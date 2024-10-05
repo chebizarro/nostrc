@@ -7,7 +7,34 @@
 #include <arpa/inet.h>
 #include <libwebsockets.h>
 
-// Relay-related functions
+
+static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
+                              void *user, void *in, size_t len) {
+    switch (reason) {
+        case LWS_CALLBACK_CLIENT_ESTABLISHED:
+            printf("WebSocket connection established\n");
+            break;
+        case LWS_CALLBACK_CLIENT_RECEIVE:
+            printf("Received data: %.*s\n", (int)len, (char *)in);
+            break;
+        case LWS_CALLBACK_CLIENT_WRITEABLE:
+            // This is where you would write data to the WebSocket
+            break;
+        case LWS_CALLBACK_CLIENT_CLOSED:
+            printf("WebSocket connection closed\n");
+            break;
+        default:
+            break;
+    }
+    return 0;
+}
+
+static const struct lws_protocols protocols[] = {
+    { "wss", websocket_callback, 0, 128 },
+    { NULL, NULL, 0, 0 }
+};
+
+
 Relay *create_relay(const char *url) {
     // Allocate memory for the Relay and RelayPrivate structs
     Relay *relay = (Relay *)malloc(sizeof(Relay));
@@ -69,14 +96,18 @@ int relay_connect(Relay *relay) {
     struct lws_client_connect_info connect_info;
     memset(&connect_info, 0, sizeof(connect_info));
 
+	struct lws_context_creation_info context_info;
+	memset(&context_info, 0, sizeof(context_info));
+
     // Set up the WebSocket context if it's not already created
     if (!relay->priv->ws_context) {
-        struct lws_context_creation_info context_info;
-        memset(&context_info, 0, sizeof(context_info));
         context_info.port = CONTEXT_PORT_NO_LISTEN;  // No listening on a port
-        context_info.protocols = NULL;               // We'll define our protocols below
+        context_info.protocols = protocols;               // We'll define our protocols below
         context_info.gid = -1;
         context_info.uid = -1;
+
+		// Enable detailed logging
+		lws_set_log_level(LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_INFO | LLL_DEBUG, NULL);
 
         // Create the WebSocket context and store it in the relay
         relay->priv->ws_context = lws_create_context(&context_info);
@@ -90,12 +121,11 @@ int relay_connect(Relay *relay) {
     connect_info.context = relay->priv->ws_context;
     connect_info.address = relay->url;           // Relay URL
     connect_info.port = relay->priv->port;             // WebSocket port (typically 443 for SSL)
-    connect_info.port = relay->priv->port;             // WebSocket port (typically 443 for SSL)
     connect_info.path = "/";                     // WebSocket path
     connect_info.host = lws_canonical_hostname(relay->priv->ws_context);
     connect_info.origin = connect_info.host;
     connect_info.ssl_connection = relay->priv->ssl_connection; // Use SSL if set in the relay
-    connect_info.protocol = "ws";                // WebSocket protocol
+    connect_info.protocol = "wss";                // WebSocket protocol
     connect_info.pwsi = &relay->priv->wsi;             // Store the WebSocket instance in the relay
 
     // Connect to the WebSocket server
@@ -106,7 +136,7 @@ int relay_connect(Relay *relay) {
 
     // Process WebSocket events
     while (lws_service(relay->priv->ws_context, 0) >= 0) {
-        //...
+		fprintf(stdout, "Events incomming\n");
     }
 
     return 0;

@@ -36,7 +36,7 @@ int main() {
     bool matches = filter_matches(filter, event);
     assert(matches);
 
-    Relay *relay = create_relay("wss://relay.stoner.com");
+    Relay *relay = create_relay("relay.sharegap.net");
     assert(relay != NULL);
 
     int conn_res = relay_connect(relay);
