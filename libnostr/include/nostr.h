@@ -114,7 +114,7 @@ typedef struct _RelayPrivate RelayPrivate;
 typedef struct Relay {
     RelayPrivate *priv;
     char *url;
-    Subscriptions *subscriptions;
+    //Subscription *subscriptions;
 } Relay;
 
 Relay *create_relay(const char *url) MALLOC;

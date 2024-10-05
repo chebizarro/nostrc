@@ -3,6 +3,13 @@ project(libnostr)
 # Include the header files
 include_directories(include)
 
+# Find the libwebsockets package
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LWS REQUIRED libwebsockets)
+
+# Include directories from libwebsockets
+include_directories(${LWS_INCLUDE_DIRS})
+
 set(LIBNOSTR_SOURCES
     src/timestamp.c
     src/tag.c
@@ -20,7 +27,7 @@ set(LIBNOSTR_SOURCES
 # Create the library
 add_library(libnostr ${LIBNOSTR_SOURCES})
 
-target_link_libraries(libnostr libgo)
+target_link_libraries(libnostr libgo ${LWS_LIBRARIES})
 
 target_include_directories(libnostr PUBLIC include)
 

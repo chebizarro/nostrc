@@ -80,12 +80,7 @@ void subscription_unsub(Subscription *sub) {
 }
 
 void subscription_close(Subscription *sub) {
-	if (sub->relay->priv->ssl) {
-	const char *id = sub->priv->label; // Simplified; use proper ID generation logic
-	char close_msg[256];
-	snprintf(close_msg, sizeof(close_msg), "{\"type\":\"CLOSE\",\"id\":\"%s\"}", id);
-	SSL_write(sub->relay->priv->ssl, close_msg, strlen(close_msg));
-	}
+
 }
 
 void subscription_sub(Subscription *sub, Filters *filters) {
@@ -98,6 +93,6 @@ void subscription_fire(Subscription *sub) {
 	char req_msg[512];
 	snprintf(req_msg, sizeof(req_msg), "{\"type\":\"REQ\",\"id\":\"%s\",\"filters\":[...]}",
 		 id); // Simplified; serialize filters properly
-	SSL_write(sub->relay->priv->ssl, req_msg, strlen(req_msg));
+	//SSL_write(sub->relay->priv->ssl, req_msg, strlen(req_msg));
 	sub->priv->live = true;
 }
