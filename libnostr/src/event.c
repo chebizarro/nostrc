@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <secp256k1.h>
+#include <secp256k1_schnorrsig.h>
 #include <openssl/sha.h>
 
 extern int hex2bin(unsigned char *bin, const char *hex, size_t bin_len);
@@ -38,12 +39,65 @@ void free_event(NostrEvent *event) {
 }
 
 char *event_serialize(NostrEvent *event) {
-    if (!event) return NULL;
+    if (!event || !event->pubkey || !event->content) return NULL;
 
-    if (json_interface && json_interface->serialize) {
-        return json_interface->serialize(event);
+    // Initial capacity for the serialized string
+    size_t capacity = 1024;
+    char *result = malloc(capacity);
+    if (!result) return NULL;
+
+    // Create the header part: [0,"PubKey",CreatedAt,Kind,
+    size_t needed = snprintf(
+        result, capacity,
+        "[0,\"%s\",%ld,%d,",
+        event->pubkey, event->created_at, event->kind
+    );
+    if (needed >= capacity) {
+        capacity = needed + 1;
+        result = realloc(result, capacity);
+        snprintf(result, capacity, "[0,\"%s\",%ld,%d,", event->pubkey, event->created_at, event->kind);
     }
-    return NULL;
+
+    // Serialize tags
+    char *tags_json = tag_marshal_to_json(event->tags, event->tags->count);
+    if (!tags_json) {
+        free(result);
+        return NULL;
+    }
+
+    // Reallocate buffer for tags
+    needed = strlen(result) + strlen(tags_json) + 2;
+    if (needed > capacity) {
+        capacity = needed;
+        result = realloc(result, capacity);
+    }
+    strcat(result, tags_json);  // Append the serialized tags
+    strcat(result, ",");
+
+    // Free the tags JSON string after use
+    free(tags_json);
+
+    // Escape and append content
+    char *escaped_content = escape_string(event->Content);
+    if (!escaped_content) {
+        free(result);
+        return NULL;
+    }
+
+    // Reallocate buffer for content
+    needed = strlen(result) + strlen(escaped_content) + 2;
+    if (needed > capacity) {
+        capacity = needed;
+        result = realloc(result, capacity);
+    }
+    strcat(result, "\"");
+    strcat(result, escaped_content);  // Append escaped content
+    strcat(result, "\"]");             // Close the JSON array
+
+    // Free the escaped content string
+    free(escaped_content);
+
+    return result;  // Return the final serialized JSON string
 }
 
 char *event_get_id(NostrEvent *event) {
@@ -73,58 +127,64 @@ char *event_get_id(NostrEvent *event) {
 
 // Check if the signature of a Nostr event is valid
 bool event_check_signature(NostrEvent *event) {
-    if (!event) return false;
+    if (!event) {
+        fprintf(stderr, "Event is null\n");
+        return false;
+    }
 
-    secp256k1_context *ctx;
-    secp256k1_pubkey pubkey;
-    secp256k1_ecdsa_signature sig;
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    unsigned char pubkey_bin[33];  // Compressed public key (33 bytes)
-    unsigned char sig_bin[64];     // ECDSA signature (64 bytes)
-    int return_val;
+    // Decode public key from hex
+    unsigned char pubkey_bin[32]; // 32 bytes for schnorr pubkey
+    if (!hex2bin(pubkey_bin, event->pubkey, sizeof(pubkey_bin))) {
+        fprintf(stderr, "Invalid public key hex\n");
+        return false;
+    }
 
-    // Serialize the event to obtain its hash
+    // Decode signature from hex
+    unsigned char sig_bin[64]; // 64 bytes for schnorr signature
+    if (!hex2bin(sig_bin, event->sig, sizeof(sig_bin))) {
+        fprintf(stderr, "Invalid signature hex\n");
+        return false;
+    }
+
+    // Create secp256k1 context
+    secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
+    if (!ctx) {
+        fprintf(stderr, "Failed to create secp256k1 context\n");
+        return false;
+    }
+
+    // Parse the public key using secp256k1_xonly_pubkey_parse (for Schnorr signatures)
+    secp256k1_xonly_pubkey pubkey;
+    if (!secp256k1_xonly_pubkey_parse(ctx, &pubkey, pubkey_bin)) {
+        fprintf(stderr, "Failed to parse public key\n");
+        secp256k1_context_destroy(ctx);
+        return false;
+    }
+
+    // Serialize the event content and hash it
     char *serialized = event_serialize(event);
-    if (!serialized) return false;
-    SHA256((unsigned char *)serialized, strlen(serialized), hash);  // Hash the serialized event
+    if (!serialized) {
+        fprintf(stderr, "Failed to serialize event\n");
+        secp256k1_context_destroy(ctx);
+        return false;
+    }
+    size_t serialized_len = strlen(serialized); // Get the length of the serialized string
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256((unsigned char *)serialized, serialized_len, hash);
     free(serialized);
 
-    // Convert the public key from hex to binary
-    if (!hex2bin(pubkey_bin, event->pubkey, sizeof(pubkey_bin))) {
-        return false;
-    }
+    // Verify the signature against the hash and the public key
+    int verified = secp256k1_schnorrsig_verify(ctx, sig_bin, hash, 32, &pubkey);
 
-    // Convert the signature from hex to binary
-    if (!hex2bin(sig_bin, event->sig, sizeof(sig_bin))) {
-        return false;
-    }
-
-    // Create secp256k1 context for signature verification
-    ctx = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
-
-    // Parse the public key
-    return_val = secp256k1_ec_pubkey_parse(ctx, &pubkey, pubkey_bin, sizeof(pubkey_bin));
-    if (return_val == 0) {
-        // Failed to parse public key
-        secp256k1_context_destroy(ctx);
-        return false;
-    }
-
-    // Parse the signature
-    return_val = secp256k1_ecdsa_signature_parse_compact(ctx, &sig, sig_bin);
-    if (return_val == 0) {
-        // Failed to parse signature
-        secp256k1_context_destroy(ctx);
-        return false;
-    }
-
-    // Verify the signature
-    return_val = secp256k1_ecdsa_verify(ctx, &sig, hash, &pubkey);
-    
-    // Clean up secp256k1 context
+    // Clean up
     secp256k1_context_destroy(ctx);
 
-    return return_val == 1;  // Return true if signature is valid
+    if (verified) {
+        return true;
+    } else {
+        fprintf(stderr, "Signature verification failed\n");
+        return false;
+    }
 }
 
 // Sign the event

@@ -163,6 +163,46 @@ Tag *tags_get_last(Tags *tags, Tag *prefix) {
     return NULL;
 }
 
+// Marshal a single Tag to a JSON array
+char *tag_marshal_to_json(Tag *tag) {
+    size_t capacity = 128;
+    char *buffer = malloc(capacity);
+    if (!buffer) return NULL;
+
+    strcpy(buffer, "[");  // Start the JSON array
+    size_t len = 1;
+
+    for (size_t i = 0; i < tag->num_elements; i++) {
+        char *escaped = escape_string(tag->elements[i]);
+        size_t escaped_len = strlen(escaped);
+
+        // Resize the buffer if necessary
+        while (len + escaped_len + 4 > capacity) {
+            capacity *= 2;
+            buffer = realloc(buffer, capacity);
+            if (!buffer) {
+                free(escaped);
+                return NULL;
+            }
+        }
+
+        if (i > 0) {
+            strcat(buffer, ",");  // Add a comma between elements
+            len++;
+        }
+
+        strcat(buffer, "\"");
+        strcat(buffer, escaped);
+        strcat(buffer, "\"");
+        len += escaped_len + 2;
+
+        free(escaped);
+    }
+
+    strcat(buffer, "]");  // Close the JSON array
+    return buffer;
+}
+
 Tags *tags_get_all(Tags *tags, Tag *prefix) {
     if (!tags || !prefix)
 	return NULL;
@@ -245,4 +285,42 @@ bool tags_contains_any(Tags *tags, const char *tag_name, char **values, size_t v
     }
 
     return false;
+}
+
+// Marshal multiple Tags (array of Tag) to a JSON array of arrays
+char *tags_marshal_to_json(Tags *tags) {
+    size_t capacity = 256;
+    char *buffer = malloc(capacity);
+    if (!buffer) return NULL;
+
+    strcpy(buffer, "[");  // Start the outer JSON array
+    size_t len = 1;
+
+    for (size_t i = 0; i < tags->num_tags; i++) {
+        char *tag_json = marshal_tag_to_json(&tags->tags[i]);
+        size_t tag_len = strlen(tag_json);
+
+        // Resize the buffer if necessary
+        while (len + tag_len + 3 > capacity) {
+            capacity *= 2;
+            buffer = realloc(buffer, capacity);
+            if (!buffer) {
+                free(tag_json);
+                return NULL;
+            }
+        }
+
+        if (i > 0) {
+            strcat(buffer, ",");  // Add a comma between tag arrays
+            len++;
+        }
+
+        strcat(buffer, tag_json);
+        len += tag_len;
+
+        free(tag_json);
+    }
+
+    strcat(buffer, "]");  // Close the outer JSON array
+    return buffer;
 }
