@@ -1,0 +1,72 @@
+# Ignore build directories
+/build/
+/out/
+/bin/
+/lib/
+/CMakeFiles/
+/CMakeCache.txt
+/Makefile
+/*.cmake
+/cmake_install.cmake
+
+# Ignore IDE and editor-specific files
+.vscode/
+/.idea/
+/*.code-workspace
+/.settings/
+/*.sublime-project
+/*.sublime-workspace
+.clang-format
+.editorconfig
+
+# Ignore log files
+*.log
+*.temp
+
+# Ignore compiled object files, static and shared libraries
+*.o
+*.obj
+*.so
+*.a
+*.lib
+*.dll
+*.dylib
+*.exe
+
+# Ignore generated documentation files
+/doxygen-docs/
+/docs/
+
+# Ignore backup and temporary files created by editors or OS
+*~
+*.bak
+*.swp
+*.tmp
+*.old
+*.orig
+*.rej
+*.swo
+*.DS_Store
+/.AppleDouble
+.LSOverride
+
+# Ignore coverage and test result files
+*.gcda
+*.gcno
+*.gcov
+
+# Ignore CMake build artifacts
+/cmake-build-*/  # For out-of-source CMake builds
+/compile_commands.json
+/*.dir
+*.h.gch
+/*.ipch
+*.pch
+
+# Ignore CLion files (if used)
+.idea/
+cmake-build-*/
+
+# Ignore Visual Studio build artifacts (if using MSVC)
+*.VC.db
+*.VC.VC.opendb
