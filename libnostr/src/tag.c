@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+extern char *escape_string(const char *str);
+
 Tag *create_tag(const char *key, ...) {
     va_list args;
     const char *str;
@@ -172,7 +174,7 @@ char *tag_marshal_to_json(Tag *tag) {
     strcpy(buffer, "[");  // Start the JSON array
     size_t len = 1;
 
-    for (size_t i = 0; i < tag->num_elements; i++) {
+    for (size_t i = 0; i < tag->count; i++) {
         char *escaped = escape_string(tag->elements[i]);
         size_t escaped_len = strlen(escaped);
 
@@ -296,8 +298,8 @@ char *tags_marshal_to_json(Tags *tags) {
     strcpy(buffer, "[");  // Start the outer JSON array
     size_t len = 1;
 
-    for (size_t i = 0; i < tags->num_tags; i++) {
-        char *tag_json = marshal_tag_to_json(&tags->tags[i]);
+    for (size_t i = 0; i < tags->count; i++) {
+        char *tag_json = tag_marshal_to_json(tags->data[i]);
         size_t tag_len = strlen(tag_json);
 
         // Resize the buffer if necessary

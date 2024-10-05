@@ -30,7 +30,7 @@ int main() {
 
     Filter *filter = create_filter();
     filter->Authors = (char **)malloc(sizeof(char *));
-    filter->Authors[0] = strdup("your-public-key-here");
+    filter->Authors[0] = strdup(pubKey);
     filter->Authors_count = 1;
 
     bool matches = filter_matches(filter, event);

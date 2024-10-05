@@ -9,6 +9,39 @@
 
 extern int hex2bin(unsigned char *bin, const char *hex, size_t bin_len);
 
+// Escape special characters in the string according to RFC8259
+char *escape_string(const char *str) {
+    size_t len = strlen(str);
+    size_t capacity = len * 2;  // Start with enough space
+    char *escaped = malloc(capacity + 1);  // Allocate buffer
+    if (!escaped) return NULL;
+
+    size_t j = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (j + 6 > capacity) {  // Make sure we have enough space
+            capacity *= 2;
+            escaped = realloc(escaped, capacity + 1);
+            if (!escaped) return NULL;
+        }
+
+        switch (str[i]) {
+            case '\"': escaped[j++] = '\\'; escaped[j++] = '\"'; break;
+            case '\\': escaped[j++] = '\\'; escaped[j++] = '\\'; break;
+            case '\b': escaped[j++] = '\\'; escaped[j++] = 'b'; break;
+            case '\f': escaped[j++] = '\\'; escaped[j++] = 'f'; break;
+            case '\n': escaped[j++] = '\\'; escaped[j++] = 'n'; break;
+            case '\r': escaped[j++] = '\\'; escaped[j++] = 'r'; break;
+            case '\t': escaped[j++] = '\\'; escaped[j++] = 't'; break;
+            default:
+                escaped[j++] = str[i];  // No escape needed
+                break;
+        }
+    }
+
+    escaped[j] = '\0';  // Null-terminate the string
+    return escaped;
+}
+
 // Event-related functions
 NostrEvent *create_event() {
     NostrEvent *event = (NostrEvent *)malloc(sizeof(NostrEvent));
@@ -59,7 +92,7 @@ char *event_serialize(NostrEvent *event) {
     }
 
     // Serialize tags
-    char *tags_json = tag_marshal_to_json(event->tags, event->tags->count);
+    char *tags_json = tags_marshal_to_json(event->tags);
     if (!tags_json) {
         free(result);
         return NULL;
@@ -78,7 +111,7 @@ char *event_serialize(NostrEvent *event) {
     free(tags_json);
 
     // Escape and append content
-    char *escaped_content = escape_string(event->Content);
+    char *escaped_content = escape_string(event->content);
     if (!escaped_content) {
         free(result);
         return NULL;
@@ -125,7 +158,6 @@ char *event_get_id(NostrEvent *event) {
     return id;
 }
 
-// Check if the signature of a Nostr event is valid
 bool event_check_signature(NostrEvent *event) {
     if (!event) {
         fprintf(stderr, "Event is null\n");
@@ -133,14 +165,14 @@ bool event_check_signature(NostrEvent *event) {
     }
 
     // Decode public key from hex
-    unsigned char pubkey_bin[32]; // 32 bytes for schnorr pubkey
+    unsigned char pubkey_bin[32];  // 32 bytes for schnorr pubkey
     if (!hex2bin(pubkey_bin, event->pubkey, sizeof(pubkey_bin))) {
         fprintf(stderr, "Invalid public key hex\n");
         return false;
     }
 
     // Decode signature from hex
-    unsigned char sig_bin[64]; // 64 bytes for schnorr signature
+    unsigned char sig_bin[64];  // 64 bytes for schnorr signature
     if (!hex2bin(sig_bin, event->sig, sizeof(sig_bin))) {
         fprintf(stderr, "Invalid signature hex\n");
         return false;
@@ -161,20 +193,23 @@ bool event_check_signature(NostrEvent *event) {
         return false;
     }
 
-    // Serialize the event content and hash it
+    // Serialize the event content and create a hash
     char *serialized = event_serialize(event);
     if (!serialized) {
         fprintf(stderr, "Failed to serialize event\n");
         secp256k1_context_destroy(ctx);
         return false;
     }
-    size_t serialized_len = strlen(serialized); // Get the length of the serialized string
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256((unsigned char *)serialized, serialized_len, hash);
+
+    // Calculate the SHA-256 hash of the serialized event
+    unsigned char hash[32];
+    SHA256((unsigned char *)serialized, strlen(serialized), hash);
     free(serialized);
 
-    // Verify the signature against the hash and the public key
-    int verified = secp256k1_schnorrsig_verify(ctx, sig_bin, hash, 32, &pubkey);
+    /*** Verification ***/
+
+    // Verify the signature using secp256k1_schnorrsig_verify
+	int verified = secp256k1_schnorrsig_verify(ctx, sig_bin, hash, 32, &pubkey);
 
     // Clean up
     secp256k1_context_destroy(ctx);
@@ -191,7 +226,7 @@ bool event_check_signature(NostrEvent *event) {
 int event_sign(NostrEvent *event, const char *private_key) {
     if (!event || !private_key) return -1;
 
-    unsigned char hash[SHA256_DIGEST_LENGTH];
+    unsigned char hash[32]; // Schnorr requires a 32-byte hash
     char *serialized = event_serialize(event);
     if (!serialized) return -1;
 
@@ -200,10 +235,10 @@ int event_sign(NostrEvent *event, const char *private_key) {
     free(serialized);
 
     secp256k1_context *ctx;
-    secp256k1_ecdsa_signature sig;
+    secp256k1_keypair keypair;
     unsigned char privkey_bin[32]; // 32-byte private key (256-bit)
-    unsigned char sig_bin[64];     // 64-byte signature
-    size_t sig_len = sizeof(sig_bin);
+    unsigned char sig_bin[64];     // 64-byte Schnorr signature
+    unsigned char auxiliary_rand[32]; // Auxiliary randomness
     int return_val = -1;
 
     // Convert the private key from hex to binary
@@ -220,30 +255,37 @@ int event_sign(NostrEvent *event, const char *private_key) {
         return -1;
     }
 
-    // Sign the hash of the event using the private key
-    if (secp256k1_ecdsa_sign(ctx, &sig, hash, privkey_bin, NULL, NULL) != 1) {
+    // Create a keypair from the private key
+    if (!secp256k1_keypair_create(ctx, &keypair, privkey_bin)) {
         secp256k1_context_destroy(ctx);
         return -1;
     }
 
-    // Serialize the signature to a compact form
-    if (secp256k1_ecdsa_signature_serialize_compact(ctx, sig_bin, &sig) != 1) {
+    // Generate 32 bytes of randomness for Schnorr signing
+    if (RAND_bytes(auxiliary_rand, sizeof(auxiliary_rand)) != 1) {
+        fprintf(stderr, "Failed to generate random bytes\n");
+        secp256k1_context_destroy(ctx);
+        return -1;
+    }
+
+    // Sign the hash using Schnorr signatures (BIP-340)
+    if (secp256k1_schnorrsig_sign32(ctx, sig_bin, hash, &keypair, auxiliary_rand) != 1) {
         secp256k1_context_destroy(ctx);
         return -1;
     }
 
     // Convert the signature to a hex string and store it in the event
-    event->sig = (char *)malloc(sig_len * 2 + 1);
+    event->sig = (char *)malloc(64 * 2 + 1);
     if (!event->sig) {
         secp256k1_context_destroy(ctx);
         return -1;
     }
-    for (size_t i = 0; i < sig_len; i++) {
+    for (size_t i = 0; i < 64; i++) {
         sprintf(&event->sig[i * 2], "%02x", sig_bin[i]);
     }
-    event->sig[sig_len * 2] = '\0';
+    event->sig[64 * 2] = '\0';
 
-    // Generate and set the event ID (you need to define event_get_id logic)
+    // Generate and set the event ID
     event->id = event_get_id(event);
 
     return_val = 0;
