@@ -36,7 +36,7 @@ int main() {
     bool matches = filter_matches(filter, event);
     assert(matches);
 
-    Relay *relay = create_relay("your-relay-url-here");
+    Relay *relay = create_relay("wss://relay.stoner.com");
     assert(relay != NULL);
 
     int conn_res = relay_connect(relay);

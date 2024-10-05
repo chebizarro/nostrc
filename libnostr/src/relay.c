@@ -5,7 +5,7 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <arpa/inet.h>
-#include <openssl/ssl.h>
+#include <libwebsockets.h>
 
 // Relay-related functions
 Relay *create_relay(const char *url) {
@@ -41,39 +41,46 @@ void free_relay(Relay *relay) {
 }
 
 int relay_connect(Relay *relay) {
-    struct addrinfo hints, *res;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_family = AF_UNSPEC;
+    struct lws_client_connect_info connect_info;
+    memset(&connect_info, 0, sizeof(connect_info));
 
-    if (getaddrinfo(relay->url, "443", &hints, &res) != 0) {
+    // Set up the WebSocket context if it's not already created
+    if (!relay->ws_context) {
+        struct lws_context_creation_info context_info;
+        memset(&context_info, 0, sizeof(context_info));
+        context_info.port = CONTEXT_PORT_NO_LISTEN;  // No listening on a port
+        context_info.protocols = NULL;               // We'll define our protocols below
+        context_info.gid = -1;
+        context_info.uid = -1;
+
+        // Create the WebSocket context and store it in the relay
+        relay->ws_context = lws_create_context(&context_info);
+        if (!relay->ws_context) {
+            fprintf(stderr, "Failed to create WebSocket context\n");
+            return -1;
+        }
+    }
+
+    // Set up the connection information
+    connect_info.context = relay->ws_context;
+    connect_info.address = relay->url;           // Relay URL
+    connect_info.port = relay->port;             // WebSocket port (typically 443 for SSL)
+    connect_info.path = "/";                     // WebSocket path
+    connect_info.host = lws_canonical_hostname(relay->ws_context);
+    connect_info.origin = connect_info.host;
+    connect_info.ssl_connection = relay->ssl_connection; // Use SSL if set in the relay
+    connect_info.protocol = "ws";                // WebSocket protocol
+    connect_info.pwsi = &relay->wsi;             // Store the WebSocket instance in the relay
+
+    // Connect to the WebSocket server
+    if (!lws_client_connect_via_info(&connect_info)) {
+        fprintf(stderr, "Failed to connect to relay WebSocket\n");
         return -1;
     }
 
-    relay->priv->socket = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (relay->priv->socket == -1) {
-        freeaddrinfo(res);
-        return -1;
-    }
-
-    if (connect(relay->priv->socket, res->ai_addr, res->ai_addrlen) == -1) {
-        close(relay->priv->socket);
-        relay->priv->socket = -1;
-        freeaddrinfo(res);
-        return -1;
-    }
-
-    freeaddrinfo(res);
-
-    relay->priv->ssl = SSL_new(relay->priv->ssl_ctx);
-    SSL_set_fd(relay->priv->ssl, relay->priv->socket);
-
-    if (SSL_connect(relay->priv->ssl) <= 0) {
-        SSL_free(relay->priv->ssl);
-        relay->priv->ssl = NULL;
-        close(relay->priv->socket);
-        relay->priv->socket = -1;
-        return -1;
+    // Process WebSocket events
+    while (lws_service(relay->ws_context, 0) >= 0) {
+        //...
     }
 
     return 0;

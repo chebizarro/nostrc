@@ -7,9 +7,10 @@
 
 
 struct _RelayPrivate {
-    SSL_CTX *ssl_ctx;
-    SSL *ssl;
-    int socket;
+    int port;                             // Relay port (usually 443 for WebSocket over SSL)
+    struct lws_context *ws_context;       // WebSocket context (reused across connections)
+    struct lws *wsi;                      // WebSocket connection instance (reused)
+    int ssl_connection;                   // SSL connection flag (if SSL is used)
 
     char *challenge;
 
