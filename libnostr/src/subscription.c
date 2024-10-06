@@ -41,21 +41,17 @@ char *subscription_get_id(Subscription *sub) {
 } 
 
 void *subscription_thread_func(void *arg) {
-	Subscription *sub = (Subscription *)arg;
 	pthread_mutex_lock(&sub->priv->sub_mutex);
 
 	pthread_mutex_unlock(&sub->priv->sub_mutex);
-
 	return NULL;
 }
 
-void subscription_start(Subscription *sub) {
-	go(subscription_thread_func, sub->events);
-	while (!sub->priv->context->canceled) {
-
-	}
+void subscription_start(void *arg) {
+	Subscription *sub = (Subscription *)arg;
+	while (!go_context_is_canceled(sub->priv->context)) { }
 	subscription_unsub(sub);
-	// go_channel_close(?)
+	// go_channel_close(sub->events)
 }
 
 void subscription_dispatch_event(Subscription *sub, NostrEvent *event) {
@@ -96,11 +92,29 @@ void subscription_sub(Subscription *sub, Filters *filters) {
 	subscription_fire(sub);
 }
 
+static void *sub_error(void *arg) {
+
+	subscription_cancel();
+
+}
+
 void subscription_fire(Subscription *sub) {
-	const char *id = sub->priv->label; // Simplified; use proper ID generation logic
+	Envelope *req;
+	if (sub->count_result) {
+		req = NewEnvelope();	
+	} else {
+		req = NewEnvelope();
+	}
+
+	atomic_store(&sub->priv->live, true);
+
+	GoChannel *err = (sub->relay, data);
+
+	go(sub_error, err);
+
+
 	char req_msg[512];
 	snprintf(req_msg, sizeof(req_msg), "{\"type\":\"REQ\",\"id\":\"%s\",\"filters\":[...]}",
 		 id); // Simplified; serialize filters properly
-	//SSL_write(sub->relay->priv->ssl, req_msg, strlen(req_msg));
 	sub->priv->live = true;
 }

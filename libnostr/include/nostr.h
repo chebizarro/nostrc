@@ -151,6 +151,7 @@ typedef struct Subscription {
 
 Subscription *create_subscription(Relay *relay, Filters *filters, const char *label) MALLOC;
 void free_subscription(Subscription *sub);
+char *subscription_get_id(Subscription *sub);
 void subscription_unsub(Subscription *sub);
 void subscription_close(Subscription *sub);
 void subscription_sub(Subscription *sub, Filters *filters);
