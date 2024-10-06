@@ -11,6 +11,19 @@
 static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                               void *user, void *in, size_t len) {
     switch (reason) {
+        case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER: {
+            // Add custom headers (e.g., User-Agent) before the WebSocket handshake
+            unsigned char **p = (unsigned char **)in;
+            unsigned char *end = (*p) + len;
+
+            const char *user_agent = "User-Agent: nostrc/1.0\r\n";
+            if (lws_add_http_header_by_name(wsi, (unsigned char *)"User-Agent:",
+                                            (unsigned char *)user_agent,
+                                            strlen(user_agent), p, end)) {
+                return 1;
+            }
+            break;
+        }
         case LWS_CALLBACK_CLIENT_ESTABLISHED:
             printf("WebSocket connection established\n");
             break;
@@ -34,6 +47,10 @@ static const struct lws_protocols protocols[] = {
     { NULL, NULL, 0, 0 }
 };
 
+static const struct lws_extension extensions[] = {
+    { "permessage-deflate", lws_extension_callback_pm_deflate, "permessage-deflate; client_no_context_takeover; client_max_window_bits" },
+    { NULL, NULL, NULL }
+};
 
 Relay *create_relay(const char *url) {
     // Allocate memory for the Relay and RelayPrivate structs
@@ -64,16 +81,13 @@ Relay *create_relay(const char *url) {
 
 void free_relay(Relay *relay) {
     if (relay) {
-        // Free the URL
         free(relay->url);
-        // Clean up WebSocket context and instance
         if (relay->priv->wsi) {
             // Close the WebSocket connection
             lws_set_timeout(relay->priv->wsi, PENDING_TIMEOUT_CLOSE_SEND, LWS_TO_KILL_ASYNC);
-            lws_service(relay->priv->ws_context, 0);  // Process the WebSocket closure
+            lws_service(relay->priv->ws_context, 0);
             relay->priv->wsi = NULL;
         }
-        
         // Destroy the WebSocket context
         if (relay->priv->ws_context) {
             lws_context_destroy(relay->priv->ws_context);
@@ -82,17 +96,25 @@ void free_relay(Relay *relay) {
 
         //free_filters(relay->subscriptions);
 
-        // Destroy the mutex
         pthread_mutex_destroy(&relay->priv->mutex);
-
-        // Free the private data
         free(relay->priv);
-
-        // Finally, free the relay itself
         free(relay);
     }
 }
+
+void *websocket_service_thread(void *arg) {
+    Relay *relay = (Relay *)arg;
+    // Run the WebSocket event loop
+    while (lws_service(relay->priv->ws_context, 0) >= 0) {
+        // This thread handles all WebSocket events
+    }
+    return NULL;
+}
+
 int relay_connect(Relay *relay) {
+
+	Connection *conn = new_connection(relay->url, relay->priv->port);
+
     struct lws_client_connect_info connect_info;
     memset(&connect_info, 0, sizeof(connect_info));
 
@@ -101,10 +123,12 @@ int relay_connect(Relay *relay) {
 
     // Set up the WebSocket context if it's not already created
     if (!relay->priv->ws_context) {
-        context_info.port = CONTEXT_PORT_NO_LISTEN;  // No listening on a port
-        context_info.protocols = protocols;               // We'll define our protocols below
+        context_info.port = CONTEXT_PORT_NO_LISTEN;
+        context_info.protocols = protocols;
         context_info.gid = -1;
         context_info.uid = -1;
+    	// Enable permessage-deflate
+	    context_info.extensions = extensions;
 
 		// Enable detailed logging
 		lws_set_log_level(LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_INFO | LLL_DEBUG, NULL);
@@ -134,11 +158,15 @@ int relay_connect(Relay *relay) {
         return -1;
     }
 
-    // Process WebSocket events
-    while (lws_service(relay->priv->ws_context, 0) >= 0) {
-		fprintf(stdout, "Events incomming\n");
+    // Launch a separate thread to handle the WebSocket service loop
+    pthread_t service_thread;
+    if (pthread_create(&service_thread, NULL, websocket_service_thread, (void *)relay) != 0) {
+        fprintf(stderr, "Failed to create service thread\n");
+        return -1;
     }
 
+    // Optionally join the thread or detach if you don't want to wait for it to finish
+    pthread_detach(service_thread);
     return 0;
 }
 
@@ -204,10 +232,8 @@ void relay_auth(Relay *relay, void (*sign)(NostrEvent *)) {
 
 bool relay_is_connected(Relay *relay) {
     pthread_mutex_lock(&relay->priv->mutex);
-
     // Check if the WebSocket instance exists and if it's still connected
     bool connected = (relay->priv->wsi != NULL && lws_get_context(relay->priv->wsi) != NULL);
-
     pthread_mutex_unlock(&relay->priv->mutex);
     return connected;
 }

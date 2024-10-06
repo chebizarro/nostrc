@@ -9,18 +9,18 @@
 typedef struct _NostrEvent NostrEvent;
 
 typedef struct _Filter {
-    char **IDs;
-    size_t IDs_count;
-    int *Kinds;
-    size_t Kinds_count;
-    char **Authors;
-    size_t Authors_count;
-    Tags *Tags;
-    Timestamp *Since;
-    Timestamp *Until;
-    int Limit;
-    char *Search;
-    bool LimitZero;
+    char **ids;
+    size_t ids_count;
+    int *kinds;
+    size_t kinds_count;
+    char **authors;
+    size_t authors_count;
+    Tags *tags;
+    Timestamp *since;
+    Timestamp *until;
+    int limit;
+    char *search;
+    bool limit_zero;
 } Filter;
 
 typedef struct _Filters {

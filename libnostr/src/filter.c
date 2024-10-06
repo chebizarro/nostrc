@@ -6,36 +6,36 @@ Filter *create_filter() {
     Filter *filter = (Filter *)malloc(sizeof(Filter));
     if (!filter) return NULL;
 
-    filter->IDs = NULL;
-    filter->IDs_count = 0;
-    filter->Kinds = NULL;
-    filter->Kinds_count = 0;
-    filter->Authors = NULL;
-    filter->Authors_count = 0;
-    filter->Tags = NULL;
-    filter->Since = NULL;
-    filter->Until = NULL;
-    filter->Limit = 0;
-    filter->Search = NULL;
-    filter->LimitZero = false;
+    filter->ids = NULL;
+    filter->ids_count = 0;
+    filter->kinds = NULL;
+    filter->kinds_count = 0;
+    filter->authors = NULL;
+    filter->authors_count = 0;
+    filter->tags = NULL;
+    filter->since = NULL;
+    filter->until = NULL;
+    filter->limit = 0;
+    filter->search = NULL;
+    filter->limit_zero = false;
 
     return filter;
 }
 
 void free_filter(Filter *filter) {
-	for (size_t i = 0; i < filter->IDs_count; i++) {
-		free(filter->IDs[i]);
+	for (size_t i = 0; i < filter->ids_count; i++) {
+		free(filter->ids[i]);
 	}
-	free(filter->IDs);
-	free(filter->Kinds);
-	for (size_t i = 0; i < filter->Authors_count; i++) {
-		free(filter->Authors[i]);
+	free(filter->ids);
+	free(filter->kinds);
+	for (size_t i = 0; i < filter->authors_count; i++) {
+		free(filter->authors[i]);
 	}
-	free(filter->Authors);
-	free(filter->Tags);
-	free(filter->Since);
-	free(filter->Until);
-	free(filter->Search);
+	free(filter->authors);
+	free(filter->tags);
+	free(filter->since);
+	free(filter->until);
+	free(filter->search);
 	free(filter);
 }
 
@@ -66,51 +66,63 @@ void free_filters(Filters *filters) {
 }
 
 bool filter_matches(Filter *filter, NostrEvent *event) {
-    //if (!filter || !event) return false;
+    if (!filter || !event) return false;
 
     bool match = true;
-
-    if (filter->IDs && filter->IDs_count > 0) {
-        match = false;
-        for (size_t i = 0; i < filter->IDs_count; i++) {
-            if (strcmp(filter->IDs[i], event->id) == 0) {
-                match = true;
-                break;
-            }
-        }
-        if (!match) return false;
-    }
-
-    if (filter->Kinds && filter->Kinds_count > 0) {
-        match = false;
-        for (size_t i = 0; i < filter->Kinds_count; i++) {
-            if (filter->Kinds[i] == event->kind) {
-                match = true;
-                break;
-            }
-        }
-        if (!match) return false;
-    }
-
-    if (filter->Authors && filter->Authors_count > 0) {
-        match = false;
-        for (size_t i = 0; i < filter->Authors_count; i++) {
-            if (strcmp(filter->Authors[i], event->pubkey) == 0) {
-                match = true;
-                break;
-            }
-        }
-        if (!match) return false;
-    }
-
-    if (filter->Since && event->created_at < *(filter->Since)) return false;
-    if (filter->Until && event->created_at > *(filter->Until)) return false;
-
+	if (!filter_match_ignoring_timestamp(filter, event)) return false;
+    if (filter->since && event->created_at < *(filter->since)) return false;
+    if (filter->until && event->created_at > *(filter->until)) return false;
     return match;
 }
 
+bool filter_match_ignoring_timestamp(Filter *filter, NostrEvent *event) {
+    if (!filter || !event) return false;
+
+    bool match = true;
+
+    if (filter->ids && filter->ids_count > 0) {
+        match = false;
+        for (size_t i = 0; i < filter->ids_count; i++) {
+            if (strcmp(filter->ids[i], event->id) == 0) {
+                match = true;
+                break;
+            }
+        }
+        if (!match) return false;
+    }
+
+    if (filter->kinds && filter->kinds_count > 0) {
+        match = false;
+        for (size_t i = 0; i < filter->kinds_count; i++) {
+            if (filter->kinds[i] == event->kind) {
+                match = true;
+                break;
+            }
+        }
+        if (!match) return false;
+    }
+
+    if (filter->authors && filter->authors_count > 0) {
+        match = false;
+        for (size_t i = 0; i < filter->authors_count; i++) {
+            if (strcmp(filter->authors[i], event->pubkey) == 0) {
+                match = true;
+                break;
+            }
+        }
+        if (!match) return false;
+    }
+
+	id (filter->tags && filter->tags->count > 0) {
+		// TODO implement
+	}
+
+	return match;
+
+}
+
 bool filters_match(Filters *filters, NostrEvent *event) {
-    //if (!filters || !event) return false;
+    if (!filters || !event) return false;
 
     for (size_t i = 0; i < filters->count; i++) {
         if (filter_matches(&filters->filters[i], event)) {

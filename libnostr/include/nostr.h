@@ -77,18 +77,18 @@ bool event_check_signature(NostrEvent *event);
 int event_sign(NostrEvent *event, const char *private_key);
 
 typedef struct _Filter {
-    char **IDs;
-    size_t IDs_count;
-    int *Kinds;
-    size_t Kinds_count;
-    char **Authors;
-    size_t Authors_count;
-    Tags *Tags;
-    Timestamp *Since;
-    Timestamp *Until;
-    int Limit;
-    char *Search;
-    bool LimitZero;
+    char **ids;
+    size_t ids_count;
+    int *kinds;
+    size_t kinds_count;
+    char **authors;
+    size_t authors_count;
+    Tags *tags;
+    Timestamp *since;
+    Timestamp *until;
+    int limit;
+    char *search;
+    bool limit_zero;
 } Filter;
 
 typedef struct _Filters {
@@ -142,11 +142,11 @@ typedef struct _Channel Channel;
 typedef struct _SubscriptionPrivate SubscriptionPrivate;
 
 typedef struct Subscription {
+    SubscriptionPrivate *priv;
     Relay *relay;
-    Filters filters;
+    Filters *filters;
     GoChannel *events;
     GoChannel *closed_reason;
-    SubscriptionPrivate *priv;
 } Subscription;
 
 Subscription *create_subscription(Relay *relay, Filters *filters, const char *label) MALLOC;

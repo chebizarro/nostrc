@@ -29,9 +29,9 @@ int main() {
     assert(verified);
 
     Filter *filter = create_filter();
-    filter->Authors = (char **)malloc(sizeof(char *));
-    filter->Authors[0] = strdup(pubKey);
-    filter->Authors_count = 1;
+    filter->authors = (char **)malloc(sizeof(char *));
+    filter->authors[0] = strdup(pubKey);
+    filter->authors_count = 1;
 
     bool matches = filter_matches(filter, event);
     assert(matches);

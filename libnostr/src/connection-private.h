@@ -1,13 +1,12 @@
-#ifndef CONNECTION_H
-#define CONNECTION_H
+#ifndef CONNECTION_PRIVATE_H
+#define CONNECTION_PRIVATE_H
 
-#include "nostr.h"
-#include <zlib.h>
+#include <libwebsockets.h>
 
 struct _ConnectionPrivate {
   struct lws *wsi;
   int enable_compression;
-  z_stream zstream;
+  struct lws_context *context;
 };
 
-#endif // CONNECTION_H
+#endif // CONNECTION_PRIVATE_H
