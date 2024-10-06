@@ -14,6 +14,7 @@ set(LIBNOSTR_SOURCES
     src/timestamp.c
     src/tag.c
     src/event.c
+	src/envelope.c
     src/filter.c
     src/relay.c
     src/subscription.c

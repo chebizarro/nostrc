@@ -20,7 +20,7 @@ typedef struct _SubscriptionPrivate {
 } SubscriptionPrivate;
 
 Subscription *create_subscription(Relay *relay, Filters *filters, const char *label);
-void subscription_start(Subscription *sub);
+void subscription_start(void *arg);
 void subscription_dispatch_event(Subscription *sub, NostrEvent *event);
 void subscription_dispatch_eose(Subscription *sub);
 void subscription_dispatch_closed(Subscription *sub, const char *reason);

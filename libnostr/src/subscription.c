@@ -16,7 +16,7 @@ Subscription *create_subscription(Relay *relay, Filters *filters, const char *la
 	sub->priv->label = strdup(label);
 	sub->priv->counter = 0;
 	sub->relay = relay;
-	sub->filters = *filters;
+	sub->filters = filters;
 	sub->priv->countResult = NULL;
 	sub->events = NULL;
 	sub->closed_reason = NULL;
@@ -41,6 +41,7 @@ char *subscription_get_id(Subscription *sub) {
 } 
 
 void *subscription_thread_func(void *arg) {
+	Subscription *sub = (Subscription *)arg;
 	pthread_mutex_lock(&sub->priv->sub_mutex);
 
 	pthread_mutex_unlock(&sub->priv->sub_mutex);
@@ -69,8 +70,7 @@ void subscription_dispatch_eose(Subscription *sub) {
 
 void subscription_dispatch_closed(Subscription *sub, const char *reason) {
 	atomic_store(&sub->priv->closed, true);
-	free(sub->closed_reason);
-	sub->closed_reason = strdup(reason);
+	go_channel_send(sub->closed_reason, (void*)reason);
 }
 
 void subscription_unsub(Subscription *sub) {
@@ -112,9 +112,8 @@ void subscription_fire(Subscription *sub) {
 
 	go(sub_error, err);
 
-
 	char req_msg[512];
-	snprintf(req_msg, sizeof(req_msg), "{\"type\":\"REQ\",\"id\":\"%s\",\"filters\":[...]}",
-		 id); // Simplified; serialize filters properly
+	//snprintf(req_msg, sizeof(req_msg), "{\"type\":\"REQ\",\"id\":\"%s\",\"filters\":[...]}",
+	//	 id); // Simplified; serialize filters properly
 	sub->priv->live = true;
 }

@@ -113,7 +113,7 @@ bool filter_match_ignoring_timestamp(Filter *filter, NostrEvent *event) {
         if (!match) return false;
     }
 
-	id (filter->tags && filter->tags->count > 0) {
+	if (filter->tags && filter->tags->count > 0) {
 		// TODO implement
 	}
 

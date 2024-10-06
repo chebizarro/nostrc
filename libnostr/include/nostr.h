@@ -101,6 +101,7 @@ void free_filter(Filter *filter);
 Filters *create_filters(size_t count) MALLOC;
 void free_filters(Filters *filters);
 bool filter_matches(Filter *filter, NostrEvent *event);
+bool filter_match_ignoring_timestamp(Filter *filter, NostrEvent *event);
 bool filters_match(Filters *filters, NostrEvent *event);
 
 typedef struct _ConnectionPrivate ConnectionPrivate;
@@ -143,6 +144,7 @@ typedef struct _SubscriptionPrivate SubscriptionPrivate;
 
 typedef struct Subscription {
     SubscriptionPrivate *priv;
+	char *id;
     Relay *relay;
     Filters *filters;
     GoChannel *events;

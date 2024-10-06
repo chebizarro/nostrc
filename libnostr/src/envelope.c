@@ -3,6 +3,24 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+int bytes_index(const unsigned char *haystack, int haystack_len, const unsigned char *needle, int needle_len) {
+    // Edge case: if the needle is empty or longer than the haystack, return -1
+    if (needle_len == 0 || needle_len > haystack_len) {
+        return -1;
+    }
+
+    // Loop through the haystack and look for the needle
+    for (int i = 0; i <= haystack_len - needle_len; i++) {
+        // Check if the substring starting at haystack[i] matches the needle
+        if (memcmp(&haystack[i], needle, needle_len) == 0) {
+            return i; // Return the starting index of the needle in the haystack
+        }
+    }
+
+    // If no match is found, return -1
+    return -1;
+}
+
 // Helper function to create a new Envelope
 Envelope *create_envelope(EnvelopeType type) {
     Envelope *envelope = (Envelope *)malloc(sizeof(Envelope));
@@ -13,6 +31,19 @@ Envelope *create_envelope(EnvelopeType type) {
 
 // Function to parse a message and return the appropriate Envelope struct
 Envelope *parse_message(const char *message) {
+    const unsigned char comma[] = {','};
+	int firstComma = bytes_index((const unsigned char *)message, strlen(message), comma, 1);
+
+	if (firstComma == -1) {
+		return NULL;
+	}
+
+    char *label = (char *)malloc(firstComma + 1);
+    memcpy(label, message, firstComma);
+    label[firstComma] = '\0';
+
+    Envelope v = NULL;
+
     cJSON *json = cJSON_Parse(message);
     if (!json) return NULL;
 
