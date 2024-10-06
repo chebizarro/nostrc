@@ -17,6 +17,7 @@ add_library(libgo ${LIBGO_SOURCES})
 
 target_include_directories(libgo PUBLIC include)
 
+target_link_libraries(libgo libnsync)
 
 # Optionally, you can specify installation rules
 # install(TARGETS nostr DESTINATION lib)

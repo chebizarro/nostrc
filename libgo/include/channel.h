@@ -1,7 +1,7 @@
 #ifndef CHANNEL_H
 #define CHANNEL_H
 
-#include <pthread.h>
+#include <nsync.h>
 #include "context.h"
 #include "refptr.h"
 
@@ -11,9 +11,9 @@ typedef struct GoChannel {
     size_t size;
     size_t in;
     size_t out;
-    pthread_mutex_t mutex;
-    pthread_cond_t cond_full;
-    pthread_cond_t cond_empty;
+    nsync_mu mutex;
+    nsync_cv cond_full;
+    nsync_cv cond_empty;
 } GoChannel;
 
 GoChannel *go_channel_create(size_t capacity);

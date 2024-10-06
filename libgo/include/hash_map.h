@@ -1,7 +1,7 @@
 #ifndef GO_HASH_MAP_H
 #define GO_HASH_MAP_H
 
-#include <pthread.h>
+#include <nsync.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdatomic.h>
@@ -14,7 +14,7 @@ typedef struct HashNode {
 
 typedef struct {
     HashNode **buckets;
-    pthread_rwlock_t *bucket_locks;  // Lock for each bucket
+    nsync_mu *bucket_locks;  // Lock for each bucket
     size_t num_buckets;
 } ConcurrentHashMap;
 

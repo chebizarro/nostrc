@@ -1,7 +1,7 @@
 #ifndef CONTEXT_H
 #define CONTEXT_H
 
-#include <pthread.h>
+#include <nsync.h>
 #include <time.h>
 
 typedef struct GoContextInterface {
@@ -13,8 +13,8 @@ typedef struct GoContextInterface {
 
 typedef struct GoContext {
     GoContextInterface *vtable;
-    pthread_mutex_t mutex;
-    pthread_cond_t cond;
+    nsync_mu mutex;
+    nsync_cv cond;
     int canceled;
     struct timespec timeout;
 } GoContext;

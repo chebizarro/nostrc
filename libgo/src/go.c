@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <nsync.h>
 
 
 // Wrapper function to create a new thread

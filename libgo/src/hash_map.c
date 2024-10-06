@@ -1,5 +1,6 @@
 #include "hash_map.h"
 #include <string.h>
+#include <nsync.h>
 
 unsigned long hash_function(const char *key) {
     unsigned long hash = 5381;
@@ -21,10 +22,10 @@ ConcurrentHashMap *concurrent_hash_map_create(size_t num_buckets) {
     ConcurrentHashMap *map = malloc(sizeof(ConcurrentHashMap));
     map->num_buckets = num_buckets;
     map->buckets = calloc(num_buckets, sizeof(HashNode *));
-    map->bucket_locks = malloc(num_buckets * sizeof(pthread_rwlock_t));
+    map->bucket_locks = malloc(num_buckets * sizeof(nsync_mu));
 
     for (size_t i = 0; i < num_buckets; i++) {
-        pthread_rwlock_init(&map->bucket_locks[i], NULL);
+        nsync_mu_init(&map->bucket_locks[i]);  // Initialize nsync mutex for each bucket
     }
 
     return map;
@@ -34,13 +35,13 @@ void concurrent_hash_map_insert(ConcurrentHashMap *map, const char *key, void *v
     unsigned long hash = hash_function(key);
     size_t bucket_index = hash % map->num_buckets;
 
-    pthread_rwlock_wrlock(&map->bucket_locks[bucket_index]);
+    nsync_mu_lock(&map->bucket_locks[bucket_index]);  // Lock for write
 
     HashNode *node = map->buckets[bucket_index];
     while (node) {
         if (strcmp(node->key, key) == 0) {
             node->value = value;  // Update existing value
-            pthread_rwlock_unlock(&map->bucket_locks[bucket_index]);
+            nsync_mu_unlock(&map->bucket_locks[bucket_index]);  // Unlock after update
             return;
         }
         node = node->next;
@@ -50,25 +51,25 @@ void concurrent_hash_map_insert(ConcurrentHashMap *map, const char *key, void *v
     new_node->next = map->buckets[bucket_index];
     map->buckets[bucket_index] = new_node;
 
-    pthread_rwlock_unlock(&map->bucket_locks[bucket_index]);
+    nsync_mu_unlock(&map->bucket_locks[bucket_index]);  // Unlock after insert
 }
 
 void *concurrent_hash_map_get(ConcurrentHashMap *map, const char *key) {
     unsigned long hash = hash_function(key);
     size_t bucket_index = hash % map->num_buckets;
 
-    pthread_rwlock_rdlock(&map->bucket_locks[bucket_index]);
+    nsync_mu_lock(&map->bucket_locks[bucket_index]);  // Lock for read
 
     HashNode *node = map->buckets[bucket_index];
     while (node) {
         if (strcmp(node->key, key) == 0) {
-            pthread_rwlock_unlock(&map->bucket_locks[bucket_index]);
+            nsync_mu_unlock(&map->bucket_locks[bucket_index]);  // Unlock after read
             return node->value;  // Return value if found
         }
         node = node->next;
     }
 
-    pthread_rwlock_unlock(&map->bucket_locks[bucket_index]);
+    nsync_mu_unlock(&map->bucket_locks[bucket_index]);  // Unlock after read
     return NULL;  // Return NULL if not found
 }
 
@@ -76,7 +77,7 @@ void concurrent_hash_map_remove(ConcurrentHashMap *map, const char *key) {
     unsigned long hash = hash_function(key);
     size_t bucket_index = hash % map->num_buckets;
 
-    pthread_rwlock_wrlock(&map->bucket_locks[bucket_index]);
+    nsync_mu_lock(&map->bucket_locks[bucket_index]);  // Lock for write
 
     HashNode *node = map->buckets[bucket_index];
     HashNode *prev = NULL;
@@ -95,12 +96,12 @@ void concurrent_hash_map_remove(ConcurrentHashMap *map, const char *key) {
         node = node->next;
     }
 
-    pthread_rwlock_unlock(&map->bucket_locks[bucket_index]);
+    nsync_mu_unlock(&map->bucket_locks[bucket_index]);  // Unlock after remove
 }
 
 void concurrent_hash_map_destroy(ConcurrentHashMap *map) {
     for (size_t i = 0; i < map->num_buckets; i++) {
-        pthread_rwlock_wrlock(&map->bucket_locks[i]);
+        nsync_mu_lock(&map->bucket_locks[i]);  // Lock for write
 
         HashNode *node = map->buckets[i];
         while (node) {
@@ -110,10 +111,9 @@ void concurrent_hash_map_destroy(ConcurrentHashMap *map) {
             node = next;
         }
 
-        pthread_rwlock_unlock(&map->bucket_locks[i]);
-        pthread_rwlock_destroy(&map->bucket_locks[i]);
+        nsync_mu_unlock(&map->bucket_locks[i]);  // Unlock after destruction
     }
-    
+
     free(map->buckets);
     free(map->bucket_locks);
     free(map);
