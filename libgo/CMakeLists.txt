@@ -10,6 +10,7 @@ set(LIBGO_SOURCES
 	src/wait_group.c
 	src/hash_map.c
 	src/counter.c
+	src/select.c
 )
 
 # Create the library

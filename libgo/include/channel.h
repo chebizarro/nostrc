@@ -1,5 +1,5 @@
-#ifndef CHANNEL_H
-#define CHANNEL_H
+#ifndef GO_CHANNEL_H
+#define GO_CHANNEL_H
 
 #include <nsync.h>
 #include "context.h"
@@ -23,4 +23,4 @@ int go_channel_receive(GoChannel *chan, void **data);
 int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx);
 int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx);
 
-#endif // CHANNEL_H
+#endif // GO_CHANNEL_H
