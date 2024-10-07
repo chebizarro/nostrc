@@ -11,6 +11,8 @@ set(LIBGO_SOURCES
 	src/hash_map.c
 	src/counter.c
 	src/select.c
+	src/string_array.c
+	src/int_array.c
 )
 
 # Create the library

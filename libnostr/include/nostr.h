@@ -77,15 +77,12 @@ bool event_check_signature(NostrEvent *event);
 int event_sign(NostrEvent *event, const char *private_key);
 
 typedef struct _Filter {
-    char **ids;
-    size_t ids_count;
-    int *kinds;
-    size_t kinds_count;
-    char **authors;
-    size_t authors_count;
+    StringArray ids;
+    IntArray kinds;
+    StringArray authors;
     Tags *tags;
-    Timestamp *since;
-    Timestamp *until;
+    Timestamp since;
+    Timestamp until;
     int limit;
     char *search;
     bool limit_zero;

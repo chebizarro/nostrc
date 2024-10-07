@@ -3,24 +3,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-int bytes_index(const unsigned char *haystack, int haystack_len, const unsigned char *needle, int needle_len) {
-    // Edge case: if the needle is empty or longer than the haystack, return -1
-    if (needle_len == 0 || needle_len > haystack_len) {
-        return -1;
-    }
-
-    // Loop through the haystack and look for the needle
-    for (int i = 0; i <= haystack_len - needle_len; i++) {
-        // Check if the substring starting at haystack[i] matches the needle
-        if (memcmp(&haystack[i], needle, needle_len) == 0) {
-            return i; // Return the starting index of the needle in the haystack
-        }
-    }
-
-    // If no match is found, return -1
-    return -1;
-}
-
 // Helper function to create a new Envelope
 Envelope *create_envelope(EnvelopeType type) {
     Envelope *envelope = (Envelope *)malloc(sizeof(Envelope));
@@ -31,91 +13,67 @@ Envelope *create_envelope(EnvelopeType type) {
 
 // Function to parse a message and return the appropriate Envelope struct
 Envelope *parse_message(const char *message) {
-    const unsigned char comma[] = {','};
-	int firstComma = bytes_index((const unsigned char *)message, strlen(message), comma, 1);
+    if (!message) return NULL;
 
-	if (firstComma == -1) {
-		return NULL;
-	}
+    char *first_comma = strchr(message, ',');
+    if (!first_comma) return NULL;
 
-    char *label = (char *)malloc(firstComma + 1);
-    memcpy(label, message, firstComma);
-    label[firstComma] = '\0';
+    char label[16];
+    strncpy(label, message, first_comma - message);
+    label[first_comma - message] = '\\0';
 
-    Envelope v = NULL;
+    // Check the label and return the corresponding envelope
+    if (strcmp(label, "EVENT") == 0) {
+        EventEnvelope *envelope = malloc(sizeof(EventEnvelope));
 
-    cJSON *json = cJSON_Parse(message);
-    if (!json) return NULL;
+        if (EventEnvelope_UnmarshalJSON(envelope, message, json_iface) == 0) {
+            return envelope;
+        }
 
-    const cJSON *label = cJSON_GetArrayItem(json, 0);
-    if (!cJSON_IsString(label)) {
-        cJSON_Delete(json);
-        return NULL;
-    }
-
-    Envelope *envelope = NULL;
-
-    if (strcmp(label->valuestring, "EVENT") == 0) {
-        envelope = (Envelope *)malloc(sizeof(EventEnvelope));
-        envelope->type = ENVELOPE_EVENT;
-        EventEnvelope *event_envelope = (EventEnvelope *)envelope;
-        event_envelope->subscription_id = strdup(cJSON_GetArrayItem(json, 1)->valuestring);
-        // Parse the event (omitting error checking for brevity)
-        cJSON *event_json = cJSON_GetArrayItem(json, 2);
-        event_envelope->event.pubkey = strdup(cJSON_GetObjectItem(event_json, "pubkey")->valuestring);
-        // Repeat for other event fields...
-    } else if (strcmp(label->valuestring, "REQ") == 0) {
-        envelope = (Envelope *)malloc(sizeof(ReqEnvelope));
-        envelope->type = ENVELOPE_REQ;
-        ReqEnvelope *req_envelope = (ReqEnvelope *)envelope;
-        req_envelope->subscription_id = strdup(cJSON_GetArrayItem(json, 1)->valuestring);
-        // Parse filters (omitting error checking for brevity)
-    } else if (strcmp(label->valuestring, "COUNT") == 0) {
+        free(envelope);
+    } else if (strcmp(label, "REQ") == 0) {
+        ReqEnvelope *envelope = malloc(sizeof(ReqEnvelope));
+        if (ReqEnvelope_UnmarshalJSON(envelope, message, json_iface) == 0) {
+            return envelope;
+        }
+        free(envelope);
+    } else if (strcmp(label, "COUNT") == 0) {
         envelope = (Envelope *)malloc(sizeof(CountEnvelope));
         envelope->type = ENVELOPE_COUNT;
         CountEnvelope *count_envelope = (CountEnvelope *)envelope;
-        count_envelope->subscription_id = strdup(cJSON_GetArrayItem(json, 1)->valuestring);
-        // Parse count and filters (omitting error checking for brevity)
-    } else if (strcmp(label->valuestring, "NOTICE") == 0) {
+
+    } else if (strcmp(label, "NOTICE") == 0) {
         envelope = (Envelope *)malloc(sizeof(NoticeEnvelope));
         envelope->type = ENVELOPE_NOTICE;
         NoticeEnvelope *notice_envelope = (NoticeEnvelope *)envelope;
-        notice_envelope->message = strdup(cJSON_GetArrayItem(json, 1)->valuestring);
-    } else if (strcmp(label->valuestring, "EOSE") == 0) {
+
+    } else if (strcmp(label, "EOSE") == 0) {
         envelope = (Envelope *)malloc(sizeof(EOSEEnvelope));
         envelope->type = ENVELOPE_EOSE;
         EOSEEnvelope *eose_envelope = (EOSEEnvelope *)envelope;
-        eose_envelope->message = strdup(cJSON_GetArrayItem(json, 1)->valuestring);
-    } else if (strcmp(label->valuestring, "CLOSE") == 0) {
+
+    } else if (strcmp(label, "CLOSE") == 0) {
         envelope = (Envelope *)malloc(sizeof(CloseEnvelope));
         envelope->type = ENVELOPE_CLOSE;
         CloseEnvelope *close_envelope = (CloseEnvelope *)envelope;
-        close_envelope->message = strdup(cJSON_GetArrayItem(json, 1)->valuestring);
-    } else if (strcmp(label->valuestring, "CLOSED") == 0) {
+
+    } else if (strcmp(label, "CLOSED") == 0) {
         envelope = (Envelope *)malloc(sizeof(ClosedEnvelope));
         envelope->type = ENVELOPE_CLOSED;
         ClosedEnvelope *closed_envelope = (ClosedEnvelope *)envelope;
-        closed_envelope->subscription_id = strdup(cJSON_GetArrayItem(json, 1)->valuestring);
-        closed_envelope->reason = strdup(cJSON_GetArrayItem(json, 2)->valuestring);
-    } else if (strcmp(label->valuestring, "OK") == 0) {
+
+    } else if (strcmp(label, "OK") == 0) {
         envelope = (Envelope *)malloc(sizeof(OKEnvelope));
         envelope->type = ENVELOPE_OK;
         OKEnvelope *ok_envelope = (OKEnvelope *)envelope;
-        ok_envelope->event_id = strdup(cJSON_GetArrayItem(json, 1)->valuestring);
-        ok_envelope->ok = cJSON_IsTrue(cJSON_GetArrayItem(json, 2));
-        ok_envelope->reason = strdup(cJSON_GetArrayItem(json, 3)->valuestring);
-    } else if (strcmp(label->valuestring, "AUTH") == 0) {
+
+    } else if (strcmp(label, "AUTH") == 0) {
         envelope = (Envelope *)malloc(sizeof(AuthEnvelope));
         envelope->type = ENVELOPE_AUTH;
         AuthEnvelope *auth_envelope = (AuthEnvelope *)envelope;
-        auth_envelope->challenge = strdup(cJSON_GetArrayItem(json, 1)->valuestring);
-        // Parse the event (omitting error checking for brevity)
-        cJSON *event_json = cJSON_GetArrayItem(json, 2);
-        auth_envelope->event.pubkey = strdup(cJSON_GetObjectItem(event_json, "pubkey")->valuestring);
-        // Repeat for other event fields...
+
     }
 
-    cJSON_Delete(json);
     return envelope;
 }
 
@@ -164,6 +122,33 @@ void free_envelope(Envelope *envelope) {
 
     free(envelope);
 }
+
+int event_envelope_unmarshal_json(EventEnvelope *envelope, const char *json_data) {
+    if (!json_data || !envelope) return -1;
+
+    // Parse the JSON to check the number of elements in the array
+    NostrEvent *event = json_iface->deserialize(json_data);
+    if (!event) return -1;
+
+    envelope->event = event;
+    return 0;
+}
+
+char *event_envelope_marshal_json(EventEnvelope *envelope) {
+    if (!envelope || !envelope->event) return NULL;
+
+    // Serialize the event
+    char *serialized_event = json_iface->serialize(envelope->event);
+    if (!serialized_event) return NULL;
+
+    // Construct the final JSON array string
+    char *json_str = malloc(1024);  // Allocating enough space for the JSON
+    snprintf(json_str, 1024, "[\\"EVENT\\",\\"%s\\",%s]", envelope->subscription_id ? envelope->subscription_id : "", serialized_event);
+
+    free(serialized_event);
+    return json_str;
+}
+
 
 // Function to convert an Envelope struct to JSON
 char *envelope_to_json(Envelope *envelope) {
