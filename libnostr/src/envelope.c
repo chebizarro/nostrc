@@ -20,7 +20,7 @@ Envelope *parse_message(const char *message) {
 
     char label[16];
     strncpy(label, message, first_comma - message);
-    label[first_comma - message] = '\\0';
+    label[first_comma - message] = '\0';
 
     // Check the label and return the corresponding envelope
     if (strcmp(label, "EVENT") == 0) {

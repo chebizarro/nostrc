@@ -58,3 +58,18 @@ void string_array_free(StringArray *array) {
     array->size = 0;
     array->capacity = 0;
 }
+
+size_t string_array_size(StringArray * array) {
+	return array->size;
+}
+
+int string_array_contains(const StringArray *array, const char *str) {
+    if (!array || !str) return 0;  // Handle null array or string input
+
+    for (size_t i = 0; i < array->size; i++) {
+        if (strcmp(array->data[i], str) == 0) {
+            return 1;  // String found
+        }
+    }
+    return 0;  // String not found
+}

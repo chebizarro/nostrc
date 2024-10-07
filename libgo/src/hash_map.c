@@ -1,6 +1,7 @@
-#include "hash_map.h"
 #include <string.h>
+#include <stdlib.h>
 #include <nsync.h>
+#include "hash_map.h"
 
 unsigned long hash_function(const char *key) {
     unsigned long hash = 5381;

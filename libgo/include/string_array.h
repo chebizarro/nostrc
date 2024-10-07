@@ -7,7 +7,7 @@
 
 #define STRING_ARRAY_INITIAL_CAPACITY 4
 
-typedef struct {
+typedef struct _StringArray {
     char **data;      // Array of strings
     size_t size;      // Number of elements in the array
     size_t capacity;  // Allocated capacity
@@ -27,5 +27,9 @@ void string_array_remove(StringArray *array, size_t index);
 
 // Free the array memory
 void string_array_free(StringArray *array);
+
+size_t string_array_size(StringArray *array);
+
+int string_array_contains(const StringArray * array, const char * str);
 
 #endif // STRING_ARRAY_H

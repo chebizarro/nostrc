@@ -32,7 +32,7 @@ int main() {
     go(consumer, chan);
 
     // Sleep to allow threads to finish execution
-    sleep(2);
+    //sleep(2);
 
     go_channel_free(chan);
     return 0;

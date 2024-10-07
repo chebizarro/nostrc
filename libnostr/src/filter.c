@@ -6,15 +6,12 @@ Filter *create_filter() {
     Filter *filter = (Filter *)malloc(sizeof(Filter));
     if (!filter) return NULL;
 
-    filter->ids = NULL;
-    filter->ids_count = 0;
-    filter->kinds = NULL;
-    filter->kinds_count = 0;
-    filter->authors = NULL;
-    filter->authors_count = 0;
-    filter->tags = NULL;
-    filter->since = NULL;
-    filter->until = NULL;
+    string_array_init(&filter->ids);
+    int_array_init(&filter->kinds);
+    string_array_init(&filter->authors);
+    filter->tags = create_tags(0);
+    filter->since = 0;
+    filter->until = 0;
     filter->limit = 0;
     filter->search = NULL;
     filter->limit_zero = false;
@@ -23,18 +20,10 @@ Filter *create_filter() {
 }
 
 void free_filter(Filter *filter) {
-	for (size_t i = 0; i < filter->ids_count; i++) {
-		free(filter->ids[i]);
-	}
-	free(filter->ids);
-	free(filter->kinds);
-	for (size_t i = 0; i < filter->authors_count; i++) {
-		free(filter->authors[i]);
-	}
-	free(filter->authors);
-	free(filter->tags);
-	free(filter->since);
-	free(filter->until);
+	string_array_free(&filter->ids);
+	int_array_free(&filter->kinds);
+	string_array_free(&filter->authors);
+	free_tags(filter->tags);
 	free(filter->search);
 	free(filter);
 }
@@ -70,8 +59,8 @@ bool filter_matches(Filter *filter, NostrEvent *event) {
 
     bool match = true;
 	if (!filter_match_ignoring_timestamp(filter, event)) return false;
-    if (filter->since && event->created_at < *(filter->since)) return false;
-    if (filter->until && event->created_at > *(filter->until)) return false;
+    if (filter->since && event->created_at < (filter->since)) return false;
+    if (filter->until && event->created_at > (filter->until)) return false;
     return match;
 }
 
@@ -80,37 +69,16 @@ bool filter_match_ignoring_timestamp(Filter *filter, NostrEvent *event) {
 
     bool match = true;
 
-    if (filter->ids && filter->ids_count > 0) {
-        match = false;
-        for (size_t i = 0; i < filter->ids_count; i++) {
-            if (strcmp(filter->ids[i], event->id) == 0) {
-                match = true;
-                break;
-            }
-        }
-        if (!match) return false;
+    if (string_array_size(&filter->ids) > 0) {
+		if (!string_array_contains(&filter->ids, event->id)) return false;
     }
 
-    if (filter->kinds && filter->kinds_count > 0) {
-        match = false;
-        for (size_t i = 0; i < filter->kinds_count; i++) {
-            if (filter->kinds[i] == event->kind) {
-                match = true;
-                break;
-            }
-        }
-        if (!match) return false;
+    if (int_array_size(&filter->kinds) > 0) {
+		if (!int_array_contains(&filter->kinds, event->kind)) return false;
     }
 
-    if (filter->authors && filter->authors_count > 0) {
-        match = false;
-        for (size_t i = 0; i < filter->authors_count; i++) {
-            if (strcmp(filter->authors[i], event->pubkey) == 0) {
-                match = true;
-                break;
-            }
-        }
-        if (!match) return false;
+    if (string_array_size(&filter->authors) > 0) {
+		if (!string_array_contains(&filter->authors, event->pubkey)) return false;
     }
 
 	if (filter->tags && filter->tags->count > 0) {
