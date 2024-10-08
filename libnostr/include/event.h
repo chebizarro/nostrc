@@ -1,7 +1,7 @@
 #ifndef NOSTR_EVENT_H
 #define NOSTR_EVENT_H
 
-#include "nostr.h"
+#include "tag.h"
 
 // Define the NostrEvent structure
 typedef struct _NostrEvent {
@@ -15,7 +15,7 @@ typedef struct _NostrEvent {
     void *extra; // Extra fields
 } NostrEvent;
 
-// Function prototypes for NostrEvent management
+// NostrEvent management
 NostrEvent *create_event();
 void free_event(NostrEvent *event);
 char *event_serialize(NostrEvent *event);

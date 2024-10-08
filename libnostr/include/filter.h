@@ -1,11 +1,9 @@
 #ifndef FILTER_H
 #define FILTER_H
 
-#include <stdlib.h>
-#include <stdint.h>
+#include "go.h"
 #include "timestamp.h"
 #include "event.h"
-#include "go.h"
 
 typedef struct _NostrEvent NostrEvent;
 
@@ -31,6 +29,7 @@ void free_filter(Filter *filter);
 Filters *create_filters(size_t count);
 void free_filters(Filters *filters);
 bool filter_matches(Filter *filter, NostrEvent *event);
+bool filter_match_ignoring_timestamp(Filter *filter, NostrEvent *event);
 bool filters_match(Filters *filters, NostrEvent *event);
 
 #endif // FILTER_H

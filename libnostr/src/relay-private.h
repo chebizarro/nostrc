@@ -1,10 +1,8 @@
-#ifndef RELAY_H
-#define RELAY_H
+#ifndef NOSTR_RELAY_PRIVATE_H
+#define NOSTR_RELAY_PRIVATE_H
 
-#include "nostr.h"
-#include <openssl/types.h>
-#include <bits/pthreadtypes.h>
-
+#include <stdbool.h>
+#include "event.h"
 
 struct _RelayPrivate {
     int port;                             // Relay port (usually 443 for WebSocket over SSL)
@@ -21,4 +19,4 @@ struct _RelayPrivate {
 };
 
 
-#endif // RELAY_H
+#endif // NOSTR_RELAY_PRIVATE_H

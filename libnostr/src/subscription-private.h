@@ -1,9 +1,10 @@
-#ifndef SUBSCRIPTION_H
-#define SUBSCRIPTION_H
+#ifndef NOSTR_SUBSCRIPTION_PRIVATE_H
+#define NOSTR_SUBSCRIPTION_PRIVATE_H
 
-#include "nostr.h"
-#include "channel.h"
 #include <stdatomic.h>
+#include "go.h"
+#include "filter.h"
+#include "event.h"
 
 typedef struct _SubscriptionPrivate {
 	char *label;
@@ -25,4 +26,4 @@ void subscription_dispatch_event(Subscription *sub, NostrEvent *event);
 void subscription_dispatch_eose(Subscription *sub);
 void subscription_dispatch_closed(Subscription *sub, const char *reason);
 
-#endif // SUBSCRIPTION_H
+#endif // NOSTR_SUBSCRIPTION_PRIVATE_H

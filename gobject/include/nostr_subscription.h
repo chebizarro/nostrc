@@ -1,5 +1,5 @@
-#ifndef NOSTR_SUBSCRIPTION_H
-#define NOSTR_SUBSCRIPTION_H
+#ifndef NOSTR_GSUBSCRIPTION_H
+#define NOSTR_GSUBSCRIPTION_H
 
 #include <glib-object.h>
 #include "subscription.h"
@@ -16,4 +16,4 @@ struct _NostrSubscription {
 NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilter *filter);
 void nostr_subscription_unsubscribe(NostrSubscription *self);
 
-#endif // NOSTR_SUBSCRIPTION_H
+#endif // NOSTR_GSUBSCRIPTION_H

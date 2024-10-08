@@ -1,9 +1,8 @@
-#ifndef ENVELOPE_H
-#define ENVELOPE_H
+#ifndef NOSTR_ENVELOPE_H
+#define NOSTR_ENVELOPE_H
 
-#include <stdlib.h>
-#include <stdbool.h>
-#include "nostr.h"
+#include "event.h"
+#include "filter.h"
 
 // Define the Envelope types
 typedef enum {
@@ -91,4 +90,4 @@ Envelope *parse_message(const char *message);
 void free_envelope(Envelope *envelope);
 char *envelope_to_json(Envelope *envelope);
 
-#endif // ENVELOPE_H
+#endif // NOSTR_ENVELOPE_H
