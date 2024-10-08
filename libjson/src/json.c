@@ -1,11 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "nostr_jansson.h"
 #include <jansson.h>
+#include "nostr_jansson.h"
 #include "go.h"
 
-json_t *tags_serialize(const Tags *tags);
+char * jansson_event_serialize(const NostrEvent * event);
+void jansson_envelope_deserialize(Envelope * envelope, const char * json_str);
+int jansson_filter_deserialize(Filter * filter, json_t * json_obj);
+json_t * jansson_filter_serialize(const Filter * filter);
+json_t * jansson_tag_serialize(const Tag * tag);
+json_t *jansson_tags_serialize(const Tags *tags);
+Tag * jansson_tag_deserialize(json_t * json_array);
+Tags * jansson_tags_deserialize(json_t * json_array);
 json_t *string_array_serialize(const StringArray *array);
 json_t *int_array_serialize(const IntArray *array);
 int tags_deserialize(Tags *tags, json_t *json_obj);
@@ -13,17 +20,17 @@ int string_array_deserialize(StringArray *array, json_t *json_array);
 int int_array_deserialize(IntArray *array, json_t *json_array);
 
 // Initializes the JSON interface (if needed)
-void nostr_json_init(void) {
+void jansson_init(void) {
     // Initialize if necessary, Jansson doesn't require special init
 }
 
 // Cleans up the JSON interface (if needed)
-void nostr_json_cleanup(void) {
+void jansson_cleanup(void) {
     // Clean up if needed, Jansson doesn't require special cleanup
 }
 
 // Serialize NostrEvent to a JSON string
-char *nostr_json_serialize(const NostrEvent *event) {
+char *jansson_event_serialize(const NostrEvent *event) {
     if (!event) return NULL;
 
     // Create a new JSON object
@@ -45,12 +52,10 @@ char *nostr_json_serialize(const NostrEvent *event) {
     return json_str;
 }
 
+NostrEvent *_deserialize_event(json_t *json_obj) {
 
-NostrEvent *nostr_event_deserialize(json_t* json_obj) {
-    // Allocate memory for NostrEvent
     NostrEvent *event = (NostrEvent *)malloc(sizeof(NostrEvent));
     if (!event) {
-        json_decref(json_obj);
         return NULL;
     }
 
@@ -67,36 +72,11 @@ NostrEvent *nostr_event_deserialize(json_t* json_obj) {
     event->kind = atoi(json_string_value(json_kind));
     event->content = strdup(json_string_value(json_content));
 
-
     return event;
 }
 
 // Deserialize a JSON string to NostrEvent
-NostrEvent *event_deserialize(const char *json_str) {
-    if (!json_str) return NULL;
-
-    // Parse the JSON string
-    json_error_t error;
-    json_t *json_obj = json_loads(json_str, 0, &error);
-    if (!json_obj) {
-        fprintf(stderr, "Error parsing JSON: %s\n", error.text);
-        return NULL;
-    }
-
-	NostrEvent *event = nostr_event_deserialize(json_obj);
-    // Free the JSON object
-    json_decref(json_obj);
-
-	return event;
-}
-
-
-char *envelope_serialize(Envelope *envelope) {
-
-	return NULL;
-}
-
-void envelope_deserialize(Envelope *envelope, const char* json_str) {
+void jansson_envelope_deserialize(Envelope *envelope, const char *json_str) {
     if (!json_str) return;
 
     // Parse the JSON string
@@ -106,139 +86,154 @@ void envelope_deserialize(Envelope *envelope, const char* json_str) {
         fprintf(stderr, "Error parsing JSON: %s\n", error.text);
         return;
     }
-	if(!json_is_array(json_obj)) {
-		fprintf(stderr, "error: root is not an array\n");
-		json_decref(json_obj);
-		return;
-	}
-
-    switch (envelope->type) {
-        case ENVELOPE_EVENT:
-			EventEnvelope *env = (EventEnvelope *)envelope;
-			switch (json_array_size(json_obj)) {
-			case 2:
-				json_t *json_evt = json_array_get(json_obj, 1);
-				env->event = nostr_json_deserialize_event(json_evt);
-				break;
-			case 3:
-				json_t *json_id = json_array_get(json_obj, 1);
-				json_t *json_evt = json_array_get(json_obj, 2);					
-				env->subscription_id = strdup(json_string_value(json_id));
-				env->event = nostr_json_deserialize_event(json_evt);
-				break;
-			default:
-				break;
-			}
-			json_decref(root);
-            break;
-        case ENVELOPE_REQ:
-			if (json_array_size(json_obj) < 3) {
-				fprintf(stderr, "failed to decode REQ envelope: missing filters");
-				break;
-			}
-			ReqEnvelope *env = (ReqEnvelope *)envelope;
-			json_t *json_id = json_array_get(json_obj, 1);
-			env->subscription_id = strdup(json_string_value(json_id));
-			env->filters = malloc(sizeof(Filter)*(json_array_size(json_obj)-2));
-			int f = 0;
-			for (int i = 2; i < json_array_size(json_obj); i++) {
-				json_t *json_filter = json_array_get(json_obj, i);
-				env->filters[f] = nostr_json_deserialize_filter(json_filter); 
-				f++;
-			}
-            break;
-        case ENVELOPE_COUNT:
-			if (json_array_size(json_obj) < 4) {
-				fprintf(stderr, "failed to decode COUNT envelope: missing filters");
-				break;
-			}
-			ReqEnvelope *env = (ReqEnvelope *)envelope;
-			json_t *json_id = json_array_get(json_obj, 1);
-			env->subscription_id = strdup(json_string_value(json_id));
-			json_t *count = json_array_get(json_obj, 2);
-			if (!json_is_object(count)) {
-				fprintf(stderr, "failed to decode COUNT envelope: count element is not a dictionary");				
-				break;
-			}
-			env->count = json_object_get(count, "count");
-			env->filters = malloc(sizeof(Filter)*(json_array_size(json_obj)-3));
-			int f = 0;
-			for (int i = 3; i < json_array_size(json_obj); i++) {
-				json_t *json_filter = json_array_get(json_obj, i);
-				env->filters[f] = nostr_json_deserialize_filter(json_filter); 
-				f++;
-			}
-            break;
-        case ENVELOPE_NOTICE:
-			if (json_array_size(json_obj) < 2) {
-				fprintf(stderr, "failed to decode NOTICE envelope");
-				break;
-			}
-			NoticeEnvelope *env = (NoticeEnvelope *)envelope;
-			json_t *json_message = json_array_get(json_obj, 1);
-			env->message = strdup(json_string_value(json_message));
-            break;
-        case ENVELOPE_EOSE:
-			if (json_array_size(json_obj) < 2) {
-				fprintf(stderr, "failed to decode ESOSE envelope");
-				break;
-			}
-			EOSEEnvelope *env = (EOSEEnvelope *)envelope;
-			json_t *json_message = json_array_get(json_obj, 1);
-			env->message = strdup(json_string_value(json_message));
-            break;
-        case ENVELOPE_CLOSE:
-			if (json_array_size(json_obj) < 2) {
-				fprintf(stderr, "failed to decode CLOSE envelope");
-				break;
-			}
-			CloseEnvelope *env = (CloseEnvelope *)envelope;
-			json_t *json_message = json_array_get(json_obj, 1);
-			env->message = strdup(json_string_value(json_message));
-            break;
-        case ENVELOPE_CLOSED:
-			if (json_array_size(json_obj) < 3) {
-				fprintf(stderr, "failed to decode CLOSED envelope");
-				break;
-			}
-			ClosedEnvelope *env = (ClosedEnvelope *)envelope;
-			json_t *json_id = json_array_get(json_obj, 1);
-			json_t *json_message = json_array_get(json_obj, 2);
-			env->subscription_id = strdup(json_string_value(json_id));
-			env->message = strdup(json_string_value(json_message));
-            break;
-        case ENVELOPE_OK:
-			if (json_array_size(json_obj) < 4) {
-				fprintf(stderr, "failed to decode OK envelope");
-				break;
-			}
-			OKEnvelope *env = (OKEnvelope *)envelope;
-			json_t *json_id = json_array_get(json_obj, 1);
-			json_t *json_message = json_array_get(json_obj, 2);
-			env->subscription_id = strdup(json_string_value(json_id));
-			env->message = strdup(json_string_value(json_message));
-            break;
-        case ENVELOPE_AUTH:
-			if (json_array_size(json_obj) < 2) {
-				fprintf(stderr, "failed to decode AUTH envelope");
-				break;
-			}
-			AuthEnvelope *env = (AuthEnvelope *)envelope;
-			json_t *json_challenge = json_array_get(json_obj, 1);
-			if (json_is_object(json_challenge)) {
-				env->event = nostr_json_deserialize_event(json_challenge);
-			} else {
-				env->challenge = strdup(json_string_value(json_challenge));
-			}
-            break;
-        default:
-            break;
+    if (!json_is_array(json_obj)) {
+        fprintf(stderr, "Error: root is not an array\n");
+        json_decref(json_obj);
+        return;
     }
-	json_decref(json_obj);
-	return;
+
+    // Process according to envelope type
+    switch (envelope->type) {
+    case ENVELOPE_EVENT: {
+        EventEnvelope *env = (EventEnvelope *)envelope;
+
+        if (json_array_size(json_obj) == 2) {
+            json_t *json_evt = json_array_get(json_obj, 1);
+            env->event = _deserialize_event(json_evt);
+        } else if (json_array_size(json_obj) == 3) {
+            json_t *json_id = json_array_get(json_obj, 1);
+            json_t *json_evt = json_array_get(json_obj, 2);
+
+            env->subscription_id = strdup(json_string_value(json_id));
+            env->event = _deserialize_event(json_evt);
+        }
+        break;
+    }
+    case ENVELOPE_REQ: {
+        if (json_array_size(json_obj) < 3) {
+            fprintf(stderr, "Failed to decode REQ envelope: missing filters\n");
+            break;
+        }
+        ReqEnvelope *env = (ReqEnvelope *)envelope;
+        json_t *json_id = json_array_get(json_obj, 1);
+        env->subscription_id = strdup(json_string_value(json_id));
+
+        env->filters = malloc(sizeof(Filter) * (json_array_size(json_obj) - 2));
+        if (!env->filters) {
+            fprintf(stderr, "Memory allocation failed for filters\n");
+            break;
+        }
+        for (int f = 0, i = 2; i < json_array_size(json_obj); i++, f++) {
+            json_t *json_filter = json_array_get(json_obj, i);
+            jansson_filter_deserialize(&env->filters[i], json_filter);
+        }
+        break;
+    }
+    case ENVELOPE_COUNT: {
+        if (json_array_size(json_obj) < 4) {
+            fprintf(stderr, "Failed to decode COUNT envelope: missing filters\n");
+            break;
+        }
+        CountEnvelope *env = (CountEnvelope *)envelope;
+        json_t *json_id = json_array_get(json_obj, 1);
+        json_t *json_count = json_array_get(json_obj, 2);
+
+        env->subscription_id = strdup(json_string_value(json_id));
+
+        json_t *count_value = json_object_get(json_count, "count");
+        if (json_is_integer(count_value)) {
+            env->count = (int)json_integer_value(count_value);
+        }
+
+        env->filters = malloc(sizeof(Filter) * (json_array_size(json_obj) - 3));
+        if (!env->filters) {
+            fprintf(stderr, "Memory allocation failed for filters\n");
+            break;
+        }
+        for (int f = 0, i = 3; i < json_array_size(json_obj); i++, f++) {
+            json_t *json_filter = json_array_get(json_obj, i);
+            env->filters[f] = jansson_filter_deserialize(json_filter);
+        }
+        break;
+    }
+    case ENVELOPE_NOTICE: {
+        if (json_array_size(json_obj) < 2) {
+            fprintf(stderr, "Failed to decode NOTICE envelope\n");
+            break;
+        }
+        NoticeEnvelope *env = (NoticeEnvelope *)envelope;
+        json_t *json_message = json_array_get(json_obj, 1);
+        env->message = strdup(json_string_value(json_message));
+        break;
+    }
+    case ENVELOPE_EOSE: {
+        if (json_array_size(json_obj) < 2) {
+            fprintf(stderr, "Failed to decode EOSE envelope\n");
+            break;
+        }
+        EOSEEnvelope *env = (EOSEEnvelope *)envelope;
+        json_t *json_message = json_array_get(json_obj, 1);
+        env->message = strdup(json_string_value(json_message));
+        break;
+    }
+    case ENVELOPE_CLOSE: {
+        if (json_array_size(json_obj) < 2) {
+            fprintf(stderr, "Failed to decode CLOSE envelope\n");
+            break;
+        }
+        CloseEnvelope *env = (CloseEnvelope *)envelope;
+        json_t *json_message = json_array_get(json_obj, 1);
+        env->message = strdup(json_string_value(json_message));
+        break;
+    }
+    case ENVELOPE_CLOSED: {
+        if (json_array_size(json_obj) < 3) {
+            fprintf(stderr, "Failed to decode CLOSED envelope\n");
+            break;
+        }
+        ClosedEnvelope *env = (ClosedEnvelope *)envelope;
+        json_t *json_id = json_array_get(json_obj, 1);
+        json_t *json_message = json_array_get(json_obj, 2);
+        env->subscription_id = strdup(json_string_value(json_id));
+        env->reason = strdup(json_string_value(json_message));
+        break;
+    }
+    case ENVELOPE_OK: {
+        if (json_array_size(json_obj) < 4) {
+            fprintf(stderr, "Failed to decode OK envelope\n");
+            break;
+        }
+        OKEnvelope *env = (OKEnvelope *)envelope;
+        json_t *json_id = json_array_get(json_obj, 1);
+        json_t *json_ok = json_array_get(json_obj, 2);
+        env->event_id = strdup(json_string_value(json_id));
+        env->ok = json_is_true(json_ok);
+        break;
+    }
+    case ENVELOPE_AUTH: {
+        if (json_array_size(json_obj) < 2) {
+            fprintf(stderr, "Failed to decode AUTH envelope\n");
+            break;
+        }
+        AuthEnvelope *env = (AuthEnvelope *)envelope;
+        json_t *json_challenge = json_array_get(json_obj, 1);
+
+        if (json_is_object(json_challenge)) {
+            env->event = _deserialize_event(json_challenge);
+        } else {
+            env->challenge = strdup(json_string_value(json_challenge));
+        }
+        break;
+    }
+    default:
+        break;
+    }
+
+    json_decref(json_obj);
 }
 
-int filter_deserialize(Filter *filter, json_t *json_obj) {
+
+int jansson_filter_deserialize(Filter *filter, json_t *json_obj) {
     if (!filter || !json_is_object(json_obj)) {
         return -1;
     }
@@ -297,7 +292,7 @@ int filter_deserialize(Filter *filter, json_t *json_obj) {
     return 0;  // Success
 }
 
-json_t *filter_serialize(const Filter *filter) {
+json_t *jansson_filter_serialize(const Filter *filter) {
     if (!filter) {
         return NULL;
     }
@@ -319,7 +314,7 @@ json_t *filter_serialize(const Filter *filter) {
 
     // Serialize the `tags`
     if (filter->tags) {
-        json_t *tags_json = tags_serialize(filter->tags);
+        json_t *tags_json = jansson_tags_serialize(filter->tags);
         json_object_set_new(json_obj, "tags", tags_json);
     }
 
@@ -342,7 +337,7 @@ json_t *filter_serialize(const Filter *filter) {
 }
 
 
-json_t *tag_serialize(const Tag *tag) {
+json_t *jansson_tag_serialize(const Tag *tag) {
     if (!tag) return NULL;
 
     json_t *json_array = json_array();
@@ -353,19 +348,19 @@ json_t *tag_serialize(const Tag *tag) {
 }
 
 // Serialize a collection of Tags into a JSON array of arrays
-json_t *tags_serialize(const Tags *tags) {
+json_t *jansson_tags_serialize(const Tags *tags) {
     if (!tags) return NULL;
 
     json_t *json_array = json_array();
     for (size_t i = 0; i < tags->count; i++) {
-        json_t *tag_json = tag_serialize(tags->data[i]);
+        json_t *tag_json = jansson_tag_serialize(tags->data[i]);
         json_array_append_new(json_array, tag_json);
     }
     return json_array;
 }
 
 // Deserialize a JSON array into a single Tag
-Tag *tag_deserialize(json_t *json_array) {
+Tag *jansson_tag_deserialize(json_t *json_array) {
     if (!json_is_array(json_array)) return NULL;
 
     Tag *tag = malloc(sizeof(Tag));
@@ -378,12 +373,12 @@ Tag *tag_deserialize(json_t *json_array) {
     json_t *value;
     json_array_foreach(json_array, index, value) {
         if (!json_is_string(value)) {
-            tag_free(tag);
+            free_tag(tag);
             return NULL;
         }
 
         if (tag_add_element(tag, json_string_value(value)) != 0) {
-            tag_free(tag);
+            free_tag(tag);
             return NULL;
         }
     }
@@ -392,7 +387,7 @@ Tag *tag_deserialize(json_t *json_array) {
 }
 
 // Deserialize a JSON array of arrays into a Tags collection
-Tags *tags_deserialize(json_t *json_array) {
+Tags *jansson_tags_deserialize(json_t *json_array) {
     if (!json_is_array(json_array)) return NULL;
 
     Tags *tags = malloc(sizeof(Tags));
@@ -404,7 +399,7 @@ Tags *tags_deserialize(json_t *json_array) {
     size_t index;
     json_t *value;
     json_array_foreach(json_array, index, value) {
-        Tag *tag = tag_deserialize(value);
+        Tag *tag = jansson_tag_deserialize(value);
         if (!tag) {
             tags_free(tags);
             return NULL;
@@ -454,39 +449,16 @@ int string_array_deserialize(StringArray *array, json_t *json_array) {
     return 0; // Success
 }
 
-NostrEvent *nostr_json_deserialize_event(json_t *json_obj) {
-
-    NostrEvent *event = (NostrEvent *)malloc(sizeof(NostrEvent));
-    if (!event) {
-        return NULL;
-    }
-
-    // Extract fields
-    json_t *json_id = json_object_get(json_obj, "id");
-    json_t *json_pubkey = json_object_get(json_obj, "pubkey");
-    json_t *json_created_at = json_object_get(json_obj, "created_at");
-    json_t *json_kind = json_object_get(json_obj, "kind");
-    json_t *json_content = json_object_get(json_obj, "content");
-
-    event->id = strdup(json_string_value(json_id));
-    event->pubkey = strdup(json_string_value(json_pubkey));
-    event->created_at = json_integer_value(json_created_at);
-    event->kind = atoi(json_string_value(json_kind));
-    event->content = strdup(json_string_value(json_content));
-
-    return event;
-}
-
 // Implement the interface
 NostrJsonInterface jansson_struct = {
-    .init = nostr_json_init,
-    .cleanup = nostr_json_cleanup,
-    .serialize_event = nostr_json_serialize,
-    .deserialize_event = event_deserialize,
-	.serialize_envelope = envelope_serialize,
-	.deserialize_envelope = envelope_deserialize,
-	.serialize_filter = filter_serialize,
-	.deserialize_filter = filter_deserialize
+    .init = jansson_init,
+    .cleanup = jansson_cleanup,
+    .serialize_event = jansson_event_serialize,
+    .deserialize_event = jansson_event_deserialize,
+	.serialize_envelope = jansson_envelope_serialize,
+	.deserialize_envelope = jansson_envelope_deserialize,
+	.serialize_filter = jansson_filter_serialize,
+	.deserialize_filter = jansson_filter_deserialize
 };
 
 NostrJsonInterface *jansson_impl = &jansson_struct;

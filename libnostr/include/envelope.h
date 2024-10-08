@@ -34,14 +34,14 @@ typedef struct {
 typedef struct {
     Envelope base;
     char *subscription_id;
-    Filters filters;
+    Filters *filters;
 } ReqEnvelope;
 
 // CountEnvelope struct
 typedef struct {
     Envelope base;
     char *subscription_id;
-    Filters filters;
+    Filters *filters;
     int64_t *count;
 } CountEnvelope;
 
@@ -82,7 +82,7 @@ typedef struct {
 typedef struct {
     Envelope base;
     char *challenge;
-    NostrEvent event;
+    NostrEvent *event;
 } AuthEnvelope;
 
 Envelope * create_envelope(EnvelopeType type);
