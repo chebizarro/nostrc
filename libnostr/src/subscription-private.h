@@ -5,6 +5,8 @@
 #include "go.h"
 #include "filter.h"
 #include "event.h"
+#include "relay.h"
+#include "subscription.h"
 
 typedef struct _SubscriptionPrivate {
 	char *label;

@@ -1,10 +1,8 @@
-#include "nostr.h"
 #include "subscription-private.h"
+#include "relay.h"
 #include "relay-private.h"
-#include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include "envelope.h"
+#include "json.h"
 #include <openssl/ssl.h>
 
 // Subscription-related functions
@@ -81,9 +79,10 @@ void subscription_unsub(Subscription *sub) {
 
 void subscription_close(Subscription *sub) {
 	if (relay_is_connected(sub->relay)) {
-		Envelope *close_msg = NewEnvelope(sub->id);
-		char* close_b = envelope_marshal_json(close_msg);
-		relay_write(sub.relay, close_b);
+		ClosedEnvelope *close_msg = (ClosedEnvelope*)create_envelope(ENVELOPE_CLOSED);
+		close_msg->subscription_id = strdup(sub->id);
+		char* close_b = nostr_envelope_serialize((Envelope*)close_msg);
+		//relay_write(sub->relay, close_b);
 	}
 }
 
@@ -92,25 +91,18 @@ void subscription_sub(Subscription *sub, Filters *filters) {
 	subscription_fire(sub);
 }
 
-static void *sub_error(void *arg) {
-
-	subscription_cancel();
-
-}
+//static void *sub_error(void *arg) {
+	//subscription_cancel();
+//}
 
 void subscription_fire(Subscription *sub) {
 	Envelope *req;
-	if (sub->count_result) {
-		req = NewEnvelope();	
-	} else {
-		req = NewEnvelope();
-	}
-
+	
 	atomic_store(&sub->priv->live, true);
 
-	GoChannel *err = (sub->relay, data);
+	//GoChannel *err = (sub->relay, data);
 
-	go(sub_error, err);
+	//go(sub_error, err);
 
 	char req_msg[512];
 	//snprintf(req_msg, sizeof(req_msg), "{\"type\":\"REQ\",\"id\":\"%s\",\"filters\":[...]}",

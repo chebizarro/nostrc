@@ -1,7 +1,5 @@
 #include "envelope.h"
-#include <string.h>
-#include <stdlib.h>
-#include <stdio.h>
+#include "json.h"
 
 // Helper function to create a new Envelope
 Envelope *create_envelope(EnvelopeType type) {
@@ -64,7 +62,7 @@ void free_envelope(Envelope *envelope) {
     switch (envelope->type) {
         case ENVELOPE_EVENT:
             free(((EventEnvelope *)envelope)->subscription_id);
-            free_event(&((EventEnvelope *)envelope)->event);
+            free_event(((EventEnvelope *)envelope)->event);
             break;
         case ENVELOPE_REQ:
             free(((ReqEnvelope *)envelope)->subscription_id);
@@ -121,11 +119,27 @@ char *event_envelope_marshal_json(EventEnvelope *envelope) {
     char *serialized_event = nostr_event_serialize(envelope->event);
     if (!serialized_event) return NULL;
 
-    // Construct the final JSON array string
-    char *json_str = malloc(1024);  // Allocating enough space for the JSON
-    snprintf(json_str, 1024, "[\\"EVENT\\",\\"%s\\",%s]", envelope->subscription_id ? envelope->subscription_id : "", serialized_event);
+    // Get the length of the subscription ID (handle NULL)
+    size_t subscription_id_len = envelope->subscription_id ? strlen(envelope->subscription_id) : 0;
 
+    // Calculate the total length of the final JSON string
+    size_t total_len = subscription_id_len + strlen(serialized_event) + 20;  // 20 for fixed parts of the string
+
+    // Allocate sufficient space for the final JSON string
+    char *json_str = malloc(total_len + 1);  // +1 for the null terminator
+    if (!json_str) {
+        free(serialized_event);
+        return NULL;
+    }
+
+    // Construct the final JSON array string
+    snprintf(json_str, total_len + 1, "[\"EVENT\",\"%s\",%s]",
+             envelope->subscription_id ? envelope->subscription_id : "",
+             serialized_event);
+
+    // Free the serialized event after usage
     free(serialized_event);
+
     return json_str;
 }
 

@@ -9,7 +9,7 @@ typedef struct _NostrEvent {
     char *pubkey;
     int64_t created_at;
     int kind;
-    Tags tags;
+    Tags *tags;
     char *content;
     char *sig;
     void *extra; // Extra fields

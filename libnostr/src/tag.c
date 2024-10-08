@@ -1,4 +1,4 @@
-#include "nostr.h"
+#include "tag.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -101,18 +101,31 @@ char *tag_relay(Tag *tag) {
 
 Tags *create_tags(size_t count, ...) {
     va_list args;
-    Tag **new_tags = (Tag **)malloc(count * sizeof(Tag));
 
+    // Allocate memory for array of Tag pointers
+    Tag **new_tags = (Tag **)malloc(count * sizeof(Tag *));
+    if (!new_tags)
+        return NULL;  // Handle memory allocation failure
+
+    // Initialize the variable argument list
     va_start(args, count);
-    for (int i = 0; i < count; i++) {
-	new_tags[i] = va_arg(args, Tag *);
+
+    // Loop through the arguments and assign them to the new_tags array
+    for (size_t i = 0; i < count; i++) {
+        new_tags[i] = va_arg(args, Tag *);
     }
+
+    // Clean up the variable argument list
     va_end(args);
 
+    // Allocate memory for Tags struct
     Tags *tags = (Tags *)malloc(sizeof(Tags));
-    if (!tags)
-	return NULL;
+    if (!tags) {
+        free(new_tags);  // Free new_tags if Tags allocation fails
+        return NULL;
+    }
 
+    // Assign the newly created tag array and count
     tags->data = new_tags;
     tags->count = count;
 

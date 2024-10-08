@@ -1,4 +1,3 @@
-#include "nostr.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,6 +6,7 @@
 #include <secp256k1_schnorrsig.h>
 #include <openssl/sha.h>
 #include <openssl/rand.h>
+#include "event.h"
 
 extern int hex2bin(unsigned char *bin, const char *hex, size_t bin_len);
 

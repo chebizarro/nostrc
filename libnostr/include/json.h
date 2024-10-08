@@ -20,5 +20,13 @@ typedef struct _NostrJsonInterface {
 
 extern NostrJsonInterface *json_interface;
 void nostr_set_json_interface(NostrJsonInterface *interface);
+void nostr_json_init(void);
+void nostr_json_cleanup(void);
+char * nostr_event_serialize(const NostrEvent * event);
+NostrEvent * nostr_event_deserialize(const char * event);
+char * nostr_envelope_serialize(const Envelope * envelope);
+Envelope * nostr_envelope_deserialize(const char * json);
+char * nostr_filter_serialize(const Filter * filter);
+Filter * nostr_filter_deserialize(const char * json);
 
 #endif // NOSTR_JSON_H
