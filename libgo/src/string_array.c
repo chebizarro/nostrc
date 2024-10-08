@@ -7,6 +7,20 @@ void string_array_init(StringArray *array) {
     array->capacity = STRING_ARRAY_INITIAL_CAPACITY;
 }
 
+void string_array_init_with(StringArray *arr, ...) {
+    va_list args;
+    va_start(args, arr);
+
+    const char *str;
+    while ((str = va_arg(args, const char *)) != NULL) {
+        arr->data = realloc(arr->data, (arr->size + 1) * sizeof(char *));
+        arr->data[arr->size] = strdup(str);  // Duplicate the string
+        arr->size++;
+    }
+
+    va_end(args);
+}
+
 // Append a string to the array, resizing if necessary
 void string_array_add(StringArray *array, const char *value) {
     if (array->size >= array->capacity) {
@@ -20,6 +34,22 @@ void string_array_add(StringArray *array, const char *value) {
     }
     array->data[array->size++] = strdup(value);  // Use strdup to allocate a copy of the string
 }
+
+// Add multiple strings to a StringArray using variadic arguments
+void string_array_add_many(StringArray *arr, ...) {
+    va_list args;
+    va_start(args, arr);
+
+    const char *str;
+    while ((str = va_arg(args, const char *)) != NULL) {
+        arr->data = realloc(arr->data, (arr->size + 1) * sizeof(char *));
+        arr->data[arr->size] = strdup(str);  // Duplicate the string
+        arr->size++;
+    }
+
+    va_end(args);
+}
+
 
 // Get the string at the given index
 const char *string_array_get(const StringArray *array, size_t index) {

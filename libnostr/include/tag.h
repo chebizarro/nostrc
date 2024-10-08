@@ -3,11 +3,9 @@
 
 #include <stdlib.h>
 #include <stdbool.h>
+#include "go.h"
 
-typedef struct _Tag {
-    char **elements;
-    size_t count;
-} Tag;
+typedef StringArray Tag;
 
 typedef struct _Tags {
     Tag **data;

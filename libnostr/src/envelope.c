@@ -66,12 +66,11 @@ void free_envelope(Envelope *envelope) {
             break;
         case ENVELOPE_REQ:
             free(((ReqEnvelope *)envelope)->subscription_id);
-            free_filters(&((ReqEnvelope *)envelope)->filters);
+            free_filters(((ReqEnvelope *)envelope)->filters);
             break;
         case ENVELOPE_COUNT:
             free(((CountEnvelope *)envelope)->subscription_id);
-            free_filters(&((CountEnvelope *)envelope)->filters);
-            free(((CountEnvelope *)envelope)->count);
+            free_filters(((CountEnvelope *)envelope)->filters);
             break;
         case ENVELOPE_NOTICE:
             free(((NoticeEnvelope *)envelope)->message);
@@ -92,7 +91,7 @@ void free_envelope(Envelope *envelope) {
             break;
         case ENVELOPE_AUTH:
             free(((AuthEnvelope *)envelope)->challenge);
-            free_event(&((AuthEnvelope *)envelope)->event);
+            free_event(((AuthEnvelope *)envelope)->event);
             break;
         default:
             break;
@@ -105,8 +104,9 @@ int event_envelope_unmarshal_json(EventEnvelope *envelope, const char *json_data
     if (!json_data || !envelope) return -1;
 
     // Parse the JSON to check the number of elements in the array
-    NostrEvent *event = nostr_event_deserialize(json_data);
-    if (!event) return -1;
+    NostrEvent *event = create_event();
+	int err = nostr_event_deserialize(event, json_data);
+    if (!err) return -1;
 
     envelope->event = event;
     return 0;

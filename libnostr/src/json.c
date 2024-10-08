@@ -28,11 +28,11 @@ char* nostr_event_serialize(const NostrEvent *event) {
     return NULL;
 }
 
-NostrEvent* nostr_event_deserialize(const char *event) {
+int nostr_event_deserialize(NostrEvent* event, const char *json_str) {
     if (json_interface && json_interface->deserialize_event) {
-        return json_interface->deserialize_event(event);
+        return json_interface->deserialize_event(event, json_str);
     }
-    return NULL;
+    return -1;
 }
 
 char* nostr_envelope_serialize(const Envelope *envelope) {
@@ -42,11 +42,11 @@ char* nostr_envelope_serialize(const Envelope *envelope) {
     return NULL;
 }
 
-Envelope* nostr_envelope_deserialize(const char* json) {
+int nostr_envelope_deserialize(Envelope* envelope, const char* json) {
 	if (json_interface && json_interface->deserialize_envelope) {
-	    return json_interface->deserialize_envelope(json);
+	    return json_interface->deserialize_envelope(envelope, json);
     }
-	return NULL;
+	return -1;
 }
 
 char* nostr_filter_serialize(const Filter *filter) {
@@ -56,9 +56,9 @@ char* nostr_filter_serialize(const Filter *filter) {
     return NULL;
 }
 
-Filter* nostr_filter_deserialize(const char* json) {
+int nostr_filter_deserialize(Filter* filter, const char* json) {
 	if (json_interface && json_interface->deserialize_filter) {
-	    return json_interface->deserialize_filter(json);
+	    return json_interface->deserialize_filter(filter, json);
     }
-	return NULL;
+	return -1;
 }

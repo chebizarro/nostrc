@@ -42,7 +42,7 @@ typedef struct {
     Envelope base;
     char *subscription_id;
     Filters *filters;
-    int64_t *count;
+    int count;
 } CountEnvelope;
 
 // NoticeEnvelope struct

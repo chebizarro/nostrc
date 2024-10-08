@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
 
 #define STRING_ARRAY_INITIAL_CAPACITY 4
 
@@ -16,8 +17,12 @@ typedef struct _StringArray {
 // Initialize the array
 void string_array_init(StringArray *array);
 
+void string_array_init_with(StringArray * arr, ...);
+
 // Append a string to the array
 void string_array_add(StringArray *array, const char *value);
+
+void string_array_add_many(StringArray * arr, ...);
 
 // Get the string at the given index
 const char *string_array_get(const StringArray *array, size_t index);
