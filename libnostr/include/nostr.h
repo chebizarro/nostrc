@@ -16,6 +16,25 @@ extern "C" {
 #define CLEANUP(func) __attribute__((cleanup(func)))
 #define NON_NULL_MALLOC(...) __attribute__((nonnull(__VA_ARGS__), malloc))
 
+// Define the Envelope types
+typedef enum {
+    ENVELOPE_EVENT,
+    ENVELOPE_REQ,
+    ENVELOPE_COUNT,
+    ENVELOPE_NOTICE,
+    ENVELOPE_EOSE,
+    ENVELOPE_CLOSE,
+    ENVELOPE_CLOSED,
+    ENVELOPE_OK,
+    ENVELOPE_AUTH,
+    ENVELOPE_UNKNOWN
+} EnvelopeType;
+
+// Base Envelope struct
+typedef struct {
+    EnvelopeType type;
+} Envelope;
+
 typedef int64_t Timestamp;
 
 Timestamp Now();
@@ -129,8 +148,13 @@ bool relay_is_connected(Relay *relay);
 typedef struct _NostrJsonInterface {
     void (*init)(void);
     void (*cleanup)(void);
-    char *(*serialize)(const NostrEvent *event);
-    NostrEvent *(*deserialize)(const char *json_str);
+    char *(*serialize_event)(const NostrEvent *event);
+    NostrEvent *(*deserialize_event)(const char *json_str);
+    char *(*serialize_envelope)(const Envelope *envelope);
+    Envelope *(*deserialize_envelope)(const char *json_str);
+    char *(*serialize_filter)(const Filter *filter);
+    Filter *(*deserialize_filter)(const char *json_str);
+
 } NostrJsonInterface;
 
 extern NostrJsonInterface *json_interface;

@@ -58,6 +58,6 @@ static NostrEvent* cjson_deserialize(const char *json_str) {
 static const NostrJsonInterface cjson_interface = {
     .init = cjson_init,
     .cleanup = cjson_cleanup,
-    .serialize = cjson_serialize,
-    .deserialize = cjson_deserialize
+    .serialize_event = cjson_serialize,
+    .deserialize_event = cjson_deserialize
 };

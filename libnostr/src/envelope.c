@@ -22,56 +22,36 @@ Envelope *parse_message(const char *message) {
     strncpy(label, message, first_comma - message);
     label[first_comma - message] = '\0';
 
+	Envelope *envelope = NULL;
+
     // Check the label and return the corresponding envelope
     if (strcmp(label, "EVENT") == 0) {
-        EventEnvelope *envelope = malloc(sizeof(EventEnvelope));
-
-        if (EventEnvelope_UnmarshalJSON(envelope, message, json_iface) == 0) {
-            return envelope;
-        }
-
-        free(envelope);
+        envelope = malloc(sizeof(EventEnvelope));
+		envelope->type = ENVELOPE_EVENT;
     } else if (strcmp(label, "REQ") == 0) {
-        ReqEnvelope *envelope = malloc(sizeof(ReqEnvelope));
-        if (ReqEnvelope_UnmarshalJSON(envelope, message, json_iface) == 0) {
-            return envelope;
-        }
-        free(envelope);
+        envelope = malloc(sizeof(ReqEnvelope));
+		envelope->type = ENVELOPE_REQ;
     } else if (strcmp(label, "COUNT") == 0) {
         envelope = (Envelope *)malloc(sizeof(CountEnvelope));
         envelope->type = ENVELOPE_COUNT;
-        CountEnvelope *count_envelope = (CountEnvelope *)envelope;
-
     } else if (strcmp(label, "NOTICE") == 0) {
         envelope = (Envelope *)malloc(sizeof(NoticeEnvelope));
         envelope->type = ENVELOPE_NOTICE;
-        NoticeEnvelope *notice_envelope = (NoticeEnvelope *)envelope;
-
     } else if (strcmp(label, "EOSE") == 0) {
         envelope = (Envelope *)malloc(sizeof(EOSEEnvelope));
         envelope->type = ENVELOPE_EOSE;
-        EOSEEnvelope *eose_envelope = (EOSEEnvelope *)envelope;
-
     } else if (strcmp(label, "CLOSE") == 0) {
         envelope = (Envelope *)malloc(sizeof(CloseEnvelope));
         envelope->type = ENVELOPE_CLOSE;
-        CloseEnvelope *close_envelope = (CloseEnvelope *)envelope;
-
     } else if (strcmp(label, "CLOSED") == 0) {
         envelope = (Envelope *)malloc(sizeof(ClosedEnvelope));
         envelope->type = ENVELOPE_CLOSED;
-        ClosedEnvelope *closed_envelope = (ClosedEnvelope *)envelope;
-
     } else if (strcmp(label, "OK") == 0) {
         envelope = (Envelope *)malloc(sizeof(OKEnvelope));
         envelope->type = ENVELOPE_OK;
-        OKEnvelope *ok_envelope = (OKEnvelope *)envelope;
-
     } else if (strcmp(label, "AUTH") == 0) {
         envelope = (Envelope *)malloc(sizeof(AuthEnvelope));
         envelope->type = ENVELOPE_AUTH;
-        AuthEnvelope *auth_envelope = (AuthEnvelope *)envelope;
-
     }
 
     return envelope;
@@ -127,7 +107,7 @@ int event_envelope_unmarshal_json(EventEnvelope *envelope, const char *json_data
     if (!json_data || !envelope) return -1;
 
     // Parse the JSON to check the number of elements in the array
-    NostrEvent *event = json_iface->deserialize(json_data);
+    NostrEvent *event = nostr_event_deserialize(json_data);
     if (!event) return -1;
 
     envelope->event = event;
@@ -138,7 +118,7 @@ char *event_envelope_marshal_json(EventEnvelope *envelope) {
     if (!envelope || !envelope->event) return NULL;
 
     // Serialize the event
-    char *serialized_event = json_iface->serialize(envelope->event);
+    char *serialized_event = nostr_event_serialize(envelope->event);
     if (!serialized_event) return NULL;
 
     // Construct the final JSON array string
@@ -152,84 +132,54 @@ char *event_envelope_marshal_json(EventEnvelope *envelope) {
 
 // Function to convert an Envelope struct to JSON
 char *envelope_to_json(Envelope *envelope) {
-    cJSON *json = cJSON_CreateArray();
 
     switch (envelope->type) {
         case ENVELOPE_EVENT: {
-            cJSON_AddItemToArray(json, cJSON_CreateString("EVENT"));
             EventEnvelope *event_envelope = (EventEnvelope *)envelope;
             if (event_envelope->subscription_id) {
-                cJSON_AddItemToArray(json, cJSON_CreateString(event_envelope->subscription_id));
+
             }
-            cJSON *event_json = cJSON_CreateObject();
-            cJSON_AddStringToObject(event_json, "pubkey", event_envelope->event.pubkey);
-            // Add other event fields...
-            cJSON_AddItemToArray(json, event_json);
             break;
         }
         case ENVELOPE_REQ: {
-            cJSON_AddItemToArray(json, cJSON_CreateString("REQ"));
             ReqEnvelope *req_envelope = (ReqEnvelope *)envelope;
-            cJSON_AddItemToArray(json, cJSON_CreateString(req_envelope->subscription_id));
             // Add filters...
             break;
         }
         case ENVELOPE_COUNT: {
-            cJSON_AddItemToArray(json, cJSON_CreateString("COUNT"));
             CountEnvelope *count_envelope = (CountEnvelope *)envelope;
-            cJSON_AddItemToArray(json, cJSON_CreateString(count_envelope->subscription_id));
             if (count_envelope->count) {
-                cJSON *count_json = cJSON_CreateObject();
-                cJSON_AddNumberToObject(count_json, "count", *count_envelope->count);
-                cJSON_AddItemToArray(json, count_json);
             } else {
                 // Add filters...
             }
             break;
         }
         case ENVELOPE_NOTICE: {
-            cJSON_AddItemToArray(json, cJSON_CreateString("NOTICE"));
             NoticeEnvelope *notice_envelope = (NoticeEnvelope *)envelope;
-            cJSON_AddItemToArray(json, cJSON_CreateString(notice_envelope->message));
             break;
         }
         case ENVELOPE_EOSE: {
-            cJSON_AddItemToArray(json, cJSON_CreateString("EOSE"));
             EOSEEnvelope *eose_envelope = (EOSEEnvelope *)envelope;
-            cJSON_AddItemToArray(json, cJSON_CreateString(eose_envelope->message));
             break;
         }
         case ENVELOPE_CLOSE: {
-            cJSON_AddItemToArray(json, cJSON_CreateString("CLOSE"));
             CloseEnvelope *close_envelope = (CloseEnvelope *)envelope;
-            cJSON_AddItemToArray(json, cJSON_CreateString(close_envelope->message));
             break;
         }
         case ENVELOPE_CLOSED: {
-            cJSON_AddItemToArray(json, cJSON_CreateString("CLOSED"));
             ClosedEnvelope *closed_envelope = (ClosedEnvelope *)envelope;
-            cJSON_AddItemToArray(json, cJSON_CreateString(closed_envelope->subscription_id));
-            cJSON_AddItemToArray(json, cJSON_CreateString(closed_envelope->reason));
             break;
         }
         case ENVELOPE_OK: {
-            cJSON_AddItemToArray(json, cJSON_CreateString("OK"));
             OKEnvelope *ok_envelope = (OKEnvelope *)envelope;
-            cJSON_AddItemToArray(json, cJSON_CreateString(ok_envelope->event_id));
-            cJSON_AddItemToArray(json, cJSON_CreateBool(ok_envelope->ok));
-            cJSON_AddItemToArray(json, cJSON_CreateString(ok_envelope->reason));
             break;
         }
         case ENVELOPE_AUTH: {
-            cJSON_AddItemToArray(json, cJSON_CreateString("AUTH"));
             AuthEnvelope *auth_envelope = (AuthEnvelope *)envelope;
             if (auth_envelope->challenge) {
-                cJSON_AddItemToArray(json, cJSON_CreateString(auth_envelope->challenge));
+
             } else {
-                cJSON *event_json = cJSON_CreateObject();
-                cJSON_AddStringToObject(event_json, "pubkey", auth_envelope->event.pubkey);
-                // Add other event fields...
-                cJSON_AddItemToArray(json, event_json);
+
             }
             break;
         }
@@ -237,7 +187,6 @@ char *envelope_to_json(Envelope *envelope) {
             break;
     }
 
-    char *json_string = cJSON_PrintUnformatted(json);
-    cJSON_Delete(json);
+    char *json_string = NULL;
     return json_string;
 }

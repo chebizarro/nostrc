@@ -82,7 +82,7 @@ void subscription_unsub(Subscription *sub) {
 void subscription_close(Subscription *sub) {
 	if (relay_is_connected(sub->relay)) {
 		Envelope *close_msg = NewEnvelope(sub->id);
-		*char close_b = envelope_marshal_json(close_msg);
+		char* close_b = envelope_marshal_json(close_msg);
 		relay_write(sub.relay, close_b);
 	}
 }

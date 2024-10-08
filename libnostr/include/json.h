@@ -7,8 +7,8 @@
 typedef struct _NostrJsonInterface {
     void (*init)(void);
     void (*cleanup)(void);
-    char* (*serialize)(const struct _NostrEvent *event);
-    struct _NostrEvent* (*deserialize)(const char *json_str);
+    char* (*serialize_event)(const struct _NostrEvent *event);
+    struct _NostrEvent* (*deserialize_event)(const char *json_str);
 } NostrJsonInterface;
 
 #endif // NOSTR_JSON_H

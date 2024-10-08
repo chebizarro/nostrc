@@ -77,6 +77,6 @@ static NostrEvent* glib_json_deserialize(const char *json_str) {
 static const NostrJsonInterface glib_json_interface = {
     .init = glib_json_init,
     .cleanup = glib_json_cleanup,
-    .serialize = glib_json_serialize,
-    .deserialize = glib_json_deserialize
+    .serialize_event = glib_json_serialize,
+    .deserialize_event = glib_json_deserialize
 };
