@@ -8,14 +8,14 @@
 char * jansson_event_serialize(const NostrEvent * event);
 int jansson_event_deserialize(NostrEvent * event, const char* json_str);
 int _deserialize_event(NostrEvent * event, json_t * json_obj);
-char * jansson_envelope_serialize(Envelope * envelope);
+char * jansson_envelope_serialize(const Envelope * envelope);
 int jansson_envelope_deserialize(Envelope * envelope, const char * json_str);
 
 int jansson_filter_deserialize(Filter * filter, json_t * json_obj);
 json_t * jansson_filter_serialize(const Filter * filter);
 json_t * jansson_tag_serialize(const Tag * tag);
 json_t *jansson_tags_serialize(const Tags *tags);
-Tag * jansson_tag_deserialize(json_t * json_array);
+int jansson_tag_deserialize(Tag* tag, json_t * json);
 Tags * jansson_tags_deserialize(json_t * json_array);
 json_t *string_array_serialize(const StringArray *array);
 json_t *int_array_serialize(const IntArray *array);
@@ -87,7 +87,7 @@ int _deserialize_event(NostrEvent *event, json_t *json_obj) {
     return 1;
 }
 
-char * jansson_envelope_serialize(Envelope* envelope) {
+char * jansson_envelope_serialize(const Envelope* envelope) {
 	return NULL;
 }
 
@@ -374,17 +374,17 @@ json_t *jansson_tag_serialize(const Tag *tag) {
 json_t *jansson_tags_serialize(const Tags *tags) {
     if (!tags) return NULL;
 
-    json_t *json_array = json_array(NULL);
+    json_t *json_a = json_array();
     for (size_t i = 0; i < tags->count; i++) {
         json_t *tag_json = jansson_tag_serialize(tags->data[i]);
-        json_array_append_new(json_array, tag_json);
+        json_array_append_new(json_a, tag_json);
     }
-    return json_array;
+    return json_a;
 }
 
 // Deserialize a JSON array into a single Tag
 int jansson_tag_deserialize(Tag *tag, json_t *json_array) {
-    if (!json_is_array(json_array)) return NULL;
+    if (!json_is_array(json_array)) return -1;
 
     return string_array_deserialize(tag, json_array);
 }
@@ -402,15 +402,17 @@ Tags *jansson_tags_deserialize(json_t *json_array) {
     size_t index;
     json_t *value;
     json_array_foreach(json_array, index, value) {
-        Tag *tag = jansson_tag_deserialize(value);
+
+        Tag *tag = new_string_array(0); 
+		jansson_tag_deserialize(tag, value);
         if (!tag) {
-            tags_free(tags);
+            free_tags(tags);
             return NULL;
         }
 
-        if (tags_add_tag(tags, tag) != 0) {
-            tag_free(tag);
-            tags_free(tags);
+        if (tags_append_unique(tags, tag) != 0) {
+            free_tag(tag);
+            free_tags(tags);
             return NULL;
         }
     }
@@ -423,16 +425,16 @@ json_t *string_array_serialize(const StringArray *array) {
         return NULL;
     }
 
-    json_t *json_array = json_array();
-    if (!json_array) {
+    json_t *json_a = json_array();
+    if (!json_a) {
         return NULL;
     }
 
     for (size_t i = 0; i < array->size; i++) {
-        json_array_append_new(json_array, json_string(array->data[i]));
+        json_array_append_new(json_a, json_string(array->data[i]));
     }
 
-    return json_array;
+    return json_a;
 }
 
 int string_array_deserialize(StringArray *array, json_t *json_array) {

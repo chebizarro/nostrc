@@ -20,11 +20,19 @@ else()
     message(FATAL_ERROR "libsecp256k1 not found")
 endif()
 
+# Find the nsync library and headers manually
+find_library(NYNC_LIB nsync REQUIRED)
+find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
+
+# Include the nsync headers
+include_directories(${NSYNC_INCLUDE_DIR})
+
+
 # Add the executable
 add_executable(test_nostr tests_nostr.c)
 
 # Link OpenSSL and libsecp256k1
-target_link_libraries(test_nostr libnostr nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+target_link_libraries(test_nostr PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 
 # Add test
 add_test(NAME test_nostr COMMAND test_nostr)

@@ -6,7 +6,6 @@ include_directories(include)
 # Find the libwebsockets package
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LWS REQUIRED libwebsockets)
-
 # Include directories from libwebsockets
 include_directories(${LWS_INCLUDE_DIRS})
 
@@ -16,6 +15,7 @@ set(LIBNOSTR_SOURCES
     src/event.c
 	src/envelope.c
     src/filter.c
+	src/connection.c
     src/relay.c
     src/subscription.c
 	src/keys.c

@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include "connection.h"
 
 #define MAX_PAYLOAD_SIZE 1024
 

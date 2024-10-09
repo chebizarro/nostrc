@@ -1,6 +1,6 @@
-#include "nostr.h"
+#include "relay.h"
 #include "relay-private.h"
-#include <string.h>
+#include "connection.h"
 #include <sys/socket.h>
 #include <netdb.h>
 #include <unistd.h>
