@@ -3,16 +3,25 @@
 
 #include "event.h"
 #include "filter.h"
+#include "connection.h"
 
 typedef struct _RelayPrivate RelayPrivate;
 
 typedef struct Relay {
     RelayPrivate *priv;
+
     char *url;
-    // Subscription *subscriptions;
+    // request_header;
+
+    Connection *connection;
+    ConcurrentHashMap *subscriptions;
+
+    // connection_error;
+
+    bool assume_valid;
 } Relay;
 
-Relay *create_relay(const char *url);
+Relay *new_relay(GoContext *context, char *url);
 void free_relay(Relay *relay);
 int relay_connect(Relay *relay);
 void relay_disconnect(Relay *relay);

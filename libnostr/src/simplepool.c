@@ -54,7 +54,7 @@ void simple_pool_ensure_relay(SimplePool *pool, const char *url) {
     }
 
     // If relay not found, create and connect a new one
-    Relay *relay = create_relay(url);
+    Relay *relay = new_relay(url);
     relay_connect(relay);
 
     pool->relays = (Relay **)realloc(pool->relays, (pool->relay_count + 1) * sizeof(Relay *));

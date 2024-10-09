@@ -1,15 +1,15 @@
 #include "nostr.h"
 #include "nostr_jansson.h"
 #include <assert.h>
-#include <string.h>
 #include <stdio.h>
+#include <string.h>
 
 int main() {
 
-	nostr_set_json_interface(jansson_impl);
+    nostr_set_json_interface(jansson_impl);
 
-	char * privateKey = generate_private_key();
-	char * pubKey = get_public_key(privateKey);
+    char *privateKey = generate_private_key();
+    char *pubKey = get_public_key(privateKey);
 
     NostrEvent *event = create_event();
     assert(event != NULL);
@@ -34,7 +34,7 @@ int main() {
     bool matches = filter_matches(filter, event);
     assert(matches);
 
-    Relay *relay = create_relay("relay.sharegap.net");
+    Relay *relay = new_relay("relay.sharegap.net");
     assert(relay != NULL);
 
     int conn_res = relay_connect(relay);
@@ -56,8 +56,8 @@ int main() {
     free_relay(relay);
     free_subscription(sub);
 
-	free(privateKey);
-	free(pubKey);
+    free(privateKey);
+    free(pubKey);
 
     return 0;
 }

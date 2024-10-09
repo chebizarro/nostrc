@@ -1,5 +1,6 @@
 #include "connection.h"
 #include "connection-private.h"
+#include "go.h"
 #include <libwebsockets.h>
 #include <pthread.h>
 #include <stdio.h>

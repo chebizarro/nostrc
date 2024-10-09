@@ -18,4 +18,14 @@ typedef struct {
     size_t num_buckets;
 } ConcurrentHashMap;
 
+ConcurrentHashMap *concurrent_hash_map_create(size_t num_buckets);
+
+void concurrent_hash_map_insert(ConcurrentHashMap *map, const char *key, void *value);
+
+void *concurrent_hash_map_get(ConcurrentHashMap *map, const char *key);
+
+void concurrent_hash_map_remove(ConcurrentHashMap *map, const char *key);
+
+void concurrent_hash_map_destroy(ConcurrentHashMap *map);
+
 #endif // GO_HASH_MAP_H
