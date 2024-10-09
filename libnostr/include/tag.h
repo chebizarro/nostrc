@@ -1,9 +1,9 @@
 #ifndef NOSTR_TAG_H
 #define NOSTR_TAG_H
 
-#include <stdlib.h>
-#include <stdbool.h>
 #include "go.h"
+#include <stdbool.h>
+#include <stdlib.h>
 
 typedef StringArray Tag;
 

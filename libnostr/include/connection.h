@@ -8,5 +8,6 @@ typedef struct _Connection {
 } Connection;
 
 Connection * new_connection(const char * url, int port);
+void connection_close(Connection * conn);
 
 #endif // NOSTR_CONNECTION_H

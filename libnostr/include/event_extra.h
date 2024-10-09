@@ -1,9 +1,9 @@
 #ifndef EVENT_EXTRA_H
 #define EVENT_EXTRA_H
 
-#include <stdlib.h>
-#include <stdbool.h>
 #include "nostr.h"
+#include <stdbool.h>
+#include <stdlib.h>
 
 // Function prototypes for handling extra fields in NostrEvent
 void set_extra(NostrEvent *event, const char *key, json_t *value);

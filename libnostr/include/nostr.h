@@ -5,16 +5,16 @@
 extern "C" {
 #endif
 
-#include "timestamp.h"
-#include "keys.h"
-#include "tag.h"
+#include "connection.h"
+#include "envelope.h"
 #include "event.h"
 #include "filter.h"
-#include "connection.h"
-#include "relay.h"
 #include "json.h"
+#include "keys.h"
+#include "relay.h"
 #include "subscription.h"
-#include "envelope.h"
+#include "tag.h"
+#include "timestamp.h"
 
 #ifdef __cplusplus
 }

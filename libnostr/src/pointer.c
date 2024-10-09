@@ -1,11 +1,12 @@
 #include "pointer.h"
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 
 // Create ProfilePointer
 ProfilePointer *create_profile_pointer() {
     ProfilePointer *ptr = (ProfilePointer *)malloc(sizeof(ProfilePointer));
-    if (!ptr) return NULL;
+    if (!ptr)
+        return NULL;
 
     ptr->public_key = NULL;
     ptr->relays = NULL;
@@ -29,7 +30,8 @@ void free_profile_pointer(ProfilePointer *ptr) {
 // Create EventPointer
 EventPointer *create_event_pointer() {
     EventPointer *ptr = (EventPointer *)malloc(sizeof(EventPointer));
-    if (!ptr) return NULL;
+    if (!ptr)
+        return NULL;
 
     ptr->id = NULL;
     ptr->relays = NULL;
@@ -56,7 +58,8 @@ void free_event_pointer(EventPointer *ptr) {
 // Create EntityPointer
 EntityPointer *create_entity_pointer() {
     EntityPointer *ptr = (EntityPointer *)malloc(sizeof(EntityPointer));
-    if (!ptr) return NULL;
+    if (!ptr)
+        return NULL;
 
     ptr->public_key = NULL;
     ptr->kind = 0;

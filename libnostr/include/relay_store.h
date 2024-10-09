@@ -1,10 +1,10 @@
 #ifndef RELAY_STORE_H
 #define RELAY_STORE_H
 
-#include <stdlib.h>
-#include <stdbool.h>
-#include <pthread.h>
 #include "nostr.h"
+#include <pthread.h>
+#include <stdbool.h>
+#include <stdlib.h>
 
 // Define the RelayStore interface
 typedef struct {

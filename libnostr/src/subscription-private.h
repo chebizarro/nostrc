@@ -1,25 +1,25 @@
 #ifndef NOSTR_SUBSCRIPTION_PRIVATE_H
 #define NOSTR_SUBSCRIPTION_PRIVATE_H
 
-#include <stdatomic.h>
-#include "go.h"
-#include "filter.h"
 #include "event.h"
+#include "filter.h"
+#include "go.h"
 #include "relay.h"
 #include "subscription.h"
+#include <stdatomic.h>
 
 typedef struct _SubscriptionPrivate {
-	char *label;
-	int counter;
+    char *label;
+    int counter;
 
-	GoChannel *countResult;
-	GoContext *context;
+    GoChannel *countResult;
+    GoContext *context;
 
-	_Atomic bool live;
-	_Atomic bool eosed;
-	_Atomic bool closed;
-	pthread_mutex_t sub_mutex;
-	pthread_t thread;
+    _Atomic bool live;
+    _Atomic bool eosed;
+    _Atomic bool closed;
+    pthread_mutex_t sub_mutex;
+    pthread_t thread;
 } SubscriptionPrivate;
 
 Subscription *create_subscription(Relay *relay, Filters *filters, const char *label);

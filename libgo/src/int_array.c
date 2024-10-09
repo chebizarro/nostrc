@@ -51,18 +51,19 @@ void int_array_free(IntArray *array) {
     array->capacity = 0;
 }
 
-size_t int_array_size(IntArray * array) {
-	return array->size;
+size_t int_array_size(IntArray *array) {
+    return array->size;
 }
 
 // Function to check if an IntArray contains a given integer
 int int_array_contains(const IntArray *array, int value) {
-    if (!array) return 0;  // Handle null array input
+    if (!array)
+        return 0; // Handle null array input
 
     for (size_t i = 0; i < array->size; i++) {
         if (array->data[i] == value) {
-            return 1;  // Value found
+            return 1; // Value found
         }
     }
-    return 0;  // Value not found
+    return 0; // Value not found
 }

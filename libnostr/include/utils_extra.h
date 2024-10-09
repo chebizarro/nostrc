@@ -1,10 +1,10 @@
 #ifndef UTILS_EXTRA_H
 #define UTILS_EXTRA_H
 
+#include <pthread.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdbool.h>
-#include <pthread.h>
 #include <string.h>
 
 // Constants

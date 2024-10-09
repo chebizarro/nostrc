@@ -11,8 +11,8 @@ typedef enum {
 typedef struct {
     GoSelectOp op;
     GoChannel *chan;
-    void *value;  // Used for sending
-    void **recv_buf;  // Used for receiving
+    void *value;     // Used for sending
+    void **recv_buf; // Used for receiving
 } GoSelectCase;
 
 int go_select(GoSelectCase *cases, size_t num_cases);

@@ -1,9 +1,9 @@
 #ifndef FILTER_H
 #define FILTER_H
 
+#include "event.h"
 #include "go.h"
 #include "timestamp.h"
-#include "event.h"
 
 typedef struct _NostrEvent NostrEvent;
 

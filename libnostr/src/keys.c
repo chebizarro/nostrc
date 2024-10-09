@@ -1,17 +1,17 @@
+#include <assert.h>
+#include <ctype.h>
+#include <openssl/rand.h>
+#include <secp256k1.h>
+#include <secp256k1_extrakeys.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdbool.h>
-#include <secp256k1.h>
-#include <secp256k1_extrakeys.h>
-#include <ctype.h>
-#include <assert.h>
-#include <openssl/rand.h>
-
 
 // Convert hex string to binary
 int hex2bin(unsigned char *bin, const char *hex, size_t bin_len) {
-    if (strlen(hex) != bin_len * 2) return 0;
+    if (strlen(hex) != bin_len * 2)
+        return 0;
     for (size_t i = 0; i < bin_len; i++) {
         sscanf(hex + 2 * i, "%2hhx", &bin[i]);
     }
@@ -21,7 +21,7 @@ int hex2bin(unsigned char *bin, const char *hex, size_t bin_len) {
 // Generate a private key using libsecp256k1
 char *generate_private_key() {
     secp256k1_context *ctx;
-    unsigned char privkey[32];  // Private key (32 bytes for secp256k1)
+    unsigned char privkey[32];      // Private key (32 bytes for secp256k1)
     char *privkey_hex = malloc(65); // Hex representation of private key (64 chars + null terminator)
 
     if (!privkey_hex) {
@@ -49,7 +49,7 @@ char *generate_private_key() {
 
         // Verify that the private key is valid (must be less than curve order)
         if (secp256k1_ec_seckey_verify(ctx, privkey)) {
-            break;  // Valid private key found
+            break; // Valid private key found
         }
     }
 
@@ -57,7 +57,7 @@ char *generate_private_key() {
     for (size_t i = 0; i < 32; i++) {
         sprintf(&privkey_hex[i * 2], "%02x", privkey[i]);
     }
-    privkey_hex[64] = '\0';  // Null-terminate the string
+    privkey_hex[64] = '\0'; // Null-terminate the string
 
     // Clean up secp256k1 context
     secp256k1_context_destroy(ctx);
@@ -68,7 +68,7 @@ char *generate_private_key() {
 // Get the public key from a private key using libsecp256k1
 char *get_public_key(const char *sk) {
     secp256k1_context *ctx;
-    unsigned char privkey[32];  // Private key (32 bytes)
+    unsigned char privkey[32]; // Private key (32 bytes)
     secp256k1_pubkey pubkey;
     secp256k1_xonly_pubkey xonly_pubkey;
     unsigned char pubkey_bin[32];  // Compressed public key (32 bytes)
@@ -117,13 +117,12 @@ char *get_public_key(const char *sk) {
     for (size_t i = 0; i < 32; i++) {
         sprintf(&pubkey_hex[i * 2], "%02x", pubkey_bin[i]);
     }
-    pubkey_hex[64] = '\0';  // Null-terminate the string
+    pubkey_hex[64] = '\0'; // Null-terminate the string
 
     // Clean up secp256k1 context
     secp256k1_context_destroy(ctx);
 
     return pubkey_hex;
-
 }
 
 // Validate if a public key is a valid 32-byte hex string

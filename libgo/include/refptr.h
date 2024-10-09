@@ -1,8 +1,8 @@
 #ifndef REFPTR_H
 #define REFPTR_H
 
-#include <stdlib.h>
 #include <stdatomic.h>
+#include <stdlib.h>
 
 typedef struct GoRefPtr {
     void *ptr;
@@ -56,7 +56,8 @@ static inline void free_generic_array_t(generic_array_t *ptr) {
 #define auto_generic_array_t __attribute__((cleanup(free_generic_array_t))) generic_array_t
 
 // Macro to initialize the generic array
-#define init_generic_array_t(type, len) (generic_array_t){.array = malloc((len) * sizeof(type)), .element_size = sizeof(type), .length = (len)}
+#define init_generic_array_t(type, len) \
+    (generic_array_t) { .array = malloc((len) * sizeof(type)), .element_size = sizeof(type), .length = (len) }
 
 // Macro to access elements in the generic array
 #define get_generic_array_element(arr, index, type) (((type *)(arr).array)[index])
@@ -74,7 +75,6 @@ static inline void go_string_cleanup(char **str) {
 
 #define CLEANUP(func) __attribute__((cleanup(func)))
 
-#define go_autostr CLEANUP(go_string_cleanup) char*
-
+#define go_autostr CLEANUP(go_string_cleanup) char *
 
 #endif // REFPTR_H

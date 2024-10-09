@@ -1,12 +1,13 @@
 #include "relay_store.h"
-#include <string.h>
-#include <stdlib.h>
 #include <pthread.h>
+#include <stdlib.h>
+#include <string.h>
 
 // Function to create a MultiStore
 MultiStore *create_multi_store(size_t initial_size) {
     MultiStore *multi = (MultiStore *)malloc(sizeof(MultiStore));
-    if (!multi) return NULL;
+    if (!multi)
+        return NULL;
 
     multi->stores = (RelayStore **)malloc(initial_size * sizeof(RelayStore *));
     if (!multi->stores) {

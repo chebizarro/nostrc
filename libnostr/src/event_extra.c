@@ -1,6 +1,6 @@
 #include "event_extra.h"
-#include <string.h>
 #include <jansson.h>
+#include <string.h>
 
 // SetExtra sets an out-of-the-spec value under the given key into the event object.
 void set_extra(NostrEvent *event, const char *key, json_t *value) {

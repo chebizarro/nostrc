@@ -1,11 +1,11 @@
 #ifndef SIMPLEPOOL_H
 #define SIMPLEPOOL_H
 
-#include <stdlib.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <pthread.h>
 #include "nostr.h"
+#include <pthread.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
 
 #define SEEN_ALREADY_DROP_TICK 60 // seconds
 
@@ -29,7 +29,6 @@ typedef struct _DirectedFilters {
     Filters filters;
     char *relay_url;
 } DirectedFilters;
-
 
 SimplePool *create_simple_pool();
 void free_simple_pool(SimplePool *pool);

@@ -1,17 +1,18 @@
 #include "utils.h"
+#include <ctype.h>
+#include <libgen.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
-#include <stdbool.h>
-#include <libgen.h>
 
 // Helper function to trim leading and trailing whitespace
 static char *trim_whitespace(char *str) {
     char *end;
 
     // Trim leading space
-    while (isspace((unsigned char)*str)) str++;
+    while (isspace((unsigned char)*str))
+        str++;
 
     if (*str == 0) {
         return str;
@@ -19,7 +20,8 @@ static char *trim_whitespace(char *str) {
 
     // Trim trailing space
     end = str + strlen(str) - 1;
-    while (end > str && isspace((unsigned char)*end)) end--;
+    while (end > str && isspace((unsigned char)*end))
+        end--;
 
     end[1] = '\0';
 
@@ -33,7 +35,8 @@ char *normalize_url(const char *u) {
     }
 
     char *url = strdup(u);
-    if (!url) return NULL;
+    if (!url)
+        return NULL;
 
     url = trim_whitespace(url);
 
@@ -180,20 +183,41 @@ char *escape_string(const char *s) {
     for (size_t i = 0; i < len; i++) {
         char c = s[i];
         switch (c) {
-            case '"': *dst++ = '\\'; *dst++ = '"'; break;
-            case '\\': *dst++ = '\\'; *dst++ = '\\'; break;
-            case '\b': *dst++ = '\\'; *dst++ = 'b'; break;
-            case '\t': *dst++ = '\\'; *dst++ = 't'; break;
-            case '\n': *dst++ = '\\'; *dst++ = 'n'; break;
-            case '\f': *dst++ = '\\'; *dst++ = 'f'; break;
-            case '\r': *dst++ = '\\'; *dst++ = 'r'; break;
-            default:
-                if (iscntrl(c)) {
-                    dst += sprintf(dst, "\\u%04x", c);
-                } else {
-                    *dst++ = c;
-                }
-                break;
+        case '"':
+            *dst++ = '\\';
+            *dst++ = '"';
+            break;
+        case '\\':
+            *dst++ = '\\';
+            *dst++ = '\\';
+            break;
+        case '\b':
+            *dst++ = '\\';
+            *dst++ = 'b';
+            break;
+        case '\t':
+            *dst++ = '\\';
+            *dst++ = 't';
+            break;
+        case '\n':
+            *dst++ = '\\';
+            *dst++ = 'n';
+            break;
+        case '\f':
+            *dst++ = '\\';
+            *dst++ = 'f';
+            break;
+        case '\r':
+            *dst++ = '\\';
+            *dst++ = 'r';
+            break;
+        default:
+            if (iscntrl(c)) {
+                dst += sprintf(dst, "\\u%04x", c);
+            } else {
+                *dst++ = c;
+            }
+            break;
         }
     }
     *dst++ = '"';

@@ -8,12 +8,12 @@ GoChannel *go_channel_create(size_t capacity) {
     chan->size = 0;
     chan->in = 0;
     chan->out = 0;
-    
+
     // Initialize the nsync mutex and condition variables
     nsync_mu_init(&chan->mutex);
     nsync_cv_init(&chan->cond_full);
     nsync_cv_init(&chan->cond_empty);
-    
+
     return chan;
 }
 

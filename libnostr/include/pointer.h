@@ -1,9 +1,9 @@
 #ifndef POINTER_H
 #define POINTER_H
 
-#include <stdlib.h>
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
 
 // ProfilePointer struct
 typedef struct {

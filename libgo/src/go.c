@@ -1,9 +1,8 @@
 #include "go.h"
-#include <stdlib.h>
-#include <stdio.h>
-#include <pthread.h>
 #include <nsync.h>
-
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 // Wrapper function to create a new thread
 int go(void *(*start_routine)(void *), void *arg) {

@@ -85,11 +85,11 @@ typedef struct {
     NostrEvent *event;
 } AuthEnvelope;
 
-Envelope * create_envelope(EnvelopeType type);
-Envelope * parse_message(const char *message);
+Envelope *create_envelope(EnvelopeType type);
+Envelope *parse_message(const char *message);
 void free_envelope(Envelope *envelope);
-int event_envelope_unmarshal_json(EventEnvelope * envelope, const char * json_data);
-char * event_envelope_marshal_json(EventEnvelope * envelope);
+int event_envelope_unmarshal_json(EventEnvelope *envelope, const char *json_data);
+char *event_envelope_marshal_json(EventEnvelope *envelope);
 char *envelope_to_json(Envelope *envelope);
 
 #endif // NOSTR_ENVELOPE_H

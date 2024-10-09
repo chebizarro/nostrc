@@ -1,13 +1,13 @@
 #ifndef UTILS_H
 #define UTILS_H
 
-#include <stddef.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <pthread.h>
-#include <string.h>
 #include <ctype.h>
+#include <pthread.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 // Constants
 #define MAX_LOCKS 50

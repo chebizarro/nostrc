@@ -1,74 +1,72 @@
 #include "relay.h"
-#include "relay-private.h"
 #include "connection.h"
-#include <sys/socket.h>
-#include <netdb.h>
-#include <unistd.h>
+#include "relay-private.h"
 #include <arpa/inet.h>
 #include <libwebsockets.h>
-
+#include <netdb.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                               void *user, void *in, size_t len) {
     switch (reason) {
-        case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER: {
-            // Add custom headers (e.g., User-Agent) before the WebSocket handshake
-            unsigned char **p = (unsigned char **)in;
-            unsigned char *end = (*p) + len;
+    case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER: {
+        // Add custom headers (e.g., User-Agent) before the WebSocket handshake
+        unsigned char **p = (unsigned char **)in;
+        unsigned char *end = (*p) + len;
 
-            const char *user_agent = "User-Agent: nostrc/1.0\r\n";
-            if (lws_add_http_header_by_name(wsi, (unsigned char *)"User-Agent:",
-                                            (unsigned char *)user_agent,
-                                            strlen(user_agent), p, end)) {
-                return 1;
-            }
-            break;
+        const char *user_agent = "User-Agent: nostrc/1.0\r\n";
+        if (lws_add_http_header_by_name(wsi, (unsigned char *)"User-Agent:",
+                                        (unsigned char *)user_agent,
+                                        strlen(user_agent), p, end)) {
+            return 1;
         }
-        case LWS_CALLBACK_CLIENT_ESTABLISHED:
-            printf("WebSocket connection established\n");
-            break;
-        case LWS_CALLBACK_CLIENT_RECEIVE:
-            printf("Received data: %.*s\n", (int)len, (char *)in);
-            break;
-        case LWS_CALLBACK_CLIENT_WRITEABLE:
-            // This is where you would write data to the WebSocket
-            break;
-        case LWS_CALLBACK_CLIENT_CLOSED:
-            printf("WebSocket connection closed\n");
-            break;
-        default:
-            break;
+        break;
+    }
+    case LWS_CALLBACK_CLIENT_ESTABLISHED:
+        printf("WebSocket connection established\n");
+        break;
+    case LWS_CALLBACK_CLIENT_RECEIVE:
+        printf("Received data: %.*s\n", (int)len, (char *)in);
+        break;
+    case LWS_CALLBACK_CLIENT_WRITEABLE:
+        // This is where you would write data to the WebSocket
+        break;
+    case LWS_CALLBACK_CLIENT_CLOSED:
+        printf("WebSocket connection closed\n");
+        break;
+    default:
+        break;
     }
     return 0;
 }
 
 static const struct lws_protocols protocols[] = {
-    { "wss", websocket_callback, 0, 128 },
-    { NULL, NULL, 0, 0 }
-};
+    {"wss", websocket_callback, 0, 128},
+    {NULL, NULL, 0, 0}};
 
 static const struct lws_extension extensions[] = {
-    { "permessage-deflate", lws_extension_callback_pm_deflate, "permessage-deflate; client_no_context_takeover; client_max_window_bits" },
-    { NULL, NULL, NULL }
-};
+    {"permessage-deflate", lws_extension_callback_pm_deflate, "permessage-deflate; client_no_context_takeover; client_max_window_bits"},
+    {NULL, NULL, NULL}};
 
 Relay *create_relay(const char *url) {
     // Allocate memory for the Relay and RelayPrivate structs
     Relay *relay = (Relay *)malloc(sizeof(Relay));
     RelayPrivate *priv = (RelayPrivate *)malloc(sizeof(RelayPrivate));
-    if (!relay || !priv) return NULL;
+    if (!relay || !priv)
+        return NULL;
 
     // Initialize the relay URL
     relay->url = strdup(url);
     relay->priv = priv;
-    relay->priv->port = 443;  // Default WebSocket over SSL port
- 
+    relay->priv->port = 443; // Default WebSocket over SSL port
+
     // Initialize the WebSocket context and instance
-    relay->priv->ws_context = NULL;  // WebSocket context will be created during connection
-    relay->priv->wsi = NULL;         // No WebSocket instance yet
+    relay->priv->ws_context = NULL; // WebSocket context will be created during connection
+    relay->priv->wsi = NULL;        // No WebSocket instance yet
 
     // Initialize the subscriptions (assuming create_filters is a valid function)
-    //relay->subscriptions = create_filters(0);
+    // relay->subscriptions = create_filters(0);
 
     // Initialize the private data (mutex and handlers)
     pthread_mutex_init(&relay->priv->mutex, NULL);
@@ -94,7 +92,7 @@ void free_relay(Relay *relay) {
             relay->priv->ws_context = NULL;
         }
 
-        //free_filters(relay->subscriptions);
+        // free_filters(relay->subscriptions);
 
         pthread_mutex_destroy(&relay->priv->mutex);
         free(relay->priv);
@@ -113,13 +111,13 @@ void *websocket_service_thread(void *arg) {
 
 int relay_connect(Relay *relay) {
 
-	Connection *conn = new_connection(relay->url, relay->priv->port);
+    Connection *conn = new_connection(relay->url, relay->priv->port);
 
     struct lws_client_connect_info connect_info;
     memset(&connect_info, 0, sizeof(connect_info));
 
-	struct lws_context_creation_info context_info;
-	memset(&context_info, 0, sizeof(context_info));
+    struct lws_context_creation_info context_info;
+    memset(&context_info, 0, sizeof(context_info));
 
     // Set up the WebSocket context if it's not already created
     if (!relay->priv->ws_context) {
@@ -127,11 +125,11 @@ int relay_connect(Relay *relay) {
         context_info.protocols = protocols;
         context_info.gid = -1;
         context_info.uid = -1;
-    	// Enable permessage-deflate
-	    context_info.extensions = extensions;
+        // Enable permessage-deflate
+        context_info.extensions = extensions;
 
-		// Enable detailed logging
-		lws_set_log_level(LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_INFO | LLL_DEBUG, NULL);
+        // Enable detailed logging
+        lws_set_log_level(LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_INFO | LLL_DEBUG, NULL);
 
         // Create the WebSocket context and store it in the relay
         relay->priv->ws_context = lws_create_context(&context_info);
@@ -143,14 +141,14 @@ int relay_connect(Relay *relay) {
 
     // Set up the connection information
     connect_info.context = relay->priv->ws_context;
-    connect_info.address = relay->url;           // Relay URL
-    connect_info.port = relay->priv->port;             // WebSocket port (typically 443 for SSL)
-    connect_info.path = "/";                     // WebSocket path
+    connect_info.address = relay->url;     // Relay URL
+    connect_info.port = relay->priv->port; // WebSocket port (typically 443 for SSL)
+    connect_info.path = "/";               // WebSocket path
     connect_info.host = lws_canonical_hostname(relay->priv->ws_context);
     connect_info.origin = connect_info.host;
     connect_info.ssl_connection = relay->priv->ssl_connection; // Use SSL if set in the relay
-    connect_info.protocol = "wss";                // WebSocket protocol
-    connect_info.pwsi = &relay->priv->wsi;             // Store the WebSocket instance in the relay
+    connect_info.protocol = "wss";                             // WebSocket protocol
+    connect_info.pwsi = &relay->priv->wsi;                     // Store the WebSocket instance in the relay
 
     // Connect to the WebSocket server
     if (!lws_client_connect_via_info(&connect_info)) {
@@ -176,10 +174,10 @@ void relay_disconnect(Relay *relay) {
     if (relay->priv->wsi) {
         // Close the WebSocket connection
         lws_set_timeout(relay->priv->wsi, PENDING_TIMEOUT_CLOSE_SEND, LWS_TO_KILL_ASYNC);
-        
+
         // Call service to actually process the closure
         lws_service(relay->priv->ws_context, 0);
-        
+
         // Clear the WebSocket instance after closure
         relay->priv->wsi = NULL;
     }
@@ -195,8 +193,8 @@ void relay_disconnect(Relay *relay) {
 
 int relay_subscribe(Relay *relay, Filters *filters) {
     pthread_mutex_lock(&relay->priv->mutex);
-    //relay->subscriptions = filters;
-    // Add implementation to send subscription message to the relay
+    // relay->subscriptions = filters;
+    //  Add implementation to send subscription message to the relay
     pthread_mutex_unlock(&relay->priv->mutex);
     return 0;
 }
@@ -219,9 +217,8 @@ void relay_auth(Relay *relay, void (*sign)(NostrEvent *)) {
         .created_at = time(NULL),
         .kind = 22242,
         .tags = create_tags(2,
-          create_tag("relay", relay->url),
-          create_tag("challenge", relay->priv->challenge)
-        ),
+                            create_tag("relay", relay->url),
+                            create_tag("challenge", relay->priv->challenge)),
         .content = "",
     };
 

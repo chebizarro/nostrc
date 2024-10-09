@@ -9,10 +9,10 @@ int go_select(GoSelectCase *cases, size_t num_cases) {
         for (size_t i = 0; i < num_cases; i++) {
             GoSelectCase *c = &cases[i];
             if (c->op == GO_SELECT_SEND && go_channel_send(c->chan, c->value)) {
-                return i;  // Send successful, return index of the case
+                return i; // Send successful, return index of the case
             }
             if (c->op == GO_SELECT_RECEIVE && go_channel_receive(c->chan, c->recv_buf)) {
-                return i;  // Receive successful, return index of the case
+                return i; // Receive successful, return index of the case
             }
         }
         // Randomization to avoid priority bias
@@ -22,9 +22,9 @@ int go_select(GoSelectCase *cases, size_t num_cases) {
             GoSelectCase *c = &cases[idx];
             nsync_mu_lock(&c->chan->mutex);
             if (c->op == GO_SELECT_SEND) {
-                nsync_cv_wait(&c->chan->cond_full, &c->chan->mutex);  // Wait for space
+                nsync_cv_wait(&c->chan->cond_full, &c->chan->mutex); // Wait for space
             } else {
-                nsync_cv_wait(&c->chan->cond_empty, &c->chan->mutex);  // Wait for data
+                nsync_cv_wait(&c->chan->cond_empty, &c->chan->mutex); // Wait for data
             }
             nsync_mu_unlock(&c->chan->mutex);
         }

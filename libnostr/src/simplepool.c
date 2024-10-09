@@ -1,14 +1,15 @@
 #include "simplepool.h"
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
 #include <unistd.h>
 
 // Function to create a SimplePool
 SimplePool *create_simple_pool() {
     SimplePool *pool = (SimplePool *)malloc(sizeof(SimplePool));
-    if (!pool) return NULL;
+    if (!pool)
+        return NULL;
 
     pool->relays = NULL;
     pool->relay_count = 0;

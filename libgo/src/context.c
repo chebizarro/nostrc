@@ -1,27 +1,27 @@
 #include "context.h"
+#include <nsync.h>
 #include <stdlib.h>
 #include <string.h>
-#include <nsync.h>
 
 void go_context_init(GoContext *ctx, int timeout_seconds) {
-    nsync_mu_init(&ctx->mutex);  // Initialize nsync mutex
-    nsync_cv_init(&ctx->cond);   // Initialize nsync condition variable
+    nsync_mu_init(&ctx->mutex); // Initialize nsync mutex
+    nsync_cv_init(&ctx->cond);  // Initialize nsync condition variable
     ctx->canceled = 0;
     clock_gettime(CLOCK_REALTIME, &ctx->timeout);
     ctx->timeout.tv_sec += timeout_seconds;
 }
 
 int go_context_is_canceled(GoContext *ctx) {
-    nsync_mu_lock(&ctx->mutex);   // Lock the mutex
+    nsync_mu_lock(&ctx->mutex); // Lock the mutex
     int result = ctx->canceled;
     nsync_mu_unlock(&ctx->mutex); // Unlock the mutex
     return result;
 }
 
 void go_context_wait(GoContext *ctx) {
-    nsync_mu_lock(&ctx->mutex);   // Lock the mutex
+    nsync_mu_lock(&ctx->mutex); // Lock the mutex
     while (!ctx->canceled) {
-        nsync_cv_wait(&ctx->cond, &ctx->mutex);  // Wait until canceled
+        nsync_cv_wait(&ctx->cond, &ctx->mutex); // Wait until canceled
     }
     nsync_mu_unlock(&ctx->mutex); // Unlock the mutex
 }
@@ -31,8 +31,8 @@ void go_context_free(GoContext *ctx) {
 }
 
 void go_deadline_context_init(GoDeadlineContext *ctx, struct timespec deadline) {
-    go_context_init((GoContext *)ctx, 0);  // Initialize as a regular context
-    ctx->deadline = deadline;              // Set deadline
+    go_context_init((GoContext *)ctx, 0); // Initialize as a regular context
+    ctx->deadline = deadline;             // Set deadline
 }
 
 int go_deadline_context_is_canceled(GoDeadlineContext *ctx) {
@@ -46,7 +46,7 @@ int go_deadline_context_is_canceled(GoDeadlineContext *ctx) {
 }
 
 void go_value_context_init(GoValueContext *ctx, int timeout_seconds, char **keys, char **values, int kv_count) {
-    go_context_init((GoContext *)ctx, timeout_seconds);  // Initialize base context
+    go_context_init((GoContext *)ctx, timeout_seconds); // Initialize base context
     ctx->keys = keys;
     ctx->values = values;
     ctx->kv_count = kv_count;
@@ -62,7 +62,7 @@ char *go_value_context_get_value(GoValueContext *ctx, const char *key) {
 }
 
 void go_hierarchical_context_init(GoHierarchicalContext *ctx, GoContext *parent, int timeout_seconds) {
-    go_context_init((GoContext *)ctx, timeout_seconds);  // Initialize base context
+    go_context_init((GoContext *)ctx, timeout_seconds); // Initialize base context
     ctx->parent = parent;
 }
 
