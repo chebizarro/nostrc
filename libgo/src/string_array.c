@@ -1,10 +1,20 @@
 #include "string_array.h"
 
+StringArray* new_string_array(int capacity) {
+	StringArray *array = (StringArray *)malloc(sizeof(StringArray));
+	if (capacity == 0) {
+		array->capacity = STRING_ARRAY_INITIAL_CAPACITY;
+	} else {
+		array->capacity = (size_t)capacity;
+	}
+	return array;
+}
+
 // Initialize the StringArray with an initial capacity
 void string_array_init(StringArray *array) {
-    array->data = malloc(STRING_ARRAY_INITIAL_CAPACITY * sizeof(char *));
+	
+    array->data = malloc(array->capacity * sizeof(char *));
     array->size = 0;
-    array->capacity = STRING_ARRAY_INITIAL_CAPACITY;
 }
 
 void string_array_init_with(StringArray *arr, ...) {

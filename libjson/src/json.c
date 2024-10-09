@@ -374,7 +374,7 @@ json_t *jansson_tag_serialize(const Tag *tag) {
 json_t *jansson_tags_serialize(const Tags *tags) {
     if (!tags) return NULL;
 
-    json_t *json_array = json_array();
+    json_t *json_array = json_array(NULL);
     for (size_t i = 0; i < tags->count; i++) {
         json_t *tag_json = jansson_tag_serialize(tags->data[i]);
         json_array_append_new(json_array, tag_json);

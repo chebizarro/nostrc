@@ -14,6 +14,8 @@ typedef struct _StringArray {
     size_t capacity;  // Allocated capacity
 } StringArray;
 
+StringArray* new_string_array(int capacity);
+
 // Initialize the array
 void string_array_init(StringArray *array);
 
