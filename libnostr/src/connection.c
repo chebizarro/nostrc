@@ -46,7 +46,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
     case LWS_CALLBACK_CLIENT_WRITEABLE: {
         // Pop a message from the send_channel and send it over the WebSocket
         WebSocketMessage *msg;
-        if (go_channel_receive(send_channel, (void **)&msg) == 0) {
+        if (go_channel_receive(conn->send_channel, (void **)&msg) == 0) {
             unsigned char buf[LWS_PRE + MAX_PAYLOAD_SIZE];
             unsigned char *p = &buf[LWS_PRE];
             memcpy(p, msg->data, msg->length);
@@ -60,7 +60,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
             free(msg);
 
             // Check if there are more messages to send
-            if (go_channel_receive(send_channel, (void **)&msg) == 0) {
+            if (go_channel_receive(conn->send_channel, (void **)&msg) == 0) {
                 lws_callback_on_writable(wsi); // Request another writable callback
             }
         }
@@ -77,7 +77,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
 }
 
 static const struct lws_protocols protocols[] = {
-    {"wss", websocket_callback, 0, 128},
+    {"wss", websocket_callback, 0, MAX_PAYLOAD_SIZE},
     LWS_PROTOCOL_LIST_TERM};
 
 static const struct lws_extension extensions[] = {
@@ -132,30 +132,28 @@ Connection *new_connection(const char *url, int port) {
     return conn;
 }
 
-int write_message(Connection *conn, const char *message) {
-    unsigned char buf[LWS_SEND_BUFFER_PRE_PADDING + 512 + LWS_SEND_BUFFER_POST_PADDING];
-    unsigned char *p = &buf[LWS_SEND_BUFFER_PRE_PADDING];
-    size_t n = strlen(message);
-
-    memcpy(p, message, n);
-    lws_write(conn->priv->wsi, p, n, LWS_WRITE_TEXT);
-
-    return 0;
+// Coroutine for processing incoming WebSocket messages
+void *websocket_receive_coroutine(void *arg) {
+    Connection *conn = (Connection *)arg;
+    while (1) {
+        WebSocketMessage *msg;
+        if (go_channel_receive(conn->recv_channel, (void **)&msg) == 0) {
+            printf("Received message: %s\n", msg->data); // Process the message
+            free(msg->data);
+            free(msg);
+        }
+    }
 }
 
-int read_message(Connection *conn, char *buffer, size_t buffer_len) {
-    struct lws_pollfd fds;
-    int n;
-
-    fds.fd = lws_get_socket_fd(conn->priv->wsi);
-    fds.events = POLLIN;
-    fds.revents = 0;
-
-    n = poll(&fds, 1, 1000);
-    if (n > 0) {
+// Coroutine for processing outgoing WebSocket messages
+void *websocket_send_coroutine(void *arg) {
+    Connection *conn = (Connection *)arg;
+    while (1) {
+        WebSocketMessage *msg;
+        if (go_channel_receive(conn->send_channel, (void **)&msg) == 0) {
+            lws_callback_on_writable(conn->priv->wsi); // Signal that there is data to send
+        }
     }
-
-    return 0;
 }
 
 void connection_close(Connection *conn) {
