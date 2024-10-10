@@ -1,5 +1,6 @@
 #include "relay.h"
 #include "relay-private.h"
+#include "kinds.h"
 
 Relay *new_relay(GoContext *context, char *url) {
     if (url == NULL) {
@@ -43,67 +44,42 @@ void free_relay(Relay *relay) {
     }
 }
 
+bool relay_is_connected(Relay *relay) {
+    return 0;
+}
+
 int relay_connect(Relay *relay) {
     if (relay == NULL) {
         fprintf(stderr, "relay must be initialized with a call to new_relay()\n");
         return -1;
     }
 
-    Connection *conn = new_connection(relay->url, 443);
+    Connection *conn = new_connection(relay->url);
+    if (conn == NULL) {
+        fprintf(stderr, "error opening websocket to '%s'\n", relay->url);
+        return -1;
+    }
+    relay->connection = conn;
 
 
 
     return 0;
 }
 
-void relay_disconnect(Relay *relay) {
-    pthread_mutex_lock(&relay->priv->mutex);
+void relay_write(char *msg) {
 
-    if (relay->priv->wsi) {
-        // Close the WebSocket connection
-        lws_set_timeout(relay->priv->wsi, PENDING_TIMEOUT_CLOSE_SEND, LWS_TO_KILL_ASYNC);
-
-        // Call service to actually process the closure
-        lws_service(relay->priv->ws_context, 0);
-
-        // Clear the WebSocket instance after closure
-        relay->priv->wsi = NULL;
-    }
-
-    // Destroy the WebSocket context if it's still available
-    if (relay->priv->ws_context) {
-        lws_context_destroy(relay->priv->ws_context);
-        relay->priv->ws_context = NULL;
-    }
-
-    pthread_mutex_unlock(&relay->priv->mutex);
-}
-
-int relay_subscribe(Relay *relay, Filters *filters) {
-    pthread_mutex_lock(&relay->priv->mutex);
-    // relay->subscriptions = filters;
-    //  Add implementation to send subscription message to the relay
-    pthread_mutex_unlock(&relay->priv->mutex);
-    return 0;
-}
-
-void relay_unsubscribe(Relay *relay, int subscription_id) {
-    pthread_mutex_lock(&relay->priv->mutex);
-    // Add implementation to send unsubscription message to the relay
-    pthread_mutex_unlock(&relay->priv->mutex);
 }
 
 void relay_publish(Relay *relay, NostrEvent *event) {
-    pthread_mutex_lock(&relay->priv->mutex);
-    // Add implementation to send event to the relay
-    pthread_mutex_unlock(&relay->priv->mutex);
+
 }
 
 void relay_auth(Relay *relay, void (*sign)(NostrEvent *)) {
     pthread_mutex_lock(&relay->priv->mutex);
+
     NostrEvent auth_event = {
         .created_at = time(NULL),
-        .kind = 22242,
+        .kind = KIND_CLIENT_AUTHENTICATION,
         .tags = create_tags(2,
                             create_tag("relay", relay->url),
                             create_tag("challenge", relay->priv->challenge)),
@@ -112,8 +88,50 @@ void relay_auth(Relay *relay, void (*sign)(NostrEvent *)) {
 
     relay_publish(relay, &auth_event);
     free_tags(auth_event.tags);
+
     pthread_mutex_unlock(&relay->priv->mutex);
 }
+
+
+int relay_subscribe(Relay *relay, Filters *filters) {
+
+    return 0;
+}
+
+int relay_prepare_subscription(Relay *relay, Filters *filters) {
+
+    return 0;
+}
+
+int relay_query_events(Relay *relay, Filter *filter) {
+    return 0;
+}
+
+
+int relay_query_sync(Relay *relay, Filter *filter) {
+    return 0;
+}
+
+int relay_count(Relay *relay, Filter *filter) {
+    return 0;
+}
+
+int relay_close(Relay *relay, Filter *filter) {
+    return 0;
+}
+
+
+void relay_unsubscribe(Relay *relay, int subscription_id) {
+
+
+
+}
+
+
+void relay_disconnect(Relay *relay) {
+}
+
+
 
 bool relay_is_connected(Relay *relay) {
     pthread_mutex_lock(&relay->priv->mutex);

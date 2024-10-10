@@ -85,7 +85,7 @@ static const struct lws_extension extensions[] = {
     {"permessage-deflate", lws_extension_callback_pm_deflate, "permessage-deflate; client_no_context_takeover; client_max_window_bits"},
     {NULL, NULL, NULL}};
 
-Connection *new_connection(const char *url, int port) {
+Connection *new_connection(const char *url) {
     struct lws_context_creation_info context_info;
     struct lws_client_connect_info connect_info;
     struct lws_context *context;
@@ -114,7 +114,7 @@ Connection *new_connection(const char *url, int port) {
     memset(&connect_info, 0, sizeof(connect_info));
     connect_info.context = context;
     connect_info.address = url;
-    connect_info.port = port;
+    connect_info.port = 443;
     connect_info.path = "/";
     connect_info.host = lws_canonical_hostname(context);
     connect_info.origin = connect_info.host;

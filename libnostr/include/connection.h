@@ -11,7 +11,7 @@ typedef struct _Connection {
     GoChannel *recv_channel;
 } Connection;
 
-Connection *new_connection(const char *url, int port);
+Connection *new_connection(const char *url);
 void connection_close(Connection *conn);
 
 #endif // NOSTR_CONNECTION_H

@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 
+#include "kinds.h"
 #include "connection.h"
 #include "envelope.h"
 #include "event.h"
