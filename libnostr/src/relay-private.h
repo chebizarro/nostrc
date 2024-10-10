@@ -23,4 +23,6 @@ typedef struct _write_request {
     GoChannel *answer;
 } write_request;
 
+typedef void (*ok_callback)(bool, char*);
+
 #endif // NOSTR_RELAY_PRIVATE_H

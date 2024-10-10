@@ -3,6 +3,7 @@
 #include "kinds.h"
 #include "relay-private.h"
 #include "subscription.h"
+#include "subscription-private.h"
 #include <unistd.h>
 
 Relay *new_relay(GoContext *context, const char *url, Error **err) {
@@ -30,7 +31,7 @@ Relay *new_relay(GoContext *context, const char *url, Error **err) {
     // request_header
 
     relay->priv->notice_handler = NULL;
-    relay->priv->signature_checker = NULL;
+    relay->priv->custom_handler = NULL;
 
     return relay;
 }
@@ -160,22 +161,41 @@ void *message_loop(void *arg) {
                         continue;
                     }
                 }
+                subscription_dispatch_event(subscription, env->event);
             }
             break;
         }
         case ENVELOPE_EOSE: {
-            
+            EOSEEnvelope *env = (EOSEEnvelope *)envelope;
+            Subscription *subscription = concurrent_hash_map_get(r->subscriptions, env->subscription_id);
+            if (subscription) {
+                subscription_dispatch_eose(subscription);
+            }
             break;
         }
         case ENVELOPE_CLOSED: {
+            ClosedEnvelope *env = (ClosedEnvelope *)envelope;
+            Subscription *subscription = concurrent_hash_map_get(r->subscriptions, env->subscription_id);
+            if (subscription) {
+                subscription_dispatch_closed(subscription, env->reason);
+            }
             break;
         }
         case ENVELOPE_COUNT: {
+            CountEnvelope *env = (CountEnvelope *)envelope;
+            Subscription *subscription = concurrent_hash_map_get(r->subscriptions, env->subscription_id);
+            if (subscription) {
+                go_channel_send(subscription->priv->count_result, env->count);
+            }
             break;
         }
         case ENVELOPE_OK: {
+            OKEnvelope *env = (OKEnvelope *)envelope;
+            ok_callback cb = concurrent_hash_map_get(r->priv->ok_callbacks, env->event_id);
+            if (cb) {
+                cb(env->ok, env->reason);
+            }
             break;
-        }
         default:
             break;
         }

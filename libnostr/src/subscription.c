@@ -15,7 +15,7 @@ Subscription *create_subscription(Relay *relay, Filters *filters, const char *la
     sub->priv->counter = 0;
     sub->relay = relay;
     sub->filters = filters;
-    sub->priv->countResult = NULL;
+    sub->priv->count_result = NULL;
     sub->events = NULL;
     sub->closed_reason = NULL;
     sub->priv->live = false;

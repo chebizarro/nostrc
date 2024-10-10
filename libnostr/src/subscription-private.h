@@ -12,7 +12,7 @@ typedef struct _SubscriptionPrivate {
     char *label;
     int counter;
 
-    GoChannel *countResult;
+    GoChannel *count_result;
     GoContext *context;
 
     _Atomic bool live;
