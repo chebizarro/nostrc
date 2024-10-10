@@ -2,7 +2,7 @@
 #include "relay-private.h"
 #include "kinds.h"
 
-Relay *new_relay(GoContext *context, char *url) {
+Relay *new_relay(GoContext *context, const char *url) {
     if (url == NULL) {
         fprintf(stderr, "invalid relay URL\n");
         return NULL;
@@ -75,7 +75,6 @@ void relay_publish(Relay *relay, NostrEvent *event) {
 }
 
 void relay_auth(Relay *relay, void (*sign)(NostrEvent *)) {
-    pthread_mutex_lock(&relay->priv->mutex);
 
     NostrEvent auth_event = {
         .created_at = time(NULL),
@@ -89,7 +88,6 @@ void relay_auth(Relay *relay, void (*sign)(NostrEvent *)) {
     relay_publish(relay, &auth_event);
     free_tags(auth_event.tags);
 
-    pthread_mutex_unlock(&relay->priv->mutex);
 }
 
 
@@ -131,12 +129,3 @@ void relay_unsubscribe(Relay *relay, int subscription_id) {
 void relay_disconnect(Relay *relay) {
 }
 
-
-
-bool relay_is_connected(Relay *relay) {
-    pthread_mutex_lock(&relay->priv->mutex);
-    // Check if the WebSocket instance exists and if it's still connected
-    bool connected = (relay->priv->wsi != NULL && lws_get_context(relay->priv->wsi) != NULL);
-    pthread_mutex_unlock(&relay->priv->mutex);
-    return connected;
-}

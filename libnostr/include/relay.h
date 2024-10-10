@@ -21,7 +21,7 @@ typedef struct Relay {
     bool assume_valid;
 } Relay;
 
-Relay *new_relay(GoContext *context, char *url);
+Relay *new_relay(GoContext *context, const char *url);
 void free_relay(Relay *relay);
 int relay_connect(Relay *relay);
 void relay_disconnect(Relay *relay);

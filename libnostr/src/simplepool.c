@@ -1,4 +1,5 @@
 #include "simplepool.h"
+#include "go.h"
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,7 +55,9 @@ void simple_pool_ensure_relay(SimplePool *pool, const char *url) {
     }
 
     // If relay not found, create and connect a new one
-    Relay *relay = new_relay(url);
+    GoContext *ctx;
+    go_context_init(ctx, 7);
+    Relay *relay = new_relay(ctx, url);
     relay_connect(relay);
 
     pool->relays = (Relay **)realloc(pool->relays, (pool->relay_count + 1) * sizeof(Relay *));
