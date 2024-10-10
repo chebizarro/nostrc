@@ -1,23 +1,18 @@
 #ifndef NOSTR_RELAY_H
 #define NOSTR_RELAY_H
 
+#include "connection.h"
 #include "event.h"
 #include "filter.h"
-#include "connection.h"
 
 typedef struct _RelayPrivate RelayPrivate;
 
 typedef struct Relay {
     RelayPrivate *priv;
-
     char *url;
     // request_header;
-
     Connection *connection;
     ConcurrentHashMap *subscriptions;
-
-    // connection_error;
-
     bool assume_valid;
 } Relay;
 

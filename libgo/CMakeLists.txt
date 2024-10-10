@@ -13,6 +13,7 @@ set(LIBGO_SOURCES
 	src/select.c
 	src/string_array.c
 	src/int_array.c
+    src/ticker.c
 )
 
 # Create the library

@@ -46,7 +46,7 @@ void nostr_free_group(nostr_group_t *group) {
 
 nostr_event_t *nostr_group_to_metadata_event(const nostr_group_t *group) {
     nostr_event_t *evt = nostr_event_new();
-    evt->kind = NOSTR_KIND_SIMPLE_GROUP_METADATA;
+    evt->kind = KIND_SIMPLE_GROUP_METADATA;
     evt->created_at = group->last_metadata_update;
     nostr_event_add_tag(evt, "d", group->address.id);
     if (group->name) nostr_event_add_tag(evt, "name", group->name);

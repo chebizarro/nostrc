@@ -1,6 +1,6 @@
 #include "relay.h"
-#include "relay-private.h"
 #include "kinds.h"
+#include "relay-private.h"
 
 Relay *new_relay(GoContext *context, const char *url) {
     if (url == NULL) {
@@ -48,6 +48,27 @@ bool relay_is_connected(Relay *relay) {
     return 0;
 }
 
+void *cleanup_routine(void *arg) {
+    Relay *r = (Relay *)arg;
+
+    // Wait for connection context to be done
+    void *done_signal;
+    go_channel_receive(r->connection_done, &done_signal);
+
+    // Stop the ticker
+    stop_ticker();
+
+    connection_close(r->connection);
+    r->connection = NULL;
+
+    // Close all subscriptions
+    for (size_t i = 0; i < (r->subscriptions); i++) {
+        r->Subscriptions[i]->Unsub(r->Subscriptions[i]);
+    }
+
+    return NULL;
+}
+
 int relay_connect(Relay *relay) {
     if (relay == NULL) {
         fprintf(stderr, "relay must be initialized with a call to new_relay()\n");
@@ -61,17 +82,13 @@ int relay_connect(Relay *relay) {
     }
     relay->connection = conn;
 
-
-
     return 0;
 }
 
 void relay_write(char *msg) {
-
 }
 
 void relay_publish(Relay *relay, NostrEvent *event) {
-
 }
 
 void relay_auth(Relay *relay, void (*sign)(NostrEvent *)) {
@@ -87,9 +104,7 @@ void relay_auth(Relay *relay, void (*sign)(NostrEvent *)) {
 
     relay_publish(relay, &auth_event);
     free_tags(auth_event.tags);
-
 }
-
 
 int relay_subscribe(Relay *relay, Filters *filters) {
 
@@ -105,7 +120,6 @@ int relay_query_events(Relay *relay, Filter *filter) {
     return 0;
 }
 
-
 int relay_query_sync(Relay *relay, Filter *filter) {
     return 0;
 }
@@ -118,14 +132,8 @@ int relay_close(Relay *relay, Filter *filter) {
     return 0;
 }
 
-
 void relay_unsubscribe(Relay *relay, int subscription_id) {
-
-
-
 }
-
 
 void relay_disconnect(Relay *relay) {
 }
-
