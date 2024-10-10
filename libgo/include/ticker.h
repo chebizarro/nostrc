@@ -5,7 +5,7 @@
 #include "stdbool.h"
 
 typedef struct Ticker {
-    GoChannel *channel;
+    GoChannel *c;
     size_t interval_ms;
     pthread_t thread;
     bool stop;

@@ -1,18 +1,21 @@
 #include "relay.h"
+#include "envelope.h"
 #include "kinds.h"
 #include "relay-private.h"
 #include "subscription.h"
+#include <unistd.h>
 
-Relay *new_relay(GoContext *context, const char *url) {
+Relay *new_relay(GoContext *context, const char *url, Error **err) {
     if (url == NULL) {
-        fprintf(stderr, "invalid relay URL\n");
+        *err = new_error(1, "invalid relay URL");
         return NULL;
     }
 
     Relay *relay = (Relay *)malloc(sizeof(Relay));
     RelayPrivate *priv = (RelayPrivate *)malloc(sizeof(RelayPrivate));
     if (!relay || !priv)
-        return NULL;
+        *err = new_error(1, "failed to allocate memory for Relay struct");
+    return NULL;
 
     relay->url = strdup(url);
     relay->subscriptions = concurrent_hash_map_create(16);
@@ -58,8 +61,9 @@ void *cleanup_routine(void *arg) {
     Relay *r = (Relay *)arg;
     Ticker *t = (Ticker *)++arg;
     // Wait for connection context to be done
-    //void *done_signal;
-    //go_channel_receive(r->priv->connection_context, &done_signal);
+    while (!go_context_is_canceled(r->priv->connection_context)) {
+        sleep(1);
+    }
     stop_ticker(t);
     connection_close(r->connection);
     r->connection = NULL;
@@ -67,24 +71,137 @@ void *cleanup_routine(void *arg) {
     return NULL;
 }
 
-int relay_connect(Relay *relay) {
+void *write_operations(void *arg) {
+    Relay *r = ((Relay **)arg)[0];
+    Ticker *t = ((Ticker **)arg)[1];
+
+    write_request *write_req;
+
+    GoSelectCase cases[] = {
+        {GO_SELECT_RECEIVE, t->c, NULL},
+        {GO_SELECT_RECEIVE, r->priv->write_queue, write_req},
+        {GO_SELECT_RECEIVE, r->priv->connection_context, NULL}};
+
+    while (true) {
+        int result = go_select(cases, 3);
+        switch (result) {
+        case 0:
+            // ping!
+            break;
+        case 1:
+            Error **err = NULL;
+            connection_write_message(r->connection, r->priv->connection_context, write_req->msg, err);
+            if (err)
+                go_channel_send(write_req->answer, err);
+            go_channel_free(write_req->answer);
+            break;
+        case 2:
+            if (go_context_is_canceled(r->priv->connection_context))
+                return NULL;
+        default:
+            break;
+        }
+    }
+    return NULL;
+}
+
+void *message_loop(void *arg) {
+    Relay *r = (Relay *)arg;
+    char **buf;
+    Error **err;
+
+    while (true) {
+        buf = NULL;
+        connection_read_message(r->connection, r->priv->connection_context, buf, err);
+        if (err) {
+            r->connection_error = err;
+            relay_close(r);
+            break;
+        }
+        const char *message = buf;
+        Envelope *envelope = parse_message(message);
+        if (!envelope) {
+            if (r->priv->custom_handler) {
+                r->priv->custom_handler(message);
+            }
+            continue;
+        }
+        switch (envelope->type) {
+        case ENVELOPE_NOTICE: {
+            if (r->priv->notice_handler) {
+                r->priv->notice_handler((char *)envelope);
+            } else {
+                // log it
+            }
+            break;
+        }
+        case ENVELOPE_AUTH: {
+            AuthEnvelope *env = (AuthEnvelope *)envelope;
+            if (!env->challenge)
+                continue;
+            r->priv->challenge = env->challenge;
+            break;
+        }
+        case ENVELOPE_EVENT: {
+            EventEnvelope *env = (EventEnvelope *)envelope;
+            if (!env->subscription_id) {
+                continue;
+            }
+            // implement subIdToSerial
+            Subscription *subscription = concurrent_hash_map_get(r->subscriptions, env->subscription_id);
+            if (!subscription) {
+                continue;
+            } else {
+                if (!subscription_match(env->event)) {
+                    continue;
+                }
+                if (!r->assume_valid) {
+                    if (!event_check_signature(env->event)) {
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+        case ENVELOPE_EOSE: {
+            
+            break;
+        }
+        case ENVELOPE_CLOSED: {
+            break;
+        }
+        case ENVELOPE_COUNT: {
+            break;
+        }
+        case ENVELOPE_OK: {
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    return NULL;
+}
+
+int relay_connect(Relay *relay, Error **err) {
     if (relay == NULL) {
-        fprintf(stderr, "relay must be initialized with a call to new_relay()\n");
+        *err = new_error(1, "relay must be initialized with a call to new_relay()");
         return -1;
     }
 
     Connection *conn = new_connection(relay->url);
     if (conn == NULL) {
-        fprintf(stderr, "error opening websocket to '%s'\n", relay->url);
+        *err = new_error(1, "error opening websocket to '%s'\n", relay->url);
         return -1;
     }
     relay->connection = conn;
 
-    Ticker *ticker = create_ticker(29*GO_TIME_SECOND);
+    Ticker *ticker = create_ticker(29 * GO_TIME_SECOND);
 
-    void *cleanup[2] = {relay, ticker};
-
-    go(cleanup_routine, cleanup[0]);
+    void *cleanup[] = {relay, ticker};
+    go(cleanup_routine, cleanup);
+    go(write_operations, cleanup[0]);
+    go(message_loop, relay);
 
     return 0;
 }
@@ -132,7 +249,7 @@ int relay_count(Relay *relay, Filter *filter) {
     return 0;
 }
 
-int relay_close(Relay *relay, Filter *filter) {
+int relay_close(Relay *relay) {
     return 0;
 }
 

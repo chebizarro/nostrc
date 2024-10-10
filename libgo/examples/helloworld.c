@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include "go.h"
-#include "channel.h"
 
 void *print_message(void *arg) {
     char *message = (char *)arg;

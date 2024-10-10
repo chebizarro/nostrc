@@ -10,6 +10,8 @@
 #include "wait_group.h"
 #include "gtime.h"
 #include "ticker.h"
+#include "error.h"
+#include "select.h"
 
 // Wrapper function to create a new thread
 int go(void *(*start_routine)(void *), void *arg);

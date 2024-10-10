@@ -12,15 +12,15 @@ struct _RelayPrivate {
 
     char *challenge;
     void (*notice_handler)(const char *);
-    bool (*signature_checker)(NostrEvent);
+    bool (*custom_handler)(const char *);
     ConcurrentHashMap *ok_callbacks;
     GoChannel *write_queue;
     GoChannel *subscription_channel_close_queue;
 };
 
-struct write_request {
+typedef struct _write_request {
     char *msg;
-    GoChannel answer;
+    GoChannel *answer;
 } write_request;
 
 #endif // NOSTR_RELAY_PRIVATE_H

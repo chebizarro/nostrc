@@ -47,7 +47,8 @@ void simple_pool_ensure_relay(SimplePool *pool, const char *url) {
             } else {
                 // reconnect if not connected
                 relay_disconnect(pool->relays[i]);
-                relay_connect(pool->relays[i]);
+                Error **err;
+                relay_connect(pool->relays[i], err);
                 pthread_mutex_unlock(&pool->pool_mutex);
                 return;
             }
@@ -57,8 +58,9 @@ void simple_pool_ensure_relay(SimplePool *pool, const char *url) {
     // If relay not found, create and connect a new one
     GoContext *ctx;
     go_context_init(ctx, 7);
-    Relay *relay = new_relay(ctx, url);
-    relay_connect(relay);
+    Error **err = NULL;
+    Relay *relay = new_relay(ctx, url, err);
+    relay_connect(relay, err);
 
     pool->relays = (Relay **)realloc(pool->relays, (pool->relay_count + 1) * sizeof(Relay *));
     pool->relays[pool->relay_count++] = relay;

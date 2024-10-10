@@ -161,3 +161,11 @@ void connection_close(Connection *conn) {
     lws_context_destroy(conn->priv->context);
     free(conn);
 }
+
+void connection_write_message(Connection *conn, GoContext* ctx, char* message, Error **err) {
+
+}
+
+void connection_read_message(Connection *conn, GoContext* ctx, char* buffer, Error **err) {
+
+}
