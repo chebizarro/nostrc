@@ -1,6 +1,7 @@
 #include "relay.h"
 #include "kinds.h"
 #include "relay-private.h"
+#include "subscription.h"
 
 Relay *new_relay(GoContext *context, const char *url) {
     if (url == NULL) {
@@ -48,24 +49,21 @@ bool relay_is_connected(Relay *relay) {
     return 0;
 }
 
+bool sub_foreach_unsub(const char *key, void *sub) {
+    subscription_unsub((Subscription *)sub);
+    return true;
+}
+
 void *cleanup_routine(void *arg) {
     Relay *r = (Relay *)arg;
-
+    Ticker *t = (Ticker *)++arg;
     // Wait for connection context to be done
-    void *done_signal;
-    go_channel_receive(r->connection_done, &done_signal);
-
-    // Stop the ticker
-    stop_ticker();
-
+    //void *done_signal;
+    //go_channel_receive(r->priv->connection_context, &done_signal);
+    stop_ticker(t);
     connection_close(r->connection);
     r->connection = NULL;
-
-    // Close all subscriptions
-    for (size_t i = 0; i < (r->subscriptions); i++) {
-        r->Subscriptions[i]->Unsub(r->Subscriptions[i]);
-    }
-
+    concurrent_hash_map_for_each(r->subscriptions, sub_foreach_unsub);
     return NULL;
 }
 
@@ -81,6 +79,12 @@ int relay_connect(Relay *relay) {
         return -1;
     }
     relay->connection = conn;
+
+    Ticker *ticker = create_ticker(29*GO_TIME_SECOND);
+
+    void *cleanup[2] = {relay, ticker};
+
+    go(cleanup_routine, cleanup[0]);
 
     return 0;
 }

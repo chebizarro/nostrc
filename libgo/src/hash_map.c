@@ -74,6 +74,30 @@ void *concurrent_hash_map_get(ConcurrentHashMap *map, const char *key) {
     return NULL;                                       // Return NULL if not found
 }
 
+void concurrent_hash_map_for_each(ConcurrentHashMap *map, bool (*foreach)(const char *, void *)) {
+    for (size_t i = 0; i < map->num_buckets; i++) {
+        nsync_mu_lock(&map->bucket_locks[i]);
+
+        HashNode *node = map->buckets[i];
+        while (node) {
+            HashNode *next = node->next;
+            // Copy key and value outside the critical section
+            const char *key = node->key;
+            void *value = node->value;
+
+            nsync_mu_unlock(&map->bucket_locks[i]); // Unlock before calling foreach
+
+            bool cont = foreach (key, value);
+            if (!cont) {
+                return;
+            }
+            nsync_mu_lock(&map->bucket_locks[i]); // Re-lock to get the next node
+            node = next;
+        }
+        nsync_mu_unlock(&map->bucket_locks[i]);
+    }
+}
+
 void concurrent_hash_map_remove(ConcurrentHashMap *map, const char *key) {
     unsigned long hash = hash_function(key);
     size_t bucket_index = hash % map->num_buckets;

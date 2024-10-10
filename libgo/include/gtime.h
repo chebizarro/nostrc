@@ -1,0 +1,25 @@
+#ifndef GO_TIME_H
+#define GO_TIME_H
+
+// Time duration constants in nanoseconds
+#define GO_TIME_NANOSECOND 1LL
+#define GO_TIME_MICROSECOND (1000LL * GO_TIME_NANOSECOND)
+#define GO_TIME_MILLISECOND (1000LL * GO_TIME_MICROSECOND)
+#define GO_TIME_SECOND      (1000LL * GO_TIME_MILLISECOND)
+#define GO_TIME_MINUTE      (60LL * GO_TIME_SECOND)
+#define GO_TIME_HOUR        (60LL * GO_TIME_MINUTE)
+#define GO_TIME_DAY         (24LL * GO_TIME_HOUR)
+#define GO_TIME_WEEK        (7LL * GO_TIME_DAY)
+
+// Time unit conversions for human readability
+#define GO_TIME_NANOS_IN_SECOND 1000000000LL
+#define GO_TIME_NANOS_IN_MINUTE (GO_TIME_NANOS_IN_SECOND * 60LL)
+#define GO_TIME_NANOS_IN_HOUR   (GO_TIME_NANOS_IN_MINUTE * 60LL)
+#define GO_TIME_NANOS_IN_DAY    (GO_TIME_NANOS_IN_HOUR * 24LL)
+#define GO_TIME_NANOS_IN_WEEK   (GO_TIME_NANOS_IN_DAY * 7LL)
+
+// For finer precision, micros/millis can also be useful
+#define GO_TIME_MICROS_IN_SECOND (GO_TIME_NANOS_IN_SECOND / 1000LL)
+#define GO_TIME_MILLIS_IN_SECOND (GO_TIME_NANOS_IN_SECOND / 1000000LL)
+
+#endif // GO_TIME_H
