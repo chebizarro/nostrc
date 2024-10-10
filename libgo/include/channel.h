@@ -1,9 +1,9 @@
 #ifndef GO_CHANNEL_H
 #define GO_CHANNEL_H
 
-#include "context.h"
 #include "refptr.h"
 #include <nsync.h>
+#include "context.h"
 
 typedef struct GoChannel {
     void **buffer;

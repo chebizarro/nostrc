@@ -81,7 +81,7 @@ void *write_operations(void *arg) {
     GoSelectCase cases[] = {
         {GO_SELECT_RECEIVE, t->c, NULL},
         {GO_SELECT_RECEIVE, r->priv->write_queue, write_req},
-        {GO_SELECT_RECEIVE, r->priv->connection_context, NULL}};
+        {GO_SELECT_RECEIVE, r->priv->connection_context->done, NULL}};
 
     while (true) {
         int result = go_select(cases, 3);
@@ -89,13 +89,14 @@ void *write_operations(void *arg) {
         case 0:
             // ping!
             break;
-        case 1:
+        case 1: {
             Error **err = NULL;
             connection_write_message(r->connection, r->priv->connection_context, write_req->msg, err);
             if (err)
                 go_channel_send(write_req->answer, err);
             go_channel_free(write_req->answer);
             break;
+        }
         case 2:
             if (go_context_is_canceled(r->priv->connection_context))
                 return NULL;
@@ -113,13 +114,13 @@ void *message_loop(void *arg) {
 
     while (true) {
         buf = NULL;
-        connection_read_message(r->connection, r->priv->connection_context, buf, err);
+        connection_read_message(r->connection, r->priv->connection_context, *buf, err);
         if (err) {
             r->connection_error = err;
             relay_close(r);
             break;
         }
-        const char *message = buf;
+        const char *message = *buf;
         Envelope *envelope = parse_message(message);
         if (!envelope) {
             if (r->priv->custom_handler) {

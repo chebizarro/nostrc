@@ -5,8 +5,8 @@ include_directories(include)
 
 set(LIBGO_SOURCES
     src/go.c
-    src/channel.c
     src/context.c
+    src/channel.c
 	src/wait_group.c
 	src/hash_map.c
 	src/counter.c
