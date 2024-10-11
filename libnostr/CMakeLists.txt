@@ -23,6 +23,7 @@ set(LIBNOSTR_SOURCES
 	src/pointer.c
 	src/relay_store.c
 	src/simplepool.c
+    src/utils.c
 )
 
 # Create the library

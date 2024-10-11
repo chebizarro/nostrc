@@ -25,6 +25,10 @@ bool are_pointer_values_equal(const void *a, const void *b, size_t size);
 char *normalize_url(const char *u);
 char *normalize_ok_message(const char *reason, const char *prefix);
 
+bool hex2bin(unsigned char *bin, const char *hex, size_t bin_len);
+
 int64_t sub_id_to_serial(const char *sub_id);
+
+char *escape_string(const char *str);
 
 #endif // UTILS_H

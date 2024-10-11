@@ -257,3 +257,69 @@ int64_t sub_id_to_serial(const char *sub_id) {
 
     return serial_id;
 }
+
+// Convert hex string to binary
+bool hex2bin(unsigned char *bin, const char *hex, size_t bin_len) {
+    if (strlen(hex) != bin_len * 2)
+        return false;
+    for (size_t i = 0; i < bin_len; i++) {
+        sscanf(hex + 2 * i, "%2hhx", &bin[i]);
+    }
+    return true;
+}
+
+// Escape special characters in the string according to RFC8259
+char *escape_string(const char *str) {
+    size_t len = strlen(str);
+    size_t capacity = len * 2;            // Start with enough space
+    char *escaped = malloc(capacity + 1); // Allocate buffer
+    if (!escaped)
+        return NULL;
+
+    size_t j = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (j + 6 > capacity) { // Make sure we have enough space
+            capacity *= 2;
+            escaped = realloc(escaped, capacity + 1);
+            if (!escaped)
+                return NULL;
+        }
+
+        switch (str[i]) {
+        case '\"':
+            escaped[j++] = '\\';
+            escaped[j++] = '\"';
+            break;
+        case '\\':
+            escaped[j++] = '\\';
+            escaped[j++] = '\\';
+            break;
+        case '\b':
+            escaped[j++] = '\\';
+            escaped[j++] = 'b';
+            break;
+        case '\f':
+            escaped[j++] = '\\';
+            escaped[j++] = 'f';
+            break;
+        case '\n':
+            escaped[j++] = '\\';
+            escaped[j++] = 'n';
+            break;
+        case '\r':
+            escaped[j++] = '\\';
+            escaped[j++] = 'r';
+            break;
+        case '\t':
+            escaped[j++] = '\\';
+            escaped[j++] = 't';
+            break;
+        default:
+            escaped[j++] = str[i]; // No escape needed
+            break;
+        }
+    }
+
+    escaped[j] = '\0'; // Null-terminate the string
+    return escaped;
+}
