@@ -55,11 +55,7 @@ void subscription_start(void *arg) {
 }
 
 void subscription_dispatch_event(Subscription *sub, NostrEvent *event) {
-
-    pthread_mutex_lock(&sub->priv->sub_mutex);
-    // sub->events = (NostrEvent **)realloc(sub->events, (sub->event_count + 1) * sizeof(NostrEvent *));
-    // sub->events[sub->priv->event_count++] = event;
-    pthread_mutex_unlock(&sub->priv->sub_mutex);
+    go_channel_send(sub->events, event);
 }
 
 void subscription_dispatch_eose(Subscription *sub) {
@@ -96,17 +92,35 @@ void subscription_sub(Subscription *sub, Filters *filters) {
 // subscription_cancel();
 //}
 
-void subscription_fire(Subscription *sub) {
-    Envelope *req;
+int subscription_fire(Subscription *subscription, Error **err) {
+    if (!subscription || !subscription->relay->connection) {
+        *err = new_error(1, "subscription or connection is NULL");
+        return -1;
+    }
 
-    atomic_store(&sub->priv->live, true);
+    // Serialize filters into JSON
+    char *filters_json = filters_serialize(subscription->filters);
+    if (!filters_json) {
+        *err = new_error(1, "failed to serialize filters");
+        return -1;
+    }
 
-    // GoChannel *err = (sub->relay, data);
+    // Construct the subscription message
+    char *sub_id_str = malloc(32);  // Allocate memory for the subscription ID string
+    snprintf(sub_id_str, 32, "\"REQ\",\"%s\",%s", subscription->id, filters_json);
 
-    // go(sub_error, err);
+    // Send the subscription request via the relay
+    GoChannel* write_channel = relay_write(subscription->relay, sub_id_str);
+    free(filters_json);
+    free(sub_id_str);
 
-    char req_msg[512];
-    // snprintf(req_msg, sizeof(req_msg), "{\"type\":\"REQ\",\"id\":\"%s\",\"filters\":[...]}",
-    //	 id); // Simplified; serialize filters properly
-    sub->priv->live = true;
+    // Wait for a response
+    Error *write_err = NULL;
+    go_channel_receive(write_channel, &write_err);
+    if (write_err) {
+        *err = write_err;
+        return -1;
+    }
+
+    return 0;
 }
