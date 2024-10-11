@@ -12,6 +12,7 @@ typedef struct _Connection {
 } Connection;
 
 Connection *new_connection(const char *url);
+
 void connection_close(Connection *conn);
 
 void connection_write_message(Connection *conn, GoContext *ctx, char *buffer, Error **err);

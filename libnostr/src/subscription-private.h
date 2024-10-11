@@ -19,6 +19,8 @@ typedef struct _SubscriptionPrivate {
 
     GoContext *context;
 
+    LongAdder *stored_event_counter;
+
     _Atomic bool live;
     _Atomic bool eosed;
     _Atomic bool closed;

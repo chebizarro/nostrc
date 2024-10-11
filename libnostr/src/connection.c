@@ -42,6 +42,18 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         msg->length = len;
 
         go_channel_send(conn->recv_channel, msg); // Send to receive channel
+
+        // Handle control frames (PING, PONG, CLOSE)
+        if (lws_is_final_fragment(wsi) && lws_is_control_frame(wsi)) {
+            if (lws_frame_is_ping(wsi)) {
+                lws_callback_on_writable(wsi); // Send PONG in response
+            } else if (lws_frame_is_pong(wsi)) {
+                printf("Received PONG\n");
+            } else if (lws_frame_is_close(wsi)) {
+                connection_close(conn);
+            }
+        }
+
         break;
     }
     case LWS_CALLBACK_CLIENT_WRITEABLE: {
@@ -50,11 +62,15 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         if (go_channel_receive(conn->send_channel, (void **)&msg) == 0) {
             unsigned char buf[LWS_PRE + MAX_PAYLOAD_SIZE];
             unsigned char *p = &buf[LWS_PRE];
-            memcpy(p, msg->data, msg->length);
 
+            // Copy the message data and send it over the WebSocket
+            memcpy(p, msg->data, msg->length);
             int n = lws_write(wsi, p, msg->length, LWS_WRITE_TEXT);
             if (n < 0) {
-                fprintf(stderr, "Error writing to WebSocket\n");
+                fprintf(stderr, "Error writing WebSocket message\n");
+                free(msg->data);
+                free(msg);
+                return -1;
             }
 
             free(msg->data);
@@ -65,6 +81,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                 lws_callback_on_writable(wsi); // Request another writable callback
             }
         }
+
         break;
     }
     case LWS_CALLBACK_CLIENT_CLOSED:
@@ -163,9 +180,64 @@ void connection_close(Connection *conn) {
 }
 
 void connection_write_message(Connection *conn, GoContext* ctx, char* message, Error **err) {
+    if (!conn || !message) {
+        if (err) {
+            *err = new_error(1, "Invalid connection or message");
+        }
+        return;
+    }
 
+    // Prepare the message to send
+    size_t message_length = strlen(message);
+    WebSocketMessage *msg = malloc(sizeof(WebSocketMessage));
+    if (!msg) {
+        if (err) {
+            *err = new_error(1, "Memory allocation failure for WebSocketMessage");
+        }
+        return;
+    }
+
+    msg->data = malloc(message_length + 1);
+    if (!msg->data) {
+        free(msg);
+        if (err) {
+            *err = new_error(1, "Memory allocation failure for message data");
+        }
+        return;
+    }
+
+    strcpy(msg->data, message);
+    msg->length = message_length;
+
+    // Add the message to the send channel
+    go_channel_send(conn->send_channel, msg);
+
+    // Ensure that the socket becomes writable
+    lws_callback_on_writable(conn->priv->wsi);
 }
 
 void connection_read_message(Connection *conn, GoContext* ctx, char* buffer, Error **err) {
+    if (!conn || !buffer) {
+        if (err) {
+            *err = new_error(1, "Invalid connection or buffer");
+        }
+        return;
+    }
 
+    // Wait for a message from the recv_channel
+    WebSocketMessage *msg;
+    if (go_channel_receive(conn->recv_channel, (void **)&msg) == 0) {
+        // Copy the received message to the buffer
+        if (msg->length > 0) {
+            strncpy(buffer, msg->data, msg->length);
+            buffer[msg->length] = '\0'; // Ensure null termination
+        }
+
+        free(msg->data);
+        free(msg);
+    } else {
+        if (err) {
+            *err = new_error(1, "Failed to receive message");
+        }
+    }
 }

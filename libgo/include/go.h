@@ -3,6 +3,7 @@
 
 #include "channel.h"
 #include "context.h"
+#include "counter.h"
 #include "hash_map.h"
 #include "int_array.h"
 #include "refptr.h"

@@ -5,19 +5,22 @@
 #include "subscription-private.h"
 #include <openssl/ssl.h>
 
-// Subscription-related functions
 Subscription *create_subscription(Relay *relay, Filters *filters, const char *label) {
     Subscription *sub = (Subscription *)malloc(sizeof(Subscription));
-    if (!sub)
-        return NULL;
+    if (!sub) return NULL;
 
-    sub->priv->label = strdup(label);
-    sub->priv->counter = 0;
     sub->relay = relay;
     sub->filters = filters;
+    sub->priv = (SubscriptionPrivate *)malloc(sizeof(SubscriptionPrivate));
+    if (!sub->priv) {
+        free(sub);
+        return NULL;
+    }
+
+    sub->priv->label = label ? strdup(label) : NULL;
     sub->priv->count_result = NULL;
-    sub->events = NULL;
-    sub->closed_reason = NULL;
+    sub->events = go_channel_create(1);
+    sub->closed_reason = go_channel_create(1);
     sub->priv->live = false;
     sub->priv->eosed = false;
     sub->priv->closed = false;
@@ -27,10 +30,13 @@ Subscription *create_subscription(Relay *relay, Filters *filters, const char *la
 }
 
 void free_subscription(Subscription *sub) {
+    if (!sub) return;
+
     free(sub->priv->label);
-    free(sub->closed_reason);
     go_channel_free(sub->events);
+    go_channel_free(sub->closed_reason);
     pthread_mutex_destroy(&sub->priv->sub_mutex);
+    free(sub->priv);
     free(sub);
 }
 
@@ -46,51 +52,143 @@ void *subscription_thread_func(void *arg) {
     return NULL;
 }
 
-void subscription_start(void *arg) {
+void *subscription_start(void *arg) {
     Subscription *sub = (Subscription *)arg;
+
+    // Wait for the subscription context to be canceled
     while (!go_context_is_canceled(sub->priv->context)) {
+        sleep(1);  // Small sleep to avoid busy waiting
     }
+
+    // Once the context is canceled, unsubscribe the subscription
     subscription_unsub(sub);
-    // go_channel_close(sub->events)
+
+    // Lock the subscription to avoid race conditions
+    pthread_mutex_lock(&sub->priv->sub_mutex);
+
+    // Close the events channel
+    go_channel_close(sub->events);
+
+    // Unlock the mutex after the events channel is closed
+    pthread_mutex_unlock(&sub->priv->sub_mutex);
+
+    return NULL;
 }
 
 void subscription_dispatch_event(Subscription *sub, NostrEvent *event) {
-    go_channel_send(sub->events, event);
-}
+    if (!sub || !event)
+        return;
 
-void subscription_dispatch_eose(Subscription *sub) {
-    atomic_store(&sub->priv->eosed, true);
-    sub->priv->eosed = true;
-}
+    bool added = false;
+    if (!atomic_load(&sub->priv->eosed)) {
+        added = true;
+        // Increment a "stored" event counter (if needed)
+    }
 
-void subscription_dispatch_closed(Subscription *sub, const char *reason) {
-    atomic_store(&sub->priv->closed, true);
-    go_channel_send(sub->closed_reason, (void *)reason);
-}
+    pthread_mutex_lock(&sub->priv->sub_mutex);
 
-void subscription_unsub(Subscription *sub) {
-    atomic_store(&sub->priv->live, false);
-    pthread_cancel(sub->priv->thread);
-    subscription_close(sub);
-}
+    if (atomic_load(&sub->priv->live)) {
+        go_channel_send(sub->events, event);
+    }
 
-void subscription_close(Subscription *sub) {
-    if (relay_is_connected(sub->relay)) {
-        ClosedEnvelope *close_msg = (ClosedEnvelope *)create_envelope(ENVELOPE_CLOSED);
-        close_msg->subscription_id = strdup(sub->id);
-        char *close_b = nostr_envelope_serialize((Envelope *)close_msg);
-        // relay_write(sub->relay, close_b);
+    pthread_mutex_unlock(&sub->priv->sub_mutex);
+
+    if (added) {
+        // Decrement "stored" event counter (if needed)
     }
 }
 
-void subscription_sub(Subscription *sub, Filters *filters) {
-    sub->filters = filters;
-    subscription_fire(sub);
+void subscription_dispatch_eose(Subscription *sub) {
+    if (!sub)
+        return;
+
+    // Change the match behavior and signal the end of stored events
+    if (atomic_exchange(&sub->priv->eosed, true) == false) {
+        sub->priv->match = filters_match_ignoring_timestamp_constraints;
+        
+        // Wait for any "stored" events to finish processing, then signal EOSE
+        go_channel_send(sub->end_of_stored_events, NULL);
+    }
 }
 
-// static void *sub_error(void *arg) {
-// subscription_cancel();
-//}
+void subscription_dispatch_closed(Subscription *sub, const char *reason) {
+    if (!sub || !reason)
+        return;
+
+    // Set the closed flag and dispatch the reason
+    if (atomic_exchange(&sub->priv->closed, true) == false) {
+        go_channel_send(sub->closed_reason, (void *)reason);
+    }
+}
+
+void subscription_unsub(Subscription *sub) {
+    if (!sub)
+        return;
+
+    // Cancel the subscription's context
+    go_context_cancel(sub->priv->context);
+
+    // If the subscription is still live, mark it as inactive and close it
+    if (atomic_exchange(&sub->priv->live, false)) {
+        subscription_close(sub, NULL);
+    }
+
+    // Remove the subscription from the relay's map
+    concurrent_hash_map_remove(sub->relay->subscriptions, sub->id);
+}
+
+void subscription_close(Subscription *sub, Error **err) {
+    if (!sub || !sub->relay) {
+        *err = new_error(1, "subscription or relay is NULL");
+        return;
+    }
+
+    if (relay_is_connected(sub->relay)) {
+        // Create a CloseEnvelope with the subscription ID
+        ClosedEnvelope *close_msg = (ClosedEnvelope *)create_envelope(ENVELOPE_CLOSED);
+        if (!close_msg) {
+            *err = new_error(1, "failed to create close envelope");
+            return;
+        }
+        close_msg->subscription_id = strdup(sub->id);
+        
+        // Serialize the close message and send it to the relay
+        char *close_msg_str = nostr_envelope_serialize((Envelope *)close_msg);
+        if (!close_msg_str) {
+            *err = new_error(1, "failed to serialize close envelope");
+            return;
+        }
+
+        // Send the message through the relay
+        GoChannel *write_channel = relay_write(sub->relay, close_msg_str);
+        free(close_msg_str);
+
+        // Wait for the result of the write
+        Error *write_err = NULL;
+        go_channel_receive(write_channel, &write_err);
+        if (write_err) {
+            *err = write_err;
+        }
+    }
+}
+
+void subscription_sub(Subscription *sub, Filters *filters, Error **err) {
+    if (!sub) {
+        *err = new_error(1, "subscription is NULL");
+        return;
+    }
+
+    // Set the filters for the subscription
+    sub->filters = filters;
+
+    // Fire the subscription (send the "REQ" command to the relay)
+    int result = subscription_fire(sub, err);
+    if (result < 0) {
+        // If subscription_fire fails, handle the error
+        *err = new_error(1, "failed to fire subscription");
+        return;
+    }
+}
 
 int subscription_fire(Subscription *subscription, Error **err) {
     if (!subscription || !subscription->relay->connection) {
@@ -121,6 +219,9 @@ int subscription_fire(Subscription *subscription, Error **err) {
         *err = write_err;
         return -1;
     }
+
+    // Mark the subscription as live
+    subscription->priv->live = true;
 
     return 0;
 }

@@ -13,4 +13,14 @@ typedef struct {
     int num_counters;                                // Number of counters
 } LongAdder;
 
+LongAdder *long_adder_create();
+
+void long_adder_increment(LongAdder *adder);
+
+long long long_adder_sum(LongAdder *adder);
+
+void long_adder_reset(LongAdder *adder);
+
+void long_adder_destroy(LongAdder *adder);
+
 #endif // GO_COUNTER_H
