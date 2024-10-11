@@ -2,8 +2,9 @@
 #include "envelope.h"
 #include "kinds.h"
 #include "relay-private.h"
-#include "subscription.h"
 #include "subscription-private.h"
+#include "subscription.h"
+#include "utils.h"
 #include <unistd.h>
 
 Relay *new_relay(GoContext *context, const char *url, Error **err) {
@@ -154,7 +155,7 @@ void *message_loop(void *arg) {
             if (!subscription) {
                 continue;
             } else {
-                if (!subscription_match(env->event)) {
+                if (!subscription->priv->match(env->event)) {
                     continue;
                 }
                 if (!r->assume_valid) {
@@ -168,10 +169,11 @@ void *message_loop(void *arg) {
         }
         case ENVELOPE_EOSE: {
             EOSEEnvelope *env = (EOSEEnvelope *)envelope;
-            Subscription *subscription = concurrent_hash_map_get(r->subscriptions, env->subscription_id);
+            /*
+            Subscription *subscription = concurrent_hash_map_get(r->subscriptions, sub_id_to_serial(env->message));
             if (subscription) {
                 subscription_dispatch_eose(subscription);
-            }
+            }*/
             break;
         }
         case ENVELOPE_CLOSED: {
@@ -186,7 +188,7 @@ void *message_loop(void *arg) {
             CountEnvelope *env = (CountEnvelope *)envelope;
             Subscription *subscription = concurrent_hash_map_get(r->subscriptions, env->subscription_id);
             if (subscription) {
-                go_channel_send(subscription->priv->count_result, env->count);
+                go_channel_send(subscription->priv->count_result, &env->count);
             }
             break;
         }
@@ -199,6 +201,7 @@ void *message_loop(void *arg) {
             break;
         default:
             break;
+        }
         }
     }
     return NULL;

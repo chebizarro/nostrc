@@ -236,3 +236,24 @@ bool are_pointer_values_equal(const void *a, const void *b, size_t size) {
     }
     return false;
 }
+
+int64_t sub_id_to_serial(const char *sub_id) {
+    if (!sub_id) return -1;
+
+    // Find the index of the colon character
+    char *colon_pos = strchr(sub_id, ':');
+    if (!colon_pos) {
+        return -1;  // Colon not found
+    }
+
+    // Convert the part of the string before the colon to an integer
+    char *endptr;
+    int64_t serial_id = strtoll(sub_id, &endptr, 10);
+
+    // Check if conversion was successful and if the next character is the colon
+    if (*endptr != ':' || endptr != colon_pos) {
+        return -1;  // Invalid number or improperly formatted string
+    }
+
+    return serial_id;
+}

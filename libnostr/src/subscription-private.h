@@ -9,10 +9,14 @@
 #include <stdatomic.h>
 
 typedef struct _SubscriptionPrivate {
-    char *label;
-    int counter;
 
+    int counter;
     GoChannel *count_result;
+
+    bool (*match)(NostrEvent*);
+
+    char *label;
+
     GoContext *context;
 
     _Atomic bool live;

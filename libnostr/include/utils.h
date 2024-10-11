@@ -25,4 +25,6 @@ bool are_pointer_values_equal(const void *a, const void *b, size_t size);
 char *normalize_url(const char *u);
 char *normalize_ok_message(const char *reason, const char *prefix);
 
+int64_t sub_id_to_serial(const char *sub_id);
+
 #endif // UTILS_H
