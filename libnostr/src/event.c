@@ -1,4 +1,5 @@
 #include "event.h"
+#include "utils.h"
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 #include <secp256k1.h>
@@ -8,65 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern int hex2bin(unsigned char *bin, const char *hex, size_t bin_len);
-
-// Escape special characters in the string according to RFC8259
-char *escape_string(const char *str) {
-    size_t len = strlen(str);
-    size_t capacity = len * 2;            // Start with enough space
-    char *escaped = malloc(capacity + 1); // Allocate buffer
-    if (!escaped)
-        return NULL;
-
-    size_t j = 0;
-    for (size_t i = 0; i < len; i++) {
-        if (j + 6 > capacity) { // Make sure we have enough space
-            capacity *= 2;
-            escaped = realloc(escaped, capacity + 1);
-            if (!escaped)
-                return NULL;
-        }
-
-        switch (str[i]) {
-        case '\"':
-            escaped[j++] = '\\';
-            escaped[j++] = '\"';
-            break;
-        case '\\':
-            escaped[j++] = '\\';
-            escaped[j++] = '\\';
-            break;
-        case '\b':
-            escaped[j++] = '\\';
-            escaped[j++] = 'b';
-            break;
-        case '\f':
-            escaped[j++] = '\\';
-            escaped[j++] = 'f';
-            break;
-        case '\n':
-            escaped[j++] = '\\';
-            escaped[j++] = 'n';
-            break;
-        case '\r':
-            escaped[j++] = '\\';
-            escaped[j++] = 'r';
-            break;
-        case '\t':
-            escaped[j++] = '\\';
-            escaped[j++] = 't';
-            break;
-        default:
-            escaped[j++] = str[i]; // No escape needed
-            break;
-        }
-    }
-
-    escaped[j] = '\0'; // Null-terminate the string
-    return escaped;
-}
-
-// Event-related functions
 NostrEvent *create_event() {
     NostrEvent *event = (NostrEvent *)malloc(sizeof(NostrEvent));
     if (!event)
@@ -77,8 +19,6 @@ NostrEvent *create_event() {
     event->created_at = 0;
     event->kind = 0;
     event->tags = create_tags(0);
-    event->tags->data = NULL;
-    event->tags->count = 0;
     event->content = NULL;
     event->sig = NULL;
 
@@ -113,7 +53,12 @@ char *event_serialize(NostrEvent *event) {
         event->pubkey, event->created_at, event->kind);
     if (needed >= capacity) {
         capacity = needed + 1;
-        result = realloc(result, capacity);
+        char *temp = realloc(result, capacity);
+        if (!temp) {
+            free(result);
+            return NULL;
+        }
+        result = temp;
         snprintf(result, capacity, "[0,\"%s\",%ld,%d,", event->pubkey, event->created_at, event->kind);
     }
 
@@ -128,7 +73,12 @@ char *event_serialize(NostrEvent *event) {
     needed = strlen(result) + strlen(tags_json) + 2;
     if (needed > capacity) {
         capacity = needed;
-        result = realloc(result, capacity);
+        char *temp = realloc(result, capacity);
+        if (!temp) {
+            free(result);
+            return NULL;
+        }
+        result = temp;
     }
     strcat(result, tags_json); // Append the serialized tags
     strcat(result, ",");
@@ -147,7 +97,12 @@ char *event_serialize(NostrEvent *event) {
     needed = strlen(result) + strlen(escaped_content) + 2;
     if (needed > capacity) {
         capacity = needed;
-        result = realloc(result, capacity);
+        char *temp = realloc(result, capacity);
+        if (!temp) {
+            free(result);
+            return NULL;
+        }
+        result = temp;
     }
     strcat(result, "\"");
     strcat(result, escaped_content); // Append escaped content
@@ -324,4 +279,20 @@ int event_sign(NostrEvent *event, const char *private_key) {
 cleanup:
     secp256k1_context_destroy(ctx);
     return return_val;
+}
+
+bool event_is_regular(NostrEvent *event) {
+    return event->kind < 1000 && event->kind != 0 && event->kind != 3;
+}
+
+bool event_is_replaceable(NostrEvent *event) {
+    return event->kind == 0 || event->kind == 3 || (10000 <= event->kind && event->kind < 20000);
+}
+
+bool event_is_ephemeral(NostrEvent *event) {
+    return 20000 <= event->kind && event->kind < 30000;
+}
+
+bool event_is_addressable(NostrEvent *event) {
+    return 30000 <= event->kind && event->kind < 40000;
 }

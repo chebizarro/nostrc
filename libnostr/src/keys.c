@@ -7,16 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-// Convert hex string to binary
-int hex2bin(unsigned char *bin, const char *hex, size_t bin_len) {
-    if (strlen(hex) != bin_len * 2)
-        return 0;
-    for (size_t i = 0; i < bin_len; i++) {
-        sscanf(hex + 2 * i, "%2hhx", &bin[i]);
-    }
-    return 1;
-}
+#include "utils.h"
 
 // Generate a private key using libsecp256k1
 char *generate_private_key() {

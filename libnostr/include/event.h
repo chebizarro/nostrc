@@ -23,4 +23,6 @@ char *event_get_id(NostrEvent *event);
 bool event_check_signature(NostrEvent *event);
 int event_sign(NostrEvent *event, const char *private_key);
 
+bool event_is_regular(NostrEvent *event);
+
 #endif // NOSTR_EVENT_H
