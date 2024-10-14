@@ -62,4 +62,11 @@ typedef struct {
 void go_hierarchical_context_init(GoHierarchicalContext *ctx, GoContext *parent, int timeout_seconds);
 int go_hierarchical_context_is_canceled(GoHierarchicalContext *ctx);
 
+typedef void (*CancelFunc)(GoContext *ctx);
+
+typedef struct {
+    GoContext *context;
+    CancelFunc cancel;
+} CancelContextResult;
+
 #endif // CONTEXT_H

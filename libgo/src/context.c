@@ -35,12 +35,14 @@ const char *go_context_err(GoContext *ctx) {
     return err; // Return the error message
 }
 
-void go_context_cancel(GoContext *ctx, const char *err_msg) {
+void go_context_cancel(GoContext *ctx) {
     nsync_mu_lock(&ctx->mutex);
-    ctx->canceled = 1;
-    ctx->err_msg = err_msg;
-    go_channel_send(ctx->done, NULL); // Close the done channel
-    nsync_cv_broadcast(&ctx->cond);   // Signal all waiting threads
+    if (!ctx->canceled) {
+        ctx->canceled = 1;
+        ctx->err_msg = "context canceled";
+        go_channel_send(ctx->done, NULL); // Close the done channel
+        nsync_cv_broadcast(&ctx->cond);   // Signal all waiting threads
+    }
     nsync_mu_unlock(&ctx->mutex);
 }
 
@@ -70,42 +72,21 @@ int go_deadline_context_is_canceled(GoDeadlineContext *ctx) {
     clock_gettime(CLOCK_REALTIME, &now);
     if (now.tv_sec > ctx->deadline.tv_sec ||
         (now.tv_sec == ctx->deadline.tv_sec && now.tv_nsec > ctx->deadline.tv_nsec)) {
-        go_context_cancel((GoContext *)ctx, "context deadline exceeded");
+        go_context_cancel((GoContext *)ctx);
         return 1;
     }
     return 0;
 }
 
-void go_value_context_init(GoValueContext *ctx, int timeout_seconds, char **keys, char **values, int kv_count) {
-    go_context_init((GoContext *)ctx, timeout_seconds); // Initialize base context
-    ctx->keys = keys;
-    ctx->values = values;
-    ctx->kv_count = kv_count;
-}
-
-char *go_value_context_get_value(GoValueContext *ctx, const char *key) {
-    for (int i = 0; i < ctx->kv_count; ++i) {
-        if (strcmp(ctx->keys[i], key) == 0) {
-            return ctx->values[i];
-        }
-    }
-    return NULL;
-}
-
-void go_hierarchical_context_init(GoHierarchicalContext *ctx, GoContext *parent, int timeout_seconds) {
-    go_context_init((GoContext *)ctx, timeout_seconds); // Initialize base context
-    ctx->parent = parent;
-}
-
-int go_hierarchical_context_is_canceled(GoHierarchicalContext *ctx) {
-    return go_context_is_canceled((GoContext *)ctx) ||
-           (ctx->parent && go_context_is_canceled(ctx->parent));
-}
-
-GoContext *go_with_cancel(GoContext *parent) {
+CancelContextResult go_with_cancel(GoContext *parent) {
     GoHierarchicalContext *ctx = malloc(sizeof(GoHierarchicalContext));
     go_hierarchical_context_init(ctx, parent, 0);
-    return (GoContext *)ctx;
+
+    CancelContextResult result;
+    result.context = (GoContext *)ctx;
+    result.cancel = go_context_cancel;
+
+    return result;
 }
 
 GoContext *go_with_deadline(GoContext *parent, struct timespec deadline) {
