@@ -87,14 +87,21 @@ static const struct lws_protocols protocols[] = {
     {"wss", websocket_callback, 0, MAX_PAYLOAD_SIZE},
     LWS_PROTOCOL_LIST_TERM};
 
-static const struct lws_extension extensions[] = {
-    {"permessage-deflate", lws_extension_callback_pm_deflate, "permessage-deflate; client_no_context_takeover; client_max_window_bits"},
-    {NULL, NULL, NULL}};
+static const uint32_t retry_table[] = {1000, 2000, 3000}; // Retry intervals in ms
 
 Connection *new_connection(const char *url) {
     struct lws_context_creation_info context_info;
     struct lws_client_connect_info connect_info;
     struct lws_context *context;
+
+    lws_retry_bo_t retry_bo = {
+        .retry_ms_table = retry_table,
+        .retry_ms_table_count = LWS_ARRAY_SIZE(retry_table),
+        .conceal_count = 3,            // Number of retries before giving up
+        .secs_since_valid_ping = 29,   // Issue a PING after 30 seconds of idle time
+        .secs_since_valid_hangup = 60, // Hang up the connection if no response after 60 seconds
+        .jitter_percent = 5            // Add 5% random jitter to avoid synchronized retries
+    };
 
     Connection *conn = malloc(sizeof(Connection));
     ConnectionPrivate *priv = malloc(sizeof(ConnectionPrivate));
@@ -105,11 +112,11 @@ Connection *new_connection(const char *url) {
 
     // Initialize context creation info
     memset(&connect_info, 0, sizeof(connect_info));
+    context_info.retry_and_idle_policy = &retry_bo;
     context_info.port = CONTEXT_PORT_NO_LISTEN;
     context_info.protocols = protocols;
     context_info.gid = -1;
     context_info.uid = -1;
-    context_info.ws_ping_pong_interval = 29;
 
     context = lws_create_context(&context_info);
     if (!context) {
