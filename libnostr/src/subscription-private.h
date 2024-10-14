@@ -13,9 +13,7 @@ typedef struct _SubscriptionPrivate {
     int counter;
     GoChannel *count_result;
 
-    bool (*match)(NostrEvent*);
-
-    char *label;
+    bool (*match)(Filters*, NostrEvent*);
 
     GoContext *context;
 
@@ -28,8 +26,8 @@ typedef struct _SubscriptionPrivate {
     pthread_t thread;
 } SubscriptionPrivate;
 
-Subscription *create_subscription(Relay *relay, Filters *filters, const char *label);
-void subscription_start(void *arg);
+Subscription *create_subscription(Relay *relay, Filters *filters);
+void *subscription_start(void *arg);
 void subscription_dispatch_event(Subscription *sub, NostrEvent *event);
 void subscription_dispatch_eose(Subscription *sub);
 void subscription_dispatch_closed(Subscription *sub, const char *reason);

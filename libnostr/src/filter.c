@@ -1,6 +1,7 @@
 #include "nostr.h"
 #include <stdlib.h>
 #include <string.h>
+#include "filter.h"
 
 Filter *create_filter() {
     Filter *filter = (Filter *)malloc(sizeof(Filter));
@@ -104,6 +105,19 @@ bool filters_match(Filters *filters, NostrEvent *event) {
 
     for (size_t i = 0; i < filters->count; i++) {
         if (filter_matches(&filters->filters[i], event)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool filters_match_ignoring_timestamp(Filters *filters, NostrEvent *event) {
+    if (!filters || !event)
+        return false;
+
+    for (size_t i = 0; i < filters->count; i++) {
+        if (filter_match_ignoring_timestamp(&filters->filters[i], event)) {
             return true;
         }
     }

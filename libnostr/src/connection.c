@@ -43,17 +43,6 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
 
         go_channel_send(conn->recv_channel, msg); // Send to receive channel
 
-        // Handle control frames (PING, PONG, CLOSE)
-        if (lws_is_final_fragment(wsi) && lws_is_control_frame(wsi)) {
-            if (lws_frame_is_ping(wsi)) {
-                lws_callback_on_writable(wsi); // Send PONG in response
-            } else if (lws_frame_is_pong(wsi)) {
-                printf("Received PONG\n");
-            } else if (lws_frame_is_close(wsi)) {
-                connection_close(conn);
-            }
-        }
-
         break;
     }
     case LWS_CALLBACK_CLIENT_WRITEABLE: {
@@ -120,6 +109,7 @@ Connection *new_connection(const char *url) {
     context_info.protocols = protocols;
     context_info.gid = -1;
     context_info.uid = -1;
+    context_info.ws_ping_pong_interval = 29;
 
     context = lws_create_context(&context_info);
     if (!context) {
@@ -179,7 +169,7 @@ void connection_close(Connection *conn) {
     free(conn);
 }
 
-void connection_write_message(Connection *conn, GoContext* ctx, char* message, Error **err) {
+void connection_write_message(Connection *conn, GoContext *ctx, char *message, Error **err) {
     if (!conn || !message) {
         if (err) {
             *err = new_error(1, "Invalid connection or message");
@@ -216,7 +206,7 @@ void connection_write_message(Connection *conn, GoContext* ctx, char* message, E
     lws_callback_on_writable(conn->priv->wsi);
 }
 
-void connection_read_message(Connection *conn, GoContext* ctx, char* buffer, Error **err) {
+void connection_read_message(Connection *conn, GoContext *ctx, char *buffer, Error **err) {
     if (!conn || !buffer) {
         if (err) {
             *err = new_error(1, "Invalid connection or buffer");

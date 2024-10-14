@@ -6,7 +6,7 @@
 
 typedef struct _SubscriptionPrivate SubscriptionPrivate;
 
-typedef struct Subscription {
+typedef struct _Subscription {
     SubscriptionPrivate *priv;
     char *id;
     Relay *relay;
@@ -15,12 +15,12 @@ typedef struct Subscription {
     GoChannel *closed_reason;
 } Subscription;
 
-Subscription *create_subscription(Relay *relay, Filters *filters, const char *label);
+Subscription *create_subscription(Relay *relay, Filters *filters);
 void free_subscription(Subscription *sub);
 char *subscription_get_id(Subscription *sub);
 void subscription_unsub(Subscription *sub);
-void subscription_close(Subscription *sub);
-void subscription_sub(Subscription *sub, Filters *filters);
-void subscription_fire(Subscription *sub);
+void subscription_close(Subscription *sub, Error **err);
+bool subscription_sub(Subscription *sub, Filters *filters, Error **err);
+bool subscription_fire(Subscription *sub, Error **err);
 
 #endif // NOSTR_SUBSCRIPTION_H

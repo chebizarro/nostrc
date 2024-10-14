@@ -31,5 +31,6 @@ void free_filters(Filters *filters);
 bool filter_matches(Filter *filter, NostrEvent *event);
 bool filter_match_ignoring_timestamp(Filter *filter, NostrEvent *event);
 bool filters_match(Filters *filters, NostrEvent *event);
+bool filters_match_ignoring_timestamp(Filters *filters, NostrEvent *event);
 
 #endif // FILTER_H

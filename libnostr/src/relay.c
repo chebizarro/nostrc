@@ -1,5 +1,7 @@
 #include "relay.h"
 #include "envelope.h"
+#include "error_codes.h"
+#include "json.h"
 #include "kinds.h"
 #include "relay-private.h"
 #include "subscription-private.h"
@@ -51,7 +53,7 @@ void free_relay(Relay *relay) {
 }
 
 bool relay_is_connected(Relay *relay) {
-    return go_context_is_active(relay->priv->connection_context);
+    return !go_context_is_canceled(relay->priv->connection_context);
 }
 
 bool sub_foreach_unsub(const char *key, void *sub) {
@@ -88,7 +90,7 @@ void *write_operations(void *arg) {
         int result = go_select(cases, 3);
         switch (result) {
         case 0:
-            connection_ping(r->connection);
+            // connection_ping(r->connection);
             break;
         case 1: {
             Error **err = NULL;
@@ -119,7 +121,9 @@ void *message_loop(void *arg) {
         connection_read_message(r->connection, r->priv->connection_context, *buf, err);
         if (err) {
             r->connection_error = err;
-            relay_close(r, err);
+            Error **cerr;
+            relay_close(r, cerr);
+
             break;
         }
         const char *message = *buf;
@@ -189,16 +193,16 @@ void *message_loop(void *arg) {
     return NULL;
 }
 
-int relay_connect(Relay *relay, Error **err) {
+bool relay_connect(Relay *relay, Error **err) {
     if (!relay) {
         *err = new_error(1, "relay must be initialized with a call to new_relay()");
-        return -1;
+        return false;
     }
 
     Connection *conn = new_connection(relay->url);
     if (!conn) {
         *err = new_error(1, "error opening websocket to '%s'\n", relay->url);
-        return -1;
+        return false;
     }
     relay->connection = conn;
 
@@ -209,7 +213,7 @@ int relay_connect(Relay *relay, Error **err) {
     go(write_operations, cleanup[0]);
     go(message_loop, relay);
 
-    return 0;
+    return true;
 }
 
 void *write_error(void *arg) {
@@ -220,13 +224,12 @@ void *write_error(void *arg) {
 GoChannel *relay_write(Relay *r, char *msg) {
     GoChannel *chan = go_channel_create(1);
 
-    write_request msg = {
+    write_request req = {
         .msg = msg,
-        .answer = chan
-    };
+        .answer = chan};
 
     GoSelectCase cases[] = {
-        {GO_SELECT_SEND, r->priv->write_queue, &msg},
+        {GO_SELECT_SEND, r->priv->write_queue, &req},
         {GO_SELECT_RECEIVE, r->priv->connection_context->done, NULL}};
 
     while (true) {
@@ -244,9 +247,10 @@ GoChannel *relay_write(Relay *r, char *msg) {
 
 void relay_publish(Relay *relay, NostrEvent *event) {
     char *event_json = nostr_event_serialize(event);
-    if (!event_json) return;
+    if (!event_json)
+        return;
 
-    GoChannel* chan = relay_write(relay, event_json);
+    GoChannel *chan = relay_write(relay, event_json);
     free(event_json);
 }
 
@@ -271,79 +275,71 @@ void relay_auth(Relay *relay, void (*sign)(NostrEvent *, Error **), Error **err)
     free_tags(auth_event.tags);
 }
 
-int relay_subscribe(Relay *relay, Filters *filters, Error **err) {
+bool relay_subscribe(Relay *relay, GoContext *ctx, Filters *filters, Error **err) {
     // Ensure the relay connection exists
     if (relay->connection == NULL) {
         *err = new_error(1, "not connected to %s", relay->url);
-        return -1;
+        return false;
     }
 
     // Prepare the subscription
-    Subscription *subscription = relay_prepare_subscription(relay, filters);
+    Subscription *subscription = relay_prepare_subscription(relay, ctx, filters);
     if (!subscription) {
         *err = new_error(1, "failed to prepare subscription");
-        return -1;
+        return false;
     }
 
     // Send the subscription request (Fire the subscription)
-    int result = -1;
-    subscription_fire(subscription);
-    if (result != 0) {
-        *err = new_error(1, "couldn't subscribe to filters at %s", relay->url);
-        return -1;
+    if (!subscription_fire(subscription, err)) {
+        return false;
     }
 
     // Successfully subscribed
-    return 0;
+    return true;
 }
 
-int relay_prepare_subscription(Relay *relay, Filters *filters) {
-    if (!relay || !filters) {
-        return -1;
+Subscription* relay_prepare_subscription(Relay *relay, GoContext *ctx, Filters *filters) {
+    if (!relay || !filters || !ctx) {
+        return NULL;
     }
+
+    
 
     // Generate a unique subscription ID
     static int64_t subscription_counter = 1;
     int64_t subscription_id = subscription_counter++;
-    
-    Subscription *subscription = (Subscription *)malloc(sizeof(Subscription));
-    if (!subscription) {
-        return -1;
-    }
 
+    Subscription *subscription = create_subscription(relay, filters);
     // Initialize the subscription fields
     subscription->priv->counter = subscription_id;
-    subscription->filters = filters;
-    subscription->events = go_channel_create(1);  // Channel for receiving events
-    //subscription->eose = go_channel_create(1);  // Channel for end of stored events
-    subscription->closed_reason = go_channel_create(1);  // Channel for closed subscription reasons
-    subscription->priv->match = filters_match;  // Function for matching filters with events
+    subscription->priv->match = filters_match;          // Function for matching filters with events
 
     // Store subscription in relay subscriptions map
-    concurrent_hash_map_set(relay->subscriptions, subscription_id, subscription);
+    concurrent_hash_map_insert(relay->subscriptions, subscription_id, subscription);
 
-    return subscription_id;
+    return subscription;
 }
 
-GoChannel *relay_query_events(Relay *relay, Filter *filter, Error **err) {
+GoChannel *relay_query_events(Relay *relay, GoContext* ctx, Filter *filter, Error **err) {
     if (!relay->connection) {
         *err = new_error(1, "not connected to relay");
         return NULL;
     }
 
+    Filters filters = {
+        .filters = filter,
+    };
+
     // Prepare the subscription
-    int subscription_id = relay_prepare_subscription(relay, filter);
-    if (subscription_id < 0) {
-        *err = new_error(1, "failed to prepare subscription");
+    Subscription* subscription = relay_prepare_subscription(relay, ctx, &filters);
+    if (!subscription) {
+        *err = new_error(ERR_RELAY_SUBSCRIBE_FAILED, "failed to prepare subscription");
         return NULL;
     }
 
-    Subscription *subscription = concurrent_hash_map_get(relay->subscriptions, subscription_id);
-
     // Fire the subscription (send REQ)
-    int result = subscription_fire(subscription);
-    if (result != 0) {
-        *err = new_error(1, "couldn't subscribe to filter at relay");
+    if (!subscription_fire(subscription, err)) {
+        *err = new_error(ERR_RELAY_SUBSCRIBE_FAILED, "couldn't subscribe to filter at relay");
         return NULL;
     }
 
@@ -351,32 +347,34 @@ GoChannel *relay_query_events(Relay *relay, Filter *filter, Error **err) {
     return subscription->events;
 }
 
-NostrEvent **relay_query_sync(Relay *relay, Filter *filter, int *event_count, Error **err) {
+NostrEvent **relay_query_sync(Relay *relay, GoContext *ctx, Filter *filter, int *event_count, Error **err) {
     if (!relay->connection) {
         *err = new_error(1, "not connected to relay");
         return NULL;
     }
 
     // Create an array to store the events
-    size_t max_events = (filter->limit > 0) ? filter->limit : 250;  // Default to 250 if no limit is specified
+    size_t max_events = (filter->limit > 0) ? filter->limit : 250; // Default to 250 if no limit is specified
     NostrEvent **events = (NostrEvent **)malloc(max_events * sizeof(NostrEvent *));
     if (!events) {
         *err = new_error(1, "failed to allocate memory for events");
         return NULL;
     }
 
+    Filters filters = {
+        .filters = filter
+    };
+
     // Prepare the subscription
-    int subscription_id = relay_prepare_subscription(relay, filter);
-    if (subscription_id < 0) {
+    Subscription *subscription = relay_prepare_subscription(relay, ctx, &filters);
+    if (!subscription) {
         *err = new_error(1, "failed to prepare subscription");
         free(events);
         return NULL;
     }
 
-    Subscription *subscription = concurrent_hash_map_get(relay->subscriptions, subscription_id);
-
     // Fire the subscription (send REQ)
-    if (subscription_fire(subscription, err) != 0) {
+    if (!subscription_fire(subscription, err)) {
         free(events);
         return NULL;
     }
@@ -386,59 +384,60 @@ NostrEvent **relay_query_sync(Relay *relay, Filter *filter, int *event_count, Er
     GoSelectCase cases[] = {
         {GO_SELECT_RECEIVE, subscription->events, NULL},
         {GO_SELECT_RECEIVE, subscription->EndOfStoredEvents, NULL},
-        {GO_SELECT_RECEIVE, relay->priv->connection_context->done, NULL}
-    };
+        {GO_SELECT_RECEIVE, relay->priv->connection_context->done, NULL}};
 
     while (true) {
         // Select which event happens (receiving an event or end of stored events)
         int result = go_select(cases, 3);
         switch (result) {
-            case 0: {  // New event received
-                if (received_count >= max_events) {
-                    max_events *= 2;  // Expand the events array if needed
-                    events = (NostrEvent **)realloc(events, max_events * sizeof(NostrEvent *));
-                    if (!events) {
-                        *err = new_error(1, "failed to expand event array");
-                        return NULL;
-                    }
+        case 0: { // New event received
+            if (received_count >= max_events) {
+                max_events *= 2; // Expand the events array if needed
+                events = (NostrEvent **)realloc(events, max_events * sizeof(NostrEvent *));
+                if (!events) {
+                    *err = new_error(1, "failed to expand event array");
+                    return NULL;
                 }
+            }
 
-                NostrEvent *event;
-                go_channel_receive(subscription->Events, &event);
-                events[received_count++] = event;  // Store the event
-                break;
-            }
-            case 1: {  // End of stored events (EOSE)
-                subscription_unsub(subscription);  // Unsubscribe from the relay
-                *event_count = received_count;  // Set the event count for the caller
-                return events;  // Return the array of events
-            }
-            case 2: {  // Connection context is canceled (relay is closing)
-                *err = new_error(1, "relay connection closed while querying events");
-                free(events);
-                return NULL;
-            }
-            default:
-                break;
+            NostrEvent *event;
+            go_channel_receive(subscription->events, &event);
+            events[received_count++] = event; // Store the event
+            break;
+        }
+        case 1: {                             // End of stored events (EOSE)
+            subscription_unsub(subscription); // Unsubscribe from the relay
+            *event_count = received_count;    // Set the event count for the caller
+            return events;                    // Return the array of events
+        }
+        case 2: { // Connection context is canceled (relay is closing)
+            *err = new_error(1, "relay connection closed while querying events");
+            free(events);
+            return NULL;
+        }
+        default:
+            break;
         }
     }
 }
 
-int relay_count(Relay *relay, Filter *filter, Error **err) {
+int64_t relay_count(Relay *relay, GoContext* ctx, Filter *filter, Error **err) {
     if (!relay->connection) {
         *err = new_error(1, "not connected to relay");
-        return -1;
+        return 0;
     }
+
+    Filters filters = {
+        .filters = filter
+    };
 
     // Prepare the subscription (but don't fire it yet)
-    int subscription_id = relay_prepare_subscription(relay, filter);
-    if (subscription_id < 0) {
+    Subscription *subscription = relay_prepare_subscription(relay, ctx, &filters);
+    if (!subscription) {
         *err = new_error(1, "failed to prepare subscription");
-        return -1;
+        return 0;
     }
 
-    // Create a channel for receiving the count result
-    Subscription *subscription = concurrent_hash_map_get(relay->subscriptions, subscription_id);
     subscription->priv->count_result = go_channel_create(1);
 
     // Fire the subscription (send REQ)
@@ -449,22 +448,22 @@ int relay_count(Relay *relay, Filter *filter, Error **err) {
     }
 
     // Wait for count result
-    int64_t count;
+    int64_t *count;
     go_channel_receive(subscription->priv->count_result, &count);
 
     // Return the count result
-    return count;
+    return *count;
 }
 
-int relay_close(Relay *r, Error **err) {
+bool relay_close(Relay *r, Error **err) {
 
     if (!r->connection) {
-        *err = new_error(0, "relay not connected");
-        return -1;
+        *err = new_error(ERR_RELAY_CLOSE_FAILED, "relay not connected");
+        return false;
     }
 
     connection_close(r->connection);
     r->connection = NULL;
     go_context_cancel(r->priv->connection_context);
-    return 0;
+    return true;
 }

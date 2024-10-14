@@ -4,10 +4,12 @@
 #include "relay.h"
 #include "subscription-private.h"
 #include <openssl/ssl.h>
+#include <unistd.h>
 
-Subscription *create_subscription(Relay *relay, Filters *filters, const char *label) {
+Subscription *create_subscription(Relay *relay, Filters *filters) {
     Subscription *sub = (Subscription *)malloc(sizeof(Subscription));
-    if (!sub) return NULL;
+    if (!sub)
+        return NULL;
 
     sub->relay = relay;
     sub->filters = filters;
@@ -17,7 +19,6 @@ Subscription *create_subscription(Relay *relay, Filters *filters, const char *la
         return NULL;
     }
 
-    sub->priv->label = label ? strdup(label) : NULL;
     sub->priv->count_result = NULL;
     sub->events = go_channel_create(1);
     sub->closed_reason = go_channel_create(1);
@@ -30,9 +31,9 @@ Subscription *create_subscription(Relay *relay, Filters *filters, const char *la
 }
 
 void free_subscription(Subscription *sub) {
-    if (!sub) return;
+    if (!sub)
+        return;
 
-    free(sub->priv->label);
     go_channel_free(sub->events);
     go_channel_free(sub->closed_reason);
     pthread_mutex_destroy(&sub->priv->sub_mutex);
@@ -57,7 +58,7 @@ void *subscription_start(void *arg) {
 
     // Wait for the subscription context to be canceled
     while (!go_context_is_canceled(sub->priv->context)) {
-        sleep(1);  // Small sleep to avoid busy waiting
+        sleep(1); // Small sleep to avoid busy waiting
     }
 
     // Once the context is canceled, unsubscribe the subscription
@@ -104,8 +105,8 @@ void subscription_dispatch_eose(Subscription *sub) {
 
     // Change the match behavior and signal the end of stored events
     if (atomic_exchange(&sub->priv->eosed, true) == false) {
-        sub->priv->match = filters_match_ignoring_timestamp_constraints;
-        
+        sub->priv->match = filters_match_ignoring_timestamp;
+
         // Wait for any "stored" events to finish processing, then signal EOSE
         go_channel_send(sub->end_of_stored_events, NULL);
     }
@@ -151,7 +152,7 @@ void subscription_close(Subscription *sub, Error **err) {
             return;
         }
         close_msg->subscription_id = strdup(sub->id);
-        
+
         // Serialize the close message and send it to the relay
         char *close_msg_str = nostr_envelope_serialize((Envelope *)close_msg);
         if (!close_msg_str) {
@@ -172,10 +173,10 @@ void subscription_close(Subscription *sub, Error **err) {
     }
 }
 
-void subscription_sub(Subscription *sub, Filters *filters, Error **err) {
+bool subscription_sub(Subscription *sub, Filters *filters, Error **err) {
     if (!sub) {
         *err = new_error(1, "subscription is NULL");
-        return;
+        return false;
     }
 
     // Set the filters for the subscription
@@ -186,35 +187,36 @@ void subscription_sub(Subscription *sub, Filters *filters, Error **err) {
     if (result < 0) {
         // If subscription_fire fails, handle the error
         *err = new_error(1, "failed to fire subscription");
-        return;
+        return false;
     }
+    return true;
 }
 
-int subscription_fire(Subscription *subscription, Error **err) {
+bool subscription_fire(Subscription *subscription, Error **err) {
     if (!subscription || !subscription->relay->connection) {
         *err = new_error(1, "subscription or connection is NULL");
-        return -1;
+        return false;
     }
 
     // Serialize filters into JSON
     char *filters_json = filters_serialize(subscription->filters);
     if (!filters_json) {
         *err = new_error(1, "failed to serialize filters");
-        return -1;
+        return false;
     }
 
     // Construct the subscription message
-    char *sub_id_str = malloc(32);  // Allocate memory for the subscription ID string
+    char *sub_id_str = malloc(32); // Allocate memory for the subscription ID string
     snprintf(sub_id_str, 32, "\"REQ\",\"%s\",%s", subscription->id, filters_json);
 
     // Send the subscription request via the relay
-    GoChannel* write_channel = relay_write(subscription->relay, sub_id_str);
+    GoChannel *write_channel = relay_write(subscription->relay, sub_id_str);
     free(filters_json);
     free(sub_id_str);
 
     // Wait for a response
     Error *write_err = NULL;
-    go_channel_receive(write_channel, &write_err);
+    go_channel_receive(write_channel, (void *)&write_err);
     if (write_err) {
         *err = write_err;
         return -1;
