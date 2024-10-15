@@ -14,6 +14,7 @@ set(LIBGO_SOURCES
 	src/string_array.c
 	src/int_array.c
     src/ticker.c
+    src/error.c
 )
 
 # Create the library

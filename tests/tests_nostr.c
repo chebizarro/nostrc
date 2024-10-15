@@ -34,26 +34,29 @@ int main() {
     bool matches = filter_matches(filter, event);
     assert(matches);
 
-    Relay *relay = new_relay("relay.sharegap.net");
+    GoContext *ctx = go_context_background();
+    Error **err;
+    Relay *relay = new_relay(ctx, "relay.sharegap.net", err);
     assert(relay != NULL);
 
-    int conn_res = relay_connect(relay);
+    int conn_res = relay_connect(relay, err);
     assert(conn_res == 0);
     assert(relay_is_connected(relay));
 
     relay_publish(relay, event);
 
-    Subscription *sub = create_subscription(relay, create_filters(1), "sub1");
-    subscription_fire(sub);
+    Subscription *sub = create_subscription(relay, create_filters(1));
+    subscription_fire(sub, err);
     subscription_unsub(sub);
 
-    relay_disconnect(relay);
+    //relay_disconnect(relay);
     assert(!relay_is_connected(relay));
 
     free(id);
     free_event(event);
     free_filter(filter);
     free_relay(relay);
+    go_context_free(ctx);
     free_subscription(sub);
 
     free(privateKey);

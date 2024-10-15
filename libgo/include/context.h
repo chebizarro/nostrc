@@ -26,6 +26,8 @@ typedef struct GoContext {
     struct timespec timeout;
 } GoContext;
 
+GoContext *go_context_background();
+
 // GoContext functions
 void go_context_init(GoContext *ctx, int timeout_seconds);
 int go_context_is_canceled(GoContext *ctx);

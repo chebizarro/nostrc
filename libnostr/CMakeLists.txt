@@ -5,9 +5,9 @@ include_directories(include)
 
 # Find the libwebsockets package
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(LWS REQUIRED libwebsockets)
+# pkg_check_modules(LWS REQUIRED libwebsockets)
 # Include directories from libwebsockets
-include_directories(${LWS_INCLUDE_DIRS})
+# include_directories(${LWS_INCLUDE_DIRS})
 
 set(LIBNOSTR_SOURCES
     src/timestamp.c
@@ -25,6 +25,8 @@ set(LIBNOSTR_SOURCES
 	src/simplepool.c
     src/utils.c
 )
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Create the library
 add_library(libnostr ${LIBNOSTR_SOURCES})

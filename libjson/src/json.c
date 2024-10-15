@@ -1,25 +1,24 @@
+#include "go.h"
+#include "nostr_jansson.h"
+#include <jansson.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <jansson.h>
-#include "nostr_jansson.h"
-#include "go.h"
 
-char * jansson_event_serialize(const NostrEvent * event);
-int jansson_event_deserialize(NostrEvent * event, const char* json_str);
-int _deserialize_event(NostrEvent * event, json_t * json_obj);
-char * jansson_envelope_serialize(const Envelope * envelope);
-int jansson_envelope_deserialize(Envelope * envelope, const char * json_str);
+char *jansson_event_serialize(const NostrEvent *event);
+int jansson_event_deserialize(NostrEvent *event, const char *json_str);
+int _deserialize_event(NostrEvent *event, json_t *json_obj);
+char *jansson_envelope_serialize(const Envelope *envelope);
+int jansson_envelope_deserialize(Envelope *envelope, const char *json_str);
 
-int jansson_filter_deserialize(Filter * filter, json_t * json_obj);
-json_t * jansson_filter_serialize(const Filter * filter);
-json_t * jansson_tag_serialize(const Tag * tag);
+int jansson_filter_deserialize(Filter *filter, json_t *json_obj);
+json_t *jansson_filter_serialize(const Filter *filter);
+json_t *jansson_tag_serialize(const Tag *tag);
 json_t *jansson_tags_serialize(const Tags *tags);
-int jansson_tag_deserialize(Tag* tag, json_t * json);
-Tags * jansson_tags_deserialize(json_t * json_array);
+int jansson_tag_deserialize(Tag *tag, json_t *json);
+Tags *jansson_tags_deserialize(json_t *json_array);
 json_t *string_array_serialize(const StringArray *array);
 json_t *int_array_serialize(const IntArray *array);
-int tags_deserialize(Tags *tags, json_t *json_obj);
 int string_array_deserialize(StringArray *array, json_t *json_array);
 int int_array_deserialize(IntArray *array, json_t *json_array);
 
@@ -35,13 +34,14 @@ void jansson_cleanup(void) {
 
 // Serialize NostrEvent to a JSON string
 char *jansson_event_serialize(const NostrEvent *event) {
-    if (!event) return NULL;
+    if (!event)
+        return NULL;
 
     // Create a new JSON object
     json_t *json_obj = json_object();
-	char kind_str[12];
-	snprintf(kind_str, sizeof(kind_str), "%d", event->kind);  // if 'kind' is int
-	json_object_set_new(json_obj, "kind", json_string(kind_str));
+    char kind_str[12];
+    snprintf(kind_str, sizeof(kind_str), "%d", event->kind); // if 'kind' is int
+    json_object_set_new(json_obj, "kind", json_string(kind_str));
     json_object_set_new(json_obj, "id", json_string(event->id));
     json_object_set_new(json_obj, "pubkey", json_string(event->pubkey));
     json_object_set_new(json_obj, "created_at", json_integer(event->created_at));
@@ -56,7 +56,7 @@ char *jansson_event_serialize(const NostrEvent *event) {
     return json_str;
 }
 
-int jansson_event_deserialize(NostrEvent * event, const char * json_str) {
+int jansson_event_deserialize(NostrEvent *event, const char *json_str) {
     // Parse the JSON string
     json_error_t error;
     json_t *json_obj = json_loads(json_str, 0, &error);
@@ -64,10 +64,10 @@ int jansson_event_deserialize(NostrEvent * event, const char * json_str) {
         fprintf(stderr, "Error parsing JSON: %s\n", error.text);
         return -1;
     }
-	int err = _deserialize_event(event, json_obj);
+    int err = _deserialize_event(event, json_obj);
     // Free the JSON object
     json_decref(json_obj);
-	return err;
+    return err;
 }
 
 int _deserialize_event(NostrEvent *event, json_t *json_obj) {
@@ -87,17 +87,18 @@ int _deserialize_event(NostrEvent *event, json_t *json_obj) {
     return 1;
 }
 
-char * jansson_envelope_serialize(const Envelope* envelope) {
-	return NULL;
+char *jansson_envelope_serialize(const Envelope *envelope) {
+    return NULL;
 }
 
-
 // Deserialize a JSON string to NostrEvent
-int jansson_envelope_deserialize(Envelope* envelope, const char *json_str) {
-    if (!json_str) return -1;
+int jansson_envelope_deserialize(Envelope *envelope, const char *json_str) {
+    if (!json_str)
+        return -1;
 
     char *first_comma = strchr(json_str, ',');
-    if (!first_comma) return -1;
+    if (!first_comma)
+        return -1;
 
     char label[16];
     strncpy(label, json_str, first_comma - json_str);
@@ -123,14 +124,14 @@ int jansson_envelope_deserialize(Envelope* envelope, const char *json_str) {
 
         if (json_array_size(json_obj) == 2) {
             json_t *json_evt = json_array_get(json_obj, 1);
-			env->event = create_event();
+            env->event = create_event();
             int err = _deserialize_event(env->event, json_evt);
         } else if (json_array_size(json_obj) == 3) {
             json_t *json_id = json_array_get(json_obj, 1);
             json_t *json_evt = json_array_get(json_obj, 2);
 
             env->subscription_id = strdup(json_string_value(json_id));
-			env->event = create_event();
+            env->event = create_event();
             int err = _deserialize_event(env->event, json_evt);
         }
         break;
@@ -151,7 +152,7 @@ int jansson_envelope_deserialize(Envelope* envelope, const char *json_str) {
         }
         for (int f = 0, i = 2; i < json_array_size(json_obj); i++, f++) {
             json_t *json_filter = json_array_get(json_obj, i);
-            //jansson_filter_deserialize(&env->filters[i], json_filter);
+            // jansson_filter_deserialize(&env->filters[i], json_filter);
         }
         break;
     }
@@ -178,7 +179,7 @@ int jansson_envelope_deserialize(Envelope* envelope, const char *json_str) {
         }
         for (int f = 0, i = 3; i < json_array_size(json_obj); i++, f++) {
             json_t *json_filter = json_array_get(json_obj, i);
-            //env->filters[f] = jansson_filter_deserialize(json_filter);
+            // env->filters[f] = jansson_filter_deserialize(json_filter);
         }
         break;
     }
@@ -246,7 +247,7 @@ int jansson_envelope_deserialize(Envelope* envelope, const char *json_str) {
 
         if (json_is_object(json_challenge)) {
             env->event = create_event();
-			_deserialize_event(env->event, json_challenge);
+            _deserialize_event(env->event, json_challenge);
         } else {
             env->challenge = strdup(json_string_value(json_challenge));
         }
@@ -257,9 +258,8 @@ int jansson_envelope_deserialize(Envelope* envelope, const char *json_str) {
     }
 
     json_decref(json_obj);
-	return 0;
+    return 0;
 }
-
 
 int jansson_filter_deserialize(Filter *filter, json_t *json_obj) {
     if (!filter || !json_is_object(json_obj)) {
@@ -286,9 +286,10 @@ int jansson_filter_deserialize(Filter *filter, json_t *json_obj) {
 
     // Deserialize the `tags`
     json_t *tags_json = json_object_get(json_obj, "tags");
-    if (tags_json && filter->tags && tags_deserialize(filter->tags, tags_json) != 0) {
+    if (!tags_json) {
         return -1;
     }
+    filter->tags = jansson_tags_deserialize(tags_json);
 
     // Deserialize `since` and `until` as integer timestamps
     json_t *since_json = json_object_get(json_obj, "since");
@@ -310,14 +311,14 @@ int jansson_filter_deserialize(Filter *filter, json_t *json_obj) {
     // Deserialize `search`
     json_t *search_json = json_object_get(json_obj, "search");
     if (json_is_string(search_json)) {
-        filter->search = strdup(json_string_value(search_json));  // Make a copy of the string
+        filter->search = strdup(json_string_value(search_json)); // Make a copy of the string
     }
 
     // Deserialize `limit_zero`
     json_t *limit_zero_json = json_object_get(json_obj, "limit_zero");
     filter->limit_zero = json_is_true(limit_zero_json);
 
-    return 0;  // Success
+    return 0; // Success
 }
 
 json_t *jansson_filter_serialize(const Filter *filter) {
@@ -364,15 +365,16 @@ json_t *jansson_filter_serialize(const Filter *filter) {
     return json_obj;
 }
 
-
 json_t *jansson_tag_serialize(const Tag *tag) {
-    if (!tag) return NULL;
-	return string_array_serialize(tag);
+    if (!tag)
+        return NULL;
+    return string_array_serialize(tag);
 }
 
 // Serialize a collection of Tags into a JSON array of arrays
 json_t *jansson_tags_serialize(const Tags *tags) {
-    if (!tags) return NULL;
+    if (!tags)
+        return NULL;
 
     json_t *json_a = json_array();
     for (size_t i = 0; i < tags->count; i++) {
@@ -384,17 +386,20 @@ json_t *jansson_tags_serialize(const Tags *tags) {
 
 // Deserialize a JSON array into a single Tag
 int jansson_tag_deserialize(Tag *tag, json_t *json_array) {
-    if (!json_is_array(json_array)) return -1;
+    if (!json_is_array(json_array))
+        return -1;
 
     return string_array_deserialize(tag, json_array);
 }
 
 // Deserialize a JSON array of arrays into a Tags collection
 Tags *jansson_tags_deserialize(json_t *json_array) {
-    if (!json_is_array(json_array)) return NULL;
+    if (!json_is_array(json_array))
+        return NULL;
 
     Tags *tags = malloc(sizeof(Tags));
-    if (!tags) return NULL;
+    if (!tags)
+        return NULL;
 
     tags->data = NULL;
     tags->count = 0;
@@ -403,8 +408,8 @@ Tags *jansson_tags_deserialize(json_t *json_array) {
     json_t *value;
     json_array_foreach(json_array, index, value) {
 
-        Tag *tag = new_string_array(0); 
-		jansson_tag_deserialize(tag, value);
+        Tag *tag = new_string_array(0);
+        jansson_tag_deserialize(tag, value);
         if (!tag) {
             free_tags(tags);
             return NULL;
@@ -454,16 +459,52 @@ int string_array_deserialize(StringArray *array, json_t *json_array) {
     return 0; // Success
 }
 
+json_t *int_array_serialize(const IntArray *array) {
+    if (array == NULL) {
+        return NULL;
+    }
+
+    json_t *int_array = json_array();
+    if (!int_array) {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < array->size; i++) {
+        json_array_append_new(int_array, json_integer(array->data[i]));
+    }
+
+    return int_array;
+}
+
+int int_array_deserialize(IntArray *array, json_t *json_array) {
+    if (!json_is_array(json_array)) {
+        return -1; // Return an error code if the input is not a JSON array
+    }
+
+    size_t array_size = json_array_size(json_array);
+    for (size_t i = 0; i < array_size; i++) {
+        json_t *json_value = json_array_get(json_array, i);
+        if (!json_is_integer(json_value)) {
+            return -1; // Return error if an element is not an integer
+        }
+
+        int int_value = (int) json_integer_value(json_value);
+        // Add the integer to IntArray (assumes you have a function to add)
+        int_array_add(array, int_value);
+    }
+
+    return 0; // Success
+}
+
 // Implement the interface
 NostrJsonInterface jansson_struct = {
     .init = jansson_init,
     .cleanup = jansson_cleanup,
     .serialize_event = jansson_event_serialize,
     .deserialize_event = jansson_event_deserialize,
-	.serialize_envelope = jansson_envelope_serialize,
-	.deserialize_envelope = jansson_envelope_deserialize,
-	.serialize_filter = jansson_filter_serialize,
-	.deserialize_filter = jansson_filter_deserialize
-};
+    .serialize_envelope = jansson_envelope_serialize,
+    .deserialize_envelope = jansson_envelope_deserialize,
+    .serialize_filter = jansson_filter_serialize,
+    .deserialize_filter = jansson_filter_deserialize};
 
 NostrJsonInterface *jansson_impl = &jansson_struct;

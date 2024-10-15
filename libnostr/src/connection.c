@@ -75,7 +75,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
     }
     case LWS_CALLBACK_CLIENT_CLOSED:
     case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
-        connection_close(conn);
+        //connection_close(conn);
         break;
     default:
         break;
@@ -94,6 +94,8 @@ Connection *new_connection(const char *url) {
     struct lws_client_connect_info connect_info;
     struct lws_context *context;
 
+    lws_set_log_level(LLL_USER | LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_DEBUG | LLL_HEADER | LLL_LATENCY | LLL_CLIENT | LLL_PARSER | LLL_EXT | LLL_INFO, NULL);
+
     lws_retry_bo_t retry_bo = {
         .retry_ms_table = retry_table,
         .retry_ms_table_count = LWS_ARRAY_SIZE(retry_table),
@@ -111,12 +113,16 @@ Connection *new_connection(const char *url) {
     conn->priv->enable_compression = 0;
 
     // Initialize context creation info
-    memset(&connect_info, 0, sizeof(connect_info));
+    memset(&context_info, 0, sizeof(context_info));
     context_info.retry_and_idle_policy = &retry_bo;
     context_info.port = CONTEXT_PORT_NO_LISTEN;
     context_info.protocols = protocols;
     context_info.gid = -1;
     context_info.uid = -1;
+    context_info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT |
+                           LWS_SERVER_OPTION_VALIDATE_UTF8;
+    context_info.fd_limit_per_thread = 1 + 1 + 1;
+    context_info.pt_serv_buf_size = 32 * 1024;
 
     context = lws_create_context(&context_info);
     if (!context) {

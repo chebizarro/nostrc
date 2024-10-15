@@ -7,6 +7,16 @@ extern GoChannel *go_channel_create(size_t capacity);
 extern int go_channel_send(GoChannel *chan, void *data);
 extern void go_channel_free(GoChannel *chan);
 
+GoContext *go_context_background() {
+    GoContext *ctx = (GoContext *)malloc(sizeof(GoContext));
+    nsync_mu_init(&ctx->mutex);
+    nsync_cv_init(&ctx->cond);
+    ctx->done = go_channel_create(1); // Initialize done channel
+    ctx->canceled = 0;
+    ctx->err_msg = NULL;
+    return ctx;
+}
+
 void go_context_init(GoContext *ctx, int timeout_seconds) {
     nsync_mu_init(&ctx->mutex);
     nsync_cv_init(&ctx->cond);
@@ -99,4 +109,30 @@ GoContext *go_with_value(GoContext *parent, char **keys, char **values, int kv_c
     GoValueContext *ctx = malloc(sizeof(GoValueContext));
     go_value_context_init(ctx, 0, keys, values, kv_count);
     return (GoContext *)ctx;
+}
+
+void go_hierarchical_context_init(GoHierarchicalContext *ctx, GoContext *parent, int timeout_seconds) {
+    go_context_init((GoContext *)ctx, timeout_seconds);
+    ctx->parent = parent;
+}
+
+int go_hierarchical_context_is_canceled(GoHierarchicalContext *ctx) {
+    return go_context_is_canceled((GoContext *)ctx) ||
+           (ctx->parent && go_context_is_canceled(ctx->parent));
+}
+
+void go_value_context_init(GoValueContext *ctx, int timeout_seconds, char **keys, char **values, int kv_count) {
+    go_context_init((GoContext *)ctx, timeout_seconds);
+    ctx->keys = keys;
+    ctx->values = values;
+    ctx->kv_count = kv_count;
+}
+
+char *go_value_context_get_value(GoValueContext *ctx, const char *key) {
+    for (int i = 0; i < ctx->kv_count; ++i) {
+        if (strcmp(ctx->keys[i], key) == 0) {
+            return ctx->values[i];
+        }
+    }
+    return NULL;
 }

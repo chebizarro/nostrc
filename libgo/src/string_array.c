@@ -15,6 +15,7 @@ void string_array_init(StringArray *array) {
 
     array->data = malloc(array->capacity * sizeof(char *));
     array->size = 0;
+    array->capacity = STRING_ARRAY_INITIAL_CAPACITY;
 }
 
 void string_array_init_with(StringArray *arr, ...) {

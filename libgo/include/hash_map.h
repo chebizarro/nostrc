@@ -7,11 +7,8 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
-typedef struct HashNode {
-    char *key;
-    void *value;
-    struct HashNode *next;
-} HashNode;
+typedef struct HashNode HashNode;
+typedef struct HashKey HashKey;
 
 typedef struct {
     HashNode **buckets;
@@ -21,13 +18,21 @@ typedef struct {
 
 ConcurrentHashMap *concurrent_hash_map_create(size_t num_buckets);
 
-void concurrent_hash_map_insert(ConcurrentHashMap *map, const char *key, void *value);
+void concurrent_hash_map_insert_string(ConcurrentHashMap *map, const char *key_str, void *value);
 
-void *concurrent_hash_map_get(ConcurrentHashMap *map, const char *key);
+void concurrent_hash_map_insert_int(ConcurrentHashMap *map, int64_t key_int, void *value);
 
-void concurrent_hash_map_for_each(ConcurrentHashMap *map, bool (*foreach)(const char *, void *));
+void concurrent_hash_map_insert(ConcurrentHashMap *map, HashKey *key, void *value);
 
-void concurrent_hash_map_remove(ConcurrentHashMap *map, const char *key);
+void *concurrent_hash_map_get_string(ConcurrentHashMap *map, const char *key_str);
+
+void *concurrent_hash_map_get_int(ConcurrentHashMap *map, int64_t key_int);
+
+void *concurrent_hash_map_get(ConcurrentHashMap *map, HashKey *key);
+
+void concurrent_hash_map_for_each(ConcurrentHashMap *map, bool (*foreach)(HashKey *, void *));
+
+void concurrent_hash_map_remove(ConcurrentHashMap *map, HashKey *key);
 
 void concurrent_hash_map_destroy(ConcurrentHashMap *map);
 
