@@ -4,6 +4,7 @@
 #include <time.h>
 #include <nsync.h>
 #include <time.h>
+#include <stdbool.h>
 
 typedef struct GoChannel GoChannel;
 
@@ -30,7 +31,7 @@ GoContext *go_context_background();
 
 // GoContext functions
 void go_context_init(GoContext *ctx, int timeout_seconds);
-int go_context_is_canceled(GoContext *ctx);
+bool go_context_is_canceled(GoContext *ctx);
 void go_context_wait(GoContext *ctx);
 void go_context_free(GoContext *ctx);
 GoChannel *go_context_done(GoContext *ctx); // Done function

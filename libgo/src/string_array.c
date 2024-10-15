@@ -7,15 +7,16 @@ StringArray *new_string_array(int capacity) {
     } else {
         array->capacity = (size_t)capacity;
     }
+    array->data = malloc(array->capacity * sizeof(char *));
+    array->size = 0;    
     return array;
 }
 
 // Initialize the StringArray with an initial capacity
 void string_array_init(StringArray *array) {
-
+    array->capacity = STRING_ARRAY_INITIAL_CAPACITY;
     array->data = malloc(array->capacity * sizeof(char *));
     array->size = 0;
-    array->capacity = STRING_ARRAY_INITIAL_CAPACITY;
 }
 
 void string_array_init_with(StringArray *arr, ...) {

@@ -27,9 +27,10 @@ void go_context_init(GoContext *ctx, int timeout_seconds) {
     ctx->timeout.tv_sec += timeout_seconds;
 }
 
-int go_context_is_canceled(GoContext *ctx) {
+bool go_context_is_canceled(GoContext *ctx) {
+    if(!ctx) return true;
     nsync_mu_lock(&ctx->mutex);
-    int result = ctx->canceled;
+    bool result = ctx->canceled;
     nsync_mu_unlock(&ctx->mutex);
     return result;
 }
