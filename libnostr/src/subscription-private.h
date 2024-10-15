@@ -9,19 +9,18 @@
 #include <stdatomic.h>
 
 typedef struct _SubscriptionPrivate {
-
     int counter;
+    char *id;
     GoChannel *count_result;
 
     bool (*match)(Filters*, NostrEvent*);
-
-    GoContext *context;
-
-    LongAdder *stored_event_counter;
-
     _Atomic bool live;
     _Atomic bool eosed;
     _Atomic bool closed;
+    CancelFunc cancel;
+
+    LongAdder *stored_event_counter;
+
     pthread_mutex_t sub_mutex;
     pthread_t thread;
 } SubscriptionPrivate;

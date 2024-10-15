@@ -8,11 +8,12 @@ typedef struct _SubscriptionPrivate SubscriptionPrivate;
 
 typedef struct _Subscription {
     SubscriptionPrivate *priv;
-    char *id;
     Relay *relay;
     Filters *filters;
     GoChannel *events;
+    GoChannel *end_of_stored_events;
     GoChannel *closed_reason;
+    GoContext *context;
 } Subscription;
 
 Subscription *create_subscription(Relay *relay, Filters *filters);

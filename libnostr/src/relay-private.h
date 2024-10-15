@@ -8,6 +8,7 @@ struct _RelayPrivate {
     nsync_mu *close_mutex;
 
     GoContext *connection_context;
+    CancelFunc connection_context_cancel;
     // cancel_func
 
     char *challenge;

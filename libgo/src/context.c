@@ -78,7 +78,7 @@ int go_deadline_context_is_canceled(GoDeadlineContext *ctx) {
     return 0;
 }
 
-CancelContextResult go_with_cancel(GoContext *parent) {
+CancelContextResult go_context_with_cancel(GoContext *parent) {
     GoHierarchicalContext *ctx = malloc(sizeof(GoHierarchicalContext));
     go_hierarchical_context_init(ctx, parent, 0);
 

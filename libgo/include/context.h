@@ -1,6 +1,7 @@
 #ifndef CONTEXT_H
 #define CONTEXT_H
 
+#include <time.h>
 #include <nsync.h>
 #include <time.h>
 
@@ -41,6 +42,7 @@ typedef struct {
 
 void go_deadline_context_init(GoDeadlineContext *ctx, struct timespec deadline);
 int go_deadline_context_is_canceled(GoDeadlineContext *ctx);
+GoContext *go_with_deadline(GoContext *parent, struct timespec deadline);
 
 // Value context
 typedef struct {
@@ -68,5 +70,7 @@ typedef struct {
     GoContext *context;
     CancelFunc cancel;
 } CancelContextResult;
+
+CancelContextResult go_context_with_cancel(GoContext *parent);
 
 #endif // CONTEXT_H

@@ -42,7 +42,7 @@ void free_subscription(Subscription *sub) {
 }
 
 char *subscription_get_id(Subscription *sub) {
-    return sub->id;
+    return sub->priv->id;
 }
 
 void *subscription_thread_func(void *arg) {
@@ -57,7 +57,7 @@ void *subscription_start(void *arg) {
     Subscription *sub = (Subscription *)arg;
 
     // Wait for the subscription context to be canceled
-    while (!go_context_is_canceled(sub->priv->context)) {
+    while (!go_context_is_canceled(sub->context)) {
         sleep(1); // Small sleep to avoid busy waiting
     }
 
@@ -127,7 +127,7 @@ void subscription_unsub(Subscription *sub) {
         return;
 
     // Cancel the subscription's context
-    go_context_cancel(sub->priv->context);
+    sub->priv->cancel(sub->context);
 
     // If the subscription is still live, mark it as inactive and close it
     if (atomic_exchange(&sub->priv->live, false)) {
@@ -135,7 +135,7 @@ void subscription_unsub(Subscription *sub) {
     }
 
     // Remove the subscription from the relay's map
-    concurrent_hash_map_remove(sub->relay->subscriptions, sub->id);
+    concurrent_hash_map_remove(sub->relay->subscriptions, sub->priv->id);
 }
 
 void subscription_close(Subscription *sub, Error **err) {
@@ -151,7 +151,7 @@ void subscription_close(Subscription *sub, Error **err) {
             *err = new_error(1, "failed to create close envelope");
             return;
         }
-        close_msg->subscription_id = strdup(sub->id);
+        close_msg->subscription_id = strdup(sub->priv->id);
 
         // Serialize the close message and send it to the relay
         char *close_msg_str = nostr_envelope_serialize((Envelope *)close_msg);
@@ -166,7 +166,7 @@ void subscription_close(Subscription *sub, Error **err) {
 
         // Wait for the result of the write
         Error *write_err = NULL;
-        go_channel_receive(write_channel, &write_err);
+        go_channel_receive(write_channel, (void**)write_err);
         if (write_err) {
             *err = write_err;
         }
@@ -199,7 +199,7 @@ bool subscription_fire(Subscription *subscription, Error **err) {
     }
 
     // Serialize filters into JSON
-    char *filters_json = filters_serialize(subscription->filters);
+    char *filters_json = nostr_filter_serialize(subscription->filters);
     if (!filters_json) {
         *err = new_error(1, "failed to serialize filters");
         return false;
@@ -207,7 +207,7 @@ bool subscription_fire(Subscription *subscription, Error **err) {
 
     // Construct the subscription message
     char *sub_id_str = malloc(32); // Allocate memory for the subscription ID string
-    snprintf(sub_id_str, 32, "\"REQ\",\"%s\",%s", subscription->id, filters_json);
+    snprintf(sub_id_str, 32, "\"REQ\",\"%s\",%s", subscription->priv->id, filters_json);
 
     // Send the subscription request via the relay
     GoChannel *write_channel = relay_write(subscription->relay, sub_id_str);

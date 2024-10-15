@@ -14,6 +14,7 @@ typedef struct GoChannel {
     nsync_mu mutex;
     nsync_cv cond_full;
     nsync_cv cond_empty;
+    int closed;
 } GoChannel;
 
 GoChannel *go_channel_create(size_t capacity);
@@ -22,5 +23,6 @@ int go_channel_send(GoChannel *chan, void *data);
 int go_channel_receive(GoChannel *chan, void **data);
 int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx);
 int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx);
+void go_channel_close(GoChannel *chan);
 
 #endif // GO_CHANNEL_H

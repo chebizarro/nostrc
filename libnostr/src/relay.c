@@ -15,19 +15,22 @@ Relay *new_relay(GoContext *context, const char *url, Error **err) {
         return NULL;
     }
 
+    CancelContextResult cancellabe = go_context_with_cancel(context);
+
     Relay *relay = (Relay *)malloc(sizeof(Relay));
     RelayPrivate *priv = (RelayPrivate *)malloc(sizeof(RelayPrivate));
     if (!relay || !priv)
         *err = new_error(1, "failed to allocate memory for Relay struct");
     return NULL;
 
-    relay->url = strdup(url);
+    relay->url = normalize_url(url);
     relay->subscriptions = concurrent_hash_map_create(16);
     relay->assume_valid = false;
 
     relay->priv = priv;
     nsync_mu_init(relay->priv->close_mutex);
-    relay->priv->connection_context = context;
+    relay->priv->connection_context = cancellabe.context;
+    relay->priv->connection_context_cancel = cancellabe.cancel;
     relay->priv->ok_callbacks = concurrent_hash_map_create(16);
     relay->priv->write_queue = go_channel_create(16);
     relay->priv->subscription_channel_close_queue = go_channel_create(16);
@@ -383,7 +386,7 @@ NostrEvent **relay_query_sync(Relay *relay, GoContext *ctx, Filter *filter, int 
     int received_count = 0;
     GoSelectCase cases[] = {
         {GO_SELECT_RECEIVE, subscription->events, NULL},
-        {GO_SELECT_RECEIVE, subscription->EndOfStoredEvents, NULL},
+        {GO_SELECT_RECEIVE, subscription->end_of_stored_events, NULL},
         {GO_SELECT_RECEIVE, relay->priv->connection_context->done, NULL}};
 
     while (true) {
@@ -401,7 +404,7 @@ NostrEvent **relay_query_sync(Relay *relay, GoContext *ctx, Filter *filter, int 
             }
 
             NostrEvent *event;
-            go_channel_receive(subscription->events, &event);
+            go_channel_receive(subscription->events, (void**)event);
             events[received_count++] = event; // Store the event
             break;
         }
@@ -449,7 +452,7 @@ int64_t relay_count(Relay *relay, GoContext* ctx, Filter *filter, Error **err) {
 
     // Wait for count result
     int64_t *count;
-    go_channel_receive(subscription->priv->count_result, &count);
+    go_channel_receive(subscription->priv->count_result, (void**)count);
 
     // Return the count result
     return *count;
@@ -464,6 +467,6 @@ bool relay_close(Relay *r, Error **err) {
 
     connection_close(r->connection);
     r->connection = NULL;
-    go_context_cancel(r->priv->connection_context);
+    r->priv->connection_context_cancel(r->priv->connection_context);
     return true;
 }
