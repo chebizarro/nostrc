@@ -39,8 +39,7 @@ int main() {
     Relay *relay = new_relay(ctx, "relay.sharegap.net", err);
     assert(relay != NULL);
 
-    int conn_res = relay_connect(relay, err);
-    assert(conn_res == 0);
+    assert(relay_connect(relay, err));
     assert(relay_is_connected(relay));
 
     relay_publish(relay, event);

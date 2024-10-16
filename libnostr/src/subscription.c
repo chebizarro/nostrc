@@ -135,7 +135,7 @@ void subscription_unsub(Subscription *sub) {
     }
 
     // Remove the subscription from the relay's map
-    concurrent_hash_map_remove(sub->relay->subscriptions, sub->priv->id);
+    go_hash_map_remove(sub->relay->subscriptions, sub->priv->id);
 }
 
 void subscription_close(Subscription *sub, Error **err) {
@@ -166,7 +166,7 @@ void subscription_close(Subscription *sub, Error **err) {
 
         // Wait for the result of the write
         Error *write_err = NULL;
-        go_channel_receive(write_channel, (void**)write_err);
+        go_channel_receive(write_channel, (void **)write_err);
         if (write_err) {
             *err = write_err;
         }

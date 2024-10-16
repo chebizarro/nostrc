@@ -14,7 +14,7 @@ typedef struct Relay {
     // request_header;
     Connection *connection;
     Error **connection_error;
-    ConcurrentHashMap *subscriptions;
+    GoHashMap *subscriptions;
     bool assume_valid;
 } Relay;
 
@@ -23,7 +23,7 @@ void free_relay(Relay *relay);
 bool relay_connect(Relay *relay, Error **err);
 void relay_disconnect(Relay *relay);
 bool relay_subscribe(Relay *relay, GoContext *ctx, Filters *filters, Error **err);
-Subscription* relay_prepare_subscription(Relay *relay, GoContext *ctx, Filters *filters);
+Subscription *relay_prepare_subscription(Relay *relay, GoContext *ctx, Filters *filters);
 GoChannel *relay_query_events(Relay *relay, GoContext *ctx, Filter *filter, Error **err);
 NostrEvent **relay_query_sync(Relay *relay, GoContext *ctx, Filter *filter, int *event_count, Error **err);
 int64_t relay_count(Relay *relay, GoContext *ctx, Filter *filter, Error **err);

@@ -3,9 +3,9 @@
 
 #include <nsync.h>
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
 
 typedef struct HashNode HashNode;
 typedef struct HashKey HashKey;
@@ -14,26 +14,30 @@ typedef struct {
     HashNode **buckets;
     nsync_mu *bucket_locks; // Lock for each bucket
     size_t num_buckets;
-} ConcurrentHashMap;
+} GoHashMap;
 
-ConcurrentHashMap *concurrent_hash_map_create(size_t num_buckets);
+GoHashMap *go_hash_map_create(size_t num_buckets);
 
-void concurrent_hash_map_insert_string(ConcurrentHashMap *map, const char *key_str, void *value);
+void go_hash_map_insert_str(GoHashMap *map, const char *key_str, void *value);
 
-void concurrent_hash_map_insert_int(ConcurrentHashMap *map, int64_t key_int, void *value);
+void go_hash_map_insert_int(GoHashMap *map, int64_t key_int, void *value);
 
-void concurrent_hash_map_insert(ConcurrentHashMap *map, HashKey *key, void *value);
+void go_hash_map_insert(GoHashMap *map, HashKey *key, void *value);
 
-void *concurrent_hash_map_get_string(ConcurrentHashMap *map, const char *key_str);
+void *go_hash_map_get_string(GoHashMap *map, const char *key_str);
 
-void *concurrent_hash_map_get_int(ConcurrentHashMap *map, int64_t key_int);
+void *go_hash_map_get_int(GoHashMap *map, int64_t key_int);
 
-void *concurrent_hash_map_get(ConcurrentHashMap *map, HashKey *key);
+void *go_hash_map_get(GoHashMap *map, HashKey *key);
 
-void concurrent_hash_map_for_each(ConcurrentHashMap *map, bool (*foreach)(HashKey *, void *));
+void go_hash_map_for_each(GoHashMap *map, bool (*foreach)(HashKey *, void *));
 
-void concurrent_hash_map_remove(ConcurrentHashMap *map, HashKey *key);
+void go_hash_map_remove_str(GoHashMap *map, const char *key_str);
 
-void concurrent_hash_map_destroy(ConcurrentHashMap *map);
+void go_hash_map_remove_int(GoHashMap *map, int64_t key);
+
+void go_hash_map_remove(GoHashMap *map, HashKey *key);
+
+void go_hash_map_destroy(GoHashMap *map);
 
 #endif // GO_HASH_MAP_H

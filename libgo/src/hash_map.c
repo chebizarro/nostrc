@@ -56,7 +56,7 @@ unsigned long hash_function(const char *key) {
 HashKey make_key_from_string(const char *str) {
     HashKey key;
     key.type = KEY_TYPE_STRING;
-    key.key.str_key = strdup(str);  // Duplicate the string
+    key.key.str_key = strdup(str); // Duplicate the string
     return key;
 }
 
@@ -69,12 +69,12 @@ HashKey make_key_from_int(int64_t num) {
 
 void free_hash_key(HashKey *key) {
     if (key->type == KEY_TYPE_STRING && key->key.str_key) {
-        free(key->key.str_key);  // Free the duplicated string
+        free(key->key.str_key); // Free the duplicated string
     }
 }
 
-ConcurrentHashMap *concurrent_hash_map_create(size_t num_buckets) {
-    ConcurrentHashMap *map = malloc(sizeof(ConcurrentHashMap));
+GoHashMap *go_hash_map_create(size_t num_buckets) {
+    GoHashMap *map = malloc(sizeof(GoHashMap));
     map->num_buckets = num_buckets;
     map->buckets = calloc(num_buckets, sizeof(HashNode *));
     map->bucket_locks = malloc(num_buckets * sizeof(nsync_mu));
@@ -86,20 +86,21 @@ ConcurrentHashMap *concurrent_hash_map_create(size_t num_buckets) {
     return map;
 }
 
-void concurrent_hash_map_insert_string(ConcurrentHashMap *map, const char *key_str, void *value) {
-    if (!key_str) return;  // Handle NULL keys
+void go_hash_map_insert_str(GoHashMap *map, const char *key_str, void *value) {
+    if (!key_str)
+        return; // Handle NULL keys
 
-    HashKey key = make_key_from_string(key_str);  // Create key internally
-    concurrent_hash_map_insert(map, &key, value);
-    free_hash_key(&key);  // Free key after insertion
+    HashKey key = make_key_from_string(key_str); // Create key internally
+    go_hash_map_insert(map, &key, value);
+    free_hash_key(&key); // Free key after insertion
 }
 
-void concurrent_hash_map_insert_int(ConcurrentHashMap *map, int64_t key_int, void *value) {
-    HashKey key = make_key_from_int(key_int);  // Create key internally
-    concurrent_hash_map_insert(map, &key, value);
+void go_hash_map_insert_int(GoHashMap *map, int64_t key_int, void *value) {
+    HashKey key = make_key_from_int(key_int); // Create key internally
+    go_hash_map_insert(map, &key, value);
 }
 
-void concurrent_hash_map_insert(ConcurrentHashMap *map, HashKey *key, void *value) {
+void go_hash_map_insert(GoHashMap *map, HashKey *key, void *value) {
     unsigned long hash = hash_key(key);
     size_t bucket_index = hash % map->num_buckets;
 
@@ -128,21 +129,22 @@ void concurrent_hash_map_insert(ConcurrentHashMap *map, HashKey *key, void *valu
     nsync_mu_unlock(&map->bucket_locks[bucket_index]);
 }
 
-void *concurrent_hash_map_get_string(ConcurrentHashMap *map, const char *key_str) {
-    if (!key_str) return NULL;  // Handle NULL keys
+void *go_hash_map_get_string(GoHashMap *map, const char *key_str) {
+    if (!key_str)
+        return NULL; // Handle NULL keys
 
-    HashKey key = make_key_from_string(key_str);  // Create key internally
-    void *value = concurrent_hash_map_get(map, &key);
-    free_hash_key(&key);  // Free key after retrieval
+    HashKey key = make_key_from_string(key_str); // Create key internally
+    void *value = go_hash_map_get(map, &key);
+    free_hash_key(&key); // Free key after retrieval
     return value;
 }
 
-void *concurrent_hash_map_get_int(ConcurrentHashMap *map, int64_t key_int) {
-    HashKey key = make_key_from_int(key_int);  // Create key internally
-    return concurrent_hash_map_get(map, &key);
+void *go_hash_map_get_int(GoHashMap *map, int64_t key_int) {
+    HashKey key = make_key_from_int(key_int); // Create key internally
+    return go_hash_map_get(map, &key);
 }
 
-void *concurrent_hash_map_get(ConcurrentHashMap *map, HashKey *key) {
+void *go_hash_map_get(GoHashMap *map, HashKey *key) {
     unsigned long hash = hash_key(key);
     size_t bucket_index = hash % map->num_buckets;
 
@@ -164,7 +166,7 @@ void *concurrent_hash_map_get(ConcurrentHashMap *map, HashKey *key) {
     return NULL; // Key not found
 }
 
-void concurrent_hash_map_for_each(ConcurrentHashMap *map, bool (*foreach)(HashKey *, void *)) {
+void go_hash_map_for_each(GoHashMap *map, bool (*foreach)(HashKey *, void *)) {
     for (size_t i = 0; i < map->num_buckets; i++) {
         nsync_mu_lock(&map->bucket_locks[i]);
 
@@ -173,7 +175,7 @@ void concurrent_hash_map_for_each(ConcurrentHashMap *map, bool (*foreach)(HashKe
             HashNode *next = node->next;
 
             // Call the provided function with the key and value
-            bool cont = foreach(&node->key, node->value);
+            bool cont = foreach (&node->key, node->value);
             if (!cont) {
                 nsync_mu_unlock(&map->bucket_locks[i]);
                 return;
@@ -185,7 +187,21 @@ void concurrent_hash_map_for_each(ConcurrentHashMap *map, bool (*foreach)(HashKe
     }
 }
 
-void concurrent_hash_map_remove(ConcurrentHashMap *map, HashKey *key) {
+void go_hash_map_remove_str(GoHashMap *map, const char *key_str) {
+    if (!key_str)
+        return;
+
+    HashKey key = make_key_from_string(key_str);
+    go_hash_map_remove(map, &key);
+    free_hash_key(&key);
+}
+
+void go_hash_map_remove_int(GoHashMap *map, int64_t key) {
+    HashKey key_int = make_key_from_int(key);
+    go_hash_map_remove(map, &key_int);
+}
+
+void go_hash_map_remove(GoHashMap *map, HashKey *key) {
     unsigned long hash = hash_key(key);
     size_t bucket_index = hash % map->num_buckets;
 
@@ -213,8 +229,9 @@ void concurrent_hash_map_remove(ConcurrentHashMap *map, HashKey *key) {
     nsync_mu_unlock(&map->bucket_locks[bucket_index]);
 }
 
-void concurrent_hash_map_destroy(ConcurrentHashMap *map) {
-    if (!map) return;
+void go_hash_map_destroy(GoHashMap *map) {
+    if (!map)
+        return;
 
     for (size_t i = 0; i < map->num_buckets; i++) {
         nsync_mu_lock(&map->bucket_locks[i]);

@@ -14,7 +14,7 @@ struct _RelayPrivate {
     char *challenge;
     void (*notice_handler)(const char *);
     bool (*custom_handler)(const char *);
-    ConcurrentHashMap *ok_callbacks;
+    GoHashMap *ok_callbacks;
     GoChannel *write_queue;
     GoChannel *subscription_channel_close_queue;
 };
@@ -24,6 +24,6 @@ typedef struct _write_request {
     GoChannel *answer;
 } write_request;
 
-typedef void (*ok_callback)(bool, char*);
+typedef void (*ok_callback)(bool, char *);
 
 #endif // NOSTR_RELAY_PRIVATE_H

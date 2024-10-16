@@ -25,14 +25,14 @@ Relay *new_relay(GoContext *context, const char *url, Error **err) {
     }
 
     relay->url = strdup(url);
-    relay->subscriptions = concurrent_hash_map_create(16);
+    relay->subscriptions = go_hash_map_create(16);
     relay->assume_valid = false;
 
     relay->priv = priv;
-    //nsync_mu_init(relay->priv->close_mutex);
+    // nsync_mu_init(relay->priv->close_mutex);
     relay->priv->connection_context = cancellabe.context;
     relay->priv->connection_context_cancel = cancellabe.cancel;
-    relay->priv->ok_callbacks = concurrent_hash_map_create(16);
+    relay->priv->ok_callbacks = go_hash_map_create(16);
     relay->priv->write_queue = go_channel_create(16);
     relay->priv->subscription_channel_close_queue = go_channel_create(16);
     // request_header
@@ -46,9 +46,9 @@ Relay *new_relay(GoContext *context, const char *url, Error **err) {
 void free_relay(Relay *relay) {
     if (relay) {
         free(relay->url);
-        concurrent_hash_map_destroy(relay->subscriptions);
+        go_hash_map_destroy(relay->subscriptions);
         go_context_free(relay->priv->connection_context);
-        concurrent_hash_map_destroy(relay->priv->ok_callbacks);
+        go_hash_map_destroy(relay->priv->ok_callbacks);
         go_channel_free(relay->priv->write_queue);
         go_channel_free(relay->priv->subscription_channel_close_queue);
         free(relay->priv);
@@ -69,37 +69,29 @@ void *cleanup_routine(void *arg) {
     Relay *r = (Relay *)arg;
     Ticker *t = (Ticker *)++arg;
     // Wait for connection context to be done
-    while (!go_context_is_canceled(r->priv->connection_context)) {
-        sleep(1);
-    }
+    r->priv->connection_context_cancel(r->priv->connection_context);
     stop_ticker(t);
     connection_close(r->connection);
     r->connection = NULL;
-    concurrent_hash_map_for_each(r->subscriptions, sub_foreach_unsub);
+    go_hash_map_for_each(r->subscriptions, sub_foreach_unsub);
     return NULL;
 }
 
 void *write_operations(void *arg) {
-    Relay *r = ((Relay **)arg)[0];
-    Ticker *t = ((Ticker **)arg)[1];
+    Relay *r = (Relay *)arg;
 
     write_request write_req = {
         .answer = go_channel_create(1),
-        .msg = (char*)malloc(4 * sizeof(char))
-    };
+        .msg = (char *)malloc(4 * sizeof(char))};
 
     GoSelectCase cases[] = {
-        {GO_SELECT_RECEIVE, t->c, NULL},
         {GO_SELECT_RECEIVE, r->priv->write_queue, &write_req},
         {GO_SELECT_RECEIVE, r->priv->connection_context->done, NULL}};
 
     while (true) {
-        int result = go_select(cases, 3);
+        int result = go_select(cases, 2);
         switch (result) {
-        case 0:
-            // connection_ping(r->connection);
-            break;
-        case 1: {
+        case 0: {
             Error **err = NULL;
             connection_write_message(r->connection, r->priv->connection_context, write_req.msg, err);
             if (err) {
@@ -108,7 +100,7 @@ void *write_operations(void *arg) {
             go_channel_free(write_req.answer);
             break;
         }
-        case 2:
+        case 1:
             if (go_context_is_canceled(r->priv->connection_context))
                 return NULL;
         default:
@@ -154,7 +146,7 @@ void *message_loop(void *arg) {
         }
         case ENVELOPE_EVENT: {
             EventEnvelope *env = (EventEnvelope *)envelope;
-            Subscription *subscription = concurrent_hash_map_get_int(r->subscriptions, sub_id_to_serial(env->subscription_id));
+            Subscription *subscription = go_hash_map_get_int(r->subscriptions, sub_id_to_serial(env->subscription_id));
             if (subscription && event_check_signature(env->event)) {
                 subscription_dispatch_event(subscription, env->event);
             }
@@ -163,7 +155,7 @@ void *message_loop(void *arg) {
         case ENVELOPE_EOSE: {
             EOSEEnvelope *env = (EOSEEnvelope *)envelope;
             /*
-            Subscription *subscription = concurrent_hash_map_get(r->subscriptions, sub_id_to_serial(env->message));
+            Subscription *subscription = go_hash_map_get(r->subscriptions, sub_id_to_serial(env->message));
             if (subscription) {
                 subscription_dispatch_eose(subscription);
             }*/
@@ -171,7 +163,7 @@ void *message_loop(void *arg) {
         }
         case ENVELOPE_CLOSED: {
             ClosedEnvelope *env = (ClosedEnvelope *)envelope;
-            Subscription *subscription = concurrent_hash_map_get_int(r->subscriptions, sub_id_to_serial(env->subscription_id));
+            Subscription *subscription = go_hash_map_get_int(r->subscriptions, sub_id_to_serial(env->subscription_id));
             if (subscription) {
                 subscription_dispatch_closed(subscription, env->reason);
             }
@@ -179,7 +171,7 @@ void *message_loop(void *arg) {
         }
         case ENVELOPE_COUNT: {
             CountEnvelope *env = (CountEnvelope *)envelope;
-            Subscription *subscription = concurrent_hash_map_get_int(r->subscriptions, sub_id_to_serial(env->subscription_id));
+            Subscription *subscription = go_hash_map_get_int(r->subscriptions, sub_id_to_serial(env->subscription_id));
             if (subscription) {
                 go_channel_send(subscription->priv->count_result, &env->count);
             }
@@ -187,7 +179,7 @@ void *message_loop(void *arg) {
         }
         case ENVELOPE_OK: {
             OKEnvelope *env = (OKEnvelope *)envelope;
-            ok_callback cb = concurrent_hash_map_get_string(r->priv->ok_callbacks, env->event_id);
+            ok_callback cb = go_hash_map_get_string(r->priv->ok_callbacks, env->event_id);
             if (cb) {
                 cb(env->ok, env->reason);
             }
@@ -216,7 +208,7 @@ bool relay_connect(Relay *relay, Error **err) {
     Ticker *ticker = create_ticker(29 * GO_TIME_SECOND);
 
     void *cleanup[] = {relay, ticker};
-    go(cleanup_routine, cleanup);
+    go(cleanup_routine, relay);
     go(write_operations, cleanup[0]);
     go(message_loop, relay);
 
@@ -320,7 +312,7 @@ Subscription *relay_prepare_subscription(Relay *relay, GoContext *ctx, Filters *
     subscription->priv->match = filters_match; // Function for matching filters with events
 
     // Store subscription in relay subscriptions map
-    concurrent_hash_map_insert_int(relay->subscriptions, subscription->priv->counter, subscription);
+    go_hash_map_insert_int(relay->subscriptions, subscription->priv->counter, subscription);
 
     return subscription;
 }
