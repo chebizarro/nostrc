@@ -1,0 +1,41 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <time.h>
+#include <unistd.h>
+#include "go.h"
+
+void *wait_with_timeout(void *arg) {
+    GoContext *ctx = (GoContext *)arg;
+    
+    printf("Thread: Waiting for the context to timeout...\n");
+    go_context_wait(ctx);  // Wait for the context to timeout or be canceled
+    printf("Thread: Context timed out, error message: %s\n", go_context_err(ctx));
+
+    return NULL;
+}
+
+int main() {
+    // Set a 3-second deadline
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_sec += 3;  // Set the timeout 3 seconds in the future
+
+    printf("Main: Creating context with a 3-second deadline.\n");
+    GoContext *ctx = go_with_deadline(NULL, deadline);
+
+    // Create a thread to wait for the context to timeout
+    pthread_t thread;
+    pthread_create(&thread, NULL, wait_with_timeout, (void *)ctx);
+
+    // Wait for the thread to finish
+    pthread_join(thread, NULL);
+
+    // Free the context
+    go_context_free(ctx);
+    free(ctx->vtable);
+    free(ctx);
+    
+    printf("Test complete!\n");
+    return 0;
+}

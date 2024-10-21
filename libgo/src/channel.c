@@ -1,6 +1,7 @@
 #include "channel.h"
 #include <stdlib.h>
-
+#include <stdio.h>
+ 
 GoChannel *go_channel_create(size_t capacity) {
     GoChannel *chan = malloc(sizeof(GoChannel));
     chan->buffer = malloc(sizeof(void *) * capacity);
@@ -21,6 +22,11 @@ void go_channel_free(GoChannel *chan) {
 }
 
 int go_channel_send(GoChannel *chan, void *data) {
+    if (!chan) {
+        fprintf(stderr, "Error: Attempting to send data to a NULL channel\n");
+        return -1;
+    }
+
     nsync_mu_lock(&chan->mutex);
     if (chan->closed) {
         nsync_mu_unlock(&chan->mutex);
