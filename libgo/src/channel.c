@@ -1,7 +1,7 @@
 #include "channel.h"
 #include <stdlib.h>
 #include <stdio.h>
- 
+
 GoChannel *go_channel_create(size_t capacity) {
     GoChannel *chan = malloc(sizeof(GoChannel));
     chan->buffer = malloc(sizeof(void *) * capacity);
@@ -17,7 +17,19 @@ GoChannel *go_channel_create(size_t capacity) {
 }
 
 void go_channel_free(GoChannel *chan) {
-    free(chan->buffer);
+    if (chan == NULL) {
+        return;  // Avoid freeing a NULL channel
+    }
+
+    nsync_mu_lock(&chan->mutex);
+    // Free the internal buffer and other resources
+    if (chan->buffer) {
+        free(chan->buffer);
+        chan->buffer = NULL;
+    }
+    nsync_mu_unlock(&chan->mutex);
+    
+    // Free the channel structure
     free(chan);
 }
 

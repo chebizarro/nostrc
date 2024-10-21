@@ -67,7 +67,7 @@ bool sub_foreach_unsub(HashKey *key, void *sub) {
 
 void *cleanup_routine(void *arg) {
     Relay *r = (Relay *)arg;
-    Ticker *t = (Ticker *)++arg;
+    Ticker *t = (Ticker *)(arg + sizeof(Relay));
     // Wait for connection context to be done
     nsync_mu_lock(&r->priv->mutex);
     r->priv->connection_context_cancel(r->priv->connection_context);
@@ -82,11 +82,10 @@ void *cleanup_routine(void *arg) {
 void *write_operations(void *arg) {
     Relay *r = (Relay *)arg;
 
+    // Initialize the write request
     write_request write_req = {
         .answer = go_channel_create(1),
         .msg = (char *)malloc(4 * sizeof(char))};
-
-    nsync_mu_lock(&r->priv->mutex);
 
     GoSelectCase cases[] = {
         {GO_SELECT_RECEIVE, r->priv->write_queue, &write_req},
@@ -94,87 +93,98 @@ void *write_operations(void *arg) {
 
     while (true) {
         int result = go_select(cases, 2);
+
         switch (result) {
-        case 0: {
-            Error **err = NULL;
-            connection_write_message(r->connection, r->priv->connection_context, write_req.msg, err);
-            if (err) {
+        case 0: { // Received a message to write
+            Error *err = NULL;
+
+            // Lock only around shared resources (if necessary)
+            nsync_mu_lock(&r->priv->mutex);
+            connection_write_message(r->connection, r->priv->connection_context, write_req.msg, &err);
+            nsync_mu_unlock(&r->priv->mutex);
+
+            // Check for errors and send them over the answer channel
+            if (err != NULL) {
                 go_channel_send(write_req.answer, err);
             }
-            go_channel_free(write_req.answer);
+
+            // Free resources for this write request
+            // free(write_req.msg);               // Free the message
+            go_channel_free(write_req.answer); // Free the channel
             break;
         }
-        case 1:
+        case 1: // Context has been canceled
             if (go_context_is_canceled(r->priv->connection_context)) {
+                // Unlock before exiting
                 nsync_mu_unlock(&r->priv->mutex);
-                return NULL;
+                return NULL; // Exit the loop
             }
         default:
             break;
         }
     }
+
+    // Unlock and clean up if exiting
     nsync_mu_unlock(&r->priv->mutex);
     return NULL;
 }
 
 void *message_loop(void *arg) {
     Relay *r = (Relay *)arg;
-    char **buf;
-    Error **err;
+    char *buf = (char *)malloc(1024 * sizeof(char));  // Allocate a buffer for reading messages
+    Error *err = NULL;  // Initialize the error pointer
 
     while (true) {
-        buf = NULL;
+        // Reset buffer and error for each loop iteration
+        memset(buf, 0, 1024);  // Clear the buffer
+
         nsync_mu_lock(&r->priv->mutex);
 
-        //connection_read_message(r->connection, r->priv->connection_context, *buf, err);
-        if (err) {
-            r->connection_error = err;
-            Error **cerr;
-            relay_close(r, cerr);
-
+        // Read the message into buf, passing the error pointer
+        connection_read_message(r->connection, r->priv->connection_context, buf, &err);
+        
+        // Check if an error occurred (err != NULL)
+        if (err != NULL) {
+            r->connection_error = &err;
+            Error *cerr = NULL;
+            relay_close(r, &cerr);  // Pass the error pointer to relay_close
+            nsync_mu_unlock(&r->priv->mutex);
             break;
         }
-        const char *message = *buf;
+
+        const char *message = buf;  // Use the buffer to get the message
+
         Envelope *envelope = parse_message(message);
         if (!envelope) {
             if (r->priv->custom_handler) {
-                r->priv->custom_handler(message);
+                r->priv->custom_handler(message);  // Call custom handler if no envelope
             }
+            nsync_mu_unlock(&r->priv->mutex);
             continue;
         }
+
         switch (envelope->type) {
-        case ENVELOPE_NOTICE: {
+        case ENVELOPE_NOTICE:
             if (r->priv->notice_handler) {
-                r->priv->notice_handler((char *)envelope);
+                r->priv->notice_handler((char *)envelope);  // Handle notice
             }
             break;
-        }
-        case ENVELOPE_AUTH: {
-            r->priv->challenge = ((AuthEnvelope *)envelope)->challenge;
+        case ENVELOPE_AUTH:
+            r->priv->challenge = ((AuthEnvelope *)envelope)->challenge;  // Handle auth
             break;
-        }
         case ENVELOPE_EVENT: {
             EventEnvelope *env = (EventEnvelope *)envelope;
             Subscription *subscription = go_hash_map_get_int(r->subscriptions, sub_id_to_serial(env->subscription_id));
             if (subscription && event_check_signature(env->event)) {
-                subscription_dispatch_event(subscription, env->event);
+                subscription_dispatch_event(subscription, env->event);  // Dispatch event
             }
-            break;
-        }
-        case ENVELOPE_EOSE: {
-            EOSEEnvelope *env = (EOSEEnvelope *)envelope;
-            /*
-            Subscription *subscription = go_hash_map_get(r->subscriptions, sub_id_to_serial(env->message));
-            if (subscription) {
-                subscription_dispatch_eose(subscription);
-            }*/
             break;
         }
         case ENVELOPE_CLOSED: {
             ClosedEnvelope *env = (ClosedEnvelope *)envelope;
             Subscription *subscription = go_hash_map_get_int(r->subscriptions, sub_id_to_serial(env->subscription_id));
             if (subscription) {
-                subscription_dispatch_closed(subscription, env->reason);
+                subscription_dispatch_closed(subscription, env->reason);  // Dispatch closed event
             }
             break;
         }
@@ -182,7 +192,7 @@ void *message_loop(void *arg) {
             CountEnvelope *env = (CountEnvelope *)envelope;
             Subscription *subscription = go_hash_map_get_int(r->subscriptions, sub_id_to_serial(env->subscription_id));
             if (subscription) {
-                go_channel_send(subscription->priv->count_result, &env->count);
+                go_channel_send(subscription->priv->count_result, &env->count);  // Send count result
             }
             break;
         }
@@ -190,17 +200,21 @@ void *message_loop(void *arg) {
             OKEnvelope *env = (OKEnvelope *)envelope;
             ok_callback cb = go_hash_map_get_string(r->priv->ok_callbacks, env->event_id);
             if (cb) {
-                cb(env->ok, env->reason);
+                cb(env->ok, env->reason);  // Handle OK callback
             }
             break;
+        }
         default:
             break;
         }
-        }
+
         nsync_mu_unlock(&r->priv->mutex);
     }
+
+    free(buf);  // Free the buffer when done
     return NULL;
 }
+
 
 bool relay_connect(Relay *relay, Error **err) {
     if (!relay) {
@@ -218,7 +232,7 @@ bool relay_connect(Relay *relay, Error **err) {
     Ticker *ticker = create_ticker(29 * GO_TIME_SECOND);
 
     void *cleanup[] = {relay, ticker};
-    go(cleanup_routine, relay);
+    go(cleanup_routine, cleanup[0]);
     go(write_operations, cleanup[0]);
     go(message_loop, relay);
 

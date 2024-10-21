@@ -9,6 +9,7 @@ typedef struct Ticker {
     size_t interval_ms;
     pthread_t thread;
     bool stop;
+    nsync_mu mutex;
 } Ticker;
 
 Ticker *create_ticker(size_t interval_ms);
