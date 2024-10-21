@@ -5,7 +5,7 @@
 #include <stdbool.h>
 
 struct _RelayPrivate {
-    nsync_mu *close_mutex;
+    nsync_mu mutex;
 
     GoContext *connection_context;
     CancelFunc connection_context_cancel;

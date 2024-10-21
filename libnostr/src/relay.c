@@ -29,7 +29,7 @@ Relay *new_relay(GoContext *context, const char *url, Error **err) {
     relay->assume_valid = false;
 
     relay->priv = priv;
-    // nsync_mu_init(relay->priv->close_mutex);
+    nsync_mu_init(&relay->priv->mutex);
     relay->priv->connection_context = cancellabe.context;
     relay->priv->connection_context_cancel = cancellabe.cancel;
     relay->priv->ok_callbacks = go_hash_map_create(16);
@@ -69,11 +69,13 @@ void *cleanup_routine(void *arg) {
     Relay *r = (Relay *)arg;
     Ticker *t = (Ticker *)++arg;
     // Wait for connection context to be done
+    nsync_mu_lock(&r->priv->mutex);
     r->priv->connection_context_cancel(r->priv->connection_context);
     stop_ticker(t);
     connection_close(r->connection);
     r->connection = NULL;
     go_hash_map_for_each(r->subscriptions, sub_foreach_unsub);
+    nsync_mu_unlock(&r->priv->mutex);
     return NULL;
 }
 
@@ -83,6 +85,8 @@ void *write_operations(void *arg) {
     write_request write_req = {
         .answer = go_channel_create(1),
         .msg = (char *)malloc(4 * sizeof(char))};
+
+    nsync_mu_lock(&r->priv->mutex);
 
     GoSelectCase cases[] = {
         {GO_SELECT_RECEIVE, r->priv->write_queue, &write_req},
@@ -101,12 +105,15 @@ void *write_operations(void *arg) {
             break;
         }
         case 1:
-            if (go_context_is_canceled(r->priv->connection_context))
+            if (go_context_is_canceled(r->priv->connection_context)) {
+                nsync_mu_unlock(&r->priv->mutex);
                 return NULL;
+            }
         default:
             break;
         }
     }
+    nsync_mu_unlock(&r->priv->mutex);
     return NULL;
 }
 
@@ -117,7 +124,9 @@ void *message_loop(void *arg) {
 
     while (true) {
         buf = NULL;
-        connection_read_message(r->connection, r->priv->connection_context, *buf, err);
+        nsync_mu_lock(&r->priv->mutex);
+
+        //connection_read_message(r->connection, r->priv->connection_context, *buf, err);
         if (err) {
             r->connection_error = err;
             Error **cerr;
@@ -188,6 +197,7 @@ void *message_loop(void *arg) {
             break;
         }
         }
+        nsync_mu_unlock(&r->priv->mutex);
     }
     return NULL;
 }

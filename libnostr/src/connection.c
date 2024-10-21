@@ -149,7 +149,8 @@ Connection *new_connection(const char *url) {
         free(conn);
         return NULL;
     }
-
+    conn->recv_channel = go_channel_create(16);
+    conn->send_channel = go_channel_create(16);
     return conn;
 }
 
