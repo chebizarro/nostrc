@@ -105,12 +105,13 @@ Connection *new_connection(const char *url) {
         .jitter_percent = 5            // Add 5% random jitter to avoid synchronized retries
     };
 
-    Connection *conn = malloc(sizeof(Connection));
-    ConnectionPrivate *priv = malloc(sizeof(ConnectionPrivate));
+    Connection *conn = calloc(1, sizeof(Connection));
+    ConnectionPrivate *priv = calloc(1, sizeof(ConnectionPrivate));
     if (!conn || !priv)
         return NULL;
     conn->priv = priv;
     conn->priv->enable_compression = 0;
+    nsync_mu_init(&conn->priv->mutex);
 
     // Initialize context creation info
     memset(&context_info, 0, sizeof(context_info));
@@ -129,6 +130,8 @@ Connection *new_connection(const char *url) {
         free(conn);
         return NULL;
     }
+
+    conn->priv->context = context;
 
     // Initialize client connect info
     memset(&connect_info, 0, sizeof(connect_info));
@@ -179,7 +182,13 @@ void *websocket_send_coroutine(void *arg) {
 }
 
 void connection_close(Connection *conn) {
+    //nsync_mu_lock(&conn->priv->mutex);
+    lws_callback_on_writable(conn->priv->wsi); // Ensure any pending data is sent
+    //nsync_mu_unlock(&conn->priv->mutex);
     lws_context_destroy(conn->priv->context);
+    free(conn->priv);
+    go_channel_free(conn->recv_channel);
+    go_channel_free(conn->send_channel);
     free(conn);
 }
 

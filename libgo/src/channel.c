@@ -1,6 +1,6 @@
 #include "channel.h"
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 GoChannel *go_channel_create(size_t capacity) {
     GoChannel *chan = malloc(sizeof(GoChannel));
@@ -18,7 +18,7 @@ GoChannel *go_channel_create(size_t capacity) {
 
 void go_channel_free(GoChannel *chan) {
     if (chan == NULL) {
-        return;  // Avoid freeing a NULL channel
+        return; // Avoid freeing a NULL channel
     }
 
     nsync_mu_lock(&chan->mutex);
@@ -28,26 +28,21 @@ void go_channel_free(GoChannel *chan) {
         chan->buffer = NULL;
     }
     nsync_mu_unlock(&chan->mutex);
-    
+
     // Free the channel structure
     free(chan);
 }
 
 int go_channel_send(GoChannel *chan, void *data) {
-    if (!chan) {
-        fprintf(stderr, "Error: Attempting to send data to a NULL channel\n");
-        return -1;
-    }
-
     nsync_mu_lock(&chan->mutex);
-    if (chan->closed) {
+    if (chan->size == 0 && chan->closed) {
         nsync_mu_unlock(&chan->mutex);
         return -1;
     }
     while (chan->size == chan->capacity && !chan->closed) {
         nsync_cv_wait(&chan->cond_full, &chan->mutex);
     }
-    if (chan->closed) {
+    if (chan->size == 0 && chan->closed) {
         nsync_mu_unlock(&chan->mutex);
         return -1;
     }
@@ -61,10 +56,10 @@ int go_channel_send(GoChannel *chan, void *data) {
 
 int go_channel_receive(GoChannel *chan, void **data) {
     nsync_mu_lock(&chan->mutex);
-    while (chan->size == 0 && !chan->closed) {
+    while (!chan->closed) {
         nsync_cv_wait(&chan->cond_empty, &chan->mutex);
     }
-    if (chan->size == 0 && chan->closed) {
+    if (chan->closed) {
         nsync_mu_unlock(&chan->mutex);
         return -1;
     }
@@ -122,8 +117,9 @@ void go_channel_close(GoChannel *chan) {
     nsync_mu_lock(&chan->mutex);
 
     if (!chan->closed) {
-        chan->closed = 1;                      // Mark the channel as closed
+        chan->closed = true;                      // Mark the channel as closed
         nsync_cv_broadcast(&chan->cond_empty); // Wake up any waiting receivers
+        nsync_cv_broadcast(&chan->cond_full);
     }
 
     nsync_mu_unlock(&chan->mutex);

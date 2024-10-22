@@ -10,7 +10,8 @@ void *wait_for_cancel(void *arg) {
     
     printf("Thread waiting for context to be canceled...\n");
     go_context_wait(ctx);  // Wait for the context to be canceled
-    printf("Thread: Context canceled, error message: %s\n", go_context_err(ctx));
+    Error* err = go_context_err(ctx);
+    printf("Thread: Context canceled, error message: %s\n", err ? err->message : NULL);
     
     return NULL;
 }

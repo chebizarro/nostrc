@@ -10,13 +10,16 @@ int go_select(GoSelectCase *cases, size_t num_cases) {
         for (size_t i = 0; i < num_cases; i++) {
             GoSelectCase *c = &cases[i];
 
+            nsync_mu_lock(&c->chan->mutex);
             if (c->op == GO_SELECT_SEND) {
                 int result = go_channel_send(c->chan, c->value);
+                nsync_mu_unlock(&c->chan->mutex);
                 if (result == 0) {
                     return i; // Send successful, return index of the case
                 }
             } else if (c->op == GO_SELECT_RECEIVE) {
                 int result = go_channel_receive(c->chan, c->recv_buf);
+                nsync_mu_unlock(&c->chan->mutex);
                 if (result == 0) {
                     return i; // Receive successful, return index of the case
                 }

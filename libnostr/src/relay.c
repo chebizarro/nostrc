@@ -17,8 +17,8 @@ Relay *new_relay(GoContext *context, const char *url, Error **err) {
 
     CancelContextResult cancellabe = go_context_with_cancel(context);
 
-    Relay *relay = (Relay *)malloc(sizeof(Relay));
-    RelayPrivate *priv = (RelayPrivate *)malloc(sizeof(RelayPrivate));
+    Relay *relay = (Relay *)calloc(1, sizeof(Relay));
+    RelayPrivate *priv = (RelayPrivate *)calloc(1, sizeof(RelayPrivate));
     if (!relay || !priv) {
         *err = new_error(1, "failed to allocate memory for Relay struct");
         return NULL;
@@ -49,7 +49,9 @@ void free_relay(Relay *relay) {
         go_hash_map_destroy(relay->subscriptions);
         go_context_free(relay->priv->connection_context);
         go_hash_map_destroy(relay->priv->ok_callbacks);
+        go_channel_close(relay->priv->write_queue);
         go_channel_free(relay->priv->write_queue);
+        go_channel_close(relay->priv->subscription_channel_close_queue);
         go_channel_free(relay->priv->subscription_channel_close_queue);
         free(relay->priv);
         free(relay);
@@ -79,8 +81,8 @@ void *cleanup_routine(void *arg) {
     stop_ticker(t);
     connection_close(r->connection);
     r->connection = NULL;
-    go_hash_map_for_each(r->subscriptions, sub_foreach_unsub);
     nsync_mu_unlock(&r->priv->mutex);
+    go_hash_map_for_each(r->subscriptions, sub_foreach_unsub);
     return NULL;
 }
 
@@ -94,16 +96,18 @@ void *write_operations(void *arg) {
 
     GoSelectCase cases[] = {
         {GO_SELECT_RECEIVE, r->priv->write_queue, &write_req},
-        {GO_SELECT_RECEIVE, r->priv->connection_context->done, &write_req}};
+        {GO_SELECT_SEND, r->priv->connection_context->done, (void*)NULL}};
 
     while (true) {
         int result = go_select(cases, 2);
 
+        if (go_context_is_canceled(r->priv->connection_context)) {
+            break; // Exit the thread if the connection is closed
+        }
+
         switch (result) {
         case 0: { // Received a message to write
             Error *err = NULL;
-
-            // Lock only around shared resources (if necessary)
             nsync_mu_lock(&r->priv->mutex);
             connection_write_message(r->connection, r->priv->connection_context, write_req.msg, &err);
             nsync_mu_unlock(&r->priv->mutex);
@@ -114,23 +118,18 @@ void *write_operations(void *arg) {
             }
 
             // Free resources for this write request
-            // free(write_req.msg);               // Free the message
             go_channel_free(write_req.answer); // Free the channel
             break;
         }
         case 1: // Context has been canceled
             if (go_context_is_canceled(r->priv->connection_context)) {
                 // Unlock before exiting
-                nsync_mu_unlock(&r->priv->mutex);
                 return NULL; // Exit the loop
             }
         default:
             break;
         }
     }
-
-    // Unlock and clean up if exiting
-    nsync_mu_unlock(&r->priv->mutex);
     return NULL;
 }
 
@@ -142,18 +141,16 @@ void *message_loop(void *arg) {
     while (true) {
         // Reset buffer and error for each loop iteration
         memset(buf, 0, 1024);  // Clear the buffer
-
-        nsync_mu_lock(&r->priv->mutex);
-
         // Read the message into buf, passing the error pointer
         connection_read_message(r->connection, r->priv->connection_context, buf, &err);
         
         // Check if an error occurred (err != NULL)
         if (err != NULL) {
+            nsync_mu_lock(&r->priv->mutex);
             r->connection_error = &err;
+            nsync_mu_unlock(&r->priv->mutex);
             Error *cerr = NULL;
             relay_close(r, &cerr);  // Pass the error pointer to relay_close
-            nsync_mu_unlock(&r->priv->mutex);
             break;
         }
 
@@ -164,7 +161,6 @@ void *message_loop(void *arg) {
             if (r->priv->custom_handler) {
                 r->priv->custom_handler(message);  // Call custom handler if no envelope
             }
-            nsync_mu_unlock(&r->priv->mutex);
             continue;
         }
 
@@ -212,8 +208,6 @@ void *message_loop(void *arg) {
         default:
             break;
         }
-
-        nsync_mu_unlock(&r->priv->mutex);
     }
 
     free(buf);  // Free the buffer when done
@@ -234,10 +228,10 @@ bool relay_connect(Relay *relay, Error **err) {
     }
     relay->connection = conn;
 
-    Ticker *ticker = create_ticker(29 * GO_TIME_SECOND);
+    //Ticker *ticker = create_ticker(29 * GO_TIME_SECOND);
 
-    void *cleanup[] = {relay, ticker};
-    go(cleanup_routine, cleanup);
+    //void *cleanup[] = {relay, ticker};
+    // go(cleanup_routine, cleanup);
     go(write_operations, relay);
     go(message_loop, relay);
 
@@ -487,8 +481,9 @@ bool relay_close(Relay *r, Error **err) {
         return false;
     }
 
+    nsync_mu_lock(&r->priv->mutex);
     connection_close(r->connection);
-    r->connection = NULL;
     r->priv->connection_context_cancel(r->priv->connection_context);
+    nsync_mu_unlock(&r->priv->mutex);
     return true;
 }

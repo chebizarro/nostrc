@@ -73,7 +73,7 @@ GoChannel *go_context_done(GoContext *ctx) {
 
 Error *go_context_err(GoContext *ctx) {
     if (ctx && ctx->vtable && ctx->vtable->err) {
-        char* err = ctx->vtable->err(ctx);
+        const char* err = ctx->vtable->err(ctx);
         if (err) return new_error(-1, err);
     }
     return NULL;
@@ -88,7 +88,7 @@ void go_context_wait(GoContext *ctx) {
 
 // Background context
 GoContext *go_context_background() {
-    GoContext *ctx = (GoContext *)malloc(sizeof(GoContext));
+    GoContext *ctx = (GoContext *)calloc(1, sizeof(GoContext));
     nsync_mu_init(&ctx->mutex);
     nsync_cv_init(&ctx->cond);
     ctx->done = go_channel_create(1);
@@ -189,10 +189,10 @@ bool hierarchical_context_is_canceled(void *ctx) {
 }
 
 CancelContextResult go_context_with_cancel(GoContext *parent) {
-    GoHierarchicalContext *ctx = malloc(sizeof(GoHierarchicalContext));
+    GoHierarchicalContext *ctx = calloc(1, sizeof(GoHierarchicalContext));
     hierarchical_context_init(ctx, parent);
 
-    ctx->base.vtable = malloc(sizeof(GoContextInterface));
+    ctx->base.vtable = calloc(1, sizeof(GoContextInterface));
     ctx->base.vtable->is_canceled = hierarchical_context_is_canceled;
     ctx->base.vtable->wait = base_context_wait;
     ctx->base.vtable->free = base_context_free;
