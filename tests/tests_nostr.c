@@ -44,11 +44,14 @@ int main() {
 
     relay_publish(relay, event);
 
-    Subscription *sub = create_subscription(relay, create_filters(1));
+    Filters filters = {
+        .filters = filter
+    };
+
+    Subscription *sub = create_subscription(relay, &filters);
     subscription_fire(sub, err);
     subscription_unsub(sub);
 
-    //relay_disconnect(relay);
     assert(!relay_is_connected(relay));
 
     free(id);

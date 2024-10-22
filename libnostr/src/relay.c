@@ -57,7 +57,12 @@ void free_relay(Relay *relay) {
 }
 
 bool relay_is_connected(Relay *relay) {
-    return !go_context_is_canceled(relay->priv->connection_context);
+    Error *err = go_context_err(relay->priv->connection_context);
+    if (err) {
+        free_error(err);
+        return false;
+    }
+    return true;
 }
 
 bool sub_foreach_unsub(HashKey *key, void *sub) {
@@ -89,7 +94,7 @@ void *write_operations(void *arg) {
 
     GoSelectCase cases[] = {
         {GO_SELECT_RECEIVE, r->priv->write_queue, &write_req},
-        {GO_SELECT_RECEIVE, r->priv->connection_context->done, NULL}};
+        {GO_SELECT_RECEIVE, r->priv->connection_context->done, &write_req}};
 
     while (true) {
         int result = go_select(cases, 2);
@@ -232,8 +237,8 @@ bool relay_connect(Relay *relay, Error **err) {
     Ticker *ticker = create_ticker(29 * GO_TIME_SECOND);
 
     void *cleanup[] = {relay, ticker};
-    go(cleanup_routine, cleanup[0]);
-    go(write_operations, cleanup[0]);
+    go(cleanup_routine, cleanup);
+    go(write_operations, relay);
     go(message_loop, relay);
 
     return true;
@@ -448,7 +453,8 @@ int64_t relay_count(Relay *relay, GoContext *ctx, Filter *filter, Error **err) {
     }
 
     Filters filters = {
-        .filters = filter};
+        .filters = filter
+    };
 
     // Prepare the subscription (but don't fire it yet)
     Subscription *subscription = relay_prepare_subscription(relay, ctx, &filters);

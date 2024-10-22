@@ -31,11 +31,16 @@ include_directories(${NSYNC_INCLUDE_DIR})
 # Add the executable
 add_executable(test_nostr tests_nostr.c)
 
+add_executable(test_relay test_relay.c)
+
 # Link OpenSSL and libsecp256k1
 target_link_libraries(test_nostr PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 
+target_link_libraries(test_relay PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+
 # Add test
 add_test(NAME test_nostr COMMAND test_nostr)
+add_test(NAME test_relay COMMAND test_relay)
 
 # Include directories for libsecp256k1
 target_include_directories(test_nostr PRIVATE ${SECP256K1_INCLUDE_DIRS})

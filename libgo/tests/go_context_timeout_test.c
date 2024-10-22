@@ -10,7 +10,8 @@ void *wait_with_timeout(void *arg) {
     
     printf("Thread: Waiting for the context to timeout...\n");
     go_context_wait(ctx);  // Wait for the context to timeout or be canceled
-    printf("Thread: Context timed out, error message: %s\n", go_context_err(ctx));
+    Error* err = go_context_err(ctx);
+    printf("Thread: Context timed out, error message: %s\n", err ? err->message : NULL);
 
     return NULL;
 }

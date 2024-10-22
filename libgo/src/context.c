@@ -71,8 +71,12 @@ GoChannel *go_context_done(GoContext *ctx) {
     return ctx && ctx->vtable && ctx->vtable->done ? ctx->vtable->done(ctx) : NULL;
 }
 
-const char *go_context_err(GoContext *ctx) {
-    return ctx && ctx->vtable && ctx->vtable->err ? ctx->vtable->err(ctx) : NULL;
+Error *go_context_err(GoContext *ctx) {
+    if (ctx && ctx->vtable && ctx->vtable->err) {
+        char* err = ctx->vtable->err(ctx);
+        if (err) return new_error(-1, err);
+    }
+    return NULL;
 }
 
 

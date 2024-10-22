@@ -4,6 +4,7 @@
 #include <time.h>
 #include <nsync.h>
 #include <stdbool.h>
+#include "error.h"
 
 typedef struct GoChannel GoChannel;
 
@@ -34,7 +35,7 @@ bool go_context_is_canceled(GoContext *ctx);  // Wrapper for vtable->is_canceled
 void go_context_wait(GoContext *ctx);         // Wrapper for vtable->wait
 void go_context_free(GoContext *ctx);         // Wrapper for vtable->free
 GoChannel *go_context_done(GoContext *ctx);   // Wrapper for vtable->done
-const char *go_context_err(GoContext *ctx);   // Wrapper for vtable->err
+Error *go_context_err(GoContext *ctx);   // Wrapper for vtable->err
 
 // Deadline context
 typedef struct {
