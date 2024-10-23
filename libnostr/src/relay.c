@@ -132,7 +132,7 @@ void *message_loop(void *arg) {
         nsync_mu_lock(&r->priv->mutex);
 
         // Read the message into buf, passing the error pointer
-        connection_read_message(r->connection, r->priv->connection_context, buf, &err);
+        connection_read_message(r->connection, r->priv->connection_context, buf, 1024, &err);
 
         // Check if an error occurred
         if (err != NULL) {
@@ -221,9 +221,9 @@ bool relay_connect(Relay *relay, Error **err) {
     relay->connection = conn;
 
     // Ticker *ticker = create_ticker(29 * GO_TIME_SECOND);
-
     // void *cleanup[] = {relay, ticker};
     //  go(cleanup_routine, cleanup);
+    
     go(write_operations, relay);
     go(message_loop, relay);
 
@@ -235,28 +235,47 @@ void *write_error(void *arg) {
     return NULL;
 }
 
+int nsync_go_context_is_canceled(const void *ctx) {
+    return go_context_is_canceled((GoContext *)ctx);
+}
+
 GoChannel *relay_write(Relay *r, char *msg) {
     GoChannel *chan = go_channel_create(1);
 
+    // Create a write request
     write_request req = {
         .msg = msg,
-        .answer = chan};
+        .answer = chan
+    };
 
-    GoSelectCase cases[] = {
-        {GO_SELECT_SEND, r->priv->write_queue, &req},
-        {GO_SELECT_RECEIVE, r->priv->connection_context->done, NULL}};
+    nsync_mu_lock(&r->priv->mutex);  // Lock the mutex to ensure thread safety
 
+    // Use a loop to handle the condition (waiting until the message is sent or context is canceled)
     while (true) {
-        switch (go_select(cases, 2)) {
-        case 0:
-            break;
-        case 1:
-            go(write_error, chan);
-        default:
-            break;
+        // Check if the context is canceled (done)
+        if (go_context_is_canceled(r->priv->connection_context)) {
+            go(write_error, chan);  // If canceled, write the error to the channel
+            nsync_mu_unlock(&r->priv->mutex);
+            return chan;  // Return immediately after cancellation
         }
+
+        // Add the write request to the write queue
+        if (go_channel_send(r->priv->write_queue, &req) == 0) {
+            // Successfully added to the write queue, return the channel
+            nsync_mu_unlock(&r->priv->mutex);
+            return chan;
+        }
+
+        // Wait until either the write queue has space or the context is canceled
+        nsync_mu_wait_with_deadline(
+            &r->priv->mutex, 
+            &nsync_go_context_is_canceled, 
+            r->priv->connection_context,
+            NULL,
+            nsync_time_no_deadline,  // No timeout deadline
+            NULL  // No specific note for cancellation
+        );
     }
-    return chan;
 }
 
 void relay_publish(Relay *relay, NostrEvent *event) {

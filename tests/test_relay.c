@@ -26,7 +26,7 @@ void test_relay_connection_and_close() {
 
     // Connect the relay
     bool connected = relay_connect(relay, &err);
-    //assert(connected == true);
+    assert(connected == true);
     assert(err == NULL);
 
     // Check if the relay is connected
@@ -71,6 +71,7 @@ void test_relay_subscription() {
     // Close the relay
     relay_close(relay, &err);
     free_relay(relay);
+    free_filter(filter);
     go_context_free(ctx);
 }
 
@@ -103,7 +104,7 @@ int main() {
     test_relay_initialization_and_cleanup();
     test_relay_connection_and_close();
     test_relay_subscription();
-    //test_relay_write();
+    test_relay_write();
 
     return 0;
 }

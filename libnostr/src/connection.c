@@ -94,7 +94,7 @@ Connection *new_connection(const char *url) {
     struct lws_client_connect_info connect_info;
     struct lws_context *context;
 
-    lws_set_log_level(LLL_USER | LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_DEBUG | LLL_HEADER | LLL_LATENCY | LLL_CLIENT | LLL_PARSER | LLL_EXT | LLL_INFO, NULL);
+    lws_set_log_level(LLL_USER | LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_DEBUG | LLL_HEADER | LLL_CLIENT , NULL);
 
     lws_retry_bo_t retry_bo = {
         .retry_ms_table = retry_table,
@@ -229,7 +229,7 @@ void connection_write_message(Connection *conn, GoContext *ctx, char *message, E
     lws_callback_on_writable(conn->priv->wsi);
 }
 
-void connection_read_message(Connection *conn, GoContext *ctx, char *buffer, Error **err) {
+void connection_read_message(Connection *conn, GoContext *ctx, char *buffer, size_t buffer_size, Error **err) {
     if (!conn || !buffer) {
         if (err) {
             *err = new_error(1, "Invalid connection or buffer");
@@ -237,20 +237,39 @@ void connection_read_message(Connection *conn, GoContext *ctx, char *buffer, Err
         return;
     }
 
-    // Wait for a message from the recv_channel
+    // Optionally check if the context is canceled
+    if (ctx && ctx->vtable->is_canceled(ctx)) {
+        if (err) {
+            *err = new_error(1, "Context canceled");
+        }
+        return;
+    }
+
     WebSocketMessage *msg;
     if (go_channel_receive(conn->recv_channel, (void **)&msg) == 0) {
-        // Copy the received message to the buffer
         if (msg->length > 0) {
-            strncpy(buffer, msg->data, msg->length);
-            buffer[msg->length] = '\0'; // Ensure null termination
+            // Check if the buffer can accommodate the message and the null terminator
+            if (msg->length < buffer_size) {
+                strncpy(buffer, msg->data, msg->length);
+                buffer[msg->length] = '\0'; // Ensure null termination
+            } else {
+                // Handle case where message exceeds buffer size
+                if (err) {
+                    *err = new_error(1, "Buffer too small to hold message");
+                }
+                // Free memory and return early to avoid issues
+                free(msg->data);
+                free(msg);
+                return;
+            }
         }
 
+        // Free message memory
         free(msg->data);
         free(msg);
     } else {
         if (err) {
-            *err = new_error(1, "Failed to receive message");
+            *err = new_error(1, "Failed to receive message or channel closed");
         }
     }
 }

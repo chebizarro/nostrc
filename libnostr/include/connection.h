@@ -17,6 +17,6 @@ void connection_close(Connection *conn);
 
 void connection_write_message(Connection *conn, GoContext *ctx, char *buffer, Error **err);
 
-void connection_read_message(Connection *conn, GoContext *ctx, char *message, Error **err);
+void connection_read_message(Connection *conn, GoContext *ctx, char *message, size_t buffer_size, Error **err);
 
 #endif // NOSTR_CONNECTION_H
