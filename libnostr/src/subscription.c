@@ -135,7 +135,7 @@ void subscription_unsub(Subscription *sub) {
     }
 
     // Remove the subscription from the relay's map
-    go_hash_map_remove(sub->relay->subscriptions, sub->priv->id);
+    go_hash_map_remove_str(sub->relay->subscriptions, sub->priv->id);
 }
 
 void subscription_close(Subscription *sub, Error **err) {

@@ -6,7 +6,7 @@ void test_relay_initialization_and_cleanup() {
     GoContext *ctx = go_context_background();
     
     // Create relay
-    Relay *relay = new_relay(ctx, "localhost:8080", &err);
+    Relay *relay = new_relay(ctx, "relay.sharegap.net", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
@@ -48,7 +48,7 @@ void test_relay_subscription() {
     GoContext *ctx = go_context_background();
 
     // Create relay
-    Relay *relay = new_relay(ctx, "localhost:8080", &err);
+    Relay *relay = new_relay(ctx, "relay.sharegap.net", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
@@ -79,7 +79,7 @@ void test_relay_write() {
     GoContext *ctx = go_context_background();
 
     // Create relay
-    Relay *relay = new_relay(ctx, "localhost:8080", &err);
+    Relay *relay = new_relay(ctx, "relay.sharegap.net", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
@@ -100,9 +100,9 @@ void test_relay_write() {
 
 int main() {
 
-    //test_relay_initialization_and_cleanup();
+    test_relay_initialization_and_cleanup();
     test_relay_connection_and_close();
-    //test_relay_subscription();
+    test_relay_subscription();
     //test_relay_write();
 
     return 0;

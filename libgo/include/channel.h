@@ -1,9 +1,9 @@
 #ifndef GO_CHANNEL_H
 #define GO_CHANNEL_H
 
+#include "context.h"
 #include "refptr.h"
 #include <nsync.h>
-#include "context.h"
 
 typedef struct GoChannel {
     void **buffer;
@@ -20,6 +20,8 @@ typedef struct GoChannel {
 GoChannel *go_channel_create(size_t capacity);
 void go_channel_free(GoChannel *chan);
 int go_channel_send(GoChannel *chan, void *data);
+int go_channel_has_space(const void *chan);
+int go_channel_has_data(const void *chan);
 int go_channel_receive(GoChannel *chan, void **data);
 int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx);
 int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx);

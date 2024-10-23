@@ -7,7 +7,7 @@
 
 extern GoChannel *go_channel_create(size_t capacity);
 extern int go_channel_send(GoChannel *chan, void *data);
-extern void go_channel_free(GoChannel *chan);
+extern void go_channel_close(GoChannel *chan);
 
 void go_context_cancel(GoContext *ctx) {
     nsync_mu_lock(&ctx->mutex);
@@ -24,7 +24,9 @@ void go_context_cancel(GoContext *ctx) {
 // Base functions (common for all contexts)
 void base_context_free(void *ctx) {
     GoContext *base_ctx = (GoContext *)ctx;
-    go_channel_free(base_ctx->done);
+    go_channel_close(base_ctx->done);
+    free(base_ctx->vtable);
+    free(base_ctx);
 }
 
 GoChannel *base_context_done(void *ctx) {

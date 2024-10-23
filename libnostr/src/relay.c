@@ -46,13 +46,13 @@ Relay *new_relay(GoContext *context, const char *url, Error **err) {
 void free_relay(Relay *relay) {
     if (relay) {
         free(relay->url);
+        //if (*relay->connection_error) free_error(*relay->connection_error);
         go_hash_map_destroy(relay->subscriptions);
         go_context_free(relay->priv->connection_context);
+        free(relay->priv->challenge);
         go_hash_map_destroy(relay->priv->ok_callbacks);
         go_channel_close(relay->priv->write_queue);
-        go_channel_free(relay->priv->write_queue);
         go_channel_close(relay->priv->subscription_channel_close_queue);
-        go_channel_free(relay->priv->subscription_channel_close_queue);
         free(relay->priv);
         free(relay);
     }
@@ -94,90 +94,82 @@ void *write_operations(void *arg) {
         .answer = go_channel_create(1),
         .msg = (char *)malloc(4 * sizeof(char))};
 
-    GoSelectCase cases[] = {
-        {GO_SELECT_RECEIVE, r->priv->write_queue, &write_req},
-        {GO_SELECT_SEND, r->priv->connection_context->done, (void*)NULL}};
-
     while (true) {
-        int result = go_select(cases, 2);
+        // Wait for data in the write queue or for the context to be canceled
+        nsync_mu_lock(&r->priv->mutex);
+        nsync_mu_wait(&r->priv->mutex, &go_channel_has_data, r->priv->write_queue, NULL);
+        nsync_mu_unlock(&r->priv->mutex);
 
         if (go_context_is_canceled(r->priv->connection_context)) {
             break; // Exit the thread if the connection is closed
         }
 
-        switch (result) {
-        case 0: { // Received a message to write
-            Error *err = NULL;
-            nsync_mu_lock(&r->priv->mutex);
-            connection_write_message(r->connection, r->priv->connection_context, write_req.msg, &err);
-            nsync_mu_unlock(&r->priv->mutex);
+        // Dequeue and process the write request
+        Error *err = NULL;
+        nsync_mu_lock(&r->priv->mutex);
+        connection_write_message(r->connection, r->priv->connection_context, write_req.msg, &err);
+        nsync_mu_unlock(&r->priv->mutex);
 
-            // Check for errors and send them over the answer channel
-            if (err != NULL) {
-                go_channel_send(write_req.answer, err);
-            }
-
-            // Free resources for this write request
-            go_channel_free(write_req.answer); // Free the channel
-            break;
+        // Handle error and free resources
+        if (err != NULL) {
+            go_channel_send(write_req.answer, err);
         }
-        case 1: // Context has been canceled
-            if (go_context_is_canceled(r->priv->connection_context)) {
-                // Unlock before exiting
-                return NULL; // Exit the loop
-            }
-        default:
-            break;
-        }
+        go_channel_free(write_req.answer); // Free the channel
     }
+
     return NULL;
 }
 
 void *message_loop(void *arg) {
     Relay *r = (Relay *)arg;
-    char *buf = (char *)malloc(1024 * sizeof(char));  // Allocate a buffer for reading messages
-    Error *err = NULL;  // Initialize the error pointer
+    char *buf = (char *)malloc(1024 * sizeof(char)); // Allocate a buffer for reading messages
+    Error *err = NULL;                               // Initialize the error pointer
 
     while (true) {
-        // Reset buffer and error for each loop iteration
-        memset(buf, 0, 1024);  // Clear the buffer
+        // Reset buffer for each loop iteration
+        memset(buf, 0, 1024); // Clear the buffer
+
+        nsync_mu_lock(&r->priv->mutex);
+
         // Read the message into buf, passing the error pointer
         connection_read_message(r->connection, r->priv->connection_context, buf, &err);
-        
-        // Check if an error occurred (err != NULL)
+
+        // Check if an error occurred
         if (err != NULL) {
-            nsync_mu_lock(&r->priv->mutex);
             r->connection_error = &err;
-            nsync_mu_unlock(&r->priv->mutex);
+            nsync_mu_unlock(&r->priv->mutex); // Unlock before closing the connection
             Error *cerr = NULL;
-            relay_close(r, &cerr);  // Pass the error pointer to relay_close
+            relay_close(r, &cerr); // Pass the error pointer to relay_close
             break;
         }
 
-        const char *message = buf;  // Use the buffer to get the message
+        nsync_mu_unlock(&r->priv->mutex); // Unlock after processing the message
+
+        const char *message = buf; // Use the buffer to get the message
 
         Envelope *envelope = parse_message(message);
         if (!envelope) {
             if (r->priv->custom_handler) {
-                r->priv->custom_handler(message);  // Call custom handler if no envelope
+                r->priv->custom_handler(message); // Call custom handler if no envelope
             }
             continue;
         }
 
+        nsync_mu_lock(&r->priv->mutex); // Lock again for processing the envelope
         switch (envelope->type) {
         case ENVELOPE_NOTICE:
             if (r->priv->notice_handler) {
-                r->priv->notice_handler((char *)envelope);  // Handle notice
+                r->priv->notice_handler((char *)envelope); // Handle notice
             }
             break;
         case ENVELOPE_AUTH:
-            r->priv->challenge = ((AuthEnvelope *)envelope)->challenge;  // Handle auth
+            r->priv->challenge = ((AuthEnvelope *)envelope)->challenge; // Handle auth
             break;
         case ENVELOPE_EVENT: {
             EventEnvelope *env = (EventEnvelope *)envelope;
             Subscription *subscription = go_hash_map_get_int(r->subscriptions, sub_id_to_serial(env->subscription_id));
             if (subscription && event_check_signature(env->event)) {
-                subscription_dispatch_event(subscription, env->event);  // Dispatch event
+                subscription_dispatch_event(subscription, env->event); // Dispatch event
             }
             break;
         }
@@ -185,7 +177,7 @@ void *message_loop(void *arg) {
             ClosedEnvelope *env = (ClosedEnvelope *)envelope;
             Subscription *subscription = go_hash_map_get_int(r->subscriptions, sub_id_to_serial(env->subscription_id));
             if (subscription) {
-                subscription_dispatch_closed(subscription, env->reason);  // Dispatch closed event
+                subscription_dispatch_closed(subscription, env->reason); // Dispatch closed event
             }
             break;
         }
@@ -193,7 +185,7 @@ void *message_loop(void *arg) {
             CountEnvelope *env = (CountEnvelope *)envelope;
             Subscription *subscription = go_hash_map_get_int(r->subscriptions, sub_id_to_serial(env->subscription_id));
             if (subscription) {
-                go_channel_send(subscription->priv->count_result, &env->count);  // Send count result
+                go_channel_send(subscription->priv->count_result, &env->count); // Send count result
             }
             break;
         }
@@ -201,19 +193,19 @@ void *message_loop(void *arg) {
             OKEnvelope *env = (OKEnvelope *)envelope;
             ok_callback cb = go_hash_map_get_string(r->priv->ok_callbacks, env->event_id);
             if (cb) {
-                cb(env->ok, env->reason);  // Handle OK callback
+                cb(env->ok, env->reason); // Handle OK callback
             }
             break;
         }
         default:
             break;
         }
+        nsync_mu_unlock(&r->priv->mutex); // Unlock after processing the envelope
     }
 
-    free(buf);  // Free the buffer when done
+    free(buf); // Free the buffer when done
     return NULL;
 }
-
 
 bool relay_connect(Relay *relay, Error **err) {
     if (!relay) {
@@ -228,10 +220,10 @@ bool relay_connect(Relay *relay, Error **err) {
     }
     relay->connection = conn;
 
-    //Ticker *ticker = create_ticker(29 * GO_TIME_SECOND);
+    // Ticker *ticker = create_ticker(29 * GO_TIME_SECOND);
 
-    //void *cleanup[] = {relay, ticker};
-    // go(cleanup_routine, cleanup);
+    // void *cleanup[] = {relay, ticker};
+    //  go(cleanup_routine, cleanup);
     go(write_operations, relay);
     go(message_loop, relay);
 
@@ -447,8 +439,7 @@ int64_t relay_count(Relay *relay, GoContext *ctx, Filter *filter, Error **err) {
     }
 
     Filters filters = {
-        .filters = filter
-    };
+        .filters = filter};
 
     // Prepare the subscription (but don't fire it yet)
     Subscription *subscription = relay_prepare_subscription(relay, ctx, &filters);
