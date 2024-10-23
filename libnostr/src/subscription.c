@@ -25,7 +25,7 @@ Subscription *create_subscription(Relay *relay, Filters *filters) {
     sub->priv->live = false;
     sub->priv->eosed = false;
     sub->priv->closed = false;
-    pthread_mutex_init(&sub->priv->sub_mutex, NULL);
+    nsync_mu_init(&sub->priv->sub_mutex);
 
     return sub;
 }
@@ -36,7 +36,6 @@ void free_subscription(Subscription *sub) {
 
     go_channel_free(sub->events);
     go_channel_free(sub->closed_reason);
-    pthread_mutex_destroy(&sub->priv->sub_mutex);
     free(sub->priv);
     free(sub);
 }
@@ -45,33 +44,32 @@ char *subscription_get_id(Subscription *sub) {
     return sub->priv->id;
 }
 
-void *subscription_thread_func(void *arg) {
-    Subscription *sub = (Subscription *)arg;
-    pthread_mutex_lock(&sub->priv->sub_mutex);
-
-    pthread_mutex_unlock(&sub->priv->sub_mutex);
-    return NULL;
-}
-
 void *subscription_start(void *arg) {
     Subscription *sub = (Subscription *)arg;
 
-    // Wait for the subscription context to be canceled
+    // Wait for the subscription context to be canceled or for the subscription to be closed
     while (!go_context_is_canceled(sub->context)) {
-        sleep(1); // Small sleep to avoid busy waiting
+        // Use nsync to wait efficiently
+        nsync_mu_lock(&sub->priv->sub_mutex);
+        nsync_mu_wait(&sub->priv->sub_mutex, go_context_is_canceled, sub->context, NULL);
+        nsync_mu_unlock(&sub->priv->sub_mutex);
+
+        if (go_context_is_canceled(sub->context)) {
+            break;
+        }
     }
 
     // Once the context is canceled, unsubscribe the subscription
     subscription_unsub(sub);
 
     // Lock the subscription to avoid race conditions
-    pthread_mutex_lock(&sub->priv->sub_mutex);
+    nsync_mu_lock(&sub->priv->sub_mutex);
 
     // Close the events channel
     go_channel_close(sub->events);
 
     // Unlock the mutex after the events channel is closed
-    pthread_mutex_unlock(&sub->priv->sub_mutex);
+    nsync_mu_unlock(&sub->priv->sub_mutex);
 
     return NULL;
 }
@@ -83,21 +81,21 @@ void subscription_dispatch_event(Subscription *sub, NostrEvent *event) {
     bool added = false;
     if (!atomic_load(&sub->priv->eosed)) {
         added = true;
-        // Increment a "stored" event counter (if needed)
     }
 
-    pthread_mutex_lock(&sub->priv->sub_mutex);
+    nsync_mu_lock(&sub->priv->sub_mutex);
+    bool is_live = atomic_load(&sub->priv->live);
+    nsync_mu_unlock(&sub->priv->sub_mutex);
 
-    if (atomic_load(&sub->priv->live)) {
+    if (is_live) {
         go_channel_send(sub->events, event);
     }
 
-    pthread_mutex_unlock(&sub->priv->sub_mutex);
-
     if (added) {
-        // Decrement "stored" event counter (if needed)
+        // Decrement stored event counter if needed
     }
 }
+
 
 void subscription_dispatch_eose(Subscription *sub) {
     if (!sub)

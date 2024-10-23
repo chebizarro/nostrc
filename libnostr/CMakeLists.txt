@@ -28,8 +28,11 @@ set(LIBNOSTR_SOURCES
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+
 # Create the library
 add_library(libnostr ${LIBNOSTR_SOURCES})
+
+target_compile_options(libnostr PRIVATE $<$<CONFIG:Debug>:-Werror>)
 
 target_link_libraries(libnostr libgo ${LWS_LIBRARIES})
 

@@ -23,6 +23,8 @@ enable_testing()
 # Create the library
 add_library(libgo ${LIBGO_SOURCES})
 
+target_compile_options(libgo PRIVATE $<$<CONFIG:Debug>:-Werror>)
+
 target_include_directories(libgo PUBLIC include)
 
 target_link_libraries(libgo)

@@ -65,7 +65,8 @@ void go_context_free(GoContext *ctx) {
 }
 
 // Wrapper functions
-bool go_context_is_canceled(GoContext *ctx) {
+int go_context_is_canceled(const void *ctxp) {
+    GoContext *ctx = (GoContext*)ctxp;
     return ctx && ctx->vtable && ctx->vtable->is_canceled ? ctx->vtable->is_canceled(ctx) : true;
 }
 

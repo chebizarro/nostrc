@@ -21,8 +21,7 @@ typedef struct _SubscriptionPrivate {
 
     LongAdder *stored_event_counter;
 
-    pthread_mutex_t sub_mutex;
-    pthread_t thread;
+    nsync_mu sub_mutex;
 } SubscriptionPrivate;
 
 Subscription *create_subscription(Relay *relay, Filters *filters);

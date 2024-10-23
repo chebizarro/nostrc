@@ -3,6 +3,8 @@
 #include <string.h>
 #include "filter.h"
 
+#define INITIAL_CAPACITY 4  // Initial capacity for Filters array
+
 Filter *create_filter() {
     Filter *filter = (Filter *)malloc(sizeof(Filter));
     if (!filter)
@@ -25,29 +27,55 @@ void free_filter(Filter *filter) {
     string_array_free(&filter->ids);
     int_array_free(&filter->kinds);
     string_array_free(&filter->authors);
-    free_tags(filter->tags);
+    free_tags(&filter->tags);
     free(filter->search);
     free(filter);
 }
 
-Filters *create_filters(size_t count) {
+Filters *create_filters() {
     Filters *filters = (Filters *)malloc(sizeof(Filters));
     if (!filters)
         return NULL;
 
-    filters->filters = (Filter *)malloc(count * sizeof(Filter));
+    filters->count = 0;
+    filters->capacity = INITIAL_CAPACITY;
+    filters->filters = (Filter *)malloc(filters->capacity * sizeof(Filter));
     if (!filters->filters) {
         free(filters);
         return NULL;
     }
 
-    filters->count = count;
-    for (size_t i = 0; i < count; i++) {
-        filters->filters[i] = *create_filter();
-    }
-
     return filters;
 }
+
+// Resizes the internal array when needed
+static bool filters_resize(Filters *filters) {
+    size_t new_capacity = filters->capacity * 2;
+    Filter *new_filters = (Filter *)realloc(filters->filters, new_capacity * sizeof(Filter));
+    if (!new_filters)
+        return false;
+
+    filters->filters = new_filters;
+    filters->capacity = new_capacity;
+    return true;
+}
+
+bool filters_add(Filters *filters, Filter *filter) {
+    if (!filters || !filter)
+        return false;
+
+    // Resize the array if necessary
+    if (filters->count == filters->capacity) {
+        if (!filters_resize(filters)) {
+            return false;
+        }
+    }
+
+    filters->filters[filters->count] = *filter; // Copy the filter into the array
+    filters->count++;
+    return true;
+}
+
 
 void free_filters(Filters *filters) {
     for (size_t i = 0; i < filters->count; i++) {
@@ -92,7 +120,7 @@ bool filter_match_ignoring_timestamp(Filter *filter, NostrEvent *event) {
             return false;
     }
 
-    if (filter->tags && filter->tags->count > 0) {
+    if (&filter->tags && &filter->tags.count > 0) {
         // TODO implement
     }
 

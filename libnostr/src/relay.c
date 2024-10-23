@@ -310,7 +310,7 @@ void relay_auth(Relay *relay, void (*sign)(NostrEvent *, Error **), Error **err)
 
 bool relay_subscribe(Relay *relay, GoContext *ctx, Filters *filters, Error **err) {
     // Ensure the relay connection exists
-    if (relay->connection == NULL) {
+    if (!relay->connection) {
         *err = new_error(1, "not connected to %s", relay->url);
         return false;
     }

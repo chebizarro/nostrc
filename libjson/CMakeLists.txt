@@ -27,6 +27,8 @@ include_directories(${NSYNC_INCLUDE_DIR})
 # Add the library source files
 add_library(nostr_json SHARED src/json.c)
 
+target_compile_options(nostr_json PRIVATE $<$<CONFIG:Debug>:-Werror>)
+
 # Include headers
 target_include_directories(nostr_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(nostr_json PUBLIC include)
