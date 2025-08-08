@@ -41,6 +41,7 @@ jobs:
         if: startsWith(matrix.os, 'macos')
         run: |
           brew update
+          brew upgrade
           # Prefer Homebrew package if available; fallback to source build
           if brew info nsync >/dev/null 2>&1; then
             brew install nsync || true

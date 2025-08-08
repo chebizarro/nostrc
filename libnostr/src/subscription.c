@@ -5,6 +5,7 @@
 #include "subscription-private.h"
 #include <openssl/ssl.h>
 #include <unistd.h>
+#include <time.h>
 
 static _Atomic long long g_sub_counter = 1;
 
@@ -29,6 +30,9 @@ Subscription *create_subscription(Relay *relay, Filters *filters) {
     sub->priv->eosed = false;
     sub->priv->closed = false;
     nsync_mu_init(&sub->priv->sub_mutex);
+    // Initialize wait group for lifecycle thread
+    go_wait_group_init(&sub->priv->wg);
+    go_wait_group_add(&sub->priv->wg, 1);
 
     // Initialize identity and context so API works even if caller doesn't go through relay helper
     long long c = atomic_fetch_add(&g_sub_counter, 1);
@@ -44,6 +48,9 @@ Subscription *create_subscription(Relay *relay, Filters *filters) {
     // Default match function
     sub->priv->match = filters_match;
     // Start lifecycle watcher
+    if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+        fprintf(stderr, "[sub %s] create: starting lifecycle thread\n", sub->priv->id);
+    }
     go(subscription_start, sub);
 
     return sub;
@@ -53,10 +60,14 @@ void free_subscription(Subscription *sub) {
     if (!sub)
         return;
 
+    // Ensure lifecycle worker has exited (caller should have unsubscribed)
+    go_wait_group_wait(&sub->priv->wg);
+
     go_channel_free(sub->events);
     go_channel_free(sub->end_of_stored_events);
     go_channel_free(sub->closed_reason);
     free(sub->priv->id);
+    go_wait_group_destroy(&sub->priv->wg);
     free(sub->priv);
     free(sub);
 }
@@ -68,19 +79,18 @@ char *subscription_get_id(Subscription *sub) {
 void *subscription_start(void *arg) {
     Subscription *sub = (Subscription *)arg;
 
-    // Wait for the subscription context to be canceled or for the subscription to be closed
-    while (!go_context_is_canceled(sub->context)) {
-        // Use nsync to wait efficiently
-        nsync_mu_lock(&sub->priv->sub_mutex);
-        nsync_mu_wait(&sub->priv->sub_mutex, go_context_is_canceled, sub->context, NULL);
-        nsync_mu_unlock(&sub->priv->sub_mutex);
-
-        if (go_context_is_canceled(sub->context)) {
-            break;
-        }
+    if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+        fprintf(stderr, "[sub %s] start: waiting for cancel/close\n", sub->priv->id);
     }
 
+    // Wait for context cancellation via its done channel; this is signaled/closed by go_context_cancel
+    GoChannel *done = go_context_done(sub->context);
+    (void)go_channel_receive(done, NULL); // success or closed+empty both indicate done
+
     // Once the context is canceled, unsubscribe the subscription
+    if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+        fprintf(stderr, "[sub %s] start: context canceled -> unsubscribing\n", sub->priv->id);
+    }
     subscription_unsub(sub);
 
     // Lock the subscription to avoid race conditions
@@ -92,6 +102,10 @@ void *subscription_start(void *arg) {
     // Unlock the mutex after the events channel is closed
     nsync_mu_unlock(&sub->priv->sub_mutex);
 
+    if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+        fprintf(stderr, "[sub %s] start: exited lifecycle thread\n", sub->priv->id);
+    }
+    go_wait_group_done(&sub->priv->wg);
     return NULL;
 }
 
@@ -112,10 +126,16 @@ void subscription_dispatch_event(Subscription *sub, NostrEvent *event) {
     if (is_live) {
         // Non-blocking send; if full or closed or canceled, drop to avoid hang
         if (go_channel_try_send(sub->events, event) != 0) {
+            if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+                fprintf(stderr, "[sub %s] dispatch_event: dropped (queue full/closed)\n", sub->priv->id);
+            }
             free_event(event);
         }
     } else {
         // Not live anymore; drop event to avoid blocking
+        if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+            fprintf(stderr, "[sub %s] dispatch_event: dropped (not live)\n", sub->priv->id);
+        }
         free_event(event);
     }
 
@@ -135,6 +155,9 @@ void subscription_dispatch_eose(Subscription *sub) {
 
         // Wait for any "stored" events to finish processing, then signal EOSE
         go_channel_send(sub->end_of_stored_events, NULL);
+        if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+            fprintf(stderr, "[sub %s] dispatch_eose: signaled EOSE\n", sub->priv->id);
+        }
     }
 }
 
@@ -145,6 +168,9 @@ void subscription_dispatch_closed(Subscription *sub, const char *reason) {
     // Set the closed flag and dispatch the reason
     if (atomic_exchange(&sub->priv->closed, true) == false) {
         go_channel_send(sub->closed_reason, (void *)reason);
+        if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+            fprintf(stderr, "[sub %s] dispatch_closed: reason='%s'\n", sub->priv->id, reason ? reason : "");
+        }
     }
 }
 
@@ -157,11 +183,17 @@ void subscription_unsub(Subscription *sub) {
 
     // If the subscription is still live, mark it as inactive and close it
     if (atomic_exchange(&sub->priv->live, false)) {
+        if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+            fprintf(stderr, "[sub %s] unsub: closing (send CLOSED)\n", sub->priv->id);
+        }
         subscription_close(sub, NULL);
     }
 
     // Remove the subscription from the relay's map (keys are ints/counters)
     go_hash_map_remove_int(sub->relay->subscriptions, sub->priv->counter);
+    if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+        fprintf(stderr, "[sub %s] unsub: removed from relay map\n", sub->priv->id);
+    }
 }
 
 void subscription_close(Subscription *sub, Error **err) {
@@ -171,33 +203,56 @@ void subscription_close(Subscription *sub, Error **err) {
     }
 
     if (relay_is_connected(sub->relay)) {
-        // Create a CloseEnvelope with the subscription ID
-        ClosedEnvelope *close_msg = (ClosedEnvelope *)create_envelope(ENVELOPE_CLOSED);
+        // Create a ClosedEnvelope with the subscription ID (allocated with correct size)
+        ClosedEnvelope *close_msg = (ClosedEnvelope *)malloc(sizeof(ClosedEnvelope));
         if (!close_msg) {
-            *err = new_error(1, "failed to create close envelope");
+            if (err) *err = new_error(1, "failed to create close envelope");
             return;
         }
+        close_msg->base.type = ENVELOPE_CLOSED;
         close_msg->subscription_id = strdup(sub->priv->id);
+        close_msg->reason = NULL;
 
         // Serialize the close message and send it to the relay
         char *close_msg_str = nostr_envelope_serialize((Envelope *)close_msg);
         if (!close_msg_str) {
             if (err) *err = new_error(1, "failed to serialize close envelope");
+            // free envelope before returning
+            free(close_msg->subscription_id);
+            free(close_msg);
             return;
         }
+        // free temporary envelope after serialization to avoid leaks
+        free(close_msg->subscription_id);
+        free(close_msg);
 
         // Send the message through the relay
         GoChannel *write_channel = relay_write(sub->relay, close_msg_str);
         free(close_msg_str);
 
-        // Wait for the result of the write
+        // Wait for the result of the write, but don't block indefinitely
         Error *write_err = NULL;
-        go_channel_receive(write_channel, (void **)&write_err);
-    // Channel no longer needed: close then free
-    go_channel_close(write_channel);
-    go_channel_free(write_channel);
+        struct timespec now;
+        clock_gettime(CLOCK_REALTIME, &now);
+        struct timespec deadline = now;
+        deadline.tv_sec += 0;
+        long nsec_add = 200 * 1000000L; // 200ms timeout
+        deadline.tv_nsec += nsec_add;
+        if (deadline.tv_nsec >= 1000000000L) {
+            deadline.tv_sec += 1;
+            deadline.tv_nsec -= 1000000000L;
+        }
+        GoContext *wctx = go_with_deadline(go_context_background(), deadline);
+        (void)go_channel_receive_with_context(write_channel, (void **)&write_err, wctx);
+        go_context_free(wctx);
+        // Channel no longer needed: close then free
+        go_channel_close(write_channel);
+        go_channel_free(write_channel);
         if (write_err) {
             if (err) *err = write_err;
+        }
+        if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+            fprintf(stderr, "[sub %s] close: write done (err=%p)\n", sub->priv->id, (void *)write_err);
         }
     }
 }
@@ -280,6 +335,9 @@ bool subscription_fire(Subscription *subscription, Error **err) {
 
     // Mark the subscription as live
     atomic_store(&subscription->priv->live, true);
+    if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+        fprintf(stderr, "[sub %s] fire: live=1\n", subscription->priv->id);
+    }
 
     return true;
 }

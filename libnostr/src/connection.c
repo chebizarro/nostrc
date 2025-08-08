@@ -291,7 +291,11 @@ void *websocket_send_coroutine(void *arg) {
 
 void connection_close(Connection *conn) {
     if (!conn) return;
-    // Close channels to unblock any waiters before freeing
+    // Ownership note:
+    // - connection_close() closes channels to wake waiters but MUST NOT free them.
+    // - relay_close() is responsible for freeing conn->recv_channel/send_channel
+    //   after all workers have exited (see relay.c) to prevent use-after-free.
+    // Close channels to unblock any waiters; do not free here to avoid UAF.
     if (conn->recv_channel) go_channel_close(conn->recv_channel);
     if (conn->send_channel) go_channel_close(conn->send_channel);
 
@@ -308,9 +312,7 @@ void connection_close(Connection *conn) {
         free(conn->priv);
     }
 
-    // Free channels after they have been closed and any waiters unblocked
-    if (conn->recv_channel) go_channel_free(conn->recv_channel);
-    if (conn->send_channel) go_channel_free(conn->send_channel);
+    // Do not free channels here; the owner (relay) will free them after worker threads exit.
     free(conn);
 }
 

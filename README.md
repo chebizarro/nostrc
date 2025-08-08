@@ -138,3 +138,15 @@ To add a new NIP:
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+## Shutdown Quick Reference
+
+For correct relay/connection/subscription teardown and to avoid hangs or use-after-free during shutdown, see:
+
+- docs/SHUTDOWN.md
+
+Key points:
+
+- Cancel context, close relay queues, snapshot+null the connection.
+- Wait for relay workers to exit, then free `conn` channels.
+- Finally call `connection_close(conn)`; it closes channels but does not free them.

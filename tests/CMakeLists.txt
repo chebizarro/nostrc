@@ -5,6 +5,25 @@ project(test_nostr_project)
 
 enable_testing()
 
+# Sanitizer helper (Debug builds)
+function(apply_sanitizers target)
+  if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    if (GO_ENABLE_TSAN)
+      target_compile_options(${target} PRIVATE -fsanitize=thread)
+      target_link_options(${target} PRIVATE -fsanitize=thread)
+    else()
+      if (GO_ENABLE_ASAN)
+        target_compile_options(${target} PRIVATE -fsanitize=address)
+        target_link_options(${target} PRIVATE -fsanitize=address)
+      endif()
+      if (GO_ENABLE_UBSAN)
+        target_compile_options(${target} PRIVATE -fsanitize=undefined)
+        target_link_options(${target} PRIVATE -fsanitize=undefined)
+      endif()
+    endif()
+  endif()
+endfunction()
+
 # Find OpenSSL for hashing/crypto used by tests
 find_package(OpenSSL REQUIRED)
 if (OpenSSL_FOUND)
@@ -35,24 +54,41 @@ add_executable(test_nostr tests_nostr.c)
 
 add_executable(test_relay test_relay.c)
 add_executable(test_relay_shutdown test_relay_shutdown.c)
+add_executable(test_subscription_lifecycle test_subscription_lifecycle.c)
+add_executable(test_envelope_parse test_envelope_parse.c)
 
 # Link OpenSSL, libsecp256k1, nsync, and project libraries
 target_link_libraries(test_nostr PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 
 target_link_libraries(test_relay PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_link_libraries(test_relay_shutdown PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+target_link_libraries(test_subscription_lifecycle PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+target_link_libraries(test_envelope_parse PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+
+# Apply sanitizers to tests if enabled
+apply_sanitizers(test_nostr)
+apply_sanitizers(test_relay)
+apply_sanitizers(test_relay_shutdown)
+apply_sanitizers(test_subscription_lifecycle)
+apply_sanitizers(test_envelope_parse)
 
 # Register tests for CTest. Run with: `ctest --output-on-failure`
 add_test(NAME test_nostr COMMAND test_nostr)
 add_test(NAME test_relay COMMAND test_relay)
 add_test(NAME test_relay_shutdown COMMAND test_relay_shutdown)
+add_test(NAME test_subscription_lifecycle COMMAND test_subscription_lifecycle)
+add_test(NAME test_envelope_parse COMMAND test_envelope_parse)
 
 # Include directories for libsecp256k1 headers
 target_include_directories(test_nostr PRIVATE ${SECP256K1_INCLUDE_DIRS})
 target_include_directories(test_relay PRIVATE ${SECP256K1_INCLUDE_DIRS})
 target_include_directories(test_relay_shutdown PRIVATE ${SECP256K1_INCLUDE_DIRS})
+target_include_directories(test_subscription_lifecycle PRIVATE ${SECP256K1_INCLUDE_DIRS})
+target_include_directories(test_envelope_parse PRIVATE ${SECP256K1_INCLUDE_DIRS})
 
 # Link directories for libsecp256k1
 target_link_directories(test_nostr PRIVATE ${SECP256K1_LIBRARY_DIRS})
 target_link_directories(test_relay PRIVATE ${SECP256K1_LIBRARY_DIRS})
 target_link_directories(test_relay_shutdown PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(test_subscription_lifecycle PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(test_envelope_parse PRIVATE ${SECP256K1_LIBRARY_DIRS})

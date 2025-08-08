@@ -176,7 +176,9 @@ int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
 
     channel_wait_arg_t wa = { .c = chan, .ctx = ctx };
     while (chan->size == chan->capacity && !chan->closed && !(ctx && go_context_is_canceled(ctx))) {
-        nsync_mu_wait(&chan->mutex, channel_send_pred, &wa, NULL);
+        // Wait with a short deadline so time-based contexts can be observed
+        nsync_time dl = nsync_time_add(nsync_time_now(), nsync_time_ms(50));
+        nsync_mu_wait_with_deadline(&chan->mutex, channel_send_pred, &wa, NULL, dl, NULL);
     }
 
     if (chan->closed || (ctx && go_context_is_canceled(ctx))) {
@@ -207,7 +209,9 @@ int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx
 
     channel_wait_arg_t wa = { .c = chan, .ctx = ctx };
     while (chan->size == 0 && !chan->closed && !(ctx && go_context_is_canceled(ctx))) {
-        nsync_mu_wait(&chan->mutex, channel_recv_pred, &wa, NULL);
+        // Wait with a short deadline so time-based contexts can be observed
+        nsync_time dl = nsync_time_add(nsync_time_now(), nsync_time_ms(50));
+        nsync_mu_wait_with_deadline(&chan->mutex, channel_recv_pred, &wa, NULL, dl, NULL);
     }
 
     if ((chan->closed && chan->size == 0) || (ctx && go_context_is_canceled(ctx))) {

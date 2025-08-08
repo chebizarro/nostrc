@@ -125,10 +125,11 @@ Envelope *parse_message(const char *message) {
         EOSEEnvelope *env = (EOSEEnvelope *)malloc(sizeof(EOSEEnvelope));
         if (!env) { free(label); return NULL; }
         env->base.type = ENVELOPE_EOSE;
-        // Second element: subscription id (string)
+        // Second element: subscription id (string) is required
         char *sid = parse_json_string(&p);
+        if (!sid) { free(env); free(label); return NULL; }
         // We don't currently use it; store in message for debugging
-        env->message = sid; // optional
+        env->message = sid;
         envelope = (Envelope *)env;
     } else if (strcmp(label, "NOTICE") == 0) {
         NoticeEnvelope *env = (NoticeEnvelope *)malloc(sizeof(NoticeEnvelope));
@@ -149,6 +150,7 @@ Envelope *parse_message(const char *message) {
         if (!q) { free(env->subscription_id); free(env); free(label); return NULL; }
         p = q;
         char *reason = parse_json_string(&p);
+        if (!reason) { free(env->subscription_id); free(env); free(label); return NULL; }
         env->reason = reason;
         envelope = (Envelope *)env;
     } else if (strcmp(label, "OK") == 0) {
@@ -164,8 +166,14 @@ Envelope *parse_message(const char *message) {
         // parse boolean ok (true/false)
         if (strncmp(p, "true", 4) == 0) { env->ok = true; p += 4; }
         else if (strncmp(p, "false", 5) == 0) { env->ok = false; p += 5; }
+        else { free(env->event_id); free(env); free(label); return NULL; }
         q = parse_comma(p);
-        if (q) { p = q; env->reason = parse_json_string(&p); }
+        if (q) {
+            p = q;
+            char *rsn = parse_json_string(&p);
+            if (!rsn) { free(env->event_id); free(env); free(label); return NULL; }
+            env->reason = rsn;
+        }
         envelope = (Envelope *)env;
     } else if (strcmp(label, "COUNT") == 0) {
         CountEnvelope *env = (CountEnvelope *)malloc(sizeof(CountEnvelope));

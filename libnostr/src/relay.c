@@ -606,6 +606,16 @@ bool relay_close(Relay *r, Error **err) {
         return false;
     }
 
+    // Ownership note:
+    // - connection_close() only closes channels; it MUST NOT free them.
+    // - relay_close() is responsible for freeing conn->recv_channel/send_channel
+    //   but ONLY AFTER all workers have exited to avoid use-after-free in go_select.
+    // Ensure workers exit before tearing down the connection to avoid UAF
+    // Workers observe r->connection == NULL and/or context cancel and then call done
+    go_wait_group_wait(&r->priv->workers);
+    // Now that workers are done, it's safe to free connection-owned channels
+    if (conn->recv_channel) { go_channel_free(conn->recv_channel); conn->recv_channel = NULL; }
+    if (conn->send_channel) { go_channel_free(conn->send_channel); conn->send_channel = NULL; }
     // Close the network connection outside the relay mutex
     connection_close(conn);
     return true;

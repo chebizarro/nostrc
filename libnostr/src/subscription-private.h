@@ -22,6 +22,8 @@ typedef struct _SubscriptionPrivate {
     LongAdder *stored_event_counter;
 
     nsync_mu sub_mutex;
+    // Wait for lifecycle thread to exit before freeing
+    GoWaitGroup wg;
 } SubscriptionPrivate;
 
 Subscription *create_subscription(Relay *relay, Filters *filters);
