@@ -12,6 +12,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+static int shutdown_dbg_enabled(void) {
+    static int inited = 0;
+    static int enabled = 0;
+    if (!inited) {
+        const char *e = getenv("NOSTR_DEBUG_SHUTDOWN");
+        enabled = (e && *e && strcmp(e, "0") != 0) ? 1 : 0;
+        inited = 1;
+    }
+    return enabled;
+}
+
 // Forward declaration for worker used before its definition
 static void *write_error(void *arg);
 static void *write_operations(void *arg);
@@ -81,6 +92,7 @@ Relay *new_relay(GoContext *context, const char *url, Error **err) {
     relay->priv->subscription_channel_close_queue = go_channel_create(16);
     relay->priv->debug_raw = NULL;
     go_wait_group_init(&relay->priv->workers);
+    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] new_relay: initialized workers and queues for %s\n", relay->url);
     // request_header
 
     relay->priv->notice_handler = NULL;
@@ -92,23 +104,28 @@ Relay *new_relay(GoContext *context, const char *url, Error **err) {
 void free_relay(Relay *relay) {
     if (!relay) return;
     // Signal background loops to stop
+    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] free_relay: cancel connection context\n");
     if (relay->priv && relay->priv->connection_context_cancel) {
         relay->priv->connection_context_cancel(relay->priv->connection_context);
     }
     // Close queues to unblock workers
     if (relay->priv) {
+        if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] free_relay: closing queues\n");
         if (relay->priv->write_queue) go_channel_close(relay->priv->write_queue);
         if (relay->priv->subscription_channel_close_queue) go_channel_close(relay->priv->subscription_channel_close_queue);
         if (relay->priv->debug_raw) go_channel_close(relay->priv->debug_raw);
     }
     // Close network connection last
+    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] free_relay: closing network connection\n");
     if (relay->connection) {
         connection_close(relay->connection);
         relay->connection = NULL;
     }
     // Wait for worker goroutines to finish
     if (relay->priv) {
+        if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] free_relay: waiting for workers\n");
         go_wait_group_wait(&relay->priv->workers);
+        if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] free_relay: workers joined\n");
         go_wait_group_destroy(&relay->priv->workers);
     }
 }
@@ -126,6 +143,7 @@ bool relay_connect(Relay *relay, Error **err) {
     }
     relay->connection = conn;
 
+    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] relay_connect: starting workers\n");
     go_wait_group_add(&relay->priv->workers, 2);
     go(write_operations, relay);
     go(message_loop, relay);
@@ -142,8 +160,13 @@ static void *write_error(void *arg) {
 static void *write_operations(void *arg) {
     Relay *r = (Relay *)arg;
     if (!r || !r->priv) return NULL;
+    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] write_operations: start\n");
 
     for (;;) {
+        // Fast-path: if connection context is canceled, exit promptly
+        if (r->priv->connection_context && go_context_is_canceled(r->priv->connection_context)) {
+            break;
+        }
         write_request *req = NULL;
         GoSelectCase cases[] = {
             (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = r->priv->write_queue, .value = NULL, .recv_buf = (void **)&req },
@@ -179,6 +202,7 @@ static void *write_operations(void *arg) {
         free(req);
     }
 
+    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] write_operations: exit\n");
     go_wait_group_done(&((Relay *)arg)->priv->workers);
     return NULL;
 }
@@ -188,6 +212,7 @@ static void *write_operations(void *arg) {
 static void *message_loop(void *arg) {
     Relay *r = (Relay *)arg;
     if (!r || !r->priv) return NULL;
+    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: start\n");
 
     char buf[4096];
     Error *err = NULL;
@@ -289,6 +314,7 @@ static void *message_loop(void *arg) {
         free_envelope(envelope);
     }
 
+    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: exit\n");
     go_wait_group_done(&((Relay *)arg)->priv->workers);
     return NULL;
 }
@@ -564,10 +590,14 @@ bool relay_close(Relay *r, Error **err) {
         return false;
     }
 
-    // Snapshot connection under lock and cancel context to wake workers
+    // Cancel context to wake workers and stop I/O
     nsync_mu_lock(&r->priv->mutex);
-    Connection *conn = r->connection;
     r->priv->connection_context_cancel(r->priv->connection_context);
+    // Close queues to unblock writer/select before tearing down connection
+    if (r->priv->write_queue) go_channel_close(r->priv->write_queue);
+    if (r->priv->subscription_channel_close_queue) go_channel_close(r->priv->subscription_channel_close_queue);
+    // Snapshot connection and clear relay pointer so workers see NULL
+    Connection *conn = r->connection;
     r->connection = NULL;
     nsync_mu_unlock(&r->priv->mutex);
 

@@ -15,7 +15,7 @@ int main(void) {
     assert(event != NULL);
 
     event->pubkey = strdup(pubKey);
-    event->created_at = 1234567890;
+    event->created_at = Now();
     event->kind = 1;
     event->content = strdup("Hello, Nostr!");
 

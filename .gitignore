@@ -36,7 +36,6 @@ out/
 
 # Ignore generated documentation files
 /doxygen-docs/
-/docs/
 
 # Ignore backup and temporary files created by editors or OS
 *~

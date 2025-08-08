@@ -4,9 +4,10 @@
 void test_relay_initialization_and_cleanup() {
     Error *err = NULL;
     GoContext *ctx = go_context_background();
+    setenv("NOSTR_TEST_MODE", "1", 1);
     
     // Create relay
-    Relay *relay = new_relay(ctx, "wss://nos.lol", &err);
+    Relay *relay = new_relay(ctx, "wss://example.invalid", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
@@ -18,9 +19,10 @@ void test_relay_initialization_and_cleanup() {
 void test_relay_connection_and_close() {
     Error *err = NULL;
     GoContext *ctx = go_context_background();
+    setenv("NOSTR_TEST_MODE", "1", 1);
 
     // Create relay
-    Relay *relay = new_relay(ctx, "wss://nos.lol", &err);
+    Relay *relay = new_relay(ctx, "wss://example.invalid", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
@@ -46,9 +48,10 @@ void test_relay_connection_and_close() {
 void test_relay_subscription() {
     Error *err = NULL;
     GoContext *ctx = go_context_background();
+    setenv("NOSTR_TEST_MODE", "1", 1);
 
     // Create relay
-    Relay *relay = new_relay(ctx, "wss://nos.lol", &err);
+    Relay *relay = new_relay(ctx, "wss://example.invalid", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
@@ -59,7 +62,6 @@ void test_relay_subscription() {
 
     // Create a filter for subscription
     Filter *filter = create_filter();
-    string_array_add(&filter->ids, "some_event_id");
 
     Filters filters = { .filters = filter};
 
@@ -78,9 +80,10 @@ void test_relay_subscription() {
 void test_relay_write() {
     Error *err = NULL;
     GoContext *ctx = go_context_background();
+    setenv("NOSTR_TEST_MODE", "1", 1);
 
     // Create relay
-    Relay *relay = new_relay(ctx, "wss://nos.lol", &err);
+    Relay *relay = new_relay(ctx, "wss://example.invalid", &err);
     assert(relay != NULL);
     assert(err == NULL);
 

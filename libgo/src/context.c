@@ -12,6 +12,12 @@ void go_context_cancel(GoContext *ctx) {
         ctx->err_msg = "context canceled";
         // Wake all waiters; avoid any blocking operations here
         nsync_cv_broadcast(&ctx->cond);
+        // Also make ctx->done observable by non-blocking selects
+        // Best-effort: try to enqueue a single token, then close to wake any waiters
+        if (ctx->done) {
+            (void)go_channel_try_send(ctx->done, (void*)ctx); // token value unused
+            go_channel_close(ctx->done);
+        }
     }
     nsync_mu_unlock(&ctx->mutex);
 }

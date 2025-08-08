@@ -1,4 +1,5 @@
 #include "select.h"
+#include "channel.h"
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -17,6 +18,8 @@ int go_select(GoSelectCase *cases, size_t num_cases) {
                 void *dummy = NULL;
                 void **dst = c->recv_buf ? c->recv_buf : &dummy;
                 if (go_channel_try_receive(c->chan, dst) == 0) return (int)idx;
+                // If the receive channel is closed, also consider it ready
+                if (go_channel_is_closed(c->chan)) return (int)idx;
             }
         }
 

@@ -26,6 +26,7 @@ int go_channel_receive(GoChannel *chan, void **data);
 // Non-blocking operations: return 0 on success, -1 if would block/closed
 int go_channel_try_send(GoChannel *chan, void *data);
 int go_channel_try_receive(GoChannel *chan, void **data);
+int go_channel_is_closed(GoChannel *chan);
 int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx);
 int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx);
 void go_channel_close(GoChannel *chan);

@@ -104,12 +104,19 @@ void subscription_dispatch_event(Subscription *sub, NostrEvent *event) {
         added = true;
     }
 
+    // Fast-path check without holding the mutex for too long
     nsync_mu_lock(&sub->priv->sub_mutex);
     bool is_live = atomic_load(&sub->priv->live);
     nsync_mu_unlock(&sub->priv->sub_mutex);
 
     if (is_live) {
-        go_channel_send(sub->events, event);
+        // Non-blocking send; if full or closed or canceled, drop to avoid hang
+        if (go_channel_try_send(sub->events, event) != 0) {
+            free_event(event);
+        }
+    } else {
+        // Not live anymore; drop event to avoid blocking
+        free_event(event);
     }
 
     if (added) {

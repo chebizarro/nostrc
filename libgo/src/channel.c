@@ -1,6 +1,29 @@
 #include "channel.h"
+#include "context.h"
 #include <stdio.h>
 #include <stdlib.h>
+
+typedef struct { GoChannel *c; GoContext *ctx; } channel_wait_arg_t;
+
+static int channel_send_pred(const void *arg) {
+    const channel_wait_arg_t *wa = (const channel_wait_arg_t *)arg;
+    const GoChannel *c = wa->c;
+    return (c->closed || (c->size < c->capacity) || (wa->ctx && go_context_is_canceled(wa->ctx)));
+}
+
+int go_channel_is_closed(GoChannel *chan) {
+    int closed = 0;
+    nsync_mu_lock(&chan->mutex);
+    closed = chan->closed;
+    nsync_mu_unlock(&chan->mutex);
+    return closed;
+}
+
+static int channel_recv_pred(const void *arg) {
+    const channel_wait_arg_t *wa = (const channel_wait_arg_t *)arg;
+    const GoChannel *c = wa->c;
+    return (c->closed || (c->size > 0) || (wa->ctx && go_context_is_canceled(wa->ctx)));
+}
 
 /* Condition function to check if the channel has space */
 int go_channel_has_space(const void *chan) {
@@ -144,24 +167,21 @@ int go_channel_receive(GoChannel *chan, void **data) {
 
 /* Send data to the channel with cancellation context */
 int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
+
     nsync_mu_lock(&chan->mutex);
     if (chan->buffer == NULL) {
         nsync_mu_unlock(&chan->mutex);
         return -1;
     }
 
-    while (chan->size == chan->capacity && !chan->closed) {
-        if (ctx && go_context_is_canceled(ctx)) {
-            nsync_mu_unlock(&chan->mutex);
-            return -1; // Canceled
-        }
-        // Wait until space is available
-        nsync_cv_wait(&chan->cond_full, &chan->mutex);
+    channel_wait_arg_t wa = { .c = chan, .ctx = ctx };
+    while (chan->size == chan->capacity && !chan->closed && !(ctx && go_context_is_canceled(ctx))) {
+        nsync_mu_wait(&chan->mutex, channel_send_pred, &wa, NULL);
     }
 
-    if (chan->closed) {
+    if (chan->closed || (ctx && go_context_is_canceled(ctx))) {
         nsync_mu_unlock(&chan->mutex);
-        return -1; // Channel is closed
+        return -1; // Channel closed or canceled
     }
 
     // Add data to the buffer
@@ -178,24 +198,21 @@ int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
 
 /* Receive data from the channel with cancellation context */
 int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx) {
+
     nsync_mu_lock(&chan->mutex);
     if (chan->buffer == NULL) {
         nsync_mu_unlock(&chan->mutex);
         return -1;
     }
 
-    while (chan->size == 0 && !chan->closed) {
-        if (ctx && go_context_is_canceled(ctx)) {
-            nsync_mu_unlock(&chan->mutex);
-            return -1; // Canceled
-        }
-        // Wait until data is available
-        nsync_cv_wait(&chan->cond_empty, &chan->mutex);
+    channel_wait_arg_t wa = { .c = chan, .ctx = ctx };
+    while (chan->size == 0 && !chan->closed && !(ctx && go_context_is_canceled(ctx))) {
+        nsync_mu_wait(&chan->mutex, channel_recv_pred, &wa, NULL);
     }
 
-    if (chan->closed && chan->size == 0) {
+    if ((chan->closed && chan->size == 0) || (ctx && go_context_is_canceled(ctx))) {
         nsync_mu_unlock(&chan->mutex);
-        return -1; // Channel is closed and empty
+        return -1; // Channel is closed and empty or canceled
     }
 
     // Get data from the buffer
