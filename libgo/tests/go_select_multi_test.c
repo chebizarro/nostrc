@@ -5,7 +5,7 @@
 #include "go.h"
 #include "select.h"
 
-int main(){
+int main(void){
     srand((unsigned)time(NULL));
     GoChannel *a = go_channel_create(2);
     GoChannel *b = go_channel_create(2);

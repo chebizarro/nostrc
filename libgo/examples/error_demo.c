@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include "error.h"
 
-int main(){
+int main(void){
     const char *path = "/nonexistent";
     Error *e = new_error(42, "failed to open: %s", path);
     if (is_error(e)) {

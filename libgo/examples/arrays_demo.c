@@ -2,7 +2,7 @@
 #include "int_array.h"
 #include "string_array.h"
 
-int main(){
+int main(void){
     IntArray ia; int_array_init(&ia);
     int_array_add(&ia, 7);
     int_array_add(&ia, 9);

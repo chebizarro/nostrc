@@ -17,7 +17,7 @@ void *ctx_worker(void *arg) {
     return NULL;
 }
 
-int main(){
+int main(void){
     // Create a cancellable context
     CancelContextResult r = go_context_with_cancel(NULL);
 

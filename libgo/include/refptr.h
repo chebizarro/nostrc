@@ -31,6 +31,10 @@ static inline void go_refptr_release(GoRefPtr *ref) {
     if (ref && ref->ref_count && atomic_fetch_sub(ref->ref_count, 1) == 1) {
         ref->destructor(ref->ptr);
         free(ref->ref_count);
+        // Prevent use-after-free if a cleanup attribute or caller releases again
+        ref->ref_count = NULL;
+        ref->ptr = NULL;
+        ref->destructor = NULL;
     }
 }
 

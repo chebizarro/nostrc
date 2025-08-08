@@ -13,7 +13,7 @@ static void *delayed_send(void *arg){
     return NULL;
 }
 
-int main(){
+int main(void){
     // Case 1: two receive cases, one has data now -> should pick that index
     GoChannel *a = go_channel_create(2);
     GoChannel *b = go_channel_create(2);

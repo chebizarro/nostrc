@@ -8,7 +8,7 @@ static void free_buf(void *p){
     free(p);
 }
 
-int main(){
+int main(void){
     // Create a ref-counted buffer
     go_autoptr(Buffer) r = make_go_refptr(malloc(128), free_buf);
     strcpy((char*)r.ptr, "hello refptr");

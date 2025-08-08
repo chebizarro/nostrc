@@ -20,4 +20,3 @@ void print_error(const Error *err);
 int is_error(const Error *err);
 
 #endif // GO_ERROR_H
-

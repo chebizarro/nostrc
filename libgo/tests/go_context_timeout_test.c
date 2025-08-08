@@ -16,7 +16,7 @@ void *wait_with_timeout(void *arg) {
     return NULL;
 }
 
-int main() {
+int main(void) {
     // Set a 3-second deadline
     struct timespec deadline;
     clock_gettime(CLOCK_REALTIME, &deadline);

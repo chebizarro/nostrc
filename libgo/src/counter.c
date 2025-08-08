@@ -1,7 +1,7 @@
 #include "counter.h"
 #include <unistd.h> // For sysconf
 
-LongAdder *long_adder_create() {
+LongAdder *long_adder_create(void) {
     int num_threads = sysconf(_SC_NPROCESSORS_ONLN); // Get the number of available processors
     if (num_threads < 1) {
         num_threads = 1; // Fallback to at least 1 counter

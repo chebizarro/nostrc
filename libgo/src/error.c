@@ -52,4 +52,3 @@ void print_error(const Error *err) {
 int is_error(const Error *err) {
     return err != NULL;
 }
-

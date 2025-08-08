@@ -15,7 +15,7 @@ void *ctx_worker(void *arg) {
     return NULL;
 }
 
-int main(){
+int main(void){
     srand((unsigned)time(NULL));
 
     for (int r=0; r<ROUNDS; ++r) {

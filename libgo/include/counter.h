@@ -13,7 +13,7 @@ typedef struct {
     int num_counters;                                // Number of counters
 } LongAdder;
 
-LongAdder *long_adder_create();
+LongAdder *long_adder_create(void);
 
 void long_adder_increment(LongAdder *adder);
 

@@ -38,5 +38,5 @@ void go_wait_group_wait(GoWaitGroup *wg) {
 
 // Destroy the GoWaitGroup (cleanup) - No explicit cleanup required for nsync
 void go_wait_group_destroy(GoWaitGroup *wg) {
-    // nsync doesn't require explicit destruction of mutex or condition variables
+    (void)wg; // nsync doesn't require explicit destruction of mutex or condition variables
 }

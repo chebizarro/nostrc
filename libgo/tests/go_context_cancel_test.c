@@ -16,7 +16,7 @@ void *wait_for_cancel(void *arg) {
     return NULL;
 }
 
-int main() {
+int main(void) {
     printf("Creating a cancellable context...\n");
 
     // Create a cancellable context

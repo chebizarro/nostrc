@@ -82,7 +82,7 @@ void go_context_wait(GoContext *ctx) {
 }
 
 // Background context
-GoContext *go_context_background() {
+GoContext *go_context_background(void) {
     GoContext *ctx = (GoContext *)calloc(1, sizeof(GoContext));
     nsync_mu_init(&ctx->mutex);
     nsync_cv_init(&ctx->cond);
@@ -94,6 +94,7 @@ GoContext *go_context_background() {
 
 // Initialization function for base contexts
 void go_context_init(GoContext *ctx, int timeout_seconds) {
+    (void)timeout_seconds; // unused in current implementation
     nsync_mu_init(&ctx->mutex);
     nsync_cv_init(&ctx->cond);
     ctx->done = go_channel_create(1);
@@ -150,6 +151,7 @@ void deadline_context_wait(void *dctx) {
 }
 
 GoContext *go_with_deadline(GoContext *parent, struct timespec deadline) {
+    (void)parent; // not used in this implementation
     GoDeadlineContext *ctx = malloc(sizeof(GoDeadlineContext));
     go_context_init(&ctx->base, 0);
 

@@ -11,7 +11,7 @@ void *print_message(void *arg) {
     return NULL;
 }
 
-int main() {
+int main(void) {
     GoWaitGroup wg; go_wait_group_init(&wg);
     go_wait_group_add(&wg, 2);
     MsgArgs a = { .msg = "Hello from thread 1", .wg = &wg };

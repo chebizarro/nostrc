@@ -17,7 +17,7 @@ void *producer(void *arg){
     return NULL;
 }
 
-int main(){
+int main(void){
     GoChannel *c1 = go_channel_create(1);
     GoChannel *c2 = go_channel_create(1);
 

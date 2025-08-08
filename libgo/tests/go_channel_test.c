@@ -30,7 +30,7 @@ void *receive_from_channel(void *arg) {
     return NULL;
 }
 
-int main() {
+int main(void) {
     printf("Creating a channel...\n");
 
     // Create a GoChannel with capacity for 3 messages

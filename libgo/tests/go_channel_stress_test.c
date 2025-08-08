@@ -33,13 +33,16 @@ void *cons(void *arg){
     while (go_channel_receive(a->c, &v) == 0){
         local_sum += (long)v; received++;
     }
-    // store results in thread-specific array if needed; here, just sanity checks
-    // printf("consumer %d: received=%d sum=%ld\n", a->id, received, (long)local_sum);
+    // Basic sanity: if we received anything, sum must be positive and count > 0
+    if (received < 0 || local_sum < 0) {
+        fprintf(stderr, "consumer %d counters invalid: received=%d sum=%ld\n", a->id, received, (long)local_sum);
+        abort();
+    }
     go_wait_group_done(a->wg);
     return NULL;
 }
 
-int main(){
+int main(void){
     GoChannel *c = go_channel_create(256);
     GoWaitGroup prodwg; go_wait_group_init(&prodwg);
     GoWaitGroup conswg; go_wait_group_init(&conswg);

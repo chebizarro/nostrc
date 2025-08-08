@@ -8,7 +8,7 @@ static bool print_kv(HashKey *k, void *v){
     return true; // continue
 }
 
-int main(){
+int main(void){
     GoHashMap *m = go_hash_map_create(64);
 
     go_hash_map_insert_str(m, "name", (void*)"alice");

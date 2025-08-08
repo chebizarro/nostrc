@@ -13,7 +13,7 @@ static void *worker(void *arg) {
     return NULL;
 }
 
-int main() {
+int main(void) {
     GoWaitGroup wg;
     go_wait_group_init(&wg);
 

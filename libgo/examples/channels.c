@@ -33,7 +33,7 @@ void *consumer(void *arg) {
     return NULL;
 }
 
-int main() {
+int main(void) {
     GoChannel *chan = go_channel_create(5);
     GoWaitGroup wg; go_wait_group_init(&wg);
     go_wait_group_add(&wg, 2);

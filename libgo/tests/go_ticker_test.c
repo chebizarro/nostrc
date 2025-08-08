@@ -25,7 +25,7 @@ void *consumer_thread(void *arg) {
     return NULL;
 }
 
-int main() {
+int main(void) {
     // Create a ticker that ticks every 50ms
     Ticker *t = create_ticker(50);
     if (!t) {

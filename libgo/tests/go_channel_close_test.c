@@ -20,7 +20,7 @@ static void *send_blocker(void *arg) {
     return (void*)(long)rc;
 }
 
-int main() {
+int main(void) {
     // Test 1: receiver unblocks on close and get failure
     GoChannel *c1 = go_channel_create(1);
     pthread_t rth;

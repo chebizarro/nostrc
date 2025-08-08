@@ -167,14 +167,35 @@ Tests compile executables defined in `tests/CMakeLists.txt` and in `libgo/`.
 
 ## Debugging Tips
 
-- Enable AddressSanitizer for debugging memory issues:
+- Sanitizers (Debug builds):
 
 ```sh
-cmake .. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS="-fsanitize=address -fno-omit-frame-pointer" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address"
-make -j
+# AddressSanitizer + UndefinedBehaviorSanitizer
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+
+# ThreadSanitizer (mutually exclusive with ASAN)
+cmake -S . -B build_tsan -DCMAKE_BUILD_TYPE=Debug -DGO_ENABLE_TSAN=ON
+cmake --build build_tsan -j
+ctest --test-dir build_tsan --output-on-failure
+
+# Helpful env vars
+ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1 \
+UBSAN_OPTIONS=print_stacktrace=1 \
+TSAN_OPTIONS=halt_on_error=1
 ```
 
-- Verbose build: `make VERBOSE=1`.
+- Warnings and errors:
+
+```sh
+# Enable broad warnings (default in CMakeLists)
+# Treat warnings as errors (optional)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DGO_WARNINGS_AS_ERRORS=ON
+cmake --build build -j
+```
+
+- Verbose build: `make VERBOSE=1` or `ninja -v`.
 - Use `valgrind` (Linux) or `leaks` (macOS) for leak checks.
 
 ## Environment Configuration

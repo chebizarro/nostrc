@@ -1,4 +1,26 @@
+### Developer Notes (libgo)
+
+- Sanitizers (Debug):
+
+```
+# AddressSanitizer + UndefinedBehaviorSanitizer
+cmake -S libgo -B build -DCMAKE_BUILD_TYPE=Debug -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON
+cmake --build build -j && ctest --test-dir build --output-on-failure
+
+# ThreadSanitizer
+cmake -S libgo -B build_tsan -DCMAKE_BUILD_TYPE=Debug -DGO_ENABLE_TSAN=ON
+cmake --build build_tsan -j && ctest --test-dir build_tsan --output-on-failure
+```
+
+- Warnings:
+
+```
+cmake -S libgo -B build -DCMAKE_BUILD_TYPE=Debug -DGO_WARNINGS_AS_ERRORS=ON
+```
+
 # Nostr C Library
+
+![libgo CI](https://github.com/chebizarro/nostrc/actions/workflows/libgo-ci.yml/badge.svg)
 
 The Nostr C library provides an implementation of the Nostr protocol, including various NIPs (Nostr Improvement Proposals). This library aims to be highly portable, suitable for use in IoT environments, and provides bindings for integration with the GNOME desktop environment.
 
