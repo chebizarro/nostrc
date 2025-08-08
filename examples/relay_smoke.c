@@ -20,7 +20,7 @@
 // 5) Cleanly close
 
 static void print_usage(const char *prog) {
-    fprintf(stderr, "Usage: %s [relay_url] [--timeout ms] [--limit n] [--since secs_ago] [--kinds list] [--authors list] [--raw]\n", prog);
+    fprintf(stderr, "Usage: %s [relay_url] [--timeout ms] [--limit n] [--since secs_ago] [--kinds list] [--authors list] [--raw] [--count] [--multi[=kinds]]\n", prog);
     fprintf(stderr, "  kinds: comma-separated ints (e.g., 1,30023)\n");
     fprintf(stderr, "  authors: comma-separated hex pubkeys\n");
 }
@@ -31,6 +31,9 @@ int main(int argc, char **argv) {
     int limit = 10;
     long since_secs_ago = 3600;
     int enable_raw = 0;
+    int do_count = 0;
+    int do_multi = 0;
+    IntArray multi_kinds = {0};
     if (argc > 1 && strncmp(argv[1], "--", 2) != 0) {
         url = argv[1];
     }
@@ -97,6 +100,21 @@ int main(int argc, char **argv) {
             free(tmp);
         } else if (strcmp(arg, "--raw") == 0) {
             enable_raw = 1;
+        } else if (strcmp(arg, "--count") == 0) {
+            do_count = 1;
+        } else if (strncmp(arg, "--multi", 7) == 0) {
+            do_multi = 1;
+            // Optional: --multi=kind_list
+            const char *eq = strchr(arg, '=');
+            if (eq && *(eq+1)) {
+                char *tmp = strdup(eq+1);
+                char *saveptr = NULL;
+                for (char *tok = strtok_r(tmp, ",", &saveptr); tok; tok = strtok_r(NULL, ",", &saveptr)) {
+                    int k = (int)strtol(tok, NULL, 10);
+                    int_array_add(&multi_kinds, k);
+                }
+                free(tmp);
+            }
         } else if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -115,8 +133,38 @@ int main(int argc, char **argv) {
         raw_msgs = relay_get_debug_raw_channel(relay);
     }
 
-    // Use Subscription directly for events and lifecycle signals
-    Filters filters = { .filters = filter, .count = 1, .capacity = 1 };
+    // Build Filters: single or multi
+    Filters filters = {0};
+    Filter second = {0};
+    if (do_multi) {
+        filters.count = 2; filters.capacity = 2;
+        filters.filters = (Filter*)calloc(2, sizeof(Filter));
+        // First filter is the parsed one
+        memcpy(&filters.filters[0], filter, sizeof(Filter));
+        // Second filter: default kinds if not specified via --multi=, else use provided
+        second = (Filter){0};
+        if (multi_kinds.size == 0) {
+            int_array_add(&second.kinds, 5); // default to kind 5 notes if none provided
+        } else {
+            for (int i = 0; i < multi_kinds.size; ++i) int_array_add(&second.kinds, multi_kinds.data[i]);
+        }
+        second.since = filter->since;
+        second.limit = filter->limit;
+        filters.filters[1] = second;
+    } else {
+        filters.filters = filter; filters.count = 1; filters.capacity = 1;
+    }
+
+    // Optional COUNT demo using the first filter
+    if (do_count) {
+        int64_t c = relay_count(relay, ctx, filter, &err);
+        if (err) {
+            fprintf(stderr, "[relay_smoke] COUNT error: %s\n", err->message);
+            free_error(err); err = NULL;
+        } else {
+            printf("COUNT result: %lld\n", (long long)c);
+        }
+    }
     Subscription *sub = relay_prepare_subscription(relay, ctx, &filters);
     if (!sub) {
         fprintf(stderr, "[relay_smoke] relay_prepare_subscription failed\n");
@@ -195,7 +243,16 @@ int main(int argc, char **argv) {
 
     // Debug channel was disabled above; nothing to drain here to avoid race with worker shutdown.
 
-    free_filter(filter);
+    // Free allocated filters
+    if (do_multi) {
+        // filters.filters[0] is a memcpy of filter; free both
+        free_filter(&filters.filters[0]);
+        free_filter(&filters.filters[1]);
+        free(filters.filters);
+        free_filter(filter); // original allocated
+    } else {
+        free_filter(filter);
+    }
     free_relay(relay);
     go_context_free(ctx);
 
