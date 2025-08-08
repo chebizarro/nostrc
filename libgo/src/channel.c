@@ -8,6 +8,36 @@ int go_channel_has_space(const void *chan) {
     return c->size < c->capacity;
 }
 
+/* Non-blocking send: returns 0 on success, -1 if full or closed */
+int go_channel_try_send(GoChannel *chan, void *data) {
+    int rc = -1;
+    nsync_mu_lock(&chan->mutex);
+    if (!chan->closed && chan->size < chan->capacity) {
+        chan->buffer[chan->in] = data;
+        chan->in = (chan->in + 1) % chan->capacity;
+        chan->size++;
+        nsync_cv_signal(&chan->cond_empty);
+        rc = 0;
+    }
+    nsync_mu_unlock(&chan->mutex);
+    return rc;
+}
+
+/* Non-blocking receive: returns 0 on success, -1 if empty (or closed and empty) */
+int go_channel_try_receive(GoChannel *chan, void **data) {
+    int rc = -1;
+    nsync_mu_lock(&chan->mutex);
+    if (chan->size > 0) {
+        *data = chan->buffer[chan->out];
+        chan->out = (chan->out + 1) % chan->capacity;
+        chan->size--;
+        nsync_cv_signal(&chan->cond_full);
+        rc = 0;
+    }
+    nsync_mu_unlock(&chan->mutex);
+    return rc;
+}
+
 /* Condition function to check if the channel has data */
 int go_channel_has_data(const void *chan) {
     GoChannel *c = (GoChannel *)chan;
@@ -24,6 +54,8 @@ GoChannel *go_channel_create(size_t capacity) {
     chan->out = 0;
     chan->closed = false;
     nsync_mu_init(&chan->mutex);
+    nsync_cv_init(&chan->cond_full);
+    nsync_cv_init(&chan->cond_empty);
     return chan;
 }
 
@@ -46,18 +78,22 @@ void go_channel_free(GoChannel *chan) {
 int go_channel_send(GoChannel *chan, void *data) {
     nsync_mu_lock(&chan->mutex);
 
+    while (chan->size == chan->capacity && !chan->closed) {
+        nsync_cv_wait(&chan->cond_full, &chan->mutex);
+    }
+
     if (chan->closed) {
         nsync_mu_unlock(&chan->mutex);
         return -1; // Cannot send to a closed channel
     }
 
-    // Wait for space in the buffer
-    nsync_mu_wait(&chan->mutex, &go_channel_has_space, chan, NULL);
-
     // Add data to the buffer
     chan->buffer[chan->in] = data;
     chan->in = (chan->in + 1) % chan->capacity;
     chan->size++;
+
+    // Signal receivers that data is available
+    nsync_cv_signal(&chan->cond_empty);
 
     nsync_mu_unlock(&chan->mutex);
     return 0;
@@ -67,8 +103,9 @@ int go_channel_send(GoChannel *chan, void *data) {
 int go_channel_receive(GoChannel *chan, void **data) {
     nsync_mu_lock(&chan->mutex);
 
-    // Wait for data to be available
-    nsync_mu_wait(&chan->mutex, &go_channel_has_data, chan, NULL);
+    while (chan->size == 0 && !chan->closed) {
+        nsync_cv_wait(&chan->cond_empty, &chan->mutex);
+    }
 
     if (chan->closed && chan->size == 0) {
         nsync_mu_unlock(&chan->mutex);
@@ -80,6 +117,9 @@ int go_channel_receive(GoChannel *chan, void **data) {
     chan->out = (chan->out + 1) % chan->capacity;
     chan->size--;
 
+    // Signal senders that space is available
+    nsync_cv_signal(&chan->cond_full);
+
     nsync_mu_unlock(&chan->mutex);
     return 0;
 }
@@ -89,11 +129,12 @@ int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
     nsync_mu_lock(&chan->mutex);
 
     while (chan->size == chan->capacity && !chan->closed) {
-        if (ctx && ctx->vtable->is_canceled(ctx)) {
+        if (ctx && go_context_is_canceled(ctx)) {
             nsync_mu_unlock(&chan->mutex);
             return -1; // Canceled
         }
-        nsync_mu_wait_with_deadline(&chan->mutex, &go_channel_has_space, chan, NULL, nsync_time_no_deadline, NULL);
+        // Wait until space is available
+        nsync_cv_wait(&chan->cond_full, &chan->mutex);
     }
 
     if (chan->closed) {
@@ -106,6 +147,9 @@ int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
     chan->in = (chan->in + 1) % chan->capacity;
     chan->size++;
 
+    // Signal receivers that data is available
+    nsync_cv_signal(&chan->cond_empty);
+
     nsync_mu_unlock(&chan->mutex);
     return 0;
 }
@@ -115,11 +159,12 @@ int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx
     nsync_mu_lock(&chan->mutex);
 
     while (chan->size == 0 && !chan->closed) {
-        if (ctx && ctx->vtable->is_canceled(ctx)) {
+        if (ctx && go_context_is_canceled(ctx)) {
             nsync_mu_unlock(&chan->mutex);
             return -1; // Canceled
         }
-        nsync_mu_wait_with_deadline(&chan->mutex, &go_channel_has_data, chan, NULL, nsync_time_no_deadline, NULL);
+        // Wait until data is available
+        nsync_cv_wait(&chan->cond_empty, &chan->mutex);
     }
 
     if (chan->closed && chan->size == 0) {
@@ -132,18 +177,23 @@ int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx
     chan->out = (chan->out + 1) % chan->capacity;
     chan->size--;
 
+    // Signal senders that space is available
+    nsync_cv_signal(&chan->cond_full);
+
     nsync_mu_unlock(&chan->mutex);
     return 0;
 }
 
-/* Close the channel */
+/* Close the channel (non-destructive): mark closed and wake waiters. */
 void go_channel_close(GoChannel *chan) {
     nsync_mu_lock(&chan->mutex);
 
     if (!chan->closed) {
         chan->closed = true; // Mark the channel as closed
+        // Wake up all potential waiters so they can observe closed state
+        nsync_cv_broadcast(&chan->cond_full);
+        nsync_cv_broadcast(&chan->cond_empty);
     }
 
     nsync_mu_unlock(&chan->mutex);
-    go_channel_free(chan);
 }

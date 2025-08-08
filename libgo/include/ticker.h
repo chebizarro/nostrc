@@ -2,7 +2,9 @@
 #define GO_TICKER_H
 
 #include "channel.h"
-#include "stdbool.h"
+#include <stdbool.h>
+#include <pthread.h>
+#include <nsync.h>
 
 typedef struct Ticker {
     GoChannel *c;

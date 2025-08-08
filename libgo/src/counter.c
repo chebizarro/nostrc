@@ -27,8 +27,8 @@ LongAdder *long_adder_create() {
 }
 
 void long_adder_increment(LongAdder *adder) {
-    unsigned long thread_id = pthread_self();
-    int index = thread_id % adder->num_counters; // Spread increments across the available counters
+    size_t tid_hash = (size_t)pthread_self();
+    int index = (int)(tid_hash % (size_t)adder->num_counters); // Spread increments across the available counters
     atomic_fetch_add(&adder->counters[index], 1);
 }
 

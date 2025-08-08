@@ -1,5 +1,7 @@
 #include "error.h"
-#include "stdio.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdarg.h>
 
 // Creates a new error with a code and message
 Error *new_error(int code, const char *format, ...) {

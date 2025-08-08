@@ -32,10 +32,8 @@ int main() {
     // Wait for the thread to finish
     pthread_join(thread, NULL);
 
-    // Free the context
+    // Free the context (vtable and struct are freed internally)
     go_context_free(ctx);
-    free(ctx->vtable);
-    free(ctx);
     
     printf("Test complete!\n");
     return 0;

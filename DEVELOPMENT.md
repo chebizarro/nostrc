@@ -19,6 +19,128 @@ brew install cmake openssl jansson nsync pkg-config
 brew install libsecp256k1 || true
 ```
 
+### Linux
+
+- Ubuntu/Debian:
+
+```sh
+sudo apt update
+sudo apt install -y build-essential cmake pkg-config git \
+  libssl-dev libjansson-dev \
+  libsecp256k1-dev || true
+
+# nsync is not packaged on all distros; build from source if not available
+# Build nsync from source
+git clone https://github.com/google/nsync.git
+cd nsync
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j
+sudo make install
+```
+
+- Fedora/RHEL (dnf):
+
+```sh
+sudo dnf install -y gcc gcc-c++ cmake make pkgconf-pkg-config git \
+  openssl-devel jansson-devel \
+  libsecp256k1-devel || true
+
+# Build nsync from source if not available via dnf (same steps as above)
+```
+
+- Arch Linux:
+
+```sh
+sudo pacman -S --needed base-devel cmake pkgconf git openssl jansson \
+  libsecp256k1 || true
+
+# Build nsync from source if not available via pacman
+```
+
+Notes:
+- If `libsecp256k1-dev`/`-devel` is not available on your distro, build from source:
+
+```sh
+git clone https://github.com/bitcoin-core/secp256k1.git
+cd secp256k1
+./autogen.sh
+./configure --enable-module-recovery --enable-experimental --enable-module-ecdh
+make -j
+sudo make install
+```
+
+### Windows
+
+Windows options are varied; we recommend MSYS2 or WSL for a Unix-like environment.
+
+- MSYS2 (native MinGW toolchain):
+
+```sh
+# Install MSYS2 from https://www.msys2.org/, then in MSYS2 MinGW64 shell:
+pacman -Syu --noconfirm
+pacman -S --needed --noconfirm \
+  mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake \
+  mingw-w64-x86_64-pkgconf git \
+  mingw-w64-x86_64-openssl mingw-w64-x86_64-jansson
+
+# libsecp256k1 and nsync may not be available: build both from source
+# Build secp256k1 and nsync as in Linux steps, using MinGW Makefiles or CMake
+```
+
+- WSL (Windows Subsystem for Linux):
+
+```sh
+# In Ubuntu (WSL) follow the Ubuntu/Debian instructions above
+```
+
+- vcpkg (optional, MSVC toolchain):
+  - Install vcpkg and integrate with Visual Studio.
+  - Install available ports: `vcpkg install openssl jansson libwebsockets`.
+  - `libsecp256k1` and `nsync` may require building from source; prefer MSYS2/WSL if possible.
+
+### Optional: libwebsockets
+
+If you plan to enable websocket support in `libnostr`:
+
+```sh
+# Ubuntu/Debian
+sudo apt install -y libwebsockets-dev
+
+# Fedora
+sudo dnf install -y libwebsockets-devel
+
+# macOS (Homebrew)
+brew install libwebsockets
+```
+
+### Common CMake Issues
+
+- Missing `NipOptions.cmake` during configure:
+  - Ensure all submodules or auxiliary CMake files are present. Try:
+
+```sh
+git submodule update --init --recursive
+```
+
+- `libjansson` not found:
+  - Install the development package and ensure `pkg-config --libs jansson` works.
+
+- `nsync` not found:
+  - Ensure headers and library are installed (e.g., `/usr/local/include/nsync.h`, `/usr/local/lib/libnsync.a` or `.so`).
+  - On macOS with Homebrew, it should be auto-discovered after `brew install nsync`.
+
+- `libsecp256k1` not found:
+  - Install dev package or build from source with `--enable-module-recovery` as shown above.
+
+After installing dependencies, clear and reconfigure the build:
+
+```sh
+rm -rf build
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build -j
+```
+
 ## Build
 
 ```sh

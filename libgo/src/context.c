@@ -1,22 +1,17 @@
 #include "context.h"
+#include "channel.h"
 #include <errno.h>
 #include <nsync.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-extern GoChannel *go_channel_create(size_t capacity);
-extern int go_channel_send(GoChannel *chan, void *data);
-extern void go_channel_close(GoChannel *chan);
 
 void go_context_cancel(GoContext *ctx) {
     nsync_mu_lock(&ctx->mutex);
     if (!ctx->canceled) {
         ctx->canceled = 1;
         ctx->err_msg = "context canceled";
-        printf("Context canceled, signaling all waiting threads.\n");
-        go_channel_send(ctx->done, NULL); // Close the done channel
-        nsync_cv_broadcast(&ctx->cond);   // Signal all waiting threads
+        // Wake all waiters; avoid any blocking operations here
+        nsync_cv_broadcast(&ctx->cond);
     }
     nsync_mu_unlock(&ctx->mutex);
 }
@@ -46,14 +41,11 @@ bool base_context_is_canceled(void *ctx) {
 
 void base_context_wait(void *ctx) {
     GoContext *base_ctx = (GoContext *)ctx;
-    printf("Waiting for context to be canceled...\n");
     nsync_mu_lock(&base_ctx->mutex);
 
     while (!base_ctx->canceled) {
         nsync_cv_wait(&base_ctx->cond, &base_ctx->mutex);
     }
-
-    printf("Context was canceled!\n");
     nsync_mu_unlock(&base_ctx->mutex);
 }
 
@@ -124,8 +116,7 @@ bool deadline_context_is_canceled(void *ctx) {
 
     if (now.tv_sec > dctx->deadline.tv_sec ||
         (now.tv_sec == dctx->deadline.tv_sec && now.tv_nsec > dctx->deadline.tv_nsec)) {
-        go_context_cancel((GoContext *)dctx);
-        dctx->base.err_msg = "context deadline exceeded";
+        // Pure predicate: indicate cancellation due to deadline
         return true;
     }
 
@@ -143,25 +134,18 @@ void deadline_context_wait(void *dctx) {
         // Wait with deadline, checking the result
         int result = nsync_cv_wait_with_deadline(&ctx->cond, &ctx->mutex, abs_deadline, NULL);
 
-        if (result == 0) {
-            // Condition was signaled, check if the context is canceled
-            printf("Received signal, checking context state...\n");
+        if (result == 0 || result == ETIMEDOUT) {
+            // Check cancel/deadline and mark canceled if needed
             if (ctx->vtable->is_canceled(ctx)) {
-                printf("Context was canceled!\n");
-                break;
-            }
-        } else if (result == ETIMEDOUT) {
-            // We timed out, check if the deadline has passed
-            printf("Deadline exceeded in wait cycle, checking again...\n");
-
-            if (ctx->vtable->is_canceled(ctx)) {
-                printf("Context deadline reached or context was canceled!\n");
+                if (!ctx->canceled) {
+                    ctx->canceled = true;
+                    if (!ctx->err_msg) ctx->err_msg = "context deadline exceeded";
+                    nsync_cv_broadcast(&ctx->cond);
+                }
                 break;
             }
         }
     }
-
-    printf("Context was canceled or deadline reached!\n");
     nsync_mu_unlock(&ctx->mutex);
 }
 

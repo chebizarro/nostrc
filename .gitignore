@@ -1,6 +1,6 @@
 # Ignore build directories
-/build/
-/out/
+build/
+out/
 /bin/
 /lib/
 /CMakeFiles/

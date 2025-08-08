@@ -1,8 +1,6 @@
 #include "ticker.h"
 #include <pthread.h>
 #include <unistd.h>
-#include <stdio.h>
-#include <errno.h>
 
 void *ticker_thread_func(void *arg) {
     Ticker *ticker = (Ticker *)arg;
@@ -17,8 +15,8 @@ void *ticker_thread_func(void *arg) {
 
         usleep(ticker->interval_ms * 1000); // Sleep for the specified interval
 
-        // Send a tick (e.g., an empty signal) to the channel
-        go_channel_send(ticker->c, NULL); // Just send a signal, no actual data
+        // Non-blocking send; drop tick if channel is full
+        (void)go_channel_try_send(ticker->c, NULL);
     }
 
     return NULL;
@@ -45,14 +43,7 @@ void stop_ticker(Ticker *ticker) {
     nsync_mu_unlock(&ticker->mutex); // Unlock mutex
 
     if (ticker->thread) {
-        int result = pthread_join(ticker->thread, NULL);
-        if (result == 0) {
-            printf("Ticker thread joined successfully.\n");
-        } else if (result == ESRCH) {
-            printf("Ticker thread already terminated.\n");
-        } else {
-            printf("Error joining ticker thread: %d\n", result);
-        }
+        (void)pthread_join(ticker->thread, NULL);
     }
 
     if (ticker->c) {
