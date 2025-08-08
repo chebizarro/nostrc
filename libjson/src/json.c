@@ -79,6 +79,8 @@ int _deserialize_event(NostrEvent *event, json_t *json_obj) {
     json_t *json_created_at = json_object_get(json_obj, "created_at");
     json_t *json_kind = json_object_get(json_obj, "kind");
     json_t *json_content = json_object_get(json_obj, "content");
+    json_t *json_sig = json_object_get(json_obj, "sig");
+    json_t *json_tags = json_object_get(json_obj, "tags");
 
     // id
     if (json_is_string(json_id)) {
@@ -119,6 +121,23 @@ int _deserialize_event(NostrEvent *event, json_t *json_obj) {
         event->content = strdup(json_string_value(json_content));
     } else {
         event->content = NULL;
+    }
+
+    // sig
+    if (json_is_string(json_sig)) {
+        event->sig = strdup(json_string_value(json_sig));
+    } else {
+        event->sig = NULL;
+    }
+
+    // tags
+    if (json_is_array(json_tags)) {
+        Tags *t = jansson_tags_deserialize(json_tags);
+        if (t) {
+            // free existing default empty tags if present
+            if (event->tags) free_tags(event->tags);
+            event->tags = t;
+        }
     }
 
     return 1;
@@ -448,19 +467,24 @@ Tags *jansson_tags_deserialize(json_t *json_array) {
     size_t index;
     json_t *value;
     json_array_foreach(json_array, index, value) {
-
         Tag *tag = new_string_array(0);
-        jansson_tag_deserialize(tag, value);
         if (!tag) {
             free_tags(tags);
             return NULL;
         }
-
-        if (tags_append_unique(tags, tag) != 0) {
+        if (jansson_tag_deserialize(tag, value) != 0) {
             free_tag(tag);
             free_tags(tags);
             return NULL;
         }
+        Tags *new_tags = tags_append_unique(tags, tag);
+        if (!new_tags) {
+            // on failure, free constructed tag and existing tags
+            free_tag(tag);
+            free_tags(tags);
+            return NULL;
+        }
+        tags = new_tags;
     }
 
     return tags;

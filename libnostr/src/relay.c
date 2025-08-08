@@ -559,17 +559,25 @@ int64_t relay_count(Relay *relay, GoContext *ctx, Filter *filter, Error **err) {
 }
 
 bool relay_close(Relay *r, Error **err) {
+    if (!r) {
+        if (err) *err = new_error(ERR_RELAY_CLOSE_FAILED, "invalid relay");
+        return false;
+    }
 
-    if (!r->connection) {
+    // Snapshot connection under lock and cancel context to wake workers
+    nsync_mu_lock(&r->priv->mutex);
+    Connection *conn = r->connection;
+    r->priv->connection_context_cancel(r->priv->connection_context);
+    r->connection = NULL;
+    nsync_mu_unlock(&r->priv->mutex);
+
+    if (!conn) {
         if (err) *err = new_error(ERR_RELAY_CLOSE_FAILED, "relay not connected");
         return false;
     }
 
-    nsync_mu_lock(&r->priv->mutex);
-    connection_close(r->connection);
-    r->connection = NULL;
-    r->priv->connection_context_cancel(r->priv->connection_context);
-    nsync_mu_unlock(&r->priv->mutex);
+    // Close the network connection outside the relay mutex
+    connection_close(conn);
     return true;
 }
 

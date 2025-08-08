@@ -251,16 +251,16 @@ Tags *tags_append_unique(Tags *tags, Tag *tag) {
         }
     }
 
-    Tags *new_tags = create_tags(tags->count + 1);
-    if (!new_tags)
+    // grow in place
+    size_t new_count = tags->count + 1;
+    Tag **new_data = (Tag **)realloc(tags->data, new_count * sizeof(Tag *));
+    if (!new_data) {
         return NULL;
-
-    memcpy(new_tags->data, tags->data, tags->count * sizeof(Tag));
-    new_tags->data[tags->count] = tag;
-    new_tags->count = tags->count + 1;
-
-    free_tags(tags);
-    return new_tags;
+    }
+    tags->data = new_data;
+    tags->data[tags->count] = tag;
+    tags->count = new_count;
+    return tags;
 }
 
 bool tags_contains_any(Tags *tags, const char *tag_name, char **values, size_t values_count) {

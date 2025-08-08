@@ -141,11 +141,11 @@ int main(int argc, char **argv) {
             if (idx == 0) {
                 if (ev) {
                     // Print a compact summary per NIP-01 fields
-                    printf("EVENT kind=%d pubkey=%.8s id=%.8s content=%.64s\n",
+                    printf("EVENT kind=%d pubkey=%.8s content=%.64s id=%.8s\n",
                            ev->kind,
                            ev->pubkey ? ev->pubkey : "",
-                           ev->id ? ev->id : "",
-                           ev->content ? ev->content : "");
+                           ev->content ? ev->content : "",
+                           ev->id ? ev->id : "");
                     free_event(ev);
                 }
             } else if (idx == 1) {
@@ -159,6 +159,7 @@ int main(int argc, char **argv) {
             } else if (idx == 3) {
                 // timeout ticker fired
                 stop_ticker(timeout);
+                timeout = NULL;
                 break;
             } else if (enable_raw && idx == 4) {
                 if (raw) {
@@ -168,23 +169,31 @@ int main(int argc, char **argv) {
                 }
             }
         }
+            // Ensure ticker is stopped if we exited for a reason other than timeout
+            if (timeout) {
+                stop_ticker(timeout);
+                timeout = NULL;
+            }
         }
+    }
+
+    // Proactively unsubscribe to let subscription lifecycle goroutine exit cleanly.
+    // Do not free here; lifecycle goroutine may still be running and will finish after context cancel.
+    if (sub) {
+        subscription_unsub(sub);
+        sub = NULL;
+    }
+
+    // Disable debug channel first to stop emitters before closing connection
+    if (enable_raw) {
+        relay_enable_debug_raw(relay, 0);
     }
 
     fprintf(stderr, "[relay_smoke] Closing...\n");
     relay_close(relay, &err);
     if (err) { fprintf(stderr, "[relay_smoke] relay_close error: %s\n", err->message); free_error(err); }
 
-    // Cleanup debug channel
-    if (enable_raw) {
-        if (raw_msgs) {
-            // The relay owns the channel; just drain outstanding messages.
-            char *s = NULL;
-            while (go_channel_try_receive(raw_msgs, (void **)&s) == 0 && s) { free(s); s = NULL; }
-        }
-        // Disable to release relay-owned channel resources.
-        relay_enable_debug_raw(relay, 0);
-    }
+    // Debug channel was disabled above; nothing to drain here to avoid race with worker shutdown.
 
     free_filter(filter);
     free_relay(relay);

@@ -238,32 +238,31 @@ bool are_pointer_values_equal(const void *a, const void *b, size_t size) {
 }
 
 int64_t sub_id_to_serial(const char *sub_id) {
-    if (!sub_id) return -1;
+    if (!sub_id || !*sub_id) return -1;
 
-    // Find the index of the colon character
-    char *colon_pos = strchr(sub_id, ':');
-    if (!colon_pos) {
-        return -1;  // Colon not found
+    // Accept either plain numeric IDs ("123") or numeric prefix followed by ':' ("123:foo")
+    char *endptr = NULL;
+    long long val = strtoll(sub_id, &endptr, 10);
+    if (endptr == sub_id) {
+        return -1; // no digits parsed
     }
-
-    // Convert the part of the string before the colon to an integer
-    char *endptr;
-    int64_t serial_id = strtoll(sub_id, &endptr, 10);
-
-    // Check if conversion was successful and if the next character is the colon
-    if (*endptr != ':' || endptr != colon_pos) {
-        return -1;  // Invalid number or improperly formatted string
+    if (*endptr == '\0' || *endptr == ':') {
+        return (int64_t)val;
     }
-
-    return serial_id;
+    return -1; // unexpected suffix
 }
 
 // Convert hex string to binary
 bool hex2bin(unsigned char *bin, const char *hex, size_t bin_len) {
-    if (strlen(hex) != bin_len * 2)
-        return false;
+    if (!bin || !hex) return false;
+    size_t hex_len = strlen(hex);
+    if (hex_len != bin_len * 2) return false;
     for (size_t i = 0; i < bin_len; i++) {
-        sscanf(hex + 2 * i, "%2hhx", &bin[i]);
+        unsigned int byte = 0;
+        if (sscanf(hex + 2 * i, "%2x", &byte) != 1) {
+            return false;
+        }
+        bin[i] = (unsigned char)byte;
     }
     return true;
 }

@@ -177,18 +177,25 @@ bool event_check_signature(NostrEvent *event) {
         return false;
     }
 
-    // Serialize the event content and create a hash
-    char *serialized = event_serialize(event);
-    if (!serialized) {
-        fprintf(stderr, "Failed to serialize event\n");
-        secp256k1_context_destroy(ctx);
-        return false;
-    }
-
-    // Calculate the SHA-256 hash of the serialized event
+    // Obtain the 32-byte message hash: prefer the provided event->id (authoritative),
+    // fallback to hashing our serialized representation if id is missing.
     unsigned char hash[32];
-    SHA256((unsigned char *)serialized, strlen(serialized), hash);
-    free(serialized);
+    bool have_hash = false;
+    if (event->id && strlen(event->id) == 64) {
+        if (hex2bin(hash, event->id, sizeof(hash))) {
+            have_hash = true;
+        }
+    }
+    if (!have_hash) {
+        char *serialized = event_serialize(event);
+        if (!serialized) {
+            fprintf(stderr, "Failed to serialize event\n");
+            secp256k1_context_destroy(ctx);
+            return false;
+        }
+        SHA256((unsigned char *)serialized, strlen(serialized), hash);
+        free(serialized);
+    }
 
     /*** Verification ***/
 
