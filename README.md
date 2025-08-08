@@ -63,6 +63,11 @@ add_executable(my_app main.c)
 target_link_libraries(my_app PRIVATE ${NOSTR_LIB} ${NOSTR_JSON_LIB} ${NSYNC_LIB} OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 ```
 
+## Documentation
+
+- See `docs/LIBJSON.md` for libjson API, NIP-01 #tag mapping, robustness rules, and tests.
+- See `docs/SHUTDOWN.md` for libnostr/libgo shutdown order, invariants, and troubleshooting.
+
 ## Installation
 
 ### Dependencies
