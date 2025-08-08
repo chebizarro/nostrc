@@ -30,7 +30,7 @@ typedef struct _DirectedFilters {
     char *relay_url;
 } DirectedFilters;
 
-SimplePool *create_simple_pool();
+SimplePool *create_simple_pool(void);
 void free_simple_pool(SimplePool *pool);
 void simple_pool_ensure_relay(SimplePool *pool, const char *url);
 void *simple_pool_thread_func(void *arg);

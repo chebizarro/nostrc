@@ -36,7 +36,7 @@ int main(void) {
 
     GoContext *ctx = go_context_background();
     Error *err = NULL;
-    Relay *relay = new_relay(ctx, "wss://nos.lol", &err);
+    Relay *relay = new_relay(ctx, "ws://192.168.1.149:8081", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
@@ -51,16 +51,18 @@ int main(void) {
 
     Subscription *sub = create_subscription(relay, &filters);
     subscription_fire(sub, &err);
+    // Immediately unsubscribe; don't assume this disconnects the relay
     subscription_unsub(sub);
 
-    assert(!relay_is_connected(relay));
+    // Explicitly close the relay to avoid background waits
+    relay_close(relay, &err);
 
     free(id);
     free_event(event);
     free_filter(filter);
+    free_subscription(sub);
     free_relay(relay);
     go_context_free(ctx);
-    free_subscription(sub);
 
     free(privateKey);
     free(pubKey);

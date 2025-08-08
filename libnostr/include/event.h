@@ -16,7 +16,7 @@ typedef struct _NostrEvent {
 } NostrEvent;
 
 // NostrEvent management
-NostrEvent *create_event();
+NostrEvent *create_event(void);
 void free_event(NostrEvent *event);
 char *event_serialize(NostrEvent *event);
 char *event_get_id(NostrEvent *event);

@@ -12,6 +12,10 @@ int go_channel_has_space(const void *chan) {
 int go_channel_try_send(GoChannel *chan, void *data) {
     int rc = -1;
     nsync_mu_lock(&chan->mutex);
+    if (chan->buffer == NULL) {
+        nsync_mu_unlock(&chan->mutex);
+        return -1;
+    }
     if (!chan->closed && chan->size < chan->capacity) {
         chan->buffer[chan->in] = data;
         chan->in = (chan->in + 1) % chan->capacity;
@@ -27,8 +31,13 @@ int go_channel_try_send(GoChannel *chan, void *data) {
 int go_channel_try_receive(GoChannel *chan, void **data) {
     int rc = -1;
     nsync_mu_lock(&chan->mutex);
+    if (chan->buffer == NULL) {
+        nsync_mu_unlock(&chan->mutex);
+        return -1;
+    }
     if (chan->size > 0) {
-        *data = chan->buffer[chan->out];
+        void *tmp = chan->buffer[chan->out];
+        if (data) *data = tmp;
         chan->out = (chan->out + 1) % chan->capacity;
         chan->size--;
         nsync_cv_signal(&chan->cond_full);
@@ -77,6 +86,10 @@ void go_channel_free(GoChannel *chan) {
 /* Send data to the channel */
 int go_channel_send(GoChannel *chan, void *data) {
     nsync_mu_lock(&chan->mutex);
+    if (chan->buffer == NULL) {
+        nsync_mu_unlock(&chan->mutex);
+        return -1;
+    }
 
     while (chan->size == chan->capacity && !chan->closed) {
         nsync_cv_wait(&chan->cond_full, &chan->mutex);
@@ -102,6 +115,10 @@ int go_channel_send(GoChannel *chan, void *data) {
 /* Receive data from the channel */
 int go_channel_receive(GoChannel *chan, void **data) {
     nsync_mu_lock(&chan->mutex);
+    if (chan->buffer == NULL) {
+        nsync_mu_unlock(&chan->mutex);
+        return -1;
+    }
 
     while (chan->size == 0 && !chan->closed) {
         nsync_cv_wait(&chan->cond_empty, &chan->mutex);
@@ -113,7 +130,8 @@ int go_channel_receive(GoChannel *chan, void **data) {
     }
 
     // Get data from the buffer
-    *data = chan->buffer[chan->out];
+    void *tmp = chan->buffer[chan->out];
+    if (data) *data = tmp;
     chan->out = (chan->out + 1) % chan->capacity;
     chan->size--;
 
@@ -127,6 +145,10 @@ int go_channel_receive(GoChannel *chan, void **data) {
 /* Send data to the channel with cancellation context */
 int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
     nsync_mu_lock(&chan->mutex);
+    if (chan->buffer == NULL) {
+        nsync_mu_unlock(&chan->mutex);
+        return -1;
+    }
 
     while (chan->size == chan->capacity && !chan->closed) {
         if (ctx && go_context_is_canceled(ctx)) {
@@ -157,6 +179,10 @@ int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
 /* Receive data from the channel with cancellation context */
 int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx) {
     nsync_mu_lock(&chan->mutex);
+    if (chan->buffer == NULL) {
+        nsync_mu_unlock(&chan->mutex);
+        return -1;
+    }
 
     while (chan->size == 0 && !chan->closed) {
         if (ctx && go_context_is_canceled(ctx)) {
@@ -173,7 +199,8 @@ int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx
     }
 
     // Get data from the buffer
-    *data = chan->buffer[chan->out];
+    void *tmp2 = chan->buffer[chan->out];
+    if (data) *data = tmp2;
     chan->out = (chan->out + 1) % chan->capacity;
     chan->size--;
 

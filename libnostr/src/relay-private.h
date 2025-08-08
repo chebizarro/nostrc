@@ -2,6 +2,7 @@
 #define NOSTR_RELAY_PRIVATE_H
 
 #include "event.h"
+#include "wait_group.h"
 #include <stdbool.h>
 
 struct _RelayPrivate {
@@ -17,6 +18,7 @@ struct _RelayPrivate {
     GoHashMap *ok_callbacks;
     GoChannel *write_queue;
     GoChannel *subscription_channel_close_queue;
+    GoWaitGroup workers;
 };
 
 typedef struct _write_request {

@@ -7,6 +7,7 @@
 #include "subscription-private.h"
 #include "subscription.h"
 #include "utils.h"
+#include "go.h"
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,6 +41,7 @@ Relay *new_relay(GoContext *context, const char *url, Error **err) {
     relay->priv->ok_callbacks = go_hash_map_create(16);
     relay->priv->write_queue = go_channel_create(16);
     relay->priv->subscription_channel_close_queue = go_channel_create(16);
+    go_wait_group_init(&relay->priv->workers);
     // request_header
 
     relay->priv->notice_handler = NULL;
@@ -50,19 +52,34 @@ Relay *new_relay(GoContext *context, const char *url, Error **err) {
 
 void free_relay(Relay *relay) {
     if (relay) {
-        // Ensure connection and background loops are stopped before freeing
+        // Signal background loops to stop
+        if (relay->priv && relay->priv->connection_context_cancel) {
+            relay->priv->connection_context_cancel(relay->priv->connection_context);
+        }
+        // Close write/close queues to unblock any waiters
+        if (relay->priv) {
+            if (relay->priv->write_queue) go_channel_close(relay->priv->write_queue);
+            if (relay->priv->subscription_channel_close_queue) go_channel_close(relay->priv->subscription_channel_close_queue);
+        }
+        // Close network connection last
         if (relay->connection) {
-            relay_disconnect(relay);
+            connection_close(relay->connection);
+            relay->connection = NULL;
+        }
+        // Wait for worker goroutines to finish before freeing priv
+        if (relay->priv) {
+            go_wait_group_wait(&relay->priv->workers);
+            go_wait_group_destroy(&relay->priv->workers);
         }
         free(relay->url);
         //if (*relay->connection_error) free_error(*relay->connection_error);
         go_hash_map_destroy(relay->subscriptions);
-        go_context_free(relay->priv->connection_context);
-        free(relay->priv->challenge);
-        go_hash_map_destroy(relay->priv->ok_callbacks);
-        go_channel_close(relay->priv->write_queue);
-        go_channel_close(relay->priv->subscription_channel_close_queue);
-        free(relay->priv);
+        if (relay->priv) {
+            go_context_free(relay->priv->connection_context);
+            free(relay->priv->challenge);
+            go_hash_map_destroy(relay->priv->ok_callbacks);
+            free(relay->priv);
+        }
         free(relay);
     }
 }
@@ -100,11 +117,8 @@ void *write_operations(void *arg) {
         // Receive next write request (blocks until available)
         write_request *req = NULL;
         if (go_channel_receive(r->priv->write_queue, (void **)&req) != 0) {
-            // Channel closed or error
-            if (go_context_is_canceled(r->priv->connection_context)) {
-                break;
-            }
-            continue;
+            // Channel closed or error: exit immediately to avoid touching freed relay/priv
+            break;
         }
 
         // If context canceled, report error and stop
@@ -122,13 +136,16 @@ void *write_operations(void *arg) {
         // Send the message
         Error *err = NULL;
         nsync_mu_lock(&r->priv->mutex);
-        connection_write_message(r->connection, r->priv->connection_context, req->msg, &err);
+        if (r->connection) {
+            connection_write_message(r->connection, r->priv->connection_context, req->msg, &err);
+        } else {
+            err = new_error(1, "relay not connected");
+        }
         nsync_mu_unlock(&r->priv->mutex);
 
         if (req->answer) {
             // Notify caller of error (or send NULL for success)
             go_channel_send(req->answer, err);
-            go_channel_free(req->answer);
         } else if (err) {
             // No listener, free error if produced
             free_error(err);
@@ -137,7 +154,7 @@ void *write_operations(void *arg) {
         free(req->msg);
         free(req);
     }
-
+    go_wait_group_done(&r->priv->workers);
     return NULL;
 }
 
@@ -150,26 +167,19 @@ void *message_loop(void *arg) {
         // Reset buffer for each loop iteration
         memset(buf, 0, 1024); // Clear the buffer
 
-        nsync_mu_lock(&r->priv->mutex);
-
+        // Snapshot connection pointer without holding the mutex
+        Connection *conn = r->connection;
+        if (!conn) {
+            break;
+        }
         // Read the message into buf, passing the error pointer
-        connection_read_message(r->connection, r->priv->connection_context, buf, 1024, &err);
-
+        connection_read_message(conn, r->priv->connection_context, buf, 1024, &err);
         // Check if an error occurred
         if (err != NULL) {
-            nsync_mu_unlock(&r->priv->mutex); // Unlock before closing the connection
-            Error *cerr = NULL;
-            relay_close(r, &cerr); // Close the relay on read error
-            if (cerr) {
-                free_error(cerr);
-            }
-            // Free the read error and break the loop
             free_error(err);
             err = NULL;
             break;
         }
-
-        nsync_mu_unlock(&r->priv->mutex); // Unlock after processing the message
 
         const char *message = buf; // Use the buffer to get the message
 
@@ -181,7 +191,7 @@ void *message_loop(void *arg) {
             continue;
         }
 
-        nsync_mu_lock(&r->priv->mutex); // Lock again for processing the envelope
+        nsync_mu_lock(&r->priv->mutex); // Lock for processing the envelope and shared state
         switch (envelope->type) {
         case ENVELOPE_NOTICE:
             if (r->priv->notice_handler) {
@@ -235,6 +245,7 @@ void *message_loop(void *arg) {
     }
 
     free(buf); // Free the buffer when done
+    go_wait_group_done(&r->priv->workers);
     return NULL;
 }
 
@@ -255,6 +266,7 @@ bool relay_connect(Relay *relay, Error **err) {
     // void *cleanup[] = {relay, ticker};
     //  go(cleanup_routine, cleanup);
     
+    go_wait_group_add(&relay->priv->workers, 2);
     go(write_operations, relay);
     go(message_loop, relay);
 
@@ -440,16 +452,19 @@ NostrEvent **relay_query_sync(Relay *relay, GoContext *ctx, Filter *filter, int 
         return NULL;
     }
 
-    // Wait for events or until the subscription closes
+    // Wait for events or until the subscription closes or timeout
     int received_count = 0;
+    // Create a timeout ticker (e.g., 3s) to bound waits
+    Ticker *timeout = create_ticker(3000);
     GoSelectCase cases[] = {
         {GO_SELECT_RECEIVE, subscription->events, NULL},
         {GO_SELECT_RECEIVE, subscription->end_of_stored_events, NULL},
-        {GO_SELECT_RECEIVE, relay->priv->connection_context->done, NULL}};
+        {GO_SELECT_RECEIVE, relay->priv->connection_context->done, NULL},
+        {GO_SELECT_RECEIVE, timeout->c, NULL}};
 
     while (true) {
         // Select which event happens (receiving an event or end of stored events)
-        int result = go_select(cases, 3);
+        int result = go_select(cases, 4);
         switch (result) {
         case 0: { // New event received
             if (received_count >= max_events) {
@@ -469,12 +484,21 @@ NostrEvent **relay_query_sync(Relay *relay, GoContext *ctx, Filter *filter, int 
         case 1: {                             // End of stored events (EOSE)
             subscription_unsub(subscription); // Unsubscribe from the relay
             *event_count = received_count;    // Set the event count for the caller
+            stop_ticker(timeout);
             return events;                    // Return the array of events
         }
         case 2: { // Connection context is canceled (relay is closing)
             if (err) *err = new_error(1, "relay connection closed while querying events");
+            stop_ticker(timeout);
             free(events);
             return NULL;
+        }
+        case 3: { // Timeout waiting for events
+            if (err) *err = new_error(1, "relay_query_sync timed out");
+            subscription_unsub(subscription);
+            *event_count = received_count;
+            stop_ticker(timeout);
+            return events;
         }
         default:
             break;

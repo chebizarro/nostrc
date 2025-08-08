@@ -5,7 +5,7 @@
 
 #define INITIAL_CAPACITY 4  // Initial capacity for Filters array
 
-Filter *create_filter() {
+Filter *create_filter(void) {
     Filter *filter = (Filter *)malloc(sizeof(Filter));
     if (!filter)
         return NULL;
@@ -41,7 +41,7 @@ void free_filter(Filter *filter) {
     free(filter);
 }
 
-Filters *create_filters() {
+Filters *create_filters(void) {
     Filters *filters = (Filters *)malloc(sizeof(Filters));
     if (!filters)
         return NULL;

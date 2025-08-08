@@ -14,7 +14,9 @@ int go_select(GoSelectCase *cases, size_t num_cases) {
             if (c->op == GO_SELECT_SEND) {
                 if (go_channel_try_send(c->chan, c->value) == 0) return (int)idx;
             } else { // GO_SELECT_RECEIVE
-                if (go_channel_try_receive(c->chan, c->recv_buf) == 0) return (int)idx;
+                void *dummy = NULL;
+                void **dst = c->recv_buf ? c->recv_buf : &dummy;
+                if (go_channel_try_receive(c->chan, dst) == 0) return (int)idx;
             }
         }
 

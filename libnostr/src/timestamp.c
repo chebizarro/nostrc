@@ -1,6 +1,6 @@
 #include "nostr.h"
 
-Timestamp Now() {
+Timestamp Now(void) {
     return (Timestamp)time(NULL);
 }
 

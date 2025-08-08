@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-NostrEvent *create_event() {
+NostrEvent *create_event(void) {
     NostrEvent *event = (NostrEvent *)malloc(sizeof(NostrEvent));
     if (!event)
         return NULL;

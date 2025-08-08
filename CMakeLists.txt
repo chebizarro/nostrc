@@ -25,3 +25,11 @@ add_subdirectory(libjson)
 enable_testing()
 add_subdirectory(tests)
 
+# Examples
+add_executable(relay_smoke examples/relay_smoke.c)
+target_link_libraries(relay_smoke PRIVATE libnostr nostr_json)
+find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
+target_include_directories(relay_smoke PRIVATE ${NSYNC_INCLUDE_DIR})
+find_library(NSYNC_LIB nsync REQUIRED)
+target_link_libraries(relay_smoke PRIVATE ${NSYNC_LIB})
+

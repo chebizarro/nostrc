@@ -32,6 +32,22 @@ include_directories(${NSYNC_INCLUDE_DIR})
 add_library(nostr_json SHARED src/json.c)
 
 target_compile_options(nostr_json PRIVATE $<$<CONFIG:Debug>:-Werror>)
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  # Mirror sanitizers so we can link against sanitized static libs cleanly
+  if (GO_ENABLE_TSAN)
+    target_compile_options(nostr_json PRIVATE -fsanitize=thread)
+    target_link_options(nostr_json PRIVATE -fsanitize=thread)
+  else()
+    if (GO_ENABLE_ASAN)
+      target_compile_options(nostr_json PRIVATE -fsanitize=address)
+      target_link_options(nostr_json PRIVATE -fsanitize=address)
+    endif()
+    if (GO_ENABLE_UBSAN)
+      target_compile_options(nostr_json PRIVATE -fsanitize=undefined)
+      target_link_options(nostr_json PRIVATE -fsanitize=undefined)
+    endif()
+  endif()
+endif()
 
 # Export include dirs for downstream targets; expose public headers under this module's include/.
 target_include_directories(nostr_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

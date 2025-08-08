@@ -49,12 +49,19 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         break;
     }
     case LWS_CALLBACK_CLIENT_WRITEABLE: {
-        // Pop a message from the send_channel and send it over the WebSocket
+        // Pop a message from the send_channel and send it over the WebSocket (non-blocking)
         if (!conn) break;
-        WebSocketMessage *msg;
-        if (go_channel_receive(conn->send_channel, (void **)&msg) == 0) {
-            unsigned char buf[LWS_PRE + MAX_PAYLOAD_SIZE];
-            unsigned char *p = &buf[LWS_PRE];
+        WebSocketMessage *msg = NULL;
+        if (go_channel_try_receive(conn->send_channel, (void **)&msg) == 0 && msg) {
+            size_t total = LWS_PRE + msg->length;
+            unsigned char *buf = (unsigned char *)malloc(total);
+            if (!buf) {
+                fprintf(stderr, "OOM allocating write buffer\n");
+                free(msg->data);
+                free(msg);
+                return -1;
+            }
+            unsigned char *p = buf + LWS_PRE;
 
             // Copy the message data and send it over the WebSocket
             memcpy(p, msg->data, msg->length);
@@ -63,16 +70,16 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                 fprintf(stderr, "Error writing WebSocket message\n");
                 free(msg->data);
                 free(msg);
+                free(buf);
                 return -1;
             }
 
+            free(buf);
             free(msg->data);
             free(msg);
 
-            // Check if there are more messages to send
-            if (go_channel_receive(conn->send_channel, (void **)&msg) == 0) {
-                lws_callback_on_writable(wsi); // Request another writable callback
-            }
+            // Ask for another writable callback in case there are more messages pending
+            lws_callback_on_writable(wsi);
         }
 
         break;
@@ -101,6 +108,54 @@ static void *lws_service_loop(void *arg) {
     return NULL;
 }
 
+// Minimal URL parser for ws/wss URLs: scheme://host[:port][/path]
+static void parse_ws_url(const char *url, int *use_ssl, char *host, size_t host_sz,
+                         int *port, char *path, size_t path_sz) {
+    if (!url || !host || !path || !use_ssl || !port) return;
+    *use_ssl = 0;
+    *port = 0;
+    host[0] = '\0';
+    path[0] = '\0';
+
+    const char *p = url;
+    if (!strncmp(p, "wss://", 6)) {
+        *use_ssl = 1;
+        p += 6;
+    } else if (!strncmp(p, "ws://", 5)) {
+        *use_ssl = 0;
+        p += 5;
+    }
+
+    // host[:port][/<path>]
+    const char *host_start = p;
+    const char *host_end = host_start;
+    while (*host_end && *host_end != ':' && *host_end != '/') host_end++;
+    size_t host_len = (size_t)(host_end - host_start);
+    if (host_len >= host_sz) host_len = host_sz - 1;
+    memcpy(host, host_start, host_len);
+    host[host_len] = '\0';
+
+    const char *after_host = host_end;
+    if (*after_host == ':') {
+        after_host++;
+        char port_buf[8] = {0};
+        size_t i = 0;
+        while (*after_host && *after_host != '/' && i < sizeof port_buf - 1) {
+            if (*after_host < '0' || *after_host > '9') break;
+            port_buf[i++] = *after_host++;
+        }
+        *port = atoi(port_buf);
+    }
+    if (*after_host == '\0') {
+        snprintf(path, path_sz, "/");
+    } else if (*after_host == '/') {
+        snprintf(path, path_sz, "%s", after_host);
+    } else {
+        snprintf(path, path_sz, "/");
+    }
+    if (*port == 0) *port = *use_ssl ? 443 : 80;
+}
+
 Connection *new_connection(const char *url) {
     struct lws_context_creation_info context_info;
     struct lws_client_connect_info connect_info;
@@ -125,6 +180,27 @@ Connection *new_connection(const char *url) {
     conn->priv->enable_compression = 0;
     nsync_mu_init(&conn->priv->mutex);
 
+    // Check for test mode: bypass real network and event loop
+    const char *test_env = getenv("NOSTR_TEST_MODE");
+    int test_mode = (test_env && *test_env && strcmp(test_env, "0") != 0) ? 1 : 0;
+
+    if (test_mode) {
+        Connection *conn = calloc(1, sizeof(Connection));
+        ConnectionPrivate *priv = calloc(1, sizeof(ConnectionPrivate));
+        if (!conn || !priv) {
+            if (conn) free(conn);
+            if (priv) free(priv);
+            return NULL;
+        }
+        conn->priv = priv;
+        nsync_mu_init(&conn->priv->mutex);
+        conn->priv->test_mode = 1;
+        conn->recv_channel = go_channel_create(16);
+        conn->send_channel = go_channel_create(16);
+        // No context / thread in test mode
+        return conn;
+    }
+
     // Initialize context creation info
     memset(&context_info, 0, sizeof(context_info));
     context_info.retry_and_idle_policy = &retry_bo;
@@ -148,12 +224,17 @@ Connection *new_connection(const char *url) {
     // Initialize client connect info
     memset(&connect_info, 0, sizeof(connect_info));
     connect_info.context = context;
-    connect_info.address = url;
-    connect_info.port = 443;
-    connect_info.path = "/";
-    connect_info.host = connect_info.address;
-    connect_info.origin = connect_info.address;
-    connect_info.ssl_connection = LCCSCF_USE_SSL;
+    char host[256];
+    char path[512];
+    int port = 0;
+    int use_ssl = 0;
+    parse_ws_url(url, &use_ssl, host, sizeof host, &port, path, sizeof path);
+    connect_info.address = host;
+    connect_info.port = port;
+    connect_info.path = path;
+    connect_info.host = host;
+    connect_info.origin = host;
+    connect_info.ssl_connection = use_ssl ? LCCSCF_USE_SSL : 0;
     connect_info.protocol = NULL; // no subprotocol for nostr by default
     connect_info.pwsi = &conn->priv->wsi;
     connect_info.userdata = conn;
@@ -201,15 +282,26 @@ void *websocket_send_coroutine(void *arg) {
 
 void connection_close(Connection *conn) {
     if (!conn) return;
-    // Signal thread to stop and join
-    conn->priv->running = 0;
-    // Wake service loop
-    lws_cancel_service(conn->priv->context);
-    pthread_join(conn->priv->service_thread, NULL);
-    lws_context_destroy(conn->priv->context);
-    free(conn->priv);
-    go_channel_free(conn->recv_channel);
-    go_channel_free(conn->send_channel);
+    // Close channels to unblock any waiters before freeing
+    if (conn->recv_channel) go_channel_close(conn->recv_channel);
+    if (conn->send_channel) go_channel_close(conn->send_channel);
+
+    if (conn->priv && conn->priv->test_mode) {
+        // No libwebsockets context or thread in test mode
+        free(conn->priv);
+    } else if (conn->priv) {
+        // Signal thread to stop and join
+        conn->priv->running = 0;
+        // Wake service loop
+        lws_cancel_service(conn->priv->context);
+        pthread_join(conn->priv->service_thread, NULL);
+        lws_context_destroy(conn->priv->context);
+        free(conn->priv);
+    }
+
+    // Free channels after they have been closed and any waiters unblocked
+    if (conn->recv_channel) go_channel_free(conn->recv_channel);
+    if (conn->send_channel) go_channel_free(conn->send_channel);
     free(conn);
 }
 
@@ -218,6 +310,11 @@ void connection_write_message(Connection *conn, GoContext *ctx, char *message, E
         if (err) {
             *err = new_error(1, "Invalid connection or message");
         }
+        return;
+    }
+
+    // In test mode, pretend the write succeeded without touching websockets
+    if (conn->priv && conn->priv->test_mode) {
         return;
     }
 
@@ -258,16 +355,37 @@ void connection_read_message(Connection *conn, GoContext *ctx, char *buffer, siz
         return;
     }
 
-    // Optionally check if the context is canceled
-    if (ctx && ctx->vtable->is_canceled(ctx)) {
-        if (err) {
-            *err = new_error(1, "Context canceled");
-        }
+    // In test mode, simulate no data and request caller to stop waiting
+    if (conn->priv && conn->priv->test_mode) {
+        if (err) *err = new_error(1, "test mode: no data");
         return;
     }
 
-    WebSocketMessage *msg;
-    if (go_channel_receive(conn->recv_channel, (void **)&msg) == 0) {
+    // Wait on either an incoming message or context cancellation
+    WebSocketMessage *msg = NULL;
+    if (ctx) {
+        GoSelectCase cases[] = {
+            {GO_SELECT_RECEIVE, conn->recv_channel, (void **)&msg},
+            {GO_SELECT_RECEIVE, ctx->done, NULL},
+        };
+        int idx = go_select(cases, 2);
+        if (idx == 1) {
+            if (err) *err = new_error(1, "Context canceled");
+            return;
+        }
+        // idx == 0 => message
+        if (msg == NULL) {
+            if (err) *err = new_error(1, "Receive failed or channel closed");
+            return;
+        }
+    } else {
+        if (go_channel_receive(conn->recv_channel, (void **)&msg) != 0 || !msg) {
+            if (err) *err = new_error(1, "Failed to receive message or channel closed");
+            return;
+        }
+    }
+
+    if (msg) {
         if (msg->length > 0) {
             // Check if the buffer can accommodate the message and the null terminator
             if (msg->length < buffer_size) {
@@ -288,9 +406,5 @@ void connection_read_message(Connection *conn, GoContext *ctx, char *buffer, siz
         // Free message memory
         free(msg->data);
         free(msg);
-    } else {
-        if (err) {
-            *err = new_error(1, "Failed to receive message or channel closed");
-        }
     }
 }

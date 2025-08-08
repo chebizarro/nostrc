@@ -12,6 +12,7 @@ struct _ConnectionPrivate {
     nsync_mu mutex;
     pthread_t service_thread;
     int running;
+    int test_mode; // when set, no real network; helpers short-circuit
 };
 
 // Struct to hold WebSocket message

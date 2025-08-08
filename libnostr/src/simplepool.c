@@ -7,7 +7,7 @@
 #include <unistd.h>
 
 // Function to create a SimplePool
-SimplePool *create_simple_pool() {
+SimplePool *create_simple_pool(void) {
     SimplePool *pool = (SimplePool *)malloc(sizeof(SimplePool));
     if (!pool)
         return NULL;
@@ -47,7 +47,7 @@ void simple_pool_ensure_relay(SimplePool *pool, const char *url) {
             } else {
                 // reconnect if not connected
                 relay_disconnect(pool->relays[i]);
-                Error **err;
+                Error **err = NULL;
                 relay_connect(pool->relays[i], err);
                 pthread_mutex_unlock(&pool->pool_mutex);
                 return;
@@ -56,7 +56,7 @@ void simple_pool_ensure_relay(SimplePool *pool, const char *url) {
     }
 
     // If relay not found, create and connect a new one
-    GoContext *ctx;
+    GoContext *ctx = NULL;
     go_context_init(ctx, 7);
     Error **err = NULL;
     Relay *relay = new_relay(ctx, url, err);

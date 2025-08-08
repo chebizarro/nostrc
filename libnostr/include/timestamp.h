@@ -6,7 +6,7 @@
 
 typedef int64_t Timestamp;
 
-Timestamp Now();
+Timestamp Now(void);
 time_t TimestampToTime(Timestamp t);
 
 #endif // NOSTR_TIMESTAMP_H
