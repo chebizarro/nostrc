@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.10)
 project(test_nostr_project)
 
+# Unit/integration test binaries for nostrc. Uses CTest (enabled at the root).
+
 enable_testing()
 
-# Find OpenSSL
+# Find OpenSSL for hashing/crypto used by tests
 find_package(OpenSSL REQUIRED)
 if (OpenSSL_FOUND)
     message(STATUS "Found OpenSSL version ${OpenSSL_VERSION}")
@@ -20,7 +22,7 @@ else()
     message(FATAL_ERROR "libsecp256k1 not found")
 endif()
 
-# Find the nsync library and headers manually
+# Find the nsync library and headers manually for synchronization primitives
 find_library(NYNC_LIB nsync REQUIRED)
 find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
 
@@ -28,19 +30,19 @@ find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
 include_directories(${NSYNC_INCLUDE_DIR})
 
 
-# Add the executable
+# Test executables
 add_executable(test_nostr tests_nostr.c)
 
 add_executable(test_relay test_relay.c)
 
-# Link OpenSSL and libsecp256k1
+# Link OpenSSL, libsecp256k1, nsync, and project libraries
 target_link_libraries(test_nostr PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 
 target_link_libraries(test_relay PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 
-# Add test
+# Register tests for CTest. Run with: `ctest --output-on-failure`
 add_test(NAME test_nostr COMMAND test_nostr)
 add_test(NAME test_relay COMMAND test_relay)
 
-# Include directories for libsecp256k1
+# Include directories for libsecp256k1 headers
 target_include_directories(test_nostr PRIVATE ${SECP256K1_INCLUDE_DIRS})

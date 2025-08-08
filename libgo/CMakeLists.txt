@@ -1,5 +1,7 @@
 project(libgo)
 
+# Concurrency primitives inspired by Go: channels, contexts, wait groups, etc.
+
 # Include the header files
 include_directories(include)
 
@@ -17,19 +19,20 @@ set(LIBGO_SOURCES
     src/error.c
 )
 
-# Enable testing
+# Enable CTest for module-specific tests
 enable_testing()
 
-# Create the library
+# Build static library exposing public headers from `include/`.
 add_library(libgo ${LIBGO_SOURCES})
 
 target_compile_options(libgo PRIVATE $<$<CONFIG:Debug>:-Werror>)
 
 target_include_directories(libgo PUBLIC include)
 
-target_link_libraries(libgo)
+# No additional link requirements for the core library here.
 
-# Find the nsync library and headers manually
+# Find the nsync library and headers manually; used by tests and may be used by
+# consumers for synchronization in conjunction with libgo.
 find_library(NYNC_LIB nsync REQUIRED)
 find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
 
@@ -37,7 +40,7 @@ find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
 include_directories(${NSYNC_INCLUDE_DIR})
 
 
-# Create the test executables
+# Create the test executables for channels and contexts
 add_executable(go_context_cancel_test tests/go_context_cancel_test.c)
 add_executable(go_channel_test tests/go_channel_test.c)
 add_executable(go_context_timeout_test tests/go_context_timeout_test.c)
