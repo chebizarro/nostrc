@@ -11,7 +11,7 @@ typedef struct _Filter {
     StringArray ids;
     IntArray kinds;
     StringArray authors;
-    Tags tags;
+    Tags *tags;
     Timestamp since;
     Timestamp until;
     int limit;
@@ -25,13 +25,13 @@ typedef struct _Filters {
     size_t capacity;
 } Filters;
 
-Filter *create_filter();
+Filter *create_filter(void);
 void free_filter(Filter *filter);
 bool filter_matches(Filter *filter, NostrEvent *event);
 bool filter_match_ignoring_timestamp(Filter *filter, NostrEvent *event);
 
 
-Filters *create_filters();
+Filters *create_filters(void);
 bool filters_add(Filters *filters, Filter *filter);
 void free_filters(Filters *filters);
 bool filters_match(Filters *filters, NostrEvent *event);

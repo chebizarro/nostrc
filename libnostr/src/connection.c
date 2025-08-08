@@ -12,18 +12,20 @@
 
 static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                               void *user, void *in, size_t len) {
-    Connection *conn = (Connection *)user;
+    (void)user; // not used; use opaque user data API
+    Connection *conn = (Connection *)lws_get_opaque_user_data(wsi);
 
     switch (reason) {
     case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER: {
         // Add custom headers (e.g., User-Agent) before the WebSocket handshake
+        if (!in || !len) break;
         unsigned char **p = (unsigned char **)in;
         unsigned char *end = (*p) + len;
 
-        const char *user_agent = "User-Agent: nostrc/1.0\r\n";
+        const char *user_agent_val = "nostrc/1.0";
         if (lws_add_http_header_by_name(wsi, (unsigned char *)"User-Agent:",
-                                        (unsigned char *)user_agent,
-                                        strlen(user_agent), p, end)) {
+                                        (unsigned char *)user_agent_val,
+                                        (int)strlen(user_agent_val), p, end)) {
             return 1;
         }
         break;
@@ -35,6 +37,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         break;
     case LWS_CALLBACK_CLIENT_RECEIVE: {
         // Receive a message from the WebSocket and push it into the recv_channel
+        if (!conn) break;
         WebSocketMessage *msg = (WebSocketMessage *)malloc(sizeof(WebSocketMessage));
         msg->data = (char *)malloc(len + 1);
         memcpy(msg->data, in, len);
@@ -47,6 +50,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
     }
     case LWS_CALLBACK_CLIENT_WRITEABLE: {
         // Pop a message from the send_channel and send it over the WebSocket
+        if (!conn) break;
         WebSocketMessage *msg;
         if (go_channel_receive(conn->send_channel, (void **)&msg) == 0) {
             unsigned char buf[LWS_PRE + MAX_PAYLOAD_SIZE];
@@ -75,7 +79,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
     }
     case LWS_CALLBACK_CLIENT_CLOSED:
     case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
-        //connection_close(conn);
+        // Nothing to do here; higher layers manage lifecycle.
         break;
     default:
         break;
@@ -88,6 +92,14 @@ static const struct lws_protocols protocols[] = {
     LWS_PROTOCOL_LIST_TERM};
 
 static const uint32_t retry_table[] = {1000, 2000, 3000}; // Retry intervals in ms
+
+static void *lws_service_loop(void *arg) {
+    Connection *c = (Connection *)arg;
+    while (c->priv->running) {
+        lws_service(c->priv->context, 50);
+    }
+    return NULL;
+}
 
 Connection *new_connection(const char *url) {
     struct lws_context_creation_info context_info;
@@ -139,10 +151,10 @@ Connection *new_connection(const char *url) {
     connect_info.address = url;
     connect_info.port = 443;
     connect_info.path = "/";
-    connect_info.host = lws_canonical_hostname(context);
-    connect_info.origin = connect_info.host;
+    connect_info.host = connect_info.address;
+    connect_info.origin = connect_info.address;
     connect_info.ssl_connection = LCCSCF_USE_SSL;
-    connect_info.protocol = "wss";
+    connect_info.protocol = NULL; // no subprotocol for nostr by default
     connect_info.pwsi = &conn->priv->wsi;
     connect_info.userdata = conn;
 
@@ -152,8 +164,14 @@ Connection *new_connection(const char *url) {
         free(conn);
         return NULL;
     }
+    // Attach our Connection* so callbacks can retrieve it safely
+    lws_set_opaque_user_data(conn->priv->wsi, conn);
     conn->recv_channel = go_channel_create(16);
     conn->send_channel = go_channel_create(16);
+
+    // Start a background service loop to pump libwebsockets
+    conn->priv->running = 1;
+    pthread_create(&conn->priv->service_thread, NULL, lws_service_loop, conn);
     return conn;
 }
 
@@ -182,9 +200,12 @@ void *websocket_send_coroutine(void *arg) {
 }
 
 void connection_close(Connection *conn) {
-    //nsync_mu_lock(&conn->priv->mutex);
-    lws_callback_on_writable(conn->priv->wsi); // Ensure any pending data is sent
-    //nsync_mu_unlock(&conn->priv->mutex);
+    if (!conn) return;
+    // Signal thread to stop and join
+    conn->priv->running = 0;
+    // Wake service loop
+    lws_cancel_service(conn->priv->context);
+    pthread_join(conn->priv->service_thread, NULL);
     lws_context_destroy(conn->priv->context);
     free(conn->priv);
     go_channel_free(conn->recv_channel);

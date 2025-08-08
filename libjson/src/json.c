@@ -504,7 +504,31 @@ NostrJsonInterface jansson_struct = {
     .deserialize_event = jansson_event_deserialize,
     .serialize_envelope = jansson_envelope_serialize,
     .deserialize_envelope = jansson_envelope_deserialize,
-    .serialize_filter = jansson_filter_serialize,
-    .deserialize_filter = jansson_filter_deserialize};
+    .serialize_filter = NULL, /* set below */
+    .deserialize_filter = NULL};
 
 NostrJsonInterface *jansson_impl = &jansson_struct;
+
+/* String-based wrappers for Filter serialize/deserialize to match interface */
+static char *jansson_filter_serialize_str(const Filter *filter) {
+    json_t *obj = jansson_filter_serialize(filter);
+    if (!obj) return NULL;
+    char *s = json_dumps(obj, JSON_COMPACT);
+    json_decref(obj);
+    return s;
+}
+
+static int jansson_filter_deserialize_str(Filter *filter, const char *json_str) {
+    if (!json_str) return -1;
+    json_error_t error;
+    json_t *obj = json_loads(json_str, 0, &error);
+    if (!obj) return -1;
+    int rc = jansson_filter_deserialize(filter, obj);
+    json_decref(obj);
+    return rc;
+}
+
+__attribute__((constructor)) static void _init_interface_funcs(void) {
+    jansson_impl->serialize_filter = jansson_filter_serialize_str;
+    jansson_impl->deserialize_filter = jansson_filter_deserialize_str;
+}

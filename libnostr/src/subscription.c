@@ -6,6 +6,8 @@
 #include <openssl/ssl.h>
 #include <unistd.h>
 
+static _Atomic long long g_sub_counter = 1;
+
 Subscription *create_subscription(Relay *relay, Filters *filters) {
     Subscription *sub = (Subscription *)malloc(sizeof(Subscription));
     if (!sub)
@@ -21,11 +23,28 @@ Subscription *create_subscription(Relay *relay, Filters *filters) {
 
     sub->priv->count_result = NULL;
     sub->events = go_channel_create(1);
+    sub->end_of_stored_events = go_channel_create(1);
     sub->closed_reason = go_channel_create(1);
     sub->priv->live = false;
     sub->priv->eosed = false;
     sub->priv->closed = false;
     nsync_mu_init(&sub->priv->sub_mutex);
+
+    // Initialize identity and context so API works even if caller doesn't go through relay helper
+    long long c = atomic_fetch_add(&g_sub_counter, 1);
+    sub->priv->counter = (int)c;
+    char idbuf[32];
+    snprintf(idbuf, sizeof(idbuf), "%lld", c);
+    sub->priv->id = strdup(idbuf);
+    // Child context derived from relay's connection context if available, else background
+    GoContext *parent = relay ? relay->priv->connection_context : go_context_background();
+    CancelContextResult subctx = go_context_with_cancel(parent);
+    sub->context = subctx.context;
+    sub->priv->cancel = subctx.cancel;
+    // Default match function
+    sub->priv->match = filters_match;
+    // Start lifecycle watcher
+    go(subscription_start, sub);
 
     return sub;
 }
@@ -35,7 +54,9 @@ void free_subscription(Subscription *sub) {
         return;
 
     go_channel_free(sub->events);
+    go_channel_free(sub->end_of_stored_events);
     go_channel_free(sub->closed_reason);
+    free(sub->priv->id);
     free(sub->priv);
     free(sub);
 }
@@ -132,13 +153,13 @@ void subscription_unsub(Subscription *sub) {
         subscription_close(sub, NULL);
     }
 
-    // Remove the subscription from the relay's map
-    go_hash_map_remove_str(sub->relay->subscriptions, sub->priv->id);
+    // Remove the subscription from the relay's map (keys are ints/counters)
+    go_hash_map_remove_int(sub->relay->subscriptions, sub->priv->counter);
 }
 
 void subscription_close(Subscription *sub, Error **err) {
     if (!sub || !sub->relay) {
-        *err = new_error(1, "subscription or relay is NULL");
+        if (err) *err = new_error(1, "subscription or relay is NULL");
         return;
     }
 
@@ -154,7 +175,7 @@ void subscription_close(Subscription *sub, Error **err) {
         // Serialize the close message and send it to the relay
         char *close_msg_str = nostr_envelope_serialize((Envelope *)close_msg);
         if (!close_msg_str) {
-            *err = new_error(1, "failed to serialize close envelope");
+            if (err) *err = new_error(1, "failed to serialize close envelope");
             return;
         }
 
@@ -164,16 +185,16 @@ void subscription_close(Subscription *sub, Error **err) {
 
         // Wait for the result of the write
         Error *write_err = NULL;
-        go_channel_receive(write_channel, (void **)write_err);
+        go_channel_receive(write_channel, (void **)&write_err);
         if (write_err) {
-            *err = write_err;
+            if (err) *err = write_err;
         }
     }
 }
 
 bool subscription_sub(Subscription *sub, Filters *filters, Error **err) {
     if (!sub) {
-        *err = new_error(1, "subscription is NULL");
+        if (err) *err = new_error(1, "subscription is NULL");
         return false;
     }
 
@@ -184,7 +205,7 @@ bool subscription_sub(Subscription *sub, Filters *filters, Error **err) {
     int result = subscription_fire(sub, err);
     if (result < 0) {
         // If subscription_fire fails, handle the error
-        *err = new_error(1, "failed to fire subscription");
+        if (err) *err = new_error(1, "failed to fire subscription");
         return false;
     }
     return true;
@@ -192,36 +213,53 @@ bool subscription_sub(Subscription *sub, Filters *filters, Error **err) {
 
 bool subscription_fire(Subscription *subscription, Error **err) {
     if (!subscription || !subscription->relay->connection) {
-        *err = new_error(1, "subscription or connection is NULL");
+        if (err) *err = new_error(1, "subscription or connection is NULL");
         return false;
     }
 
     // Serialize filters into JSON
-    char *filters_json = nostr_filter_serialize(subscription->filters);
+    if (!subscription->filters) {
+        if (err) *err = new_error(1, "filters are NULL");
+        return false;
+    }
+    // json API expects a single Filter*
+    char *filters_json = nostr_filter_serialize(subscription->filters->filters);
     if (!filters_json) {
-        *err = new_error(1, "failed to serialize filters");
+        if (err) *err = new_error(1, "failed to serialize filters");
         return false;
     }
 
     // Construct the subscription message
-    char *sub_id_str = malloc(32); // Allocate memory for the subscription ID string
-    snprintf(sub_id_str, 32, "\"REQ\",\"%s\",%s", subscription->priv->id, filters_json);
+    if (!subscription->priv->id) {
+        free(filters_json);
+        if (err) *err = new_error(1, "subscription id is NULL");
+        return false;
+    }
+    size_t needed = strlen(subscription->priv->id) + strlen(filters_json) + 10;
+    char *sub_msg = (char *)malloc(needed + 3); // room for brackets and NUL
+    if (!sub_msg) {
+        free(filters_json);
+        if (err) *err = new_error(1, "oom for subscription message");
+        return false;
+    }
+    // Build full REQ envelope: ["REQ","<id>",<filters_json>]
+    snprintf(sub_msg, needed + 3, "[\"REQ\",\"%s\",%s]", subscription->priv->id, filters_json);
 
     // Send the subscription request via the relay
-    GoChannel *write_channel = relay_write(subscription->relay, sub_id_str);
+    GoChannel *write_channel = relay_write(subscription->relay, sub_msg);
     free(filters_json);
-    free(sub_id_str);
+    free(sub_msg);
 
     // Wait for a response
     Error *write_err = NULL;
-    go_channel_receive(write_channel, (void *)&write_err);
+    go_channel_receive(write_channel, (void **)&write_err);
     if (write_err) {
-        *err = write_err;
+        if (err) *err = write_err;
         return -1;
     }
 
     // Mark the subscription as live
-    subscription->priv->live = true;
+    atomic_store(&subscription->priv->live, true);
 
     return 0;
 }

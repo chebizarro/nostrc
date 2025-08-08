@@ -23,7 +23,7 @@ else()
 endif()
 
 # Find the nsync library and headers manually for synchronization primitives
-find_library(NYNC_LIB nsync REQUIRED)
+find_library(NSYNC_LIB nsync REQUIRED)
 find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
 
 # Include the nsync headers
@@ -46,3 +46,8 @@ add_test(NAME test_relay COMMAND test_relay)
 
 # Include directories for libsecp256k1 headers
 target_include_directories(test_nostr PRIVATE ${SECP256K1_INCLUDE_DIRS})
+target_include_directories(test_relay PRIVATE ${SECP256K1_INCLUDE_DIRS})
+
+# Link directories for libsecp256k1
+target_link_directories(test_nostr PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(test_relay PRIVATE ${SECP256K1_LIBRARY_DIRS})

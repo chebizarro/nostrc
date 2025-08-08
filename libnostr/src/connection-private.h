@@ -2,6 +2,7 @@
 #define CONNECTION_PRIVATE_H
 
 #include <libwebsockets.h>
+#include <pthread.h>
 #include "nsync.h"
 
 struct _ConnectionPrivate {
@@ -9,6 +10,8 @@ struct _ConnectionPrivate {
     int enable_compression;
     struct lws_context *context;
     nsync_mu mutex;
+    pthread_t service_thread;
+    int running;
 };
 
 // Struct to hold WebSocket message

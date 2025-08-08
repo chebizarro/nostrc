@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
-int main() {
+int main(void) {
 
     nostr_set_json_interface(jansson_impl);
 
@@ -35,11 +35,12 @@ int main() {
     assert(matches);
 
     GoContext *ctx = go_context_background();
-    Error **err;
-    Relay *relay = new_relay(ctx, "relay.sharegap.net", err);
+    Error *err = NULL;
+    Relay *relay = new_relay(ctx, "wss://nos.lol", &err);
     assert(relay != NULL);
+    assert(err == NULL);
 
-    assert(relay_connect(relay, err));
+    assert(relay_connect(relay, &err));
     assert(relay_is_connected(relay));
 
     relay_publish(relay, event);
@@ -49,7 +50,7 @@ int main() {
     };
 
     Subscription *sub = create_subscription(relay, &filters);
-    subscription_fire(sub, err);
+    subscription_fire(sub, &err);
     subscription_unsub(sub);
 
     assert(!relay_is_connected(relay));

@@ -28,7 +28,7 @@ GoChannel *relay_query_events(Relay *relay, GoContext *ctx, Filter *filter, Erro
 NostrEvent **relay_query_sync(Relay *relay, GoContext *ctx, Filter *filter, int *event_count, Error **err);
 int64_t relay_count(Relay *relay, GoContext *ctx, Filter *filter, Error **err);
 bool relay_close(Relay *relay, Error **err);
-void relay_unsubscribe(Relay *relay, int subscription_id);
+void relay_unsubscribe(Relay *relay, const char *subscription_id);
 GoChannel *relay_write(Relay *r, char *msg);
 void relay_publish(Relay *relay, NostrEvent *event);
 void relay_auth(Relay *relay, void (*sign)(NostrEvent *, Error **), Error **err);

@@ -6,7 +6,7 @@ void test_relay_initialization_and_cleanup() {
     GoContext *ctx = go_context_background();
     
     // Create relay
-    Relay *relay = new_relay(ctx, "relay.sharegap.net", &err);
+    Relay *relay = new_relay(ctx, "wss://nos.lol", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
@@ -20,7 +20,7 @@ void test_relay_connection_and_close() {
     GoContext *ctx = go_context_background();
 
     // Create relay
-    Relay *relay = new_relay(ctx, "relay.sharegap.net", &err);
+    Relay *relay = new_relay(ctx, "wss://nos.lol", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
@@ -48,7 +48,7 @@ void test_relay_subscription() {
     GoContext *ctx = go_context_background();
 
     // Create relay
-    Relay *relay = new_relay(ctx, "relay.sharegap.net", &err);
+    Relay *relay = new_relay(ctx, "wss://nos.lol", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
@@ -80,7 +80,7 @@ void test_relay_write() {
     GoContext *ctx = go_context_background();
 
     // Create relay
-    Relay *relay = new_relay(ctx, "relay.sharegap.net", &err);
+    Relay *relay = new_relay(ctx, "wss://nos.lol", &err);
     assert(relay != NULL);
     assert(err == NULL);
 

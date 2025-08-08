@@ -10,18 +10,20 @@ set(CMAKE_C_STANDARD_REQUIRED True)
 # Find Jansson package (JSON parser/serializer)
 find_path(JANSSON_INCLUDE_DIR NAMES jansson.h)
 find_library(JANSSON_LIBRARY NAMES jansson)
-if (JANSSON_LIBRARY)
-    set(JANSSON_PKG libjansson)
-    set(JANSSON_LIBRARIES ${JANSSON_LIBRARY})
-    include_directories(${JANSSON_INCLUDE_DIRS})
-    link_directories(${JANSSON_LIBRARY_DIRS})
-else (JANSSON_LIBRARY)
-    message(FATAL_ERROR "libjansson >=2.3 not found")
-endif (JANSSON_LIBRARY)
+if (JANSSON_LIBRARY AND JANSSON_INCLUDE_DIR)
+    include_directories(${JANSSON_INCLUDE_DIR})
+else ()
+    message(FATAL_ERROR "libjansson not found (headers or library missing)")
+endif ()
+
+# Find libwebsockets via pkg-config to satisfy static libnostr deps
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LWS REQUIRED libwebsockets)
+include_directories(${LWS_INCLUDE_DIRS})
 
 # Find the nsync library and headers manually (synchronization primitives)
-find_library(NYNC_LIB nsync REQUIRED)
-find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
+find_library(NSYNC_LIB NAMES nsync REQUIRED)
+find_path(NSYNC_INCLUDE_DIR NAMES nsync.h REQUIRED)
 
 # Include the nsync headers
 include_directories(${NSYNC_INCLUDE_DIR})
@@ -36,4 +38,5 @@ target_include_directories(nostr_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(nostr_json PUBLIC include)
 
 # Link with Jansson, libnostr (types/util), and nsync.
-target_link_libraries(nostr_json PRIVATE ${NSYNC_LIB} libnostr jansson)
+target_link_directories(nostr_json PRIVATE ${LWS_LIBRARY_DIRS})
+target_link_libraries(nostr_json PRIVATE ${NSYNC_LIB} libnostr ${JANSSON_LIBRARY} ${LWS_LIBRARIES})

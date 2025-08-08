@@ -23,12 +23,21 @@ Filter *create_filter() {
     return filter;
 }
 
-void free_filter(Filter *filter) {
+static void free_filter_contents(Filter *filter) {
     string_array_free(&filter->ids);
     int_array_free(&filter->kinds);
     string_array_free(&filter->authors);
-    free_tags(&filter->tags);
+    if (filter->tags) {
+        free_tags(filter->tags);
+        filter->tags = NULL;
+    }
     free(filter->search);
+    filter->search = NULL;
+}
+
+void free_filter(Filter *filter) {
+    if (!filter) return;
+    free_filter_contents(filter);
     free(filter);
 }
 
@@ -79,7 +88,7 @@ bool filters_add(Filters *filters, Filter *filter) {
 
 void free_filters(Filters *filters) {
     for (size_t i = 0; i < filters->count; i++) {
-        free_filter(&filters->filters[i]);
+        free_filter_contents(&filters->filters[i]);
     }
     free(filters->filters);
     free(filters);
@@ -120,7 +129,7 @@ bool filter_match_ignoring_timestamp(Filter *filter, NostrEvent *event) {
             return false;
     }
 
-    if (&filter->tags && &filter->tags.count > 0) {
+    if (filter->tags && filter->tags->count > 0) {
         // TODO implement
     }
 
