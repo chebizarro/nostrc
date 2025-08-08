@@ -1,7 +1,8 @@
 #ifndef EVENT_EXTRA_H
 #define EVENT_EXTRA_H
 
-#include "nostr.h"
+#include "event.h"
+#include <jansson.h>
 #include <stdbool.h>
 #include <stdlib.h>
 

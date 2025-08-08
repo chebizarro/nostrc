@@ -2,6 +2,7 @@
 #include "json.h"
 #include "relay-private.h"
 #include "relay.h"
+#include "nostr-subscription.h"
 #include "subscription-private.h"
 #include <openssl/ssl.h>
 #include <unistd.h>
@@ -340,4 +341,58 @@ bool subscription_fire(Subscription *subscription, Error **err) {
     }
 
     return true;
+}
+
+/* Accessors (public API via nostr-subscription.h) */
+
+const char *nostr_subscription_get_id_const(const NostrSubscription *sub) {
+    if (!sub || !sub->priv) return NULL;
+    return sub->priv->id;
+}
+
+NostrRelay *nostr_subscription_get_relay(const NostrSubscription *sub) {
+    return sub ? sub->relay : NULL;
+}
+
+NostrFilters *nostr_subscription_get_filters(const NostrSubscription *sub) {
+    return sub ? sub->filters : NULL;
+}
+
+void nostr_subscription_set_filters(NostrSubscription *sub, NostrFilters *filters) {
+    if (!sub) return;
+    if (sub->filters && sub->filters != filters) {
+        free_filters(sub->filters);
+    }
+    sub->filters = filters; /* takes ownership */
+}
+
+GoChannel *nostr_subscription_get_events_channel(const NostrSubscription *sub) {
+    return sub ? sub->events : NULL;
+}
+
+GoChannel *nostr_subscription_get_eose_channel(const NostrSubscription *sub) {
+    return sub ? sub->end_of_stored_events : NULL;
+}
+
+GoChannel *nostr_subscription_get_closed_channel(const NostrSubscription *sub) {
+    return sub ? sub->closed_reason : NULL;
+}
+
+GoContext *nostr_subscription_get_context(const NostrSubscription *sub) {
+    return sub ? sub->context : NULL;
+}
+
+bool nostr_subscription_is_live(const NostrSubscription *sub) {
+    if (!sub || !sub->priv) return false;
+    return atomic_load(&sub->priv->live);
+}
+
+bool nostr_subscription_is_eosed(const NostrSubscription *sub) {
+    if (!sub || !sub->priv) return false;
+    return atomic_load(&sub->priv->eosed);
+}
+
+bool nostr_subscription_is_closed(const NostrSubscription *sub) {
+    if (!sub || !sub->priv) return false;
+    return atomic_load(&sub->priv->closed);
 }

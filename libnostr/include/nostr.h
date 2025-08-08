@@ -5,17 +5,12 @@
 extern "C" {
 #endif
 
-#include "kinds.h"
-#include "connection.h"
-#include "envelope.h"
-#include "event.h"
-#include "filter.h"
-#include "json.h"
-#include "keys.h"
-#include "relay.h"
-#include "subscription.h"
-#include "tag.h"
-#include "timestamp.h"
+#include "nostr-config.h"
+#include "nostr-core.h"
+
+#if defined(NOSTR_HAVE_GLIB) && NOSTR_HAVE_GLIB
+#include "nostr-glib.h"
+#endif
 
 #ifdef __cplusplus
 }

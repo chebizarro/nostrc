@@ -1,4 +1,5 @@
 #include "relay.h"
+#include "nostr-relay.h"
 #include "envelope.h"
 #include "error_codes.h"
 #include "json.h"
@@ -63,6 +64,22 @@ bool relay_is_connected(Relay *relay) {
     bool connected = (relay->connection != NULL);
     nsync_mu_unlock(&relay->priv->mutex);
     return connected;
+}
+
+/* GLib-style accessors (header: nostr-relay.h) */
+const char *nostr_relay_get_url_const(const NostrRelay *relay) {
+    if (!relay) return NULL;
+    return relay->url;
+}
+
+GoContext *nostr_relay_get_context(const NostrRelay *relay) {
+    if (!relay || !relay->priv) return NULL;
+    return relay->priv->connection_context;
+}
+
+GoChannel *nostr_relay_get_write_channel(const NostrRelay *relay) {
+    if (!relay || !relay->priv) return NULL;
+    return relay->priv->write_queue;
 }
 
 Relay *new_relay(GoContext *context, const char *url, Error **err) {

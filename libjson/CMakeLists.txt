@@ -20,6 +20,7 @@ endif ()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LWS REQUIRED libwebsockets)
 include_directories(${LWS_INCLUDE_DIRS})
+pkg_check_modules(GLIB QUIET IMPORTED_TARGET glib-2.0>=2.50 gobject-2.0>=2.50)
 
 # Find the nsync library and headers manually (synchronization primitives)
 find_library(NSYNC_LIB NAMES nsync REQUIRED)
@@ -55,4 +56,7 @@ target_include_directories(nostr_json PUBLIC include)
 
 # Link with Jansson, libnostr (types/util), and nsync.
 target_link_directories(nostr_json PRIVATE ${LWS_LIBRARY_DIRS})
+if (GLIB_FOUND)
+  target_link_libraries(nostr_json PRIVATE PkgConfig::GLIB)
+endif()
 target_link_libraries(nostr_json PRIVATE ${NSYNC_LIB} libnostr ${JANSSON_LIBRARY} ${LWS_LIBRARIES})

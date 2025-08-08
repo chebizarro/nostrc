@@ -161,3 +161,110 @@ bool filters_match_ignoring_timestamp(Filters *filters, NostrEvent *event) {
 
     return false;
 }
+
+/* Getters/Setters for Filter fields (public API via nostr-filter.h) */
+
+const StringArray *nostr_filter_get_ids(const NostrFilter *filter) {
+    return filter ? &filter->ids : NULL;
+}
+
+void nostr_filter_set_ids(NostrFilter *filter, const char *const *ids, size_t count) {
+    if (!filter) return;
+    string_array_free(&filter->ids);
+    string_array_init(&filter->ids);
+    if (!ids) return;
+    for (size_t i = 0; i < count; i++) {
+        if (ids[i]) string_array_add(&filter->ids, ids[i]);
+    }
+}
+
+const IntArray *nostr_filter_get_kinds(const NostrFilter *filter) {
+    return filter ? &filter->kinds : NULL;
+}
+
+void nostr_filter_set_kinds(NostrFilter *filter, const int *kinds, size_t count) {
+    if (!filter) return;
+    int_array_free(&filter->kinds);
+    int_array_init(&filter->kinds);
+    if (!kinds) return;
+    for (size_t i = 0; i < count; i++) {
+        int_array_add(&filter->kinds, kinds[i]);
+    }
+}
+
+const StringArray *nostr_filter_get_authors(const NostrFilter *filter) {
+    return filter ? &filter->authors : NULL;
+}
+
+void nostr_filter_set_authors(NostrFilter *filter, const char *const *authors, size_t count) {
+    if (!filter) return;
+    string_array_free(&filter->authors);
+    string_array_init(&filter->authors);
+    if (!authors) return;
+    for (size_t i = 0; i < count; i++) {
+        if (authors[i]) string_array_add(&filter->authors, authors[i]);
+    }
+}
+
+NostrTags *nostr_filter_get_tags(const NostrFilter *filter) {
+    return filter ? filter->tags : NULL;
+}
+
+void nostr_filter_set_tags(NostrFilter *filter, NostrTags *tags) {
+    if (!filter) return;
+    if (filter->tags && filter->tags != tags) {
+        free_tags(filter->tags);
+    }
+    filter->tags = tags; /* takes ownership */
+}
+
+Timestamp nostr_filter_get_since(const NostrFilter *filter) {
+    return filter ? filter->since : 0;
+}
+
+void nostr_filter_set_since(NostrFilter *filter, Timestamp since) {
+    if (!filter) return;
+    filter->since = since;
+}
+
+Timestamp nostr_filter_get_until(const NostrFilter *filter) {
+    return filter ? filter->until : 0;
+}
+
+void nostr_filter_set_until(NostrFilter *filter, Timestamp until) {
+    if (!filter) return;
+    filter->until = until;
+}
+
+int nostr_filter_get_limit(const NostrFilter *filter) {
+    return filter ? filter->limit : 0;
+}
+
+void nostr_filter_set_limit(NostrFilter *filter, int limit) {
+    if (!filter) return;
+    filter->limit = limit;
+}
+
+const char *nostr_filter_get_search(const NostrFilter *filter) {
+    return filter ? filter->search : NULL;
+}
+
+void nostr_filter_set_search(NostrFilter *filter, const char *search) {
+    if (!filter) return;
+    if (filter->search) {
+        free(filter->search);
+        filter->search = NULL;
+    }
+    if (search) {
+        filter->search = strdup(search);
+    }
+}
+
+bool nostr_filter_get_limit_zero(const NostrFilter *filter) {
+    return filter ? filter->limit_zero : false;
+}
+
+void nostr_filter_set_limit_zero(NostrFilter *filter, bool limit_zero) {
+    if (!filter) return;
+    filter->limit_zero = limit_zero;
+}

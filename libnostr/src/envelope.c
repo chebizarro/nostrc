@@ -1,4 +1,5 @@
 #include "envelope.h"
+#include "nostr-envelope.h"
 #include "json.h"
 
 // Helper function to create a new Envelope
@@ -318,6 +319,97 @@ char *event_envelope_marshal_json(EventEnvelope *envelope) {
     free(serialized_event);
 
     return json_str;
+}
+
+/* GLib-style accessors (header: nostr-envelope.h) */
+NostrEnvelopeType nostr_envelope_get_type(const NostrEnvelope *env) {
+    if (!env) return ENVELOPE_UNKNOWN;
+    return env->type;
+}
+
+const char *nostr_event_envelope_get_subscription_id(const NostrEventEnvelope *env) {
+    if (!env) return NULL;
+    return env->subscription_id;
+}
+
+NostrEvent *nostr_event_envelope_get_event(const NostrEventEnvelope *env) {
+    if (!env) return NULL;
+    return env->event;
+}
+
+const char *nostr_req_envelope_get_subscription_id(const NostrReqEnvelope *env) {
+    if (!env) return NULL;
+    return env->subscription_id;
+}
+
+Filters *nostr_req_envelope_get_filters(const NostrReqEnvelope *env) {
+    if (!env) return NULL;
+    return env->filters;
+}
+
+const char *nostr_count_envelope_get_subscription_id(const NostrCountEnvelope *env) {
+    if (!env) return NULL;
+    return env->subscription_id;
+}
+
+Filters *nostr_count_envelope_get_filters(const NostrCountEnvelope *env) {
+    if (!env) return NULL;
+    return env->filters;
+}
+
+int nostr_count_envelope_get_count(const NostrCountEnvelope *env) {
+    if (!env) return 0;
+    return env->count;
+}
+
+const char *nostr_notice_envelope_get_message(const NostrNoticeEnvelope *env) {
+    if (!env) return NULL;
+    return env->message;
+}
+
+const char *nostr_eose_envelope_get_message(const NostrEOSEEnvelope *env) {
+    if (!env) return NULL;
+    return env->message;
+}
+
+const char *nostr_close_envelope_get_message(const NostrCloseEnvelope *env) {
+    if (!env) return NULL;
+    return env->message;
+}
+
+const char *nostr_closed_envelope_get_subscription_id(const NostrClosedEnvelope *env) {
+    if (!env) return NULL;
+    return env->subscription_id;
+}
+
+const char *nostr_closed_envelope_get_reason(const NostrClosedEnvelope *env) {
+    if (!env) return NULL;
+    return env->reason;
+}
+
+const char *nostr_ok_envelope_get_event_id(const NostrOKEnvelope *env) {
+    if (!env) return NULL;
+    return env->event_id;
+}
+
+bool nostr_ok_envelope_get_ok(const NostrOKEnvelope *env) {
+    if (!env) return false;
+    return env->ok;
+}
+
+const char *nostr_ok_envelope_get_reason(const NostrOKEnvelope *env) {
+    if (!env) return NULL;
+    return env->reason;
+}
+
+const char *nostr_auth_envelope_get_challenge(const NostrAuthEnvelope *env) {
+    if (!env) return NULL;
+    return env->challenge;
+}
+
+NostrEvent *nostr_auth_envelope_get_event(const NostrAuthEnvelope *env) {
+    if (!env) return NULL;
+    return env->event;
 }
 
 // Function to convert an Envelope struct to JSON

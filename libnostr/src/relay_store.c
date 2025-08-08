@@ -1,4 +1,5 @@
 #include "relay_store.h"
+#include "nostr-relay-store.h"
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,4 +61,16 @@ int multi_store_query_sync(MultiStore *multi, void *ctx, Filter *filter, NostrEv
 
     *events_count = total_events_count;
     return result;
+}
+
+/* GLib-style accessors (header: nostr-relay-store.h) */
+size_t nostr_multi_store_get_count(const NostrMultiStore *multi) {
+    if (!multi) return 0;
+    return multi->stores_count;
+}
+
+NostrRelayStore *nostr_multi_store_get_nth(const NostrMultiStore *multi, size_t index) {
+    if (!multi) return NULL;
+    if (index >= multi->stores_count) return NULL;
+    return multi->stores[index];
 }

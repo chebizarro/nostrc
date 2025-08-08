@@ -1,4 +1,5 @@
 #include "event.h"
+#include "nostr-tag.h"
 #include "utils.h"
 #include <openssl/rand.h>
 #include <openssl/sha.h>
@@ -304,4 +305,66 @@ bool event_is_ephemeral(NostrEvent *event) {
 
 bool event_is_addressable(NostrEvent *event) {
     return 30000 <= event->kind && event->kind < 40000;
+}
+
+/* Accessors (public API via nostr-event.h) */
+
+const char *nostr_event_get_pubkey(const NostrEvent *event) {
+    return event ? event->pubkey : NULL;
+}
+
+void nostr_event_set_pubkey(NostrEvent *event, const char *pubkey) {
+    if (!event) return;
+    if (event->pubkey) { free(event->pubkey); event->pubkey = NULL; }
+    if (pubkey) event->pubkey = strdup(pubkey);
+}
+
+int64_t nostr_event_get_created_at(const NostrEvent *event) {
+    return event ? event->created_at : 0;
+}
+
+void nostr_event_set_created_at(NostrEvent *event, int64_t created_at) {
+    if (!event) return;
+    event->created_at = created_at;
+}
+
+int nostr_event_get_kind(const NostrEvent *event) {
+    return event ? event->kind : 0;
+}
+
+void nostr_event_set_kind(NostrEvent *event, int kind) {
+    if (!event) return;
+    event->kind = kind;
+}
+
+NostrTags *nostr_event_get_tags(const NostrEvent *event) {
+    return event ? event->tags : NULL;
+}
+
+void nostr_event_set_tags(NostrEvent *event, NostrTags *tags) {
+    if (!event) return;
+    if (event->tags && event->tags != tags) {
+        free_tags(event->tags);
+    }
+    event->tags = tags; /* takes ownership */
+}
+
+const char *nostr_event_get_content(const NostrEvent *event) {
+    return event ? event->content : NULL;
+}
+
+void nostr_event_set_content(NostrEvent *event, const char *content) {
+    if (!event) return;
+    if (event->content) { free(event->content); event->content = NULL; }
+    if (content) event->content = strdup(content);
+}
+
+const char *nostr_event_get_sig(const NostrEvent *event) {
+    return event ? event->sig : NULL;
+}
+
+void nostr_event_set_sig(NostrEvent *event, const char *sig) {
+    if (!event) return;
+    if (event->sig) { free(event->sig); event->sig = NULL; }
+    if (sig) event->sig = strdup(sig);
 }

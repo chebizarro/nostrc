@@ -1,4 +1,5 @@
 #include "connection.h"
+#include "nostr-connection.h"
 #include "connection-private.h"
 #include "go.h"
 #include <libwebsockets.h>
@@ -92,6 +93,22 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         break;
     }
     return 0;
+}
+
+/* GLib-style accessors (header: nostr-connection.h) */
+GoChannel *nostr_connection_get_send_channel(const NostrConnection *conn) {
+    if (!conn) return NULL;
+    return conn->send_channel;
+}
+
+GoChannel *nostr_connection_get_recv_channel(const NostrConnection *conn) {
+    if (!conn) return NULL;
+    return conn->recv_channel;
+}
+
+bool nostr_connection_is_running(const NostrConnection *conn) {
+    if (!conn || !conn->priv) return false;
+    return conn->priv->running != 0;
 }
 
 static const struct lws_protocols protocols[] = {

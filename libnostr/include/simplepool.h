@@ -1,7 +1,10 @@
 #ifndef SIMPLEPOOL_H
 #define SIMPLEPOOL_H
 
-#include "nostr.h"
+#include <stddef.h>
+#include "relay.h"
+#include "event.h"
+#include "filter.h"
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
