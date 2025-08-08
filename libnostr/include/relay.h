@@ -34,4 +34,11 @@ void relay_publish(Relay *relay, NostrEvent *event);
 void relay_auth(Relay *relay, void (*sign)(NostrEvent *, Error **), Error **err);
 bool relay_is_connected(Relay *relay);
 
+// Debug helpers: enable a relay-owned channel that emits concise raw summaries
+// of received envelopes (NOTICE/EOSE/CLOSED/OK/COUNT/AUTH/EVENT). When enabled,
+// message_loop() will non-blockingly push strings to this channel. The caller
+// must NOT close or free the returned channel; disable via relay_enable_debug_raw.
+void relay_enable_debug_raw(Relay *relay, int enable);
+GoChannel *relay_get_debug_raw_channel(Relay *relay);
+
 #endif // NOSTR_RELAY_H

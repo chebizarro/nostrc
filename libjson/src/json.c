@@ -39,13 +39,15 @@ char *jansson_event_serialize(const NostrEvent *event) {
 
     // Create a new JSON object
     json_t *json_obj = json_object();
-    char kind_str[12];
-    snprintf(kind_str, sizeof(kind_str), "%d", event->kind); // if 'kind' is int
-    json_object_set_new(json_obj, "kind", json_string(kind_str));
-    json_object_set_new(json_obj, "id", json_string(event->id));
-    json_object_set_new(json_obj, "pubkey", json_string(event->pubkey));
-    json_object_set_new(json_obj, "created_at", json_integer(event->created_at));
-    json_object_set_new(json_obj, "content", json_string(event->content));
+    // NIP-01 uses numeric kind
+    json_object_set_new(json_obj, "kind", json_integer(event->kind));
+    if (event->id)
+        json_object_set_new(json_obj, "id", json_string(event->id));
+    if (event->pubkey)
+        json_object_set_new(json_obj, "pubkey", json_string(event->pubkey));
+    json_object_set_new(json_obj, "created_at", json_integer((json_int_t)event->created_at));
+    if (event->content)
+        json_object_set_new(json_obj, "content", json_string(event->content));
 
     // Convert JSON object to string
     char *json_str = json_dumps(json_obj, JSON_COMPACT);
@@ -71,18 +73,53 @@ int jansson_event_deserialize(NostrEvent *event, const char *json_str) {
 }
 
 int _deserialize_event(NostrEvent *event, json_t *json_obj) {
-    // Extract fields
+    // Extract fields with validation
     json_t *json_id = json_object_get(json_obj, "id");
     json_t *json_pubkey = json_object_get(json_obj, "pubkey");
     json_t *json_created_at = json_object_get(json_obj, "created_at");
     json_t *json_kind = json_object_get(json_obj, "kind");
     json_t *json_content = json_object_get(json_obj, "content");
 
-    event->id = strdup(json_string_value(json_id));
-    event->pubkey = strdup(json_string_value(json_pubkey));
-    event->created_at = json_integer_value(json_created_at);
-    event->kind = atoi(json_string_value(json_kind));
-    event->content = strdup(json_string_value(json_content));
+    // id
+    if (json_is_string(json_id)) {
+        event->id = strdup(json_string_value(json_id));
+    } else {
+        event->id = NULL;
+    }
+
+    // pubkey
+    if (json_is_string(json_pubkey)) {
+        event->pubkey = strdup(json_string_value(json_pubkey));
+    } else {
+        event->pubkey = NULL;
+    }
+
+    // created_at (integer)
+    if (json_is_integer(json_created_at)) {
+        event->created_at = (int64_t)json_integer_value(json_created_at);
+    } else if (json_is_string(json_created_at)) {
+        const char *s = json_string_value(json_created_at);
+        event->created_at = s ? (int64_t)atoll(s) : 0;
+    } else {
+        event->created_at = 0;
+    }
+
+    // kind (prefer integer, fallback string)
+    if (json_is_integer(json_kind)) {
+        event->kind = (int)json_integer_value(json_kind);
+    } else if (json_is_string(json_kind)) {
+        const char *ks = json_string_value(json_kind);
+        event->kind = ks ? atoi(ks) : 0;
+    } else {
+        event->kind = 0;
+    }
+
+    // content
+    if (json_is_string(json_content)) {
+        event->content = strdup(json_string_value(json_content));
+    } else {
+        event->content = NULL;
+    }
 
     return 1;
 }
@@ -329,38 +366,42 @@ json_t *jansson_filter_serialize(const Filter *filter) {
     // Create a JSON object
     json_t *json_obj = json_object();
 
-    // Serialize the `ids`
-    json_t *ids_json = string_array_serialize(&filter->ids);
-    json_object_set_new(json_obj, "ids", ids_json);
-
-    // Serialize the `kinds`
-    json_t *kinds_json = int_array_serialize(&filter->kinds);
-    json_object_set_new(json_obj, "kinds", kinds_json);
-
-    // Serialize the `authors`
-    json_t *authors_json = string_array_serialize(&filter->authors);
-    json_object_set_new(json_obj, "authors", authors_json);
-
-    // Serialize the `tags`
-    if (filter->tags) {
-        json_t *tags_json = jansson_tags_serialize(filter->tags);
-        json_object_set_new(json_obj, "tags", tags_json);
+    // NIP-01: include only recognized keys and only when present
+    if (string_array_size((StringArray *)&filter->ids) > 0) {
+        json_t *ids_json = string_array_serialize(&filter->ids);
+        json_object_set_new(json_obj, "ids", ids_json);
     }
 
-    // Serialize `since` and `until` as integer timestamps
-    json_object_set_new(json_obj, "since", json_integer((json_int_t)filter->since));
-    json_object_set_new(json_obj, "until", json_integer((json_int_t)filter->until));
+    if (int_array_size((IntArray *)&filter->kinds) > 0) {
+        json_t *kinds_json = int_array_serialize(&filter->kinds);
+        json_object_set_new(json_obj, "kinds", kinds_json);
+    }
 
-    // Serialize `limit`
-    json_object_set_new(json_obj, "limit", json_integer(filter->limit));
+    if (string_array_size((StringArray *)&filter->authors) > 0) {
+        json_t *authors_json = string_array_serialize(&filter->authors);
+        json_object_set_new(json_obj, "authors", authors_json);
+    }
 
-    // Serialize `search`
+    // Tags: proper encoding is via dynamic keys like "#e": [..].
+    // Current implementation omits tags to avoid non-standard 'tags' field causing relay NOTICE errors.
+    // TODO: Implement aggregation to NIP-01 tag filter keys (e.g., "#e", "#p", ...).
+
+    if (filter->since > 0) {
+        json_object_set_new(json_obj, "since", json_integer((json_int_t)filter->since));
+    }
+    if (filter->until > 0) {
+        json_object_set_new(json_obj, "until", json_integer((json_int_t)filter->until));
+    }
+
+    if (filter->limit > 0) {
+        json_object_set_new(json_obj, "limit", json_integer(filter->limit));
+    }
+
     if (filter->search) {
         json_object_set_new(json_obj, "search", json_string(filter->search));
     }
 
-    // Serialize `limit_zero`
-    json_object_set_new(json_obj, "limit_zero", json_boolean(filter->limit_zero));
+    // Do NOT include non-standard fields like 'limit_zero'.
 
     return json_obj;
 }

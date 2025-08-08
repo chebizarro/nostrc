@@ -49,8 +49,8 @@ char *event_serialize(NostrEvent *event) {
     // Create the header part: [0,"PubKey",CreatedAt,Kind,
     size_t needed = snprintf(
         result, capacity,
-        "[0,\"%s\",%ld,%d,",
-        event->pubkey, event->created_at, event->kind);
+        "[0,\"%s\",%lld,%d,",
+        event->pubkey, (long long)event->created_at, event->kind);
     if (needed >= capacity) {
         capacity = needed + 1;
         char *temp = realloc(result, capacity);
@@ -59,7 +59,7 @@ char *event_serialize(NostrEvent *event) {
             return NULL;
         }
         result = temp;
-        snprintf(result, capacity, "[0,\"%s\",%ld,%d,", event->pubkey, event->created_at, event->kind);
+        snprintf(result, capacity, "[0,\"%s\",%lld,%d,", event->pubkey, (long long)event->created_at, event->kind);
     }
 
     // Serialize tags
@@ -276,6 +276,8 @@ int event_sign(NostrEvent *event, const char *private_key) {
 
     return_val = 0;
 
+    /* keep label but silence unused-label warnings */
+    if (0) goto cleanup;
 cleanup:
     secp256k1_context_destroy(ctx);
     return return_val;

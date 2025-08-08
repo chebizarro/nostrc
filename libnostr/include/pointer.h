@@ -31,15 +31,15 @@ typedef struct {
 } EntityPointer;
 
 // Function prototypes for ProfilePointer
-ProfilePointer *create_profile_pointer();
+ProfilePointer *create_profile_pointer(void);
 void free_profile_pointer(ProfilePointer *ptr);
 
 // Function prototypes for EventPointer
-EventPointer *create_event_pointer();
+EventPointer *create_event_pointer(void);
 void free_event_pointer(EventPointer *ptr);
 
 // Function prototypes for EntityPointer
-EntityPointer *create_entity_pointer();
+EntityPointer *create_entity_pointer(void);
 void free_entity_pointer(EntityPointer *ptr);
 
 #endif // POINTER_H

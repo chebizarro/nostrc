@@ -18,6 +18,7 @@ struct _RelayPrivate {
     GoHashMap *ok_callbacks;
     GoChannel *write_queue;
     GoChannel *subscription_channel_close_queue;
+    GoChannel *debug_raw; // optional: emits summary/raw strings for debugging
     GoWaitGroup workers;
 };
 

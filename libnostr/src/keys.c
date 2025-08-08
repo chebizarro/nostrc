@@ -10,7 +10,7 @@
 #include "utils.h"
 
 // Generate a private key using libsecp256k1
-char *generate_private_key() {
+char *generate_private_key(void) {
     secp256k1_context *ctx;
     unsigned char privkey[32];      // Private key (32 bytes for secp256k1)
     char *privkey_hex = malloc(65); // Hex representation of private key (64 chars + null terminator)

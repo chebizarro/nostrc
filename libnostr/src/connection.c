@@ -95,8 +95,17 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
 }
 
 static const struct lws_protocols protocols[] = {
-    {"wss", websocket_callback, 0, MAX_PAYLOAD_SIZE},
-    LWS_PROTOCOL_LIST_TERM};
+    {
+        .name = "wss",
+        .callback = websocket_callback,
+        .per_session_data_size = 0,
+        .rx_buffer_size = MAX_PAYLOAD_SIZE,
+        .id = 0,
+        .user = NULL,
+        .tx_packet_size = 0,
+    },
+    LWS_PROTOCOL_LIST_TERM
+};
 
 static const uint32_t retry_table[] = {1000, 2000, 3000}; // Retry intervals in ms
 
@@ -306,6 +315,7 @@ void connection_close(Connection *conn) {
 }
 
 void connection_write_message(Connection *conn, GoContext *ctx, char *message, Error **err) {
+    (void)ctx; // currently unused here; selection handled at higher level
     if (!conn || !message) {
         if (err) {
             *err = new_error(1, "Invalid connection or message");
@@ -365,8 +375,8 @@ void connection_read_message(Connection *conn, GoContext *ctx, char *buffer, siz
     WebSocketMessage *msg = NULL;
     if (ctx) {
         GoSelectCase cases[] = {
-            {GO_SELECT_RECEIVE, conn->recv_channel, (void **)&msg},
-            {GO_SELECT_RECEIVE, ctx->done, NULL},
+            (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = conn->recv_channel, .value = NULL, .recv_buf = (void **)&msg },
+            (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ctx->done, .value = NULL, .recv_buf = NULL },
         };
         int idx = go_select(cases, 2);
         if (idx == 1) {

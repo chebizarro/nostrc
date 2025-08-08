@@ -245,8 +245,6 @@ Tags *tags_append_unique(Tags *tags, Tag *tag) {
     if (!tags || !tag)
         return NULL;
 
-    size_t n = tag->size > 2 ? 2 : tag->size;
-
     for (size_t i = 0; i < tags->count; i++) {
         if (tag_starts_with(tags->data[i], tag)) {
             return tags;

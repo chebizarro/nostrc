@@ -3,7 +3,7 @@
 #include <string.h>
 
 // Create ProfilePointer
-ProfilePointer *create_profile_pointer() {
+ProfilePointer *create_profile_pointer(void) {
     ProfilePointer *ptr = (ProfilePointer *)malloc(sizeof(ProfilePointer));
     if (!ptr)
         return NULL;
@@ -28,7 +28,7 @@ void free_profile_pointer(ProfilePointer *ptr) {
 }
 
 // Create EventPointer
-EventPointer *create_event_pointer() {
+EventPointer *create_event_pointer(void) {
     EventPointer *ptr = (EventPointer *)malloc(sizeof(EventPointer));
     if (!ptr)
         return NULL;
@@ -56,7 +56,7 @@ void free_event_pointer(EventPointer *ptr) {
 }
 
 // Create EntityPointer
-EntityPointer *create_entity_pointer() {
+EntityPointer *create_entity_pointer(void) {
     EntityPointer *ptr = (EntityPointer *)malloc(sizeof(EntityPointer));
     if (!ptr)
         return NULL;

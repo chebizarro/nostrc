@@ -100,6 +100,8 @@ void simple_pool_subscribe(SimplePool *pool, const char **urls, size_t url_count
     }
 
     // Implement subscription logic here
+    (void)filters;
+    (void)unique;
 }
 
 // Function to query a single event from multiple relays
@@ -109,4 +111,5 @@ void simple_pool_query_single(SimplePool *pool, const char **urls, size_t url_co
     }
 
     // Implement query logic here
+    (void)filter;
 }
