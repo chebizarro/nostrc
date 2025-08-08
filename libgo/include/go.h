@@ -14,7 +14,9 @@
 #include "error.h"
 #include "select.h"
 
-// Wrapper function to create a new thread
+// Launch a detached goroutine-like thread executing start_routine(arg).
+// Returns 0 on success, non-zero on failure.
+// Prefer coordinating completion with GoWaitGroup instead of sleeps.
 int go(void *(*start_routine)(void *), void *arg);
 
 #endif // GO_H

@@ -48,10 +48,17 @@ Ownership: Functions returning `char*` allocate memory; caller must free.
 
 ## libgo
 
-- Go-like concurrency primitives in C.
-- Channels: `channel.c`
-- Contexts: cancellation and timeouts (`context.c`) with helpers for cooperative cancellation across operations.
-- Wait groups, tickers, error and data structures (`hash_map`, arrays).
+- Go-like concurrency primitives in C. See detailed docs in `libgo/LIBGO.md`.
+- Entry point: `go()` wrapper in `libgo/include/go.h` launches a goroutine-like detached thread.
+- Channels: `libgo/include/channel.h` (blocking and non-blocking send/receive, close)
+- Contexts: `libgo/include/context.h` (cancellation and deadlines)
+- Select: `libgo/include/select.h` (multi-channel select over send/receive)
+- Wait groups: `libgo/include/wait_group.h`
+- Ticker: `libgo/include/ticker.h`
+
+Examples:
+- `libgo/examples/helloworld.c` — basic goroutines with `go()` and a wait group
+- `libgo/examples/channels.c` — producer/consumer using `go()`, channels, and clean shutdown
 
 ## Error Codes
 

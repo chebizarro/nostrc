@@ -9,4 +9,11 @@ typedef struct {
     int counter;    // Counter for tracking tasks
 } GoWaitGroup;
 
+// Public API
+void go_wait_group_init(GoWaitGroup *wg);
+void go_wait_group_add(GoWaitGroup *wg, int delta);
+void go_wait_group_done(GoWaitGroup *wg);
+void go_wait_group_wait(GoWaitGroup *wg);
+void go_wait_group_destroy(GoWaitGroup *wg);
+
 #endif // GO_WAIT_GROUP_H

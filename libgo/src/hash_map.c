@@ -92,7 +92,6 @@ void go_hash_map_insert_str(GoHashMap *map, const char *key_str, void *value) {
 
     HashKey key = make_key_from_string(key_str); // Create key internally
     go_hash_map_insert(map, &key, value);
-    free_hash_key(&key); // Free key after insertion
 }
 
 void go_hash_map_insert_int(GoHashMap *map, int64_t key_int, void *value) {
@@ -217,6 +216,9 @@ void go_hash_map_remove(GoHashMap *map, HashKey *key) {
                     prev->next = node->next;
                 } else {
                     map->buckets[bucket_index] = node->next;
+                }
+                if (node->key.type == KEY_TYPE_STRING && node->key.key.str_key) {
+                    free(node->key.key.str_key);
                 }
                 free(node);
                 break;
