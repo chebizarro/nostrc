@@ -82,3 +82,66 @@ jobs:
             libgo/build/Testing/*/LastTest.log
             libgo/build/CTestTestfile.cmake
           if-no-files-found: ignore
+
+  fuzz-driver:
+    name: ${{ matrix.os }} • fuzz-driver
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      CMAKE_BUILD_TYPE: Debug
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+      UBSAN_OPTIONS: print_stacktrace=1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Ubuntu)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y build-essential cmake ninja-build clang git libjansson-dev pkg-config
+          # Build nsync from source (fast, small)
+          git clone --depth 1 https://github.com/google/nsync.git
+          cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build nsync/build -j
+          sudo cmake --install nsync/build
+          # Optionally install secp256k1 if not vendored
+          sudo apt-get install -y libsecp256k1-dev || true
+
+      - name: Install dependencies (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          brew update
+          brew upgrade
+          brew install cmake ninja jansson pkg-config || true
+          if brew info nsync >/dev/null 2>&1; then
+            brew install nsync || true
+          else
+            git clone --depth 1 https://github.com/google/nsync.git
+            cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release
+            cmake --build nsync/build -j
+            sudo cmake --install nsync/build
+          fi
+          brew install libsecp256k1 || true
+
+      - name: Configure fuzz driver
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DENABLE_FUZZING=ON -DENABLE_FUZZING_RUNTIME=OFF
+
+      - name: Build fuzz driver
+        run: cmake --build build -j --target fuzz_event_driver
+
+      - name: Run fuzz driver over seeds
+        run: ./build/tests/fuzz_event_driver tests/fuzz_seeds/events tests/fuzz_seeds/filters
+
+      - name: Archive crash artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }}-fuzz-driver-crashes
+          path: |
+            crash-*
+            oom-*
+          if-no-files-found: ignore
