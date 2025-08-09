@@ -2,8 +2,7 @@
 #include <json-glib/json-glib.h>
 
 static void glib_json_init(void) {
-    // Initialize GLib and JSON-GLib
-    g_type_init();
+    // No explicit initialization required for modern GLib/JSON-GLib
 }
 
 static void glib_json_cleanup(void) {
@@ -26,8 +25,10 @@ static char* glib_json_serialize(const NostrEvent *event) {
 
     json_builder_set_member_name(builder, "tags");
     json_builder_begin_array(builder);
-    for (char **tag = event->tags; *tag != NULL; ++tag) {
-        json_builder_add_string_value(builder, *tag);
+    if (event->tags) {
+        for (char **tag = event->tags; *tag != NULL; ++tag) {
+            json_builder_add_string_value(builder, *tag);
+        }
     }
     json_builder_end_array(builder);
 
@@ -45,17 +46,16 @@ static char* glib_json_serialize(const NostrEvent *event) {
     return json_str;
 }
 
-static NostrEvent* glib_json_deserialize(const char *json_str) {
+static int glib_json_deserialize(NostrEvent *event, const char *json_str) {
     JsonParser *parser = json_parser_new();
     if (!json_parser_load_from_data(parser, json_str, -1, NULL)) {
         g_object_unref(parser);
-        return NULL;
+        return 0;
     }
 
     JsonNode *root = json_parser_get_root(parser);
     JsonObject *object = json_node_get_object(root);
 
-    NostrEvent *event = nostr_event_new();
     event->id = g_strdup(json_object_get_string_member(object, "id"));
     event->pubkey = g_strdup(json_object_get_string_member(object, "pubkey"));
     event->kind = json_object_get_int_member(object, "kind");
@@ -71,7 +71,7 @@ static NostrEvent* glib_json_deserialize(const char *json_str) {
     event->tags[tag_count] = NULL;
 
     g_object_unref(parser);
-    return event;
+    return 1;
 }
 
 static const NostrJsonInterface glib_json_interface = {

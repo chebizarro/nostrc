@@ -77,6 +77,12 @@ find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
 # Include the nsync headers
 include_directories(${NSYNC_INCLUDE_DIR})
 
+# When building libgo as a shared library, we must link nsync directly;
+# otherwise undefined symbols (nsync_*) will fail the link step.
+# Expose nsync to consumers as PUBLIC so downstreams inherit it via CMake.
+target_link_libraries(libgo PUBLIC ${NSYNC_LIB} pthread)
+target_include_directories(libgo PUBLIC ${NSYNC_INCLUDE_DIR})
+
 # Create the test executables for channels and contexts
 add_executable(go_context_cancel_test tests/go_context_cancel_test.c)
 add_executable(go_channel_test tests/go_channel_test.c)

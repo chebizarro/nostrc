@@ -11,27 +11,32 @@ static gpointer s_provider = NULL; /* (owned) strong ref */
 /* Minimal interface registration and lookup helpers (no G_DECLARE_INTERFACE). */
 GType nostr_json_provider_get_type(void);
 static void nostr_json_provider_default_init(NostrJsonProviderInterface *iface) { (void)iface; }
+/* Wrapper with exact GClassInitFunc signature to avoid function pointer cast warnings */
+static void nostr_json_provider_class_init(gpointer klass, gpointer class_data) {
+    (void)class_data;
+    nostr_json_provider_default_init((NostrJsonProviderInterface *)klass);
+}
 
 GType nostr_json_provider_get_type(void) {
-    static volatile gsize gtype_id__ = 0;
-    if (g_once_init_enter(&gtype_id__)) {
+    static gsize gtype_id = 0;
+    if (g_once_init_enter(&gtype_id)) {
         GType tid = g_type_register_static_simple(
             G_TYPE_INTERFACE,
             g_intern_static_string("NostrJsonProvider"),
             sizeof(NostrJsonProviderInterface),
-            (GClassInitFunc)nostr_json_provider_default_init,
+            (GClassInitFunc)nostr_json_provider_class_init,
             0,
             NULL,
             0);
         g_type_interface_add_prerequisite(tid, G_TYPE_OBJECT);
-        g_once_init_leave(&gtype_id__, tid);
+        g_once_init_leave(&gtype_id, tid);
     }
-    return (GType)gtype_id__;
+    return (GType)gtype_id;
 }
 
 static inline NostrJsonProviderInterface *get_iface_from_obj(gpointer obj) {
     if (!obj) return NULL;
-    GTypeClass *klass = G_OBJECT_GET_CLASS(obj);
+    GTypeClass *klass = (GTypeClass *)G_OBJECT_GET_CLASS(obj);
     return (NostrJsonProviderInterface *)g_type_interface_peek(klass, NOSTR_TYPE_JSON_PROVIDER);
 }
 

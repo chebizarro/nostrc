@@ -16,14 +16,31 @@ extern "C" {
 
 /* Types: already using NostrEvent for the struct. */
 
-/* New API names mapped to legacy implementations */
-#define nostr_event_new                create_event
-#define nostr_event_free               free_event
-#define nostr_event_serialize          event_serialize
-#define nostr_event_get_id             event_get_id
-#define nostr_event_check_signature    event_check_signature
-#define nostr_event_sign               event_sign
-#define nostr_event_is_regular         event_is_regular
+/* Mapping policy:
+ * - If legacy aliases are ENABLED, map old names -> new names (preferred outward API),
+ *   so downstreams using old names still work.
+ * - Otherwise (default), map new names -> old implementations.
+ * This avoids circular macro expansions.
+ */
+#if defined(NOSTR_ENABLE_LEGACY_ALIASES) && NOSTR_ENABLE_LEGACY_ALIASES
+  /* Legacy ON: old -> new */
+#  define create_event                 nostr_event_new
+#  define free_event                   nostr_event_free
+#  /* Do not remap JSON-layer functions here */
+#  define event_get_id                 nostr_event_get_id
+#  define event_check_signature        nostr_event_check_signature
+#  define event_sign                   nostr_event_sign
+#  define event_is_regular             nostr_event_is_regular
+#else
+  /* Legacy OFF (default): new -> old */
+#  define nostr_event_new              create_event
+#  define nostr_event_free             free_event
+  /* Do not remap JSON-layer functions here */
+#  define nostr_event_get_id           event_get_id
+#  define nostr_event_check_signature  event_check_signature
+#  define nostr_event_sign             event_sign
+#  define nostr_event_is_regular       event_is_regular
+#endif
 
 /* Accessors for public struct members (for GObject properties later) */
 /**
@@ -112,16 +129,7 @@ const char *nostr_event_get_sig(const NostrEvent *event);
  */
 void nostr_event_set_sig(NostrEvent *event, const char *sig);
 
-/* Optional legacy aliases (temporary): map old to new if enabled */
-#ifdef NOSTR_ENABLE_LEGACY_ALIASES
-#  define create_event                 nostr_event_new
-#  define free_event                   nostr_event_free
-#  define event_serialize              nostr_event_serialize
-#  define event_get_id                 nostr_event_get_id
-#  define event_check_signature        nostr_event_check_signature
-#  define event_sign                   nostr_event_sign
-#  define event_is_regular             nostr_event_is_regular
-#endif
+/* No further remapping here to prevent recursive macro definitions. */
 
 #ifdef __cplusplus
 }

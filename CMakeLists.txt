@@ -53,3 +53,27 @@ find_library(NSYNC_LIB nsync REQUIRED)
 target_link_libraries(relay_smoke PRIVATE ${NSYNC_LIB})
 apply_sanitizers(relay_smoke)
 
+## GLib demo: only if libnostr built with GLib support
+if (TARGET nostr)
+  get_target_property(_nostr_defs nostr COMPILE_DEFINITIONS)
+  if (NOSTR_WITH_GLIB)
+    # Try to reuse GLib pkg from libnostr configuration
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(GLIB QUIET IMPORTED_TARGET glib-2.0>=2.50 gobject-2.0>=2.50)
+    if (GLIB_FOUND)
+      add_executable(json_provider_demo examples/json_provider_demo.c)
+      target_link_libraries(json_provider_demo PRIVATE libnostr nostr_json PkgConfig::GLIB)
+      target_compile_definitions(json_provider_demo PRIVATE NOSTR_ENABLE_LEGACY_ALIASES=0)
+      target_include_directories(json_provider_demo PRIVATE 
+        libnostr/include 
+        ${CMAKE_BINARY_DIR}/libnostr/generated)
+      # nsync dependency required via libgo headers used transitively
+      find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
+      target_include_directories(json_provider_demo PRIVATE ${NSYNC_INCLUDE_DIR})
+      find_library(NSYNC_LIB nsync REQUIRED)
+      target_link_libraries(json_provider_demo PRIVATE ${NSYNC_LIB})
+      apply_sanitizers(json_provider_demo)
+    endif()
+  endif()
+endif()
+

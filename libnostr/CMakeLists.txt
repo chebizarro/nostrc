@@ -10,7 +10,11 @@ include_directories(${NSYNC_INCLUDE_DIR})
 
 # Optional GLib/GObject for integration layer (no hard dependency for core)
 option(NOSTR_WITH_GLIB "Enable GLib integration headers" ON)
-option(NOSTR_ENABLE_LEGACY_ALIASES "Enable temporary legacy compatibility aliases" ON)
+option(NOSTR_ENABLE_LEGACY_ALIASES "Enable temporary legacy compatibility aliases" OFF)
+# Reset cache default to OFF if not explicitly provided by the user
+if (NOT DEFINED CACHE{NOSTR_ENABLE_LEGACY_ALIASES})
+  set(NOSTR_ENABLE_LEGACY_ALIASES OFF CACHE BOOL "Enable temporary legacy compatibility aliases" FORCE)
+endif()
 find_package(PkgConfig REQUIRED)
 if (NOSTR_WITH_GLIB)
   pkg_check_modules(GLIB QUIET IMPORTED_TARGET glib-2.0>=2.50 gobject-2.0>=2.50)
@@ -25,6 +29,7 @@ endif()
 
 # Find the libwebsockets package
 pkg_check_modules(LWS REQUIRED libwebsockets)
+pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 # Optionally enable websockets support by uncommenting the lines below and
 # ensuring libwebsockets is available on the system.
 # pkg_check_modules(LWS REQUIRED libwebsockets)
@@ -46,6 +51,14 @@ set(LIBNOSTR_SOURCES
 	src/event_extra.c
 	src/pointer.c
 	src/simplepool.c
+)
+
+# GI thin wrappers for macros/aliases
+list(APPEND LIBNOSTR_SOURCES
+  src/nostr_utils_wrap.c
+  src/nostr_event_extra_wrap.c
+  src/nostr_pointer_wrap.c
+  src/nostr_simple_pool_wrap.c
 )
 
 # Optional GLib bridge for JSON provider
@@ -100,7 +113,7 @@ target_include_directories(nostr PUBLIC ${LWS_INCLUDE_DIRS})
 target_link_directories(nostr PUBLIC ${LWS_LIBRARY_DIRS})
 find_package(OpenSSL REQUIRED)
 find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
-target_link_libraries(nostr PUBLIC ${LWS_LIBRARIES} libgo OpenSSL::Crypto ${SECP256K1_LIB})
+target_link_libraries(nostr PUBLIC ${LWS_LIBRARIES} libgo OpenSSL::Crypto ${SECP256K1_LIB} PkgConfig::JANSSON)
 if (NOSTR_WITH_GLIB AND GLIB_FOUND)
   target_link_libraries(nostr PUBLIC PkgConfig::GLIB)
 endif()
@@ -117,7 +130,8 @@ if (GLIB_FOUND)
 endif()
 target_compile_definitions(nostr PUBLIC NOSTR_HAVE_LIBGO=1)
 if (NOSTR_ENABLE_LEGACY_ALIASES)
-  target_compile_definitions(nostr PUBLIC NOSTR_ENABLE_LEGACY_ALIASES=1)
+  # Keep legacy aliasing internal; do not leak to dependents to avoid macro conflicts
+  target_compile_definitions(nostr PRIVATE NOSTR_ENABLE_LEGACY_ALIASES=1)
 endif()
 
 # Install rules

@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include "nostr-timestamp.h"
 #include "nostr-tag.h"
 #include "filter.h" /* defines Filter, Filters and old function names */
 

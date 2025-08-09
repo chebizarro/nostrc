@@ -3,6 +3,9 @@
 
 /* GLib-friendly transitional header for event extra fields helpers */
 
+#include <stdbool.h>
+#include <jansson.h>
+#include "nostr-event.h"
 #include "event_extra.h"
 
 #ifdef __cplusplus
@@ -13,11 +16,12 @@ extern "C" {
  * nostr_event_set_extra:
  * @event: (transfer none): event
  * @key: (transfer none): key string
- * @value: (transfer none): value string
+ * @value: (transfer none): json value
  *
  * Sets/overwrites an extra field on @event.
  */
-#define nostr_event_set_extra        set_extra
+void nostr_event_set_extra(NostrEvent *event, const char *key, json_t *value);
+
 /**
  * nostr_event_remove_extra:
  * @event: (transfer none): event
@@ -25,7 +29,8 @@ extern "C" {
  *
  * Removes an extra field.
  */
-#define nostr_event_remove_extra     remove_extra
+void nostr_event_remove_extra(NostrEvent *event, const char *key);
+
 /**
  * nostr_event_get_extra:
  * @event: (transfer none): event
@@ -33,7 +38,8 @@ extern "C" {
  *
  * Returns: (transfer none) (nullable): internal pointer to value
  */
-#define nostr_event_get_extra        get_extra
+json_t *nostr_event_get_extra(NostrEvent *event, const char *key);
+
 /**
  * nostr_event_get_extra_string:
  * @event: (transfer none): event
@@ -41,7 +47,8 @@ extern "C" {
  *
  * Returns: (transfer full) (nullable): newly-allocated copy of string value
  */
-#define nostr_event_get_extra_string get_extra_string
+char *nostr_event_get_extra_string(NostrEvent *event, const char *key);
+
 /**
  * nostr_event_get_extra_number:
  * @event: (transfer none): event
@@ -50,7 +57,8 @@ extern "C" {
  *
  * Returns: %TRUE on success
  */
-#define nostr_event_get_extra_number get_extra_number
+bool nostr_event_get_extra_number(NostrEvent *event, const char *key, double *out);
+
 /**
  * nostr_event_get_extra_bool:
  * @event: (transfer none): event
@@ -59,7 +67,7 @@ extern "C" {
  *
  * Returns: %TRUE on success
  */
-#define nostr_event_get_extra_bool   get_extra_boolean
+bool nostr_event_get_extra_bool(NostrEvent *event, const char *key, bool *out);
 
 #ifdef __cplusplus
 }

@@ -3,6 +3,8 @@
 
 /* GLib-friendly transitional header for SimplePool */
 
+#include <stddef.h>
+#include <stdbool.h>
 #include "simplepool.h"
 
 #ifdef __cplusplus
@@ -20,65 +22,57 @@ typedef SimplePool        NostrSimplePool;
 typedef IncomingEvent     NostrIncomingEvent;
 typedef DirectedFilters   NostrDirectedFilters;
 
-/* Function aliases (stable surface) */
+/* Function prototypes (stable GI-friendly surface) */
 /**
  * nostr_simple_pool_new:
  *
  * Returns: (transfer full): newly-allocated `NostrSimplePool*`
  */
-#define nostr_simple_pool_new               create_simple_pool
+NostrSimplePool *nostr_simple_pool_new(void);
 /**
  * nostr_simple_pool_free:
  * @pool: (transfer full): pool to free
  */
-#define nostr_simple_pool_free              free_simple_pool
+void nostr_simple_pool_free(NostrSimplePool *pool);
 /**
  * nostr_simple_pool_ensure_relay:
  * @pool: (transfer none): pool
  * @url: (transfer none): relay URL
  *
  * Ensures the relay is present in the pool.
- * Returns: 0 on success
  */
-#define nostr_simple_pool_ensure_relay      simple_pool_ensure_relay
+void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url);
 /**
  * nostr_simple_pool_start:
  * @pool: (transfer none): pool
  *
  * Starts pool workers.
- * Returns: 0 on success
  */
-#define nostr_simple_pool_start             simple_pool_start
+void nostr_simple_pool_start(NostrSimplePool *pool);
 /**
  * nostr_simple_pool_stop:
  * @pool: (transfer none): pool
  *
  * Stops pool workers and drains queues.
  */
-#define nostr_simple_pool_stop              simple_pool_stop
+void nostr_simple_pool_stop(NostrSimplePool *pool);
 /**
  * nostr_simple_pool_subscribe:
  * @pool: (transfer none): pool
+ * @urls: (array length=url_count) (transfer none): relay URLs
+ * @url_count: number of URLs
  * @filters: (transfer none): filters to subscribe
- * @on_event: (scope call): event callback (nullable)
- * @user_data: (closure): user data for callback
- *
- * Subscribes with directed filters.
- * Returns: 0 on success
+ * @unique: whether to de-duplicate events
  */
-#define nostr_simple_pool_subscribe         simple_pool_subscribe
+void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_t url_count, Filters filters, bool unique);
 /**
  * nostr_simple_pool_query_single:
  * @pool: (transfer none): pool
- * @relay: (transfer none): relay URL
+ * @urls: (array length=url_count) (transfer none): relay URLs
+ * @url_count: number of URLs
  * @filter: (transfer none): filter
- * @on_event: (scope call): event callback (nullable)
- * @user_data: (closure): user data for callback
- *
- * Performs a one-shot query to a single relay.
- * Returns: 0 on success
  */
-#define nostr_simple_pool_query_single      simple_pool_query_single
+void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, size_t url_count, Filter filter);
 
 #ifdef __cplusplus
 }

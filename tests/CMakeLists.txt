@@ -39,6 +39,7 @@ endif()
 # Find secp256k1 (assuming pkg-config is available)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SECP256K1 REQUIRED libsecp256k1)
+pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 if (SECP256K1_FOUND)
     message(STATUS "Found secp256k1 version ${SECP256K1_VERSION}")
 else()
@@ -52,6 +53,11 @@ find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
 # Include the nsync headers
 include_directories(${NSYNC_INCLUDE_DIR})
 
+
+# Make Jansson available to all test targets
+link_libraries(PkgConfig::JANSSON)
+include_directories(${JANSSON_INCLUDE_DIRS})
+link_directories(${JANSSON_LIBRARY_DIRS})
 
 # Test executables
 add_executable(test_nostr tests_nostr.c)

@@ -3,13 +3,17 @@
 
 /* GLib-friendly transitional header for utils */
 
+#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
 #include "utils.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Provide alias names in the nostr_* namespace for consistency. */
+/* Provide GI-friendly function prototypes in the nostr_* namespace. */
+
 /**
  * nostr_memhash:
  * @data: (transfer none): buffer
@@ -17,65 +21,79 @@ extern "C" {
  *
  * Returns: hash value
  */
-#define nostr_memhash                 memhash
+uint64_t nostr_memhash(const char *data, size_t len);
+
 /**
  * nostr_named_lock:
  * @name: (transfer none): lock name
+ * @critical_section: (scope call): function to run while holding lock
+ * @arg: (closure): user data
  */
-#define nostr_named_lock              named_lock
+void nostr_named_lock(const char *name, void (*critical_section)(void *), void *arg);
+
 /**
  * nostr_similar:
  * @a: (transfer none)
+ * @a_len: length of @a
  * @b: (transfer none)
+ * @b_len: length of @b
  *
  * Returns: %TRUE if similar
  */
-#define nostr_similar                 similar
+bool nostr_similar(const int *a, size_t a_len, const int *b, size_t b_len);
+
 /**
  * nostr_escape_string:
  * @s: (transfer none): string to escape
  *
  * Returns: (transfer full): newly-allocated escaped string
  */
-#define nostr_escape_string           escape_string
+char *nostr_escape_string(const char *s);
+
 /**
  * nostr_pointer_values_equal:
  * @a: (transfer none): pointer value
  * @b: (transfer none): pointer value
+ * @size: size in bytes
  *
  * Returns: %TRUE if equal
  */
-#define nostr_pointer_values_equal    are_pointer_values_equal
+bool nostr_pointer_values_equal(const void *a, const void *b, size_t size);
+
 /**
  * nostr_normalize_url:
  * @in: (transfer none): input URL
  *
  * Returns: (transfer full): normalized URL or %NULL
  */
-#define nostr_normalize_url           normalize_url
+char *nostr_normalize_url(const char *in);
+
 /**
  * nostr_normalize_ok_message:
- * @in: (transfer none): OK message
+ * @reason: (transfer none)
+ * @prefix: (transfer none)
  *
  * Returns: (transfer full): normalized message or %NULL
  */
-#define nostr_normalize_ok_message    normalize_ok_message
+char *nostr_normalize_ok_message(const char *reason, const char *prefix);
+
 /**
  * nostr_hex2bin:
+ * @bin: (out caller-allocates): output buffer
  * @hex: (transfer none): hex input
- * @out: (out caller-allocates) (transfer none): binary buffer
- * @out_len: (out): length written
+ * @bin_len: size of @bin
  *
- * Returns: 0 on success
+ * Returns: %TRUE on success
  */
-#define nostr_hex2bin                 hex2bin
+bool nostr_hex2bin(unsigned char *bin, const char *hex, size_t bin_len);
+
 /**
  * nostr_sub_id_to_serial:
  * @sub_id: (transfer none)
  *
  * Returns: serial number or -1 on error
  */
-#define nostr_sub_id_to_serial        sub_id_to_serial
+int64_t nostr_sub_id_to_serial(const char *sub_id);
 
 #ifdef __cplusplus
 }

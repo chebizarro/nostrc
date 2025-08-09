@@ -1,3 +1,34 @@
+## Utils (Thin Wrappers)
+
+- `memhash()` -> `nostr_memhash()`
+- `named_lock()` -> `nostr_named_lock()`
+- `similar()` -> `nostr_similar()`
+- `escape_string()` -> `nostr_escape_string()`
+- `are_pointer_values_equal()` -> `nostr_pointer_values_equal()`
+- `normalize_url()` -> `nostr_normalize_url()`
+- `normalize_ok_message()` -> `nostr_normalize_ok_message()`
+- `hex2bin()` -> `nostr_hex2bin()`
+- `sub_id_to_serial()` -> `nostr_sub_id_to_serial()`
+
+## Pointers (Thin Wrappers)
+
+- `create_profile_pointer()` -> `nostr_profile_pointer_new()` / `nostr_profile_pointer_free()`
+- `create_event_pointer()` -> `nostr_event_pointer_new()` / `nostr_event_pointer_free()`
+- `create_entity_pointer()` -> `nostr_entity_pointer_new()` / `nostr_entity_pointer_free()`
+
+## SimplePool (Thin Wrappers)
+
+- `create_simple_pool()` -> `nostr_simple_pool_new()` / `nostr_simple_pool_free()`
+- `simple_pool_ensure_relay()` -> `nostr_simple_pool_ensure_relay()`
+- `simple_pool_start()` -> `nostr_simple_pool_start()`
+- `simple_pool_stop()` -> `nostr_simple_pool_stop()`
+- `simple_pool_subscribe()` -> `nostr_simple_pool_subscribe()`
+- `simple_pool_query_single()` -> `nostr_simple_pool_query_single()`
+
+Note: Thin wrappers are preferred for bindings. Legacy macros may exist briefly under `NOSTR_ENABLE_LEGACY_ALIASES` but will be removed before release.
+Important: JSON-layer functions declared in `nostr-json.h`/`json.h` — such as `nostr_event_serialize()`, `nostr_event_deserialize()`, and their envelope/filter counterparts — are not and will not be remapped by legacy macros. This avoids conflicts with prototypes consumed by GI and downstreams.
+See also: `docs/GLIB_INTEGRATION.md` for GLib provider, GI annotations, and usage notes.
+
 # libnostr API Rename Map (Work-In-Progress)
 ## Envelope Accessors (New Public API)
 
@@ -143,6 +174,17 @@ Notes:
 - free_event() -> nostr_event_free()
 - create_filter() -> nostr_filter_new()
 - free_filter() -> nostr_filter_free()
+
+### Event Extra Helpers (Thin Wrappers)
+
+- `set_extra()` -> `nostr_event_set_extra()`
+- `remove_extra()` -> `nostr_event_remove_extra()`
+- `get_extra()` -> `nostr_event_get_extra()`
+- `get_extra_string()` -> `nostr_event_get_extra_string()`
+- `get_extra_number()` -> `nostr_event_get_extra_number()`
+- `get_extra_boolean()` -> `nostr_event_get_extra_bool()`
+
+Notes: These are real functions (not macros) exported for GI-friendly bindings.
 
 ## JSON Interface (kept)
 - nostr_set_json_interface()
