@@ -1,6 +1,9 @@
 # Ignore build directories
 build/
 build_tsan/
+build-shared/
+build-static/
+tmp*/
 out/
 /bin/
 /lib/
@@ -62,6 +65,7 @@ out/
 *.h.gch
 /*.ipch
 *.pch
+g-ir-cpp-*.c
 
 # Ignore CLion files (if used)
 .idea/
