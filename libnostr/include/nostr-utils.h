@@ -26,8 +26,8 @@ uint64_t nostr_memhash(const char *data, size_t len);
 /**
  * nostr_named_lock:
  * @name: (transfer none): lock name
- * @critical_section: (scope call): function to run while holding lock
- * @arg: (closure): user data
+ * @critical_section: function to run while holding lock
+ * @arg: user data passed to @critical_section
  */
 void nostr_named_lock(const char *name, void (*critical_section)(void *), void *arg);
 

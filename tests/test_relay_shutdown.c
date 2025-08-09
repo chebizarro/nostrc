@@ -1,4 +1,4 @@
-#include "relay.h"
+#include "nostr-relay.h"
 #include "go.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,20 +16,20 @@ int main(void) {
 
     GoContext *bg = go_context_background();
     Error *err = NULL;
-    Relay *r = new_relay(bg, "wss://example.invalid", &err);
+    Relay *r = nostr_relay_new(bg, "wss://example.invalid", &err);
     if (!r) {
-        fprintf(stderr, "new_relay failed: %s\n", err ? err->message : "unknown");
+        fprintf(stderr, "nostr_relay_new failed: %s\n", err ? err->message : "unknown");
         return 1;
     }
 
-    // Do not connect; just ensure free_relay returns promptly
+    // Do not connect; just ensure nostr_relay_free returns promptly
     long long t0 = now_ms();
-    free_relay(r);
+    nostr_relay_free(r);
     long long t1 = now_ms();
 
     long long dur = t1 - t0;
     if (dur > 2000) { // 2s threshold
-        fprintf(stderr, "free_relay took too long: %lld ms\n", dur);
+        fprintf(stderr, "nostr_relay_free took too long: %lld ms\n", dur);
         return 2;
     }
 

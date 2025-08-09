@@ -20,7 +20,7 @@ extern "C" {
 #include "nostr-json.h"
 #include "nostr-relay.h"
 #include "nostr-relay-store.h"
-#include "subscription.h"
+#include "nostr-subscription.h"
 #include "nostr-tag.h"
 #include "timestamp.h"
 #include "nostr-timestamp.h"

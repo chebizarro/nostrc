@@ -5,7 +5,7 @@
 #include <unistd.h>
 
 #include "go.h"
-#include "relay.h"
+#include "nostr-relay.h"
 
 // Internals we need to validate invariants non-invasively
 #include "../libnostr/src/relay-private.h"
@@ -16,11 +16,11 @@ int main(void) {
     Error *err = NULL;
     GoContext *ctx = go_context_background();
 
-    Relay *relay = new_relay(ctx, "wss://example.invalid", &err);
+    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay && err == NULL);
 
     // Connect starts workers (writer + message_loop). In test mode, message_loop exits promptly.
-    bool ok = relay_connect(relay, &err);
+    bool ok = nostr_relay_connect(relay, &err);
     assert(ok && err == NULL);
 
     // Immediately close. This should:
@@ -29,7 +29,7 @@ int main(void) {
     //  - wait for workers to finish
     //  - snapshot connection and set relay->connection=NULL
     //  - close connection and free its internals and channels safely
-    ok = relay_close(relay, &err);
+    ok = nostr_relay_close(relay, &err);
     assert(ok && err == NULL);
 
     // Verify snapshot cleared the connection pointer
@@ -40,7 +40,7 @@ int main(void) {
     assert(send_rc != 0);
 
     // Free the relay; should be safe after close and not hang
-    free_relay(relay);
+    nostr_relay_free(relay);
     go_context_free(ctx);
 
     printf("test_connection_shutdown_order: OK\n");

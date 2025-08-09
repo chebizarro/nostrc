@@ -1,7 +1,11 @@
 #include "nostr.h"
+#include "nostr-event.h"
+#include "nostr-relay.h"
 #include "nostr_jansson.h"
 #include "envelope.h"
-#include "subscription.h"
+#include "nostr-subscription.h"
+#include "nostr-filter.h"
+#include "filter.h"
 #include "ticker.h"
 #include "timestamp.h"
 #include "go.h"
@@ -46,32 +50,32 @@ int main(int argc, char **argv) {
     GoContext *ctx = go_context_background();
 
     fprintf(stderr, "[relay_smoke] Connecting to %s...\n", url);
-    Relay *relay = new_relay(ctx, url, &err);
+    Relay *relay = nostr_relay_new(ctx, url, &err);
     if (!relay || err) {
-        fprintf(stderr, "[relay_smoke] new_relay failed: %s\n", err ? err->message : "unknown");
+        fprintf(stderr, "[relay_smoke] nostr_relay_new failed: %s\n", err ? err->message : "unknown");
         if (err) free_error(err);
         return 1;
     }
 
-    if (!relay_connect(relay, &err)) {
-        fprintf(stderr, "[relay_smoke] relay_connect failed: %s\n", err ? err->message : "unknown");
-        if (err) free_error(err);
-        free_relay(relay);
+    if (!nostr_relay_connect(relay, &err)) {
+        fprintf(stderr, "[relay_smoke] nostr_relay_connect failed: %s\n", err ? err->message : "unknown");
+        if (err) { free_error(err); err = NULL; }
+        nostr_relay_free(relay);
         go_context_free(ctx);
         return 2;
     }
 
-    if (!relay_is_connected(relay)) {
-        fprintf(stderr, "[relay_smoke] relay_is_connected returned false\n");
-        relay_close(relay, &err);
+    if (!nostr_relay_is_connected(relay)) {
+        fprintf(stderr, "[relay_smoke] nostr_relay_is_connected returned false\n");
+        nostr_relay_close(relay, &err);
         if (err) { free_error(err); err = NULL; }
-        free_relay(relay);
+        nostr_relay_free(relay);
         go_context_free(ctx);
         return 3;
     }
 
     // Build filter and parse CLI flags
-    Filter *filter = create_filter();
+    NostrFilter *filter = nostr_filter_new();
     int have_kinds = 0;
     for (int i = 1; i < argc; ++i) {
         const char *arg = argv[i];
@@ -129,8 +133,8 @@ int main(int argc, char **argv) {
     // Optionally enable relay debug channel for concise raw summaries
     GoChannel *raw_msgs = NULL; // of char*
     if (enable_raw) {
-        relay_enable_debug_raw(relay, 1);
-        raw_msgs = relay_get_debug_raw_channel(relay);
+        nostr_relay_enable_debug_raw(relay, 1);
+        raw_msgs = nostr_relay_get_debug_raw_channel(relay);
     }
 
     // Build Filters: single or multi
@@ -157,7 +161,7 @@ int main(int argc, char **argv) {
 
     // Optional COUNT demo using the first filter
     if (do_count) {
-        int64_t c = relay_count(relay, ctx, filter, &err);
+        int64_t c = nostr_relay_count(relay, ctx, filter, &err);
         if (err) {
             fprintf(stderr, "[relay_smoke] COUNT error: %s\n", err->message);
             free_error(err); err = NULL;
@@ -165,23 +169,26 @@ int main(int argc, char **argv) {
             printf("COUNT result: %lld\n", (long long)c);
         }
     }
-    Subscription *sub = relay_prepare_subscription(relay, ctx, &filters);
+    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, &filters);
     if (!sub) {
         fprintf(stderr, "[relay_smoke] relay_prepare_subscription failed\n");
     } else {
-        if (!subscription_fire(sub, &err) || err) {
-            fprintf(stderr, "[relay_smoke] subscription_fire failed: %s\n", err ? err->message : "unknown");
+        if (!nostr_subscription_fire(sub, &err) || err) {
+            fprintf(stderr, "[relay_smoke] nostr_subscription_fire failed: %s\n", err ? err->message : "unknown");
             if (err) { free_error(err); err = NULL; }
         } else {
             fprintf(stderr, "[relay_smoke] Subscribing and processing events...\n");
             Ticker *timeout = create_ticker((int)timeout_ms);
         for (;;) {
+            GoChannel *ev_ch = nostr_subscription_get_events_channel(sub);
+            GoChannel *eose_ch = nostr_subscription_get_eose_channel(sub);
+            GoChannel *closed_ch = nostr_subscription_get_closed_channel(sub);
             NostrEvent *ev = NULL;
             char *raw = NULL;
             GoSelectCase cases[] = {
-                (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = sub->events, .value = NULL, .recv_buf = (void **)&ev },
-                (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = sub->end_of_stored_events, .value = NULL, .recv_buf = NULL },
-                (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = sub->closed_reason, .value = NULL, .recv_buf = (void **)&raw },
+                (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ev_ch, .value = NULL, .recv_buf = (void **)&ev },
+                (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = eose_ch, .value = NULL, .recv_buf = NULL },
+                (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = closed_ch, .value = NULL, .recv_buf = (void **)&raw },
                 (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = timeout->c, .value = NULL, .recv_buf = NULL },
                 (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = raw_msgs, .value = NULL, .recv_buf = (void **)&raw },
             };
@@ -190,11 +197,11 @@ int main(int argc, char **argv) {
                 if (ev) {
                     // Print a compact summary per NIP-01 fields
                     printf("EVENT kind=%d pubkey=%.8s content=%.64s id=%.8s\n",
-                           ev->kind,
-                           ev->pubkey ? ev->pubkey : "",
-                           ev->content ? ev->content : "",
-                           ev->id ? ev->id : "");
-                    free_event(ev);
+                            ev->kind,
+                            ev->pubkey ? ev->pubkey : "",
+                            ev->content ? ev->content : "",
+                            ev->id ? ev->id : "");
+                    nostr_event_free(ev);
                 }
             } else if (idx == 1) {
                 // EOSE via public channel
@@ -228,18 +235,18 @@ int main(int argc, char **argv) {
     // Proactively unsubscribe to let subscription lifecycle goroutine exit cleanly.
     // Do not free here; lifecycle goroutine may still be running and will finish after context cancel.
     if (sub) {
-        subscription_unsub(sub);
+        nostr_subscription_unsubscribe(sub);
         sub = NULL;
     }
 
     // Disable debug channel first to stop emitters before closing connection
     if (enable_raw) {
-        relay_enable_debug_raw(relay, 0);
+        nostr_relay_enable_debug_raw(relay, 0);
     }
 
     fprintf(stderr, "[relay_smoke] Closing...\n");
-    relay_close(relay, &err);
-    if (err) { fprintf(stderr, "[relay_smoke] relay_close error: %s\n", err->message); free_error(err); }
+    nostr_relay_close(relay, &err);
+    if (err) { fprintf(stderr, "[relay_smoke] nostr_relay_close error: %s\n", err->message); free_error(err); }
 
     // Debug channel was disabled above; nothing to drain here to avoid race with worker shutdown.
 
@@ -249,11 +256,11 @@ int main(int argc, char **argv) {
         free_filter(&filters.filters[0]);
         free_filter(&filters.filters[1]);
         free(filters.filters);
-        free_filter(filter); // original allocated
+        nostr_filter_free(filter); // original allocated
     } else {
-        free_filter(filter);
+        nostr_filter_free(filter);
     }
-    free_relay(relay);
+    nostr_relay_free(relay);
     go_context_free(ctx);
 
     // Cleanup JSON backend

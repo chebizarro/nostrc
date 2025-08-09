@@ -1,5 +1,8 @@
 #include "nostr.h"
 #include "nostr_jansson.h"
+#include "nostr-event.h"
+#include "nostr-relay.h"
+#include "nostr-subscription.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -11,7 +14,7 @@ int main(void) {
     char *privateKey = generate_private_key();
     char *pubKey = get_public_key(privateKey);
 
-    NostrEvent *event = create_event();
+    NostrEvent *event = nostr_event_new();
     assert(event != NULL);
 
     event->pubkey = strdup(pubKey);
@@ -19,13 +22,13 @@ int main(void) {
     event->kind = 1;
     event->content = strdup("Hello, Nostr!");
 
-    char *id = event_get_id(event);
+    const char *id = nostr_event_get_id(event);
     assert(id != NULL);
 
-    int res = event_sign(event, privateKey);
+    int res = nostr_event_sign(event, privateKey);
     assert(res == 0);
 
-    bool verified = event_check_signature(event);
+    bool verified = nostr_event_check_signature(event);
     assert(verified);
 
     Filter *filter = create_filter();
@@ -36,32 +39,32 @@ int main(void) {
 
     GoContext *ctx = go_context_background();
     Error *err = NULL;
-    Relay *relay = new_relay(ctx, "ws://192.168.1.149:8081", &err);
+    Relay *relay = nostr_relay_new(ctx, "ws://192.168.1.149:8081", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
-    assert(relay_connect(relay, &err));
-    assert(relay_is_connected(relay));
+    assert(nostr_relay_connect(relay, &err));
+    assert(nostr_relay_is_connected(relay));
 
-    relay_publish(relay, event);
+    nostr_relay_publish(relay, event);
 
     Filters filters = {
         .filters = filter
     };
 
-    Subscription *sub = create_subscription(relay, &filters);
-    subscription_fire(sub, &err);
+    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, &filters);
+    nostr_subscription_fire(sub, &err);
     // Immediately unsubscribe; don't assume this disconnects the relay
-    subscription_unsub(sub);
+    nostr_subscription_unsubscribe(sub);
 
     // Explicitly close the relay to avoid background waits
-    relay_close(relay, &err);
+    nostr_relay_close(relay, &err);
 
-    free(id);
-    free_event(event);
+    /* id is owned by event; do not free */
+    nostr_event_free(event);
     free_filter(filter);
-    free_subscription(sub);
-    free_relay(relay);
+    nostr_subscription_free(sub);
+    nostr_relay_free(relay);
     go_context_free(ctx);
 
     free(privateKey);

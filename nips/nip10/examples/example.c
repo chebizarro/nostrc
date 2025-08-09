@@ -14,23 +14,23 @@ int main() {
     // Example NIP-10 usage
     Tags tags = {
         .count = 3,
-        .items = (Tag*[]) {
-            &(Tag){.count = 4, .items = (char*[]){"e", "tag1", "", "root"}},
-            &(Tag){.count = 2, .items = (char*[]){"e", "tag2"}},
-            &(Tag){.count = 4, .items = (char*[]){"e", "tag3", "", "reply"}}
+        .data = (Tag*[]) {
+            &(Tag){.size = 4, .data = (char*[]){"e", "tag1", "", "root"}},
+            &(Tag){.size = 2, .data = (char*[]){"e", "tag2"}},
+            &(Tag){.size = 4, .data = (char*[]){"e", "tag3", "", "reply"}}
         }
     };
 
     Tag* root_tag = get_thread_root(&tags);
     if (root_tag) {
-        printf("Thread Root Tag: %s\n", root_tag->items[1]);
+        printf("Thread Root Tag: %s\n", root_tag->data[1]);
     } else {
         printf("Thread Root Tag not found\n");
     }
 
     Tag* reply_tag = get_immediate_reply(&tags);
     if (reply_tag) {
-        printf("Immediate Reply Tag: %s\n", reply_tag->items[1]);
+        printf("Immediate Reply Tag: %s\n", reply_tag->data[1]);
     } else {
         printf("Immediate Reply Tag not found\n");
     }

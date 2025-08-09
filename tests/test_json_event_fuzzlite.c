@@ -6,6 +6,7 @@
 #include "json.h"
 #include "event.h"
 #include "tag.h"
+#include "nostr-event.h"
 
 static unsigned rnd(unsigned n) { return (unsigned)rand() % (n ? n : 1); }
 
@@ -111,9 +112,9 @@ int main(void) {
 
     for (int i = 0; i < 800; i++) {
         char *s = NULL; build_random_event_json_string(&s);
-        NostrEvent *e = create_event(); assert(e);
+        NostrEvent *e = nostr_event_new(); assert(e);
         (void)nostr_event_deserialize(e, s);
-        free_event(e);
+        nostr_event_free(e);
         free(s);
     }
 

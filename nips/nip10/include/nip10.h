@@ -1,10 +1,10 @@
 #ifndef NOSTR_NIP10_H
 #define NOSTR_NIP10_H
 
-#include "event.h"
+#include "nostr-tag.h"
 
 // Function prototypes for NIP-10
-Tag* get_thread_root(Tags* tags);
-Tag* get_immediate_reply(Tags* tags);
+NostrTag* get_thread_root(NostrTags* tags);
+NostrTag* get_immediate_reply(NostrTags* tags);
 
 #endif // NOSTR_NIP10_H

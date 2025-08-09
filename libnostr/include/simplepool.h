@@ -33,13 +33,13 @@ typedef struct _DirectedFilters {
     char *relay_url;
 } DirectedFilters;
 
-SimplePool *create_simple_pool(void);
-void free_simple_pool(SimplePool *pool);
-void simple_pool_ensure_relay(SimplePool *pool, const char *url);
+SimplePool *nostr_simple_pool_new(void);
+void nostr_simple_pool_free(SimplePool *pool);
+void nostr_simple_pool_ensure_relay(SimplePool *pool, const char *url);
 void *simple_pool_thread_func(void *arg);
-void simple_pool_start(SimplePool *pool);
-void simple_pool_stop(SimplePool *pool);
-void simple_pool_subscribe(SimplePool *pool, const char **urls, size_t url_count, Filters filters, bool unique);
-void simple_pool_query_single(SimplePool *pool, const char **urls, size_t url_count, Filter filter);
+void nostr_simple_pool_start(SimplePool *pool);
+void nostr_simple_pool_stop(SimplePool *pool);
+void nostr_simple_pool_subscribe(SimplePool *pool, const char **urls, size_t url_count, Filters filters, bool unique);
+void nostr_simple_pool_query_single(SimplePool *pool, const char **urls, size_t url_count, Filter filter);
 
 #endif // SIMPLEPOOL_H

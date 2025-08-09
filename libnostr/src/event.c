@@ -1,4 +1,5 @@
 #include "event.h"
+#include "nostr-event.h"
 #include "nostr-tag.h"
 #include "utils.h"
 #include <openssl/rand.h>
@@ -9,8 +10,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "string_array.h"
 
-NostrEvent *create_event(void) {
+NostrEvent *nostr_event_new(void) {
     NostrEvent *event = (NostrEvent *)malloc(sizeof(NostrEvent));
     if (!event)
         return NULL;
@@ -19,25 +21,65 @@ NostrEvent *create_event(void) {
     event->pubkey = NULL;
     event->created_at = 0;
     event->kind = 0;
-    event->tags = create_tags(0);
+    event->tags = nostr_tags_new(0);
     event->content = NULL;
     event->sig = NULL;
 
     return event;
 }
 
-void free_event(NostrEvent *event) {
+void nostr_event_free(NostrEvent *event) {
     if (event) {
         free(event->id);
         free(event->pubkey);
-        free_tags(event->tags);
+        nostr_tags_free(event->tags);
         free(event->content);
         free(event->sig);
         free(event);
     }
 }
 
-char *event_serialize(NostrEvent *event) {
+/* Deep-copy helpers for Tags/Tag (used by nostr_event_copy) */
+static Tag *tag_clone(const Tag *src) {
+    if (!src) return NULL;
+    size_t n = string_array_size((StringArray *)src);
+    StringArray *dst = new_string_array((int)n);
+    for (size_t i = 0; i < n; i++) {
+        const char *s = string_array_get((const StringArray *)src, i);
+        if (s) string_array_add(dst, s);
+    }
+    return (Tag *)dst;
+}
+
+static Tags *tags_clone(const Tags *src) {
+    if (!src) return NULL;
+    Tags *dst = (Tags *)malloc(sizeof(Tags));
+    if (!dst) return NULL;
+    dst->count = src->count;
+    dst->data = (Tag **)calloc(dst->count, sizeof(Tag *));
+    if (!dst->data) { free(dst); return NULL; }
+    for (size_t i = 0; i < dst->count; i++) {
+        dst->data[i] = tag_clone(src->data[i]);
+    }
+    return dst;
+}
+
+/* Deep copy of NostrEvent for GI boxed type support */
+NostrEvent *nostr_event_copy(const NostrEvent *src) {
+    if (!src) return NULL;
+    NostrEvent *e = (NostrEvent *)malloc(sizeof(NostrEvent));
+    if (!e) return NULL;
+    e->id = src->id ? strdup(src->id) : NULL;
+    e->pubkey = src->pubkey ? strdup(src->pubkey) : NULL;
+    e->created_at = src->created_at;
+    e->kind = src->kind;
+    e->tags = tags_clone(src->tags);
+    e->content = src->content ? strdup(src->content) : NULL;
+    e->sig = src->sig ? strdup(src->sig) : NULL;
+    return e;
+}
+
+static char *nostr_event_serialize(NostrEvent *event) {
     if (!event || !event->pubkey || !event->content)
         return NULL;
 
@@ -64,7 +106,7 @@ char *event_serialize(NostrEvent *event) {
     }
 
     // Serialize tags
-    char *tags_json = tags_marshal_to_json(event->tags);
+    char *tags_json = nostr_tags_to_json(event->tags);
     if (!tags_json) {
         free(result);
         return NULL;
@@ -115,12 +157,12 @@ char *event_serialize(NostrEvent *event) {
     return result; // Return the final serialized JSON string
 }
 
-char *event_get_id(NostrEvent *event) {
+char *nostr_event_get_id(NostrEvent *event) {
     if (!event)
         return NULL;
 
     // Serialize the event
-    char *serialized = event_serialize(event);
+    char *serialized = nostr_event_serialize(event);
     if (!serialized)
         return NULL;
 
@@ -143,7 +185,7 @@ char *event_get_id(NostrEvent *event) {
     return id;
 }
 
-bool event_check_signature(NostrEvent *event) {
+bool nostr_event_check_signature(NostrEvent *event) {
     if (!event) {
         fprintf(stderr, "Event is null\n");
         return false;
@@ -188,7 +230,7 @@ bool event_check_signature(NostrEvent *event) {
         }
     }
     if (!have_hash) {
-        char *serialized = event_serialize(event);
+        char *serialized = nostr_event_serialize(event);
         if (!serialized) {
             fprintf(stderr, "Failed to serialize event\n");
             secp256k1_context_destroy(ctx);
@@ -215,12 +257,12 @@ bool event_check_signature(NostrEvent *event) {
 }
 
 // Sign the event
-int event_sign(NostrEvent *event, const char *private_key) {
+int nostr_event_sign(NostrEvent *event, const char *private_key) {
     if (!event || !private_key)
         return -1;
 
     unsigned char hash[32]; // Schnorr requires a 32-byte hash
-    char *serialized = event_serialize(event);
+    char *serialized = nostr_event_serialize(event);
     if (!serialized)
         return -1;
 
@@ -280,7 +322,7 @@ int event_sign(NostrEvent *event, const char *private_key) {
     event->sig[64 * 2] = '\0';
 
     // Generate and set the event ID
-    event->id = event_get_id(event);
+    event->id = nostr_event_get_id(event);
 
     return_val = 0;
 
@@ -291,15 +333,15 @@ cleanup:
     return return_val;
 }
 
-bool event_is_regular(NostrEvent *event) {
+bool nostr_event_is_regular(NostrEvent *event) {
     return event->kind < 1000 && event->kind != 0 && event->kind != 3;
 }
 
-bool event_is_replaceable(NostrEvent *event) {
+bool nostr_event_is_replaceable(NostrEvent *event) {
     return event->kind == 0 || event->kind == 3 || (10000 <= event->kind && event->kind < 20000);
 }
 
-bool event_is_ephemeral(NostrEvent *event) {
+bool nostr_event_is_ephemeral(NostrEvent *event) {
     return 20000 <= event->kind && event->kind < 30000;
 }
 
@@ -337,16 +379,16 @@ void nostr_event_set_kind(NostrEvent *event, int kind) {
     event->kind = kind;
 }
 
-NostrTags *nostr_event_get_tags(const NostrEvent *event) {
-    return event ? event->tags : NULL;
+void *nostr_event_get_tags(const NostrEvent *event) {
+    return event ? (void *)event->tags : NULL;
 }
 
-void nostr_event_set_tags(NostrEvent *event, NostrTags *tags) {
+void nostr_event_set_tags(NostrEvent *event, void *tags) {
     if (!event) return;
-    if (event->tags && event->tags != tags) {
-        free_tags(event->tags);
+    if (event->tags && (void *)event->tags != tags) {
+        nostr_tags_free(event->tags);
     }
-    event->tags = tags; /* takes ownership */
+    event->tags = (Tags *)tags; /* takes ownership */
 }
 
 const char *nostr_event_get_content(const NostrEvent *event) {

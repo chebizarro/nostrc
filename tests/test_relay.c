@@ -1,4 +1,4 @@
-#include "relay.h"
+#include "nostr-relay.h"
 #include <assert.h>
 
 void test_relay_initialization_and_cleanup() {
@@ -7,12 +7,12 @@ void test_relay_initialization_and_cleanup() {
     setenv("NOSTR_TEST_MODE", "1", 1);
     
     // Create relay
-    Relay *relay = new_relay(ctx, "wss://example.invalid", &err);
+    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
     // Free relay
-    free_relay(relay);
+    nostr_relay_free(relay);
     go_context_free(ctx);
 }
 
@@ -22,26 +22,26 @@ void test_relay_connection_and_close() {
     setenv("NOSTR_TEST_MODE", "1", 1);
 
     // Create relay
-    Relay *relay = new_relay(ctx, "wss://example.invalid", &err);
+    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
     // Connect the relay
-    bool connected = relay_connect(relay, &err);
+    bool connected = nostr_relay_connect(relay, &err);
     assert(connected == true);
     assert(err == NULL);
 
     // Check if the relay is connected
-    bool is_connected = relay_is_connected(relay);
+    bool is_connected = nostr_relay_is_connected(relay);
     assert(is_connected == true);
 
     // Close the relay
-    bool closed = relay_close(relay, &err);
+    bool closed = nostr_relay_close(relay, &err);
     assert(closed == true);
     assert(err == NULL);
 
     // Free relay
-    free_relay(relay);
+    nostr_relay_free(relay);
     go_context_free(ctx);
 }
 
@@ -51,12 +51,12 @@ void test_relay_subscription() {
     setenv("NOSTR_TEST_MODE", "1", 1);
 
     // Create relay
-    Relay *relay = new_relay(ctx, "wss://example.invalid", &err);
+    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
     // Connect the relay
-    bool connected = relay_connect(relay, &err);
+    bool connected = nostr_relay_connect(relay, &err);
     assert(connected == true);
     assert(err == NULL);
 
@@ -66,13 +66,13 @@ void test_relay_subscription() {
     Filters filters = { .filters = filter};
 
     // Subscribe
-    bool subscribed = relay_subscribe(relay, ctx, &filters, &err);
+    bool subscribed = nostr_relay_subscribe(relay, ctx, &filters, &err);
     assert(subscribed == true);
     assert(err == NULL);
 
     // Close the relay
-    relay_close(relay, &err);
-    free_relay(relay);
+    nostr_relay_close(relay, &err);
+    nostr_relay_free(relay);
     free_filter(filter);
     go_context_free(ctx);
 }
@@ -83,22 +83,22 @@ void test_relay_write() {
     setenv("NOSTR_TEST_MODE", "1", 1);
 
     // Create relay
-    Relay *relay = new_relay(ctx, "wss://example.invalid", &err);
+    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
     // Connect the relay
-    bool connected = relay_connect(relay, &err);
+    bool connected = nostr_relay_connect(relay, &err);
     assert(connected == true);
     assert(err == NULL);
 
     // Write a message
-    GoChannel *write_channel = relay_write(relay, "test message");
+    GoChannel *write_channel = nostr_relay_write(relay, "test message");
     assert(write_channel != NULL);
 
     // Close the relay
-    relay_close(relay, &err);
-    free_relay(relay);
+    nostr_relay_close(relay, &err);
+    nostr_relay_free(relay);
     go_context_free(ctx);
 }
 

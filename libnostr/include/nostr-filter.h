@@ -1,8 +1,7 @@
 #ifndef __NOSTR_FILTER_H__
 #define __NOSTR_FILTER_H__
 
-/* Transitional header: exposes standardized names for filter APIs.
- * For now, it forwards to the existing implementation in filter.h. */
+/* Public header: standardized Nostr filter APIs. */
 
 #include <stddef.h>
 #include <stdbool.h>
@@ -15,21 +14,30 @@ extern "C" {
 #endif
 
 /* Provide canonical type names */
-typedef struct _NostrEvent NostrEvent; /* already declared elsewhere */
+typedef struct _NostrEvent NostrEvent; /* forward */
 typedef Filter  NostrFilter;
 typedef Filters NostrFilters;
 
-/* New API names mapped to legacy implementations */
-#define nostr_filter_new                         create_filter
-#define nostr_filter_free                        free_filter
-#define nostr_filter_matches                     filter_matches
-#define nostr_filter_match_ignoring_timestamp    filter_match_ignoring_timestamp
+/* Constructors / matchers */
+NostrFilter  *nostr_filter_new(void);
+void          nostr_filter_free(NostrFilter *filter);
+bool          nostr_filter_matches(NostrFilter *filter, NostrEvent *event);
+bool          nostr_filter_match_ignoring_timestamp(NostrFilter *filter, NostrEvent *event);
 
-#define nostr_filters_new                        create_filters
-#define nostr_filters_add                        filters_add
-#define nostr_filters_free                       free_filters
-#define nostr_filters_match                      filters_match
-#define nostr_filters_match_ignoring_timestamp   filters_match_ignoring_timestamp
+NostrFilters *nostr_filters_new(void);
+bool          nostr_filters_add(NostrFilters *filters, NostrFilter *filter);
+void          nostr_filters_free(NostrFilters *filters);
+bool          nostr_filters_match(NostrFilters *filters, NostrEvent *event);
+bool          nostr_filters_match_ignoring_timestamp(NostrFilters *filters, NostrEvent *event);
+
+/* Deep-copy for boxed */
+NostrFilter  *nostr_filter_copy(const NostrFilter *filter);
+
+#ifdef __GI_SCANNER__
+#include <glib-object.h>
+GType nostr_filter_get_type(void);
+#define NOSTR_TYPE_FILTER (nostr_filter_get_type())
+#endif
 
 /* Field getters/setters (for future GObject properties) */
 /**

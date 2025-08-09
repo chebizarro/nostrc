@@ -15,14 +15,6 @@ typedef struct _NostrEvent {
     void *extra; // Extra fields
 } NostrEvent;
 
-// NostrEvent management
-NostrEvent *create_event(void);
-void free_event(NostrEvent *event);
-char *event_serialize(NostrEvent *event);
-char *event_get_id(NostrEvent *event);
-bool event_check_signature(NostrEvent *event);
-int event_sign(NostrEvent *event, const char *private_key);
-
-bool event_is_regular(NostrEvent *event);
+/* Legacy function prototypes removed. Use `nostr-event.h` for the public API. */
 
 #endif // NOSTR_EVENT_H

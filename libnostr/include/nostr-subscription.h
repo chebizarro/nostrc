@@ -19,14 +19,15 @@ typedef Subscription NostrSubscription;
 typedef Relay       NostrRelay;
 
 
-/* New API names mapped to legacy implementations */
-#define nostr_subscription_new          create_subscription
-#define nostr_subscription_free         free_subscription
-#define nostr_subscription_get_id       subscription_get_id
-#define nostr_subscription_unsubscribe  subscription_unsub
-#define nostr_subscription_close        subscription_close
-#define nostr_subscription_subscribe    subscription_sub
-#define nostr_subscription_fire         subscription_fire
+/* GI-facing API (stable symbol names) */
+NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filters);
+void               nostr_subscription_free(NostrSubscription *sub);
+/* Returns newly allocated copy of ID (caller frees). */
+char              *nostr_subscription_get_id(NostrSubscription *sub);
+void               nostr_subscription_unsubscribe(NostrSubscription *sub);
+void               nostr_subscription_close(NostrSubscription *sub, Error **err);
+bool               nostr_subscription_subscribe(NostrSubscription *sub, NostrFilters *filters, Error **err);
+bool               nostr_subscription_fire(NostrSubscription *sub, Error **err);
 
 /* Accessors for public fields/state (for future GObject properties) */
 

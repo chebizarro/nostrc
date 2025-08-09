@@ -1,5 +1,6 @@
 #include "envelope.h"
 #include "nostr-envelope.h"
+#include "nostr-event.h"
 #include "json.h"
 
 // Helper function to create a new Envelope
@@ -108,11 +109,11 @@ Envelope *parse_message(const char *message) {
         char *event_json = parse_json_object(&p);
         if (!event_json) { free(env->subscription_id); free(env); free(label); return NULL; }
         // hand exact object JSON to nostr_event_deserialize
-        NostrEvent *event = create_event();
+        NostrEvent *event = nostr_event_new();
         int ok = nostr_event_deserialize(event, event_json);
         if (!ok) {
             // If it failed, free and return NULL
-            free_event(event);
+            nostr_event_free(event);
             free(event_json);
             free(env->subscription_id);
             free(env);
@@ -204,11 +205,11 @@ Envelope *parse_message(const char *message) {
             if (*p == '{') {
                 char *ej = parse_json_object(&p);
                 if (ej) {
-                    NostrEvent *ev = create_event();
+                    NostrEvent *ev = nostr_event_new();
                     if (nostr_event_deserialize(ev, ej)) {
                         env->event = ev;
                     } else {
-                        free_event(ev);
+                        nostr_event_free(ev);
                     }
                     free(ej);
                 }
@@ -236,7 +237,7 @@ void free_envelope(Envelope *envelope) {
     switch (envelope->type) {
     case ENVELOPE_EVENT:
         free(((EventEnvelope *)envelope)->subscription_id);
-        free_event(((EventEnvelope *)envelope)->event);
+        nostr_event_free(((EventEnvelope *)envelope)->event);
         break;
     case ENVELOPE_REQ:
         free(((ReqEnvelope *)envelope)->subscription_id);
@@ -265,7 +266,7 @@ void free_envelope(Envelope *envelope) {
         break;
     case ENVELOPE_AUTH:
         free(((AuthEnvelope *)envelope)->challenge);
-        free_event(((AuthEnvelope *)envelope)->event);
+        nostr_event_free(((AuthEnvelope *)envelope)->event);
         break;
     default:
         break;
@@ -279,7 +280,7 @@ int event_envelope_unmarshal_json(EventEnvelope *envelope, const char *json_data
         return -1;
 
     // Parse the JSON to check the number of elements in the array
-    NostrEvent *event = create_event();
+    NostrEvent *event = nostr_event_new();
     int err = nostr_event_deserialize(event, json_data);
     if (!err)
         return -1;

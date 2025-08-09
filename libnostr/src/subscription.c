@@ -1,9 +1,10 @@
 #include "envelope.h"
+#include "nostr-event.h"
 #include "json.h"
 #include "relay-private.h"
 #include "relay.h"
-#include "nostr-subscription.h"
 #include "subscription-private.h"
+#include "nostr-relay.h"
 #include <openssl/ssl.h>
 #include <unistd.h>
 #include <time.h>
@@ -30,6 +31,7 @@ Subscription *create_subscription(Relay *relay, Filters *filters) {
     sub->priv->live = false;
     sub->priv->eosed = false;
     sub->priv->closed = false;
+    sub->priv->unsubbed = false;
     nsync_mu_init(&sub->priv->sub_mutex);
     // Initialize wait group for lifecycle thread
     go_wait_group_init(&sub->priv->wg);
@@ -130,14 +132,14 @@ void subscription_dispatch_event(Subscription *sub, NostrEvent *event) {
             if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
                 fprintf(stderr, "[sub %s] dispatch_event: dropped (queue full/closed)\n", sub->priv->id);
             }
-            free_event(event);
+            nostr_event_free(event);
         }
     } else {
         // Not live anymore; drop event to avoid blocking
         if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
             fprintf(stderr, "[sub %s] dispatch_event: dropped (not live)\n", sub->priv->id);
         }
-        free_event(event);
+        nostr_event_free(event);
     }
 
     if (added) {
@@ -179,6 +181,11 @@ void subscription_unsub(Subscription *sub) {
     if (!sub)
         return;
 
+    // Idempotent: ensure we only execute unsubscribe logic once
+    if (atomic_exchange(&sub->priv->unsubbed, true)) {
+        return;
+    }
+
     // Cancel the subscription's context
     sub->priv->cancel(sub->context);
 
@@ -190,8 +197,10 @@ void subscription_unsub(Subscription *sub) {
         subscription_close(sub, NULL);
     }
 
-    // Remove the subscription from the relay's map (keys are ints/counters)
-    go_hash_map_remove_int(sub->relay->subscriptions, sub->priv->counter);
+    // Remove the subscription from the relay's map (keys are ints/counters) if relay present
+    if (sub->relay && sub->relay->subscriptions) {
+        go_hash_map_remove_int(sub->relay->subscriptions, sub->priv->counter);
+    }
     if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
         fprintf(stderr, "[sub %s] unsub: removed from relay map\n", sub->priv->id);
     }
@@ -203,7 +212,7 @@ void subscription_close(Subscription *sub, Error **err) {
         return;
     }
 
-    if (relay_is_connected(sub->relay)) {
+    if (nostr_relay_is_connected(sub->relay)) {
         // Create a ClosedEnvelope with the subscription ID (allocated with correct size)
         ClosedEnvelope *close_msg = (ClosedEnvelope *)malloc(sizeof(ClosedEnvelope));
         if (!close_msg) {
@@ -228,7 +237,7 @@ void subscription_close(Subscription *sub, Error **err) {
         free(close_msg);
 
         // Send the message through the relay
-        GoChannel *write_channel = relay_write(sub->relay, close_msg_str);
+        GoChannel *write_channel = nostr_relay_write(sub->relay, close_msg_str);
         free(close_msg_str);
 
         // Wait for the result of the write, but don't block indefinitely
@@ -319,7 +328,7 @@ bool subscription_fire(Subscription *subscription, Error **err) {
     snprintf(sub_msg, needed + 3, "[\"REQ\",\"%s\",%s]", subscription->priv->id, filters_json);
 
     // Send the subscription request via the relay
-    GoChannel *write_channel = relay_write(subscription->relay, sub_msg);
+    GoChannel *write_channel = nostr_relay_write(subscription->relay, sub_msg);
     free(filters_json);
     free(sub_msg);
 
@@ -343,56 +352,26 @@ bool subscription_fire(Subscription *subscription, Error **err) {
     return true;
 }
 
-/* Accessors (public API via nostr-subscription.h) */
+/* Accessors are implemented in nostr_subscription_wrap.c */
 
-const char *nostr_subscription_get_id_const(const NostrSubscription *sub) {
-    if (!sub || !sub->priv) return NULL;
-    return sub->priv->id;
-}
+/* moved to wrapper: const char *nostr_subscription_get_id_const(const NostrSubscription *sub); */
 
-NostrRelay *nostr_subscription_get_relay(const NostrSubscription *sub) {
-    return sub ? sub->relay : NULL;
-}
+/* moved to wrapper: NostrRelay *nostr_subscription_get_relay(const NostrSubscription *sub); */
 
-NostrFilters *nostr_subscription_get_filters(const NostrSubscription *sub) {
-    return sub ? sub->filters : NULL;
-}
+/* moved to wrapper: NostrFilters *nostr_subscription_get_filters(const NostrSubscription *sub); */
 
-void nostr_subscription_set_filters(NostrSubscription *sub, NostrFilters *filters) {
-    if (!sub) return;
-    if (sub->filters && sub->filters != filters) {
-        free_filters(sub->filters);
-    }
-    sub->filters = filters; /* takes ownership */
-}
+/* moved to wrapper: void nostr_subscription_set_filters(NostrSubscription *sub, NostrFilters *filters); */
 
-GoChannel *nostr_subscription_get_events_channel(const NostrSubscription *sub) {
-    return sub ? sub->events : NULL;
-}
+/* moved to wrapper: GoChannel *nostr_subscription_get_events_channel(const NostrSubscription *sub); */
 
-GoChannel *nostr_subscription_get_eose_channel(const NostrSubscription *sub) {
-    return sub ? sub->end_of_stored_events : NULL;
-}
+/* moved to wrapper: GoChannel *nostr_subscription_get_eose_channel(const NostrSubscription *sub); */
 
-GoChannel *nostr_subscription_get_closed_channel(const NostrSubscription *sub) {
-    return sub ? sub->closed_reason : NULL;
-}
+/* moved to wrapper: GoChannel *nostr_subscription_get_closed_channel(const NostrSubscription *sub); */
 
-GoContext *nostr_subscription_get_context(const NostrSubscription *sub) {
-    return sub ? sub->context : NULL;
-}
+/* moved to wrapper: GoContext *nostr_subscription_get_context(const NostrSubscription *sub); */
 
-bool nostr_subscription_is_live(const NostrSubscription *sub) {
-    if (!sub || !sub->priv) return false;
-    return atomic_load(&sub->priv->live);
-}
+/* moved to wrapper: bool nostr_subscription_is_live(const NostrSubscription *sub); */
 
-bool nostr_subscription_is_eosed(const NostrSubscription *sub) {
-    if (!sub || !sub->priv) return false;
-    return atomic_load(&sub->priv->eosed);
-}
+/* moved to wrapper: bool nostr_subscription_is_eosed(const NostrSubscription *sub); */
 
-bool nostr_subscription_is_closed(const NostrSubscription *sub) {
-    if (!sub || !sub->priv) return false;
-    return atomic_load(&sub->priv->closed);
-}
+/* moved to wrapper: bool nostr_subscription_is_closed(const NostrSubscription *sub); */

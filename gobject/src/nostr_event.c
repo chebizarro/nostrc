@@ -7,7 +7,7 @@ G_DEFINE_TYPE(NostrEvent, nostr_event, G_TYPE_OBJECT)
 static void nostr_event_finalize(GObject *object) {
     NostrEvent *self = NOSTR_EVENT(object);
     if (self->event) {
-        free_event(self->event);
+        nostr_event_free(self->event);
     }
     G_OBJECT_CLASS(nostr_event_parent_class)->finalize(object);
 }
@@ -48,7 +48,7 @@ static void nostr_event_class_init(NostrEventClass *klass) {
 }
 
 static void nostr_event_init(NostrEvent *self) {
-    self->event = create_event();
+    self->event = nostr_event_new();
 }
 
 NostrEvent *nostr_event_new() {

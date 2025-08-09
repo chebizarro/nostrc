@@ -1,4 +1,5 @@
 #include "relay_store.h"
+#include "nostr-event.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,7 +12,7 @@ int dummy_publish(void *self, void *ctx, NostrEvent *event) {
 int dummy_query_sync(void *self, void *ctx, Filter *filter, NostrEvent ***events, size_t *events_count) {
     *events_count = 1;
     *events = (NostrEvent **)malloc(sizeof(NostrEvent *));
-    (*events)[0] = create_event();
+    (*events)[0] = nostr_event_new();
     (*events)[0]->content = strdup("dummy event");
     return 0;
 }
@@ -25,7 +26,7 @@ int main() {
     multi->stores[multi->stores_count++] = &store1;
     multi->stores[multi->stores_count++] = &store2;
 
-    NostrEvent *event = create_event();
+    NostrEvent *event = nostr_event_new();
     event->content = strdup("test event");
 
     int pub_result = multi_store_publish(multi, NULL, event);
@@ -40,11 +41,11 @@ int main() {
     assert(strcmp(events[1]->content, "dummy event") == 0);
 
     for (size_t i = 0; i < events_count; i++) {
-        free_event(events[i]);
+        nostr_event_free(events[i]);
     }
     free(events);
 
-    free_event(event);
+    nostr_event_free(event);
     free_multi_store(multi);
 
     printf("All tests passed!\n");

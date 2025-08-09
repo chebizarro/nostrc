@@ -58,44 +58,13 @@ jobs:
           cmake --build build -j
           sudo cmake --install build --prefix /usr
 
-      - name: Generate GIR
-        env:
-          GI_SCANNER_DISABLE_CACHE: "1"
+      - name: Generate GIR via CMake target
         run: |
-          mkdir -p gir-build
-          PKG_CFLAGS=$(pkg-config --cflags nostr glib-2.0 gobject-2.0) || true
-          PKG_LIBS=$(pkg-config --libs nostr glib-2.0 gobject-2.0) || true
-          echo "CFLAGS=$PKG_CFLAGS"
-          echo "LIBS=$PKG_LIBS"
-          g-ir-scanner \
-            --namespace=Nostr \
-            --nsversion=1.0 \
-            --symbol-prefix=nostr_ \
-            --identifier-prefix=Nostr \
-            --library nostr \
-            --library-path /usr/lib \
-            --warn-all \
-            --pkg glib-2.0 --pkg gobject-2.0 \
-            -I /usr/include/nostr \
-            /usr/include/nostr/nostr-json.h \
-            /usr/include/nostr/nostr-event.h \
-            /usr/include/nostr/nostr-event-extra.h \
-            /usr/include/nostr/nostr-envelope.h \
-            /usr/include/nostr/nostr-filter.h \
-            /usr/include/nostr/nostr-pointer.h \
-            /usr/include/nostr/nostr-relay.h \
-            /usr/include/nostr/nostr-relay-store.h \
-            /usr/include/nostr/nostr-simple-pool.h \
-            /usr/include/nostr/nostr-subscription.h \
-            --output gir-build/Nostr-1.0.gir
-
-      - name: Compile Typelib
-        run: |
-          g-ir-compiler gir-build/Nostr-1.0.gir -o gir-build/Nostr-1.0.typelib
+          cmake --build build --target nostr-gir -j
 
       - name: Upload GIR artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ runner.os }}-gir
-          path: gir-build/*
+          path: build/gir/*
           if-no-files-found: error

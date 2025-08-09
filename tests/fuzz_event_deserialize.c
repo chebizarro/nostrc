@@ -4,6 +4,7 @@
 #include <string.h>
 #include "json.h"
 #include "event.h"
+#include "nostr-event.h"
 
 // LibFuzzer entry point
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
@@ -18,10 +19,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     nostr_set_json_interface(jansson_impl);
     nostr_json_init();
 
-    NostrEvent *e = create_event();
+    NostrEvent *e = nostr_event_new();
     if (e) {
         (void)nostr_event_deserialize(e, buf);
-        free_event(e);
+        nostr_event_free(e);
     }
 
     free(buf);

@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include "json.h"
 #include "filter.h"
+#include "nostr-tag.h"
 #include "nostr_jansson.h"
 
 static void fill_filter(Filter *f) {
@@ -28,9 +29,9 @@ static void fill_filter(Filter *f) {
     Tag *t2 = new_string_array(0);
     string_array_add(t2, "p");
     string_array_add(t2, "y");
-    Tags *tmp = tags_append_unique(f->tags, t1);
+    Tags *tmp = nostr_tags_append_unique(f->tags, t1);
     if (tmp) f->tags = tmp;
-    tmp = tags_append_unique(f->tags, t2);
+    tmp = nostr_tags_append_unique(f->tags, t2);
     if (tmp) f->tags = tmp;
 }
 

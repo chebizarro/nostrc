@@ -21,9 +21,11 @@ enum {
     NOSTR_RELAY_SIGNALS_COUNT
 };
 
-NostrRelay *nostr_relay_new(const gchar *url);
-gboolean nostr_relay_connect(NostrRelay *self, GError **error);
-gboolean nostr_relay_publish(NostrRelay *self, NostrEvent *event, GError **error);
-GPtrArray *nostr_relay_query_sync(NostrRelay *self, NostrFilter *filter, GError **error);
+/* GObject convenience API (prefixed with gnostr_ to avoid clashes with core
+ * libnostr C API which uses nostr_relay_*). */
+NostrRelay *gnostr_relay_new(const gchar *url);
+gboolean gnostr_relay_connect(NostrRelay *self, GError **error);
+gboolean gnostr_relay_publish(NostrRelay *self, NostrEvent *event, GError **error);
+GPtrArray *gnostr_relay_query_sync(NostrRelay *self, NostrFilter *filter, GError **error);
 
 #endif // NOSTR_RELAY_H

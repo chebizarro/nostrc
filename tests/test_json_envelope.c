@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "json.h"
+#include "nostr-event.h"
 #include "envelope.h"
 #include "filter.h"
 #include "nostr_jansson.h"
@@ -27,7 +28,7 @@ static void test_event_with_and_without_subid(void) {
     assert(e1.event && e1.event->kind == 1);
     // Free owned members only; e1 itself is on the stack
     free(e1.subscription_id);
-    free_event(e1.event);
+    nostr_event_free(e1.event);
 
     // With sub id
     EventEnvelope e2 = { .base = { .type = ENVELOPE_EVENT }, .subscription_id = NULL, .event = NULL };
@@ -36,7 +37,7 @@ static void test_event_with_and_without_subid(void) {
     assert(e2.subscription_id && strcmp(e2.subscription_id, "subx") == 0);
     assert(e2.event && e2.event->kind == 2);
     free(e2.subscription_id);
-    free_event(e2.event);
+    nostr_event_free(e2.event);
 }
 
 static void test_count_without_count_defaults_zero(void) {

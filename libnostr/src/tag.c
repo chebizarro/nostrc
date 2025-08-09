@@ -1,4 +1,4 @@
-#include "tag.h"
+#include "nostr-tag.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -6,7 +6,7 @@
 
 extern char *escape_string(const char *str);
 
-Tag *create_tag(const char *key, ...) {
+NostrTag *nostr_tag_new(const char *key, ...) {
     va_list args;
     const char *str;
     Tag *tag = NULL;
@@ -39,11 +39,11 @@ Tag *create_tag(const char *key, ...) {
     return tag;
 }
 
-void free_tag(Tag *tag) {
+void nostr_tag_free(NostrTag *tag) {
     string_array_free(tag);
 }
 
-bool tag_starts_with(Tag *tag, Tag *prefix) {
+bool nostr_tag_starts_with(NostrTag *tag, NostrTag *prefix) {
     if (!tag || !prefix)
         return false;
 
@@ -61,21 +61,21 @@ bool tag_starts_with(Tag *tag, Tag *prefix) {
     return strncmp(tag->data[prefix_len - 1], prefix->data[prefix_len - 1], strlen(prefix->data[prefix_len - 1])) == 0;
 }
 
-char *tag_key(Tag *tag) {
+char *nostr_tag_get_key(NostrTag *tag) {
     if (tag && tag->size > 0) {
         return tag->data[0];
     }
     return NULL;
 }
 
-char *tag_value(Tag *tag) {
+char *nostr_tag_get_value(NostrTag *tag) {
     if (tag && tag->size > 1) {
         return tag->data[1];
     }
     return NULL;
 }
 
-char *tag_relay(Tag *tag) {
+char *nostr_tag_get_relay(NostrTag *tag) {
     if (tag && tag->size > 2 && (strcmp(tag->data[0], "e") == 0 || strcmp(tag->data[0], "p") == 0)) {
         // Implement NormalizeURL(tag->elements[2])
         return tag->data[2];
@@ -83,7 +83,7 @@ char *tag_relay(Tag *tag) {
     return NULL;
 }
 
-Tags *create_tags(size_t count, ...) {
+NostrTags *nostr_tags_new(size_t count, ...) {
     va_list args;
 
     // Allocate memory for array of Tag pointers
@@ -116,46 +116,46 @@ Tags *create_tags(size_t count, ...) {
     return tags;
 }
 
-void free_tags(Tags *tags) {
+void nostr_tags_free(NostrTags *tags) {
     if (tags) {
         for (size_t i = 0; i < tags->count; i++) {
-            free_tag(tags->data[i]);
+            nostr_tag_free(tags->data[i]);
         }
         free(tags->data);
         free(tags);
     }
 }
 
-char *tags_get_d(Tags *tags) {
+char *nostr_tags_get_d(NostrTags *tags) {
     if (!tags)
         return NULL;
 
     for (size_t i = 0; i < tags->count; i++) {
-        if (tag_starts_with(tags->data[i], create_tag("d", ""))) {
+        if (nostr_tag_starts_with(tags->data[i], nostr_tag_new("d", ""))) {
             return tags->data[i]->data[1];
         }
     }
     return NULL;
 }
 
-Tag *tags_get_first(Tags *tags, Tag *prefix) {
+NostrTag *nostr_tags_get_first(NostrTags *tags, NostrTag *prefix) {
     if (!tags || !prefix)
         return NULL;
 
     for (size_t i = 0; i < tags->count; i++) {
-        if (tag_starts_with(tags->data[i], prefix)) {
+        if (nostr_tag_starts_with(tags->data[i], prefix)) {
             return tags->data[i];
         }
     }
     return NULL;
 }
 
-Tag *tags_get_last(Tags *tags, Tag *prefix) {
+NostrTag *nostr_tags_get_last(NostrTags *tags, NostrTag *prefix) {
     if (!tags || !prefix)
         return NULL;
 
     for (size_t i = tags->count; i > 0; i--) {
-        if (tag_starts_with(tags->data[i - 1], prefix)) {
+        if (nostr_tag_starts_with(tags->data[i - 1], prefix)) {
             return tags->data[i - 1];
         }
     }
@@ -163,7 +163,7 @@ Tag *tags_get_last(Tags *tags, Tag *prefix) {
 }
 
 // Marshal a single Tag to a JSON array
-char *tag_marshal_to_json(Tag *tag) {
+char *nostr_tag_to_json(NostrTag *tag) {
     size_t capacity = 128;
     char *buffer = malloc(capacity);
     if (!buffer)
@@ -203,17 +203,17 @@ char *tag_marshal_to_json(Tag *tag) {
     return buffer;
 }
 
-Tags *tags_get_all(Tags *tags, Tag *prefix) {
+NostrTags *nostr_tags_get_all(NostrTags *tags, NostrTag *prefix) {
     if (!tags || !prefix)
         return NULL;
 
-    Tags *result = create_tags(tags->count);
+    Tags *result = nostr_tags_new(tags->count);
     if (!result)
         return NULL;
 
     size_t count = 0;
     for (size_t i = 0; i < tags->count; i++) {
-        if (tag_starts_with(tags->data[i], prefix)) {
+        if (nostr_tag_starts_with(tags->data[i], prefix)) {
             result->data[count++] = tags->data[i];
         }
     }
@@ -222,17 +222,17 @@ Tags *tags_get_all(Tags *tags, Tag *prefix) {
     return result;
 }
 
-Tags *tags_filter_out(Tags *tags, Tag *prefix) {
+NostrTags *nostr_tags_filter_out(NostrTags *tags, NostrTag *prefix) {
     if (!tags || !prefix)
         return NULL;
 
-    Tags *filtered = create_tags(tags->count);
+    Tags *filtered = nostr_tags_new(tags->count);
     if (!filtered)
         return NULL;
 
     size_t count = 0;
     for (size_t i = 0; i < tags->count; i++) {
-        if (!tag_starts_with(tags->data[i], prefix)) {
+        if (!nostr_tag_starts_with(tags->data[i], prefix)) {
             filtered->data[count++] = tags->data[i];
         }
     }
@@ -241,12 +241,12 @@ Tags *tags_filter_out(Tags *tags, Tag *prefix) {
     return filtered;
 }
 
-Tags *tags_append_unique(Tags *tags, Tag *tag) {
+NostrTags *nostr_tags_append_unique(NostrTags *tags, NostrTag *tag) {
     if (!tags || !tag)
         return NULL;
 
     for (size_t i = 0; i < tags->count; i++) {
-        if (tag_starts_with(tags->data[i], tag)) {
+        if (nostr_tag_starts_with(tags->data[i], tag)) {
             return tags;
         }
     }
@@ -263,7 +263,7 @@ Tags *tags_append_unique(Tags *tags, Tag *tag) {
     return tags;
 }
 
-bool tags_contains_any(Tags *tags, const char *tag_name, char **values, size_t values_count) {
+bool nostr_tags_contains_any(NostrTags *tags, const char *tag_name, char **values, size_t values_count) {
     if (!tags || !tag_name || !values)
         return false;
 
@@ -286,7 +286,7 @@ bool tags_contains_any(Tags *tags, const char *tag_name, char **values, size_t v
 }
 
 // Marshal multiple Tags (array of Tag) to a JSON array of arrays
-char *tags_marshal_to_json(Tags *tags) {
+char *nostr_tags_to_json(NostrTags *tags) {
     size_t capacity = 256;
     char *buffer = malloc(capacity);
     if (!buffer)
@@ -296,7 +296,7 @@ char *tags_marshal_to_json(Tags *tags) {
     size_t len = 1;
 
     for (size_t i = 0; i < tags->count; i++) {
-        char *tag_json = tag_marshal_to_json(tags->data[i]);
+        char *tag_json = nostr_tag_to_json(tags->data[i]);
         size_t tag_len = strlen(tag_json);
 
         // Resize the buffer if necessary

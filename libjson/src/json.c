@@ -1,5 +1,7 @@
 #include "go.h"
 #include "nostr_jansson.h"
+#include "nostr-event.h"
+#include "nostr-tag.h"
 #include <jansson.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -141,7 +143,7 @@ int _deserialize_event(NostrEvent *event, json_t *json_obj) {
         Tags *t = jansson_tags_deserialize(json_tags);
         if (t) {
             // free existing default empty tags if present
-            if (event->tags) free_tags(event->tags);
+            if (event->tags) nostr_tags_free(event->tags);
             event->tags = t;
         }
     }
@@ -265,7 +267,7 @@ int jansson_envelope_deserialize(Envelope *envelope, const char *json_str) {
             if (!json_is_string(json_id)) { json_decref(json_obj); return -1; }
             env->subscription_id = strdup(json_string_value(json_id));
         }
-        env->event = create_event();
+        env->event = nostr_event_new();
         if (!env->event) { json_decref(json_obj); return -1; }
         (void)_deserialize_event(env->event, json_evt);
         break;
@@ -388,7 +390,7 @@ int jansson_envelope_deserialize(Envelope *envelope, const char *json_str) {
         AuthEnvelope *env = (AuthEnvelope *)envelope;
         json_t *json_challenge = json_array_get(json_obj, 1);
         if (json_is_object(json_challenge)) {
-            env->event = create_event();
+            env->event = nostr_event_new();
             if (env->event) _deserialize_event(env->event, json_challenge);
         } else if (json_is_string(json_challenge)) {
             env->challenge = strdup(json_string_value(json_challenge));
@@ -421,7 +423,7 @@ int jansson_filter_deserialize(Filter *filter, json_t *json_obj) {
         string_array_init(&filter->authors);
     }
     if (filter->tags == NULL) {
-        filter->tags = create_tags(0);
+        filter->tags = nostr_tags_new(0);
     }
 
     // Deserialize the `ids`
@@ -447,7 +449,7 @@ int jansson_filter_deserialize(Filter *filter, json_t *json_obj) {
     if (tags_json) {
         Tags *t = jansson_tags_deserialize(tags_json);
         if (t) {
-            if (filter->tags) free_tags(filter->tags);
+            if (filter->tags) nostr_tags_free(filter->tags);
             filter->tags = t;
         }
     }
@@ -471,11 +473,11 @@ int jansson_filter_deserialize(Filter *filter, json_t *json_obj) {
                 if (!tag) continue;
                 string_array_add(tag, tag_name);
                 string_array_add(tag, v);
-                Tags *nt = tags_append_unique(filter->tags, tag);
+                Tags *nt = nostr_tags_append_unique(filter->tags, tag);
                 if (nt) {
                     filter->tags = nt;
                 } else {
-                    free_tag(tag);
+                    nostr_tag_free(tag);
                 }
             }
         }
@@ -621,19 +623,19 @@ Tags *jansson_tags_deserialize(json_t *json_array) {
     json_array_foreach(json_array, index, value) {
         Tag *tag = new_string_array(0);
         if (!tag) {
-            free_tags(tags);
+            nostr_tags_free(tags);
             return NULL;
         }
         if (jansson_tag_deserialize(tag, value) != 0) {
-            free_tag(tag);
-            free_tags(tags);
+            nostr_tag_free(tag);
+            nostr_tags_free(tags);
             return NULL;
         }
-        Tags *new_tags = tags_append_unique(tags, tag);
+        Tags *new_tags = nostr_tags_append_unique(tags, tag);
         if (!new_tags) {
             // on failure, free constructed tag and existing tags
-            free_tag(tag);
-            free_tags(tags);
+            nostr_tag_free(tag);
+            nostr_tags_free(tags);
             return NULL;
         }
         tags = new_tags;

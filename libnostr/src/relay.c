@@ -1,4 +1,6 @@
 #include "relay.h"
+#include "nostr-event.h"
+#include "nostr-tag.h"
 #include "nostr-relay.h"
 #include "envelope.h"
 #include "error_codes.h"
@@ -36,7 +38,7 @@ static void relay_debug_emit(Relay *r, const char *s) {
     (void)go_channel_try_send(r->priv->debug_raw, copy);
 }
 
-void relay_enable_debug_raw(Relay *relay, int enable) {
+void nostr_relay_enable_debug_raw(Relay *relay, int enable) {
     if (!relay || !relay->priv) return;
     nsync_mu_lock(&relay->priv->mutex);
     if (enable) {
@@ -53,12 +55,12 @@ void relay_enable_debug_raw(Relay *relay, int enable) {
     nsync_mu_unlock(&relay->priv->mutex);
 }
 
-GoChannel *relay_get_debug_raw_channel(Relay *relay) {
+GoChannel *nostr_relay_get_debug_raw_channel(Relay *relay) {
     if (!relay || !relay->priv) return NULL;
     return relay->priv->debug_raw;
 }
 
-bool relay_is_connected(Relay *relay) {
+bool nostr_relay_is_connected(Relay *relay) {
     if (!relay) return false;
     nsync_mu_lock(&relay->priv->mutex);
     bool connected = (relay->connection != NULL);
@@ -82,7 +84,7 @@ GoChannel *nostr_relay_get_write_channel(const NostrRelay *relay) {
     return relay->priv->write_queue;
 }
 
-Relay *new_relay(GoContext *context, const char *url, Error **err) {
+NostrRelay *nostr_relay_new(GoContext *context, const char *url, Error **err) {
     if (url == NULL) {
         if (err) *err = new_error(1, "invalid relay URL");
         return NULL;
@@ -99,6 +101,7 @@ Relay *new_relay(GoContext *context, const char *url, Error **err) {
     relay->url = strdup(url);
     relay->subscriptions = go_hash_map_create(16);
     relay->assume_valid = false;
+    relay->refcount = 1;
 
     relay->priv = priv;
     nsync_mu_init(&relay->priv->mutex);
@@ -109,47 +112,85 @@ Relay *new_relay(GoContext *context, const char *url, Error **err) {
     relay->priv->subscription_channel_close_queue = go_channel_create(16);
     relay->priv->debug_raw = NULL;
     go_wait_group_init(&relay->priv->workers);
-    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] new_relay: initialized workers and queues for %s\n", relay->url);
+    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_new: initialized workers and queues for %s\n", relay->url);
     // request_header
 
     relay->priv->notice_handler = NULL;
     relay->priv->custom_handler = NULL;
 
+    return (NostrRelay *)relay;
+}
+
+NostrRelay *nostr_relay_ref(NostrRelay *relay) {
+    if (!relay) return NULL;
+    nsync_mu_lock(&relay->priv->mutex);
+    relay->refcount++;
+    nsync_mu_unlock(&relay->priv->mutex);
     return relay;
 }
 
-void free_relay(Relay *relay) {
+static void relay_free_impl(Relay *relay) {
     if (!relay) return;
     // Signal background loops to stop
-    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] free_relay: cancel connection context\n");
+    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_free: cancel connection context\n");
     if (relay->priv && relay->priv->connection_context_cancel) {
         relay->priv->connection_context_cancel(relay->priv->connection_context);
     }
     // Close queues to unblock workers
     if (relay->priv) {
-        if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] free_relay: closing queues\n");
+        if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_free: closing queues\n");
         if (relay->priv->write_queue) go_channel_close(relay->priv->write_queue);
         if (relay->priv->subscription_channel_close_queue) go_channel_close(relay->priv->subscription_channel_close_queue);
         if (relay->priv->debug_raw) go_channel_close(relay->priv->debug_raw);
     }
     // Close network connection last
-    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] free_relay: closing network connection\n");
+    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_free: closing network connection\n");
     if (relay->connection) {
         connection_close(relay->connection);
         relay->connection = NULL;
     }
     // Wait for worker goroutines to finish
     if (relay->priv) {
-        if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] free_relay: waiting for workers\n");
+        if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_free: waiting for workers\n");
         go_wait_group_wait(&relay->priv->workers);
-        if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] free_relay: workers joined\n");
+        if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_free: workers joined\n");
         go_wait_group_destroy(&relay->priv->workers);
     }
+
+    // Free resources
+    if (relay->priv) {
+        if (relay->priv->write_queue) { go_channel_free(relay->priv->write_queue); relay->priv->write_queue = NULL; }
+        if (relay->priv->subscription_channel_close_queue) { go_channel_free(relay->priv->subscription_channel_close_queue); relay->priv->subscription_channel_close_queue = NULL; }
+        if (relay->priv->debug_raw) { go_channel_free(relay->priv->debug_raw); relay->priv->debug_raw = NULL; }
+        if (relay->priv->ok_callbacks) { go_hash_map_destroy(relay->priv->ok_callbacks); relay->priv->ok_callbacks = NULL; }
+        if (relay->priv->challenge) { free(relay->priv->challenge); relay->priv->challenge = NULL; }
+    }
+    if (relay->subscriptions) { go_hash_map_destroy(relay->subscriptions); relay->subscriptions = NULL; }
+    if (relay->url) { free(relay->url); relay->url = NULL; }
+    if (relay->priv) { free(relay->priv); relay->priv = NULL; }
+    free(relay);
 }
 
-bool relay_connect(Relay *relay, Error **err) {
+void nostr_relay_unref(Relay *relay) {
+    if (!relay) return;
+    int do_free = 0;
+    nsync_mu_lock(&relay->priv->mutex);
+    if (relay->refcount > 0) {
+        relay->refcount--;
+        if (relay->refcount == 0) do_free = 1;
+    }
+    nsync_mu_unlock(&relay->priv->mutex);
+    if (do_free) relay_free_impl(relay);
+}
+
+void nostr_relay_free(Relay *relay) {
+    if (!relay) return;
+    nostr_relay_unref(relay);
+}
+
+bool nostr_relay_connect(Relay *relay, Error **err) {
     if (!relay) {
-        if (err) *err = new_error(1, "relay must be initialized with a call to new_relay()");
+        if (err) *err = new_error(1, "relay must be initialized with a call to nostr_relay_new()");
         return false;
     }
 
@@ -169,7 +210,8 @@ bool relay_connect(Relay *relay, Error **err) {
 }
 
 static void *write_error(void *arg) {
-    go_channel_send((GoChannel *)arg, new_error(0, "connection closed"));
+    GoChannel *chan = (GoChannel *)arg;
+    go_channel_send(chan, new_error(0, "connection closed"));
     return NULL;
 }
 
@@ -215,7 +257,11 @@ static void *write_operations(void *arg) {
         // The writer owns req->msg copy
         if (req->msg) free(req->msg);
         // Send result back to caller
-        go_channel_send(req->answer, werr);
+        if (werr) {
+            go_channel_send(req->answer, werr);
+        } else {
+            go_channel_send(req->answer, NULL);
+        }
         free(req);
     }
 
@@ -288,7 +334,7 @@ static void *message_loop(void *arg) {
             Subscription *subscription = go_hash_map_get_int(r->subscriptions, sub_id_to_serial(env->subscription_id));
             if (subscription && env->event) {
                 // Optionally verify signature if available
-                if (!r->assume_valid && !event_check_signature(env->event)) {
+                if (!r->assume_valid && !nostr_event_check_signature(env->event)) {
                     // drop invalid event
                 } else {
                     subscription_dispatch_event(subscription, env->event);
@@ -340,7 +386,7 @@ int nsync_go_context_is_canceled(const void *ctx) {
     return go_context_is_canceled((GoContext *)ctx);
 }
 
-GoChannel *relay_write(Relay *r, char *msg) {
+GoChannel *nostr_relay_write(Relay *r, char *msg) {
     if (!r) return NULL;
     GoChannel *chan = go_channel_create(1);
 
@@ -367,37 +413,38 @@ GoChannel *relay_write(Relay *r, char *msg) {
     return chan;
 }
 
-void relay_publish(Relay *relay, NostrEvent *event) {
+void nostr_relay_publish(Relay *relay, NostrEvent *event) {
     char *event_json = nostr_event_serialize(event);
     if (!event_json)
         return;
 
-    (void)relay_write(relay, event_json);
+    (void)nostr_relay_write(relay, event_json);
     free(event_json);
 }
 
-void relay_auth(Relay *relay, void (*sign)(NostrEvent *, Error **), Error **err) {
+void nostr_relay_auth(Relay *relay, void (*sign)(NostrEvent *, Error **), Error **err) {
 
     NostrEvent auth_event = {
-        .created_at = time(NULL),
+        .id = NULL,
+        .pubkey = NULL,
+        .created_at = 0,
         .kind = KIND_CLIENT_AUTHENTICATION,
-        .tags = create_tags(2,
-                            create_tag("relay", relay->url),
-                            create_tag("challenge", relay->priv->challenge)),
-        .content = "",
-    };
-
+        .tags = nostr_tags_new(2,
+                nostr_tag_new("challenge", relay->priv->challenge, NULL),
+                nostr_tag_new("relay", relay->url, NULL)),
+        .content = strdup(""),
+        .sig = NULL};
     Error *sig_err = NULL;
     sign(&auth_event, &sig_err);
     if (sig_err) {
         if (err) *err = sig_err;
         return;
     }
-    relay_publish(relay, &auth_event);
-    free_tags(auth_event.tags);
+    nostr_relay_publish(relay, &auth_event);
+    nostr_tags_free(auth_event.tags);
 }
 
-bool relay_subscribe(Relay *relay, GoContext *ctx, Filters *filters, Error **err) {
+bool nostr_relay_subscribe(Relay *relay, GoContext *ctx, Filters *filters, Error **err) {
     // Ensure the relay connection exists
     if (!relay->connection) {
         if (err) *err = new_error(1, "not connected to %s", relay->url);
@@ -405,7 +452,7 @@ bool relay_subscribe(Relay *relay, GoContext *ctx, Filters *filters, Error **err
     }
 
     // Prepare the subscription
-    Subscription *subscription = relay_prepare_subscription(relay, ctx, filters);
+    Subscription *subscription = nostr_relay_prepare_subscription(relay, ctx, filters);
     if (!subscription) {
         if (err && *err == NULL) *err = new_error(1, "failed to prepare subscription");
         return false;
@@ -421,7 +468,7 @@ bool relay_subscribe(Relay *relay, GoContext *ctx, Filters *filters, Error **err
     return true;
 }
 
-Subscription *relay_prepare_subscription(Relay *relay, GoContext *ctx, Filters *filters) {
+Subscription *nostr_relay_prepare_subscription(Relay *relay, GoContext *ctx, Filters *filters) {
     if (!relay || !filters || !ctx) {
         return NULL;
     }
@@ -443,8 +490,7 @@ Subscription *relay_prepare_subscription(Relay *relay, GoContext *ctx, Filters *
     subscription->context = subctx.context;
     subscription->priv->cancel = subctx.cancel;
     subscription->priv->match = filters_match; // Function for matching filters with events
-    // Start lifecycle watcher
-    go(subscription_start, subscription);
+    // Lifecycle watcher is already started in create_subscription()
 
     // Store subscription in relay subscriptions map
     go_hash_map_insert_int(relay->subscriptions, subscription->priv->counter, subscription);
@@ -452,7 +498,7 @@ Subscription *relay_prepare_subscription(Relay *relay, GoContext *ctx, Filters *
     return subscription;
 }
 
-GoChannel *relay_query_events(Relay *relay, GoContext *ctx, Filter *filter, Error **err) {
+GoChannel *nostr_relay_query_events(Relay *relay, GoContext *ctx, Filter *filter, Error **err) {
     if (!relay->connection) {
         if (err) *err = new_error(1, "not connected to relay");
         return NULL;
@@ -463,7 +509,7 @@ GoChannel *relay_query_events(Relay *relay, GoContext *ctx, Filter *filter, Erro
     };
 
     // Prepare the subscription
-    Subscription *subscription = relay_prepare_subscription(relay, ctx, &filters);
+    Subscription *subscription = nostr_relay_prepare_subscription(relay, ctx, &filters);
     if (!subscription) {
         if (err) *err = new_error(ERR_RELAY_SUBSCRIBE_FAILED, "failed to prepare subscription");
         return NULL;
@@ -479,7 +525,7 @@ GoChannel *relay_query_events(Relay *relay, GoContext *ctx, Filter *filter, Erro
     return subscription->events;
 }
 
-NostrEvent **relay_query_sync(Relay *relay, GoContext *ctx, Filter *filter, int *event_count, Error **err) {
+NostrEvent **nostr_relay_query_sync(Relay *relay, GoContext *ctx, Filter *filter, int *event_count, Error **err) {
     if (!relay->connection) {
         *err = new_error(1, "not connected to relay");
         return NULL;
@@ -497,7 +543,7 @@ NostrEvent **relay_query_sync(Relay *relay, GoContext *ctx, Filter *filter, int 
         .filters = filter};
 
     // Prepare the subscription
-    Subscription *subscription = relay_prepare_subscription(relay, ctx, &filters);
+    Subscription *subscription = nostr_relay_prepare_subscription(relay, ctx, &filters);
     if (!subscription) {
         *err = new_error(1, "failed to prepare subscription");
         free(events);
@@ -553,7 +599,7 @@ NostrEvent **relay_query_sync(Relay *relay, GoContext *ctx, Filter *filter, int 
             return NULL;
         }
         case 3: { // Timeout waiting for events
-            if (err) *err = new_error(1, "relay_query_sync timed out");
+            if (err) *err = new_error(1, "nostr_relay_query_sync timed out");
             subscription_unsub(subscription);
             *event_count = (int)received_count;
             stop_ticker(timeout);
@@ -565,7 +611,7 @@ NostrEvent **relay_query_sync(Relay *relay, GoContext *ctx, Filter *filter, int 
     }
 }
 
-int64_t relay_count(Relay *relay, GoContext *ctx, Filter *filter, Error **err) {
+int64_t nostr_relay_count(Relay *relay, GoContext *ctx, Filter *filter, Error **err) {
     if (!relay->connection) {
         if (err) *err = new_error(1, "not connected to relay");
         return 0;
@@ -575,7 +621,7 @@ int64_t relay_count(Relay *relay, GoContext *ctx, Filter *filter, Error **err) {
         .filters = filter};
 
     // Prepare the subscription (but don't fire it yet)
-    Subscription *subscription = relay_prepare_subscription(relay, ctx, &filters);
+    Subscription *subscription = nostr_relay_prepare_subscription(relay, ctx, &filters);
     if (!subscription) {
         if (err) *err = new_error(1, "failed to prepare subscription");
         return 0;
@@ -601,7 +647,7 @@ int64_t relay_count(Relay *relay, GoContext *ctx, Filter *filter, Error **err) {
     return result;
 }
 
-bool relay_close(Relay *r, Error **err) {
+bool nostr_relay_close(Relay *r, Error **err) {
     if (!r) {
         if (err) *err = new_error(ERR_RELAY_CLOSE_FAILED, "invalid relay");
         return false;
@@ -625,7 +671,7 @@ bool relay_close(Relay *r, Error **err) {
 
     // Ownership note:
     // - connection_close() only closes channels; it MUST NOT free them.
-    // - relay_close() is responsible for freeing conn->recv_channel/send_channel
+    // - nostr_relay_close() is responsible for freeing conn->recv_channel/send_channel
     //   but ONLY AFTER all workers have exited to avoid use-after-free in go_select.
     // Ensure workers exit before tearing down the connection to avoid UAF
     // Workers observe r->connection == NULL and/or context cancel and then call done
@@ -638,20 +684,12 @@ bool relay_close(Relay *r, Error **err) {
     return true;
 }
 
-void relay_disconnect(Relay *relay) {
+void nostr_relay_disconnect(Relay *relay) {
     if (!relay) return;
     Error *err = NULL;
-    (void)relay_close(relay, &err);
+    (void)nostr_relay_close(relay, &err);
     if (err) free_error(err);
 }
 
-void relay_unsubscribe(Relay *relay, const char *subscription_id) {
-    if (!relay) return;
-    nsync_mu_lock(&relay->priv->mutex);
-    Subscription *sub = go_hash_map_get_int(relay->subscriptions, sub_id_to_serial(subscription_id));
-    if (sub) {
-        subscription_unsub(sub);
-        go_hash_map_remove_int(relay->subscriptions, sub_id_to_serial(subscription_id));
-    }
-    nsync_mu_unlock(&relay->priv->mutex);
-}
+/* Legacy relay_unsubscribe removed. Use subscription_unsub() via Subscription* or
+ * provide a thin wrapper in higher layers if needed. */

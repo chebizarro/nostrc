@@ -3,8 +3,6 @@
 
 /* GLib-friendly transitional header for pointer helpers */
 
-#include "pointer.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -15,10 +13,13 @@ extern "C" {
  * NostrEntityPointer:
  *
  * Opaque pointer helper types for NIP-19/Nostr pointers.
+ *
+ * Note: Defined as void here so GI treats them as gpointer without needing
+ * boxed type registration. Implementation uses real types in the wrapper source.
  */
-typedef ProfilePointer NostrProfilePointer;
-typedef EventPointer   NostrEventPointer;
-typedef EntityPointer  NostrEntityPointer;
+typedef void NostrProfilePointer;
+typedef void NostrEventPointer;
+typedef void NostrEntityPointer;
 
 /**
  * nostr_profile_pointer_new:

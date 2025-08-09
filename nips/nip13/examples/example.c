@@ -5,6 +5,7 @@
 #include <nostr/nip10.h>
 #include <nostr/nip11.h>
 #include <nostr/nip13.h>
+#include "nostr-event.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -35,7 +36,7 @@ int main() {
     time_t timeout = 10;
     int result = nip13_generate(&event, difficulty, timeout);
     if (result == 0) {
-        printf("Proof of work successful! Event ID: %s\n", event_get_id(&event));
+        printf("Proof of work successful! Event ID: %s\n", nostr_event_get_id((NostrEvent*)&event));
     } else if (result == NIP13_ERR_GENERATE_TIMEOUT) {
         printf("Failed to generate proof of work: timeout\n");
     } else {

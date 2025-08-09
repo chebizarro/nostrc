@@ -77,3 +77,50 @@ if (TARGET nostr)
   endif()
 endif()
 
+
+# Optional GObject Introspection generation
+option(NOSTR_ENABLE_GI "Enable GIR/typelib generation target" ON)
+if (NOSTR_ENABLE_GI)
+  find_package(PkgConfig REQUIRED)
+  # Ensure our pkg-config files are available at build time by adding build-time pc dirs if needed
+  # Consumers typically run this after an install, but for convenience we'll use build artifacts too.
+  find_program(G_IR_SCANNER g-ir-scanner)
+  find_program(G_IR_COMPILER g-ir-compiler)
+  if (G_IR_SCANNER AND G_IR_COMPILER)
+    # Includes needed for headers referenced by libnostr public headers
+    find_path(NSYNC_INCLUDE_DIR nsync.h)
+    add_custom_target(nostr-gir
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/gir
+      COMMAND ${CMAKE_COMMAND} -E env GI_SCANNER_DISABLE_CACHE=1
+        ${G_IR_SCANNER}
+        --cflags-begin
+        -std=gnu11
+        -DNOSTR_WITH_GLIB=1
+        --cflags-end
+        --namespace=Nostr
+        --nsversion=1.0
+        --symbol-prefix=nostr_
+        --identifier-prefix=Nostr
+        --warn-all
+        --library nostr
+        --library nostr_json
+        --library-path ${CMAKE_BINARY_DIR}/libnostr
+        --library-path ${CMAKE_BINARY_DIR}/libjson
+        --pkg glib-2.0 --pkg gobject-2.0
+        --pkg jansson --pkg libwebsockets --pkg openssl --pkg libsecp256k1
+        -I ${CMAKE_SOURCE_DIR}/libnostr/include
+        -I ${CMAKE_SOURCE_DIR}/libgo/include
+        $<$<BOOL:${NSYNC_INCLUDE_DIR}>:-I${NSYNC_INCLUDE_DIR}>
+        -I ${CMAKE_BINARY_DIR}/libnostr/generated
+        ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-utils.h
+        ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-pointer.h
+        ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-event.h
+        ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-filter-wrap.h
+        --output ${CMAKE_BINARY_DIR}/gir/Nostr-1.0.gir
+      COMMAND ${G_IR_COMPILER} ${CMAKE_BINARY_DIR}/gir/Nostr-1.0.gir -o ${CMAKE_BINARY_DIR}/gir/Nostr-1.0.typelib
+      DEPENDS nostr nostr_json
+      VERBATIM
+    )
+  endif()
+endif()
+

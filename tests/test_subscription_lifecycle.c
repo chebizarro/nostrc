@@ -8,9 +8,10 @@
 
 #include "go.h"
 #include "error.h"
-#include "relay.h"
+#include "nostr-relay.h"
 #include "filter.h"
-#include "subscription.h"
+#include "nostr-subscription.h"
+#include "nostr-event.h"
 
 // Include private API to drive dispatchers directly and observe internals
 #include "../libnostr/src/subscription-private.h"
@@ -32,7 +33,7 @@ static GoContext *ctx_with_timeout_ms(int ms) {
 }
 
 static NostrEvent *make_dummy_event(void) {
-    NostrEvent *ev = create_event();
+    NostrEvent *ev = nostr_event_new();
     ev->kind = 1; // text note
     ev->content = strdup("hello");
     return ev;
@@ -50,11 +51,11 @@ static void test_eose_then_receive_signal(void) {
     setenv("NOSTR_TEST_MODE", "1", 1);
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    Relay *relay = new_relay(ctx, "wss://example.invalid", &err);
+    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay && err == NULL);
 
     Filters *fs = make_min_filters();
-    Subscription *sub = create_subscription(relay, fs);
+    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
     assert(sub);
 
     // Initially not EOSE'd
@@ -68,12 +69,12 @@ static void test_eose_then_receive_signal(void) {
     int rc = go_channel_receive_with_context(sub->end_of_stored_events, &sig, rxctx);
     assert(rc == 0);
 
-    subscription_unsub(sub);
-    subscription_unsub(sub);
+    nostr_subscription_unsubscribe(sub);
+    nostr_subscription_unsubscribe(sub);
     usleep(50000);
-    free_subscription(sub);
+    nostr_subscription_free(sub);
     free_filters(fs);
-    free_relay(relay);
+    nostr_relay_free(relay);
     go_context_free(ctx);
 }
 
@@ -81,11 +82,11 @@ static void test_closed_with_reason(void) {
     setenv("NOSTR_TEST_MODE", "1", 1);
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    Relay *relay = new_relay(ctx, "wss://example.invalid", &err);
+    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay && err == NULL);
 
     Filters *fs = make_min_filters();
-    Subscription *sub = create_subscription(relay, fs);
+    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
     assert(sub);
 
     const char *reason = "test closed";
@@ -98,10 +99,10 @@ static void test_closed_with_reason(void) {
     assert(rc == 0);
     assert(got == reason || (got && strcmp(got, reason) == 0));
 
-    subscription_unsub(sub);
-    free_subscription(sub);
+    nostr_subscription_unsubscribe(sub);
+    nostr_subscription_free(sub);
     free_filters(fs);
-    free_relay(relay);
+    nostr_relay_free(relay);
     go_context_free(ctx);
 }
 
@@ -109,18 +110,18 @@ static void test_unsubscribe_closes_events_channel(void) {
     setenv("NOSTR_TEST_MODE", "1", 1);
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    Relay *relay = new_relay(ctx, "wss://example.invalid", &err);
+    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay && err == NULL);
 
     Filters *fs = make_min_filters();
-    Subscription *sub = create_subscription(relay, fs);
+    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
     assert(sub);
 
     // Mark as live to simulate active subscription
     atomic_store(&sub->priv->live, true);
 
     // Unsubscribe triggers cancel; lifecycle thread will close events channel
-    subscription_unsub(sub);
+    nostr_subscription_unsubscribe(sub);
 
     // Receive should promptly fail with -1 due to closed+empty
     GoContext *rxctx = ctx_with_timeout_ms(300);
@@ -128,9 +129,9 @@ static void test_unsubscribe_closes_events_channel(void) {
     int rc = go_channel_receive_with_context(sub->events, &msg, rxctx);
     assert(rc == -1);
 
-    free_subscription(sub);
+    nostr_subscription_free(sub);
     free_filters(fs);
-    free_relay(relay);
+    nostr_relay_free(relay);
     go_context_free(ctx);
 }
 
@@ -138,11 +139,11 @@ static void test_event_queue_full_drops(void) {
     setenv("NOSTR_TEST_MODE", "1", 1);
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    Relay *relay = new_relay(ctx, "wss://example.invalid", &err);
+    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay && err == NULL);
 
     Filters *fs = make_min_filters();
-    Subscription *sub = create_subscription(relay, fs);
+    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
     assert(sub);
 
     // Activate live to allow dispatch
@@ -166,10 +167,10 @@ static void test_event_queue_full_drops(void) {
     assert(rc2 == -1); // nothing else (second was dropped)
 
     // Cleanup
-    subscription_unsub(sub);
-    free_subscription(sub);
+    nostr_subscription_unsubscribe(sub);
+    nostr_subscription_free(sub);
     free_filters(fs);
-    free_relay(relay);
+    nostr_relay_free(relay);
     go_context_free(ctx);
 }
 

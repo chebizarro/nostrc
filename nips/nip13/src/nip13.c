@@ -1,5 +1,6 @@
 #include "nostr/nip13.h"
 #include "nostr/event.h"
+#include "nostr-event.h"
 #include "util.h"
 #include <math.h>
 #include <stdio.h>
@@ -59,7 +60,7 @@ int nip13_generate(Event *event, int target_difficulty, time_t timeout) {
         snprintf(tag[1], 21, "%llu", (unsigned long long)nonce);
         event->created_at = time(NULL);
 
-        if (nip13_difficulty(event_get_id(event)) >= target_difficulty) {
+        if (nip13_difficulty(nostr_event_get_id((NostrEvent*)event)) >= target_difficulty) {
             free(tag[1]);
             return 0;
         }

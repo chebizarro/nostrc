@@ -7,8 +7,9 @@
 #include <unistd.h>
 
 #include "go.h"
-#include "relay.h"
-#include "subscription.h"
+#include "nostr-event.h"
+#include "nostr-relay.h"
+#include "nostr-subscription.h"
 #include "filter.h"
 
 // Internals for driving live + notice handler
@@ -36,7 +37,7 @@ static Filters *make_min_filters(void) {
 }
 
 static NostrEvent *make_dummy_event(int i) {
-    NostrEvent *ev = create_event();
+    NostrEvent *ev = nostr_event_new();
     ev->kind = 1;
     char *s = (char*)malloc(32);
     snprintf(s, 32, "ev-%d", i);
@@ -55,14 +56,14 @@ int main(void) {
 
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    Relay *relay = new_relay(ctx, "wss://example.invalid", &err);
+    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay && err == NULL);
 
     // Install a notice handler to simulate NOTICE handling under load
     relay->priv->notice_handler = notice_stub;
 
     Filters *fs = make_min_filters();
-    Subscription *sub = create_subscription(relay, fs);
+    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
     assert(sub);
 
     // Activate live to allow dispatch
@@ -95,7 +96,7 @@ int main(void) {
         GoContext *rx_probe = ctx_with_timeout_ms(1);
         (void)go_channel_receive_with_context(sub->events, &ev, rx_probe);
         go_context_free(rx_probe);
-        if (ev) free_event((NostrEvent*)ev);
+        if (ev) nostr_event_free((NostrEvent*)ev);
     }
 
     // Ensure at least one EOSE observed eventually
@@ -108,10 +109,10 @@ int main(void) {
     // NOTICE handler should have been called at least once during the run
     assert(atomic_load(&notice_count) > 0);
 
-    subscription_unsub(sub);
-    free_subscription(sub);
+    nostr_subscription_unsubscribe(sub);
+    nostr_subscription_free(sub);
     free_filters(fs);
-    free_relay(relay);
+    nostr_relay_free(relay);
     go_context_free(ctx);
 
     printf("test_subscription_backpressure_long: OK\n");

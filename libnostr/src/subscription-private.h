@@ -17,6 +17,7 @@ typedef struct _SubscriptionPrivate {
     _Atomic bool live;
     _Atomic bool eosed;
     _Atomic bool closed;
+    _Atomic bool unsubbed;
     CancelFunc cancel;
 
     LongAdder *stored_event_counter;

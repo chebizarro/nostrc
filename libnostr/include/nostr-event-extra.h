@@ -4,9 +4,9 @@
 /* GLib-friendly transitional header for event extra fields helpers */
 
 #include <stdbool.h>
-#include <jansson.h>
-#include "nostr-event.h"
-#include "event_extra.h"
+
+/* Opaque forward declaration to avoid pulling internal headers into GIR */
+typedef struct _NostrEvent NostrEvent;
 
 #ifdef __cplusplus
 extern "C" {
@@ -16,11 +16,11 @@ extern "C" {
  * nostr_event_set_extra:
  * @event: (transfer none): event
  * @key: (transfer none): key string
- * @value: (transfer none): json value
+ * @value: (transfer none) (type gpointer): opaque JSON value
  *
  * Sets/overwrites an extra field on @event.
  */
-void nostr_event_set_extra(NostrEvent *event, const char *key, json_t *value);
+void nostr_event_set_extra(NostrEvent *event, const char *key, void *value);
 
 /**
  * nostr_event_remove_extra:
@@ -36,9 +36,9 @@ void nostr_event_remove_extra(NostrEvent *event, const char *key);
  * @event: (transfer none): event
  * @key: (transfer none): key string
  *
- * Returns: (transfer none) (nullable): internal pointer to value
+ * Returns: (transfer none) (nullable) (type gpointer): internal pointer to value
  */
-json_t *nostr_event_get_extra(NostrEvent *event, const char *key);
+void *nostr_event_get_extra(NostrEvent *event, const char *key);
 
 /**
  * nostr_event_get_extra_string:

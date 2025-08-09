@@ -7,9 +7,10 @@
 #include <time.h>
 
 #include "go.h"
+#include "nostr-event.h"
 #include "error.h"
-#include "relay.h"
-#include "subscription.h"
+#include "nostr-relay.h"
+#include "nostr-subscription.h"
 #include "filter.h"
 
 #include "../libnostr/src/subscription-private.h"
@@ -37,11 +38,11 @@ int main(void) {
     setenv("NOSTR_TEST_MODE", "1", 1);
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    Relay *relay = new_relay(ctx, "wss://example.invalid", &err);
+    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay && err == NULL);
 
     Filters *fs = make_min_filters();
-    Subscription *sub = create_subscription(relay, fs);
+    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
     assert(sub);
 
     // Simulate that the subscription is live and receiving
@@ -49,14 +50,14 @@ int main(void) {
 
     // Dispatch some events and then immediately unsubscribe mid-stream
     for (int i = 0; i < 5; i++) {
-        NostrEvent *ev = create_event();
+        NostrEvent *ev = nostr_event_new();
         ev->kind = 1;
         ev->content = strdup("payload");
         subscription_dispatch_event(sub, ev);
     }
 
     // Now unsubscribe; lifecycle should cancel, close channels, and may emit CLOSED locally
-    subscription_unsub(sub);
+    nostr_subscription_unsubscribe(sub);
 
     // Verify we either get a CLOSED reason promptly OR the channel is already closed
     GoContext *rx_closed = ctx_with_timeout_ms(300);
@@ -82,9 +83,9 @@ int main(void) {
     int rc_ev = go_channel_receive_with_context(sub->events, &msg, rx_ev);
     assert(rc_ev == -1 || msg == NULL);
 
-    free_subscription(sub);
+    nostr_subscription_free(sub);
     free_filters(fs);
-    free_relay(relay);
+    nostr_relay_free(relay);
     go_context_free(ctx);
     printf("test_relay_unsubscribe: OK\n");
     return 0;

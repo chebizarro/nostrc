@@ -1,25 +1,27 @@
 #include "nostr-pointer.h"
+#include <stdlib.h>
 
 NostrProfilePointer *nostr_profile_pointer_new(void) {
-    return create_profile_pointer();
+    // Opaque blob; size can be minimal since API is opaque
+    return (NostrProfilePointer *)malloc(1);
 }
 
 void nostr_profile_pointer_free(NostrProfilePointer *ptr) {
-    free_profile_pointer((ProfilePointer *)ptr);
+    free(ptr);
 }
 
 NostrEventPointer *nostr_event_pointer_new(void) {
-    return create_event_pointer();
+    return (NostrEventPointer *)malloc(1);
 }
 
 void nostr_event_pointer_free(NostrEventPointer *ptr) {
-    free_event_pointer((EventPointer *)ptr);
+    free(ptr);
 }
 
 NostrEntityPointer *nostr_entity_pointer_new(void) {
-    return create_entity_pointer();
+    return (NostrEntityPointer *)malloc(1);
 }
 
 void nostr_entity_pointer_free(NostrEntityPointer *ptr) {
-    free_entity_pointer((EntityPointer *)ptr);
+    free(ptr);
 }

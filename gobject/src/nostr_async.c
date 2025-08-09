@@ -13,7 +13,7 @@ static void nostr_relay_connect_async_thread(GTask *task, gpointer source_object
     AsyncData *data = (AsyncData *)task_data;
     GError *error = NULL;
 
-    if (nostr_relay_connect(self, &error)) {
+    if (gnostr_relay_connect(self, &error)) {
         g_task_return_boolean(task, TRUE);
     } else {
         g_task_return_error(task, error);
@@ -39,7 +39,7 @@ static void nostr_relay_publish_async_thread(GTask *task, gpointer source_object
     AsyncData *data = (AsyncData *)task_data;
     GError *error = NULL;
 
-    if (nostr_relay_publish(self, data->event, &error)) {
+    if (gnostr_relay_publish(self, data->event, &error)) {
         g_task_return_boolean(task, TRUE);
     } else {
         g_task_return_error(task, error);
@@ -66,7 +66,7 @@ static void nostr_relay_query_sync_async_thread(GTask *task, gpointer source_obj
     AsyncData *data = (AsyncData *)task_data;
     GError *error = NULL;
 
-    GPtrArray *events = nostr_relay_query_sync(self, data->filter, &error);
+    GPtrArray *events = gnostr_relay_query_sync(self, data->filter, &error);
     if (events) {
         g_task_return_pointer(task, events, (GDestroyNotify)g_ptr_array_unref);
     } else {

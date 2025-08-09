@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "json.h"
+#include "nostr-tag.h"
 #include "filter.h"
 #include "nostr_jansson.h"
 
@@ -26,9 +27,9 @@ static void test_tags_serialize_to_hash_keys(void) {
     Tag *t1 = new_string_array(0); string_array_add(t1, "e"); string_array_add(t1, "x1");
     Tag *t2 = new_string_array(0); string_array_add(t2, "e"); string_array_add(t2, "x2");
     Tag *t3 = new_string_array(0); string_array_add(t3, "p"); string_array_add(t3, "y");
-    Tags *tmp = tags_append_unique(f->tags, t1); if (tmp) f->tags = tmp;
-    tmp = tags_append_unique(f->tags, t2); if (tmp) f->tags = tmp;
-    tmp = tags_append_unique(f->tags, t3); if (tmp) f->tags = tmp;
+    Tags *tmp = nostr_tags_append_unique(f->tags, t1); if (tmp) f->tags = tmp;
+    tmp = nostr_tags_append_unique(f->tags, t2); if (tmp) f->tags = tmp;
+    tmp = nostr_tags_append_unique(f->tags, t3); if (tmp) f->tags = tmp;
 
     char *s = nostr_filter_serialize(f);
     assert(s);
