@@ -3,10 +3,22 @@
 
 #include <stdbool.h>
 
-// Function prototypes for NIP-06
-char* generate_seed_words();
-unsigned char* seed_from_words(const char* words);
-char* private_key_from_seed(const unsigned char* seed);
-bool validate_words(const char* words);
+// Canonical NIP-06 APIs
+// All returned buffers are heap-allocated; caller must free() them.
+
+// Generate a BIP39 English mnemonic (default 24 words)
+char *nostr_nip06_generate_mnemonic(void);
+
+// Validate a mnemonic against the BIP39 English wordlist
+bool nostr_nip06_validate_mnemonic(const char *mnemonic);
+
+// Derive 64-byte seed from mnemonic with empty passphrase ""
+unsigned char *nostr_nip06_seed_from_mnemonic(const char *mnemonic);
+
+// Derive private key hex from seed using path m/44'/1237'/account'/0/0
+char *nostr_nip06_private_key_from_seed_account(const unsigned char *seed, unsigned int account);
+
+// Convenience for account=0
+char *nostr_nip06_private_key_from_seed(const unsigned char *seed);
 
 #endif // NOSTR_NIP06_H
