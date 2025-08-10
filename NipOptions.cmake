@@ -70,7 +70,7 @@ if(ENABLE_NIP47)
     add_subdirectory(nips/nip47)
 endif()
 
-option(ENABLE_NIP48 "Enable nip48" ON)
+option(ENABLE_NIP48 "Enable nip48" OFF)
 if(ENABLE_NIP48)
     add_subdirectory(nips/nip48)
 endif()

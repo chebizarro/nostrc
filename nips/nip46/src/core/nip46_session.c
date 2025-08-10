@@ -3,6 +3,7 @@
 #include "nostr/nip46/nip46_bunker.h"
 #include "nostr/nip46/nip46_msg.h"
 #include "nostr/nip04.h"
+#include "nostr/nip44/nip44.h"
 #include "nostr-keys.h"
 #include "nostr-event.h"
 #include "json.h"
@@ -54,6 +55,53 @@ static int is_valid_pubkey_hex_relaxed(const char *hex) {
         if (!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F'))) return 0;
     }
     return 1;
+}
+
+/* --- Hex helpers and SEC1 -> x-only conversion --- */
+static int hex_nibble(char c){
+    if (c>='0' && c<='9') return c - '0';
+    if (c>='a' && c<='f') return 10 + (c - 'a');
+    if (c>='A' && c<='F') return 10 + (c - 'A');
+    return -1;
+}
+static int hex_to_bytes_exact(const char *hex, unsigned char *out, size_t outlen){
+    if (!hex || !out) return -1;
+    size_t n = strlen(hex);
+    if (n != outlen*2) return -1;
+    for (size_t i=0;i<outlen;i++){
+        int h = hex_nibble(hex[2*i]);
+        int l = hex_nibble(hex[2*i+1]);
+        if (h<0 || l<0) return -1;
+        out[i] = (unsigned char)((h<<4) | l);
+    }
+    return 0;
+}
+/* Accept 64/66/130 hex and output 32-byte x-only pubkey */
+static int parse_peer_xonly32(const char *hex, unsigned char out32[32]){
+    if (!hex || !out32) return -1;
+    size_t n = strlen(hex);
+    if (n == 64){
+        return hex_to_bytes_exact(hex, out32, 32);
+    } else if (n == 66){
+        unsigned char comp[33];
+        if (hex_to_bytes_exact(hex, comp, 33) != 0) return -1;
+        /* SEC1 compressed: first byte 0x02 or 0x03, next 32 are x */
+        if (!(comp[0] == 0x02 || comp[0] == 0x03)) return -1;
+        memcpy(out32, comp+1, 32);
+        return 0;
+    } else if (n == 130){
+        unsigned char uncmp[65];
+        if (hex_to_bytes_exact(hex, uncmp, 65) != 0) return -1;
+        /* SEC1 uncompressed: first byte 0x04, next 32 are x, next 32 are y */
+        if (uncmp[0] != 0x04) return -1;
+        memcpy(out32, uncmp+1, 32);
+        return 0;
+    }
+    return -1;
+}
+static int parse_sk32(const char *hex, unsigned char out32[32]){
+    if (!hex || !out32) return -1;
+    return hex_to_bytes_exact(hex, out32, 32);
 }
 
 void nostr_nip46_session_free(NostrNip46Session *s) {
@@ -179,8 +227,42 @@ int nostr_nip46_client_nip04_decrypt(NostrNip46Session *s, const char *peer_pubk
     return 0;
 }
 
-int nostr_nip46_client_nip44_encrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext) { (void)s; (void)peer_pubkey_hex; (void)plaintext; (void)out_ciphertext; return -1; }
-int nostr_nip46_client_nip44_decrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext) { (void)s; (void)peer_pubkey_hex; (void)ciphertext; (void)out_plaintext; return -1; }
+int nostr_nip46_client_nip44_encrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext) {
+    if (!s || !peer_pubkey_hex || !plaintext || !out_ciphertext) return -1;
+    *out_ciphertext = NULL;
+    if (!s->secret) return -1;
+    unsigned char sk[32];
+    if (parse_sk32(s->secret, sk) != 0) return -1;
+    unsigned char pkx[32];
+    if (parse_peer_xonly32(peer_pubkey_hex, pkx) != 0) return -1;
+    char *b64 = NULL;
+    if (nostr_nip44_encrypt_v2(sk, pkx, (const uint8_t*)plaintext, strlen(plaintext), &b64) != 0 || !b64) {
+        return -1;
+    }
+    *out_ciphertext = b64;
+    return 0;
+}
+int nostr_nip46_client_nip44_decrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext) {
+    if (!s || !peer_pubkey_hex || !ciphertext || !out_plaintext) return -1;
+    *out_plaintext = NULL;
+    if (!s->secret) return -1;
+    unsigned char sk[32];
+    if (parse_sk32(s->secret, sk) != 0) return -1;
+    unsigned char peer_x[32];
+    if (parse_peer_xonly32(peer_pubkey_hex, peer_x) != 0) return -1;
+    uint8_t *plain = NULL; size_t plain_len = 0;
+    if (nostr_nip44_decrypt_v2(sk, peer_x, ciphertext, &plain, &plain_len) != 0 || !plain) {
+        return -1;
+    }
+    /* Ensure NUL-terminated C-string for convenience */
+    char *out = (char*)malloc(plain_len + 1);
+    if (!out) { free(plain); return -1; }
+    memcpy(out, plain, plain_len);
+    out[plain_len] = '\0';
+    free(plain);
+    *out_plaintext = out;
+    return 0;
+}
 
 /* Bunker API */
 NostrNip46Session *nostr_nip46_bunker_new(const NostrNip46BunkerCallbacks *cbs) {

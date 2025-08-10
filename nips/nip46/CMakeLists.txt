@@ -12,10 +12,11 @@ set(NIP46_CORE_SRC
 
 add_library(nostr_nip46_core ${NIP46_CORE_SRC})
 target_include_directories(nostr_nip46_core PUBLIC ${NIP46_INC})
-# Ensure nip44/nip04 headers are visible
+# Ensure nip44/nip04 headers are visible and libraries linked
 target_include_directories(nostr_nip46_core PUBLIC
-  ${CMAKE_SOURCE_DIR}/nips/nip04/include)
-target_link_libraries(nostr_nip46_core PUBLIC nostr nip04)
+  ${CMAKE_SOURCE_DIR}/nips/nip04/include
+  ${CMAKE_SOURCE_DIR}/nips/nip44/include)
+target_link_libraries(nostr_nip46_core PUBLIC nostr nip04 nostr_nip44_core)
 
 # Optional GLib layer if nostr_glib is available
 set(NIP46_GLIB_SRC
