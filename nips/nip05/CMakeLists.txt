@@ -2,20 +2,40 @@
 project(nip05)
 
 # Include the header files
-include_directories(include ${CMAKE_SOURCE_DIR}/libnostr/include)
+include_directories(
+  include
+  ${CMAKE_SOURCE_DIR}/libnostr/include
+  ${CMAKE_BINARY_DIR}/libnostr/generated
+)
+
+# Dependencies
+find_package(CURL REQUIRED)
+find_library(JSONC_LIB NAMES json-c jsonc REQUIRED)
 
 # Add the source files
 file(GLOB SOURCES "src/*.c")
 
 # Create the library
 add_library(nip05 ${SOURCES})
-target_link_libraries(nip05 nostr)
+target_link_libraries(nip05 PUBLIC nostr CURL::libcurl ${JSONC_LIB})
 
-# Add tests if available
+# Example
+add_executable(nip05_example examples/example.c)
+target_link_libraries(nip05_example PRIVATE nip05 nostr CURL::libcurl ${JSONC_LIB})
+
+# Install rules
+install(TARGETS nip05
+        ARCHIVE DESTINATION lib
+        LIBRARY DESTINATION lib
+        RUNTIME DESTINATION bin)
+install(FILES include/nip05.h DESTINATION include/nostr)
+
+# Per-test executables (avoid duplicate main)
 file(GLOB TEST_SOURCES "tests/*.c")
-if(TEST_SOURCES)
-    add_executable(test_nip05 ${TEST_SOURCES})
-    target_link_libraries(test_nip05 nip05 nostr)
-    add_test(NAME test_nip05 COMMAND test_nip05)
-endif()
+foreach(TEST_SRC ${TEST_SOURCES})
+    get_filename_component(TEST_NAME ${TEST_SRC} NAME_WE)
+    add_executable(${TEST_NAME} ${TEST_SRC})
+    target_link_libraries(${TEST_NAME} PRIVATE nip05 nostr CURL::libcurl ${JSONC_LIB})
+    add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+endforeach()
 

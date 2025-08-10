@@ -155,3 +155,8 @@ Key points:
 - Cancel context, close relay queues, snapshot+null the connection.
 - Wait for relay workers to exit, then free `conn` channels.
 - Finally call `connection_close(conn)`; it closes channels but does not free them.
+
+The official Nostr NIPs are vendored as a git submodule under `docs/nips`.
+- Update with `scripts/update_nips.sh`
+- Keep the submodule pinned; bump deliberately in separate commits
+- Code under `nips/nipXX/` MUST reference the matching `docs/nips/XX.md`

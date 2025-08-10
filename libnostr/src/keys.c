@@ -21,8 +21,6 @@ char *nostr_key_generate_private(void) {
         return NULL;
     }
 
-/* Canonical API wrappers: moved to file scope at end */
-
     // Create a secp256k1 context for key generation
     ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
     if (!ctx) {

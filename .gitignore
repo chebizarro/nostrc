@@ -10,7 +10,6 @@ out/
 /CMakeFiles/
 /CMakeCache.txt
 /Makefile
-/*.cmake
 /cmake_install.cmake
 
 # Ignore IDE and editor-specific files

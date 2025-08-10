@@ -68,3 +68,35 @@ This document provides conventions and context to maximize LLM effectiveness whe
 - Keep public API minimal and stable; mark internal helpers `static` in `*.c`.
 - Update documentation cross-references: README.md, ARCHITECTURE.md, API.md.
 - Prefer small, isolated commits with tests.
+
+
+# Nostr NIPs integration
+
+You are editing a C library that implements the Nostr protocol with dual-mode APIs:
+- Pure C (no GLib deps) and
+- GLib/GObject layer (GTK-Doc, GError, refcounting, naming: nostr_* / Nostr* / NOSTR_*)
+
+Authoritative specs live in the repo as a submodule at `docs/nips/` (nostr-protocol/nips).
+
+For any work in `nips/nipXX/*`, FIRST open and read the associated spec:
+
+1) Resolve the spec path from `nips/nipXX/SPEC_SOURCE` (SPEC_MD=...).
+2) Use that markdown (e.g., `docs/nips/04.md`) as the primary reference.
+3) Align APIs, constants, and behavior with the NIP language, including edge cases.
+
+While editing:
+- Keep naming consistent with the project’s GLib/C conventions.
+- Add or update GTK-Doc to reference the spec with a relative link:
+  Example:
+  *See also:* `docs/nips/04.md`
+- Prefer object methods for stateful behaviors (GObject) and pure C functions for core primitives.
+- Error handling: return gboolean + `GError **` for GLib surface; libgo Error for pure C surface if needed.
+- Maintain thread-safety guarantees via libgo and/or GLib async patterns as applicable.
+
+When in doubt: quote the exact NIP section and justify implementation choices.
+
+Deliverables for each NIP refactor:
+- Updated headers/impl following naming + error patterns
+- Unit tests mirroring normative examples from the NIP spec
+- Clear TODOs for ambiguous or draft sections (with spec citations)
+- Migration notes if the public API changes
