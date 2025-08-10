@@ -7,6 +7,9 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <stdint.h>
+#include <jansson.h>
 
 static const char *enc_label(NostrNwcEncryption enc) {
   switch (enc) {
@@ -35,6 +38,11 @@ int nostr_nwc_request_build(const char *wallet_pub_hex, NostrNwcEncryption enc,
   NostrEvent *ev = nostr_event_new();
   if (!ev) return -1;
   nostr_event_set_kind(ev, NOSTR_EVENT_KIND_NWC_REQUEST);
+  /* ensure created_at is set for serializer */
+  {
+    time_t now = time(NULL);
+    if (now > 0) nostr_event_set_created_at(ev, (int64_t)now);
+  }
 
   /* content: {"method":"...","params": <params_json or {}>} */
   char *mqt = json_quote_token(body->method);
@@ -83,6 +91,11 @@ int nostr_nwc_response_build(const char *client_pub_hex, const char *req_event_i
   NostrEvent *ev = nostr_event_new();
   if (!ev) return -1;
   nostr_event_set_kind(ev, NOSTR_EVENT_KIND_NWC_RESPONSE);
+  /* ensure created_at is set for serializer */
+  {
+    time_t now = time(NULL);
+    if (now > 0) nostr_event_set_created_at(ev, (int64_t)now);
+  }
 
   /* content: either {"error":{"code":"...","message":"..."}} or {"result_type":"...","result": <json|null>} */
   char *content = NULL;
@@ -159,9 +172,22 @@ int nostr_nwc_request_parse(const char *event_json,
 
   if (nostr_json_get_string(event_json, "content", &content) != 0 || !content) { nostr_event_free(ev); goto out; }
   if (nostr_json_get_string(content, "method", &method) != 0 || !method) { nostr_event_free(ev); goto out; }
-  /* params may be missing; default to {} */
-  if (nostr_json_get_string(content, "params", &params_json) != 0) {
-    params_json = strdup("{}");
+  /* params may be missing; default to {}. If present and not a string, dump JSON compact */
+  {
+    json_error_t jerr; json_t *root = json_loads(content, 0, &jerr);
+    if (root && json_is_object(root)) {
+      json_t *pv = json_object_get(root, "params");
+      if (pv) {
+        if (json_is_string(pv)) {
+          const char *s = json_string_value(pv);
+          if (s) params_json = strdup(s);
+        } else {
+          params_json = json_dumps(pv, JSON_COMPACT);
+        }
+      }
+      json_decref(root);
+    }
+    if (!params_json) params_json = strdup("{}");
   }
 
   /* parse tags for p and encryption */
@@ -217,13 +243,23 @@ int nostr_nwc_response_parse(const char *event_json,
   if (nostr_event_get_kind(ev) != NOSTR_EVENT_KIND_NWC_RESPONSE) { nostr_event_free(ev); goto out; }
 
   if (nostr_json_get_string(event_json, "content", &content) != 0 || !content) { nostr_event_free(ev); goto out; }
-  /* Try error first */
-  if (nostr_json_get_string_at(content, "error", "code", &ecode) == 0) {
-    (void)0; /* ok */
-    (void)nostr_json_get_string_at(content, "error", "message", &emsg);
-  } else {
-    (void)nostr_json_get_string(content, "result_type", &rtype);
-    (void)nostr_json_get_string(content, "result", &rjson); /* may be missing; leave NULL */
+  /* Either error object or result pair. Use JSON parsing to extract. */
+  {
+    json_error_t jerr; json_t *root = json_loads(content, 0, &jerr);
+    if (!root) { nostr_event_free(ev); goto out; }
+    json_t *err = json_object_get(root, "error");
+    if (err && json_is_object(err)) {
+      json_t *code = json_object_get(err, "code");
+      json_t *msg = json_object_get(err, "message");
+      if (json_is_string(code)) { const char *s = json_string_value(code); if (s) ecode = strdup(s); }
+      if (json_is_string(msg)) { const char *s = json_string_value(msg); if (s) emsg = strdup(s); }
+    } else {
+      json_t *rt = json_object_get(root, "result_type");
+      if (json_is_string(rt)) { const char *s = json_string_value(rt); if (s) rtype = strdup(s); }
+      json_t *rv = json_object_get(root, "result");
+      if (rv) rjson = json_dumps(rv, JSON_COMPACT);
+    }
+    json_decref(root);
   }
 
   /* parse tags: e (request id), p (client pub), encryption */

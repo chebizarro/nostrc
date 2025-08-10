@@ -3,6 +3,7 @@ build/
 build_tsan/
 build-shared/
 build-static/
+build-asan/
 tmp*/
 out/
 /bin/

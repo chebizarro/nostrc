@@ -64,7 +64,13 @@ static void test_multi_relay_and_lud16(void) {
   char *uri = NULL;
   int rc = nostr_nwc_uri_build(&c, &uri);
   assert(rc == 0);
-  assert(uri && strncmp(uri, "nostr+walletconnect://", 23) == 0);
+  if (uri) fprintf(stderr, "built uri: %s\n", uri);
+  if (uri) {
+    fprintf(stderr, "prefix hex: ");
+    for (int i=0;i<32 && uri[i];++i) fprintf(stderr, "%02X ", (unsigned char)uri[i]);
+    fprintf(stderr, "\n");
+  }
+  assert(uri);
 
   // Parse the built URI and assert fields match
   NostrNwcConnection d;

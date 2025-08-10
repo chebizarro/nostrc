@@ -12,11 +12,11 @@ set(NIP47_CORE_SRC
 
 add_library(nostr_nip47_core ${NIP47_CORE_SRC})
 target_include_directories(nostr_nip47_core PUBLIC ${NIP47_INC})
-# Link to core nostr primitives and encryption helpers
+# Link to core nostr primitives, JSON interface, and encryption helpers
 if (TARGET nip44)
-  target_link_libraries(nostr_nip47_core PUBLIC nostr nip44 nip04)
+  target_link_libraries(nostr_nip47_core PUBLIC nostr nostr_json nip44 nip04)
 else()
-  target_link_libraries(nostr_nip47_core PUBLIC nostr nip04)
+  target_link_libraries(nostr_nip47_core PUBLIC nostr nostr_json nip04)
 endif()
 
 # Optional GLib layer if files exist
