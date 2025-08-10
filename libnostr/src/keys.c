@@ -117,14 +117,14 @@ char *nostr_key_get_public(const char *sk) {
     return pubkey_hex;
 }
 
-// Validate if a public key is a valid 32-byte hex string
+// Validate if a public key is a valid 32-byte x-only hex string (64 chars)
 bool nostr_key_is_valid_public_hex(const char *pk) {
     if (!pk) {
         return false;
     }
 
     size_t len = strlen(pk);
-    if (len != 66) { // 33 bytes in hex representation for compressed key
+    if (len != 64) { // 32 bytes x-only in hex representation for Nostr
         return false;
     }
 

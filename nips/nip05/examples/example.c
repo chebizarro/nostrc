@@ -1,43 +1,20 @@
-#include <nostr/nostr.h>
-#include <nostr/nip04.h>
-#include <nostr/nip05.h>
+#include "nip05.h"
 #include <stdio.h>
 #include <stdlib.h>
 
 int main() {
-    // Set up and initialize the JSON interface
-    nostr_set_json_interface(&cjson_interface);
-    nostr_json_init();
+    const char *identifier = "chebizarro@coinos.io"; // replace with a real domain for live test
 
-    // Example NIP-05 identifier
-    const char *identifier = "example@domain.com";
-
-    // Validate identifier
-    if (is_valid_identifier(identifier)) {
-        printf("Valid NIP-05 identifier\n");
-    } else {
-        printf("Invalid NIP-05 identifier\n");
+    char *pub = NULL; char **relays = NULL; size_t nrel = 0; char *err = NULL;
+    int rc = nostr_nip05_lookup(identifier, &pub, &relays, &nrel, &err);
+    if (rc != 0) {
+        fprintf(stderr, "lookup failed: %s\n", err ? err : "unknown");
+        free(err);
+        return 1;
     }
-
-    // Query identifier
-    char *pubkey;
-    char **relays;
-    if (query_identifier(identifier, &pubkey, &relays) == 0) {
-        printf("Public Key: %s\n", pubkey);
-        if (relays) {
-            for (int i = 0; relays[i] != NULL; i++) {
-                printf("Relay: %s\n", relays[i]);
-                free(relays[i]);
-            }
-            free(relays);
-        }
-        free(pubkey);
-    } else {
-        printf("Failed to query identifier\n");
-    }
-
-    // Clean up
-    nostr_json_cleanup();
-
+    printf("pubkey: %s\n", pub);
+    for (size_t i = 0; i < nrel; i++) if (relays && relays[i]) printf("relay[%zu]: %s\n", i, relays[i]);
+    if (relays) { for (size_t i = 0; i < nrel; i++) free(relays[i]); free(relays); }
+    free(pub);
     return 0;
 }

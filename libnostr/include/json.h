@@ -29,4 +29,19 @@ int nostr_envelope_deserialize(NostrEnvelope *envelope, const char *json);
 char *nostr_filter_serialize(const NostrFilter *filter);
 int nostr_filter_deserialize(NostrFilter *filter, const char *json);
 
+/* Generic helpers (backend-agnostic) for simple nested lookups.
+ * These parse the input JSON per call and return newly allocated results. */
+/* Get string at top_object[entry_key] where top_object is at object_key. */
+int nostr_json_get_string_at(const char *json,
+                             const char *object_key,
+                             const char *entry_key,
+                             char **out_str);
+
+/* Get array of strings at top_object[entry_key] where top_object is at object_key. */
+int nostr_json_get_string_array_at(const char *json,
+                                   const char *object_key,
+                                   const char *entry_key,
+                                   char ***out_array,
+                                   size_t *out_count);
+
 #endif // NOSTR_JSON_H
