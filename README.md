@@ -47,6 +47,7 @@ target_link_libraries(my_app PRIVATE ${NOSTR_LIB} ${NOSTR_JSON_LIB} ${NSYNC_LIB}
 
 - See `docs/LIBJSON.md` for libjson API, NIP-01 #tag mapping, robustness rules, and tests.
 - See `docs/SHUTDOWN.md` for libnostr/libgo shutdown order, invariants, and troubleshooting.
+- See `docs/NIP47.md` for NIP-47 (Wallet Connect) envelope helpers, negotiation, sessions, GLib bindings, and examples.
 
 ## Installation
 

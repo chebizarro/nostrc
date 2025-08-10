@@ -26,6 +26,7 @@ add_subdirectory(libjson)
 add_subdirectory(nips/nip04)
 add_subdirectory(nips/nip19)
 add_subdirectory(nips/nip46)
+add_subdirectory(nips/nip47)
 
 # Add test targets from `tests/`.
 add_subdirectory(tests)
