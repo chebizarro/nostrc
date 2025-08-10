@@ -24,6 +24,22 @@ int nostr_nwc_wallet_build_response(const NostrNwcWalletSession *s,
                                     const NostrNwcResponseBody *body,
                                     char **out_event_json);
 
+/* Encrypt/decrypt helpers (canonical). Use s->enc to choose NIP-44 v2 or NIP-04.
+ * wallet_sk_hex: 32-byte hex secret of wallet.
+ * client_pub_hex: client pubkey (accepts x-only 64, SEC1 33/65 hex; auto-converts to x-only for NIP-44).
+ */
+int nostr_nwc_wallet_encrypt(const NostrNwcWalletSession *s,
+                             const char *wallet_sk_hex,
+                             const char *client_pub_hex,
+                             const char *plaintext,
+                             char **out_ciphertext);
+
+int nostr_nwc_wallet_decrypt(const NostrNwcWalletSession *s,
+                             const char *wallet_sk_hex,
+                             const char *client_pub_hex,
+                             const char *ciphertext,
+                             char **out_plaintext);
+
 #ifdef __cplusplus
 }
 #endif

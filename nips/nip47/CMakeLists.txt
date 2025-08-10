@@ -13,11 +13,10 @@ set(NIP47_CORE_SRC
 add_library(nostr_nip47_core ${NIP47_CORE_SRC})
 target_include_directories(nostr_nip47_core PUBLIC ${NIP47_INC})
 # Link to core nostr primitives, JSON interface, and encryption helpers
-if (TARGET nip44)
-  target_link_libraries(nostr_nip47_core PUBLIC nostr nostr_json nip44 nip04)
-else()
-  target_link_libraries(nostr_nip47_core PUBLIC nostr nostr_json nip04)
-endif()
+target_include_directories(nostr_nip47_core PUBLIC
+  ${CMAKE_SOURCE_DIR}/nips/nip44/include
+  ${CMAKE_SOURCE_DIR}/nips/nip04/include)
+target_link_libraries(nostr_nip47_core PUBLIC nostr nostr_json nostr_nip44_core nip04)
 
 # Optional GLib layer if files exist
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/nwc_client_g.c)
@@ -63,6 +62,13 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nwc_session.c)
   add_executable(test_nip47_nwc_session tests/test_nwc_session.c)
   target_link_libraries(test_nip47_nwc_session PRIVATE nostr_nip47_core)
   add_test(NAME test_nip47_nwc_session COMMAND test_nip47_nwc_session)
+endif()
+
+# Crypto helpers roundtrip test
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nwc_crypto.c)
+  add_executable(test_nip47_nwc_crypto tests/test_nwc_crypto.c)
+  target_link_libraries(test_nip47_nwc_crypto PRIVATE nostr_nip47_core)
+  add_test(NAME test_nip47_nwc_crypto COMMAND test_nip47_nwc_crypto)
 endif()
 
 # Examples

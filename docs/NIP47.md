@@ -37,15 +37,48 @@ Header: `nips/nip47/include/nostr/nip47/nwc_wallet.h`
 - `nostr_nwc_wallet_build_response(&s, req_event_id, &body, &out_json)`
 - `nostr_nwc_wallet_session_clear(&s)`
 
+## Crypto helpers (canonical)
+
+Header(s):
+
+- `nips/nip47/include/nostr/nip47/nwc_client.h`
+- `nips/nip47/include/nostr/nip47/nwc_wallet.h`
+
+APIs:
+
+- Client-side
+  - `nostr_nwc_client_encrypt(const NostrNwcClientSession *s, const char *client_sk_hex, const char *wallet_pub_hex, const char *plaintext, char **out_ciphertext)`
+  - `nostr_nwc_client_decrypt(const NostrNwcClientSession *s, const char *client_sk_hex, const char *wallet_pub_hex, const char *ciphertext, char **out_plaintext)`
+- Wallet-side
+  - `nostr_nwc_wallet_encrypt(const NostrNwcWalletSession *s, const char *wallet_sk_hex, const char *client_pub_hex, const char *plaintext, char **out_ciphertext)`
+  - `nostr_nwc_wallet_decrypt(const NostrNwcWalletSession *s, const char *wallet_sk_hex, const char *client_pub_hex, const char *ciphertext, char **out_plaintext)`
+
+Behavior:
+
+- The `s->enc` field selects the encryption scheme: `nip44-v2` (preferred) or `nip04` (fallback).
+- For NIP-44 v2, keys are canonical x-only:
+  - `client_sk_hex`: 64-hex secret key (32 bytes)
+  - `peer_pub_hex`: accepts x-only (64 hex) or SEC1 (33/65); SEC1 inputs are auto-converted to x-only before ECDH/HKDF
+- For NIP-04, `peer_pub_hex` may be provided as x-only (64 hex) or SEC1 (33/65 hex):
+  - If x-only (64 hex) is given, the helper auto-builds a SEC1-compressed form by trying `0x02||x` and, if needed, falling back to `0x03||x` for ECDH
+
+There are no thin wrappers; these are the canonical `nostr_*` APIs.
+
 ## Examples
 - Client: `nips/nip47/examples/nwc_client_example.c` (target: `nwc_client_example`)
 - Wallet: `nips/nip47/examples/nwc_wallet_example.c` (target: `nwc_wallet_example`)
 
-Both demonstrate negotiation and request/response building. Run after building:
+Both demonstrate negotiation, canonical encrypt/decrypt round-trips in both directions, and request/response building. Run after building:
 ```
 ./build/nips/nip47/nwc_client_example
 ./build/nips/nip47/nwc_wallet_example
 ```
+
+Expected example behavior (illustrative):
+
+- Negotiate `encryption="nip44-v2"` if both sides support it, else `"nip04"`.
+- Show ciphertext and recovered plaintext for client→wallet and wallet→client.
+- Print a valid NIP-47 request/response event JSON with `created_at` and `encryption` tag.
 
 ## GLib bindings
 Headers:
@@ -69,13 +102,17 @@ API:
 Link target for GLib wrappers: `nostr_nip47_glib`.
 
 ## Testing
-- Session test: `nips/nip47/tests/test_nwc_session.c` → `test_nip47_nwc_session` (passes under sanitizers).
-- Envelope tests: `test_nip47_nwc_envelope`, info/URI tests also included.
+- Session: `nips/nip47/tests/test_nwc_session.c` → `test_nip47_nwc_session`.
+- Envelope/info/URI tests: `test_nip47_nwc_envelope`, `test_nip47_nwc_info`, `test_nip47_nwc_uri`.
+- Crypto roundtrip: `nips/nip47/tests/test_nwc_crypto.c` → `test_nip47_nwc_crypto` covers:
+  - client→wallet and wallet→client for both `nip44-v2` and `nip04`
+  - acceptance of SEC1-compressed peer key for the NIP-44 path
 
 ## Notes & invariants
 - Kind checks enforced in parse helpers: requests must be 23194, responses 23195.
 - Result/params JSON are embedded verbatim; caller is responsible for providing valid JSON strings.
 - All canonical APIs are named `nostr_*` with no thin wrappers.
+ - NIP-44 convkey uses libsecp256k1 ECDH with x-only public keys and HKDF(Extract/Expand) via OpenSSL EVP_MAC; vectors and roundtrips are covered under sanitizers.
 
 ## Roadmap
 - Expand examples to cover error envelopes and COUNT.

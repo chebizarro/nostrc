@@ -10,6 +10,7 @@ The Nostr C library provides an implementation of the Nostr protocol, including 
 - JSON (de)serialization with optional NSON support
 - NIP implementations (e.g., NIP-04, NIP-05, NIP-13, NIP-19, NIP-29, NIP-31, NIP-34)
 - Optional memory management handled by the library
+ - NIP-47 (Wallet Connect): canonical helpers for encrypt/decrypt supporting NIP-44 v2 (preferred) and NIP-04 fallback, with automatic key format handling (x-only and SEC1) and full tests/examples.
 
 ## Quick Start
 
@@ -47,7 +48,7 @@ target_link_libraries(my_app PRIVATE ${NOSTR_LIB} ${NOSTR_JSON_LIB} ${NSYNC_LIB}
 
 - See `docs/LIBJSON.md` for libjson API, NIP-01 #tag mapping, robustness rules, and tests.
 - See `docs/SHUTDOWN.md` for libnostr/libgo shutdown order, invariants, and troubleshooting.
-- See `docs/NIP47.md` for NIP-47 (Wallet Connect) envelope helpers, negotiation, sessions, GLib bindings, and examples.
+- See `docs/NIP47.md` for NIP-47 (Wallet Connect) envelope helpers, negotiation, canonical crypto helpers (NIP-44 v2/NIP-04), accepted key formats (x-only/SEC1), sessions, GLib bindings, and examples.
 
 ## Installation
 
@@ -95,7 +96,14 @@ Guidelines:
 
 ### Usage Examples
 
-See `examples/` for basic JSON integration and event serialization. A minimal flow:
+See `examples/` for basic JSON integration and event serialization. For NIP-47 examples, see:
+
+```
+./build/nips/nip47/nwc_client_example
+./build/nips/nip47/nwc_wallet_example
+```
+
+A minimal flow:
 
 ```c
 #include "nostr-event.h"
