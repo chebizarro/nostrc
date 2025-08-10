@@ -4,6 +4,7 @@
 #include "nostr-envelope.h"
 #include "event.h"
 #include "nostr-filter.h"
+#include <stdbool.h>
 
 // Structure to hold JSON function pointers
 typedef struct _NostrJsonInterface {
@@ -43,5 +44,66 @@ int nostr_json_get_string_array_at(const char *json,
                                    const char *entry_key,
                                    char ***out_array,
                                    size_t *out_count);
+
+/* Convenience top-level getters (no object_key) */
+int nostr_json_get_string(const char *json,
+                          const char *entry_key,
+                          char **out_str);
+int nostr_json_get_string_array(const char *json,
+                                const char *entry_key,
+                                char ***out_array,
+                                size_t *out_count);
+
+/* Integer and boolean getters */
+int nostr_json_get_int(const char *json,
+                       const char *entry_key,
+                       int *out_val);
+int nostr_json_get_bool(const char *json,
+                        const char *entry_key,
+                        bool *out_val);
+int nostr_json_get_int_array(const char *json,
+                             const char *entry_key,
+                             int **out_items,
+                             size_t *out_count);
+
+/* Nested variants under object_key */
+int nostr_json_get_int_at(const char *json,
+                          const char *object_key,
+                          const char *entry_key,
+                          int *out_val);
+int nostr_json_get_bool_at(const char *json,
+                           const char *object_key,
+                           const char *entry_key,
+                           bool *out_val);
+int nostr_json_get_int_array_at(const char *json,
+                                const char *object_key,
+                                const char *entry_key,
+                                int **out_items,
+                                size_t *out_count);
+
+/* Array-of-objects helpers (for structures like fees.* arrays) */
+int nostr_json_get_array_length_at(const char *json,
+                                   const char *object_key,
+                                   const char *entry_key,
+                                   size_t *out_len);
+int nostr_json_get_int_in_object_array_at(const char *json,
+                                          const char *object_key,
+                                          const char *entry_key,
+                                          size_t index,
+                                          const char *field_key,
+                                          int *out_val);
+int nostr_json_get_string_in_object_array_at(const char *json,
+                                             const char *object_key,
+                                             const char *entry_key,
+                                             size_t index,
+                                             const char *field_key,
+                                             char **out_str);
+int nostr_json_get_int_array_in_object_array_at(const char *json,
+                                                const char *object_key,
+                                                const char *entry_key,
+                                                size_t index,
+                                                const char *field_key,
+                                                int **out_items,
+                                                size_t *out_count);
 
 #endif // NOSTR_JSON_H

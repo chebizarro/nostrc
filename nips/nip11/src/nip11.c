@@ -1,75 +1,212 @@
-#include "nostr/nip11.h"
-#include "json_interface.h"
+#include "nip11.h"
 #include <stdlib.h>
 #include <string.h>
 #include <curl/curl.h>
+#include "json.h"
+
+typedef struct {
+    char *data;
+    size_t size;
+} MemoryStruct;
 
 static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
-    size_t realsize = size * nmemb;
-    struct MemoryStruct *mem = (struct MemoryStruct *)userp;
-
-    char *ptr = realloc(mem->memory, mem->size + realsize + 1);
-    if(ptr == NULL) {
-        return 0;
-    }
-
-    mem->memory = ptr;
-    memcpy(&(mem->memory[mem->size]), contents, realsize);
-    mem->size += realsize;
-    mem->memory[mem->size] = 0;
-
-    return realsize;
+    size_t total = size * nmemb;
+    MemoryStruct *mem = (MemoryStruct *)userp;
+    char *p = realloc(mem->data, mem->size + total + 1);
+    if (!p) return 0;
+    mem->data = p;
+    memcpy(mem->data + mem->size, contents, total);
+    mem->size += total;
+    mem->data[mem->size] = '\0';
+    return total;
 }
 
-RelayInformationDocument* fetch_relay_info(const char *url) {
-    CURL *curl_handle;
-    CURLcode res;
+/* Parsing is implemented using libnostr JSON helpers (backend-agnostic). */
 
-    struct MemoryStruct chunk;
-    chunk.memory = malloc(1);
-    chunk.size = 0;
-
-    curl_global_init(CURL_GLOBAL_ALL);
-    curl_handle = curl_easy_init();
-
-    curl_easy_setopt(curl_handle, CURLOPT_URL, url);
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
-
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Accept: application/nostr+json");
-    curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
-
-    res = curl_easy_perform(curl_handle);
-
-    RelayInformationDocument *info = NULL;
-
-    if(res == CURLE_OK) {
-        info = nostr_json_deserialize(chunk.memory);
+static RelayInformationDocument *parse_json_to_doc(const char *json, const char *url_opt) {
+    if (!json) return NULL;
+    RelayInformationDocument *info = (RelayInformationDocument *)calloc(1, sizeof(RelayInformationDocument));
+    if (!info) return NULL;
+    if (url_opt) info->url = strdup(url_opt);
+    // Simple string fields
+    (void)nostr_json_get_string(json, "name", &info->name);
+    (void)nostr_json_get_string(json, "description", &info->description);
+    (void)nostr_json_get_string(json, "pubkey", &info->pubkey);
+    (void)nostr_json_get_string(json, "contact", &info->contact);
+    (void)nostr_json_get_string(json, "software", &info->software);
+    (void)nostr_json_get_string(json, "version", &info->version);
+    // supported_nips
+    size_t nips_n = 0;
+    (void)nostr_json_get_int_array(json, "supported_nips", &info->supported_nips, &nips_n);
+    info->supported_nips_count = (int)nips_n;
+    // limitation (optional subset)
+    RelayLimitationDocument *L = (RelayLimitationDocument *)calloc(1, sizeof(RelayLimitationDocument));
+    if (L) {
+        int iv; bool bv;
+        if (nostr_json_get_int_at(json, "limitation", "max_message_length", &iv) == 0) L->max_message_length = iv;
+        if (nostr_json_get_int_at(json, "limitation", "max_subscriptions", &iv) == 0) L->max_subscriptions = iv;
+        if (nostr_json_get_int_at(json, "limitation", "max_filters", &iv) == 0) L->max_filters = iv;
+        if (nostr_json_get_int_at(json, "limitation", "max_limit", &iv) == 0) L->max_limit = iv;
+        if (nostr_json_get_int_at(json, "limitation", "max_subid_length", &iv) == 0) L->max_subid_length = iv;
+        if (nostr_json_get_int_at(json, "limitation", "max_event_tags", &iv) == 0) L->max_event_tags = iv;
+        if (nostr_json_get_int_at(json, "limitation", "max_content_length", &iv) == 0) L->max_content_length = iv;
+        if (nostr_json_get_int_at(json, "limitation", "min_pow_difficulty", &iv) == 0) L->min_pow_difficulty = iv;
+        if (nostr_json_get_bool_at(json, "limitation", "auth_required", &bv) == 0) L->auth_required = bv;
+        if (nostr_json_get_bool_at(json, "limitation", "payment_required", &bv) == 0) L->payment_required = bv;
+        if (nostr_json_get_bool_at(json, "limitation", "restricted_writes", &bv) == 0) L->restricted_writes = bv;
+        // Only assign if something was actually set; otherwise free it to keep NULL when absent
+        if (L->max_message_length || L->max_subscriptions || L->max_filters || L->max_limit ||
+            L->max_subid_length || L->max_event_tags || L->max_content_length || L->min_pow_difficulty ||
+            L->auth_required || L->payment_required || L->restricted_writes) {
+            info->limitation = L;
+        } else {
+            free(L);
+        }
     }
 
-    curl_easy_cleanup(curl_handle);
-    free(chunk.memory);
-    curl_global_cleanup();
+    // Optional arrays of strings
+    size_t arr_n = 0;
+    (void)nostr_json_get_string_array(json, "relay_countries", &info->relay_countries, &arr_n);
+    info->relay_countries_count = (int)arr_n;
+    arr_n = 0;
+    (void)nostr_json_get_string_array(json, "language_tags", &info->language_tags, &arr_n);
+    info->language_tags_count = (int)arr_n;
+    arr_n = 0;
+    (void)nostr_json_get_string_array(json, "tags", &info->tags, &arr_n);
+    info->tags_count = (int)arr_n;
 
+    // Optional strings
+    (void)nostr_json_get_string(json, "posting_policy", &info->posting_policy);
+    (void)nostr_json_get_string(json, "payments_url", &info->payments_url);
+    (void)nostr_json_get_string(json, "icon", &info->icon);
+
+    // fees parsing (admission/subscription arrays and first publication entry)
+    size_t len = 0;
+    int tmpi = 0;
+    char *tmps = NULL;
+    if (nostr_json_get_array_length_at(json, "fees", "admission", &len) == 0 && len > 0) {
+        if (!info->fees) info->fees = (RelayFeesDocument *)calloc(1, sizeof(RelayFeesDocument));
+        if (info->fees) {
+            info->fees->admission.count = (int)len;
+            info->fees->admission.items = (Fee *)calloc(len, sizeof(Fee));
+            for (size_t i = 0; i < len; i++) {
+                if (nostr_json_get_int_in_object_array_at(json, "fees", "admission", i, "amount", &tmpi) == 0)
+                    info->fees->admission.items[i].amount = tmpi;
+                if (nostr_json_get_string_in_object_array_at(json, "fees", "admission", i, "unit", &tmps) == 0)
+                    info->fees->admission.items[i].unit = tmps;
+                tmps = NULL;
+            }
+        }
+    }
+    if (nostr_json_get_array_length_at(json, "fees", "subscription", &len) == 0 && len > 0) {
+        if (!info->fees) info->fees = (RelayFeesDocument *)calloc(1, sizeof(RelayFeesDocument));
+        if (info->fees) {
+            info->fees->subscription.count = (int)len;
+            info->fees->subscription.items = (Fee *)calloc(len, sizeof(Fee));
+            for (size_t i = 0; i < len; i++) {
+                if (nostr_json_get_int_in_object_array_at(json, "fees", "subscription", i, "amount", &tmpi) == 0)
+                    info->fees->subscription.items[i].amount = tmpi;
+                if (nostr_json_get_string_in_object_array_at(json, "fees", "subscription", i, "unit", &tmps) == 0)
+                    info->fees->subscription.items[i].unit = tmps;
+                tmps = NULL;
+            }
+        }
+    }
+    // publication: parse only the first entry if present
+    if (nostr_json_get_array_length_at(json, "fees", "publication", &len) == 0 && len > 0) {
+        if (!info->fees) info->fees = (RelayFeesDocument *)calloc(1, sizeof(RelayFeesDocument));
+        if (info->fees) {
+            size_t kinds_n = 0; int *kinds = NULL;
+            (void)nostr_json_get_int_array_in_object_array_at(json, "fees", "publication", 0, "kinds", &kinds, &kinds_n);
+            if (kinds && kinds_n > 0) {
+                info->fees->publication.kinds = kinds;
+                info->fees->publication.count = (int)kinds_n;
+            }
+            if (nostr_json_get_int_in_object_array_at(json, "fees", "publication", 0, "amount", &tmpi) == 0)
+                info->fees->publication.amount = tmpi;
+            if (nostr_json_get_string_in_object_array_at(json, "fees", "publication", 0, "unit", &tmps) == 0)
+                info->fees->publication.unit = tmps;
+            tmps = NULL;
+        }
+    }
     return info;
 }
 
-void free_relay_info(RelayInformationDocument *info) {
-    if (info->supported_nips) free(info->supported_nips);
+RelayInformationDocument* nostr_nip11_fetch_info(const char *url) {
+    if (!url) return NULL;
+    CURL *curl = curl_easy_init();
+    if (!curl) return NULL;
+
+    MemoryStruct chunk = {0};
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "libnostr-nip11/1.0");
+
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Accept: application/nostr+json");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    RelayInformationDocument *info = NULL;
+    CURLcode res = curl_easy_perform(curl);
+    if (res == CURLE_OK && chunk.data) {
+        info = parse_json_to_doc(chunk.data, url);
+    }
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    free(chunk.data);
+    return info;
+}
+
+RelayInformationDocument* nostr_nip11_parse_info(const char *json) {
+    if (!json) return NULL;
+    return parse_json_to_doc(json, NULL);
+}
+
+void nostr_nip11_free_info(RelayInformationDocument *info) {
+    if (!info) return;
+    if (info->url) free(info->url);
     if (info->name) free(info->name);
     if (info->description) free(info->description);
     if (info->pubkey) free(info->pubkey);
     if (info->contact) free(info->contact);
     if (info->software) free(info->software);
     if (info->version) free(info->version);
-    if (info->limitation) free(info->limitation);
-    if (info->relay_countries) free(info->relay_countries);
-    if (info->language_tags) free(info->language_tags);
-    if (info->tags) free(info->tags);
+    if (info->supported_nips) free(info->supported_nips);
+    if (info->relay_countries) {
+        for (int i = 0; i < info->relay_countries_count; i++) free(info->relay_countries[i]);
+        free(info->relay_countries);
+    }
+    if (info->language_tags) {
+        for (int i = 0; i < info->language_tags_count; i++) free(info->language_tags[i]);
+        free(info->language_tags);
+    }
+    if (info->tags) {
+        for (int i = 0; i < info->tags_count; i++) free(info->tags[i]);
+        free(info->tags);
+    }
     if (info->posting_policy) free(info->posting_policy);
     if (info->payments_url) free(info->payments_url);
-    if (info->fees) free(info->fees);
     if (info->icon) free(info->icon);
+    if (info->limitation) free(info->limitation);
+    if (info->fees) {
+        if (info->fees->admission.items) {
+            for (int i = 0; i < info->fees->admission.count; i++) {
+                if (info->fees->admission.items[i].unit) free(info->fees->admission.items[i].unit);
+            }
+            free(info->fees->admission.items);
+        }
+        if (info->fees->subscription.items) {
+            for (int i = 0; i < info->fees->subscription.count; i++) {
+                if (info->fees->subscription.items[i].unit) free(info->fees->subscription.items[i].unit);
+            }
+            free(info->fees->subscription.items);
+        }
+        if (info->fees->publication.kinds) free(info->fees->publication.kinds);
+        if (info->fees->publication.unit) free(info->fees->publication.unit);
+        free(info->fees);
+    }
     free(info);
 }

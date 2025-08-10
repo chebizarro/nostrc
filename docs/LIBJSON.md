@@ -84,3 +84,40 @@ Consumers use the libnostr wrappers:
 ## CI and sanitizers
 
 - All tests run under ASAN/UBSAN (and optionally TSAN where applicable) on macOS and Linux.
+
+## Array-of-object helpers
+
+Some NIPs use arrays of objects nested under an object key (e.g., NIP-11 `fees`). libnostr exposes convenience helpers to access these safely by index without leaking implementation details:
+
+- `nostr_json_get_array_length_at(json, object_key, entry_key, out_len)`
+- `nostr_json_get_int_in_object_array_at(json, object_key, entry_key, index, field_key, out_val)`
+- `nostr_json_get_string_in_object_array_at(json, object_key, entry_key, index, field_key, out_str)`
+- `nostr_json_get_int_array_in_object_array_at(json, object_key, entry_key, index, field_key, out_items, out_count)`
+
+Behavior:
+- All functions return 0 on success, -1 on failure or type mismatch.
+- For string results, the callee allocates with `strdup`; the caller must free.
+- For int array results, the callee allocates; the caller must free the array.
+
+Example (NIP-11 fees publication kinds):
+```c
+size_t len = 0; // number of publication fee entries
+if (nostr_json_get_array_length_at(json, "fees", "publication", &len) == 0 && len > 0) {
+    int *kinds = NULL; size_t kinds_n = 0;
+    if (nostr_json_get_int_array_in_object_array_at(json, "fees", "publication", 0, "kinds", &kinds, &kinds_n) == 0) {
+        // use kinds[0..kinds_n)
+        free(kinds);
+    }
+}
+```
+
+## NIP-11 usage
+
+The NIP-11 module (`nips/nip11/`) consumes the JSON interface exclusively (no direct Jansson) to parse Relay Info Documents:
+
+- Strings: `nostr_json_get_string()` for `name`, `description`, `software`, `version`, `posting_policy`, `payments_url`, `icon`.
+- Int arrays: `nostr_json_get_int_array()` for `supported_nips`.
+- String arrays: `nostr_json_get_string_array()` for `relay_countries`, `language_tags`, `tags`.
+- Arrays-of-objects: helpers above for `fees.admission[]`, `fees.subscription[]`, and `fees.publication[]`.
+
+Memory ownership: the NIP-11 free function `nostr_nip11_free_info()` performs deep-free of all nested arrays and strings.

@@ -63,8 +63,9 @@ typedef struct {
     char *icon;
 } RelayInformationDocument;
 
-RelayInformationDocument* fetch_relay_info(const char *url);
+RelayInformationDocument* nostr_nip11_fetch_info(const char *url);
+RelayInformationDocument* nostr_nip11_parse_info(const char *json);
 
-void free_relay_info(RelayInformationDocument *info);
+void nostr_nip11_free_info(RelayInformationDocument *info);
 
 #endif // NOSTR_NIP11_H

@@ -1,23 +1,3 @@
-### Developer Notes (libgo)
-
-- Sanitizers (Debug):
-
-```
-# AddressSanitizer + UndefinedBehaviorSanitizer
-cmake -S libgo -B build -DCMAKE_BUILD_TYPE=Debug -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON
-cmake --build build -j && ctest --test-dir build --output-on-failure
-
-# ThreadSanitizer
-cmake -S libgo -B build_tsan -DCMAKE_BUILD_TYPE=Debug -DGO_ENABLE_TSAN=ON
-cmake --build build_tsan -j && ctest --test-dir build_tsan --output-on-failure
-```
-
-- Warnings:
-
-```
-cmake -S libgo -B build -DCMAKE_BUILD_TYPE=Debug -DGO_WARNINGS_AS_ERRORS=ON
-```
-
 # Nostr C Library
 
 ![libgo CI](https://github.com/chebizarro/nostrc/actions/workflows/libgo-ci.yml/badge.svg)
@@ -160,3 +140,23 @@ The official Nostr NIPs are vendored as a git submodule under `docs/nips`.
 - Update with `scripts/update_nips.sh`
 - Keep the submodule pinned; bump deliberately in separate commits
 - Code under `nips/nipXX/` MUST reference the matching `docs/nips/XX.md`
+
+### Developer Notes (libgo)
+
+- Sanitizers (Debug):
+
+```
+# AddressSanitizer + UndefinedBehaviorSanitizer
+cmake -S libgo -B build -DCMAKE_BUILD_TYPE=Debug -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON
+cmake --build build -j && ctest --test-dir build --output-on-failure
+
+# ThreadSanitizer
+cmake -S libgo -B build_tsan -DCMAKE_BUILD_TYPE=Debug -DGO_ENABLE_TSAN=ON
+cmake --build build_tsan -j && ctest --test-dir build_tsan --output-on-failure
+```
+
+- Warnings:
+
+```
+cmake -S libgo -B build -DCMAKE_BUILD_TYPE=Debug -DGO_WARNINGS_AS_ERRORS=ON
+```
