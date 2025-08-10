@@ -26,6 +26,7 @@ add_subdirectory(libgo)
 add_subdirectory(libnostr)
 add_subdirectory(libjson)
 
+# Build NIPs (includes their libraries and tests, e.g. NIP-44)
 # Add test targets from `tests/`.
 add_subdirectory(tests)
 
