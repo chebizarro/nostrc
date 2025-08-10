@@ -24,7 +24,6 @@ extern "C" {
 #include "nostr-timestamp.h"
 #include "nostr-keys.h"
 #include "nostr-simple-pool.h"
-#include "nostr-pointer.h"
 #include "nostr-utils.h"
 #include "nostr-event-extra.h"
 

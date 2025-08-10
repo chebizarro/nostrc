@@ -16,13 +16,16 @@ include(${CMAKE_SOURCE_DIR}/NipOptions.cmake)
 # may be built and linked by consumers that need it.
 option(ENABLE_NSON "Enable NSON compilation" OFF)
 
+# Enable CTest early so subdirectories can register tests
+enable_testing()
+
 # Build order ensures libgo is available for libnostr/libjson as needed.
 add_subdirectory(libgo)
 add_subdirectory(libnostr)
 add_subdirectory(libjson)
+add_subdirectory(nips/nip19)
 
-# Enable CTest and add test targets from `tests/`.
-enable_testing()
+# Add test targets from `tests/`.
 add_subdirectory(tests)
 
 # Sanitizer helper (Debug builds)
@@ -113,7 +116,6 @@ if (NOSTR_ENABLE_GI)
         $<$<BOOL:${NSYNC_INCLUDE_DIR}>:-I${NSYNC_INCLUDE_DIR}>
         -I ${CMAKE_BINARY_DIR}/libnostr/generated
         ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-utils.h
-        ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-pointer.h
         ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-event.h
         ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-filter.h
         --output ${CMAKE_BINARY_DIR}/gir/Nostr-1.0.gir

@@ -1,34 +1,74 @@
+// Updated NIP-19 examples using canonical APIs and unified pointer helpers
+#include "nip19.h"
 #include <stdio.h>
-#include "nostr/nip19.h"
+#include <stdlib.h>
 
-int main() {
-    // Example usage of NIP-19 functions
-    const char *private_key_hex = "your-private-key-hex";
-    char *nsec = nip19_encode_private_key(private_key_hex);
-    if (nsec) {
-        printf("Bech32 Encoded Private Key: %s\n", nsec);
-        free(nsec);
-    } else {
-        printf("Failed to encode private key\n");
+static void example_nprofile(void) {
+    NostrNProfileConfig cfg = {
+        .public_key = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
+    };
+    NostrPointer *p = NULL; char *bech = NULL;
+    if (nostr_pointer_from_nprofile_config(&cfg, &p) == 0 &&
+        nostr_pointer_to_bech32(p, &bech) == 0) {
+        printf("nprofile: %s\n", bech);
     }
+    free(bech); nostr_pointer_free(p);
+}
 
-    const char *public_key_hex = "your-public-key-hex";
-    char *npub = nip19_encode_public_key(public_key_hex);
-    if (npub) {
-        printf("Bech32 Encoded Public Key: %s\n", npub);
-        free(npub);
-    } else {
-        printf("Failed to encode public key\n");
+static void example_nevent(void) {
+    const char *relays[] = { "wss://r.x.com" };
+    NostrNEventConfig cfg = {
+        .id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        .author = NULL, .kind = 1,
+        .relays = relays, .relays_count = 1,
+    };
+    NostrPointer *p = NULL; char *bech = NULL;
+    if (nostr_pointer_from_nevent_config(&cfg, &p) == 0 &&
+        nostr_pointer_to_bech32(p, &bech) == 0) {
+        printf("nevent: %s\n", bech);
     }
+    free(bech); nostr_pointer_free(p);
+}
 
-    const char *event_id_hex = "your-event-id-hex";
-    char *note = nip19_encode_note_id(event_id_hex);
-    if (note) {
-        printf("Bech32 Encoded Event ID: %s\n", note);
-        free(note);
-    } else {
-        printf("Failed to encode event ID\n");
+static void example_naddr(void) {
+    NostrNAddrConfig cfg = {
+        .identifier = "my-d-tag",
+        .public_key = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
+        .kind = 30023,
+    };
+    NostrPointer *p = NULL; char *bech = NULL;
+    if (nostr_pointer_from_naddr_config(&cfg, &p) == 0 &&
+        nostr_pointer_to_bech32(p, &bech) == 0) {
+        printf("naddr: %s\n", bech);
     }
+    free(bech); nostr_pointer_free(p);
+}
 
+static void example_nrelay_multi(void) {
+    const char *relays[] = { "wss://r.x.com", "wss://relay.example.com" };
+    char *bech = NULL;
+    if (nostr_nip19_encode_nrelay_multi(relays, 2, &bech) == 0) {
+        printf("nrelay (2): %s\n", bech);
+        free(bech);
+    }
+}
+
+static void example_parse_roundtrip(const char *bech) {
+    NostrPointer *p = NULL; char *out = NULL;
+    if (nostr_pointer_parse(bech, &p) == 0) {
+        if (nostr_pointer_to_bech32(p, &out) == 0) {
+            printf("roundtrip: %s\n", out);
+        }
+    }
+    free(out); nostr_pointer_free(p);
+}
+
+int main(void) {
+    example_nprofile();
+    example_nevent();
+    example_naddr();
+    example_nrelay_multi();
+    // Try parsing a bech32 back into a pointer (replace with your own)
+    example_parse_roundtrip("nprofile1qqsrhuxx8l9ex335q7he0f09aej04zpazpl0ne2cgukyawd24mayt8gpp4mhxue69uhhytnc9e3k7mgpz4mhxue69uhkg6nzv9ejuumpv34kytnrdaksjlyr9p");
     return 0;
 }

@@ -1,219 +1,77 @@
-#include "nostr/nip19.h"
-#include "bech32.h"
-#include "nostr-event.h"
-#include "util.h"
-#include <stdint.h>
-#include <stdio.h>
+/* Canonical NIP-19 implementation for bare keys and ids.
+ * Spec: docs/nips/19.md
+ * - "Bare keys and ids" (lines 13–25): npub, nsec, note use bech32 (not m).
+ */
+
+#include "nip19.h"
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
-// Helper function to convert hex to binary
-static int hex_to_bin(const char *hex, uint8_t *bin, size_t bin_len) {
-    size_t hex_len = strlen(hex);
-    if (hex_len % 2 != 0 || bin_len < hex_len / 2) {
-        return -1;
-    }
-    for (size_t i = 0; i < hex_len; i += 2) {
-        sscanf(hex + i, "%2hhx", &bin[i / 2]);
-    }
-    return 0;
+static int encode32(const char *hrp, const uint8_t in[32], char **out_bech) {
+    uint8_t *data5 = NULL; size_t data5_len = 0;
+    if (nostr_b32_to_5bit(in, 32, &data5, &data5_len) != 0) return -1;
+    int rc = nostr_b32_encode(hrp, data5, data5_len, out_bech);
+    free(data5);
+    return rc;
 }
 
-// Helper function to convert binary to hex
-static void bin_to_hex(const uint8_t *bin, size_t bin_len, char *hex) {
-    for (size_t i = 0; i < bin_len; i++) {
-        sprintf(hex + i * 2, "%02x", bin[i]);
+static int decode32_expect_hrp(const char *expected_hrp, const char *bech, uint8_t out[32]) {
+    char *hrp = NULL; uint8_t *data5 = NULL; size_t data5_len = 0;
+    if (nostr_b32_decode(bech, &hrp, &data5, &data5_len) != 0) return -1;
+    int rc = -1;
+    if (strcmp(hrp, expected_hrp) == 0) {
+        uint8_t *data8 = NULL; size_t data8_len = 0;
+        if (nostr_b32_to_8bit(data5, data5_len, &data8, &data8_len) == 0 && data8_len == 32) {
+            memcpy(out, data8, 32);
+            rc = 0;
+        }
+        if (data8) { memset(data8, 0, data8_len); free(data8); }
     }
+    free(hrp);
+    if (data5) free(data5);
+    return rc;
 }
 
-int nip19_decode(const char *bech32_string, char *prefix, size_t prefix_len, void **value, size_t *value_len) {
-    char hrp[84];
-    size_t data_len = 0;
-    uint8_t data[65];
-    int result = bech32_decode(hrp, data, &data_len, bech32_string);
-    if (result == -1) {
-        return -1;
-    }
-
-    // Convert 5-bit data to 8-bit data
-    uint8_t bin[65];
-    size_t bin_len = 0;
-    if (bech32_convert_bits(bin, &bin_len, 8, data, data_len, 5, 0) == -1) {
-        return -1;
-    }
-
-    strncpy(prefix, hrp, prefix_len);
-    *value = malloc(bin_len);
-    if (*value == NULL) {
-        return -1;
-    }
-    memcpy(*value, bin, bin_len);
-    *value_len = bin_len;
-
-    return 0;
+int nostr_nip19_encode_npub(const uint8_t pubkey[32], char **out_bech) {
+    return encode32("npub", pubkey, out_bech);
 }
 
-char *nip19_encode_private_key(const char *private_key_hex) {
-    uint8_t bin[32];
-    if (hex_to_bin(private_key_hex, bin, sizeof(bin)) == -1) {
-        return NULL;
-    }
-
-    // Convert 8-bit data to 5-bit data
-    uint8_t data[52];
-    size_t data_len = 0;
-    if (bech32_convert_bits(data, &data_len, 5, bin, sizeof(bin), 8, 1) == -1) {
-        return NULL;
-    }
-
-    return bech32_encode("nsec", data, data_len);
+int nostr_nip19_decode_npub(const char *npub, uint8_t out_pubkey[32]) {
+    return decode32_expect_hrp("npub", npub, out_pubkey);
 }
 
-char *nip19_encode_public_key(const char *public_key_hex) {
-    uint8_t bin[32];
-    if (hex_to_bin(public_key_hex, bin, sizeof(bin)) == -1) {
-        return NULL;
-    }
-
-    // Convert 8-bit data to 5-bit data
-    uint8_t data[52];
-    size_t data_len = 0;
-    if (bech32_convert_bits(data, &data_len, 5, bin, sizeof(bin), 8, 1) == -1) {
-        return NULL;
-    }
-
-    return bech32_encode("npub", data, data_len);
+int nostr_nip19_encode_nsec(const uint8_t seckey[32], char **out_bech) {
+    /* Zeroization of temporary buffers handled in helpers. Do not log secrets. */
+    return encode32("nsec", seckey, out_bech);
 }
 
-char *nip19_encode_note_id(const char *event_id_hex) {
-    uint8_t bin[32];
-    if (hex_to_bin(event_id_hex, bin, sizeof(bin)) == -1) {
-        return NULL;
-    }
-
-    // Convert 8-bit data to 5-bit data
-    uint8_t data[52];
-    size_t data_len = 0;
-    if (bech32_convert_bits(data, &data_len, 5, bin, sizeof(bin), 8, 1) == -1) {
-        return NULL;
-    }
-
-    return bech32_encode("note", data, data_len);
+int nostr_nip19_decode_nsec(const char *nsec, uint8_t out_seckey[32]) {
+    return decode32_expect_hrp("nsec", nsec, out_seckey);
 }
 
-char *nip19_encode_profile(const char *public_key_hex, const char *relays[], size_t relays_len) {
-    uint8_t bin[32];
-    if (hex_to_bin(public_key_hex, bin, sizeof(bin)) == -1) {
-        return NULL;
-    }
-
-    // Prepare TLV encoded data
-    uint8_t tlv_data[1024];
-    size_t tlv_len = 0;
-    tlv_data[tlv_len++] = TLV_DEFAULT;
-    tlv_data[tlv_len++] = 32;
-    memcpy(tlv_data + tlv_len, bin, 32);
-    tlv_len += 32;
-
-    for (size_t i = 0; i < relays_len; i++) {
-        size_t relay_len = strlen(relays[i]);
-        tlv_data[tlv_len++] = TLV_RELAY;
-        tlv_data[tlv_len++] = relay_len;
-        memcpy(tlv_data + tlv_len, relays[i], relay_len);
-        tlv_len += relay_len;
-    }
-
-    // Convert 8-bit data to 5-bit data
-    uint8_t data[1024];
-    size_t data_len = 0;
-    if (bech32_convert_bits(data, &data_len, 5, tlv_data, tlv_len, 8, 1) == -1) {
-        return NULL;
-    }
-
-    return bech32_encode("nprofile", data, data_len);
+int nostr_nip19_encode_note(const uint8_t event_id[32], char **out_bech) {
+    return encode32("note", event_id, out_bech);
 }
 
-char *nip19_encode_event(const char *event_id_hex, const char *relays[], size_t relays_len, const char *author_hex) {
-    uint8_t bin[32];
-    if (hex_to_bin(event_id_hex, bin, sizeof(bin)) == -1) {
-        return NULL;
-    }
-
-    // Prepare TLV encoded data
-    uint8_t tlv_data[1024];
-    size_t tlv_len = 0;
-    tlv_data[tlv_len++] = TLV_DEFAULT;
-    tlv_data[tlv_len++] = 32;
-    memcpy(tlv_data + tlv_len, bin, 32);
-    tlv_len += 32;
-
-    for (size_t i = 0; i < relays_len; i++) {
-        size_t relay_len = strlen(relays[i]);
-        tlv_data[tlv_len++] = TLV_RELAY;
-        tlv_data[tlv_len++] = relay_len;
-        memcpy(tlv_data + tlv_len, relays[i], relay_len);
-        tlv_len += relay_len;
-    }
-
-    if (hex_to_bin(author_hex, bin, sizeof(bin)) == 0) {
-        tlv_data[tlv_len++] = TLV_AUTHOR;
-        tlv_data[tlv_len++] = 32;
-        memcpy(tlv_data + tlv_len, bin, 32);
-        tlv_len += 32;
-    }
-
-    // Convert 8-bit data to 5-bit data
-    uint8_t data[1024];
-    size_t data_len = 0;
-    if (bech32_convert_bits(data, &data_len, 5, tlv_data, tlv_len, 8, 1) == -1) {
-        return NULL;
-    }
-
-    return bech32_encode("nevent", data, data_len);
+int nostr_nip19_decode_note(const char *note, uint8_t out_event_id[32]) {
+    return decode32_expect_hrp("note", note, out_event_id);
 }
 
-char *nip19_encode_entity(const char *public_key_hex, int kind, const char *identifier, const char *relays[], size_t relays_len) {
-    // Prepare TLV encoded data
-    uint8_t tlv_data[1024];
-    size_t tlv_len = 0;
-    size_t id_len = strlen(identifier);
-    tlv_data[tlv_len++] = TLV_DEFAULT;
-    tlv_data[tlv_len++] = id_len;
-    memcpy(tlv_data + tlv_len, identifier, id_len);
-    tlv_len += id_len;
-
-    for (size_t i = 0; i < relays_len; i++) {
-        size_t relay_len = strlen(relays[i]);
-        tlv_data[tlv_len++] = TLV_RELAY;
-        tlv_data[tlv_len++] = relay_len;
-        memcpy(tlv_data + tlv_len, relays[i], relay_len);
-        tlv_len += relay_len;
-    }
-
-    uint8_t bin[32];
-    if (hex_to_bin(public_key_hex, bin, sizeof(bin)) == 0) {
-        tlv_data[tlv_len++] = TLV_AUTHOR;
-        tlv_data[tlv_len++] = 32;
-        memcpy(tlv_data + tlv_len, bin, 32);
-        tlv_len += 32;
-    }
-
-    uint8_t kind_bytes[4];
-    kind_bytes[0] = (uint8_t)(kind >> 24);
-    kind_bytes[1] = (uint8_t)(kind >> 16);
-    kind_bytes[2] = (uint8_t)(kind >> 8);
-    kind_bytes[3] = (uint8_t)kind;
-    tlv_data[tlv_len++] = TLV_KIND;
-    tlv_data[tlv_len++] = 4;
-    memcpy(tlv_data + tlv_len, kind_bytes, 4);
-    tlv_len += 4;
-
-    // Convert 8-bit data to 5-bit data
-    uint8_t data[1024];
-    size_t data_len = 0;
-    if (bech32_convert_bits(data, &data_len, 5, tlv_data, tlv_len, 8, 1) == -1) {
-        return NULL;
-    }
-
-    return bech32_encode("naddr", data, data_len);
+int nostr_nip19_inspect(const char *bech, NostrBech32Type *out_type) {
+    if (!bech || !out_type) return -1; *out_type = NOSTR_B32_UNKNOWN;
+    const char *p = strchr(bech, '1');
+    if (!p || p == bech) return -1;
+    size_t hlen = (size_t)(p - bech);
+    char hrp[16]; if (hlen >= sizeof(hrp)) return -1;
+    for (size_t i = 0; i < hlen; ++i) hrp[i] = (char)tolower((unsigned char)bech[i]);
+    hrp[hlen] = '\0';
+    if (strcmp(hrp, "npub") == 0) { *out_type = NOSTR_B32_NPUB; return 0; }
+    if (strcmp(hrp, "nsec") == 0) { *out_type = NOSTR_B32_NSEC; return 0; }
+    if (strcmp(hrp, "note") == 0) { *out_type = NOSTR_B32_NOTE; return 0; }
+    if (strcmp(hrp, "nprofile") == 0) { *out_type = NOSTR_B32_NPROFILE; return 0; }
+    if (strcmp(hrp, "nevent") == 0) { *out_type = NOSTR_B32_NEVENT; return 0; }
+    if (strcmp(hrp, "naddr") == 0) { *out_type = NOSTR_B32_NADDR; return 0; }
+    if (strcmp(hrp, "nrelay") == 0) { *out_type = NOSTR_B32_NRELAY; return 0; }
+    return 0; // unknown HRP but success indicating parsed hrp
 }
