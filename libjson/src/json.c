@@ -50,6 +50,8 @@ char *jansson_event_serialize(const NostrEvent *event) {
     json_object_set_new(json_obj, "created_at", json_integer((json_int_t)event->created_at));
     if (event->content)
         json_object_set_new(json_obj, "content", json_string(event->content));
+    if (event->sig)
+        json_object_set_new(json_obj, "sig", json_string(event->sig));
 
     // tags (array of arrays) if present
     if (event->tags && event->tags->count > 0) {

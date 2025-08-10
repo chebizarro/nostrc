@@ -23,7 +23,9 @@ enable_testing()
 add_subdirectory(libgo)
 add_subdirectory(libnostr)
 add_subdirectory(libjson)
+add_subdirectory(nips/nip04)
 add_subdirectory(nips/nip19)
+add_subdirectory(nips/nip46)
 
 # Add test targets from `tests/`.
 add_subdirectory(tests)
