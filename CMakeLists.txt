@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.10)
 project(nostrc)
 
+# Enable CTest early so all subdirectories can register tests (including NIPs)
+enable_testing()
+
 # Top-level build for the nostrc monorepo.
 # This project builds multiple libraries:
 #  - libgo: Go-like concurrency primitives in C (channels, contexts, etc.)
@@ -16,17 +19,12 @@ include(${CMAKE_SOURCE_DIR}/NipOptions.cmake)
 # may be built and linked by consumers that need it.
 option(ENABLE_NSON "Enable NSON compilation" OFF)
 
-# Enable CTest early so subdirectories can register tests
-enable_testing()
+# (enable_testing already called at the top)
 
 # Build order ensures libgo is available for libnostr/libjson as needed.
 add_subdirectory(libgo)
 add_subdirectory(libnostr)
 add_subdirectory(libjson)
-add_subdirectory(nips/nip04)
-add_subdirectory(nips/nip19)
-add_subdirectory(nips/nip46)
-add_subdirectory(nips/nip47)
 
 # Add test targets from `tests/`.
 add_subdirectory(tests)

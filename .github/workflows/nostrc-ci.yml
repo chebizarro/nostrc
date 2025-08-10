@@ -1,0 +1,87 @@
+name: nostrc CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }} • ${{ matrix.sanitizer }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        sanitizer: [asan_ubsan, tsan]
+
+    env:
+      CMAKE_BUILD_TYPE: Debug
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+      UBSAN_OPTIONS: print_stacktrace=1
+      TSAN_OPTIONS: halt_on_error=1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Ubuntu)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y build-essential cmake ninja-build clang git pkg-config \
+                                  libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
+                                  libssl-dev
+          # Build nsync from source (fast, small)
+          git clone --depth 1 https://github.com/google/nsync.git
+          cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build nsync/build -j
+          sudo cmake --install nsync/build
+
+      - name: Install dependencies (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          brew update
+          brew upgrade
+          brew install cmake ninja pkg-config jansson libsecp256k1 libwebsockets libsodium openssl@3 || true
+          if brew info nsync >/dev/null 2>&1; then
+            brew install nsync || true
+          else
+            git clone --depth 1 https://github.com/google/nsync.git
+            cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release
+            cmake --build nsync/build -j
+            sudo cmake --install nsync/build
+          fi
+
+      - name: Configure (sanitizers + ENABLE_NIP19/49)
+        run: |
+          case "${{ matrix.sanitizer }}" in
+            asan_ubsan)
+              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+                -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
+                -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON
+              ;;
+            tsan)
+              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+                -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
+                -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON
+              ;;
+          esac
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Archive logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }}-${{ matrix.sanitizer }}-monorepo-logs
+          path: |
+            build/Testing/Temporary/*
+            build/Testing/*/LastTest.log
+            build/CTestTestfile.cmake
+          if-no-files-found: ignore
