@@ -16,7 +16,7 @@ int main(void) {
     Error *err = NULL;
     GoContext *ctx = go_context_background();
 
-    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
+    NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay && err == NULL);
 
     // Connect starts workers (writer + message_loop). In test mode, message_loop exits promptly.

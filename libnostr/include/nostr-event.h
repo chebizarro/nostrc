@@ -6,6 +6,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "nostr-tag.h"
 
 /* Opaque to GI; implemented in src wrappers */
 /**
@@ -13,7 +14,17 @@
  *
  * Opaque event record; registered as a GBoxed type via `nostr_event_get_type()`.
  */
-typedef struct _NostrEvent NostrEvent;
+// Define the NostrEvent structure
+typedef struct _NostrEvent {
+    char *id;
+    char *pubkey;
+    int64_t created_at;
+    int kind;
+    NostrTags *tags;
+    char *content;
+    char *sig;
+    void *extra; // Extra fields
+} NostrEvent;
 
 #ifdef __cplusplus
 extern "C" {

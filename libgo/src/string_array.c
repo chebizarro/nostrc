@@ -115,3 +115,14 @@ int string_array_contains(const StringArray *array, const char *str) {
     }
     return 0; // String not found
 }
+
+// Set the string at the given index
+void string_array_set(StringArray *array, size_t index, const char *value) {
+    if (index >= array->size) {
+        fprintf(stderr, "Index out of bounds\n");
+        return;
+    }
+    // Free the string at the given index
+    free(array->data[index]);
+    array->data[index] = strdup(value); // Use strdup to allocate a copy of the string
+}

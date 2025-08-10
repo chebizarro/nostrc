@@ -1,11 +1,10 @@
 #ifndef NOSTR_RELAY_PRIVATE_H
 #define NOSTR_RELAY_PRIVATE_H
 
-#include "event.h"
-#include "wait_group.h"
+#include "go.h"
 #include <stdbool.h>
 
-struct _RelayPrivate {
+struct _NostrRelayPrivate {
     nsync_mu mutex;
 
     GoContext *connection_context;
@@ -22,11 +21,11 @@ struct _RelayPrivate {
     GoWaitGroup workers;
 };
 
-typedef struct _write_request {
+typedef struct _NostrRelayWriteRequest {
     char *msg;
     GoChannel *answer;
-} write_request;
+} NostrRelayWriteRequest;
 
-typedef void (*ok_callback)(bool, char *);
+typedef void (*NostrRelayOkCallback)(bool, char *);
 
 #endif // NOSTR_RELAY_PRIVATE_H

@@ -28,7 +28,7 @@ Ownership: Functions returning `char*` allocate memory; caller must free.
 ### Keys — `keys.h`
 - Key helpers and conversions for Nostr (pubkey/privkey). Typically backed by libsecp256k1.
 
-### Relays & Connections — `relay.h`, `connection.h`, `subscription.h`, `filter.h`, `relay_store.h`, `simplepool.h`
+### Relays & Connections — `nostr-relay.h`, `connection.h`, `nostr-subscription.h`, `nostr-filter.h`, `relay_store.h`, `simplepool.h`
 - Manage connections to relays, subscriptions with filters, and pools of relays.
 - Typical flow:
   - Build `Filter` and `Subscription`

@@ -1,7 +1,7 @@
 #ifndef NOSTR_NIP19_H
 #define NOSTR_NIP19_H
 
-#include "event.h"
+#include "nostr-event.h"
 #include <stdbool.h>
 #include <stdint.h>
 

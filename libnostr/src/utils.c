@@ -1,13 +1,15 @@
-#include "utils.h"
+#include "nostr-utils.h"
 #include <ctype.h>
 #include <libgen.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
+#include <nsync.h>
 
 // Helper function to trim leading and trailing whitespace
-static char *trim_whitespace(char *str) {
+static char *nostr_trim_whitespace(char *str) {
     char *end;
 
     // Trim leading space
@@ -17,6 +19,7 @@ static char *trim_whitespace(char *str) {
     if (*str == 0) {
         return str;
     }
+
 
     // Trim trailing space
     end = str + strlen(str) - 1;
@@ -29,7 +32,7 @@ static char *trim_whitespace(char *str) {
 }
 
 // NormalizeURL normalizes the url and replaces http://, https:// schemes with ws://, wss://
-char *normalize_url(const char *u) {
+char *nostr_normalize_url(const char *u) {
     if (!u || strlen(u) == 0) {
         return strdup("");
     }
@@ -38,7 +41,7 @@ char *normalize_url(const char *u) {
     if (!url)
         return NULL;
 
-    url = trim_whitespace(url);
+    url = nostr_trim_whitespace(url);
 
     for (char *p = url; *p; ++p) {
         *p = tolower((unsigned char)*p);
@@ -99,7 +102,7 @@ char *normalize_url(const char *u) {
 }
 
 // NormalizeOKMessage takes a string message that is to be sent in an `OK` or `CLOSED` command
-char *normalize_ok_message(const char *reason, const char *prefix) {
+char *nostr_normalize_ok_message(const char *reason, const char *prefix) {
     if (!reason || strlen(reason) == 0 || !prefix) {
         return strdup(prefix);
     }
@@ -127,10 +130,10 @@ char *normalize_ok_message(const char *reason, const char *prefix) {
 }
 
 // Initialize mutex pool
-pthread_mutex_t named_mutex_pool[MAX_LOCKS] = {PTHREAD_MUTEX_INITIALIZER};
+pthread_mutex_t nostr_named_mutex_pool[MAX_LOCKS] = {PTHREAD_MUTEX_INITIALIZER};
 
 // Simple hash function for demonstration
-uint64_t memhash(const char *data, size_t len) {
+uint64_t nostr_memhash(const char *data, size_t len) {
     uint64_t hash = 5381;
     for (size_t i = 0; i < len; i++) {
         hash = ((hash << 5) + hash) + data[i];
@@ -139,16 +142,16 @@ uint64_t memhash(const char *data, size_t len) {
 }
 
 // Function to acquire a named lock
-void named_lock(const char *name, void (*critical_section)(void *), void *arg) {
-    uint64_t hash = memhash(name, strlen(name));
+void nostr_named_lock(const char *name, void (*critical_section)(void *), void *arg) {
+    uint64_t hash = nostr_memhash(name, strlen(name));
     size_t idx = hash % MAX_LOCKS;
-    pthread_mutex_lock(&named_mutex_pool[idx]);
+    pthread_mutex_lock(&nostr_named_mutex_pool[idx]);
     critical_section(arg);
-    pthread_mutex_unlock(&named_mutex_pool[idx]);
+    pthread_mutex_unlock(&nostr_named_mutex_pool[idx]);
 }
 
 // Function to compare two arrays for similarity
-bool similar(const int *as, size_t as_len, const int *bs, size_t bs_len) {
+bool nostr_similar(const int *as, size_t as_len, const int *bs, size_t bs_len) {
     if (as_len != bs_len) {
         return false;
     }
@@ -169,8 +172,9 @@ bool similar(const int *as, size_t as_len, const int *bs, size_t bs_len) {
     return true;
 }
 
+
 // Function to escape a string for JSON encoding
-char *escape_string(const char *s) {
+char *nostr_escape_string(const char *s) {
     size_t len = strlen(s);
     size_t escaped_len = len * 2 + 2; // rough estimate
     char *escaped = (char *)malloc(escaped_len);
@@ -227,7 +231,7 @@ char *escape_string(const char *s) {
 }
 
 // Function to compare two pointers for equality
-bool are_pointer_values_equal(const void *a, const void *b, size_t size) {
+bool nostr_pointer_values_equal(const void *a, const void *b, size_t size) {
     if (a == NULL && b == NULL) {
         return true;
     }
@@ -237,7 +241,7 @@ bool are_pointer_values_equal(const void *a, const void *b, size_t size) {
     return false;
 }
 
-int64_t sub_id_to_serial(const char *sub_id) {
+int64_t nostr_sub_id_to_serial(const char *sub_id) {
     if (!sub_id || !*sub_id) return -1;
 
     // Accept either plain numeric IDs ("123") or numeric prefix followed by ':' ("123:foo")
@@ -253,7 +257,7 @@ int64_t sub_id_to_serial(const char *sub_id) {
 }
 
 // Convert hex string to binary
-bool hex2bin(unsigned char *bin, const char *hex, size_t bin_len) {
+bool nostr_hex2bin(unsigned char *bin, const char *hex, size_t bin_len) {
     if (!bin || !hex) return false;
     size_t hex_len = strlen(hex);
     if (hex_len != bin_len * 2) return false;

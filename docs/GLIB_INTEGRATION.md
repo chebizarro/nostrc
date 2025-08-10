@@ -112,11 +112,11 @@ These annotations enable language bindings (e.g., Python via PyGObject) to infer
 
 ## Boxed types and GI-friendly wrappers
 
-### NostrFilter (GBoxed) and GI wrappers
+### NostrFilter (GBoxed) and GI helpers
 
 - Boxed registration: `nostr_filter_get_type()`; type name `NostrFilter`.
 - Deep copy/free: `nostr_filter_copy()` / `nostr_filter_free()`; used by the boxed type.
-- For GI, avoid exposing internal arrays/structs directly. Use the wrapper header `libnostr/include/nostr-filter-wrap.h` which provides read and write helpers with primitive types only.
+- For GI, avoid exposing internal arrays/structs directly. Use the helpers declared in `libnostr/include/nostr-filter.h` which provide read and write accessors using primitive types only. These were consolidated from the former transitional wrapper header.
 
 Read helpers (all `(transfer none)`):
 
@@ -171,19 +171,19 @@ nostr_filter_free(f);
 - Relay is now reference counted (`refcount` field). Public APIs:
 
 ```c
-Relay *relay_ref(Relay *relay);     // increments refcount
-void   relay_unref(Relay *relay);   // decrements; frees when hits 0
+NostrRelay *nostr_relay_ref(NostrRelay *relay);     // increments refcount
+void        nostr_relay_unref(NostrRelay *relay);   // decrements; frees when hits 0
 ```
 
-- Boxed registration (guarded by GLib): the boxed copy uses `relay_ref()` and boxed free uses `relay_unref()`. This ensures GI languages can hold references safely without duplicating threads or connection state.
+- Boxed registration (guarded by GLib): the boxed copy uses `nostr_relay_ref()` and boxed free uses `nostr_relay_unref()`. This ensures GI languages can hold references safely without duplicating threads or connection state.
 
 Ownership rules:
 
-- `new_relay()` returns ownership to the caller — treat as `(transfer full)`.
-- Passing a relay into GI-managed fields/containers typically adds a ref; always call `relay_unref()` (or `free_relay()` which calls unref) when you are done.
+- `nostr_relay_new()` returns ownership to the caller — treat as `(transfer full)`.
+- Passing a relay into GI-managed fields/containers typically adds a ref; always call `nostr_relay_unref()` (or `nostr_relay_free()` which calls unref) when you are done.
 - Do not attempt to deep-copy a relay; copying threads/connection is undefined. Use refs.
 
 Shutdown order and safety:
 
-- `relay_close()` cancels the connection context, closes queues, waits worker threads, and then closes the network connection in a safe order. See `docs/SHUTDOWN.md` for details.
+- `nostr_relay_close()` cancels the connection context, closes queues, waits worker threads, and then closes the network connection in a safe order. See `docs/SHUTDOWN.md` for details.
 

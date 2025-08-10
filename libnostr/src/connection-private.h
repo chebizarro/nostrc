@@ -5,7 +5,7 @@
 #include <pthread.h>
 #include "nsync.h"
 
-struct _ConnectionPrivate {
+struct _NostrConnectionPrivate {
     struct lws *wsi;
     int enable_compression;
     struct lws_context *context;

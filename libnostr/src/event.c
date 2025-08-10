@@ -1,7 +1,7 @@
-#include "event.h"
+#include "nostr-event.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
-#include "utils.h"
+#include "nostr-utils.h"
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 #include <secp256k1.h>
@@ -40,26 +40,23 @@ void nostr_event_free(NostrEvent *event) {
 }
 
 /* Deep-copy helpers for Tags/Tag (used by nostr_event_copy) */
-static Tag *tag_clone(const Tag *src) {
+static NostrTag *tag_clone(const NostrTag *src) {
     if (!src) return NULL;
-    size_t n = string_array_size((StringArray *)src);
-    StringArray *dst = new_string_array((int)n);
+    size_t n = nostr_tag_size(src);
+    NostrTag *dst = nostr_tag_new(nostr_tag_get_key(src));
     for (size_t i = 0; i < n; i++) {
-        const char *s = string_array_get((const StringArray *)src, i);
-        if (s) string_array_add(dst, s);
+        const char *s = nostr_tag_get(src, i);
+        if (s) nostr_tag_append(dst, s);
     }
-    return (Tag *)dst;
+    return dst;
 }
 
-static Tags *tags_clone(const Tags *src) {
+static NostrTags *tags_clone(const NostrTags *src) {
     if (!src) return NULL;
-    Tags *dst = (Tags *)malloc(sizeof(Tags));
+    NostrTags *dst = nostr_tags_new(nostr_tags_size(src));
     if (!dst) return NULL;
-    dst->count = src->count;
-    dst->data = (Tag **)calloc(dst->count, sizeof(Tag *));
-    if (!dst->data) { free(dst); return NULL; }
-    for (size_t i = 0; i < dst->count; i++) {
-        dst->data[i] = tag_clone(src->data[i]);
+    for (size_t i = 0; i < nostr_tags_size(src); i++) {
+        nostr_tags_append(dst, tag_clone(nostr_tags_get(src, i)));
     }
     return dst;
 }
@@ -130,7 +127,7 @@ static char *nostr_event_serialize(NostrEvent *event) {
     free(tags_json);
 
     // Escape and append content
-    char *escaped_content = escape_string(event->content);
+    char *escaped_content = nostr_escape_string(event->content);
     if (!escaped_content) {
         free(result);
         return NULL;
@@ -193,14 +190,14 @@ bool nostr_event_check_signature(NostrEvent *event) {
 
     // Decode public key from hex
     unsigned char pubkey_bin[32]; // 32 bytes for schnorr pubkey
-    if (!hex2bin(pubkey_bin, event->pubkey, sizeof(pubkey_bin))) {
+    if (!nostr_hex2bin(pubkey_bin, event->pubkey, sizeof(pubkey_bin))) {
         fprintf(stderr, "Invalid public key hex\n");
         return false;
     }
 
     // Decode signature from hex
     unsigned char sig_bin[64]; // 64 bytes for schnorr signature
-    if (!hex2bin(sig_bin, event->sig, sizeof(sig_bin))) {
+    if (!nostr_hex2bin(sig_bin, event->sig, sizeof(sig_bin))) {
         fprintf(stderr, "Invalid signature hex\n");
         return false;
     }
@@ -225,7 +222,7 @@ bool nostr_event_check_signature(NostrEvent *event) {
     unsigned char hash[32];
     bool have_hash = false;
     if (event->id && strlen(event->id) == 64) {
-        if (hex2bin(hash, event->id, sizeof(hash))) {
+        if (nostr_hex2bin(hash, event->id, sizeof(hash))) {
             have_hash = true;
         }
     }
@@ -278,7 +275,7 @@ int nostr_event_sign(NostrEvent *event, const char *private_key) {
     int return_val = -1;
 
     // Convert the private key from hex to binary
-    if (!hex2bin(privkey_bin, private_key, sizeof(privkey_bin))) {
+    if (!nostr_hex2bin(privkey_bin, private_key, sizeof(privkey_bin))) {
         return -1;
     }
 
@@ -388,7 +385,7 @@ void nostr_event_set_tags(NostrEvent *event, void *tags) {
     if (event->tags && (void *)event->tags != tags) {
         nostr_tags_free(event->tags);
     }
-    event->tags = (Tags *)tags; /* takes ownership */
+    event->tags = (NostrTags *)tags; /* takes ownership */
 }
 
 const char *nostr_event_get_content(const NostrEvent *event) {

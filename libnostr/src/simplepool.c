@@ -1,4 +1,4 @@
-#include "simplepool.h"
+#include "nostr-simple-pool.h"
 #include "nostr-relay.h"
 #include "go.h"
 #include <pthread.h>
@@ -8,8 +8,8 @@
 #include <unistd.h>
 
 // Function to create a SimplePool
-SimplePool *nostr_simple_pool_new(void) {
-    SimplePool *pool = (SimplePool *)malloc(sizeof(SimplePool));
+NostrSimplePool *nostr_simple_pool_new(void) {
+    NostrSimplePool *pool = (NostrSimplePool *)malloc(sizeof(NostrSimplePool));
     if (!pool)
         return NULL;
 
@@ -25,7 +25,7 @@ SimplePool *nostr_simple_pool_new(void) {
 }
 
 // Function to free a SimplePool
-void nostr_simple_pool_free(SimplePool *pool) {
+void nostr_simple_pool_free(NostrSimplePool *pool) {
     if (pool) {
         for (size_t i = 0; i < pool->relay_count; i++) {
             nostr_relay_free(pool->relays[i]);
@@ -37,7 +37,7 @@ void nostr_simple_pool_free(SimplePool *pool) {
 }
 
 // Function to ensure a relay connection
-void nostr_simple_pool_ensure_relay(SimplePool *pool, const char *url) {
+void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url) {
     pthread_mutex_lock(&pool->pool_mutex);
 
     for (size_t i = 0; i < pool->relay_count; i++) {
@@ -60,10 +60,10 @@ void nostr_simple_pool_ensure_relay(SimplePool *pool, const char *url) {
     GoContext *ctx = NULL;
     go_context_init(ctx, 7);
     Error **err = NULL;
-    Relay *relay = nostr_relay_new(ctx, url, err);
+    NostrRelay *relay = nostr_relay_new(ctx, url, err);
     nostr_relay_connect(relay, err);
 
-    pool->relays = (Relay **)realloc(pool->relays, (pool->relay_count + 1) * sizeof(Relay *));
+    pool->relays = (NostrRelay **)realloc(pool->relays, (pool->relay_count + 1) * sizeof(NostrRelay *));
     pool->relays[pool->relay_count++] = relay;
 
     pthread_mutex_unlock(&pool->pool_mutex);
@@ -71,7 +71,7 @@ void nostr_simple_pool_ensure_relay(SimplePool *pool, const char *url) {
 
 // Thread function for SimplePool
 void *simple_pool_thread_func(void *arg) {
-    SimplePool *pool = (SimplePool *)arg;
+    NostrSimplePool *pool = (NostrSimplePool *)arg;
 
     while (pool->running) {
         // Implement event handling and relay management here
@@ -83,19 +83,19 @@ void *simple_pool_thread_func(void *arg) {
 }
 
 // Function to start the SimplePool
-void nostr_simple_pool_start(SimplePool *pool) {
+void nostr_simple_pool_start(NostrSimplePool *pool) {
     pool->running = true;
     pthread_create(&pool->thread, NULL, simple_pool_thread_func, (void *)pool);
 }
 
 // Function to stop the SimplePool
-void nostr_simple_pool_stop(SimplePool *pool) {
+void nostr_simple_pool_stop(NostrSimplePool *pool) {
     pool->running = false;
     pthread_join(pool->thread, NULL);
 }
 
 // Function to subscribe to multiple relays
-void nostr_simple_pool_subscribe(SimplePool *pool, const char **urls, size_t url_count, Filters filters, bool unique) {
+void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilters filters, bool unique) {
     for (size_t i = 0; i < url_count; i++) {
         nostr_simple_pool_ensure_relay(pool, urls[i]);
     }
@@ -106,7 +106,7 @@ void nostr_simple_pool_subscribe(SimplePool *pool, const char **urls, size_t url
 }
 
 // Function to query a single event from multiple relays
-void nostr_simple_pool_query_single(SimplePool *pool, const char **urls, size_t url_count, Filter filter) {
+void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilter filter) {
     for (size_t i = 0; i < url_count; i++) {
         nostr_simple_pool_ensure_relay(pool, urls[i]);
     }

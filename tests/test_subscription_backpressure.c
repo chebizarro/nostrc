@@ -10,7 +10,7 @@
 #include "nostr-event.h"
 #include "nostr-relay.h"
 #include "nostr-subscription.h"
-#include "filter.h"
+#include "nostr-filter.h"
 
 // Drive internals
 #include "../libnostr/src/subscription-private.h"
@@ -26,11 +26,9 @@ static GoContext *ctx_with_timeout_ms(int ms) {
     return go_with_deadline(bg, d);
 }
 
-static Filters *make_min_filters(void) {
-    Filters *fs = (Filters *)malloc(sizeof(Filters));
-    memset(fs, 0, sizeof(Filters));
-    fs->filters = (Filter *)malloc(sizeof(Filter));
-    memset(fs->filters, 0, sizeof(Filter));
+static NostrFilters *make_min_filters(void) {
+    NostrFilters *fs = nostr_filters_new();
+    nostr_filters_add(fs, nostr_filter_new());
     return fs;
 }
 
@@ -47,11 +45,11 @@ int main(void) {
     setenv("NOSTR_TEST_MODE", "1", 1);
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
+    NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay && err == NULL);
 
-    Filters *fs = make_min_filters();
-    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
+    NostrFilters *fs = nostr_filters_new();
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
     assert(sub);
 
     // Activate live to allow dispatch
@@ -60,9 +58,9 @@ int main(void) {
     // Rapidly enqueue more events than capacity; subscription should drop extra without deadlock.
     // We also dispatch EOSE and ensure it is still delivered.
     for (int i = 0; i < 50; i++) {
-        subscription_dispatch_event(sub, make_dummy_event(i));
+        nostr_subscription_dispatch_event(sub, make_dummy_event(i));
     }
-    subscription_dispatch_eose(sub);
+    nostr_subscription_dispatch_eose(sub);
 
     // We should be able to read at least one event then EOSE without blocking forever.
     void *got = NULL;
@@ -86,7 +84,7 @@ int main(void) {
 
     nostr_subscription_unsubscribe(sub);
     nostr_subscription_free(sub);
-    free_filters(fs);
+    nostr_filters_free(fs);
     nostr_relay_free(relay);
     go_context_free(ctx);
     printf("test_subscription_backpressure: OK\n");

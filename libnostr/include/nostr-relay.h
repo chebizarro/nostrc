@@ -1,12 +1,15 @@
 #ifndef __NOSTR_RELAY_H__
 #define __NOSTR_RELAY_H__
 
-/* Transitional header exposing GLib-friendly names for Relay. */
+/* Canonical NostrRelay public header */
 
 #include <stdbool.h>
-#include "relay.h"        /* legacy Relay and APIs */
+#include "nostr-filter.h"
 #include "channel.h"      /* GoChannel */
 #include "context.h"      /* GoContext */
+#include "nostr-connection.h"   /* NostrConnection */
+#include "hash_map.h"     /* GoHashMap */
+#include "error.h"        /* Error */
 #ifdef NOSTR_WITH_GLIB
 #include <glib-object.h>
 #endif
@@ -15,8 +18,21 @@
 extern "C" {
 #endif
 
-/* Canonical typedef for GLib-style naming */
-typedef Relay NostrRelay;
+/* Forward declarations to avoid heavy includes */
+struct NostrSubscription;
+typedef struct _NostrRelayPrivate NostrRelayPrivate;
+
+/* Canonical NostrRelay type */
+typedef struct NostrRelay {
+    NostrRelayPrivate *priv;
+    char *url;
+    /* request_header; */
+    NostrConnection *connection;
+    Error **connection_error;
+    GoHashMap *subscriptions;
+    bool assume_valid;
+    int refcount;
+} NostrRelay;
 
 #ifdef NOSTR_WITH_GLIB
 /**
@@ -100,7 +116,7 @@ bool        nostr_relay_close(NostrRelay *relay, Error **err);
  *
  * Returns: success
  */
-bool        nostr_relay_subscribe(NostrRelay *relay, GoContext *ctx, Filters *filters, Error **err);
+bool        nostr_relay_subscribe(NostrRelay *relay, GoContext *ctx, NostrFilters *filters, Error **err);
 
 /**
  * nostr_relay_prepare_subscription:
@@ -110,7 +126,7 @@ bool        nostr_relay_subscribe(NostrRelay *relay, GoContext *ctx, Filters *fi
  *
  * Returns: (transfer none) (nullable): internal subscription pointer
  */
-Subscription *nostr_relay_prepare_subscription(NostrRelay *relay, GoContext *ctx, Filters *filters);
+struct NostrSubscription *nostr_relay_prepare_subscription(NostrRelay *relay, GoContext *ctx, NostrFilters *filters);
 
 /**
  * nostr_relay_publish:
@@ -136,7 +152,7 @@ void        nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error
  *
  * Returns: count
  */
-int64_t     nostr_relay_count(NostrRelay *relay, GoContext *ctx, Filter *filter, Error **err);
+int64_t     nostr_relay_count(NostrRelay *relay, GoContext *ctx, NostrFilter *filter, Error **err);
 
 /**
  * nostr_relay_is_connected:

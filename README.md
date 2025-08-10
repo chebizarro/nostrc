@@ -117,7 +117,7 @@ Guidelines:
 See `examples/` for basic JSON integration and event serialization. A minimal flow:
 
 ```c
-#include "event.h"
+#include "nostr-event.h"
 #include "keys.h"
 
 int main(void) {

@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "json.h"
-#include "filter.h"
+#include "nostr-filter.h"
 #include "nostr_jansson.h"
 
 static void test_malformed_arrays_should_fail(void) {
@@ -13,25 +13,25 @@ static void test_malformed_arrays_should_fail(void) {
     const char *bad_authors = "{\"authors\":[true]}";
     const char *bad_tag_array = "{\"#e\":[1,2,3]}"; // must be strings
 
-    Filter *f = create_filter();
+    NostrFilter *f = nostr_filter_new();
     assert(f);
     assert(nostr_filter_deserialize(f, bad_kinds) != 0);
-    free_filter(f);
+    nostr_filter_free(f);
 
-    f = create_filter();
+    f = nostr_filter_new();
     assert(f);
     assert(nostr_filter_deserialize(f, bad_ids) != 0);
-    free_filter(f);
+    nostr_filter_free(f);
 
-    f = create_filter();
+    f = nostr_filter_new();
     assert(f);
     assert(nostr_filter_deserialize(f, bad_authors) != 0);
-    free_filter(f);
+    nostr_filter_free(f);
 
-    f = create_filter();
+    f = nostr_filter_new();
     assert(f);
     assert(nostr_filter_deserialize(f, bad_tag_array) != 0);
-    free_filter(f);
+    nostr_filter_free(f);
 }
 
 static void build_large_arrays_json(char **out_json, int kinds_n, int ids_n) {
@@ -78,7 +78,7 @@ static void test_large_arrays_stress(void) {
     build_large_arrays_json(&json, K, I);
     assert(json);
 
-    Filter *f = create_filter();
+    NostrFilter *f = nostr_filter_new();
     assert(f);
     int rc = nostr_filter_deserialize(f, json);
     assert(rc == 0);
@@ -93,7 +93,7 @@ static void test_large_arrays_stress(void) {
 
     free(s);
     free(json);
-    free_filter(f);
+    nostr_filter_free(f);
 }
 
 int main(void) {

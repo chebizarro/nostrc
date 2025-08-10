@@ -17,9 +17,30 @@ extern "C" {
  * Note: Defined as void here so GI treats them as gpointer without needing
  * boxed type registration. Implementation uses real types in the wrapper source.
  */
-typedef void NostrProfilePointer;
-typedef void NostrEventPointer;
-typedef void NostrEntityPointer;
+// ProfilePointer struct
+typedef struct {
+    char *public_key;
+    char **relays;
+    size_t relays_count;
+} NostrProfilePointer;
+
+// EventPointer struct
+typedef struct {
+    char *id;
+    char **relays;
+    size_t relays_count;
+    char *author;
+    int kind;
+} NostrEventPointer;
+
+// EntityPointer struct
+typedef struct {
+    char *public_key;
+    int kind;
+    char *identifier;
+    char **relays;
+    size_t relays_count;
+} NostrEntityPointer;
 
 /**
  * nostr_profile_pointer_new:

@@ -32,7 +32,7 @@ This document describes the recommended shutdown sequence and invariants for lib
 ## Invariants and Best Practices
 
 - Do not block on event dispatch during shutdown
-  - Use `go_channel_try_send()` in `subscription_dispatch_event()`.
+  - Use `go_channel_try_send()` in `nostr_subscription_dispatch_event()`.
   - Drop and free events when the subscription is not live, the channel is full, or closed.
 
 - Make channel waits cancel-aware
@@ -45,10 +45,10 @@ This document describes the recommended shutdown sequence and invariants for lib
 
 - Connection channel ownership on shutdown
   - `connection_close()` must not free `conn->recv_channel` or `conn->send_channel`.
-  - Only the relay (in `relay_close()`) frees those channels after `go_wait_group_wait()` ensures workers are done.
+  - Only the relay (in `nostr_relay_close()`) frees those channels after `go_wait_group_wait()` ensures workers are done.
 
 - Subscription lifecycle
-  - `subscription_start()` monitors the subscription context and, on cancel, calls `subscription_unsub()` and closes `sub->events` to unblock senders.
+  - `nostr_subscription_start()` monitors the subscription context and, on cancel, calls `nostr_subscription_unsubscribe()` and closes `sub->events` to unblock senders.
 
 - Relay workers
   - `write_operations()` includes a fast-path `go_context_is_canceled()` check to break promptly even if `go_select()` misses closure.
@@ -66,10 +66,10 @@ If the process prints "Closing..." but does not exit:
 
 - Use-after-free or sanitizer reports
   - Ensure channels are not freed in `connection_close()`.
-  - Ensure `relay_close()` waits for workers, then frees `conn` channels before destroying the connection object.
+  - Ensure `nostr_relay_close()` waits for workers, then frees `conn` channels before destroying the connection object.
 
 - Inspect subscription dispatch
-  - Ensure `subscription_dispatch_event()` is non-blocking and drops on full/closed.
+  - Ensure `nostr_subscription_dispatch_event()` is non-blocking and drops on full/closed.
 
 - Inspect contexts
   - Verify `go_context_cancel()` closes `done` and wakes waiters.
@@ -115,5 +115,5 @@ if (conn) connection_close(conn);
 
 ## Subscription Close Envelope
 
-- `subscription_close()` must allocate a `ClosedEnvelope` with `sizeof(ClosedEnvelope)`, set `base.type = ENVELOPE_CLOSED`, populate `subscription_id`, and free the temporary object after `nostr_envelope_serialize()`.
+- `nostr_subscription_close()` must allocate a `ClosedEnvelope` with `sizeof(ClosedEnvelope)`, set `base.type = NOSTR_ENVELOPE_CLOSED`, populate `subscription_id`, and free the temporary object after `nostr_envelope_serialize()`.
 - Do not use `create_envelope()` for typed extended envelopes; it only allocates the base `Envelope`.

@@ -1,25 +1,34 @@
 #ifndef __NOSTR_RELAY_STORE_H__
 #define __NOSTR_RELAY_STORE_H__
 
-/* Transitional header exposing GLib-friendly names for RelayStore/MultiStore. */
+/* Public header exposing GI-friendly names for NostrRelayStore/NostrMultiStore (canonical). */
 
 #include <stdbool.h>
 #include <stddef.h>
-#include "relay_store.h" /* legacy RelayStore and MultiStore */
+#include "nostr-event.h"
+#include "nostr-filter.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Canonical typedefs for GLib-style naming */
-typedef RelayStore NostrRelayStore;
-typedef MultiStore NostrMultiStore;
+// Define the NostrRelayStore interface (core C type)
+typedef struct {
+    int (*publish)(void *self, void *ctx, NostrEvent *event);
+    int (*query_sync)(void *self, void *ctx, NostrFilter *filter, NostrEvent ***events, size_t *events_count);
+} NostrRelayStore;
 
-/* New API names mapped to legacy implementations */
-#define nostr_multi_store_new          create_multi_store
-#define nostr_multi_store_free         free_multi_store
-#define nostr_multi_store_publish      multi_store_publish
-#define nostr_multi_store_query_sync   multi_store_query_sync
+// Define the NostrMultiStore struct (core C type)
+typedef struct {
+    NostrRelayStore **stores;
+    size_t stores_count;
+} NostrMultiStore;
+
+/* Canonical API */
+NostrMultiStore *nostr_multi_store_new(size_t initial_size);
+void              nostr_multi_store_free(NostrMultiStore *multi);
+int               nostr_multi_store_publish(NostrMultiStore *multi, void *ctx, NostrEvent *event);
+int               nostr_multi_store_query_sync(NostrMultiStore *multi, void *ctx, NostrFilter *filter, NostrEvent ***events, size_t *events_count);
 
 /* Accessors (GLib-friendly) */
 /**

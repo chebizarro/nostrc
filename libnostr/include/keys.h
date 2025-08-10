@@ -3,10 +3,10 @@
 
 #include <stdbool.h>
 
-// key generation and validation
-char *generate_private_key(void);
-char *get_public_key(const char *sk);
-bool is_valid_public_key_hex(const char *pk);
-bool is_valid_public_key(const char *pk);
+// Canonical key generation and validation API
+char *nostr_key_generate_private(void);
+char *nostr_key_get_public(const char *sk);
+bool  nostr_key_is_valid_public_hex(const char *pk);
+bool  nostr_key_is_valid_public(const char *pk);
 
 #endif // NOSTR_KEYS_H

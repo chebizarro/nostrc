@@ -3,7 +3,7 @@
 ## Naming
 
 - Types: `CamelCase` for public structs (e.g., `NostrEvent`), `snake_case` for internal types.
-- Functions: `snake_case` with module prefix when helpful (e.g., `event_serialize`, `relay_connect`).
+- Functions: `snake_case` with module prefix when helpful (e.g., `event_serialize`, `nostr_relay_connect`).
 - Macros/consts: `UPPER_SNAKE_CASE`.
 - Files: `snake_case.c/h` grouped by concept (e.g., `event.c`, `relay.h`).
 

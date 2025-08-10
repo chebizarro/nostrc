@@ -1,13 +1,12 @@
 #include "nostr-config.h"
 #if NOSTR_HAVE_GLIB
 #include <glib-object.h>
-#include "relay.h"
+#include "nostr-relay.h"
 
-/* Relay is ref-counted; boxed copy = nostr_relay_ref, boxed free = nostr_relay_unref */
-typedef Relay NostrRelay;
+/* NostrRelay is ref-counted; boxed copy = nostr_relay_ref, boxed free = nostr_relay_unref */
 
 static NostrRelay *nostr_relay_copy(const NostrRelay *src) {
-    return (NostrRelay *)nostr_relay_ref((Relay *)src);
+    return (NostrRelay *)nostr_relay_ref((NostrRelay *)src);
 }
 
 static void nostr_relay_free_boxed(NostrRelay *relay) {

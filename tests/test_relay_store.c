@@ -9,7 +9,7 @@ int dummy_publish(void *self, void *ctx, NostrEvent *event) {
     return 0;
 }
 
-int dummy_query_sync(void *self, void *ctx, Filter *filter, NostrEvent ***events, size_t *events_count) {
+int dummy_query_sync(void *self, void *ctx, NostrFilter *filter, NostrEvent ***events, size_t *events_count) {
     *events_count = 1;
     *events = (NostrEvent **)malloc(sizeof(NostrEvent *));
     (*events)[0] = nostr_event_new();
@@ -18,23 +18,23 @@ int dummy_query_sync(void *self, void *ctx, Filter *filter, NostrEvent ***events
 }
 
 int main() {
-    MultiStore *multi = create_multi_store(2);
+    NostrMultiStore *multi = nostr_multi_store_new(2);
     assert(multi != NULL);
 
-    RelayStore store1 = {dummy_publish, dummy_query_sync};
-    RelayStore store2 = {dummy_publish, dummy_query_sync};
+    NostrRelayStore store1 = {dummy_publish, dummy_query_sync};
+    NostrRelayStore store2 = {dummy_publish, dummy_query_sync};
     multi->stores[multi->stores_count++] = &store1;
     multi->stores[multi->stores_count++] = &store2;
 
     NostrEvent *event = nostr_event_new();
     event->content = strdup("test event");
 
-    int pub_result = multi_store_publish(multi, NULL, event);
+    int pub_result = nostr_multi_store_publish(multi, NULL, event);
     assert(pub_result == 0);
 
     NostrEvent **events = NULL;
     size_t events_count = 0;
-    int query_result = multi_store_query_sync(multi, NULL, NULL, &events, &events_count);
+    int query_result = nostr_multi_store_query_sync(multi, NULL, NULL, &events, &events_count);
     assert(query_result == 0);
     assert(events_count == 2);
     assert(strcmp(events[0]->content, "dummy event") == 0);
@@ -46,7 +46,7 @@ int main() {
     free(events);
 
     nostr_event_free(event);
-    free_multi_store(multi);
+    nostr_multi_store_free(multi);
 
     printf("All tests passed!\n");
     return 0;

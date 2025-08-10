@@ -1,4 +1,3 @@
-#include "connection.h"
 #include "nostr-connection.h"
 #include "connection-private.h"
 #include "go.h"
@@ -14,7 +13,7 @@
 static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                               void *user, void *in, size_t len) {
     (void)user; // not used; use opaque user data API
-    Connection *conn = (Connection *)lws_get_opaque_user_data(wsi);
+    NostrConnection *conn = (NostrConnection *)lws_get_opaque_user_data(wsi);
 
     switch (reason) {
     case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER: {
@@ -95,7 +94,6 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
     return 0;
 }
 
-/* GLib-style accessors (header: nostr-connection.h) */
 GoChannel *nostr_connection_get_send_channel(const NostrConnection *conn) {
     if (!conn) return NULL;
     return conn->send_channel;
@@ -127,7 +125,7 @@ static const struct lws_protocols protocols[] = {
 static const uint32_t retry_table[] = {1000, 2000, 3000}; // Retry intervals in ms
 
 static void *lws_service_loop(void *arg) {
-    Connection *c = (Connection *)arg;
+    NostrConnection *c = (NostrConnection *)arg;
     while (c->priv->running) {
         lws_service(c->priv->context, 50);
     }
@@ -182,7 +180,7 @@ static void parse_ws_url(const char *url, int *use_ssl, char *host, size_t host_
     if (*port == 0) *port = *use_ssl ? 443 : 80;
 }
 
-Connection *new_connection(const char *url) {
+NostrConnection *nostr_connection_new(const char *url) {
     struct lws_context_creation_info context_info;
     struct lws_client_connect_info connect_info;
     struct lws_context *context;
@@ -198,8 +196,8 @@ Connection *new_connection(const char *url) {
         .jitter_percent = 5            // Add 5% random jitter to avoid synchronized retries
     };
 
-    Connection *conn = calloc(1, sizeof(Connection));
-    ConnectionPrivate *priv = calloc(1, sizeof(ConnectionPrivate));
+    NostrConnection *conn = calloc(1, sizeof(NostrConnection));
+    NostrConnectionPrivate *priv = calloc(1, sizeof(NostrConnectionPrivate));
     if (!conn || !priv)
         return NULL;
     conn->priv = priv;
@@ -211,8 +209,8 @@ Connection *new_connection(const char *url) {
     int test_mode = (test_env && *test_env && strcmp(test_env, "0") != 0) ? 1 : 0;
 
     if (test_mode) {
-        Connection *conn = calloc(1, sizeof(Connection));
-        ConnectionPrivate *priv = calloc(1, sizeof(ConnectionPrivate));
+        NostrConnection *conn = calloc(1, sizeof(NostrConnection));
+        NostrConnectionPrivate *priv = calloc(1, sizeof(NostrConnectionPrivate));
         if (!conn || !priv) {
             if (conn) free(conn);
             if (priv) free(priv);
@@ -284,7 +282,7 @@ Connection *new_connection(const char *url) {
 
 // Coroutine for processing incoming WebSocket messages
 void *websocket_receive_coroutine(void *arg) {
-    Connection *conn = (Connection *)arg;
+    NostrConnection *conn = (NostrConnection *)arg;
     while (1) {
         WebSocketMessage *msg;
         if (go_channel_receive(conn->recv_channel, (void **)&msg) == 0) {
@@ -297,7 +295,7 @@ void *websocket_receive_coroutine(void *arg) {
 
 // Coroutine for processing outgoing WebSocket messages
 void *websocket_send_coroutine(void *arg) {
-    Connection *conn = (Connection *)arg;
+    NostrConnection *conn = (NostrConnection *)arg;
     while (1) {
         WebSocketMessage *msg;
         if (go_channel_receive(conn->send_channel, (void **)&msg) == 0) {
@@ -306,11 +304,11 @@ void *websocket_send_coroutine(void *arg) {
     }
 }
 
-void connection_close(Connection *conn) {
+void nostr_connection_close(NostrConnection *conn) {
     if (!conn) return;
     // Ownership note:
     // - connection_close() closes channels to wake waiters but MUST NOT free them.
-    // - relay_close() is responsible for freeing conn->recv_channel/send_channel
+    // - nostr_relay_close() is responsible for freeing conn->recv_channel/send_channel
     //   after all workers have exited (see relay.c) to prevent use-after-free.
     // Close channels to unblock any waiters; do not free here to avoid UAF.
     if (conn->recv_channel) go_channel_close(conn->recv_channel);
@@ -333,7 +331,7 @@ void connection_close(Connection *conn) {
     free(conn);
 }
 
-void connection_write_message(Connection *conn, GoContext *ctx, char *message, Error **err) {
+void nostr_connection_write_message(NostrConnection *conn, GoContext *ctx, char *message, Error **err) {
     (void)ctx; // currently unused here; selection handled at higher level
     if (!conn || !message) {
         if (err) {
@@ -376,7 +374,7 @@ void connection_write_message(Connection *conn, GoContext *ctx, char *message, E
     lws_callback_on_writable(conn->priv->wsi);
 }
 
-void connection_read_message(Connection *conn, GoContext *ctx, char *buffer, size_t buffer_size, Error **err) {
+void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *buffer, size_t buffer_size, Error **err) {
     if (!conn || !buffer) {
         if (err) {
             *err = new_error(1, "Invalid connection or buffer");

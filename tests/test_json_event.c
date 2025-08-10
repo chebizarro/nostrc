@@ -2,8 +2,6 @@
 #include <stdio.h>
 #include <string.h>
 #include "json.h"
-#include "event.h"
-#include "tag.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
 
@@ -14,9 +12,9 @@ static NostrEvent *make_event_with_tags(void) {
     e->pubkey = strdup("abcdef");
     e->content = strdup("hello");
     // tags: [["e","val1"],["p","val2","relay"]]
-    Tag *t1 = nostr_tag_new("e", "val1", NULL);
-    Tag *t2 = nostr_tag_new("p", "val2", "relay", NULL);
-    Tags *ts = nostr_tags_new(0);
+    NostrTag *t1 = nostr_tag_new("e", "val1", NULL);
+    NostrTag *t2 = nostr_tag_new("p", "val2", "relay", NULL);
+    NostrTags *ts = nostr_tags_new(0);
     ts = nostr_tags_append_unique(ts, t1);
     ts = nostr_tags_append_unique(ts, t2);
     e->tags = ts;

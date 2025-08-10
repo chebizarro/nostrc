@@ -4,9 +4,8 @@
 #include <string.h>
 #include <time.h>
 #include "json.h"
-#include "event.h"
-#include "tag.h"
 #include "nostr-event.h"
+#include "nostr-tag.h"
 
 static unsigned rnd(unsigned n) { return (unsigned)rand() % (n ? n : 1); }
 

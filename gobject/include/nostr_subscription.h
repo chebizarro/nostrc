@@ -2,18 +2,21 @@
 #define NOSTR_GSUBSCRIPTION_H
 
 #include <glib-object.h>
-#include "subscription.h"
+#include "nostr-subscription.h"   /* core NostrSubscription APIs */
+#include "nostr_relay.h"          /* GNostrRelay wrapper */
+#include "nostr_filter.h"         /* GLib filter wrapper (temporary name) */
 
-/* Define NostrSubscription GObject */
-#define NOSTR_TYPE_SUBSCRIPTION (nostr_subscription_get_type())
-G_DECLARE_FINAL_TYPE(NostrSubscription, nostr_subscription, NOSTR, SUBSCRIPTION, GObject)
+/* Define GNostrSubscription GObject (G-prefixed to avoid clashing with core) */
+#define GNOSTR_TYPE_SUBSCRIPTION (gnostr_subscription_get_type())
+G_DECLARE_FINAL_TYPE(GNostrSubscription, gnostr_subscription, GNOSTR, SUBSCRIPTION, GObject)
 
-struct _NostrSubscription {
+struct _GNostrSubscription {
     GObject parent_instance;
-    Subscription *subscription;
+    NostrSubscription *subscription; /* core subscription pointer */
 };
 
-NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilter *filter);
-void nostr_subscription_unsubscribe(NostrSubscription *self);
+/* GObject convenience API */
+GNostrSubscription *gnostr_subscription_new(GNostrRelay *relay, NostrFilter *filter);
+void gnostr_subscription_unsubscribe(GNostrSubscription *self);
 
 #endif // NOSTR_GSUBSCRIPTION_H

@@ -1,5 +1,5 @@
 #include "nostr-event-extra.h"
-#include "event.h"  // internal struct definition for NostrEvent
+#include "nostr-event.h"  // internal struct definition for NostrEvent
 #include <jansson.h>
 #include <string.h>
 

@@ -115,7 +115,7 @@ if (NOSTR_ENABLE_GI)
         ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-utils.h
         ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-pointer.h
         ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-event.h
-        ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-filter-wrap.h
+        ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-filter.h
         --output ${CMAKE_BINARY_DIR}/gir/Nostr-1.0.gir
       COMMAND ${G_IR_COMPILER} ${CMAKE_BINARY_DIR}/gir/Nostr-1.0.gir -o ${CMAKE_BINARY_DIR}/gir/Nostr-1.0.typelib
       DEPENDS nostr nostr_json

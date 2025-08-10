@@ -3,10 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "envelope.h"
+#include "nostr-envelope.h"
 
 static void expect_parse_null(const char *msg) {
-    Envelope *e = parse_message(msg);
+    NostrEnvelope *e = nostr_envelope_parse(msg);
     assert(e == NULL);
 }
 
@@ -37,19 +37,19 @@ static void test_malformed_inputs(void) {
 
 static void test_minimal_valids(void) {
     // Minimal EOSE with id
-    Envelope *e1 = parse_message("[\"EOSE\",\"sub\"]");
-    assert(e1 && e1->type == ENVELOPE_EOSE);
-    free_envelope(e1);
+    NostrEnvelope *e1 = nostr_envelope_parse("[\"EOSE\",\"sub\"]");
+    assert(e1 && e1->type == NOSTR_ENVELOPE_EOSE);
+    nostr_envelope_free(e1);
 
     // Minimal NOTICE
-    Envelope *e2 = parse_message("[\"NOTICE\",\"hello\"]");
-    assert(e2 && e2->type == ENVELOPE_NOTICE);
-    free_envelope(e2);
+    NostrEnvelope *e2 = nostr_envelope_parse("[\"NOTICE\",\"hello\"]");
+    assert(e2 && e2->type == NOSTR_ENVELOPE_NOTICE);
+    nostr_envelope_free(e2);
 
     // Minimal CLOSED
-    Envelope *e3 = parse_message("[\"CLOSED\",\"sub\",\"bye\"]");
-    assert(e3 && e3->type == ENVELOPE_CLOSED);
-    free_envelope(e3);
+    NostrEnvelope *e3 = nostr_envelope_parse("[\"CLOSED\",\"sub\",\"bye\"]");
+    assert(e3 && e3->type == NOSTR_ENVELOPE_CLOSED);
+    nostr_envelope_free(e3);
 }
 
 int main(void) {

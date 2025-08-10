@@ -44,7 +44,7 @@ NIP modules (nips/*) extend libnostr capabilities and are compiled as submodules
 - Event creation and signing flows through `libnostr` APIs (`event.h`, `keys.h`) and uses OpenSSL and libsecp256k1 underneath for cryptography (linked in tests and applications).
 - JSON serialization/deserialization is performed by `libjson` via `jansson` and synchronized using `nsync` primitives when needed.
 - Concurrency and coordination in C are provided by `libgo` (channels, contexts, wait groups), used by higher-level modules for non-blocking operations.
-- Relay connections and subscriptions (`relay.h`, `subscription.h`) orchestrate message flow to/from Nostr relays. WebSocket linkage is prepared in `libnostr/CMakeLists.txt` for libwebsockets but may be optional depending on your integration.
+- Relay connections and subscriptions (`nostr-relay.h`, `nostr-subscription.h`) orchestrate message flow to/from Nostr relays. WebSocket linkage is prepared in `libnostr/CMakeLists.txt` for libwebsockets but may be optional depending on your integration.
 
 ## Technology Choices & Rationale
 

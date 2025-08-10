@@ -2,7 +2,7 @@
 #define NOSTR_FILTER_H
 
 #include <glib-object.h>
-#include "filter.h"
+#include "nostr-filter.h"
 
 /* Define NostrFilter GObject */
 #define NOSTR_TYPE_FILTER (nostr_filter_get_type())

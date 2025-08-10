@@ -4,27 +4,27 @@
 #include <glib-object.h>
 #include "relay_store.h"
 
-/* Define NostrRelayStore GObject interface */
-#define NOSTR_TYPE_RELAY_STORE (nostr_relay_store_get_type())
-G_DECLARE_INTERFACE(NostrRelayStore, nostr_relay_store, NOSTR, RELAY_STORE, GObject)
+/* Define GNostrRelayStore GObject interface (G-prefixed to avoid core conflicts) */
+#define G_NOSTR_TYPE_RELAY_STORE (g_nostr_relay_store_get_type())
+G_DECLARE_INTERFACE(GNostrRelayStore, g_nostr_relay_store, G_NOSTR, RELAY_STORE, GObject)
 
-struct _NostrRelayStoreInterface {
+struct _GNostrRelayStoreInterface {
     GTypeInterface parent_interface;
 
-    gboolean (*publish)(NostrRelayStore *self, NostrEvent *event, GError **error);
-    gboolean (*query_sync)(NostrRelayStore *self, NostrFilter *filter, GPtrArray **events, GError **error);
+    gboolean (*publish)(GNostrRelayStore *self, NostrEvent *event, GError **error);
+    gboolean (*query_sync)(GNostrRelayStore *self, NostrFilter *filter, GPtrArray **events, GError **error);
 };
 
-/* Define NostrMultiStore GObject */
-#define NOSTR_TYPE_MULTI_STORE (nostr_multi_store_get_type())
-G_DECLARE_FINAL_TYPE(NostrMultiStore, nostr_multi_store, NOSTR, MULTI_STORE, GObject)
+/* Define GNostrMultiStore GObject (G-prefixed to avoid core conflicts) */
+#define G_NOSTR_TYPE_MULTI_STORE (g_nostr_multi_store_get_type())
+G_DECLARE_FINAL_TYPE(GNostrMultiStore, g_nostr_multi_store, G_NOSTR, MULTI_STORE, GObject)
 
-struct _NostrMultiStore {
+struct _GNostrMultiStore {
     GObject parent_instance;
-    MultiStore *multi;
+    NostrMultiStore *multi;
 };
 
-NostrMultiStore *nostr_multi_store_new();
-void nostr_multi_store_add_store(NostrMultiStore *self, NostrRelayStore *store);
+GNostrMultiStore *g_nostr_multi_store_new(void);
+void g_nostr_multi_store_add_store(GNostrMultiStore *self, GNostrRelayStore *store);
 
 #endif // NOSTR_RELAY_STORE_H

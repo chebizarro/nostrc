@@ -12,7 +12,7 @@ int main() {
     NostrEvent event;
     event.id = "event-id";
     event.pubkey = "public-key";
-    event.kind = KIND_TEXT_NOTE;
+    event.kind = NOSTR_KIND_TEXT_NOTE;
     event.content = "Hello, Nostr!";
     event.sig = "signature";
     event.tags = (char *[]){"tag1", "tag2", NULL};

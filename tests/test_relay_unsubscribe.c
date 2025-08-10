@@ -11,7 +11,7 @@
 #include "error.h"
 #include "nostr-relay.h"
 #include "nostr-subscription.h"
-#include "filter.h"
+#include "nostr-filter.h"
 
 #include "../libnostr/src/subscription-private.h"
 
@@ -26,11 +26,11 @@ static GoContext *ctx_with_timeout_ms(int ms) {
     return go_with_deadline(bg, d);
 }
 
-static Filters *make_min_filters(void) {
-    Filters *fs = (Filters *)malloc(sizeof(Filters));
-    memset(fs, 0, sizeof(Filters));
-    fs->filters = (Filter *)malloc(sizeof(Filter));
-    memset(fs->filters, 0, sizeof(Filter));
+static NostrFilters *make_min_filters(void) {
+    NostrFilters *fs = (NostrFilters *)malloc(sizeof(NostrFilters));
+    memset(fs, 0, sizeof(NostrFilters));
+    fs->filters = (NostrFilter *)malloc(sizeof(NostrFilter));
+    memset(fs->filters, 0, sizeof(NostrFilter));
     return fs;
 }
 
@@ -38,11 +38,11 @@ int main(void) {
     setenv("NOSTR_TEST_MODE", "1", 1);
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
+    NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay && err == NULL);
 
-    Filters *fs = make_min_filters();
-    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
+    NostrFilters *filters = make_min_filters();
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, ctx, filters);
     assert(sub);
 
     // Simulate that the subscription is live and receiving
@@ -53,7 +53,7 @@ int main(void) {
         NostrEvent *ev = nostr_event_new();
         ev->kind = 1;
         ev->content = strdup("payload");
-        subscription_dispatch_event(sub, ev);
+        nostr_subscription_dispatch_event(sub, ev);
     }
 
     // Now unsubscribe; lifecycle should cancel, close channels, and may emit CLOSED locally
@@ -84,7 +84,7 @@ int main(void) {
     assert(rc_ev == -1 || msg == NULL);
 
     nostr_subscription_free(sub);
-    free_filters(fs);
+    nostr_filters_free(filters);
     nostr_relay_free(relay);
     go_context_free(ctx);
     printf("test_relay_unsubscribe: OK\n");

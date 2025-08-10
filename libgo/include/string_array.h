@@ -32,6 +32,9 @@ const char *string_array_get(const StringArray *array, size_t index);
 // Remove a string at the given index
 void string_array_remove(StringArray *array, size_t index);
 
+// Set the string at the given index
+void string_array_set(StringArray *array, size_t index, const char *value);
+
 // Free the array memory
 void string_array_free(StringArray *array);
 

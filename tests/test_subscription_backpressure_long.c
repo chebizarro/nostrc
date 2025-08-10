@@ -10,7 +10,7 @@
 #include "nostr-event.h"
 #include "nostr-relay.h"
 #include "nostr-subscription.h"
-#include "filter.h"
+#include "nostr-filter.h"
 
 // Internals for driving live + notice handler
 #include "../libnostr/src/subscription-private.h"
@@ -27,12 +27,9 @@ static GoContext *ctx_with_timeout_ms(int ms) {
     return go_with_deadline(bg, d);
 }
 
-static Filters *make_min_filters(void) {
-    Filters *fs = (Filters *)malloc(sizeof(Filters));
-    memset(fs, 0, sizeof(Filters));
-    fs->filters = (Filter *)malloc(sizeof(Filter));
-    memset(fs->filters, 0, sizeof(Filter));
-    fs->count = 1; fs->capacity = 1;
+static NostrFilters *make_min_filters(void) {
+    NostrFilters *fs = nostr_filters_new();
+    nostr_filters_add(fs, nostr_filter_new());
     return fs;
 }
 
@@ -56,14 +53,14 @@ int main(void) {
 
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
+    NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay && err == NULL);
 
     // Install a notice handler to simulate NOTICE handling under load
     relay->priv->notice_handler = notice_stub;
 
-    Filters *fs = make_min_filters();
-    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
+    NostrFilters *fs = make_min_filters();
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
     assert(sub);
 
     // Activate live to allow dispatch
@@ -81,11 +78,11 @@ int main(void) {
 
         // Burst 32 events; subscription should drop if full, but never deadlock
         for (int b = 0; b < 32; ++b) {
-            subscription_dispatch_event(sub, make_dummy_event(i++));
+            nostr_subscription_dispatch_event(sub, make_dummy_event(i++));
         }
         // Every ~100ms, dispatch EOSE and invoke NOTICE handler
         if (i % 128 == 0) {
-            subscription_dispatch_eose(sub);
+            nostr_subscription_dispatch_eose(sub);
             if (relay->priv->notice_handler) relay->priv->notice_handler("test-notice");
         }
         // Small sleep to simulate pacing
@@ -111,7 +108,7 @@ int main(void) {
 
     nostr_subscription_unsubscribe(sub);
     nostr_subscription_free(sub);
-    free_filters(fs);
+    nostr_filters_free(fs);
     nostr_relay_free(relay);
     go_context_free(ctx);
 

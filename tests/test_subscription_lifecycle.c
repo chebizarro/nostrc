@@ -9,7 +9,7 @@
 #include "go.h"
 #include "error.h"
 #include "nostr-relay.h"
-#include "filter.h"
+#include "nostr-filter.h"
 #include "nostr-subscription.h"
 #include "nostr-event.h"
 
@@ -39,11 +39,9 @@ static NostrEvent *make_dummy_event(void) {
     return ev;
 }
 
-static Filters *make_min_filters(void) {
-    Filters *fs = (Filters *)malloc(sizeof(Filters));
-    memset(fs, 0, sizeof(Filters));
-    fs->filters = (Filter *)malloc(sizeof(Filter));
-    memset(fs->filters, 0, sizeof(Filter));
+static NostrFilters *make_min_filters(void) {
+    NostrFilters *fs = nostr_filters_new();
+    nostr_filters_add(fs, nostr_filter_new());
     return fs;
 }
 
@@ -51,16 +49,16 @@ static void test_eose_then_receive_signal(void) {
     setenv("NOSTR_TEST_MODE", "1", 1);
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
+    NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay && err == NULL);
 
-    Filters *fs = make_min_filters();
-    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
+    NostrFilters *fs = make_min_filters();
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
     assert(sub);
 
     // Initially not EOSE'd
     assert(!atomic_load(&sub->priv->eosed));
-    subscription_dispatch_eose(sub);
+    nostr_subscription_dispatch_eose(sub);
     assert(atomic_load(&sub->priv->eosed));
 
     // Receive on end_of_stored_events promptly
@@ -73,7 +71,7 @@ static void test_eose_then_receive_signal(void) {
     nostr_subscription_unsubscribe(sub);
     usleep(50000);
     nostr_subscription_free(sub);
-    free_filters(fs);
+    nostr_filters_free(fs);
     nostr_relay_free(relay);
     go_context_free(ctx);
 }
@@ -82,15 +80,15 @@ static void test_closed_with_reason(void) {
     setenv("NOSTR_TEST_MODE", "1", 1);
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
+    NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay && err == NULL);
 
-    Filters *fs = make_min_filters();
-    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
+    NostrFilters *fs = make_min_filters();
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
     assert(sub);
 
     const char *reason = "test closed";
-    subscription_dispatch_closed(sub, reason);
+    nostr_subscription_dispatch_closed(sub, reason);
     assert(atomic_load(&sub->priv->closed));
 
     GoContext *rxctx = ctx_with_timeout_ms(200);
@@ -101,7 +99,7 @@ static void test_closed_with_reason(void) {
 
     nostr_subscription_unsubscribe(sub);
     nostr_subscription_free(sub);
-    free_filters(fs);
+    nostr_filters_free(fs);
     nostr_relay_free(relay);
     go_context_free(ctx);
 }
@@ -110,11 +108,11 @@ static void test_unsubscribe_closes_events_channel(void) {
     setenv("NOSTR_TEST_MODE", "1", 1);
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
+    NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay && err == NULL);
 
-    Filters *fs = make_min_filters();
-    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
+    NostrFilters *fs = make_min_filters();
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
     assert(sub);
 
     // Mark as live to simulate active subscription
@@ -130,7 +128,7 @@ static void test_unsubscribe_closes_events_channel(void) {
     assert(rc == -1);
 
     nostr_subscription_free(sub);
-    free_filters(fs);
+    nostr_filters_free(fs);
     nostr_relay_free(relay);
     go_context_free(ctx);
 }
@@ -139,11 +137,11 @@ static void test_event_queue_full_drops(void) {
     setenv("NOSTR_TEST_MODE", "1", 1);
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
+    NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay && err == NULL);
 
-    Filters *fs = make_min_filters();
-    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
+    NostrFilters *fs = make_min_filters();
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
     assert(sub);
 
     // Activate live to allow dispatch
@@ -152,8 +150,8 @@ static void test_event_queue_full_drops(void) {
     // Capacity is 1; send two events non-blocking
     NostrEvent *e1 = make_dummy_event();
     NostrEvent *e2 = make_dummy_event();
-    subscription_dispatch_event(sub, e1);
-    subscription_dispatch_event(sub, e2); // should be dropped if queue full
+    nostr_subscription_dispatch_event(sub, e1);
+    nostr_subscription_dispatch_event(sub, e2); // should be dropped if queue full
 
     // We expect exactly one receive success, second receive should block; use try-receive via short timeout
     GoContext *rxctx1 = ctx_with_timeout_ms(200);
@@ -169,7 +167,7 @@ static void test_event_queue_full_drops(void) {
     // Cleanup
     nostr_subscription_unsubscribe(sub);
     nostr_subscription_free(sub);
-    free_filters(fs);
+    nostr_filters_free(fs);
     nostr_relay_free(relay);
     go_context_free(ctx);
 }

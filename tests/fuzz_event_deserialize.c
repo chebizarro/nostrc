@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "json.h"
-#include "event.h"
+#include "nostr-event.h"
 #include "nostr-event.h"
 
 // LibFuzzer entry point

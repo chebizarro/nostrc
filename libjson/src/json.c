@@ -10,15 +10,15 @@
 char *jansson_event_serialize(const NostrEvent *event);
 int jansson_event_deserialize(NostrEvent *event, const char *json_str);
 int _deserialize_event(NostrEvent *event, json_t *json_obj);
-char *jansson_envelope_serialize(const Envelope *envelope);
-int jansson_envelope_deserialize(Envelope *envelope, const char *json_str);
+char *jansson_envelope_serialize(const NostrEnvelope *envelope);
+int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str);
 
-int jansson_filter_deserialize(Filter *filter, json_t *json_obj);
-json_t *jansson_filter_serialize(const Filter *filter);
-json_t *jansson_tag_serialize(const Tag *tag);
-json_t *jansson_tags_serialize(const Tags *tags);
-int jansson_tag_deserialize(Tag *tag, json_t *json);
-Tags *jansson_tags_deserialize(json_t *json_array);
+int jansson_filter_deserialize(NostrFilter *filter, json_t *json_obj);
+json_t *jansson_filter_serialize(const NostrFilter *filter);
+json_t *jansson_tag_serialize(const NostrTag *tag);
+json_t *jansson_tags_serialize(const NostrTags *tags);
+int jansson_tag_deserialize(NostrTag *tag, json_t *json);
+NostrTags *jansson_tags_deserialize(json_t *json_array);
 json_t *string_array_serialize(const StringArray *array);
 json_t *int_array_serialize(const IntArray *array);
 int string_array_deserialize(StringArray *array, json_t *json_array);
@@ -140,7 +140,7 @@ int _deserialize_event(NostrEvent *event, json_t *json_obj) {
 
     // tags
     if (json_is_array(json_tags)) {
-        Tags *t = jansson_tags_deserialize(json_tags);
+        NostrTags *t = jansson_tags_deserialize(json_tags);
         if (t) {
             // free existing default empty tags if present
             if (event->tags) nostr_tags_free(event->tags);
@@ -151,13 +151,13 @@ int _deserialize_event(NostrEvent *event, json_t *json_obj) {
     return 0;
 }
 
-char *jansson_envelope_serialize(const Envelope *envelope) {
+char *jansson_envelope_serialize(const NostrEnvelope *envelope) {
     if (!envelope) return NULL;
     json_t *arr = json_array();
     if (!arr) return NULL;
     switch (envelope->type) {
-    case ENVELOPE_EVENT: {
-        EventEnvelope *env = (EventEnvelope *)envelope;
+    case NOSTR_ENVELOPE_EVENT: {
+        NostrEventEnvelope *env = (NostrEventEnvelope *)envelope;
         json_array_append_new(arr, json_string("EVENT"));
         if (env->subscription_id) json_array_append_new(arr, json_string(env->subscription_id));
         if (env->event) {
@@ -171,41 +171,41 @@ char *jansson_envelope_serialize(const Envelope *envelope) {
         }
         break;
     }
-    case ENVELOPE_NOTICE: {
-        NoticeEnvelope *env = (NoticeEnvelope *)envelope;
+    case NOSTR_ENVELOPE_NOTICE: {
+        NostrNoticeEnvelope *env = (NostrNoticeEnvelope *)envelope;
         json_array_append_new(arr, json_string("NOTICE"));
         json_array_append_new(arr, json_string(env->message ? env->message : ""));
         break;
     }
-    case ENVELOPE_EOSE: {
-        EOSEEnvelope *env = (EOSEEnvelope *)envelope;
+    case NOSTR_ENVELOPE_EOSE: {
+        NostrEOSEEnvelope *env = (NostrEOSEEnvelope *)envelope;
         json_array_append_new(arr, json_string("EOSE"));
         json_array_append_new(arr, json_string(env->message ? env->message : ""));
         break;
     }
-    case ENVELOPE_CLOSE: {
-        CloseEnvelope *env = (CloseEnvelope *)envelope;
+    case NOSTR_ENVELOPE_CLOSE: {
+        NostrCloseEnvelope *env = (NostrCloseEnvelope *)envelope;
         json_array_append_new(arr, json_string("CLOSE"));
         json_array_append_new(arr, json_string(env->message ? env->message : ""));
         break;
     }
-    case ENVELOPE_CLOSED: {
-        ClosedEnvelope *env = (ClosedEnvelope *)envelope;
+    case NOSTR_ENVELOPE_CLOSED: {
+        NostrClosedEnvelope *env = (NostrClosedEnvelope *)envelope;
         json_array_append_new(arr, json_string("CLOSED"));
         json_array_append_new(arr, json_string(env->subscription_id ? env->subscription_id : ""));
         json_array_append_new(arr, json_string(env->reason ? env->reason : ""));
         break;
     }
-    case ENVELOPE_OK: {
-        OKEnvelope *env = (OKEnvelope *)envelope;
+    case NOSTR_ENVELOPE_OK: {
+        NostrOKEnvelope *env = (NostrOKEnvelope *)envelope;
         json_array_append_new(arr, json_string("OK"));
         json_array_append_new(arr, json_string(env->event_id ? env->event_id : ""));
         json_array_append_new(arr, env->ok ? json_true() : json_false());
         if (env->reason) json_array_append_new(arr, json_string(env->reason));
         break;
     }
-    case ENVELOPE_AUTH: {
-        AuthEnvelope *env = (AuthEnvelope *)envelope;
+    case NOSTR_ENVELOPE_AUTH: {
+        NostrAuthEnvelope *env = (NostrAuthEnvelope *)envelope;
         json_array_append_new(arr, json_string("AUTH"));
         if (env->event) {
             char *evs = jansson_event_serialize(env->event);
@@ -229,7 +229,7 @@ char *jansson_envelope_serialize(const Envelope *envelope) {
 }
 
 // Deserialize a JSON string to NostrEvent
-int jansson_envelope_deserialize(Envelope *envelope, const char *json_str) {
+int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) {
     if (!json_str)
         return -1;
 
@@ -256,8 +256,8 @@ int jansson_envelope_deserialize(Envelope *envelope, const char *json_str) {
 
     // Process according to envelope type
     switch (envelope->type) {
-    case ENVELOPE_EVENT: {
-        EventEnvelope *env = (EventEnvelope *)envelope;
+    case NOSTR_ENVELOPE_EVENT: {
+        NostrEventEnvelope *env = (NostrEventEnvelope *)envelope;
         size_t n = json_array_size(json_obj);
         if (n < 2) { json_decref(json_obj); return -1; }
         json_t *json_evt = json_array_get(json_obj, n-1);
@@ -272,32 +272,32 @@ int jansson_envelope_deserialize(Envelope *envelope, const char *json_str) {
         (void)_deserialize_event(env->event, json_evt);
         break;
     }
-    case ENVELOPE_REQ: {
+    case NOSTR_ENVELOPE_REQ: {
         if (json_array_size(json_obj) < 3) {
             fprintf(stderr, "Failed to decode REQ envelope: missing filters\n");
             break;
         }
-        ReqEnvelope *env = (ReqEnvelope *)envelope;
+        NostrReqEnvelope *env = (NostrReqEnvelope *)envelope;
         json_t *json_id = json_array_get(json_obj, 1);
         if (!json_is_string(json_id)) { break; }
         env->subscription_id = strdup(json_string_value(json_id));
-        Filters *fs = create_filters();
+        NostrFilters *fs = nostr_filters_new();
         if (!fs) { break; }
         for (size_t i = 2; i < json_array_size(json_obj); i++) {
             json_t *json_filter = json_array_get(json_obj, i);
-            Filter f = {0};
+            NostrFilter f = {0};
             if (jansson_filter_deserialize(&f, json_filter) != 0) { continue; }
-            filters_add(fs, &f);
+            nostr_filters_add(fs, &f);
         }
         env->filters = fs;
         break;
     }
-    case ENVELOPE_COUNT: {
+    case NOSTR_ENVELOPE_COUNT: {
         if (json_array_size(json_obj) < 4) {
             fprintf(stderr, "Failed to decode COUNT envelope: missing filters\n");
             break;
         }
-        CountEnvelope *env = (CountEnvelope *)envelope;
+        NostrCountEnvelope *env = (NostrCountEnvelope *)envelope;
         json_t *json_id = json_array_get(json_obj, 1);
         json_t *json_count = json_array_get(json_obj, 2);
         if (!json_is_string(json_id) || !json_is_object(json_count)) { break; }
@@ -308,56 +308,56 @@ int jansson_envelope_deserialize(Envelope *envelope, const char *json_str) {
         if (json_is_integer(count_value)) {
             env->count = (int)json_integer_value(count_value);
         }
-        Filters *fs = create_filters();
+        NostrFilters *fs = nostr_filters_new();
         if (!fs) { break; }
         for (size_t i = 3; i < json_array_size(json_obj); i++) {
             json_t *json_filter = json_array_get(json_obj, i);
-            Filter f = {0};
+            NostrFilter f = {0};
             if (jansson_filter_deserialize(&f, json_filter) != 0) { continue; }
-            filters_add(fs, &f);
+            nostr_filters_add(fs, &f);
         }
         env->filters = fs;
         break;
     }
-    case ENVELOPE_NOTICE: {
+    case NOSTR_ENVELOPE_NOTICE: {
         if (json_array_size(json_obj) < 2) {
             fprintf(stderr, "Failed to decode NOTICE envelope\n");
             break;
         }
-        NoticeEnvelope *env = (NoticeEnvelope *)envelope;
+        NostrNoticeEnvelope *env = (NostrNoticeEnvelope *)envelope;
         json_t *json_message = json_array_get(json_obj, 1);
         if (!json_is_string(json_message)) { break; }
         env->message = strdup(json_string_value(json_message));
         break;
     }
-    case ENVELOPE_EOSE: {
+    case NOSTR_ENVELOPE_EOSE: {
         if (json_array_size(json_obj) < 2) {
             fprintf(stderr, "Failed to decode EOSE envelope\n");
             break;
         }
-        EOSEEnvelope *env = (EOSEEnvelope *)envelope;
+        NostrEOSEEnvelope *env = (NostrEOSEEnvelope *)envelope;
         json_t *json_message = json_array_get(json_obj, 1);
         if (!json_is_string(json_message)) { break; }
         env->message = strdup(json_string_value(json_message));
         break;
     }
-    case ENVELOPE_CLOSE: {
+    case NOSTR_ENVELOPE_CLOSE: {
         if (json_array_size(json_obj) < 2) {
             fprintf(stderr, "Failed to decode CLOSE envelope\n");
             break;
         }
-        CloseEnvelope *env = (CloseEnvelope *)envelope;
+        NostrCloseEnvelope *env = (NostrCloseEnvelope *)envelope;
         json_t *json_message = json_array_get(json_obj, 1);
         if (!json_is_string(json_message)) { break; }
         env->message = strdup(json_string_value(json_message));
         break;
     }
-    case ENVELOPE_CLOSED: {
+    case NOSTR_ENVELOPE_CLOSED: {
         if (json_array_size(json_obj) < 3) {
             fprintf(stderr, "Failed to decode CLOSED envelope\n");
             break;
         }
-        ClosedEnvelope *env = (ClosedEnvelope *)envelope;
+        NostrClosedEnvelope *env = (NostrClosedEnvelope *)envelope;
         json_t *json_id = json_array_get(json_obj, 1);
         json_t *json_message = json_array_get(json_obj, 2);
         if (!json_is_string(json_id) || !json_is_string(json_message)) { break; }
@@ -365,12 +365,12 @@ int jansson_envelope_deserialize(Envelope *envelope, const char *json_str) {
         env->reason = strdup(json_string_value(json_message));
         break;
     }
-    case ENVELOPE_OK: {
+    case NOSTR_ENVELOPE_OK: {
         if (json_array_size(json_obj) < 3) {
             fprintf(stderr, "Failed to decode OK envelope\n");
             break;
         }
-        OKEnvelope *env = (OKEnvelope *)envelope;
+        NostrOKEnvelope *env = (NostrOKEnvelope *)envelope;
         json_t *json_id = json_array_get(json_obj, 1);
         json_t *json_ok = json_array_get(json_obj, 2);
         if (!json_is_string(json_id) || !(json_is_true(json_ok) || json_is_false(json_ok))) { break; }
@@ -382,12 +382,12 @@ int jansson_envelope_deserialize(Envelope *envelope, const char *json_str) {
         }
         break;
     }
-    case ENVELOPE_AUTH: {
+    case NOSTR_ENVELOPE_AUTH: {
         if (json_array_size(json_obj) < 2) {
             fprintf(stderr, "Failed to decode AUTH envelope\n");
             break;
         }
-        AuthEnvelope *env = (AuthEnvelope *)envelope;
+        NostrAuthEnvelope *env = (NostrAuthEnvelope *)envelope;
         json_t *json_challenge = json_array_get(json_obj, 1);
         if (json_is_object(json_challenge)) {
             env->event = nostr_event_new();
@@ -407,7 +407,7 @@ int jansson_envelope_deserialize(Envelope *envelope, const char *json_str) {
     return 0;
 }
 
-int jansson_filter_deserialize(Filter *filter, json_t *json_obj) {
+int jansson_filter_deserialize(NostrFilter *filter, json_t *json_obj) {
     if (!filter || !json_is_object(json_obj)) {
         return -1;
     }
@@ -447,7 +447,7 @@ int jansson_filter_deserialize(Filter *filter, json_t *json_obj) {
     // Deserialize the `tags` (optional explicit array-of-arrays)
     json_t *tags_json = json_object_get(json_obj, "tags");
     if (tags_json) {
-        Tags *t = jansson_tags_deserialize(tags_json);
+        NostrTags *t = jansson_tags_deserialize(tags_json);
         if (t) {
             if (filter->tags) nostr_tags_free(filter->tags);
             filter->tags = t;
@@ -469,11 +469,11 @@ int jansson_filter_deserialize(Filter *filter, json_t *json_obj) {
                     return -1; // invalid type in #tag array
                 }
                 const char *v = json_string_value(elt);
-                Tag *tag = new_string_array(0);
+                NostrTag *tag = new_string_array(0);
                 if (!tag) continue;
-                string_array_add(tag, tag_name);
-                string_array_add(tag, v);
-                Tags *nt = nostr_tags_append_unique(filter->tags, tag);
+                nostr_tag_add(tag, tag_name);
+                nostr_tag_add(tag, v);
+                NostrTags *nt = nostr_tags_append_unique(filter->tags, tag);
                 if (nt) {
                     filter->tags = nt;
                 } else {
@@ -486,12 +486,12 @@ int jansson_filter_deserialize(Filter *filter, json_t *json_obj) {
     // Deserialize `since` and `until` as integer timestamps
     json_t *since_json = json_object_get(json_obj, "since");
     if (json_is_integer(since_json)) {
-        filter->since = (Timestamp)json_integer_value(since_json);
+        filter->since = (NostrTimestamp)json_integer_value(since_json);
     }
 
     json_t *until_json = json_object_get(json_obj, "until");
     if (json_is_integer(until_json)) {
-        filter->until = (Timestamp)json_integer_value(until_json);
+        filter->until = (NostrTimestamp)json_integer_value(until_json);
     }
 
     // Deserialize `limit`
@@ -513,7 +513,7 @@ int jansson_filter_deserialize(Filter *filter, json_t *json_obj) {
     return 0; // Success
 }
 
-json_t *jansson_filter_serialize(const Filter *filter) {
+json_t *jansson_filter_serialize(const NostrFilter *filter) {
     if (!filter) {
         return NULL;
     }
@@ -541,10 +541,10 @@ json_t *jansson_filter_serialize(const Filter *filter) {
     if (filter->tags && filter->tags->count > 0) {
         // Aggregate values by single-letter tag name
         for (size_t i = 0; i < filter->tags->count; i++) {
-            Tag *t = filter->tags->data[i];
-            if (!t || t->size < 2) continue;
-            const char *name = t->data[0];
-            const char *value = t->data[1];
+            NostrTag *t = filter->tags->data[i];
+            if (!t || nostr_tag_size(t) < 2) continue;
+            const char *name = nostr_tag_get(t, 0);
+            const char *value = nostr_tag_get(t, 1);
             if (!name || !value) continue;
             // Only map single-character names to dynamic keys
             if (name[0] == '\0' || name[1] != '\0') continue;
@@ -579,14 +579,14 @@ json_t *jansson_filter_serialize(const Filter *filter) {
     return json_obj;
 }
 
-json_t *jansson_tag_serialize(const Tag *tag) {
+json_t *jansson_tag_serialize(const NostrTag *tag) {
     if (!tag)
         return NULL;
     return string_array_serialize(tag);
 }
 
 // Serialize a collection of Tags into a JSON array of arrays
-json_t *jansson_tags_serialize(const Tags *tags) {
+json_t *jansson_tags_serialize(const NostrTags *tags) {
     if (!tags)
         return NULL;
 
@@ -599,7 +599,7 @@ json_t *jansson_tags_serialize(const Tags *tags) {
 }
 
 // Deserialize a JSON array into a single Tag
-int jansson_tag_deserialize(Tag *tag, json_t *json_array) {
+int jansson_tag_deserialize(NostrTag *tag, json_t *json_array) {
     if (!json_is_array(json_array))
         return -1;
 
@@ -607,11 +607,11 @@ int jansson_tag_deserialize(Tag *tag, json_t *json_array) {
 }
 
 // Deserialize a JSON array of arrays into a Tags collection
-Tags *jansson_tags_deserialize(json_t *json_array) {
+NostrTags *jansson_tags_deserialize(json_t *json_array) {
     if (!json_is_array(json_array))
         return NULL;
 
-    Tags *tags = malloc(sizeof(Tags));
+    NostrTags *tags = malloc(sizeof(NostrTags));
     if (!tags)
         return NULL;
 
@@ -621,7 +621,7 @@ Tags *jansson_tags_deserialize(json_t *json_array) {
     size_t index;
     json_t *value;
     json_array_foreach(json_array, index, value) {
-        Tag *tag = new_string_array(0);
+        NostrTag *tag = new_string_array(0);
         if (!tag) {
             nostr_tags_free(tags);
             return NULL;
@@ -631,7 +631,7 @@ Tags *jansson_tags_deserialize(json_t *json_array) {
             nostr_tags_free(tags);
             return NULL;
         }
-        Tags *new_tags = nostr_tags_append_unique(tags, tag);
+        NostrTags *new_tags = nostr_tags_append_unique(tags, tag);
         if (!new_tags) {
             // on failure, free constructed tag and existing tags
             nostr_tag_free(tag);
@@ -729,7 +729,7 @@ NostrJsonInterface jansson_struct = {
 NostrJsonInterface *jansson_impl = &jansson_struct;
 
 /* String-based wrappers for Filter serialize/deserialize to match interface */
-static char *jansson_filter_serialize_str(const Filter *filter) {
+static char *jansson_filter_serialize_str(const NostrFilter *filter) {
     json_t *obj = jansson_filter_serialize(filter);
     if (!obj) return NULL;
     char *s = json_dumps(obj, JSON_COMPACT);
@@ -737,7 +737,7 @@ static char *jansson_filter_serialize_str(const Filter *filter) {
     return s;
 }
 
-static int jansson_filter_deserialize_str(Filter *filter, const char *json_str) {
+static int jansson_filter_deserialize_str(NostrFilter *filter, const char *json_str) {
     if (!json_str) return -1;
     json_error_t error;
     json_t *obj = json_loads(json_str, 0, &error);

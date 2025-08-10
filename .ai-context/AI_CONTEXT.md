@@ -7,7 +7,7 @@ This document provides conventions and context to maximize LLM effectiveness whe
 - Language: C11
 - Build: CMake ≥ 3.10
 - Headers live under module `include/` directories; public APIs are declared in `libnostr/include/*.h`, `libgo/include/*.h`, `libjson/include/*.h`.
-- Always include public headers via relative paths from module include roots, e.g. `#include "event.h"` once `target_include_directories(... PUBLIC include)` is used.
+- Always include public headers via relative paths from module include roots, e.g. `#include "nostr-event.h"` once `target_include_directories(... PUBLIC include)` is used.
 - Prefer `const` correctness and explicit sizes (`int64_t`, `size_t`).
 - Error handling: return error codes (see `libnostr/include/error_codes.h`), avoid `exit()` in library code.
 - Memory: document ownership for all returned pointers. Provide `free_*` functions for heap-allocated structs.

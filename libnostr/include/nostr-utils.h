@@ -6,11 +6,14 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include "utils.h"
+#include "nostr-utils.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// Constants
+#define MAX_LOCKS 50
 
 /* Provide GI-friendly function prototypes in the nostr_* namespace. */
 

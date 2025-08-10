@@ -87,7 +87,7 @@ which will be removed before release.
 - Filters -> NostrFilters
 - Tags -> NostrTags
 - Connection -> NostrConnection
-- EnvelopeType -> NostrEnvelopeType (values: NOSTR_ENVELOPE_*)
+- EnvelopeType -> NostrEnvelopeType (values: NOSTR_NOSTR_ENVELOPE_*)
 - NostrEvent (unchanged prefix already correct)
 
 ## Relay Functions

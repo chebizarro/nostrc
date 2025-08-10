@@ -5,11 +5,17 @@
 
 #include <stddef.h>
 #include <stdbool.h>
-#include "simplepool.h"
+#include "nostr-relay.h"
+#include "nostr-event.h"
+#include "nostr-filter.h"
+#include <pthread.h>
+#include <stdlib.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define SEEN_ALREADY_DROP_TICK 60 // seconds
 
 /**
  * NostrSimplePool:
@@ -18,9 +24,26 @@ extern "C" {
  *
  * Opaque wrapper typedefs for pool, incoming events, and directed filters.
  */
-typedef SimplePool        NostrSimplePool;
-typedef IncomingEvent     NostrIncomingEvent;
-typedef DirectedFilters   NostrDirectedFilters;
+typedef struct _NostrIncomingEvent {
+    NostrEvent *event;
+    NostrRelay *relay;
+} NostrIncomingEvent;
+
+typedef struct _NostrSimplePool {
+    NostrRelay **relays;
+    size_t relay_count;
+    pthread_mutex_t pool_mutex;
+    void (*auth_handler)(NostrEvent *);
+    void (*event_middleware)(NostrIncomingEvent *);
+    bool (*signature_checker)(NostrEvent);
+    bool running;
+    pthread_t thread;
+} NostrSimplePool;
+
+typedef struct _NostrDirectedFilters {
+    NostrFilters filters;
+    char *relay_url;
+} NostrDirectedFilters;
 
 /* Function prototypes (stable GI-friendly surface) */
 /**
@@ -64,7 +87,7 @@ void nostr_simple_pool_stop(NostrSimplePool *pool);
  * @filters: (transfer none): filters to subscribe
  * @unique: whether to de-duplicate events
  */
-void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_t url_count, Filters filters, bool unique);
+void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilters filters, bool unique);
 /**
  * nostr_simple_pool_query_single:
  * @pool: (transfer none): pool
@@ -72,7 +95,7 @@ void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_
  * @url_count: number of URLs
  * @filter: (transfer none): filter
  */
-void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, size_t url_count, Filter filter);
+void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilter filter);
 
 #ifdef __cplusplus
 }

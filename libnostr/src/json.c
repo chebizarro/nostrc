@@ -1,7 +1,7 @@
 #include "json.h"
-#include "envelope.h"
-#include "event.h"
-#include "filter.h"
+#include "json.h"
+#include "nostr-event.h"
+#include "nostr-filter.h"
 
 NostrJsonInterface *json_interface = NULL;
 
@@ -35,28 +35,28 @@ int nostr_event_deserialize(NostrEvent *event, const char *json_str) {
     return -1;
 }
 
-char *nostr_envelope_serialize(const Envelope *envelope) {
+char *nostr_envelope_serialize(const NostrEnvelope *envelope) {
     if (json_interface && json_interface->serialize_envelope) {
         return json_interface->serialize_envelope(envelope);
     }
     return NULL;
 }
 
-int nostr_envelope_deserialize(Envelope *envelope, const char *json) {
+int nostr_envelope_deserialize(NostrEnvelope *envelope, const char *json) {
     if (json_interface && json_interface->deserialize_envelope) {
         return json_interface->deserialize_envelope(envelope, json);
     }
     return -1;
 }
 
-char *nostr_filter_serialize(const Filter *filter) {
+char *nostr_filter_serialize(const NostrFilter *filter) {
     if (json_interface && json_interface->serialize_filter) {
         return json_interface->serialize_filter(filter);
     }
     return NULL;
 }
 
-int nostr_filter_deserialize(Filter *filter, const char *json) {
+int nostr_filter_deserialize(NostrFilter *filter, const char *json) {
     if (json_interface && json_interface->deserialize_filter) {
         return json_interface->deserialize_filter(filter, json);
     }

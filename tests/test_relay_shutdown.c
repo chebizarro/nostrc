@@ -16,7 +16,7 @@ int main(void) {
 
     GoContext *bg = go_context_background();
     Error *err = NULL;
-    Relay *r = nostr_relay_new(bg, "wss://example.invalid", &err);
+    NostrRelay *r = nostr_relay_new(bg, "wss://example.invalid", &err);
     if (!r) {
         fprintf(stderr, "nostr_relay_new failed: %s\n", err ? err->message : "unknown");
         return 1;

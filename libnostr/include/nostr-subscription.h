@@ -1,12 +1,11 @@
 #ifndef __NOSTR_SUBSCRIPTION_H__
 #define __NOSTR_SUBSCRIPTION_H__
 
-/* Transitional header exposing GLib-friendly names for Subscription. */
+/* Canonical Nostr subscription API (GLib-friendly C interface). */
 
 #include <stdbool.h>
 #include "nostr-filter.h"
-#include "relay.h"
-#include "subscription.h" /* defines Subscription and legacy APIs */
+#include "nostr-relay.h"
 #include "channel.h"  /* GoChannel */
 #include "context.h"  /* GoContext */
 
@@ -14,9 +13,17 @@
 extern "C" {
 #endif
 
-/* Canonical typedef for GLib-style naming */
-typedef Subscription NostrSubscription;
-typedef Relay       NostrRelay;
+/* Canonical NostrSubscription type */
+typedef struct _SubscriptionPrivate SubscriptionPrivate; /* private struct */
+typedef struct NostrSubscription {
+    SubscriptionPrivate *priv;
+    NostrRelay *relay;
+    NostrFilters *filters;
+    GoChannel *events;
+    GoChannel *end_of_stored_events;
+    GoChannel *closed_reason;
+    GoContext *context;
+} NostrSubscription;
 
 
 /* GI-facing API (stable symbol names) */

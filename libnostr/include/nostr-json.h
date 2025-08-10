@@ -11,6 +11,7 @@
  */
 
 #include "json.h"
+#include "nostr-filter.h"
 #include "nostr-glib.h"
 
 #ifdef __cplusplus
@@ -102,12 +103,12 @@ struct _NostrJsonProviderInterface {
     int   (*deserialize_event)(NostrEvent *event, const char *json);
 
     /* (nullable) */
-    char *(*serialize_envelope)(const Envelope *envelope);
-    int   (*deserialize_envelope)(Envelope *envelope, const char *json);
+    char *(*serialize_envelope)(const NostrEnvelope *envelope);
+    int   (*deserialize_envelope)(NostrEnvelope *envelope, const char *json);
 
     /* (nullable) */
-    char *(*serialize_filter)(const Filter *filter);
-    int   (*deserialize_filter)(Filter *filter, const char *json);
+    char *(*serialize_filter)(const NostrFilter *filter);
+    int   (*deserialize_filter)(NostrFilter *filter, const char *json);
 };
 
 GType nostr_json_provider_get_type(void);

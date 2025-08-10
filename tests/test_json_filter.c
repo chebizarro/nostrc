@@ -3,12 +3,12 @@
 #include <string.h>
 #include <stdbool.h>
 #include "json.h"
-#include "filter.h"
+#include "nostr-filter.h"
 #include "nostr-tag.h"
 #include "nostr_jansson.h"
 
-static void fill_filter(Filter *f) {
-    // assumes f was created by create_filter()
+static void fill_filter(NostrFilter *f) {
+    // assumes f was created by nostr_filter_new()
     f->since = 123;
     f->until = 456;
     f->limit = 10;
@@ -23,19 +23,15 @@ static void fill_filter(Filter *f) {
     string_array_add(&f->authors, "a2");
 
     // tags: [["e","x"],["p","y"]]
-    Tag *t1 = new_string_array(0);
-    string_array_add(t1, "e");
-    string_array_add(t1, "x");
-    Tag *t2 = new_string_array(0);
-    string_array_add(t2, "p");
-    string_array_add(t2, "y");
-    Tags *tmp = nostr_tags_append_unique(f->tags, t1);
+    NostrTag *t1 = nostr_tag_new("e", "x", NULL);
+    NostrTag *t2 = nostr_tag_new("p", "y", NULL);
+    NostrTags *tmp = nostr_tags_append_unique(f->tags, t1);
     if (tmp) f->tags = tmp;
     tmp = nostr_tags_append_unique(f->tags, t2);
     if (tmp) f->tags = tmp;
 }
 
-static void assert_filter_eq(Filter *a, Filter *b) {
+static void assert_filter_eq(NostrFilter *a, NostrFilter *b) {
     assert(int_array_size(&a->kinds) == int_array_size(&b->kinds));
     assert(string_array_size(&a->ids) == string_array_size(&b->ids));
     assert(string_array_size(&a->authors) == string_array_size(&b->authors));
@@ -48,7 +44,7 @@ static void assert_filter_eq(Filter *a, Filter *b) {
 
 static void test_filter_roundtrip_full(void) {
     nostr_set_json_interface(jansson_impl);
-    Filter *f = create_filter();
+    NostrFilter *f = nostr_filter_new();
     assert(f);
     fill_filter(f);
 
@@ -57,7 +53,7 @@ static void test_filter_roundtrip_full(void) {
     // Non-standard fields must not appear
     assert(strstr(s, "limit_zero") == NULL);
 
-    Filter *g = create_filter();
+    NostrFilter *g = nostr_filter_new();
     assert(g);
     int rc = nostr_filter_deserialize(g, s);
     assert(rc == 0);
@@ -65,13 +61,13 @@ static void test_filter_roundtrip_full(void) {
     assert_filter_eq(f, g);
 
     free(s);
-    free_filter(g);
-    free_filter(f);
+    nostr_filter_free(g);
+    nostr_filter_free(f);
 }
 
 static void test_filter_minimal_absent_fields(void) {
     nostr_set_json_interface(jansson_impl);
-    Filter *f = create_filter();
+    NostrFilter *f = nostr_filter_new();
     assert(f);
     // only one field to ensure others are omitted
     int_array_add(&f->kinds, 42);
@@ -87,7 +83,7 @@ static void test_filter_minimal_absent_fields(void) {
     assert(strstr(s, "limit") == NULL);
     assert(strstr(s, "search") == NULL);
 
-    Filter *g = create_filter();
+    NostrFilter *g = nostr_filter_new();
     assert(g);
     int rc = nostr_filter_deserialize(g, s);
     assert(rc == 0);
@@ -95,8 +91,8 @@ static void test_filter_minimal_absent_fields(void) {
     assert(int_array_get(&g->kinds, 0) == 42);
 
     free(s);
-    free_filter(g);
-    free_filter(f);
+    nostr_filter_free(g);
+    nostr_filter_free(f);
 }
 
 int main(void) {

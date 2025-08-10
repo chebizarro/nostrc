@@ -1,7 +1,7 @@
 #ifndef NOSTR_NIP34_H
 #define NOSTR_NIP34_H
 
-#include "event.h"
+#include "nostr-event.h"
 #include "tag.h"
 
 // Define the Patch struct

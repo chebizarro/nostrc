@@ -1,11 +1,10 @@
-#include "envelope.h"
 #include "nostr-envelope.h"
 #include "nostr-event.h"
 #include "json.h"
 
 // Helper function to create a new Envelope
-Envelope *create_envelope(EnvelopeType type) {
-    Envelope *envelope = (Envelope *)malloc(sizeof(Envelope));
+NostrEnvelope *create_envelope(NostrEnvelopeType type) {
+    NostrEnvelope *envelope = (NostrEnvelope *)malloc(sizeof(NostrEnvelope));
     if (!envelope)
         return NULL;
     envelope->type = type;
@@ -80,7 +79,7 @@ static char *parse_json_object(const char **pp) {
 }
 
 // Function to parse a message and return the appropriate Envelope struct
-Envelope *parse_message(const char *message) {
+NostrEnvelope *nostr_envelope_parse(const char *message) {
     if (!message) return NULL;
     const char *p = skip_ws(message);
     if (*p != '[') return NULL;
@@ -93,11 +92,11 @@ Envelope *parse_message(const char *message) {
     if (!q) { free(label); return NULL; }
     p = q;
 
-    Envelope *envelope = NULL;
+    NostrEnvelope *envelope = NULL;
     if (strcmp(label, "EVENT") == 0) {
-        EventEnvelope *env = (EventEnvelope *)malloc(sizeof(EventEnvelope));
+        NostrEventEnvelope *env = (NostrEventEnvelope *)malloc(sizeof(NostrEventEnvelope));
         if (!env) { free(label); return NULL; }
-        env->base.type = ENVELOPE_EVENT;
+        env->base.type = NOSTR_ENVELOPE_EVENT;
         // Second element: subscription id
         char *sid = parse_json_string(&p);
         if (!sid) { free(env); free(label); return NULL; }
@@ -122,28 +121,28 @@ Envelope *parse_message(const char *message) {
         }
         free(event_json);
         env->event = event;
-        envelope = (Envelope *)env;
+        envelope = (NostrEnvelope *)env;
     } else if (strcmp(label, "EOSE") == 0) {
-        EOSEEnvelope *env = (EOSEEnvelope *)malloc(sizeof(EOSEEnvelope));
+        NostrEOSEEnvelope *env = (NostrEOSEEnvelope *)malloc(sizeof(NostrEOSEEnvelope));
         if (!env) { free(label); return NULL; }
-        env->base.type = ENVELOPE_EOSE;
+        env->base.type = NOSTR_ENVELOPE_EOSE;
         // Second element: subscription id (string) is required
         char *sid = parse_json_string(&p);
         if (!sid) { free(env); free(label); return NULL; }
         // We don't currently use it; store in message for debugging
         env->message = sid;
-        envelope = (Envelope *)env;
+        envelope = (NostrEnvelope *)env;
     } else if (strcmp(label, "NOTICE") == 0) {
-        NoticeEnvelope *env = (NoticeEnvelope *)malloc(sizeof(NoticeEnvelope));
+        NostrNoticeEnvelope *env = (NostrNoticeEnvelope *)malloc(sizeof(NostrNoticeEnvelope));
         if (!env) { free(label); return NULL; }
-        env->base.type = ENVELOPE_NOTICE;
+        env->base.type = NOSTR_ENVELOPE_NOTICE;
         char *msg = parse_json_string(&p);
         env->message = msg;
-        envelope = (Envelope *)env;
+        envelope = (NostrEnvelope *)env;
     } else if (strcmp(label, "CLOSED") == 0) {
-        ClosedEnvelope *env = (ClosedEnvelope *)malloc(sizeof(ClosedEnvelope));
+        NostrClosedEnvelope *env = (NostrClosedEnvelope *)malloc(sizeof(NostrClosedEnvelope));
         if (!env) { free(label); return NULL; }
-        env->base.type = ENVELOPE_CLOSED;
+        env->base.type = NOSTR_ENVELOPE_CLOSED;
         // sub id
         char *sid = parse_json_string(&p);
         if (!sid) { free(env); free(label); return NULL; }
@@ -154,16 +153,16 @@ Envelope *parse_message(const char *message) {
         char *reason = parse_json_string(&p);
         if (!reason) { free(env->subscription_id); free(env); free(label); return NULL; }
         env->reason = reason;
-        envelope = (Envelope *)env;
+        envelope = (NostrEnvelope *)env;
     } else if (strcmp(label, "OK") == 0) {
-        OKEnvelope *env = (OKEnvelope *)malloc(sizeof(OKEnvelope));
+        NostrOKEnvelope *env = (NostrOKEnvelope *)malloc(sizeof(NostrOKEnvelope));
         if (!env) { free(label); return NULL; }
-        env->base.type = ENVELOPE_OK;
+        env->base.type = NOSTR_ENVELOPE_OK;
         // event id
         char *eid = parse_json_string(&p);
         env->event_id = eid;
         q = parse_comma(p);
-        if (!q) { envelope = (Envelope *)env; goto done; }
+        if (!q) { envelope = (NostrEnvelope *)env; goto done; }
         p = skip_ws(q);
         // parse boolean ok (true/false)
         if (strncmp(p, "true", 4) == 0) { env->ok = true; p += 4; }
@@ -176,26 +175,26 @@ Envelope *parse_message(const char *message) {
             if (!rsn) { free(env->event_id); free(env); free(label); return NULL; }
             env->reason = rsn;
         }
-        envelope = (Envelope *)env;
+        envelope = (NostrEnvelope *)env;
     } else if (strcmp(label, "COUNT") == 0) {
-        CountEnvelope *env = (CountEnvelope *)malloc(sizeof(CountEnvelope));
+        NostrCountEnvelope *env = (NostrCountEnvelope *)malloc(sizeof(NostrCountEnvelope));
         if (!env) { free(label); return NULL; }
-        env->base.type = ENVELOPE_COUNT;
+        env->base.type = NOSTR_ENVELOPE_COUNT;
         // sub id
         char *sid = parse_json_string(&p);
         env->subscription_id = sid;
         // count may be a number or object; we only look for number
         q = parse_comma(p);
-        if (!q) { envelope = (Envelope *)env; goto done; }
+        if (!q) { envelope = (NostrEnvelope *)env; goto done; }
         p = skip_ws(q);
         if (*p >= '0' && *p <= '9') {
             env->count = atoi(p);
         }
-        envelope = (Envelope *)env;
+        envelope = (NostrEnvelope *)env;
     } else if (strcmp(label, "AUTH") == 0) {
-        AuthEnvelope *env = (AuthEnvelope *)malloc(sizeof(AuthEnvelope));
+        NostrAuthEnvelope *env = (NostrAuthEnvelope *)malloc(sizeof(NostrAuthEnvelope));
         if (!env) { free(label); return NULL; }
-        env->base.type = ENVELOPE_AUTH;
+        env->base.type = NOSTR_ENVELOPE_AUTH;
         char *challenge = parse_json_string(&p);
         env->challenge = challenge;
         // optional embedded event after comma
@@ -215,13 +214,13 @@ Envelope *parse_message(const char *message) {
                 }
             }
         }
-        envelope = (Envelope *)env;
+        envelope = (NostrEnvelope *)env;
     } else if (strcmp(label, "REQ") == 0) {
-        ReqEnvelope *env = (ReqEnvelope *)malloc(sizeof(ReqEnvelope));
+        NostrReqEnvelope *env = (NostrReqEnvelope *)malloc(sizeof(NostrReqEnvelope));
         if (!env) { free(label); return NULL; }
-        env->base.type = ENVELOPE_REQ;
+        env->base.type = NOSTR_ENVELOPE_REQ;
         env->subscription_id = parse_json_string(&p);
-        envelope = (Envelope *)env;
+        envelope = (NostrEnvelope *)env;
     }
 
 done:
@@ -230,43 +229,43 @@ done:
 }
 
 // Function to free an Envelope struct
-void free_envelope(Envelope *envelope) {
+void nostr_envelope_free(NostrEnvelope *envelope) {
     if (!envelope)
         return;
 
     switch (envelope->type) {
-    case ENVELOPE_EVENT:
-        free(((EventEnvelope *)envelope)->subscription_id);
-        nostr_event_free(((EventEnvelope *)envelope)->event);
+    case NOSTR_ENVELOPE_EVENT:
+        free(((NostrEventEnvelope *)envelope)->subscription_id);
+        nostr_event_free(((NostrEventEnvelope *)envelope)->event);
         break;
-    case ENVELOPE_REQ:
-        free(((ReqEnvelope *)envelope)->subscription_id);
-        free_filters(((ReqEnvelope *)envelope)->filters);
+    case NOSTR_ENVELOPE_REQ:
+        free(((NostrReqEnvelope *)envelope)->subscription_id);
+        nostr_filters_free(((NostrReqEnvelope *)envelope)->filters);
         break;
-    case ENVELOPE_COUNT:
-        free(((CountEnvelope *)envelope)->subscription_id);
-        free_filters(((CountEnvelope *)envelope)->filters);
+    case NOSTR_ENVELOPE_COUNT:
+        free(((NostrCountEnvelope *)envelope)->subscription_id);
+        nostr_filters_free(((NostrCountEnvelope *)envelope)->filters);
         break;
-    case ENVELOPE_NOTICE:
-        free(((NoticeEnvelope *)envelope)->message);
+    case NOSTR_ENVELOPE_NOTICE:
+        free(((NostrNoticeEnvelope *)envelope)->message);
         break;
-    case ENVELOPE_EOSE:
-        free(((EOSEEnvelope *)envelope)->message);
+    case NOSTR_ENVELOPE_EOSE:
+        free(((NostrEOSEEnvelope *)envelope)->message);
         break;
-    case ENVELOPE_CLOSE:
-        free(((CloseEnvelope *)envelope)->message);
+    case NOSTR_ENVELOPE_CLOSE:
+        free(((NostrCloseEnvelope *)envelope)->message);
         break;
-    case ENVELOPE_CLOSED:
-        free(((ClosedEnvelope *)envelope)->subscription_id);
-        free(((ClosedEnvelope *)envelope)->reason);
+    case NOSTR_ENVELOPE_CLOSED:
+        free(((NostrClosedEnvelope *)envelope)->subscription_id);
+        free(((NostrClosedEnvelope *)envelope)->reason);
         break;
-    case ENVELOPE_OK:
-        free(((OKEnvelope *)envelope)->event_id);
-        free(((OKEnvelope *)envelope)->reason);
+    case NOSTR_ENVELOPE_OK:
+        free(((NostrOKEnvelope *)envelope)->event_id);
+        free(((NostrOKEnvelope *)envelope)->reason);
         break;
-    case ENVELOPE_AUTH:
-        free(((AuthEnvelope *)envelope)->challenge);
-        nostr_event_free(((AuthEnvelope *)envelope)->event);
+    case NOSTR_ENVELOPE_AUTH:
+        free(((NostrAuthEnvelope *)envelope)->challenge);
+        nostr_event_free(((NostrAuthEnvelope *)envelope)->event);
         break;
     default:
         break;
@@ -275,7 +274,7 @@ void free_envelope(Envelope *envelope) {
     free(envelope);
 }
 
-int event_envelope_unmarshal_json(EventEnvelope *envelope, const char *json_data) {
+int event_envelope_unmarshal_json(NostrEventEnvelope *envelope, const char *json_data) {
     if (!json_data || !envelope)
         return -1;
 
@@ -289,7 +288,7 @@ int event_envelope_unmarshal_json(EventEnvelope *envelope, const char *json_data
     return 0;
 }
 
-char *event_envelope_marshal_json(EventEnvelope *envelope) {
+char *event_envelope_marshal_json(NostrEventEnvelope *envelope) {
     if (!envelope || !envelope->event)
         return NULL;
 
@@ -324,7 +323,7 @@ char *event_envelope_marshal_json(EventEnvelope *envelope) {
 
 /* GLib-style accessors (header: nostr-envelope.h) */
 NostrEnvelopeType nostr_envelope_get_type(const NostrEnvelope *env) {
-    if (!env) return ENVELOPE_UNKNOWN;
+    if (!env) return NOSTR_ENVELOPE_UNKNOWN;
     return env->type;
 }
 
@@ -343,7 +342,7 @@ const char *nostr_req_envelope_get_subscription_id(const NostrReqEnvelope *env) 
     return env->subscription_id;
 }
 
-Filters *nostr_req_envelope_get_filters(const NostrReqEnvelope *env) {
+NostrFilters *nostr_req_envelope_get_filters(const NostrReqEnvelope *env) {
     if (!env) return NULL;
     return env->filters;
 }
@@ -353,7 +352,7 @@ const char *nostr_count_envelope_get_subscription_id(const NostrCountEnvelope *e
     return env->subscription_id;
 }
 
-Filters *nostr_count_envelope_get_filters(const NostrCountEnvelope *env) {
+NostrFilters *nostr_count_envelope_get_filters(const NostrCountEnvelope *env) {
     if (!env) return NULL;
     return env->filters;
 }
@@ -413,41 +412,41 @@ NostrEvent *nostr_auth_envelope_get_event(const NostrAuthEnvelope *env) {
     return env->event;
 }
 
-// Function to convert an Envelope struct to JSON
-char *envelope_to_json(Envelope *envelope) {
+// Function to convert a NostrEnvelope struct to JSON
+char *envelope_to_json(NostrEnvelope *envelope) {
 
     switch (envelope->type) {
-    case ENVELOPE_EVENT: {
-        EventEnvelope *event_envelope = (EventEnvelope *)envelope;
+    case NOSTR_ENVELOPE_EVENT: {
+        NostrEventEnvelope *event_envelope = (NostrEventEnvelope *)envelope;
         if (event_envelope->subscription_id) {
         }
         break;
     }
-    case ENVELOPE_REQ: {
+    case NOSTR_ENVELOPE_REQ: {
         // TODO: implement JSON for REQ
         break;
     }
-    case ENVELOPE_COUNT: {
+    case NOSTR_ENVELOPE_COUNT: {
         // TODO: implement JSON for COUNT
         break;
     }
-    case ENVELOPE_NOTICE: {
+    case NOSTR_ENVELOPE_NOTICE: {
         break;
     }
-    case ENVELOPE_EOSE: {
+    case NOSTR_ENVELOPE_EOSE: {
         break;
     }
-    case ENVELOPE_CLOSE: {
+    case NOSTR_ENVELOPE_CLOSE: {
         break;
     }
-    case ENVELOPE_CLOSED: {
+    case NOSTR_ENVELOPE_CLOSED: {
         break;
     }
-    case ENVELOPE_OK: {
+    case NOSTR_ENVELOPE_OK: {
         break;
     }
-    case ENVELOPE_AUTH: {
-        AuthEnvelope *auth_envelope = (AuthEnvelope *)envelope;
+    case NOSTR_ENVELOPE_AUTH: {
+        NostrAuthEnvelope *auth_envelope = (NostrAuthEnvelope *)envelope;
         if (auth_envelope->challenge) {
 
         } else {

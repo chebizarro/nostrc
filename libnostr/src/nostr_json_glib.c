@@ -1,6 +1,7 @@
 #include "nostr-config.h"
 #include "nostr-json.h"
 #include "json.h"
+#include "nostr-filter.h"
 
 #if defined(NOSTR_HAVE_GLIB) && NOSTR_HAVE_GLIB
 
@@ -57,7 +58,7 @@ static int tr_deserialize_event(NostrEvent *event, const char *json) {
     return -1;
 }
 
-static char *tr_serialize_envelope(const Envelope *envelope) {
+static char *tr_serialize_envelope(const NostrEnvelope *envelope) {
     if (!s_provider) return NULL;
     NostrJsonProviderInterface *iface = get_iface_from_obj(s_provider);
     if (iface->serialize_envelope)
@@ -65,7 +66,7 @@ static char *tr_serialize_envelope(const Envelope *envelope) {
     return NULL;
 }
 
-static int tr_deserialize_envelope(Envelope *envelope, const char *json) {
+static int tr_deserialize_envelope(NostrEnvelope *envelope, const char *json) {
     if (!s_provider) return -1;
     NostrJsonProviderInterface *iface = get_iface_from_obj(s_provider);
     if (iface->deserialize_envelope)
@@ -73,7 +74,7 @@ static int tr_deserialize_envelope(Envelope *envelope, const char *json) {
     return -1;
 }
 
-static char *tr_serialize_filter(const Filter *filter) {
+static char *tr_serialize_filter(const NostrFilter *filter) {
     if (!s_provider) return NULL;
     NostrJsonProviderInterface *iface = get_iface_from_obj(s_provider);
     if (iface->serialize_filter)
@@ -81,7 +82,7 @@ static char *tr_serialize_filter(const Filter *filter) {
     return NULL;
 }
 
-static int tr_deserialize_filter(Filter *filter, const char *json) {
+static int tr_deserialize_filter(NostrFilter *filter, const char *json) {
     if (!s_provider) return -1;
     NostrJsonProviderInterface *iface = get_iface_from_obj(s_provider);
     if (iface->deserialize_filter)

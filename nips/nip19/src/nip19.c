@@ -1,6 +1,6 @@
 #include "nostr/nip19.h"
 #include "bech32.h"
-#include "event.h"
+#include "nostr-event.h"
 #include "util.h"
 #include <stdint.h>
 #include <stdio.h>

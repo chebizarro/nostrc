@@ -8,7 +8,7 @@ G_DEFINE_TYPE(NostrSimplePool, nostr_simple_pool, G_TYPE_OBJECT)
 static void nostr_simple_pool_finalize(GObject *object) {
     NostrSimplePool *self = NOSTR_SIMPLE_POOL(object);
     if (self->pool) {
-        simple_pool_free(self->pool);
+        nostr_simple_pool_free(self->pool);
     }
     G_OBJECT_CLASS(nostr_simple_pool_parent_class)->finalize(object);
 }
@@ -19,17 +19,21 @@ static void nostr_simple_pool_class_init(NostrSimplePoolClass *klass) {
 }
 
 static void nostr_simple_pool_init(NostrSimplePool *self) {
-    self->pool = simple_pool_new();
+    self->pool = nostr_simple_pool_new();
 }
 
-NostrSimplePool *nostr_simple_pool_new() {
+NostrSimplePool *gnostr_simple_pool_new(void) {
     return g_object_new(NOSTR_TYPE_SIMPLE_POOL, NULL);
 }
 
-void nostr_simple_pool_add_relay(NostrSimplePool *self, NostrRelay *relay) {
-    simple_pool_add_relay(self->pool, relay->relay);
+void gnostr_simple_pool_add_relay(NostrSimplePool *self, NostrRelay *relay) {
+    if (!self || !self->pool || !relay) return;
+    const char *url = nostr_relay_get_url_const(relay);
+    if (url) nostr_simple_pool_ensure_relay(self->pool, url);
 }
 
-GPtrArray *nostr_simple_pool_query_sync(NostrSimplePool *self, NostrFilter *filter, GError **error) {
-    return simple_pool_query_sync(self->pool, &filter->filter, error);
+GPtrArray *gnostr_simple_pool_query_sync(NostrSimplePool *self, NostrFilter *filter, GError **error) {
+    (void)self; (void)filter;
+    if (error) *error = g_error_new_literal(g_quark_from_static_string("nostr-simple-pool"), 1, "gnostr_simple_pool_query_sync is not implemented in this wrapper");
+    return NULL;
 }

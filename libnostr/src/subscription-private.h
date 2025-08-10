@@ -1,11 +1,10 @@
 #ifndef NOSTR_SUBSCRIPTION_PRIVATE_H
 #define NOSTR_SUBSCRIPTION_PRIVATE_H
 
-#include "event.h"
-#include "filter.h"
+#include "nostr-event.h"
+#include "nostr-filter.h"
 #include "go.h"
-#include "relay.h"
-#include "subscription.h"
+#include "nostr-relay.h"
 #include <stdatomic.h>
 
 typedef struct _SubscriptionPrivate {
@@ -13,7 +12,7 @@ typedef struct _SubscriptionPrivate {
     char *id;
     GoChannel *count_result;
 
-    bool (*match)(Filters*, NostrEvent*);
+    bool (*match)(NostrFilters*, NostrEvent*);
     _Atomic bool live;
     _Atomic bool eosed;
     _Atomic bool closed;
@@ -27,10 +26,11 @@ typedef struct _SubscriptionPrivate {
     GoWaitGroup wg;
 } SubscriptionPrivate;
 
-Subscription *create_subscription(Relay *relay, Filters *filters);
-void *subscription_start(void *arg);
-void subscription_dispatch_event(Subscription *sub, NostrEvent *event);
-void subscription_dispatch_eose(Subscription *sub);
-void subscription_dispatch_closed(Subscription *sub, const char *reason);
+struct NostrSubscription; /* forward */
+struct NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filters);
+void *nostr_subscription_start(void *arg);
+void nostr_subscription_dispatch_event(struct NostrSubscription *sub, NostrEvent *event);
+void nostr_subscription_dispatch_eose(struct NostrSubscription *sub);
+void nostr_subscription_dispatch_closed(struct NostrSubscription *sub, const char *reason);
 
 #endif // NOSTR_SUBSCRIPTION_PRIVATE_H

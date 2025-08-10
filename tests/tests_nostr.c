@@ -11,14 +11,14 @@ int main(void) {
 
     nostr_set_json_interface(jansson_impl);
 
-    char *privateKey = generate_private_key();
-    char *pubKey = get_public_key(privateKey);
+    char *privateKey = nostr_key_generate_private();
+    char *pubKey = nostr_key_get_public(privateKey);
 
     NostrEvent *event = nostr_event_new();
     assert(event != NULL);
 
     event->pubkey = strdup(pubKey);
-    event->created_at = Now();
+    event->created_at = (NostrTimestamp)nostr_timestamp_now();
     event->kind = 1;
     event->content = strdup("Hello, Nostr!");
 
@@ -31,15 +31,15 @@ int main(void) {
     bool verified = nostr_event_check_signature(event);
     assert(verified);
 
-    Filter *filter = create_filter();
+    NostrFilter *filter = nostr_filter_new();
     string_array_add(&filter->authors, strdup(pubKey));
 
-    bool matches = filter_matches(filter, event);
+    bool matches = nostr_filter_matches(filter, event);
     assert(matches);
 
     GoContext *ctx = go_context_background();
     Error *err = NULL;
-    Relay *relay = nostr_relay_new(ctx, "ws://192.168.1.149:8081", &err);
+    NostrRelay *relay = nostr_relay_new(ctx, "ws://192.168.1.149:8081", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
@@ -48,11 +48,11 @@ int main(void) {
 
     nostr_relay_publish(relay, event);
 
-    Filters filters = {
+    NostrFilters filters = {
         .filters = filter
     };
 
-    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, &filters);
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, ctx, &filters);
     nostr_subscription_fire(sub, &err);
     // Immediately unsubscribe; don't assume this disconnects the relay
     nostr_subscription_unsubscribe(sub);
@@ -62,7 +62,7 @@ int main(void) {
 
     /* id is owned by event; do not free */
     nostr_event_free(event);
-    free_filter(filter);
+    nostr_filter_free(filter);
     nostr_subscription_free(sub);
     nostr_relay_free(relay);
     go_context_free(ctx);

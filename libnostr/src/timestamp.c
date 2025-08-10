@@ -1,9 +1,10 @@
 #include "nostr.h"
+#include "nostr-timestamp.h"
 
-Timestamp Now(void) {
-    return (Timestamp)time(NULL);
+int64_t nostr_timestamp_now(void) {
+    return (int64_t)time(NULL);
 }
 
-time_t TimestampToTime(Timestamp t) {
+time_t nostr_timestamp_to_time(NostrTimestamp t) {
     return (time_t)t;
 }

@@ -1,5 +1,5 @@
 #include "nostr/nip29.h"
-#include "event.h"
+#include "nostr-event.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,7 +46,7 @@ void nostr_free_group(nostr_group_t *group) {
 
 nostr_event_t *nostr_group_to_metadata_event(const nostr_group_t *group) {
     nostr_event_t *evt = nostr_event_new();
-    evt->kind = KIND_SIMPLE_GROUP_METADATA;
+    evt->kind = NOSTR_KIND_SIMPLE_GROUP_METADATA;
     evt->created_at = group->last_metadata_update;
     nostr_event_add_tag(evt, "d", group->address.id);
     if (group->name) nostr_event_add_tag(evt, "name", group->name);
@@ -61,7 +61,7 @@ nostr_event_t *nostr_group_to_metadata_event(const nostr_group_t *group) {
 
 nostr_event_t *nostr_group_to_admins_event(const nostr_group_t *group) {
     nostr_event_t *evt = nostr_event_new();
-    evt->kind = NOSTR_KIND_SIMPLE_GROUP_ADMINS;
+    evt->kind = NOSTR_NOSTR_KIND_SIMPLE_GROUP_ADMINS;
     evt->created_at = group->last_admins_update;
     nostr_event_add_tag(evt, "d", group->address.id);
     for (size_t i = 0; i < group->members_len; ++i) {
@@ -82,7 +82,7 @@ nostr_event_t *nostr_group_to_admins_event(const nostr_group_t *group) {
 
 nostr_event_t *nostr_group_to_members_event(const nostr_group_t *group) {
     nostr_event_t *evt = nostr_event_new();
-    evt->kind = NOSTR_KIND_SIMPLE_GROUP_MEMBERS;
+    evt->kind = NOSTR_NOSTR_KIND_SIMPLE_GROUP_MEMBERS;
     evt->created_at = group->last_members_update;
     nostr_event_add_tag(evt, "d", group->address.id);
     for (size_t i = 0; i < group->members_len; ++i) {
@@ -92,7 +92,7 @@ nostr_event_t *nostr_group_to_members_event(const nostr_group_t *group) {
 }
 
 bool nostr_group_merge_in_metadata_event(nostr_group_t *group, const nostr_event_t *event) {
-    if (event->kind != NOSTR_KIND_SIMPLE_GROUP_METADATA) {
+    if (event->kind != NOSTR_NOSTR_KIND_SIMPLE_GROUP_METADATA) {
         return false;
     }
     if (event->created_at < group->last_metadata_update) {
@@ -110,7 +110,7 @@ bool nostr_group_merge_in_metadata_event(nostr_group_t *group, const nostr_event
 }
 
 bool nostr_group_merge_in_admins_event(nostr_group_t *group, const nostr_event_t *event) {
-    if (event->kind != NOSTR_KIND_SIMPLE_GROUP_ADMINS) {
+    if (event->kind != NOSTR_NOSTR_KIND_SIMPLE_GROUP_ADMINS) {
         return false;
     }
     if (event->created_at < group->last_admins_update) {
@@ -132,7 +132,7 @@ bool nostr_group_merge_in_admins_event(nostr_group_t *group, const nostr_event_t
 }
 
 bool nostr_group_merge_in_members_event(nostr_group_t *group, const nostr_event_t *event) {
-    if (event->kind != NOSTR_KIND_SIMPLE_GROUP_MEMBERS) {
+    if (event->kind != NOSTR_NOSTR_KIND_SIMPLE_GROUP_MEMBERS) {
         return false;
     }
     if (event->created_at < group->last_members_update) {

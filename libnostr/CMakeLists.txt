@@ -45,15 +45,10 @@ set(LIBNOSTR_SOURCES
   src/utils.c
   src/event_extra.c
   src/simplepool.c
-  src/nostr_filter_wrap.c
-  src/nostr_subscription_wrap.c
 )
 
 # GI thin wrappers for macros/aliases
-list(APPEND LIBNOSTR_SOURCES
-  src/nostr_utils_wrap.c
-  src/nostr_pointer_wrap.c
-)
+# (pointer helpers moved into core utils.c)
 
 # Optional GLib bridge for JSON provider
 if(NOSTR_WITH_GLIB AND GLIB_FOUND)

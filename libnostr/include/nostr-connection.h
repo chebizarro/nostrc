@@ -1,24 +1,31 @@
 #ifndef __NOSTR_CONNECTION_H__
 #define __NOSTR_CONNECTION_H__
 
-/* Transitional header exposing GLib-friendly names for Connection. */
+/* Public header exposing GI-friendly names for Connection. */
 
 #include <stdbool.h>
-#include "connection.h"   /* legacy Connection and APIs */
 #include "channel.h"      /* GoChannel */
+#include "go.h"           /* GoContext */
+#include "error.h"        /* Error */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Canonical typedef for GLib-style naming */
-typedef Connection NostrConnection;
+/* Canonical typedef for GI-style naming */
+typedef struct _NostrConnectionPrivate NostrConnectionPrivate;
 
-/* New API names mapped to legacy implementations */
-#define nostr_connection_new             new_connection
-#define nostr_connection_close           connection_close
-#define nostr_connection_write_message   connection_write_message
-#define nostr_connection_read_message    connection_read_message
+typedef struct _NostrConnection {
+    NostrConnectionPrivate *priv;
+    GoChannel *send_channel;
+    GoChannel *recv_channel;
+} NostrConnection;
+
+/* Canonical API */
+NostrConnection *nostr_connection_new(const char *url);
+void nostr_connection_close(NostrConnection *conn);
+void nostr_connection_write_message(NostrConnection *conn, GoContext *ctx, char *message, Error **err);
+void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *buffer, size_t buffer_size, Error **err);
 
 /* Accessors (GLib-friendly) */
 /**

@@ -2,12 +2,12 @@
 #include "nostr-event.h"
 #include "nostr-relay.h"
 #include "nostr_jansson.h"
-#include "envelope.h"
+#include "nostr-envelope.h"
 #include "nostr-subscription.h"
 #include "nostr-filter.h"
-#include "filter.h"
+#include "nostr-filter.h"
 #include "ticker.h"
-#include "timestamp.h"
+#include "nostr-timestamp.h"
 #include "go.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,19 +24,21 @@
 // 5) Cleanly close
 
 static void print_usage(const char *prog) {
-    fprintf(stderr, "Usage: %s [relay_url] [--timeout ms] [--limit n] [--since secs_ago] [--kinds list] [--authors list] [--raw] [--count] [--multi[=kinds]]\n", prog);
+    fprintf(stderr, "Usage: %s [relay_url] [--timeout ms] [--limit n] [--since epoch_secs] [--kinds list] [--authors list] [--raw] [--count] [--multi[=kinds]] [--debug-filter]\n", prog);
     fprintf(stderr, "  kinds: comma-separated ints (e.g., 1,30023)\n");
     fprintf(stderr, "  authors: comma-separated hex pubkeys\n");
+    fprintf(stderr, "  --since: absolute Unix epoch seconds (e.g., 1742062112)\n");
 }
 
 int main(int argc, char **argv) {
     const char *url = "wss://relay.damus.io";
     long timeout_ms = 20000;
     int limit = 10;
-    long since_secs_ago = 3600;
+    long since_abs = -1;     // absolute epoch seconds
     int enable_raw = 0;
     int do_count = 0;
     int do_multi = 0;
+    int debug_filter = 0;
     IntArray multi_kinds = {0};
     if (argc > 1 && strncmp(argv[1], "--", 2) != 0) {
         url = argv[1];
@@ -50,7 +52,7 @@ int main(int argc, char **argv) {
     GoContext *ctx = go_context_background();
 
     fprintf(stderr, "[relay_smoke] Connecting to %s...\n", url);
-    Relay *relay = nostr_relay_new(ctx, url, &err);
+    NostrRelay *relay = nostr_relay_new(ctx, url, &err);
     if (!relay || err) {
         fprintf(stderr, "[relay_smoke] nostr_relay_new failed: %s\n", err ? err->message : "unknown");
         if (err) free_error(err);
@@ -84,8 +86,27 @@ int main(int argc, char **argv) {
             timeout_ms = strtol(argv[++i], NULL, 10);
         } else if (strcmp(arg, "--limit") == 0 && i + 1 < argc) {
             limit = (int)strtol(argv[++i], NULL, 10);
-        } else if (strcmp(arg, "--since") == 0 && i + 1 < argc) {
-            since_secs_ago = strtol(argv[++i], NULL, 10);
+        } else if (strcmp(arg, "--since") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "error: --since requires an absolute epoch seconds value\n");
+                print_usage(argv[0]);
+                return 2;
+            }
+            const char *val = argv[i + 1];
+            if (strncmp(val, "--", 2) == 0) {
+                fprintf(stderr, "error: --since requires an absolute epoch seconds value\n");
+                print_usage(argv[0]);
+                return 2;
+            }
+            char *endp = NULL;
+            long v = strtol(val, &endp, 10);
+            if (val == endp || (endp && *endp != '\0')) {
+                fprintf(stderr, "error: --since value must be a number (epoch seconds)\n");
+                print_usage(argv[0]);
+                return 2;
+            }
+            since_abs = v;
+            i++; // consume value
         } else if (strcmp(arg, "--kinds") == 0 && i + 1 < argc) {
             char *tmp = strdup(argv[++i]);
             char *saveptr = NULL;
@@ -106,6 +127,8 @@ int main(int argc, char **argv) {
             enable_raw = 1;
         } else if (strcmp(arg, "--count") == 0) {
             do_count = 1;
+        } else if (strcmp(arg, "--debug-filter") == 0) {
+            debug_filter = 1;
         } else if (strncmp(arg, "--multi", 7) == 0) {
             do_multi = 1;
             // Optional: --multi=kind_list
@@ -127,7 +150,10 @@ int main(int argc, char **argv) {
     if (!have_kinds) {
         int_array_add(&filter->kinds, 1); // default kind 1
     }
-    filter->since = Now() - since_secs_ago;
+    // Set since: use absolute epoch seconds if provided; otherwise leave unset
+    if (since_abs >= 0) {
+        filter->since = (NostrTimestamp)since_abs;
+    }
     filter->limit = limit;
 
     // Optionally enable relay debug channel for concise raw summaries
@@ -138,15 +164,15 @@ int main(int argc, char **argv) {
     }
 
     // Build Filters: single or multi
-    Filters filters = {0};
-    Filter second = {0};
+    NostrFilters filters = {0};
+    NostrFilter second = {0};
     if (do_multi) {
         filters.count = 2; filters.capacity = 2;
-        filters.filters = (Filter*)calloc(2, sizeof(Filter));
+        filters.filters = (NostrFilter*)calloc(2, sizeof(NostrFilter));
         // First filter is the parsed one
-        memcpy(&filters.filters[0], filter, sizeof(Filter));
+        memcpy(&filters.filters[0], filter, sizeof(NostrFilter));
         // Second filter: default kinds if not specified via --multi=, else use provided
-        second = (Filter){0};
+        second = (NostrFilter){0};
         if (multi_kinds.size == 0) {
             int_array_add(&second.kinds, 5); // default to kind 5 notes if none provided
         } else {
@@ -159,6 +185,15 @@ int main(int argc, char **argv) {
         filters.filters = filter; filters.count = 1; filters.capacity = 1;
     }
 
+    // Optional filter debug
+    if (debug_filter) {
+        char *fs = nostr_filter_serialize(filter);
+        if (fs) {
+            fprintf(stderr, "[relay_smoke] Filter JSON: %s\n", fs);
+            free(fs);
+        }
+    }
+
     // Optional COUNT demo using the first filter
     if (do_count) {
         int64_t c = nostr_relay_count(relay, ctx, filter, &err);
@@ -169,7 +204,7 @@ int main(int argc, char **argv) {
             printf("COUNT result: %lld\n", (long long)c);
         }
     }
-    Subscription *sub = nostr_relay_prepare_subscription(relay, ctx, &filters);
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, ctx, &filters);
     if (!sub) {
         fprintf(stderr, "[relay_smoke] relay_prepare_subscription failed\n");
     } else {
@@ -253,8 +288,8 @@ int main(int argc, char **argv) {
     // Free allocated filters
     if (do_multi) {
         // filters.filters[0] is a memcpy of filter; free both
-        free_filter(&filters.filters[0]);
-        free_filter(&filters.filters[1]);
+        nostr_filter_free(&filters.filters[0]);
+        nostr_filter_free(&filters.filters[1]);
         free(filters.filters);
         nostr_filter_free(filter); // original allocated
     } else {

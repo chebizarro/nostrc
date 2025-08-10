@@ -7,10 +7,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "utils.h"
+#include "nostr-utils.h"
+#include "nostr-keys.h"
 
 // Generate a private key using libsecp256k1
-char *generate_private_key(void) {
+char *nostr_key_generate_private(void) {
     secp256k1_context *ctx;
     unsigned char privkey[32];      // Private key (32 bytes for secp256k1)
     char *privkey_hex = malloc(65); // Hex representation of private key (64 chars + null terminator)
@@ -19,6 +20,8 @@ char *generate_private_key(void) {
         fprintf(stderr, "Memory allocation failed\n");
         return NULL;
     }
+
+/* Canonical API wrappers: moved to file scope at end */
 
     // Create a secp256k1 context for key generation
     ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
@@ -57,7 +60,7 @@ char *generate_private_key(void) {
 }
 
 // Get the public key from a private key using libsecp256k1
-char *get_public_key(const char *sk) {
+char *nostr_key_get_public(const char *sk) {
     secp256k1_context *ctx;
     unsigned char privkey[32]; // Private key (32 bytes)
     secp256k1_pubkey pubkey;
@@ -71,7 +74,7 @@ char *get_public_key(const char *sk) {
     }
 
     // Convert hex-encoded private key to binary
-    if (!hex2bin(privkey, sk, 32)) {
+    if (!nostr_hex2bin(privkey, sk, 32)) {
         fprintf(stderr, "Invalid private key hex\n");
         free(pubkey_hex);
         return NULL;
@@ -117,7 +120,7 @@ char *get_public_key(const char *sk) {
 }
 
 // Validate if a public key is a valid 32-byte hex string
-bool is_valid_public_key_hex(const char *pk) {
+bool nostr_key_is_valid_public_hex(const char *pk) {
     if (!pk) {
         return false;
     }
@@ -138,19 +141,19 @@ bool is_valid_public_key_hex(const char *pk) {
 }
 
 // Validate if a public key is valid using libsecp256k1
-bool is_valid_public_key(const char *pk) {
+bool nostr_key_is_valid_public(const char *pk) {
     secp256k1_context *ctx;
     secp256k1_pubkey pubkey;
     unsigned char pub_key_bin[33]; // Compressed public key (33 bytes)
     int return_val;
 
     // First check if the provided string is a valid public key hex
-    if (!is_valid_public_key_hex(pk)) {
+    if (!nostr_key_is_valid_public_hex(pk)) {
         return false;
     }
 
     // Convert the hex-encoded public key to binary form
-    if (!hex2bin(pub_key_bin, pk, sizeof(pub_key_bin))) {
+    if (!nostr_hex2bin(pub_key_bin, pk, sizeof(pub_key_bin))) {
         return false;
     }
 

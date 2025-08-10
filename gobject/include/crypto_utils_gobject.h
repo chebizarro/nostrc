@@ -4,9 +4,9 @@
 #include <glib-object.h>
 
 /* Utility functions */
-gchar *generate_private_key();
-gchar *get_public_key(const gchar *sk);
-gboolean is_valid_public_key_hex(const gchar *pk);
-gboolean is_valid_public_key(const gchar *pk);
+gchar *nostr_key_generate_private_g(void);
+gchar *nostr_key_get_public_g(const gchar *sk);
+gboolean nostr_key_is_valid_public_hex_g(const gchar *pk);
+gboolean nostr_key_is_valid_public_g(const gchar *pk);
 
 #endif // CRYPTO_UTILS_GOBJECT_H

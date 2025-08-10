@@ -5,7 +5,7 @@
 #include <string.h>
 #include "json.h"
 #include "nostr_jansson.h"
-#include "filter.h"
+#include "nostr-filter.h"
 
 static int rnd(int n) { return rand() % n; }
 
@@ -162,11 +162,11 @@ int main(void) {
     for (int i = 0; i < 1000; i++) {
         char *s = NULL;
         build_random_filter_json_string(&s);
-        Filter *f = create_filter();
+        NostrFilter *f = nostr_filter_new();
         assert(f);
         // We don't assert success; just ensure no crashes/leaks under sanitizers.
         (void)nostr_filter_deserialize(f, s);
-        free_filter(f);
+        nostr_filter_free(f);
         free(s);
     }
 

@@ -3,8 +3,8 @@
 #include <string.h>
 
 // Create ProfilePointer
-ProfilePointer *create_profile_pointer(void) {
-    ProfilePointer *ptr = (ProfilePointer *)malloc(sizeof(ProfilePointer));
+NostrProfilePointer *nostr_profile_pointer_new(void) {
+    NostrProfilePointer *ptr = (NostrProfilePointer *)malloc(sizeof(NostrProfilePointer));
     if (!ptr)
         return NULL;
 
@@ -16,7 +16,7 @@ ProfilePointer *create_profile_pointer(void) {
 }
 
 // Free ProfilePointer
-void free_profile_pointer(ProfilePointer *ptr) {
+void nostr_profile_pointer_free(NostrProfilePointer *ptr) {
     if (ptr) {
         free(ptr->public_key);
         for (size_t i = 0; i < ptr->relays_count; i++) {
@@ -28,8 +28,8 @@ void free_profile_pointer(ProfilePointer *ptr) {
 }
 
 // Create EventPointer
-EventPointer *create_event_pointer(void) {
-    EventPointer *ptr = (EventPointer *)malloc(sizeof(EventPointer));
+NostrEventPointer *nostr_event_pointer_new(void) {
+    NostrEventPointer *ptr = (NostrEventPointer *)malloc(sizeof(NostrEventPointer));
     if (!ptr)
         return NULL;
 
@@ -43,7 +43,7 @@ EventPointer *create_event_pointer(void) {
 }
 
 // Free EventPointer
-void free_event_pointer(EventPointer *ptr) {
+void nostr_event_pointer_free(NostrEventPointer *ptr) {
     if (ptr) {
         free(ptr->id);
         for (size_t i = 0; i < ptr->relays_count; i++) {
@@ -56,8 +56,8 @@ void free_event_pointer(EventPointer *ptr) {
 }
 
 // Create EntityPointer
-EntityPointer *create_entity_pointer(void) {
-    EntityPointer *ptr = (EntityPointer *)malloc(sizeof(EntityPointer));
+NostrEntityPointer *nostr_entity_pointer_new(void) {
+    NostrEntityPointer *ptr = (NostrEntityPointer *)malloc(sizeof(NostrEntityPointer));
     if (!ptr)
         return NULL;
 
@@ -71,7 +71,7 @@ EntityPointer *create_entity_pointer(void) {
 }
 
 // Free EntityPointer
-void free_entity_pointer(EntityPointer *ptr) {
+void nostr_entity_pointer_free(NostrEntityPointer *ptr) {
     if (ptr) {
         free(ptr->public_key);
         free(ptr->identifier);

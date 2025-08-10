@@ -1,13 +1,13 @@
 #include "nostr.h"
 #include <stdlib.h>
 #include <string.h>
-#include "filter.h"
+#include "nostr-filter.h"
 #include "nostr-tag.h"
 
 #define INITIAL_CAPACITY 4  // Initial capacity for Filters array
 
-Filter *nostr_filter_new(void) {
-    Filter *filter = (Filter *)malloc(sizeof(Filter));
+NostrFilter *nostr_filter_new(void) {
+    NostrFilter *filter = (NostrFilter *)malloc(sizeof(NostrFilter));
     if (!filter)
         return NULL;
 
@@ -25,39 +25,39 @@ Filter *nostr_filter_new(void) {
 }
 
 /* --- Legacy symbol compatibility (remove after full migration) --- */
-Filter *create_filter(void) {
+NostrFilter *create_filter(void) {
     return nostr_filter_new();
 }
 
-bool filter_matches(Filter *filter, NostrEvent *event) {
+bool filter_matches(NostrFilter *filter, NostrEvent *event) {
     return nostr_filter_matches(filter, event);
 }
 
-bool filter_match_ignoring_timestamp(Filter *filter, NostrEvent *event) {
+bool filter_match_ignoring_timestamp(NostrFilter *filter, NostrEvent *event) {
     return nostr_filter_match_ignoring_timestamp(filter, event);
 }
 
-bool filters_match(Filters *filters, NostrEvent *event) {
+bool filters_match(NostrFilters *filters, NostrEvent *event) {
     return nostr_filters_match(filters, event);
 }
 
-bool filters_match_ignoring_timestamp(Filters *filters, NostrEvent *event) {
+bool filters_match_ignoring_timestamp(NostrFilters *filters, NostrEvent *event) {
     return nostr_filters_match_ignoring_timestamp(filters, event);
 }
 
-void free_filters(Filters *filters) {
+void free_filters(NostrFilters *filters) {
     nostr_filters_free(filters);
 }
 
-Filters *create_filters(void) {
+NostrFilters *create_filters(void) {
     return nostr_filters_new();
 }
 
-bool filters_add(Filters *filters, Filter *filter) {
+bool filters_add(NostrFilters *filters, NostrFilter *filter) {
     return nostr_filters_add(filters, filter);
 }
 
-static void free_filter_contents(Filter *filter) {
+static void free_filter_contents(NostrFilter *filter) {
     string_array_free(&filter->ids);
     int_array_free(&filter->kinds);
     string_array_free(&filter->authors);
@@ -69,7 +69,7 @@ static void free_filter_contents(Filter *filter) {
     filter->search = NULL;
 }
 
-void free_filter(Filter *filter) {
+void free_filter(NostrFilter *filter) {
     if (!filter) return;
     free_filter_contents(filter);
     free(filter);
@@ -81,7 +81,7 @@ void nostr_filter_free(NostrFilter *filter) {
 }
 
 /* Deep-copy helpers for tags */
-static Tag *filter_tag_clone(const Tag *src) {
+static NostrTag *filter_tag_clone(const NostrTag *src) {
     if (!src) return NULL;
     size_t n = string_array_size((StringArray *)src);
     StringArray *dst = new_string_array((int)n);
@@ -89,18 +89,18 @@ static Tag *filter_tag_clone(const Tag *src) {
         const char *s = string_array_get((const StringArray *)src, i);
         if (s) string_array_add(dst, s);
     }
-    return (Tag *)dst;
+    return (NostrTag *)dst;
 }
 
-static Tags *filter_tags_clone(const Tags *src) {
+static NostrTags *filter_tags_clone(const NostrTags *src) {
     if (!src) return NULL;
-    Tags *dst = (Tags *)malloc(sizeof(Tags));
+    NostrTags *dst = (NostrTags *)malloc(sizeof(NostrTags));
     if (!dst) return NULL;
     dst->count = src->count;
-    dst->data = (Tag **)calloc(dst->count, sizeof(Tag *));
-    if (!dst->data) { free(dst); return NULL; }
+    dst->data = (NostrTag **)calloc(dst->count, sizeof(NostrTag *));
+    if (!dst->data) { nostr_tags_free(dst); return NULL; }
     for (size_t i = 0; i < dst->count; i++) {
-        dst->data[i] = filter_tag_clone(src->data[i]);
+        dst->data[i] = (NostrTag *)filter_tag_clone(src->data[i]);
     }
     return dst;
 }
@@ -136,14 +136,14 @@ NostrFilter *nostr_filter_copy(const NostrFilter *src) {
     return f;
 }
 
-Filters *nostr_filters_new(void) {
-    Filters *filters = (Filters *)malloc(sizeof(Filters));
+NostrFilters *nostr_filters_new(void) {
+    NostrFilters *filters = (NostrFilters *)malloc(sizeof(NostrFilters));
     if (!filters)
         return NULL;
 
     filters->count = 0;
     filters->capacity = INITIAL_CAPACITY;
-    filters->filters = (Filter *)malloc(filters->capacity * sizeof(Filter));
+    filters->filters = (NostrFilter *)malloc(filters->capacity * sizeof(NostrFilter));
     if (!filters->filters) {
         free(filters);
         return NULL;
@@ -153,9 +153,9 @@ Filters *nostr_filters_new(void) {
 }
 
 // Resizes the internal array when needed
-static bool filters_resize(Filters *filters) {
+static bool filters_resize(NostrFilters *filters) {
     size_t new_capacity = filters->capacity * 2;
-    Filter *new_filters = (Filter *)realloc(filters->filters, new_capacity * sizeof(Filter));
+    NostrFilter *new_filters = (NostrFilter *)realloc(filters->filters, new_capacity * sizeof(NostrFilter));
     if (!new_filters)
         return false;
 
@@ -164,7 +164,7 @@ static bool filters_resize(Filters *filters) {
     return true;
 }
 
-bool nostr_filters_add(Filters *filters, Filter *filter) {
+bool nostr_filters_add(NostrFilters *filters, NostrFilter *filter) {
     if (!filters || !filter)
         return false;
 
@@ -181,7 +181,7 @@ bool nostr_filters_add(Filters *filters, Filter *filter) {
 }
 
 
-void nostr_filters_free(Filters *filters) {
+void nostr_filters_free(NostrFilters *filters) {
     for (size_t i = 0; i < filters->count; i++) {
         free_filter_contents(&filters->filters[i]);
     }
@@ -189,7 +189,7 @@ void nostr_filters_free(Filters *filters) {
     free(filters);
 }
 
-bool nostr_filter_matches(Filter *filter, NostrEvent *event) {
+bool nostr_filter_matches(NostrFilter *filter, NostrEvent *event) {
     if (!filter || !event)
         return false;
 
@@ -203,7 +203,7 @@ bool nostr_filter_matches(Filter *filter, NostrEvent *event) {
     return match;
 }
 
-bool nostr_filter_match_ignoring_timestamp(Filter *filter, NostrEvent *event) {
+bool nostr_filter_match_ignoring_timestamp(NostrFilter *filter, NostrEvent *event) {
     if (!filter || !event)
         return false;
 
@@ -231,7 +231,7 @@ bool nostr_filter_match_ignoring_timestamp(Filter *filter, NostrEvent *event) {
     return match;
 }
 
-bool nostr_filters_match(Filters *filters, NostrEvent *event) {
+bool nostr_filters_match(NostrFilters *filters, NostrEvent *event) {
     if (!filters || !event)
         return false;
 
@@ -244,7 +244,7 @@ bool nostr_filters_match(Filters *filters, NostrEvent *event) {
     return false;
 }
 
-bool nostr_filters_match_ignoring_timestamp(Filters *filters, NostrEvent *event) {
+bool nostr_filters_match_ignoring_timestamp(NostrFilters *filters, NostrEvent *event) {
     if (!filters || !event)
         return false;
 
@@ -313,20 +313,20 @@ void nostr_filter_set_tags(NostrFilter *filter, NostrTags *tags) {
     filter->tags = tags; /* takes ownership */
 }
 
-Timestamp nostr_filter_get_since(const NostrFilter *filter) {
+int64_t nostr_filter_get_since_i64(const NostrFilter *filter) {
     return filter ? filter->since : 0;
 }
 
-void nostr_filter_set_since(NostrFilter *filter, Timestamp since) {
+void nostr_filter_set_since_i64(NostrFilter *filter, int64_t since) {
     if (!filter) return;
     filter->since = since;
 }
 
-Timestamp nostr_filter_get_until(const NostrFilter *filter) {
+int64_t nostr_filter_get_until_i64(const NostrFilter *filter) {
     return filter ? filter->until : 0;
 }
 
-void nostr_filter_set_until(NostrFilter *filter, Timestamp until) {
+void nostr_filter_set_until_i64(NostrFilter *filter, int64_t until) {
     if (!filter) return;
     filter->until = until;
 }
@@ -346,13 +346,8 @@ const char *nostr_filter_get_search(const NostrFilter *filter) {
 
 void nostr_filter_set_search(NostrFilter *filter, const char *search) {
     if (!filter) return;
-    if (filter->search) {
-        free(filter->search);
-        filter->search = NULL;
-    }
-    if (search) {
-        filter->search = strdup(search);
-    }
+    if (filter->search) { free(filter->search); filter->search = NULL; }
+    if (search) filter->search = strdup(search);
 }
 
 /* limit_zero accessors are defined once below */
@@ -364,4 +359,88 @@ bool nostr_filter_get_limit_zero(const NostrFilter *filter) {
 void nostr_filter_set_limit_zero(NostrFilter *filter, bool limit_zero) {
     if (!filter) return;
     filter->limit_zero = limit_zero;
+}
+
+/* === GI-friendly accessors (now declared in nostr-filter.h) === */
+
+size_t nostr_filter_ids_len(const NostrFilter *filter) {
+    return filter ? string_array_size((StringArray *)&filter->ids) : 0;
+}
+
+const char *nostr_filter_ids_get(const NostrFilter *filter, size_t index) {
+    if (!filter) return NULL;
+    size_t n = string_array_size((StringArray *)&filter->ids);
+    if (index >= n) return NULL;
+    return string_array_get(&filter->ids, index);
+}
+
+size_t nostr_filter_kinds_len(const NostrFilter *filter) {
+    return filter ? int_array_size((IntArray *)&filter->kinds) : 0;
+}
+
+int nostr_filter_kinds_get(const NostrFilter *filter, size_t index) {
+    if (!filter) return 0;
+    size_t n = int_array_size((IntArray *)&filter->kinds);
+    if (index >= n) return 0;
+    return int_array_get(&filter->kinds, index);
+}
+
+size_t nostr_filter_authors_len(const NostrFilter *filter) {
+    return filter ? string_array_size((StringArray *)&filter->authors) : 0;
+}
+
+const char *nostr_filter_authors_get(const NostrFilter *filter, size_t index) {
+    if (!filter) return NULL;
+    size_t n = string_array_size((StringArray *)&filter->authors);
+    if (index >= n) return NULL;
+    return string_array_get(&filter->authors, index);
+}
+
+size_t nostr_filter_tags_len(const NostrFilter *filter) {
+    return (filter && filter->tags) ? nostr_tags_size(filter->tags) : 0;
+}
+
+size_t nostr_filter_tag_len(const NostrFilter *filter, size_t tag_index) {
+    if (!filter || !filter->tags) return 0;
+    if (tag_index >= nostr_tags_size(filter->tags)) return 0;
+    NostrTag *t = nostr_tags_get(filter->tags, tag_index);
+    return t ? nostr_tag_size(t) : 0;
+}
+
+const char *nostr_filter_tag_get(const NostrFilter *filter, size_t tag_index, size_t item_index) {
+    if (!filter || !filter->tags) return NULL;
+    if (tag_index >= nostr_tags_size(filter->tags)) return NULL;
+    NostrTag *t = nostr_tags_get(filter->tags, tag_index);
+    if (!t) return NULL;
+    size_t n = nostr_tag_size(t);
+    if (item_index >= n) return NULL;
+    return nostr_tag_get(t, item_index);
+}
+
+void nostr_filter_add_id(NostrFilter *filter, const char *id) {
+    if (!filter || !id) return;
+    string_array_add(&filter->ids, id);
+}
+
+void nostr_filter_add_kind(NostrFilter *filter, int kind) {
+    if (!filter) return;
+    int_array_add(&filter->kinds, kind);
+}
+
+void nostr_filter_add_author(NostrFilter *filter, const char *author) {
+    if (!filter || !author) return;
+    string_array_add(&filter->authors, author);
+}
+
+void nostr_filter_tags_append(NostrFilter *filter, const char *key, const char *value, const char *relay) {
+    if (!filter || !key) return;
+    NostrTag *t = NULL;
+    if (relay && *relay) {
+        t = nostr_tag_new(key, value ? value : "", relay, NULL);
+    } else {
+        t = nostr_tag_new(key, value ? value : "", NULL);
+    }
+    if (!t) return;
+    if (!filter->tags) filter->tags = nostr_tags_new(0);
+    filter->tags = nostr_tags_append_unique(filter->tags, t);
 }

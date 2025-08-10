@@ -7,7 +7,7 @@ void test_relay_initialization_and_cleanup() {
     setenv("NOSTR_TEST_MODE", "1", 1);
     
     // Create relay
-    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
+    NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
@@ -22,7 +22,7 @@ void test_relay_connection_and_close() {
     setenv("NOSTR_TEST_MODE", "1", 1);
 
     // Create relay
-    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
+    NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
@@ -51,7 +51,7 @@ void test_relay_subscription() {
     setenv("NOSTR_TEST_MODE", "1", 1);
 
     // Create relay
-    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
+    NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay != NULL);
     assert(err == NULL);
 
@@ -61,19 +61,20 @@ void test_relay_subscription() {
     assert(err == NULL);
 
     // Create a filter for subscription
-    Filter *filter = create_filter();
+    NostrFilter *filter = nostr_filter_new();
 
-    Filters filters = { .filters = filter};
+    NostrFilters *filters = nostr_filters_new();
+    nostr_filters_add(filters, filter);
 
     // Subscribe
-    bool subscribed = nostr_relay_subscribe(relay, ctx, &filters, &err);
+    bool subscribed = nostr_relay_subscribe(relay, ctx, filters, &err);
     assert(subscribed == true);
     assert(err == NULL);
 
     // Close the relay
     nostr_relay_close(relay, &err);
     nostr_relay_free(relay);
-    free_filter(filter);
+    nostr_filters_free(filters);
     go_context_free(ctx);
 }
 
@@ -83,7 +84,7 @@ void test_relay_write() {
     setenv("NOSTR_TEST_MODE", "1", 1);
 
     // Create relay
-    Relay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
+    NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
     assert(relay != NULL);
     assert(err == NULL);
 

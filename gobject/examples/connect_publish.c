@@ -14,7 +14,7 @@ static void on_connect(GObject *source_object, GAsyncResult *result, gpointer us
         nostr_event_set_id(event, "example_id");
         nostr_event_set_pubkey(event, "example_pubkey");
         nostr_event_set_created_at(event, time(NULL));
-        nostr_event_set_kind(event, KIND_TEXT_NOTE);
+        nostr_event_set_kind(event, NOSTR_KIND_TEXT_NOTE);
         nostr_event_set_content(event, "Hello, Nostr!");
         nostr_event_set_sig(event, "example_sig");
 
