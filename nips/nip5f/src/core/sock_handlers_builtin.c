@@ -38,14 +38,36 @@ static char *bin_to_hex(const uint8_t *buf, size_t len){
   out[len*2]='\0'; return out;
 }
 
-/* Resolve seckey from environment: NOSTR_SIGNER_SECKEY_HEX or NOSTR_SIGNER_NSEC. */
+/* Resolve seckey from environment with precedence:
+ * 1) NOSTR_SIGNER_KEY (hex or nsec)
+ * 2) NOSTR_SIGNER_SECKEY_HEX (legacy)
+ * 3) NOSTR_SIGNER_NSEC (legacy)
+ */
 static int resolve_seckey_hex_env(char **out_sk_hex){
   if (!out_sk_hex) return -1; *out_sk_hex = NULL;
+  /* Preferred: NOSTR_SIGNER_KEY */
+  const char *key = getenv("NOSTR_SIGNER_KEY");
+  if (key && *key) {
+    if (is_hex_64(key)) {
+      *out_sk_hex = strdup(key);
+      if (*out_sk_hex && signer_log_enabled()) fprintf(stderr, "[nip5f] using seckey from KEY env (%.4s...)\n", key);
+      return *out_sk_hex?0:-1;
+    }
+    if (strncmp(key, "nsec1", 5)==0) {
+      uint8_t sk[32]; if (nostr_nip19_decode_nsec(key, sk)!=0) return -1;
+      *out_sk_hex = bin_to_hex(sk, 32); secure_bzero(sk, sizeof sk);
+      if (*out_sk_hex && signer_log_enabled()) fprintf(stderr, "[nip5f] using seckey from KEY env (nsec) (%.4s...)\n", *out_sk_hex);
+      return *out_sk_hex?0:-1;
+    }
+    if (signer_log_enabled()) fprintf(stderr, "[nip5f] invalid NOSTR_SIGNER_KEY format; expecting 64-hex or nsec1...\n");
+  }
+  /* Legacy HEX */
   const char *cand = getenv("NOSTR_SIGNER_SECKEY_HEX");
   if (cand) {
     if (is_hex_64(cand)) { *out_sk_hex = strdup(cand); if (signer_log_enabled()) fprintf(stderr, "[nip5f] using seckey from HEX env (%.4s...)\n", cand); return *out_sk_hex?0:-1; }
     if (signer_log_enabled()) fprintf(stderr, "[nip5f] invalid NOSTR_SIGNER_SECKEY_HEX length/format\n");
   }
+  /* Legacy NSEC */
   const char *nsec = getenv("NOSTR_SIGNER_NSEC");
   if (nsec && strncmp(nsec, "nsec1", 5)==0) {
     uint8_t sk[32]; if (nostr_nip19_decode_nsec(nsec, sk)!=0) return -1;

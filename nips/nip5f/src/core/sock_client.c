@@ -12,6 +12,29 @@
 
 struct Nip5fConn { int fd; unsigned long next_id; };
 
+/* Local JSON helpers (kept internal to NIP-5F client) */
+static inline char *json_str(const char *s) {
+  return nostr_escape_string(s); /* returns quoted+escaped string; caller frees */
+}
+
+static int jsonrpc_build_req(struct Nip5fConn *c, const char *method, const char *params_raw, char **out_req, char idbuf[32]) {
+  if (!c || !method || !out_req) return -1; *out_req = NULL; if (idbuf) idbuf[0] = '\0';
+  snprintf(idbuf, 32, "%lu", ++c->next_id);
+  const char *params = (params_raw && *params_raw) ? params_raw : "null";
+  int need = snprintf(NULL, 0, "{\"id\":\"%s\",\"method\":\"%s\",\"params\":%s}", idbuf, method, params);
+  if (need < 0) return -1;
+  size_t L = (size_t)need + 1; char *req = (char*)malloc(L); if (!req) return -1;
+  snprintf(req, L, "{\"id\":\"%s\",\"method\":\"%s\",\"params\":%s}", idbuf, method, params);
+  *out_req = req; return 0;
+}
+
+static int rpc_write_and_read(struct Nip5fConn *c, const char *req, char **out_resp, size_t *out_len) {
+  if (!c || !req || !out_resp) return -1; *out_resp = NULL; if (out_len) *out_len = 0;
+  if (nip5f_write_frame(c->fd, req, strlen(req)) != 0) return -1;
+  size_t rlen = 0; char *resp = NULL; if (nip5f_read_frame(c->fd, &resp, &rlen) != 0) return -1;
+  if (out_len) *out_len = rlen; *out_resp = resp; return 0;
+}
+
 /* Minimal extractor: returns newly-allocated copy of the JSON value at top-level key "result".
  * Handles string, object, array, numbers, true/false/null. Returns NULL on parse failure. */
 static char *extract_result_raw(const char *json) {
@@ -117,11 +140,9 @@ int nostr_nip5f_client_close(void *conn) {
 int nostr_nip5f_client_get_public_key(void *conn, char **out_pub_hex) {
   if (!conn || !out_pub_hex) return -1;
   struct Nip5fConn *c = (struct Nip5fConn*)conn;
-  char idbuf[32]; snprintf(idbuf, sizeof(idbuf), "%lu", ++c->next_id);
-  char req[128]; snprintf(req, sizeof(req), "{\"id\":\"%s\",\"method\":\"get_public_key\",\"params\":null}", idbuf);
-  if (nip5f_write_frame(c->fd, req, strlen(req)) != 0) return -1;
-  char *resp = NULL; size_t rlen = 0;
-  if (nip5f_read_frame(c->fd, &resp, &rlen) != 0) return -1;
+  char *req = NULL; char idbuf[32]; if (jsonrpc_build_req(c, "get_public_key", "null", &req, idbuf)!=0) return -1;
+  char *resp = NULL; size_t rlen = 0; if (rpc_write_and_read(c, req, &resp, &rlen)!=0) { free(req); return -1; }
+  free(req);
   // Validate response id and error == null, then extract result string
   int rc = 0; char *raw = NULL;
   rc = parse_ok_and_get_result(resp, idbuf, &raw);
@@ -147,23 +168,15 @@ int nostr_nip5f_client_get_public_key(void *conn, char **out_pub_hex) {
 int nostr_nip5f_client_sign_event(void *conn, const char *event_json, const char *pubkey_hex, char **out_signed_event_json) {
   if (!conn || !event_json || !out_signed_event_json) return -1; *out_signed_event_json=NULL;
   struct Nip5fConn *c = (struct Nip5fConn*)conn;
-  // Build params: {"event":<event_json>[,"pubkey":"..."]}
-  size_t base = strlen(event_json) + 64 + (pubkey_hex? (strlen(pubkey_hex)+24) : 0);
-  char *params = (char*)malloc(base);
-  if (!params) return -1;
-  if (pubkey_hex)
-    snprintf(params, base, "{\"event\":%s,\"pubkey\":\"%s\"}", event_json, pubkey_hex);
-  else
-    snprintf(params, base, "{\"event\":%s}", event_json);
-  size_t rq = strlen(params) + 96;
-  char *req = (char*)malloc(rq);
-  if (!req){ free(params); return -1; }
-  char idbuf[32]; snprintf(idbuf, sizeof(idbuf), "%lu", ++c->next_id);
-  snprintf(req, rq, "{\"id\":\"%s\",\"method\":\"sign_event\",\"params\":%s}", idbuf, params);
+  int plen = pubkey_hex ? snprintf(NULL,0, "{\"event\":%s,\"pubkey\":\"%s\"}", event_json, pubkey_hex)
+                        : snprintf(NULL,0, "{\"event\":%s}", event_json);
+  if (plen < 0) return -1; size_t pL = (size_t)plen + 1; char *params = (char*)malloc(pL); if (!params) return -1;
+  if (pubkey_hex) snprintf(params, pL, "{\"event\":%s,\"pubkey\":\"%s\"}", event_json, pubkey_hex);
+  else snprintf(params, pL, "{\"event\":%s}", event_json);
+  char *req=NULL; char idbuf[32]; if (jsonrpc_build_req(c, "sign_event", params, &req, idbuf)!=0) { free(params); return -1; }
   free(params);
-  if (nip5f_write_frame(c->fd, req, strlen(req)) != 0) { free(req); return -1; }
+  char *resp=NULL; size_t rlen=0; if (rpc_write_and_read(c, req, &resp, &rlen)!=0) { free(req); return -1; }
   free(req);
-  char *resp=NULL; size_t rlen=0; if (nip5f_read_frame(c->fd, &resp, &rlen)!=0) return -1;
   char *raw=NULL; int prc = parse_ok_and_get_result(resp, idbuf, &raw);
   free(resp);
   if (prc!=0 || !raw) return -1;
@@ -173,18 +186,16 @@ int nostr_nip5f_client_sign_event(void *conn, const char *event_json, const char
 int nostr_nip5f_client_nip44_encrypt(void *conn, const char *peer_pub_hex, const char *plaintext, char **out_cipher_b64) {
   if (!conn || !peer_pub_hex || !plaintext || !out_cipher_b64) return -1; *out_cipher_b64=NULL;
   struct Nip5fConn *c = (struct Nip5fConn*)conn;
-  char *pt_esc = nostr_escape_string(plaintext); if (!pt_esc) return -1;
-  char idbuf[32]; snprintf(idbuf, sizeof(idbuf), "%lu", ++c->next_id);
-  int need = snprintf(NULL, 0, "{\"id\":\"%s\",\"method\":\"nip44_encrypt\",\"params\":{\"peer_pub\":\"%s\",\"plaintext\":%s}}", idbuf, peer_pub_hex, pt_esc);
-  if (need < 0) { free(pt_esc); return -1; }
-  size_t rq = (size_t)need + 1;
-  char *req = (char*)malloc(rq);
-  if (!req){ free(pt_esc); return -1; }
-  snprintf(req, rq, "{\"id\":\"%s\",\"method\":\"nip44_encrypt\",\"params\":{\"peer_pub\":\"%s\",\"plaintext\":%s}}", idbuf, peer_pub_hex, pt_esc);
+  char *pt_esc = json_str(plaintext); if (!pt_esc) return -1;
+  int plen = snprintf(NULL,0, "{\"peer_pub\":\"%s\",\"plaintext\":%s}", peer_pub_hex, pt_esc);
+  if (plen < 0) { free(pt_esc); return -1; }
+  size_t pL = (size_t)plen + 1; char *params = (char*)malloc(pL); if (!params) { free(pt_esc); return -1; }
+  snprintf(params, pL, "{\"peer_pub\":\"%s\",\"plaintext\":%s}", peer_pub_hex, pt_esc);
   free(pt_esc);
-  if (nip5f_write_frame(c->fd, req, strlen(req)) != 0) { free(req); return -1; }
+  char *req=NULL; char idbuf[32]; if (jsonrpc_build_req(c, "nip44_encrypt", params, &req, idbuf)!=0) { free(params); return -1; }
+  free(params);
+  char *resp=NULL; size_t rlen=0; if (rpc_write_and_read(c, req, &resp, &rlen)!=0) { free(req); return -1; }
   free(req);
-  char *resp=NULL; size_t rlen=0; if (nip5f_read_frame(c->fd, &resp, &rlen)!=0) return -1;
   char *raw=NULL; int prc = parse_ok_and_get_result(resp, idbuf, &raw);
   free(resp);
   if (prc!=0 || !raw) return -1;
@@ -200,18 +211,16 @@ int nostr_nip5f_client_nip44_encrypt(void *conn, const char *peer_pub_hex, const
 int nostr_nip5f_client_nip44_decrypt(void *conn, const char *peer_pub_hex, const char *cipher_b64, char **out_plaintext) {
   if (!conn || !peer_pub_hex || !cipher_b64 || !out_plaintext) return -1; *out_plaintext=NULL;
   struct Nip5fConn *c = (struct Nip5fConn*)conn;
-  char *ct_esc = nostr_escape_string(cipher_b64); if (!ct_esc) return -1;
-  char idbuf[32]; snprintf(idbuf, sizeof(idbuf), "%lu", ++c->next_id);
-  int need = snprintf(NULL, 0, "{\"id\":\"%s\",\"method\":\"nip44_decrypt\",\"params\":{\"peer_pub\":\"%s\",\"cipher_b64\":%s}}", idbuf, peer_pub_hex, ct_esc);
-  if (need < 0) { free(ct_esc); return -1; }
-  size_t rq = (size_t)need + 1;
-  char *req = (char*)malloc(rq);
-  if (!req){ free(ct_esc); return -1; }
-  snprintf(req, rq, "{\"id\":\"%s\",\"method\":\"nip44_decrypt\",\"params\":{\"peer_pub\":\"%s\",\"cipher_b64\":%s}}", idbuf, peer_pub_hex, ct_esc);
+  char *ct_esc = json_str(cipher_b64); if (!ct_esc) return -1;
+  int plen = snprintf(NULL,0, "{\"peer_pub\":\"%s\",\"cipher_b64\":%s}", peer_pub_hex, ct_esc);
+  if (plen < 0) { free(ct_esc); return -1; }
+  size_t pL = (size_t)plen + 1; char *params = (char*)malloc(pL); if (!params) { free(ct_esc); return -1; }
+  snprintf(params, pL, "{\"peer_pub\":\"%s\",\"cipher_b64\":%s}", peer_pub_hex, ct_esc);
   free(ct_esc);
-  if (nip5f_write_frame(c->fd, req, strlen(req)) != 0) { free(req); return -1; }
+  char *req=NULL; char idbuf[32]; if (jsonrpc_build_req(c, "nip44_decrypt", params, &req, idbuf)!=0) { free(params); return -1; }
+  free(params);
+  char *resp=NULL; size_t rlen=0; if (rpc_write_and_read(c, req, &resp, &rlen)!=0) { free(req); return -1; }
   free(req);
-  char *resp=NULL; size_t rlen=0; if (nip5f_read_frame(c->fd, &resp, &rlen)!=0) return -1;
   char *raw=NULL; int prc = parse_ok_and_get_result(resp, idbuf, &raw);
   free(resp);
   if (prc!=0 || !raw) return -1;
@@ -226,10 +235,9 @@ int nostr_nip5f_client_nip44_decrypt(void *conn, const char *peer_pub_hex, const
 int nostr_nip5f_client_list_public_keys(void *conn, char **out_keys_json) {
   if (!conn || !out_keys_json) return -1; *out_keys_json=NULL;
   struct Nip5fConn *c = (struct Nip5fConn*)conn;
-  char idbuf[32]; snprintf(idbuf, sizeof(idbuf), "%lu", ++c->next_id);
-  char req[128]; snprintf(req, sizeof(req), "{\"id\":\"%s\",\"method\":\"list_public_keys\",\"params\":null}", idbuf);
-  if (nip5f_write_frame(c->fd, req, strlen(req)) != 0) return -1;
-  char *resp=NULL; size_t rlen=0; if (nip5f_read_frame(c->fd, &resp, &rlen)!=0) return -1;
+  char *req=NULL; char idbuf[32]; if (jsonrpc_build_req(c, "list_public_keys", "null", &req, idbuf)!=0) return -1;
+  char *resp=NULL; size_t rlen=0; if (rpc_write_and_read(c, req, &resp, &rlen)!=0) { free(req); return -1; }
+  free(req);
   char *raw=NULL; int prc = parse_ok_and_get_result(resp, idbuf, &raw); free(resp);
   if (!raw) return -1; *out_keys_json = raw; return 0;
 }
