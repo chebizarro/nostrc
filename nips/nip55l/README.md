@@ -2,9 +2,9 @@
 
 This component provides a local signer daemon exposing a GLib/GDBus interface for Nostr signing and peer-to-peer encryption (NIP-04 and NIP-44 v2). It also ships a small CLI that talks to the DBus service.
 
-- Service name: `com.nostr.Signer`
-- Object path: `/com/nostr/Signer`
-- Interface: `com.nostr.Signer`
+- Service name: `org.nostr.Signer`
+- Object path: `/org/nostr/signer`
+- Interface: `org.nostr.Signer`
 
 ## Build
 
@@ -43,7 +43,7 @@ export NOSTR_SIGNER_NSEC=nsec1...
 build/nips/nip55l/nostr-signer-daemon
 ```
 
-Service file (`dbus/com.nostr.Signer.service.in`) installs to `share/dbus-1/services/` to enable auto-activation on Linux.
+Service file (`dbus/com.nostr.Signer.service.in`, installed as `org.nostr.Signer.service`) installs to `share/dbus-1/services/` to enable auto-activation on Linux.
 
 ## Key resolution order
 
@@ -58,7 +58,7 @@ If none are found: returns NOT_FOUND.
 
 ## DBus API
 
-Interface: `com.nostr.Signer`
+Interface: `org.nostr.Signer`
 
 - `GetPublicKey() -> (s npub)`
   - Returns the `npub1...` for the current secret key.
@@ -76,7 +76,7 @@ Interface: `com.nostr.Signer`
   - Stub; currently returns NOT_FOUND.
 
 - `StoreSecret(in s secret, in s account) -> (b ok)`
-  - Stores a secret (64-hex or `nsec1...`) in Secret Service under schema `com.nostr.Signer`, attr `account`. Optional feature; returns error if libsecret is unavailable.
+  - Stores a secret (64-hex or `nsec1...`) in Secret Service under schema `org.nostr.Signer`, attr `account`. Optional feature; returns error if libsecret is unavailable.
   - ACL: requires env `NOSTR_SIGNER_ALLOW_SECRET_MUTATIONS=1` and subject to a per-sender 500ms rate limit.
 
 - `ClearSecret(in s account) -> (b ok)`
