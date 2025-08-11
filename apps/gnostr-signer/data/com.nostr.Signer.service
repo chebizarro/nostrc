@@ -1,4 +1,0 @@
-[D-BUS Service]
-Name=org.nostr.Signer
-Exec=@CMAKE_INSTALL_FULL_BINDIR@/gnostr-signer-daemon
-SystemdService=
