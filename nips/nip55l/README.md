@@ -43,7 +43,7 @@ export NOSTR_SIGNER_NSEC=nsec1...
 build/nips/nip55l/nostr-signer-daemon
 ```
 
-Service file (`dbus/com.nostr.Signer.service.in`, installed as `org.nostr.Signer.service`) installs to `share/dbus-1/services/` to enable auto-activation on Linux.
+Service file (`dbus/org.nostr.Signer.service.in`, installed as `org.nostr.Signer.service`) installs to `share/dbus-1/services/` to enable auto-activation on Linux.
 
 ## Key resolution order
 

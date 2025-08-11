@@ -1,6 +1,9 @@
 #include <gtk/gtk.h>
 #include "../policy_store.h"
 
+/* Forward declaration for internal refresh API used by callbacks */
+void gnostr_permissions_page_refresh(GtkWidget *page, PolicyStore *ps);
+
 typedef struct {
   PolicyStore *ps;
   GtkWidget *page; /* container widget for refresh */
@@ -24,7 +27,6 @@ static void on_remove_clicked(GtkButton *btn, gpointer user_data) {
     policy_store_unset(pp->ps, app_id, account);
     policy_store_save(pp->ps);
     // Refresh
-    extern void gnostr_permissions_page_refresh(GtkWidget*, PolicyStore*);
     if (pp->page)
       gnostr_permissions_page_refresh(pp->page, pp->ps);
   }

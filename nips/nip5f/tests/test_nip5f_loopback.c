@@ -29,6 +29,8 @@ static char *make_min_event_json(const char *content, int kind, int64_t created_
 }
 
 int main(void) {
+  /* Ensure server bypasses ACL in test mode */
+  setenv("NOSTR_TEST_MODE", "1", 1);
   // Generate a fresh secret and set env for built-ins
   char *sk = nostr_key_generate_private();
   if (!sk) { fprintf(stderr, "failed to gen sk\n"); return 1; }

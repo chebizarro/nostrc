@@ -38,7 +38,7 @@ target_compile_definitions(gnostr-signer-daemon PRIVATE
 find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
 target_include_directories(gnostr-signer-daemon PRIVATE ${NSYNC_INCLUDE_DIR})
 find_library(NSYNC_LIB nsync REQUIRED)
-target_link_libraries(gnostr-signer-daemon PRIVATE nostr_nip55l_glib PkgConfig::GLIB ${NSYNC_LIB})
+target_link_libraries(gnostr-signer-daemon PRIVATE nostr_nip55l_glib nostr_nip5f_core PkgConfig::GLIB ${NSYNC_LIB})
 
 # Data install (schemas, dbus, desktop)
 install(TARGETS ${APP_SIGNER_BIN} gnostr-signer-daemon RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

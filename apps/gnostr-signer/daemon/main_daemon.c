@@ -6,6 +6,10 @@
 extern guint signer_export(GDBusConnection *conn, const char *object_path);
 extern void  signer_unexport(GDBusConnection *conn, guint reg_id);
 
+// NIP-5F Unix domain socket fallback server
+int gnostr_uds_sockd_start(const char *socket_path);
+void gnostr_uds_sockd_stop(void);
+
 #define SIGNER_NAME  "org.nostr.Signer"
 #define SIGNER_PATH  "/org/nostr/signer"
 
@@ -20,6 +24,11 @@ static void on_bus_acquired(GDBusConnection *connection, const gchar *name, gpoi
     if (loop) g_main_loop_quit(loop);
   } else {
     g_message("gnostr-signer: exported at %s on %s", SIGNER_PATH, SIGNER_NAME);
+    // Start UDS fallback listener (NIP-5F)
+    const char *sock = g_getenv("NOSTR_SIGNER_SOCK");
+    if (gnostr_uds_sockd_start(sock) != 0) {
+      g_warning("gnostr-signer: failed to start UDS signer (NIP-5F)");
+    }
   }
 }
 
@@ -35,11 +44,15 @@ static void on_name_lost(GDBusConnection *connection, const gchar *name, gpointe
     obj_reg_id = 0;
   }
   g_warning("gnostr-signer: lost name or could not acquire bus, exiting");
+  // Stop UDS fallback
+  gnostr_uds_sockd_stop();
   if (loop) g_main_loop_quit(loop);
 }
 
 static void handle_sig(int sig) {
   (void)sig;
+  // Stop UDS fallback early to unblock accept loop
+  gnostr_uds_sockd_stop();
   if (loop) g_main_loop_quit(loop);
 }
 

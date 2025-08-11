@@ -10,14 +10,19 @@ typedef struct {
   gpointer user_data;
   GtkCheckButton *remember;
   GtkWindow *win;
-  GtkComboBoxText *acct_combo;
+  GtkDropDown *acct_dropdown;
+  GtkStringList *acct_model; /* model backing the dropdown */
 } ApprovalData;
 
 static void do_finish(ApprovalData *data, gboolean decision) {
   gboolean remember = FALSE;
   if (data->remember) remember = gtk_check_button_get_active(data->remember);
   const char *selected = NULL;
-  if (data->acct_combo) selected = gtk_combo_box_text_get_active_text(data->acct_combo);
+  if (data->acct_dropdown && data->acct_model) {
+    guint idx = gtk_drop_down_get_selected(data->acct_dropdown);
+    if ((int)idx >= 0)
+      selected = gtk_string_list_get_string(data->acct_model, idx);
+  }
   if (data->cb) data->cb(decision, remember, selected, data->user_data);
   if (data->win) gtk_window_destroy(data->win);
   g_free(data);
@@ -75,26 +80,27 @@ void gnostr_show_approval_dialog(GtkWindow *parent, const char *account_npub,
   GtkWidget *acct_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
   GtkWidget *acct_lbl = gtk_label_new("Account:");
   gtk_widget_set_halign(acct_lbl, GTK_ALIGN_START);
-  GtkWidget *acct_combo = gtk_combo_box_text_new();
+  GtkStringList *acct_model = gtk_string_list_new(NULL);
+  guint selected_idx = (guint)-1;
   if (as) {
     GPtrArray *items = accounts_store_list(as);
     if (items) {
       for (guint i = 0; i < items->len; i++) {
         AccountEntry *e = g_ptr_array_index(items, i);
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(acct_combo), e->id);
-        if (account_npub && g_strcmp0(account_npub, e->id) == 0) {
-          gtk_combo_box_set_active(GTK_COMBO_BOX(acct_combo), i);
+        gtk_string_list_append(acct_model, e->id);
+        if (selected_idx == (guint)-1 && account_npub && g_strcmp0(account_npub, e->id) == 0) {
+          selected_idx = i;
         }
         g_free(e->id); g_free(e->label); g_free(e);
       }
       g_ptr_array_free(items, TRUE);
     }
   }
-  if (gtk_combo_box_get_active(GTK_COMBO_BOX(acct_combo)) < 0) {
-    gtk_combo_box_set_active(GTK_COMBO_BOX(acct_combo), 0);
-  }
+  GtkWidget *acct_dropdown = gtk_drop_down_new(G_LIST_MODEL(acct_model), NULL);
+  if ((int)selected_idx < 0) selected_idx = 0;
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(acct_dropdown), selected_idx);
   gtk_box_append(GTK_BOX(acct_row), acct_lbl);
-  gtk_box_append(GTK_BOX(acct_row), acct_combo);
+  gtk_box_append(GTK_BOX(acct_row), acct_dropdown);
   gtk_box_append(GTK_BOX(root), acct_row);
 
   // Remember
@@ -115,7 +121,8 @@ void gnostr_show_approval_dialog(GtkWindow *parent, const char *account_npub,
   data->user_data = user_data;
   data->remember = GTK_CHECK_BUTTON(remember);
   data->win = win;
-  data->acct_combo = GTK_COMBO_BOX_TEXT(acct_combo);
+  data->acct_dropdown = GTK_DROP_DOWN(acct_dropdown);
+  data->acct_model = acct_model;
 
   g_signal_connect(accept, "clicked", G_CALLBACK(on_accept_clicked), data);
   g_signal_connect(reject, "clicked", G_CALLBACK(on_reject_clicked), data);

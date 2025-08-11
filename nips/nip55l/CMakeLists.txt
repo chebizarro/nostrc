@@ -52,7 +52,7 @@ if (GIO_FOUND)
   target_link_libraries(nostr-signer-cli PRIVATE PkgConfig::GIO)
 
   install(TARGETS nostr_nip55l_glib nostr-signer-daemon nostr-signer-cli)
-  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/dbus/com.nostr.Signer.service.in
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/dbus/org.nostr.Signer.service.in
           DESTINATION share/dbus-1/services RENAME org.nostr.Signer.service)
 endif()
 

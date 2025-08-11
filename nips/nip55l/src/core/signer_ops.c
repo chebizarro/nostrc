@@ -171,15 +171,66 @@ int nostr_nip55l_nip44_decrypt(const char *cipher_b64, const char *peer_pub_hex,
 }
 
 int nostr_nip55l_decrypt_zap_event(const char *event_json,
-                                   const char *current_user, char **out_json){
-  (void)event_json; (void)current_user;
-  if(!out_json) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_json=NULL;
-  return NOSTR_SIGNER_ERROR_NOT_FOUND; /* TODO: implement per NIP-57/NIP-04 or NIP-44 payload decryption */
+                                    const char *current_user, char **out_json){
+  if(!out_json || !event_json) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_json=NULL;
+  /* Strategy: parse event; find first 'p' tag as peer; attempt NIP-44 v2 decrypt of content,
+   * then fallback to NIP-04. If decrypt ok, replace content and return serialized event. */
+  int rc; char *sk_hex=NULL; rc = resolve_seckey_hex(current_user, &sk_hex); if (rc!=0) return rc;
+  NostrEvent *ev = nostr_event_new(); if(!ev){ free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  if (nostr_event_deserialize(ev, event_json)!=0) { nostr_event_free(ev); free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_JSON; }
+  const char *peer_pub_hex = NULL;
+  NostrTags *tags = (NostrTags*)nostr_event_get_tags(ev);
+  if (tags){
+    size_t n = nostr_tags_size(tags);
+    for (size_t i=0; i<n; i++){
+      NostrTag *t = nostr_tags_get(tags, i);
+      if (!t) continue;
+      const char *key = nostr_tag_get_key(t);
+      if (key && strcmp(key, "p")==0) { peer_pub_hex = nostr_tag_get(t, 1); break; }
+    }
+  }
+  if (!peer_pub_hex) { nostr_event_free(ev); free(sk_hex); return NOSTR_SIGNER_ERROR_NOT_FOUND; }
+  const char *content = nostr_event_get_content(ev);
+  if (!content) { nostr_event_free(ev); free(sk_hex); return NOSTR_SIGNER_ERROR_NOT_FOUND; }
+  /* Try NIP-44 first */
+  int dec_ok = 0; char *pt = NULL;
+  do {
+    uint8_t sk[32]; if (!nostr_hex2bin(sk, sk_hex, sizeof sk)) break;
+    if (!is_hex_64(peer_pub_hex)) break;
+    uint8_t pkx[32]; if (!nostr_hex2bin(pkx, peer_pub_hex, sizeof pkx)) break;
+    uint8_t *ptbuf=NULL; size_t ptlen=0;
+    if (nostr_nip44_decrypt_v2(sk, pkx, content, &ptbuf, &ptlen)==0) {
+      pt = (char*)malloc(ptlen+1); if(pt){ memcpy(pt, ptbuf, ptlen); pt[ptlen]='\0'; dec_ok=1; }
+      free(ptbuf);
+    }
+  } while(0);
+  if (!dec_ok) {
+    /* Fallback NIP-04 */
+    char *err=NULL; char *out=NULL;
+    if (nostr_nip04_decrypt(content, peer_pub_hex, sk_hex, &out, &err)==0 && out) {
+      pt = out; dec_ok = 1; 
+    }
+    if (err) free(err);
+  }
+  free(sk_hex);
+  if (!dec_ok || !pt) { nostr_event_free(ev); return NOSTR_SIGNER_ERROR_CRYPTO_FAILED; }
+  /* Replace content and serialize */
+  nostr_event_set_content(ev, pt);
+  free(pt);
+  char *js = nostr_event_serialize(ev);
+  if (!js) { nostr_event_free(ev); return NOSTR_SIGNER_ERROR_BACKEND; }
+  nostr_event_free(ev);
+  *out_json = js; return 0;
 }
 
 int nostr_nip55l_get_relays(char **out_relays_json){
   if(!out_relays_json) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_relays_json=NULL;
-  return NOSTR_SIGNER_ERROR_NOT_FOUND; /* TODO: integrate with profile/contacts store */
+  /* Return an empty list for now to indicate no configured relays instead of NOT_FOUND. */
+  const char *empty = "[]";
+  char *dup = strdup(empty);
+  if (!dup) return NOSTR_SIGNER_ERROR_BACKEND;
+  *out_relays_json = dup;
+  return 0;
 }
 
 int nostr_nip55l_store_secret(const char *secret, const char *account){

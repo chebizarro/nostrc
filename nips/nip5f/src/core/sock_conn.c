@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include "sock_internal.h"
 #include <jansson.h>
+#include <glib.h>
+#include <glib/gstdio.h>
 #include "nostr/nip5f/nip5f.h"
 #include "sock_conn.h"
 #include "json.h"
@@ -102,6 +104,38 @@ static char *build_ok_json_raw(const char *id, const char *raw_json) {
   return buf;
 }
 
+/* Shared ACL with DBus path: ~/.config/gnostr/signer-acl.ini */
+static gchar *acl_file_path(void){
+  const char *conf = g_get_user_config_dir();
+  if (!conf) conf = g_get_home_dir();
+  gchar *dir = g_build_filename(conf, "gnostr", NULL);
+  g_mkdir_with_parents(dir, 0700);
+  gchar *path = g_build_filename(dir, "signer-acl.ini", NULL);
+  g_free(dir);
+  return path; /* caller frees */
+}
+
+static gboolean acl_load_decision(const char *method, const char *app_id, const char *account, gboolean *decision_out){
+  if (!method || !app_id || !account || !decision_out) return FALSE;
+  gboolean found = FALSE; GError *err=NULL;
+  gchar *path = acl_file_path(); GKeyFile *kf = g_key_file_new();
+  if (g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, &err)) {
+    gchar *key = g_strdup_printf("%s:%s", app_id, account);
+    if (g_key_file_has_group(kf, method) && g_key_file_has_key(kf, method, key, NULL)) {
+      gchar *val = g_key_file_get_string(kf, method, key, NULL);
+      if (val){
+        if (g_strcmp0(val, "allow")==0) { *decision_out = TRUE; found = TRUE; }
+        else if (g_strcmp0(val, "deny")==0) { *decision_out = FALSE; found = TRUE; }
+        g_free(val);
+      }
+    }
+    g_free(key);
+  }
+  if (err) g_error_free(err);
+  g_key_file_unref(kf); g_free(path);
+  return found;
+}
+
 void *nip5f_conn_thread(void *arg) {
   struct Nip5fConnArg *carg = (struct Nip5fConnArg*)arg;
   int fd = carg->fd;
@@ -147,7 +181,7 @@ void *nip5f_conn_thread(void *arg) {
         if (err) { if (signer_log_enabled()) fprintf(stderr, "[nip5f] -> %s\n", err); nip5f_write_frame(fd, err, strlen(err)); free(err); }
       }
     } else if (strcmp(method, "sign_event") == 0) {
-      char *ev = NULL; char *pub = NULL; int ok1=-1, ok2=-1;
+      char *ev = NULL; char *pub = NULL; char *appid = NULL; int ok1=-1, ok2=-1;
       ok1 = nostr_json_get_string_at(req, "params", "event", &ev);
       if (signer_log_enabled()) {
         int elen = ev ? (int) (strlen(ev) > 80 ? 80 : strlen(ev)) : 0;
@@ -173,10 +207,32 @@ void *nip5f_conn_thread(void *arg) {
         }
       }
       (void)nostr_json_get_string_at(req, "params", "pubkey", &pub); // optional
+      (void)nostr_json_get_string_at(req, "params", "app_id", &appid); // optional
       if (ok1 != 0 || !ev) {
         char *err = build_error_json(id, 1, "invalid params");
         if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
       } else {
+        /* ACL pre-check: method SignEvent, app_id or fallback "uds", account fallback "default".
+           In test mode (NOSTR_TEST_MODE=1), bypass ACL to keep loopback tests hermetic. */
+        const char *test_mode = getenv("NOSTR_TEST_MODE");
+        if (!(test_mode && test_mode[0] == '1')) {
+          const char *acl_app = (appid && *appid) ? appid : "uds";
+          const char *acl_acct = "default";
+          gboolean acl_decision = FALSE;
+          if (!acl_load_decision("SignEvent", acl_app, acl_acct, &acl_decision)) {
+            /* Default-deny: require prior approval via UI */
+            char *err = build_error_json(id, 11, "approval required");
+            if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
+            if (ev) free(ev); if (pub) free(pub); if (appid) free(appid);
+            continue;
+          }
+          if (!acl_decision) {
+            char *err = build_error_json(id, 13, "ACL deny");
+            if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
+            if (ev) free(ev); if (pub) free(pub); if (appid) free(appid);
+            continue;
+          }
+        }
         char *signed_json = NULL; int rc = -2;
         if (signer_log_enabled()) fprintf(stderr, "[nip5f] sign_event dispatch: using %s, pub=%s, ev_snip=%.*s\n",
                                           carg->sign_event?"custom":"builtin",
@@ -197,7 +253,7 @@ void *nip5f_conn_thread(void *arg) {
           if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
         }
       }
-      if (ev) free(ev); if (pub) free(pub); (void)ok2;
+      if (ev) free(ev); if (pub) free(pub); if (appid) free(appid); (void)ok2;
     } else if (strcmp(method, "nip44_encrypt") == 0) {
       char *peer = NULL; char *pt = NULL;
       int okp = nostr_json_get_string_at(req, "params", "peer_pub", &peer);
