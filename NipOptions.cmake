@@ -110,3 +110,9 @@ if(ENABLE_NIP94)
     add_subdirectory(nips/nip94)
 endif()
 
+# DBus signer (nip55l)
+option(ENABLE_NIP55L "Enable nip55l" ON)
+if(ENABLE_NIP55L)
+    add_subdirectory(nips/nip55l)
+endif()
+

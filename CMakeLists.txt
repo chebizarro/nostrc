@@ -31,6 +31,9 @@ add_subdirectory(libjson)
 # Add test targets from `tests/`.
 add_subdirectory(tests)
 
+# GNostr apps (GTK4/GLib/libsecret) — guarded by dependency checks inside apps/CMakeLists.txt
+add_subdirectory(apps)
+
 # Sanitizer helper (Debug builds)
 function(apply_sanitizers target)
   if (CMAKE_BUILD_TYPE STREQUAL "Debug")

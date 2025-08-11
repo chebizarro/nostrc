@@ -13,13 +13,14 @@ target_include_directories(nostr_nip55l_core PUBLIC
   ${CMAKE_BINARY_DIR}/libnostr/generated
   ${CMAKE_SOURCE_DIR}/nips/nip04/include
   ${CMAKE_SOURCE_DIR}/nips/nip44/include
+  ${CMAKE_SOURCE_DIR}/nips/nip19/include
 )
 find_package(OpenSSL REQUIRED)
 find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
-target_link_libraries(nostr_nip55l_core PUBLIC nostr nip04 nostr_nip44_core OpenSSL::Crypto ${SECP256K1_LIB})
+target_link_libraries(nostr_nip55l_core PUBLIC nostr nip04 nip19 nostr_nip44_core OpenSSL::Crypto ${SECP256K1_LIB})
 
 # Optional libsecret for key storage
-if (PkgConfig)
+if (PkgConfig_FOUND)
   pkg_check_modules(LIBSECRET QUIET IMPORTED_TARGET libsecret-1)
   if (LIBSECRET_FOUND)
     target_link_libraries(nostr_nip55l_core PUBLIC PkgConfig::LIBSECRET)
@@ -30,7 +31,7 @@ endif()
 # Optionally build GLib DBus service if GIO is available
 include(CheckIncludeFile)
 find_package(PkgConfig QUIET)
-if (PkgConfig)
+if (PkgConfig_FOUND)
   pkg_check_modules(GIO QUIET IMPORTED_TARGET gio-2.0>=2.50 gobject-2.0>=2.50)
 endif()
 

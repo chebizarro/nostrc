@@ -17,6 +17,12 @@ static const gchar *signer_xml =
   "      <arg type='s' direction='in' name='app_id'/>"
   "      <arg type='s' direction='out' name='signature'/>"
   "    </method>"
+  "    <method name='ApproveRequest'>"
+  "      <arg type='s' direction='in' name='request_id'/>"
+  "      <arg type='b' direction='in' name='decision'/>"
+  "      <arg type='b' direction='in' name='remember'/>"
+  "      <arg type='b' direction='out' name='ok'/>"
+  "    </method>"
   "    <method name='NIP04Encrypt'>"
   "      <arg type='s' direction='in' name='plaintext'/>"
   "      <arg type='s' direction='in' name='pubKey'/>"
@@ -58,10 +64,37 @@ static const gchar *signer_xml =
   "      <arg type='s' direction='in' name='account'/>"
   "      <arg type='b' direction='out' name='ok'/>"
   "    </method>"
+  "    <signal name='ApprovalRequested'>"
+  "      <arg type='s' name='app_id'/>"
+  "      <arg type='s' name='account'/>"
+  "      <arg type='s' name='kind'/>"
+  "      <arg type='s' name='preview'/>"
+  "      <arg type='s' name='request_id'/>"
+  "    </signal>"
+  "    <signal name='ApprovalCompleted'>"
+  "      <arg type='s' name='request_id'/>"
+  "      <arg type='b' name='decision'/>"
+  "    </signal>"
   "  </interface>"
   "</node>";
 
 static GDBusNodeInfo *introspection_data = NULL;
+typedef struct {
+  char *event_json;
+  char *current_user;
+  char *app_id;
+  GDBusMethodInvocation *invocation; /* kept until decision */
+} PendingSign;
+static void pending_free(gpointer data){
+  PendingSign *ps = (PendingSign*)data;
+  if (!ps) return;
+  g_free(ps->event_json);
+  g_free(ps->current_user);
+  g_free(ps->app_id);
+  /* ps->invocation is finished elsewhere; do not unref here */
+  g_free(ps);
+}
+static GHashTable *pending = NULL; /* id(string) -> PendingSign* */
 
 /* Simple ACL and rate limiter for mutation methods */
 static gboolean signer_mutations_allowed(void){
@@ -105,10 +138,29 @@ static void on_method_call(GDBusConnection *connection,
   if (g_strcmp0(method_name, "SignEvent") == 0) {
     const gchar *eventJson; const gchar *current_user; const gchar *app_id;
     g_variant_get(parameters, "(sss)", &eventJson, &current_user, &app_id);
-    char *sig=NULL; int rc = nostr_nip55l_sign_event(eventJson, current_user, app_id, &sig);
-    if (rc!=0 || !sig) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_FAILED, "sign failed"); return; }
-    g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", sig));
-    free(sig); return;
+    if (!pending) pending = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, pending_free);
+
+    gchar *req_id = g_uuid_string_random();
+    PendingSign *ps = g_new0(PendingSign, 1);
+    ps->event_json = g_strdup(eventJson);
+    ps->current_user = g_strdup(current_user);
+    ps->app_id = g_strdup(app_id);
+    ps->invocation = invocation; /* keep, do not finish now */
+    g_hash_table_insert(pending, g_strdup(req_id), ps);
+
+    const gchar *preview = eventJson; /* TODO: shorten */
+    g_dbus_connection_emit_signal(connection,
+                                  NULL,
+                                  object_path,
+                                  interface_name,
+                                  "ApprovalRequested",
+                                  g_variant_new("(sssss)", app_id ? app_id : "",
+                                                current_user ? current_user : "",
+                                                "event", preview ? preview : "",
+                                                req_id),
+                                  NULL);
+    g_free(req_id);
+    return; /* wait for ApproveRequest */
   }
   if (g_strcmp0(method_name, "NIP04Encrypt") == 0) {
     const gchar *plaintext; const gchar *pubKey; const gchar *current_user;
@@ -157,6 +209,43 @@ static void on_method_call(GDBusConnection *connection,
     free(out); return;
   }
 
+  if (g_strcmp0(method_name, "ApproveRequest") == 0) {
+    const gchar *req_id; gboolean decision; gboolean remember;
+    g_variant_get(parameters, "(sbb)", &req_id, &decision, &remember);
+    (void)remember; /* TODO: persist policy */
+    if (!pending) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "no pending"); return; }
+    PendingSign *ps = g_hash_table_lookup(pending, req_id);
+    if (!ps) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "unknown request"); return; }
+
+    /* emit completion */
+    g_dbus_connection_emit_signal(connection,
+                                  NULL,
+                                  object_path,
+                                  interface_name,
+                                  "ApprovalCompleted",
+                                  g_variant_new("(sb)", req_id, decision),
+                                  NULL);
+
+    if (!decision) {
+      g_dbus_method_invocation_return_error_literal(ps->invocation, G_IO_ERROR, G_IO_ERROR_CANCELLED, "rejected");
+      g_dbus_method_invocation_return_value(invocation, g_variant_new("(b)", TRUE));
+      g_hash_table_remove(pending, req_id);
+      return;
+    }
+    char *sig=NULL; int rc = nostr_nip55l_sign_event(ps->event_json, ps->current_user, ps->app_id, &sig);
+    if (rc!=0 || !sig) {
+      g_dbus_method_invocation_return_error_literal(ps->invocation, G_IO_ERROR, G_IO_ERROR_FAILED, "sign failed");
+      g_dbus_method_invocation_return_value(invocation, g_variant_new("(b)", FALSE));
+      g_hash_table_remove(pending, req_id);
+      return;
+    }
+    g_dbus_method_invocation_return_value(ps->invocation, g_variant_new("(s)", sig));
+    free(sig);
+    g_dbus_method_invocation_return_value(invocation, g_variant_new("(b)", TRUE));
+    g_hash_table_remove(pending, req_id);
+    return;
+  }
+
   if (g_strcmp0(method_name, "StoreSecret") == 0) {
     if (!signer_mutations_allowed()) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "secret mutations disabled"); return; }
     if (!rate_limit_ok(sender)) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_BUSY, "rate limited"); return; }
@@ -194,8 +283,9 @@ guint signer_export(GDBusConnection *conn, const char *object_path) {
       return 0;
     }
   }
-  const GDBusInterfaceInfo *iface = g_dbus_node_info_lookup_interface(introspection_data, "com.nostr.Signer");
-  if (!iface) return 0;
+  const GDBusInterfaceInfo *iface_const = g_dbus_node_info_lookup_interface(introspection_data, "com.nostr.Signer");
+  if (!iface_const) return 0;
+  GDBusInterfaceInfo *iface = (GDBusInterfaceInfo*)iface_const; /* API expects non-const */
   return g_dbus_connection_register_object(conn, object_path, iface, &vtable, NULL, NULL, NULL);
 }
 
