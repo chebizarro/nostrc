@@ -21,10 +21,10 @@
       <summary>Remember approvals</summary>
       <description>Whether to remember app approvals according to ACL policies.</description>
     </key>
-    <key name="default-account" type="s">
+    <key name="default-identity" type="s">
       <default>''</default>
-      <summary>Default account id</summary>
-      <description>Identifier for the default account (non-sensitive).</description>
+      <summary>Default identity id</summary>
+      <description>Identifier for the default identity (non-sensitive).</description>
     </key>
     <key name="bunker-enabled" type="b">
       <default>false</default>

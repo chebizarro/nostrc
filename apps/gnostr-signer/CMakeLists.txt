@@ -27,7 +27,10 @@ add_executable(${APP_SIGNER_BIN} ${APP_SRC})
 target_compile_features(${APP_SIGNER_BIN} PRIVATE c_std_11)
 target_compile_definitions(${APP_SIGNER_BIN} PRIVATE 
   APP_ID="${APP_SIGNER_FLATPAK_ID}" APP_NAME="${APP_SIGNER_NAME}")
-target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB)
+# NIP-55L core headers for owner/key APIs used by the UI
+target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip55l/include)
+# Link against core to resolve owner APIs
+target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB nostr_nip55l_core)
 
 # Daemon providing DBus (55L) and UDS (5F) fallback (skeleton now)
 add_executable(gnostr-signer-daemon daemon/main_daemon.c daemon/uds_sockd.c)

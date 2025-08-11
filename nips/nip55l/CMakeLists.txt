@@ -36,10 +36,34 @@ if (PkgConfig_FOUND)
 endif()
 
 if (GIO_FOUND)
+  # Generate DBus glue from XML using gdbus-codegen
+  find_program(GDBUS_CODEGEN gdbus-codegen)
+  if (NOT GDBUS_CODEGEN)
+    message(FATAL_ERROR "gdbus-codegen not found; required to build NIP-55L GLib service/client")
+  endif()
+
+  set(DBUS_XML ${CMAKE_CURRENT_SOURCE_DIR}/dbus/com.nostr.Signer.xml)
+  set(GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+  file(MAKE_DIRECTORY ${GENERATED_DIR})
+
+  set(GENERATED_DBUS_C ${GENERATED_DIR}/signer_dbus.c)
+  set(GENERATED_DBUS_H ${GENERATED_DIR}/signer_dbus.h)
+
+  add_custom_command(
+    OUTPUT ${GENERATED_DBUS_C} ${GENERATED_DBUS_H}
+    COMMAND ${GDBUS_CODEGEN}
+            --interface-prefix org.nostr.
+            --c-namespace Nostr
+            --generate-c-code ${GENERATED_DIR}/signer_dbus
+            ${DBUS_XML}
+    DEPENDS ${DBUS_XML}
+    VERBATIM)
+
   add_library(nostr_nip55l_glib
     ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_service_g.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_client_g.c
+    ${GENERATED_DBUS_C}
   )
+  target_include_directories(nostr_nip55l_glib PUBLIC ${NIP55L_INC} PRIVATE ${GENERATED_DIR})
   target_include_directories(nostr_nip55l_glib PUBLIC ${NIP55L_INC})
   target_compile_definitions(nostr_nip55l_glib PRIVATE -DNIP55L_HAVE_GIO)
   target_link_libraries(nostr_nip55l_glib PUBLIC nostr_nip55l_core PkgConfig::GIO)

@@ -5,7 +5,7 @@ typedef struct _PolicyStore PolicyStore;
 
 typedef struct {
   gchar *app_id;
-  gchar *account;
+  gchar *identity;
   gboolean decision; /* TRUE=approve, FALSE=deny */
 } PolicyEntry;
 
@@ -18,13 +18,13 @@ void policy_store_load(PolicyStore *ps);
 void policy_store_save(PolicyStore *ps);
 
 /* Lookup; returns TRUE if a remembered decision exists. */
-gboolean policy_store_get(PolicyStore *ps, const gchar *app_id, const gchar *account, gboolean *out_decision);
+gboolean policy_store_get(PolicyStore *ps, const gchar *app_id, const gchar *identity, gboolean *out_decision);
 
 /* Set or update decision. */
-void policy_store_set(PolicyStore *ps, const gchar *app_id, const gchar *account, gboolean decision);
+void policy_store_set(PolicyStore *ps, const gchar *app_id, const gchar *identity, gboolean decision);
 
 /* Remove a policy; returns TRUE if removed. */
-gboolean policy_store_unset(PolicyStore *ps, const gchar *app_id, const gchar *account);
+gboolean policy_store_unset(PolicyStore *ps, const gchar *app_id, const gchar *identity);
 
 /* Enumerate all entries; caller owns returned GPtrArray of PolicyEntry* and each entry fields. */
 GPtrArray *policy_store_list(PolicyStore *ps);

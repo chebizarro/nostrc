@@ -2,13 +2,13 @@
 #include <string.h>
 
 struct _PolicyStore {
-  GHashTable *map; /* key: composite "account|app_id", value: GINT_TO_POINTER(0/1) */
+  GHashTable *map; /* key: composite "identity|app_id", value: GINT_TO_POINTER(0/1) */
   gchar *path;     /* ~/.config/gnostr-signer/policy.ini */
 };
 
-static gchar *make_key(const gchar *app_id, const gchar *account) {
-  /* Keyed by account then app for intuitive grouping */
-  return g_strdup_printf("%s|%s", account ? account : "", app_id ? app_id : "");
+static gchar *make_key(const gchar *app_id, const gchar *identity) {
+  /* Keyed by identity then app for intuitive grouping */
+  return g_strdup_printf("%s|%s", identity ? identity : "", app_id ? app_id : "");
 }
 
 static const char *config_path(void) {
@@ -49,7 +49,7 @@ void policy_store_load(PolicyStore *ps) {
   gsize ngroups = 0;
   gchar **groups = g_key_file_get_groups(kf, &ngroups);
   for (gsize i = 0; i < ngroups; i++) {
-    const gchar *group = groups[i]; /* group format: account */
+    const gchar *group = groups[i]; /* group format: identity */
     gsize nkeys = 0;
     gchar **keys = g_key_file_get_keys(kf, group, &nkeys, NULL);
     for (gsize j = 0; j < nkeys; j++) {
@@ -67,18 +67,18 @@ void policy_store_load(PolicyStore *ps) {
 void policy_store_save(PolicyStore *ps) {
   if (!ps) return;
   GKeyFile *kf = g_key_file_new();
-  /* Reconstruct grouped by account */
+  /* Reconstruct grouped by identity */
   GHashTableIter it; gpointer key, vptr;
   g_hash_table_iter_init(&it, ps->map);
   while (g_hash_table_iter_next(&it, &key, &vptr)) {
-    const gchar *ckey = key; /* account|app */
+    const gchar *ckey = key; /* identity|app */
     const gchar *bar = strchr(ckey, '|');
     if (!bar) continue;
-    gchar *account = g_strndup(ckey, bar - ckey);
+    gchar *identity = g_strndup(ckey, bar - ckey);
     const gchar *app = bar + 1;
     gboolean val = (GPOINTER_TO_INT(vptr) != 0);
-    g_key_file_set_boolean(kf, account, app, val);
-    g_free(account);
+    g_key_file_set_boolean(kf, identity, app, val);
+    g_free(identity);
   }
   gsize len = 0;
   gchar *data = g_key_file_to_data(kf, &len, NULL);
@@ -92,9 +92,9 @@ void policy_store_save(PolicyStore *ps) {
   g_key_file_unref(kf);
 }
 
-gboolean policy_store_get(PolicyStore *ps, const gchar *app_id, const gchar *account, gboolean *out_decision) {
+gboolean policy_store_get(PolicyStore *ps, const gchar *app_id, const gchar *identity, gboolean *out_decision) {
   if (!ps) return FALSE;
-  gchar *ckey = make_key(app_id, account);
+  gchar *ckey = make_key(app_id, identity);
   gpointer v = g_hash_table_lookup(ps->map, ckey);
   g_free(ckey);
   if (v == NULL) return FALSE;
@@ -102,15 +102,15 @@ gboolean policy_store_get(PolicyStore *ps, const gchar *app_id, const gchar *acc
   return TRUE;
 }
 
-void policy_store_set(PolicyStore *ps, const gchar *app_id, const gchar *account, gboolean decision) {
+void policy_store_set(PolicyStore *ps, const gchar *app_id, const gchar *identity, gboolean decision) {
   if (!ps) return;
-  gchar *ckey = make_key(app_id, account);
+  gchar *ckey = make_key(app_id, identity);
   g_hash_table_replace(ps->map, ckey, GINT_TO_POINTER(decision ? 1 : 0));
 }
 
-gboolean policy_store_unset(PolicyStore *ps, const gchar *app_id, const gchar *account) {
+gboolean policy_store_unset(PolicyStore *ps, const gchar *app_id, const gchar *identity) {
   if (!ps) return FALSE;
-  gchar *ckey = make_key(app_id, account);
+  gchar *ckey = make_key(app_id, identity);
   gboolean removed = g_hash_table_remove(ps->map, ckey);
   g_free(ckey);
   return removed;
@@ -118,11 +118,11 @@ gboolean policy_store_unset(PolicyStore *ps, const gchar *app_id, const gchar *a
 
 static void list_accum(gpointer key, gpointer value, gpointer user_data) {
   GPtrArray *arr = user_data;
-  const gchar *ckey = key; /* account|app */
+  const gchar *ckey = key; /* identity|app */
   const gchar *bar = strchr(ckey, '|');
   if (!bar) return;
   PolicyEntry *e = g_new0(PolicyEntry, 1);
-  e->account = g_strndup(ckey, bar - ckey);
+  e->identity = g_strndup(ckey, bar - ckey);
   e->app_id = g_strdup(bar + 1);
   e->decision = (GPOINTER_TO_INT(value) != 0);
   g_ptr_array_add(arr, e);

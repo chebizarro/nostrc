@@ -4,7 +4,7 @@
 typedef struct _AccountsStore AccountsStore;
 
 typedef struct {
-  gchar *id;     /* e.g., npub or label */
+  gchar *id;     /* identity selector: key_id or npub */
   gchar *label;  /* optional display label */
 } AccountEntry;
 

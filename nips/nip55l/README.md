@@ -33,8 +33,8 @@ brew services start dbus
 Run the daemon:
 
 ```
-# Optional: allow secret mutations over DBus
-export NOSTR_SIGNER_ALLOW_SECRET_MUTATIONS=1
+# Optional: allow key mutations over DBus
+export NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1
 
 # Optional: provide a secret for key resolution (hex or nsec)
 export NOSTR_SIGNER_SECKEY_HEX=...   # or
@@ -75,12 +75,12 @@ Interface: `org.nostr.Signer`
 - `GetRelays() -> (s relaysJson)`
   - Stub; currently returns NOT_FOUND.
 
-- `StoreSecret(in s secret, in s account) -> (b ok)`
-  - Stores a secret (64-hex or `nsec1...`) in Secret Service under schema `org.nostr.Signer`, attr `account`. Optional feature; returns error if libsecret is unavailable.
-  - ACL: requires env `NOSTR_SIGNER_ALLOW_SECRET_MUTATIONS=1` and subject to a per-sender 500ms rate limit.
+- `StoreKey(in s key, in s identity) -> (b ok)`
+  - Stores a private key (64-hex or `nsec1...`) in Secret Service under schema `org.nostr.Signer`, attribute `identity`. Optional feature; returns error if libsecret is unavailable.
+  - ACL: requires env `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1` and subject to a per-sender 500ms rate limit.
 
-- `ClearSecret(in s account) -> (b ok)`
-  - Clears stored secret for `account`. Same ACL/rate limit as above.
+- `ClearKey(in s identity) -> (b ok)`
+  - Clears stored key for `identity`. Same ACL/rate limit as above.
 
 Errors are returned as GLib `G_IO_ERROR_*` over DBus. Core error codes map to generic DBus failure for now.
 
@@ -95,8 +95,8 @@ Usage: nostr-signer-cli <cmd> [args]
 
 Commands:
   get-pubkey
-  store-secret <secret> [account]
-  clear-secret [account]
+  store-key <key> [identity]
+  clear-key [identity]
   sign <json> [current_user] [requester]
   nip04-encrypt <plaintext> <peer_hex> [current_user]
   nip04-decrypt <cipher_b64> <peer_hex> [current_user]
@@ -111,8 +111,8 @@ Examples:
 nostr-signer-cli get-pubkey
 
 # Store a key (requires Secret Service and env gate)
-export NOSTR_SIGNER_ALLOW_SECRET_MUTATIONS=1
-nostr-signer-cli store-secret 'nsec1...' default
+export NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1
+nostr-signer-cli store-key 'nsec1...' default
 
 # Sign an event
 nostr-signer-cli sign '{"kind":1,"tags":[],"content":"hi"}'
@@ -129,7 +129,7 @@ nostr-signer-cli nip44-decrypt "$C" <peer_hex>
 ## Security notes
 
 - Secrets never leave the local machine. No network calls are made by the signer.
-- Secret mutations over DBus are opt-in via `NOSTR_SIGNER_ALLOW_SECRET_MUTATIONS=1` and rate-limited.
+- Key mutations over DBus are opt-in via `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1` and rate-limited.
 - On macOS, libsecret typically has no Secret Service provider by default; store/clear may return NOT_FOUND. Linux desktops with keyrings (e.g., GNOME Keyring) provide this service.
 
 ## Roadmap

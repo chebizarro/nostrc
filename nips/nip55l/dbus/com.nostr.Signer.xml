@@ -5,41 +5,67 @@
     </method>
     <method name="SignEvent">
       <arg type="s" direction="in" name="eventJson" />
-      <arg type="s" direction="in" name="current_user" />
+      <arg type="s" direction="in" name="identity" />
       <arg type="s" direction="in" name="app_id" />
       <arg type="s" direction="out" name="signature" />
     </method>
     <method name="NIP04Encrypt">
       <arg type="s" direction="in" name="plaintext" />
       <arg type="s" direction="in" name="pubKey" />
-      <arg type="s" direction="in" name="current_user" />
+      <arg type="s" direction="in" name="identity" />
       <arg type="s" direction="out" name="encryptedText" />
     </method>
     <method name="NIP04Decrypt">
       <arg type="s" direction="in" name="encryptedText" />
       <arg type="s" direction="in" name="pubKey" />
-      <arg type="s" direction="in" name="current_user" />
+      <arg type="s" direction="in" name="identity" />
       <arg type="s" direction="out" name="plaintext" />
     </method>
     <method name="NIP44Encrypt">
       <arg type="s" direction="in" name="plaintext" />
       <arg type="s" direction="in" name="pubKey" />
-      <arg type="s" direction="in" name="current_user" />
+      <arg type="s" direction="in" name="identity" />
       <arg type="s" direction="out" name="encryptedText" />
     </method>
     <method name="NIP44Decrypt">
       <arg type="s" direction="in" name="encryptedText" />
       <arg type="s" direction="in" name="pubKey" />
-      <arg type="s" direction="in" name="current_user" />
+      <arg type="s" direction="in" name="identity" />
       <arg type="s" direction="out" name="plaintext" />
     </method>
     <method name="DecryptZapEvent">
       <arg type="s" direction="in" name="eventJson" />
-      <arg type="s" direction="in" name="current_user" />
+      <arg type="s" direction="in" name="identity" />
       <arg type="s" direction="out" name="decryptedEvent" />
     </method>
     <method name="GetRelays">
       <arg type="s" direction="out" name="relaysJson" />
     </method>
+    <method name="StoreKey">
+      <arg type="s" direction="in" name="key" />
+      <arg type="s" direction="in" name="identity" />
+      <arg type="b" direction="out" name="ok" />
+    </method>
+    <method name="ClearKey">
+      <arg type="s" direction="in" name="identity" />
+      <arg type="b" direction="out" name="ok" />
+    </method>
+    <method name="ApproveRequest">
+      <arg type="s" direction="in" name="request_id" />
+      <arg type="b" direction="in" name="decision" />
+      <arg type="b" direction="in" name="remember" />
+      <arg type="b" direction="out" name="ok" />
+    </method>
+    <signal name="ApprovalRequested">
+      <arg type="s" name="app_id" />
+      <arg type="s" name="identity" />
+      <arg type="s" name="kind" />
+      <arg type="s" name="preview" />
+      <arg type="s" name="request_id" />
+    </signal>
+    <signal name="ApprovalCompleted">
+      <arg type="s" name="request_id" />
+      <arg type="b" name="decision" />
+    </signal>
   </interface>
 </node>

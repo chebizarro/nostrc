@@ -1,6 +1,9 @@
 #include <gtk/gtk.h>
 #include "../accounts_store.h"
 #include <gio/gio.h>
+#include <nostr/nip55l/signer_ops.h>
+#include <unistd.h>
+#include <pwd.h>
 
 typedef struct {
   AccountsStore *as;
@@ -9,6 +12,11 @@ typedef struct {
   GtkWidget *add_id;
   GtkWidget *add_label;
   GtkCheckButton *group_head; /* head of radio-like group */
+  /* Linked user UI */
+  GtkWidget *linked_box;
+  GtkWidget *linked_label;
+  GtkWidget *link_btn;
+  GtkWidget *clear_link_btn;
 } SettingsUI;
 
 #define SIGNER_NAME  "org.nostr.Signer"
@@ -17,15 +25,15 @@ typedef struct {
 typedef struct {
   SettingsUI *ui;
   GtkWidget *entry_secret;
-  GtkDropDown *acct_dd;
+  GtkDropDown *ident_dd;
   GtkWidget *dialog;
-  void (*on_success)(const char *account, gpointer user_data);
+  void (*on_success)(const char *identity, gpointer user_data);
   gpointer cb_user_data;
 } ImportCtx;
 
 typedef struct {
   SettingsUI *ui;
-  GtkDropDown *acct_dd;
+  GtkDropDown *ident_dd;
   GtkWidget *dialog;
 } ClearCtx;
 
@@ -75,7 +83,7 @@ static void on_remove_clicked(GtkButton *btn, gpointer user_data) {
   const gchar *id = g_object_get_data(G_OBJECT(btn), "id");
   if (!ui || !ui->as || !id) return;
   GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(ui->page));
-  GtkAlertDialog *dlg = gtk_alert_dialog_new("Remove account?\n%s", id);
+  GtkAlertDialog *dlg = gtk_alert_dialog_new("Remove identity?\n%s", id);
   gtk_alert_dialog_set_buttons(dlg, (const char * const[]){"Remove", "Cancel", NULL});
   RemoveCtx *rc = g_new0(RemoveCtx, 1);
   rc->ui = ui;
@@ -90,6 +98,9 @@ static void on_radio_toggled(GtkToggleButton *btn, gpointer user_data) {
   if (!ui || !ui->as || !id) return;
   accounts_store_set_active(ui->as, id);
   accounts_store_save(ui->as);
+  /* Update linked user section when active identity changes */
+  extern void update_linked_user_ui(SettingsUI*);
+  update_linked_user_ui(ui);
 }
 
 void gnostr_settings_page_refresh(GtkWidget *page, AccountsStore *as) {
@@ -139,6 +150,9 @@ void gnostr_settings_page_refresh(GtkWidget *page, AccountsStore *as) {
     g_ptr_array_free(items, TRUE);
   }
   g_free(active);
+  /* Ensure linked user section reflects latest state */
+  extern void update_linked_user_ui(SettingsUI*);
+  update_linked_user_ui(ui);
 }
 
 static void on_add_clicked(GtkButton *btn, gpointer user_data) {
@@ -148,14 +162,14 @@ static void on_add_clicked(GtkButton *btn, gpointer user_data) {
   const gchar *label = gtk_editable_get_text(GTK_EDITABLE(ui->add_label));
   if (!id || !*id) {
     GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(ui->page));
-    GtkAlertDialog *dlg = gtk_alert_dialog_new("Account id is required");
+    GtkAlertDialog *dlg = gtk_alert_dialog_new("Identity id is required");
     gtk_alert_dialog_show(dlg, parent);
     g_object_unref(dlg);
     return;
   }
   if (!accounts_store_add(ui->as, id, label)) {
     GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(ui->page));
-    GtkAlertDialog *dlg = gtk_alert_dialog_new("Account already exists: %s", id);
+    GtkAlertDialog *dlg = gtk_alert_dialog_new("Identity already exists: %s", id);
     gtk_alert_dialog_show(dlg, parent);
     g_object_unref(dlg);
     return;
@@ -182,13 +196,13 @@ GtkWidget *gnostr_settings_page_new(AccountsStore *as) {
   gtk_widget_add_css_class(title, "title-1");
   gtk_box_append(GTK_BOX(box), title);
 
-  /* Secrets notice + actions */
+  /* Key material notice + actions */
   GtkWidget *secrets_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-  GtkWidget *secrets_note = gtk_label_new("Secrets are kept in memory for this session only. Only public npubs are shown.");
+  GtkWidget *secrets_note = gtk_label_new("Private keys are held in memory for this session only. Only public npubs are shown.");
   gtk_label_set_wrap(GTK_LABEL(secrets_note), TRUE);
   gtk_widget_set_hexpand(secrets_note, TRUE);
-  GtkWidget *btn_import = gtk_button_new_with_label("Import Secret");
-  GtkWidget *btn_clear  = gtk_button_new_with_label("Clear Secret");
+  GtkWidget *btn_import = gtk_button_new_with_label("Import Key");
+  GtkWidget *btn_clear  = gtk_button_new_with_label("Clear Key");
   gtk_box_append(GTK_BOX(secrets_row), secrets_note);
   gtk_box_append(GTK_BOX(secrets_row), btn_import);
   gtk_box_append(GTK_BOX(secrets_row), btn_clear);
@@ -200,13 +214,33 @@ GtkWidget *gnostr_settings_page_new(AccountsStore *as) {
   gtk_editable_set_text(GTK_EDITABLE(ui->add_label), "");
   gtk_entry_set_placeholder_text(GTK_ENTRY(ui->add_label), "Label (optional)");
   ui->add_id = gtk_entry_new();
-  gtk_entry_set_placeholder_text(GTK_ENTRY(ui->add_id), "Account id (npub, label, ...) ");
-  GtkWidget *add_btn = gtk_button_new_with_label("Add");
+  gtk_entry_set_placeholder_text(GTK_ENTRY(ui->add_id), "Identity selector (key_id or npub1...)");
+  GtkWidget *add_btn = gtk_button_new_with_label("Add Identity");
   g_signal_connect(add_btn, "clicked", G_CALLBACK(on_add_clicked), ui);
-  gtk_box_append(GTK_BOX(form), ui->add_label);
   gtk_box_append(GTK_BOX(form), ui->add_id);
+  gtk_box_append(GTK_BOX(form), ui->add_label);
   gtk_box_append(GTK_BOX(form), add_btn);
   gtk_box_append(GTK_BOX(box), form);
+
+  /* Linked user section */
+  ui->linked_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  GtkWidget *linked_title = gtk_label_new("Linked user:");
+  ui->linked_label = gtk_label_new("(none)");
+  ui->link_btn = gtk_button_new_with_label("Link current user");
+  ui->clear_link_btn = gtk_button_new_with_label("Clear link");
+  gtk_box_append(GTK_BOX(ui->linked_box), linked_title);
+  gtk_box_append(GTK_BOX(ui->linked_box), ui->linked_label);
+  gtk_widget_set_hexpand(ui->linked_label, TRUE);
+  gtk_widget_set_halign(ui->linked_label, GTK_ALIGN_START);
+  gtk_box_append(GTK_BOX(ui->linked_box), ui->link_btn);
+  gtk_box_append(GTK_BOX(ui->linked_box), ui->clear_link_btn);
+  gtk_box_append(GTK_BOX(box), ui->linked_box);
+
+  /* Handlers */
+  extern void on_link_current_user_clicked(GtkButton*, gpointer);
+  extern void on_clear_link_clicked(GtkButton*, gpointer);
+  g_signal_connect(ui->link_btn, "clicked", G_CALLBACK(on_link_current_user_clicked), ui);
+  g_signal_connect(ui->clear_link_btn, "clicked", G_CALLBACK(on_clear_link_clicked), ui);
 
   /* Accounts list */
   GtkWidget *list = gtk_list_box_new();
@@ -227,7 +261,61 @@ GtkWidget *gnostr_settings_page_new(AccountsStore *as) {
 
 GtkWidget *gnostr_settings_page_new(AccountsStore *as);
 
-/* ---- Secret Import/Clear helpers (C callbacks) ---- */
+/* ---- Key Import/Clear helpers (C callbacks) ---- */
+
+/* ---- Linked user helpers ---- */
+static gchar *get_active_identity(SettingsUI *ui){
+  if (!ui || !ui->as) return NULL;
+  gchar *active=NULL; accounts_store_get_active(ui->as, &active); return active;
+}
+
+void update_linked_user_ui(SettingsUI *ui){
+  if (!ui) return;
+  g_autofree gchar *active = get_active_identity(ui);
+  gboolean has_active = (active && *active);
+  gtk_widget_set_sensitive(ui->link_btn, has_active);
+  gtk_widget_set_sensitive(ui->clear_link_btn, has_active);
+  if (!has_active){
+    gtk_label_set_text(GTK_LABEL(ui->linked_label), "(none)");
+    return;
+  }
+  int has_owner=0; uid_t uid=0; char *uname=NULL;
+  int rc = nostr_nip55l_get_owner(active, &has_owner, &uid, &uname);
+  if (rc==0 && has_owner){
+    gchar buf[256]; g_snprintf(buf, sizeof buf, "%s (UID %u)", uname?uname:"?", (unsigned)uid);
+    gtk_label_set_text(GTK_LABEL(ui->linked_label), buf);
+  } else {
+    gtk_label_set_text(GTK_LABEL(ui->linked_label), "(none)");
+  }
+  if (uname) free(uname);
+}
+
+void on_link_current_user_clicked(GtkButton *btn, gpointer user_data){
+  (void)btn; SettingsUI *ui = user_data; if (!ui) return;
+  g_autofree gchar *active = get_active_identity(ui); if (!active || !*active) return;
+  uid_t uid = getuid();
+  struct passwd *pw = getpwuid(uid);
+  const char *uname = (pw && pw->pw_name) ? pw->pw_name : NULL;
+  int rc = nostr_nip55l_set_owner(active, uid, uname);
+  if (rc != 0){
+    GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(ui->page));
+    GtkAlertDialog *dlg = gtk_alert_dialog_new("Failed to link user (rc=%d)", rc);
+    gtk_alert_dialog_show(dlg, parent); g_object_unref(dlg);
+  }
+  update_linked_user_ui(ui);
+}
+
+void on_clear_link_clicked(GtkButton *btn, gpointer user_data){
+  (void)btn; SettingsUI *ui = user_data; if (!ui) return;
+  g_autofree gchar *active = get_active_identity(ui); if (!active || !*active) return;
+  int rc = nostr_nip55l_clear_owner(active);
+  if (rc != 0){
+    GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(ui->page));
+    GtkAlertDialog *dlg = gtk_alert_dialog_new("Failed to clear link (rc=%d)", rc);
+    gtk_alert_dialog_show(dlg, parent); g_object_unref(dlg);
+  }
+  update_linked_user_ui(ui);
+}
 
 static void import_call_done(GObject *src, GAsyncResult *res, gpointer user_data){
   ImportCtx *ctx = (ImportCtx*)user_data;
@@ -237,17 +325,17 @@ static void import_call_done(GObject *src, GAsyncResult *res, gpointer user_data
   if (!parent && ctx && ctx->ui && ctx->ui->page) parent = GTK_WINDOW(gtk_widget_get_root(ctx->ui->page));
   if (e){
     const gchar *msg = e->message ? e->message : "unknown error";
-    GtkAlertDialog *ad = gtk_alert_dialog_new("Import failed: %s\nEnsure daemon was started with NOSTR_SIGNER_ALLOW_SECRET_MUTATIONS=1", msg);
+    GtkAlertDialog *ad = gtk_alert_dialog_new("Import failed: %s\nEnsure daemon was started with NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1", msg);
     gtk_alert_dialog_show(ad, parent);
     g_object_unref(ad); g_clear_error(&e);
   } else if (ret){
     gboolean ok=FALSE; g_variant_get(ret, "(b)", &ok); g_variant_unref(ret);
     if (ok && ctx->on_success) {
-      gchar *acct = dropdown_get_selected_string(ctx->acct_dd);
-      ctx->on_success(acct ? acct : "", ctx->cb_user_data);
-      g_free(acct);
+      gchar *ident = dropdown_get_selected_string(ctx->ident_dd);
+      ctx->on_success(ident ? ident : "", ctx->cb_user_data);
+      g_free(ident);
     }
-    GtkAlertDialog *ad = gtk_alert_dialog_new(ok?"Secret imported (session only)":"Import failed");
+    GtkAlertDialog *ad = gtk_alert_dialog_new(ok?"Key imported (session only)":"Import failed");
     gtk_alert_dialog_show(ad, parent);
     g_object_unref(ad);
   }
@@ -268,10 +356,10 @@ static void on_import_ok_clicked(GtkButton *btn, gpointer user_data){
   ImportCtx *ctx = (ImportCtx*)user_data;
   if (!ctx) return;
   const gchar *secret = gtk_editable_get_text(GTK_EDITABLE(ctx->entry_secret));
-  g_autofree gchar *account = dropdown_get_selected_string(ctx->acct_dd);
+  g_autofree gchar *identity = dropdown_get_selected_string(ctx->ident_dd);
   GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(ctx->dialog));
-  if (!secret || !*secret || !account || !*account) {
-    GtkAlertDialog *ad = gtk_alert_dialog_new("Secret and account are required");
+  if (!secret || !*secret || !identity || !*identity) {
+    GtkAlertDialog *ad = gtk_alert_dialog_new("Key and identity are required");
     gtk_alert_dialog_show(ad, parent);
     g_object_unref(ad);
     if (ctx->dialog) gtk_window_destroy(GTK_WINDOW(ctx->dialog));
@@ -287,8 +375,8 @@ static void on_import_ok_clicked(GtkButton *btn, gpointer user_data){
     g_free(ctx);
     return;
   }
-  g_dbus_connection_call(bus, SIGNER_NAME, SIGNER_PATH, "org.nostr.Signer", "StoreSecret",
-                         g_variant_new("(ss)", secret, account), G_VARIANT_TYPE("(b)"),
+  g_dbus_connection_call(bus, SIGNER_NAME, SIGNER_PATH, "org.nostr.Signer", "StoreKey",
+                         g_variant_new("(ss)", secret, identity), G_VARIANT_TYPE("(b)"),
                          G_DBUS_CALL_FLAGS_NONE, 5000, NULL, import_call_done, ctx);
   g_object_unref(bus);
 }
@@ -300,13 +388,13 @@ void on_import_clicked(GtkButton *btn, gpointer user_data){
   GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(ui->page));
 
   GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-  GtkWidget *lbl = gtk_label_new("Paste hex private key (64 hex) or nsec:\nIt will be kept in memory for this session only.");
+  GtkWidget *lbl = gtk_label_new("Paste hex private key (64 hex) or nsec. It will be kept in memory for this session only.");
   gtk_label_set_wrap(GTK_LABEL(lbl), TRUE);
   GtkWidget *entry = gtk_entry_new();
   gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "nsec1... or 64-hex...");
 
   GtkWidget *acct_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-  GtkWidget *acct_lbl = gtk_label_new("Account:");
+  GtkWidget *acct_lbl = gtk_label_new("Identity:");
   GtkStringList *sl = gtk_string_list_new(NULL);
   guint to_sel = GTK_INVALID_LIST_POSITION;
   gchar *active = NULL; accounts_store_get_active(ui->as, &active);
@@ -320,11 +408,11 @@ void on_import_clicked(GtkButton *btn, gpointer user_data){
     }
     g_ptr_array_free(items, TRUE);
   }
-  GtkDropDown *acct_dd = GTK_DROP_DOWN(gtk_drop_down_new(G_LIST_MODEL(sl), NULL));
-  if (to_sel != GTK_INVALID_LIST_POSITION) gtk_drop_down_set_selected(acct_dd, to_sel);
-  else if (gtk_drop_down_get_selected(acct_dd) == GTK_INVALID_LIST_POSITION) gtk_drop_down_set_selected(acct_dd, 0);
+  GtkDropDown *ident_dd = GTK_DROP_DOWN(gtk_drop_down_new(G_LIST_MODEL(sl), NULL));
+  if (to_sel != GTK_INVALID_LIST_POSITION) gtk_drop_down_set_selected(ident_dd, to_sel);
+  else if (gtk_drop_down_get_selected(ident_dd) == GTK_INVALID_LIST_POSITION) gtk_drop_down_set_selected(ident_dd, 0);
   gtk_box_append(GTK_BOX(acct_row), acct_lbl);
-  gtk_box_append(GTK_BOX(acct_row), GTK_WIDGET(acct_dd));
+  gtk_box_append(GTK_BOX(acct_row), GTK_WIDGET(ident_dd));
 
   gtk_box_append(GTK_BOX(content), lbl);
   gtk_box_append(GTK_BOX(content), entry);
@@ -334,7 +422,7 @@ void on_import_clicked(GtkButton *btn, gpointer user_data){
   gtk_window_set_transient_for(GTK_WINDOW(win), parent);
   gtk_window_set_modal(GTK_WINDOW(win), TRUE);
   GtkWidget *hb = gtk_header_bar_new();
-  GtkWidget *title = gtk_label_new("Import Secret");
+  GtkWidget *title = gtk_label_new("Import Key");
   gtk_header_bar_set_title_widget(GTK_HEADER_BAR(hb), title);
   GtkWidget *btn_cancel = gtk_button_new_with_label("Cancel");
   GtkWidget *btn_ok = gtk_button_new_with_label("Import");
@@ -346,14 +434,14 @@ void on_import_clicked(GtkButton *btn, gpointer user_data){
   gtk_window_present(GTK_WINDOW(win));
 
   ImportCtx *ctx = g_new0(ImportCtx, 1);
-  ctx->ui = ui; ctx->entry_secret = entry; ctx->acct_dd = acct_dd; ctx->dialog = win; ctx->on_success=NULL; ctx->cb_user_data=NULL;
+  ctx->ui = ui; ctx->entry_secret = entry; ctx->ident_dd = ident_dd; ctx->dialog = win; ctx->on_success=NULL; ctx->cb_user_data=NULL;
   g_signal_connect(btn_cancel, "clicked", G_CALLBACK(on_import_cancel_clicked), ctx);
   g_signal_connect(btn_ok, "clicked", G_CALLBACK(on_import_ok_clicked), ctx);
 }
 
-/* Exported helper: open Import Secret dialog programmatically */
+/* Exported helper: open Import Key dialog programmatically */
 /* Extended helper with success callback */
-void gnostr_settings_open_import_dialog_with_callback(GtkWindow *parent, AccountsStore *as, const char *initial_account,
+void gnostr_settings_open_import_dialog_with_callback(GtkWindow *parent, AccountsStore *as, const char *initial_identity,
                                                       void (*on_success)(const char*, gpointer), gpointer user_data){
   if (!parent || !as) return;
   GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
@@ -363,7 +451,7 @@ void gnostr_settings_open_import_dialog_with_callback(GtkWindow *parent, Account
   gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "nsec1... or 64-hex...");
 
   GtkWidget *acct_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-  GtkWidget *acct_lbl = gtk_label_new("Account:");
+  GtkWidget *acct_lbl = gtk_label_new("Identity:");
   GtkStringList *sl = gtk_string_list_new(NULL);
   guint to_sel = GTK_INVALID_LIST_POSITION;
   gchar *active = NULL; accounts_store_get_active(as, &active);
@@ -372,16 +460,17 @@ void gnostr_settings_open_import_dialog_with_callback(GtkWindow *parent, Account
     for (guint i=0;i<items->len;i++){
       AccountEntry *e = g_ptr_array_index(items, i);
       gtk_string_list_append(sl, e->id);
-      if ((initial_account && g_strcmp0(initial_account, e->id)==0) || (!initial_account && active && g_strcmp0(active, e->id)==0)) to_sel = i;
+      if ((initial_identity && g_strcmp0(initial_identity, e->id)==0) || (!initial_identity && active && g_strcmp0(active, e->id)==0)) to_sel = i;
       g_free(e->id); g_free(e->label); g_free(e);
     }
     g_ptr_array_free(items, TRUE);
   }
-  GtkDropDown *acct_dd = GTK_DROP_DOWN(gtk_drop_down_new(G_LIST_MODEL(sl), NULL));
-  if (to_sel != GTK_INVALID_LIST_POSITION) gtk_drop_down_set_selected(acct_dd, to_sel);
-  else if (gtk_drop_down_get_selected(acct_dd) == GTK_INVALID_LIST_POSITION) gtk_drop_down_set_selected(acct_dd, 0);
+  g_free(active);
+  GtkDropDown *ident_dd = GTK_DROP_DOWN(gtk_drop_down_new(G_LIST_MODEL(sl), NULL));
+  if (to_sel != GTK_INVALID_LIST_POSITION) gtk_drop_down_set_selected(ident_dd, to_sel);
+  else if (gtk_drop_down_get_selected(ident_dd) == GTK_INVALID_LIST_POSITION) gtk_drop_down_set_selected(ident_dd, 0);
   gtk_box_append(GTK_BOX(acct_row), acct_lbl);
-  gtk_box_append(GTK_BOX(acct_row), GTK_WIDGET(acct_dd));
+  gtk_box_append(GTK_BOX(acct_row), GTK_WIDGET(ident_dd));
 
   gtk_box_append(GTK_BOX(content), lbl);
   gtk_box_append(GTK_BOX(content), entry);
@@ -404,28 +493,25 @@ void gnostr_settings_open_import_dialog_with_callback(GtkWindow *parent, Account
 
   ImportCtx *ctx = g_new0(ImportCtx, 1);
   ctx->ui = NULL; /* not needed for this path */
-  ctx->entry_secret = entry; ctx->acct_dd = acct_dd; ctx->dialog = win;
+  ctx->entry_secret = entry; ctx->ident_dd = ident_dd; ctx->dialog = win;
   ctx->on_success = on_success; ctx->cb_user_data = user_data;
   g_signal_connect(btn_cancel, "clicked", G_CALLBACK(on_import_cancel_clicked), ctx);
   g_signal_connect(btn_ok, "clicked", G_CALLBACK(on_import_ok_clicked), ctx);
 }
 
-/* Backwards-compatible wrapper */
-void gnostr_settings_open_import_dialog(GtkWindow *parent, AccountsStore *as, const char *initial_account){
-  gnostr_settings_open_import_dialog_with_callback(parent, as, initial_account, NULL, NULL);
-}
+
 
 static void clear_call_done(GObject *src, GAsyncResult *res, gpointer user_data){
   ClearCtx *ctx = (ClearCtx*)user_data;
   GError *e=NULL; GVariant *ret = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &e);
   GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(ctx->ui->page));
   if (e){
-    GtkAlertDialog *ad = gtk_alert_dialog_new("Clear failed: %s\nEnsure daemon was started with NOSTR_SIGNER_ALLOW_SECRET_MUTATIONS=1", e->message);
+    GtkAlertDialog *ad = gtk_alert_dialog_new("Clear failed: %s\nEnsure daemon was started with NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1", e->message);
     gtk_alert_dialog_show(ad, parent);
     g_object_unref(ad); g_clear_error(&e);
   } else if (ret){
     gboolean ok=FALSE; g_variant_get(ret, "(b)", &ok); g_variant_unref(ret);
-    GtkAlertDialog *ad = gtk_alert_dialog_new(ok?"Secret cleared":"Clear failed");
+    GtkAlertDialog *ad = gtk_alert_dialog_new(ok?"Key cleared":"Clear failed");
     gtk_alert_dialog_show(ad, parent);
     g_object_unref(ad);
   }
@@ -445,8 +531,8 @@ static void on_clear_ok_clicked(GtkButton *btn, gpointer user_data){
   (void)btn;
   ClearCtx *ctx = (ClearCtx*)user_data;
   if (!ctx) return;
-  g_autofree gchar *account = dropdown_get_selected_string(ctx->acct_dd);
-  if (!account || !*account){ if (ctx->dialog) gtk_window_destroy(GTK_WINDOW(ctx->dialog)); g_free(ctx); return; }
+  g_autofree gchar *identity = dropdown_get_selected_string(ctx->ident_dd);
+  if (!identity || !*identity){ if (ctx->dialog) gtk_window_destroy(GTK_WINDOW(ctx->dialog)); g_free(ctx); return; }
   GError *err=NULL; GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
   if (!bus){
     GtkAlertDialog *ad = gtk_alert_dialog_new("Failed to get session bus: %s", err?err->message:"unknown");
@@ -456,8 +542,8 @@ static void on_clear_ok_clicked(GtkButton *btn, gpointer user_data){
     g_free(ctx);
     return;
   }
-  g_dbus_connection_call(bus, SIGNER_NAME, SIGNER_PATH, "org.nostr.Signer", "ClearSecret",
-                         g_variant_new("(s)", account), G_VARIANT_TYPE("(b)"),
+  g_dbus_connection_call(bus, SIGNER_NAME, SIGNER_PATH, "org.nostr.Signer", "ClearKey",
+                         g_variant_new("(s)", identity), G_VARIANT_TYPE("(b)"),
                          G_DBUS_CALL_FLAGS_NONE, 5000, NULL, clear_call_done, ctx);
   g_object_unref(bus);
 }
@@ -469,7 +555,7 @@ void on_clear_clicked(GtkButton *btn, gpointer user_data){
   GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(ui->page));
 
   GtkWidget *content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-  GtkWidget *lbl = gtk_label_new("Account:");
+  GtkWidget *lbl = gtk_label_new("Identity:");
   GtkStringList *sl = gtk_string_list_new(NULL);
   guint to_sel = GTK_INVALID_LIST_POSITION;
   gchar *active = NULL; accounts_store_get_active(ui->as, &active);
@@ -483,17 +569,17 @@ void on_clear_clicked(GtkButton *btn, gpointer user_data){
     }
     g_ptr_array_free(items, TRUE);
   }
-  GtkDropDown *acct_dd = GTK_DROP_DOWN(gtk_drop_down_new(G_LIST_MODEL(sl), NULL));
-  if (to_sel != GTK_INVALID_LIST_POSITION) gtk_drop_down_set_selected(acct_dd, to_sel);
-  else if (gtk_drop_down_get_selected(acct_dd) == GTK_INVALID_LIST_POSITION) gtk_drop_down_set_selected(acct_dd, 0);
-  gtk_box_append(GTK_BOX(content), lbl);
-  gtk_box_append(GTK_BOX(content), GTK_WIDGET(acct_dd));
+  g_free(active);
+  GtkDropDown *ident_dd = GTK_DROP_DOWN(gtk_drop_down_new(G_LIST_MODEL(sl), NULL));
+  if (to_sel != GTK_INVALID_LIST_POSITION) gtk_drop_down_set_selected(ident_dd, to_sel);
+  else if (gtk_drop_down_get_selected(ident_dd) == GTK_INVALID_LIST_POSITION) gtk_drop_down_set_selected(ident_dd, 0);
+  gtk_box_append(GTK_BOX(content), GTK_WIDGET(ident_dd));
 
   GtkWidget *win = gtk_window_new();
   gtk_window_set_transient_for(GTK_WINDOW(win), parent);
   gtk_window_set_modal(GTK_WINDOW(win), TRUE);
   GtkWidget *hb = gtk_header_bar_new();
-  GtkWidget *title = gtk_label_new("Clear Secret");
+  GtkWidget *title = gtk_label_new("Clear Key");
   gtk_header_bar_set_title_widget(GTK_HEADER_BAR(hb), title);
   GtkWidget *btn_cancel = gtk_button_new_with_label("Cancel");
   GtkWidget *btn_ok = gtk_button_new_with_label("Clear");
@@ -505,7 +591,7 @@ void on_clear_clicked(GtkButton *btn, gpointer user_data){
   gtk_window_present(GTK_WINDOW(win));
 
   ClearCtx *ctx = g_new0(ClearCtx, 1);
-  ctx->ui = ui; ctx->acct_dd = acct_dd; ctx->dialog = win;
+  ctx->ui = ui; ctx->ident_dd = ident_dd; ctx->dialog = win;
   g_signal_connect(btn_cancel, "clicked", G_CALLBACK(on_clear_cancel_clicked), ctx);
   g_signal_connect(btn_ok, "clicked", G_CALLBACK(on_clear_ok_clicked), ctx);
 }

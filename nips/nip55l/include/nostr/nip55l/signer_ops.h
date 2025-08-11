@@ -22,9 +22,17 @@ int nostr_nip55l_decrypt_zap_event(const char *event_json,
                                    const char *current_user, char **out_json);
 int nostr_nip55l_get_relays(char **out_relays_json);
 
-/* Optional key storage using libsecret when available. */
-int nostr_nip55l_store_secret(const char *secret, const char *account);
-int nostr_nip55l_clear_secret(const char *account);
+/* Optional private key storage using libsecret when available. */
+int nostr_nip55l_store_key(const char *key, const char *identity);
+int nostr_nip55l_clear_key(const char *identity);
+
+/* Optional Unix owner metadata (no enforcement). Selector is key_id or npub. */
+/* Returns 0 on success, NOT_FOUND if libsecret unavailable or item missing. */
+#include <sys/types.h>
+int nostr_nip55l_set_owner(const char *selector, uid_t uid, const char *username);
+int nostr_nip55l_clear_owner(const char *selector);
+/* Outputs: has_owner=1 if present; if present, uid_out and username_out (caller frees username_out). */
+int nostr_nip55l_get_owner(const char *selector, int *has_owner, uid_t *uid_out, char **username_out);
 
 #ifdef __cplusplus
 }

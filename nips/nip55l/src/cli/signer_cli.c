@@ -22,23 +22,23 @@ static int cmd_get_pubkey(void){
   printf("%s\n", npub?npub:""); g_variant_unref(ret); g_object_unref(p); return 0;
 }
 
-static int cmd_store_secret(const char *secret, const char *account){
+static int cmd_store_key(const char *key, const char *identity){
   GError *err=NULL; GDBusProxy *p = ensure_proxy(&err);
   if (!p){ fprintf(stderr, "proxy error: %s\n", err?err->message:"?"); g_clear_error(&err); return 1; }
-  GVariant *ret = g_dbus_proxy_call_sync(p, "StoreSecret", g_variant_new("(ss)", secret, account?account:"default"), G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
-  if (!ret){ fprintf(stderr, "StoreSecret failed: %s\n", err?err->message:"?\n"); g_clear_error(&err); g_object_unref(p); return 2; }
+  GVariant *ret = g_dbus_proxy_call_sync(p, "StoreKey", g_variant_new("(ss)", key, identity?identity:"default"), G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
+  if (!ret){ fprintf(stderr, "StoreKey failed: %s\n", err?err->message:"?\n"); g_clear_error(&err); g_object_unref(p); return 2; }
   gboolean ok=FALSE; g_variant_get(ret, "(b)", &ok); g_variant_unref(ret); g_object_unref(p);
-  if (!ok){ fprintf(stderr, "StoreSecret returned false\n"); return 3; }
+  if (!ok){ fprintf(stderr, "StoreKey returned false\n"); return 3; }
   printf("ok\n"); return 0;
 }
 
-static int cmd_clear_secret(const char *account){
+static int cmd_clear_key(const char *identity){
   GError *err=NULL; GDBusProxy *p = ensure_proxy(&err);
   if (!p){ fprintf(stderr, "proxy error: %s\n", err?err->message:"?"); g_clear_error(&err); return 1; }
-  GVariant *ret = g_dbus_proxy_call_sync(p, "ClearSecret", g_variant_new("(s)", account?account:"default"), G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
-  if (!ret){ fprintf(stderr, "ClearSecret failed: %s\n", err?err->message:"?\n"); g_clear_error(&err); g_object_unref(p); return 2; }
+  GVariant *ret = g_dbus_proxy_call_sync(p, "ClearKey", g_variant_new("(s)", identity?identity:"default"), G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
+  if (!ret){ fprintf(stderr, "ClearKey failed: %s\n", err?err->message:"?\n"); g_clear_error(&err); g_object_unref(p); return 2; }
   gboolean ok=FALSE; g_variant_get(ret, "(b)", &ok); g_variant_unref(ret); g_object_unref(p);
-  if (!ok){ fprintf(stderr, "ClearSecret returned false\n"); return 3; }
+  if (!ok){ fprintf(stderr, "ClearKey returned false\n"); return 3; }
   printf("ok\n"); return 0;
 }
 
@@ -87,8 +87,8 @@ static void usage(const char *argv0){
     "Usage: %s <cmd> [args]\n\n"
     "Commands:\n"
     "  get-pubkey\n"
-    "  store-secret <secret> [account]\n"
-    "  clear-secret [account]\n"
+    "  store-key <key> [identity]\n"
+    "  clear-key [identity]\n"
     "  sign <json> [current_user] [requester]\n"
     "  nip04-encrypt <plaintext> <peer_hex> [current_user]\n"
     "  nip04-decrypt <cipher_b64> <peer_hex> [current_user]\n"
@@ -101,8 +101,8 @@ int main(int argc, char **argv){
   if (argc < 2){ usage(argv[0]); return 2; }
   const char *cmd = argv[1];
   if (strcmp(cmd, "get-pubkey")==0){ return cmd_get_pubkey(); }
-  if (strcmp(cmd, "store-secret")==0){ if (argc<3){ usage(argv[0]); return 2; } return cmd_store_secret(argv[2], argc>3?argv[3]:"default"); }
-  if (strcmp(cmd, "clear-secret")==0){ return cmd_clear_secret(argc>2?argv[2]:"default"); }
+  if (strcmp(cmd, "store-key")==0){ if (argc<3){ usage(argv[0]); return 2; } return cmd_store_key(argv[2], argc>3?argv[3]:"default"); }
+  if (strcmp(cmd, "clear-key")==0){ return cmd_clear_key(argc>2?argv[2]:"default"); }
   if (strcmp(cmd, "sign")==0){ if (argc<3){ usage(argv[0]); return 2; } return cmd_sign(argv[2], argc>3?argv[3]:"", argc>4?argv[4]:""); }
   if (strcmp(cmd, "nip04-encrypt")==0){ if (argc<4){ usage(argv[0]); return 2; } return cmd_nip04_enc(argv[2], argv[3], argc>4?argv[4]:""); }
   if (strcmp(cmd, "nip04-decrypt")==0){ if (argc<4){ usage(argv[0]); return 2; } return cmd_nip04_dec(argv[2], argv[3], argc>4?argv[4]:""); }
