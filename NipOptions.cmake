@@ -55,9 +55,14 @@ if(ENABLE_NIP42)
     add_subdirectory(nips/nip42)
 endif()
 
-option(ENABLE_NIP44 "Enable nip44" OFF)
+option(ENABLE_NIP44 "Enable nip44" ON)
 if(ENABLE_NIP44)
     add_subdirectory(nips/nip44)
+endif()
+
+# Ensure nip46's link-time dependency on nostr_nip44_core is satisfied
+if(ENABLE_NIP46)
+    set(ENABLE_NIP44 ON CACHE BOOL "Enable nip44" FORCE)
 endif()
 
 option(ENABLE_NIP46 "Enable nip46" ON)
@@ -93,6 +98,11 @@ endif()
 option(ENABLE_NIP54 "Enable nip54" OFF)
 if(ENABLE_NIP54)
     add_subdirectory(nips/nip54)
+endif()
+
+option(ENABLE_NIP5F "Enable nip5f" ON)
+if(ENABLE_NIP5F)
+    add_subdirectory(nips/nip5f)
 endif()
 
 option(ENABLE_NIP94 "Enable nip94" OFF)
