@@ -5,6 +5,8 @@
 
 #include "nostr/nip55l/signer_ops.h"
 #include "signer_dbus.h"
+#include "nip55l_dbus_names.h"
+#include "nip55l_dbus_errors.h"
 
 /* Generated skeleton instance */
 static NostrSigner *signer_skel = NULL;
@@ -151,17 +153,17 @@ static gboolean handle_sign_event(NostrSigner *object, GDBusMethodInvocation *in
   if (acl_load_decision("SignEvent", app_id, identity, &acl_decision)) {
     if (acl_decision) {
       char *sig=NULL; int rc = nostr_nip55l_sign_event(eventJson, identity, app_id, &sig);
-      if (rc!=0 || !sig) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_FAILED, "sign failed"); return TRUE; }
+      if (rc!=0 || !sig) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "sign failed"); return TRUE; }
       nostr_signer_complete_sign_event(object, invocation, sig);
       free(sig); return TRUE;
     } else {
-      g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "denied by policy");
+      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL, "denied by policy");
       return TRUE;
     }
   }
-  if (!rate_limit_ok_ms(sender, 100)) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_BUSY, "rate limited"); return TRUE; }
+  if (!rate_limit_ok_ms(sender, 100)) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT, "rate limited"); return TRUE; }
   if (!pending) pending = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, pending_free);
-  gchar *req_id = g_strdup_printf("%p", invocation);
+  gchar *req_id = g_strdup_printf("%p", (void*)invocation);
   PendingSign *ps = g_new0(PendingSign, 1);
   ps->event_json = g_strdup(eventJson);
   ps->identity = g_strdup(identity);
@@ -204,11 +206,11 @@ static gboolean handle_approve_request(NostrSigner *object, GDBusMethodInvocatio
                               decision);
           }
         } else {
-          g_dbus_method_invocation_return_error_literal(ps->invocation, G_IO_ERROR, G_IO_ERROR_FAILED, "sign failed");
+          g_dbus_method_invocation_return_dbus_error(ps->invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "sign failed");
           nostr_signer_complete_approve_request(object, invocation, FALSE);
         }
       } else {
-        g_dbus_method_invocation_return_error_literal(ps->invocation, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "user denied");
+        g_dbus_method_invocation_return_dbus_error(ps->invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL, "user denied");
         if (remember) {
           acl_save_decision("SignEvent",
                             (ps->app_id && *ps->app_id) ? ps->app_id : (sender?sender:""),
@@ -230,7 +232,7 @@ static gboolean handle_nip04_encrypt(NostrSigner *object, GDBusMethodInvocation 
 {
   (void)object;
   char *out=NULL; int rc = nostr_nip55l_nip04_encrypt(plaintext, pubKey, identity, &out);
-  if (rc!=0 || !out) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_FAILED, "nip04 encrypt failed"); return TRUE; }
+  if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "nip04 encrypt failed"); return TRUE; }
   nostr_signer_complete_nip04_encrypt(object, invocation, out);
   free(out); return TRUE;
 }
@@ -240,7 +242,7 @@ static gboolean handle_nip04_decrypt(NostrSigner *object, GDBusMethodInvocation 
 {
   (void)object;
   char *out=NULL; int rc = nostr_nip55l_nip04_decrypt(cipher, pubKey, identity, &out);
-  if (rc!=0 || !out) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_FAILED, "nip04 decrypt failed"); return TRUE; }
+  if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "nip04 decrypt failed"); return TRUE; }
   nostr_signer_complete_nip04_decrypt(object, invocation, out);
   free(out); return TRUE;
 }
@@ -250,7 +252,7 @@ static gboolean handle_nip44_encrypt(NostrSigner *object, GDBusMethodInvocation 
 {
   (void)object;
   char *out=NULL; int rc = nostr_nip55l_nip44_encrypt(plaintext, pubKey, identity, &out);
-  if (rc!=0 || !out) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_FAILED, "nip44 encrypt failed"); return TRUE; }
+  if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "nip44 encrypt failed"); return TRUE; }
   nostr_signer_complete_nip44_encrypt(object, invocation, out);
   free(out); return TRUE;
 }
@@ -260,7 +262,7 @@ static gboolean handle_nip44_decrypt(NostrSigner *object, GDBusMethodInvocation 
 {
   (void)object;
   char *out=NULL; int rc = nostr_nip55l_nip44_decrypt(cipher, pubKey, identity, &out);
-  if (rc!=0 || !out) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_FAILED, "nip44 decrypt failed"); return TRUE; }
+  if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "nip44 decrypt failed"); return TRUE; }
   nostr_signer_complete_nip44_decrypt(object, invocation, out);
   free(out); return TRUE;
 }
@@ -270,7 +272,7 @@ static gboolean handle_decrypt_zap_event(NostrSigner *object, GDBusMethodInvocat
 {
   (void)object;
   char *out=NULL; int rc = nostr_nip55l_decrypt_zap_event(eventJson, identity, &out);
-  if (rc!=0 || !out) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_FAILED, "zap decrypt failed"); return TRUE; }
+  if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "zap decrypt failed"); return TRUE; }
   nostr_signer_complete_decrypt_zap_event(object, invocation, out);
   free(out); return TRUE;
 }
@@ -279,7 +281,7 @@ static gboolean handle_get_relays(NostrSigner *object, GDBusMethodInvocation *in
 {
   (void)object;
   char *out=NULL; int rc = nostr_nip55l_get_relays(&out);
-  if (rc!=0 || !out) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_FAILED, "get relays failed"); return TRUE; }
+  if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "get relays failed"); return TRUE; }
   nostr_signer_complete_get_relays(object, invocation, out);
   free(out); return TRUE;
 }
@@ -289,8 +291,8 @@ static gboolean handle_store_key(NostrSigner *object, GDBusMethodInvocation *inv
 {
   (void)object;
   const gchar *sender = g_dbus_method_invocation_get_sender(invocation);
-  if (!signer_mutations_allowed()) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "key mutations disabled"); return TRUE; }
-  if (!rate_limit_ok(sender)) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_BUSY, "rate limited"); return TRUE; }
+  if (!signer_mutations_allowed()) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_PERMISSION, "key mutations disabled"); return TRUE; }
+  if (!rate_limit_ok(sender)) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT, "rate limited"); return TRUE; }
   int rc = nostr_nip55l_store_key(key, identity);
   nostr_signer_complete_store_key(object, invocation, rc==0);
   return TRUE;

@@ -63,7 +63,15 @@ if (GIO_FOUND)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_service_g.c
     ${GENERATED_DBUS_C}
   )
-  target_include_directories(nostr_nip55l_glib PUBLIC ${NIP55L_INC} PRIVATE ${GENERATED_DIR})
+  target_include_directories(nostr_nip55l_glib
+    PUBLIC
+      ${NIP55L_INC}
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE
+      ${GENERATED_DIR}
+  )
+  # Fail-fast hygiene for GLib signer target
+  target_compile_options(nostr_nip55l_glib PRIVATE -Wall -Wextra -Wpedantic -Werror)
   target_include_directories(nostr_nip55l_glib PUBLIC ${NIP55L_INC})
   target_compile_definitions(nostr_nip55l_glib PRIVATE -DNIP55L_HAVE_GIO)
   target_link_libraries(nostr_nip55l_glib PUBLIC nostr_nip55l_core PkgConfig::GIO)

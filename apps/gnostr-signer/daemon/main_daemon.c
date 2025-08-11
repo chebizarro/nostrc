@@ -1,5 +1,6 @@
 #include <gio/gio.h>
 #include <signal.h>
+#include "nip55l_dbus_names.h"
 
 // Use nip55l GLib implementation. This exports the full signer protocol.
 // Prototypes provided by nips/nip55l/src/glib/signer_service_g.c
@@ -10,20 +11,18 @@ extern void  signer_unexport(GDBusConnection *conn, guint reg_id);
 int gnostr_uds_sockd_start(const char *socket_path);
 void gnostr_uds_sockd_stop(void);
 
-#define SIGNER_NAME  "org.nostr.Signer"
-#define SIGNER_PATH  "/org/nostr/signer"
 
 static GMainLoop *loop = NULL;
 static guint obj_reg_id = 0;
 
 static void on_bus_acquired(GDBusConnection *connection, const gchar *name, gpointer user_data) {
   (void)name; (void)user_data;
-  obj_reg_id = signer_export(connection, SIGNER_PATH);
+  obj_reg_id = signer_export(connection, ORG_NOSTR_SIGNER_OBJECT_PATH);
   if (!obj_reg_id) {
-    g_critical("Failed to export %s on %s", SIGNER_PATH, SIGNER_NAME);
+    g_critical("DBUS_EXPORT_FAILED: path=%s bus=%s", ORG_NOSTR_SIGNER_OBJECT_PATH, ORG_NOSTR_SIGNER_BUS);
     if (loop) g_main_loop_quit(loop);
   } else {
-    g_message("gnostr-signer: exported at %s on %s", SIGNER_PATH, SIGNER_NAME);
+    g_message("gnostr-signer: exported at %s on %s", ORG_NOSTR_SIGNER_OBJECT_PATH, ORG_NOSTR_SIGNER_BUS);
     // Start UDS fallback listener (NIP-5F)
     const char *sock = g_getenv("NOSTR_SIGNER_SOCK");
     if (gnostr_uds_sockd_start(sock) != 0) {
@@ -34,7 +33,7 @@ static void on_bus_acquired(GDBusConnection *connection, const gchar *name, gpoi
 
 static void on_name_acquired(GDBusConnection *connection, const gchar *name, gpointer user_data) {
   (void)connection; (void)user_data; (void)name;
-  g_message("gnostr-signer: name acquired %s", SIGNER_NAME);
+  g_message("gnostr-signer: name acquired %s", ORG_NOSTR_SIGNER_BUS);
 }
 
 static void on_name_lost(GDBusConnection *connection, const gchar *name, gpointer user_data) {
@@ -62,7 +61,7 @@ int main(int argc, char **argv) {
   signal(SIGTERM, handle_sig);
   loop = g_main_loop_new(NULL, FALSE);
   guint owner_id = g_bus_own_name(G_BUS_TYPE_SESSION,
-                                  SIGNER_NAME,
+                                  ORG_NOSTR_SIGNER_BUS,
                                   G_BUS_NAME_OWNER_FLAGS_ALLOW_REPLACEMENT | G_BUS_NAME_OWNER_FLAGS_REPLACE,
                                   on_bus_acquired,
                                   on_name_acquired,

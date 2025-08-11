@@ -1,0 +1,60 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+  "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<!-- Canonical D-Bus interface for GNostr Signer (no inline XML in C) -->
+<node>
+  <interface name="org.nostr.Signer">
+    <!-- Identity: returns current user's npub per identity selector rules -->
+    <method name="GetPublicKey">
+      <arg name="npub" type="s" direction="out"/>
+    </method>
+
+    <!-- Sign an event JSON and return signature (hex or bech32 per spec) -->
+    <method name="SignEvent">
+      <arg name="event_json" type="s" direction="in"/>
+      <arg name="current_user" type="s" direction="in"/>
+      <arg name="app_id" type="s" direction="in"/>
+      <arg name="signature" type="s" direction="out"/>
+    </method>
+
+    <!-- NIP-44 default crypto; NIP-04 legacy kept for compatibility -->
+    <method name="NIP44Encrypt">
+      <arg name="plaintext" type="s" direction="in"/>
+      <arg name="peer_pubkey" type="s" direction="in"/>
+      <arg name="current_user" type="s" direction="in"/>
+      <arg name="ciphertext" type="s" direction="out"/>
+    </method>
+
+    <method name="NIP44Decrypt">
+      <arg name="ciphertext" type="s" direction="in"/>
+      <arg name="peer_pubkey" type="s" direction="in"/>
+      <arg name="current_user" type="s" direction="in"/>
+      <arg name="plaintext" type="s" direction="out"/>
+    </method>
+
+    <method name="NIP04Encrypt">
+      <arg name="plaintext" type="s" direction="in"/>
+      <arg name="peer_pubkey" type="s" direction="in"/>
+      <arg name="current_user" type="s" direction="in"/>
+      <arg name="ciphertext" type="s" direction="out"/>
+    </method>
+
+    <method name="NIP04Decrypt">
+      <arg name="ciphertext" type="s" direction="in"/>
+      <arg name="peer_pubkey" type="s" direction="in"/>
+      <arg name="current_user" type="s" direction="in"/>
+      <arg name="plaintext" type="s" direction="out"/>
+    </method>
+
+    <method name="DecryptZapEvent">
+      <arg name="event_json" type="s" direction="in"/>
+      <arg name="current_user" type="s" direction="in"/>
+      <arg name="decrypted_event" type="s" direction="out"/>
+    </method>
+
+    <method name="GetRelays">
+      <arg name="relays_json" type="s" direction="out"/>
+    </method>
+
+    <!-- Future: Signals for approval UI lifecycle could be added here. -->
+  </interface>
+</node>

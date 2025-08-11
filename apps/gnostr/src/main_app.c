@@ -1,11 +1,8 @@
 #include <gtk/gtk.h>
+#include "ui/gnostr-main-window.h"
 
 static void on_activate(GtkApplication *app, gpointer user_data) {
-  GtkWidget *win = gtk_application_window_new(app);
-  gtk_window_set_title(GTK_WINDOW(win), "GNostr");
-  gtk_window_set_default_size(GTK_WINDOW(win), 900, 600);
-  GtkWidget *label = gtk_label_new("GNostr – Timeline coming soon");
-  gtk_window_set_child(GTK_WINDOW(win), label);
+  GnostrMainWindow *win = gnostr_main_window_new(app);
   gtk_window_present(GTK_WINDOW(win));
 }
 

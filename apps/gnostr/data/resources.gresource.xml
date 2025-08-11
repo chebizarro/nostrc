@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/org/gnostr/ui">
+    <file>ui/gnostr-main-window.ui</file>
+    <file>ui/widgets/gnostr-timeline-view.ui</file>
+    <file>ui/widgets/gnostr-composer.ui</file>
+  </gresource>
+</gresources>
