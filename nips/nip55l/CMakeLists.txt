@@ -53,7 +53,7 @@ if (GIO_FOUND)
 
   install(TARGETS nostr_nip55l_glib nostr-signer-daemon nostr-signer-cli)
   install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/dbus/com.nostr.Signer.service.in
-          DESTINATION share/dbus-1/services RENAME com.nostr.Signer.service)
+          DESTINATION share/dbus-1/services RENAME org.nostr.Signer.service)
 endif()
 
 install(TARGETS nostr_nip55l_core)

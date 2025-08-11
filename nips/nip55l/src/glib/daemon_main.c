@@ -1,7 +1,7 @@
 #include <gio/gio.h>
 
-#define SIGNER_NAME  "com.nostr.Signer"
-#define SIGNER_PATH  "/com/nostr/Signer"
+#define SIGNER_NAME  "org.nostr.Signer"
+#define SIGNER_PATH  "/org/nostr/signer"
 
 /* from signer_service_g.c */
 extern guint signer_export(GDBusConnection *conn, const char *object_path);

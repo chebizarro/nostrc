@@ -3,8 +3,8 @@
 #include "policy_store.h"
 #include "accounts_store.h"
 
-#define SIGNER_NAME  "com.nostr.Signer"
-#define SIGNER_PATH  "/com/nostr/Signer"
+#define SIGNER_NAME  "org.nostr.Signer"
+#define SIGNER_PATH  "/org/nostr/signer"
 
 // Forward declarations for UI pages
 GtkWidget *gnostr_home_page_new(void);
@@ -88,7 +88,7 @@ static void on_import_success_retry(const char *account, gpointer user_data){
   g_dbus_connection_call(n->ui->bus,
                          SIGNER_NAME,
                          SIGNER_PATH,
-                         "com.nostr.Signer",
+                         SIGNER_NAME,
                          "ApproveRequest",
                          g_variant_new("(sbb)", n->request_id, n->decision, n->remember),
                          G_VARIANT_TYPE("(b)"),
@@ -147,7 +147,7 @@ static void on_user_decision(gboolean decision, gboolean remember, gpointer user
   g_dbus_connection_call(ctx->ui->bus,
                          SIGNER_NAME,
                          SIGNER_PATH,
-                         "com.nostr.Signer",
+                         SIGNER_NAME,
                          "ApproveRequest",
                          g_variant_new("(sbb)", ctx->request_id, decision, remember),
                          G_VARIANT_TYPE("(b)"),
@@ -355,7 +355,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
   if (ui->bus){
     g_dbus_connection_signal_subscribe(ui->bus,
                                        SIGNER_NAME,
-                                       "com.nostr.Signer",
+                                       SIGNER_NAME,
                                        "ApprovalRequested",
                                        SIGNER_PATH,
                                        NULL,

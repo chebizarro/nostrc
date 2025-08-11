@@ -20,7 +20,7 @@
 #ifdef NIP55L_HAVE_LIBSECRET
 #include <libsecret/secret.h>
 static const SecretSchema SIGNER_SECRET_SCHEMA = {
-  "com.nostr.Signer",
+  "org.nostr.Signer",
   SECRET_SCHEMA_NONE,
   {
     { "account", SECRET_SCHEMA_ATTRIBUTE_STRING },

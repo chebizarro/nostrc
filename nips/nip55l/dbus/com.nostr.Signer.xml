@@ -1,5 +1,5 @@
 <node>
-  <interface name="com.nostr.Signer">
+  <interface name="org.nostr.Signer">
     <method name="GetPublicKey">
       <arg type="s" direction="out" name="npub" />
     </method>

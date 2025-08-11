@@ -6,6 +6,9 @@
 typedef struct _NostrSockSignerServer {
   GObject parent_instance;
 } NostrSockSignerServer;
+typedef struct _NostrSockSignerServerClass {
+  GObjectClass parent_class;
+} NostrSockSignerServerClass;
 
 G_DEFINE_TYPE(NostrSockSignerServer, nostr_sock_signer_server, G_TYPE_OBJECT)
 

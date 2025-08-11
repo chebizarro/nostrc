@@ -1,3 +1,3 @@
 [D-BUS Service]
-Name=com.nostr.Signer
+Name=org.nostr.Signer
 Exec=@CMAKE_INSTALL_FULL_BINDIR@/nostr-signer-daemon

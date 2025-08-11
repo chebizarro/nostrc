@@ -1,9 +1,9 @@
 #include <gio/gio.h>
 #include <stdlib.h>
 
-#define SIGNER_NAME  "com.nostr.Signer"
-#define SIGNER_PATH  "/com/nostr/Signer"
-#define SIGNER_IFACE "com.nostr.Signer"
+#define SIGNER_NAME  "org.nostr.Signer"
+#define SIGNER_PATH  "/org/nostr/signer"
+#define SIGNER_IFACE "org.nostr.Signer"
 
 GDBusProxy *signer_client_new_sync(GError **error){
   return g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SESSION,

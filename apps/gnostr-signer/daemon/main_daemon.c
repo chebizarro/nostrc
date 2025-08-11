@@ -6,8 +6,8 @@
 extern guint signer_export(GDBusConnection *conn, const char *object_path);
 extern void  signer_unexport(GDBusConnection *conn, guint reg_id);
 
-#define SIGNER_NAME  "com.nostr.Signer"
-#define SIGNER_PATH  "/com/nostr/Signer"
+#define SIGNER_NAME  "org.nostr.Signer"
+#define SIGNER_PATH  "/org/nostr/signer"
 
 static GMainLoop *loop = NULL;
 static guint obj_reg_id = 0;

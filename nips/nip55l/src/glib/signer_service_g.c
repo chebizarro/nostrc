@@ -7,7 +7,7 @@
 /* Embed introspection XML to avoid build-time codegen */
 static const gchar *signer_xml =
   "<node>"
-  "  <interface name='com.nostr.Signer'>"
+  "  <interface name='org.nostr.Signer'>"
   "    <method name='GetPublicKey'>"
   "      <arg type='s' direction='out' name='npub'/>"
   "    </method>"
@@ -283,7 +283,7 @@ guint signer_export(GDBusConnection *conn, const char *object_path) {
       return 0;
     }
   }
-  const GDBusInterfaceInfo *iface_const = g_dbus_node_info_lookup_interface(introspection_data, "com.nostr.Signer");
+  const GDBusInterfaceInfo *iface_const = g_dbus_node_info_lookup_interface(introspection_data, "org.nostr.Signer");
   if (!iface_const) return 0;
   GDBusInterfaceInfo *iface = (GDBusInterfaceInfo*)iface_const; /* API expects non-const */
   return g_dbus_connection_register_object(conn, object_path, iface, &vtable, NULL, NULL, NULL);

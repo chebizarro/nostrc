@@ -6,9 +6,9 @@ static GDBusProxy* ensure_proxy(GError **error){
   return g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SESSION,
                                        G_DBUS_PROXY_FLAGS_NONE,
                                        NULL,
-                                       "com.nostr.Signer",
-                                       "/com/nostr/Signer",
-                                       "com.nostr.Signer",
+                                       "org.nostr.Signer",
+                                       "/org/nostr/signer",
+                                       "org.nostr.Signer",
                                        NULL,
                                        error);
 }

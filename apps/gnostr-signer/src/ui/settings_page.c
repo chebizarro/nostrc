@@ -11,8 +11,8 @@ typedef struct {
   GtkCheckButton *group_head; /* head of radio-like group */
 } SettingsUI;
 
-#define SIGNER_NAME  "com.nostr.Signer"
-#define SIGNER_PATH  "/com/nostr/Signer"
+#define SIGNER_NAME  "org.nostr.Signer"
+#define SIGNER_PATH  "/org/nostr/signer"
 
 typedef struct {
   SettingsUI *ui;
@@ -287,7 +287,7 @@ static void on_import_ok_clicked(GtkButton *btn, gpointer user_data){
     g_free(ctx);
     return;
   }
-  g_dbus_connection_call(bus, SIGNER_NAME, SIGNER_PATH, "com.nostr.Signer", "StoreSecret",
+  g_dbus_connection_call(bus, SIGNER_NAME, SIGNER_PATH, "org.nostr.Signer", "StoreSecret",
                          g_variant_new("(ss)", secret, account), G_VARIANT_TYPE("(b)"),
                          G_DBUS_CALL_FLAGS_NONE, 5000, NULL, import_call_done, ctx);
   g_object_unref(bus);
@@ -456,7 +456,7 @@ static void on_clear_ok_clicked(GtkButton *btn, gpointer user_data){
     g_free(ctx);
     return;
   }
-  g_dbus_connection_call(bus, SIGNER_NAME, SIGNER_PATH, "com.nostr.Signer", "ClearSecret",
+  g_dbus_connection_call(bus, SIGNER_NAME, SIGNER_PATH, "org.nostr.Signer", "ClearSecret",
                          g_variant_new("(s)", account), G_VARIANT_TYPE("(b)"),
                          G_DBUS_CALL_FLAGS_NONE, 5000, NULL, clear_call_done, ctx);
   g_object_unref(bus);
