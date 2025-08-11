@@ -39,8 +39,19 @@ endif()
 if (GIO_FOUND)
   add_library(nostr_nip5f_glib ${NIP5F_GLIB_SRC})
   target_include_directories(nostr_nip5f_glib PUBLIC ${NIP5F_INC})
-  # Link to the actual pkg-config imported targets created above
-  target_link_libraries(nostr_nip5f_glib PUBLIC nostr_nip5f_core PkgConfig::gio-2.0 PkgConfig::gobject-2.0)
+  # Add include directories from pkg-config
+  if (GIO_INCLUDE_DIRS)
+    target_include_directories(nostr_nip5f_glib PUBLIC ${GIO_INCLUDE_DIRS})
+  endif()
+  if (GOBJECT_INCLUDE_DIRS)
+    target_include_directories(nostr_nip5f_glib PUBLIC ${GOBJECT_INCLUDE_DIRS})
+  endif()
+  # Link either to imported targets or to raw pkg-config variables
+  if (TARGET PkgConfig::gio-2.0 AND TARGET PkgConfig::gobject-2.0)
+    target_link_libraries(nostr_nip5f_glib PUBLIC nostr_nip5f_core PkgConfig::gio-2.0 PkgConfig::gobject-2.0)
+  else()
+    target_link_libraries(nostr_nip5f_glib PUBLIC nostr_nip5f_core ${GIO_LIBRARIES} ${GOBJECT_LIBRARIES})
+  endif()
 endif()
 
 add_executable(nostr-signer-sockd ${CMAKE_CURRENT_SOURCE_DIR}/src/core/sockd_main.c)

@@ -1,17 +1,26 @@
 #include <gtk/gtk.h>
 #include <gio/gio.h>
+#include "policy_store.h"
+#include "accounts_store.h"
 
 #define SIGNER_NAME  "com.nostr.Signer"
 #define SIGNER_PATH  "/com/nostr/Signer"
 
 // Forward declarations for UI pages
 GtkWidget *gnostr_home_page_new(void);
-GtkWidget *gnostr_permissions_page_new(void);
-GtkWidget *gnostr_settings_page_new(void);
+GtkWidget *gnostr_permissions_page_new(struct _PolicyStore *ps);
+void gnostr_permissions_page_refresh(GtkWidget *page, struct _PolicyStore *ps);
+GtkWidget *gnostr_settings_page_new(AccountsStore *as);
+void gnostr_settings_page_refresh(GtkWidget *page, AccountsStore *as);
+/* Import dialog helper from settings_page.c */
+void gnostr_settings_open_import_dialog(GtkWindow *parent, AccountsStore *as, const char *initial_account);
+void gnostr_settings_open_import_dialog_with_callback(GtkWindow *parent, AccountsStore *as, const char *initial_account,
+                                                      void (*on_success)(const char*, gpointer), gpointer user_data);
 // Approval dialog API
 void gnostr_show_approval_dialog(GtkWindow *parent, const char *account_npub,
                                  const char *app_name, const char *preview,
-                                 void (*cb)(gboolean, gboolean, gpointer), gpointer user_data);
+                                 AccountsStore *as,
+                                 void (*cb)(gboolean, gboolean, const char*, gpointer), gpointer user_data);
 
 typedef struct {
   GtkLabel *status;
@@ -23,6 +32,10 @@ typedef struct {
   guint watch_id;
   GDBusConnection *bus;
   GtkWindow *win;
+  struct _PolicyStore *policy;
+  GtkWidget *perms_page;
+  AccountsStore *accounts;
+  GtkWidget *settings_page;
 } AppUI;
 
 static void set_status(AppUI *ui, const char *text, const char *css) {
@@ -38,25 +51,99 @@ static void set_status(AppUI *ui, const char *text, const char *css) {
   }
 }
 
+
 typedef struct {
   AppUI *ui;
   gchar *request_id;
   gchar *app_id;
+  gchar *account;
+  gboolean decision;
+  gboolean remember;
 } ApproveCtx;
+
+typedef struct {
+  AppUI *ui;
+  gchar *request_id;
+  gchar *app_id;
+  gchar *account;
+  gboolean decision;
+  gboolean remember;
+} RetryCtx;
+
+/* Forward declaration */
+static void approve_call_done(GObject *source, GAsyncResult *res, gpointer user_data);
+
+/* File-scope callback: invoked after a successful secret import to retry approval */
+static void on_import_success_retry(const char *account, gpointer user_data){
+  RetryCtx *rc2 = (RetryCtx*)user_data;
+  if (!rc2 || !rc2->ui || !rc2->ui->bus) { if (rc2){ g_free(rc2->request_id); g_free(rc2->app_id); g_free(rc2->account); g_free(rc2);} return; }
+  if (account && *account) {
+    g_free(rc2->account);
+    rc2->account = g_strdup(account);
+  }
+  /* Re-send ApproveRequest with the same decision/remember */
+  ApproveCtx *n = g_new0(ApproveCtx, 1);
+  n->ui = rc2->ui; n->request_id = rc2->request_id; n->app_id = rc2->app_id; n->account = rc2->account; n->decision = rc2->decision; n->remember = rc2->remember;
+  rc2->request_id = NULL; rc2->app_id = NULL; rc2->account = NULL;
+  g_dbus_connection_call(n->ui->bus,
+                         SIGNER_NAME,
+                         SIGNER_PATH,
+                         "com.nostr.Signer",
+                         "ApproveRequest",
+                         g_variant_new("(sbb)", n->request_id, n->decision, n->remember),
+                         G_VARIANT_TYPE("(b)"),
+                         G_DBUS_CALL_FLAGS_NONE,
+                         5000,
+                         NULL,
+                         approve_call_done,
+                         n);
+  g_free(rc2);
+}
 
 static void approve_call_done(GObject *source, GAsyncResult *res, gpointer user_data){
   (void)source;
   GError *err=NULL; GVariant *ret = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), res, &err);
-  if (err) { g_warning("ApproveRequest failed: %s", err->message); g_clear_error(&err); }
-  if (ret) g_variant_unref(ret);
+  gboolean ok = TRUE;
+  if (err) {
+    g_warning("ApproveRequest failed: %s", err->message);
+    g_clear_error(&err);
+  }
+  if (ret) {
+    g_variant_get(ret, "(b)", &ok);
+    g_variant_unref(ret);
+  }
   ApproveCtx *ctx = (ApproveCtx*)user_data;
-  if (ctx){ g_free(ctx->request_id); g_free(ctx->app_id); g_free(ctx); }
+  if (!ok && ctx && ctx->ui && ctx->ui->win && ctx->ui->accounts) {
+    /* Likely missing session secret for selected account: prompt import, then retry */
+    RetryCtx *rc = g_new0(RetryCtx, 1);
+    rc->ui = ctx->ui;
+    rc->request_id = g_strdup(ctx->request_id);
+    rc->app_id = g_strdup(ctx->app_id);
+    rc->account = g_strdup(ctx->account);
+    rc->decision = ctx->decision;
+    rc->remember = ctx->remember;
+    /* free the original ctx now */
+    g_free(ctx->request_id); g_free(ctx->app_id); g_free(ctx->account); g_free(ctx);
+    gnostr_settings_open_import_dialog_with_callback(rc->ui->win, rc->ui->accounts, rc->account, on_import_success_retry, rc);
+    return;
+  }
+  if (ctx){ g_free(ctx->request_id); g_free(ctx->app_id); g_free(ctx->account); g_free(ctx); }
 }
 
 static void on_user_decision(gboolean decision, gboolean remember, gpointer user_data){
   ApproveCtx *ctx = (ApproveCtx*)user_data;
   if (!ctx || !ctx->ui || !ctx->ui->bus) { if (ctx) { g_free(ctx->request_id); g_free(ctx->app_id); g_free(ctx);} return; }
-  (void)remember; /* TODO: plumb to settings */
+  ctx->decision = decision;
+  ctx->remember = remember;
+  if (remember && ctx->ui->policy) {
+    extern void policy_store_set(struct _PolicyStore*, const gchar*, const gchar*, gboolean);
+    extern void policy_store_save(struct _PolicyStore*);
+    policy_store_set(ctx->ui->policy, ctx->app_id, ctx->account, decision);
+    policy_store_save(ctx->ui->policy);
+    if (ctx->ui->perms_page) {
+      gnostr_permissions_page_refresh(ctx->ui->perms_page, ctx->ui->policy);
+    }
+  }
   g_dbus_connection_call(ctx->ui->bus,
                          SIGNER_NAME,
                          SIGNER_PATH,
@@ -71,6 +158,16 @@ static void on_user_decision(gboolean decision, gboolean remember, gpointer user
                          ctx);
 }
 
+/* Adapter to consume selected account from dialog and forward to existing handler */
+static void on_user_decision_with_account(gboolean decision, gboolean remember, const char *selected_account, gpointer user_data){
+  ApproveCtx *ctx = (ApproveCtx*)user_data;
+  if (selected_account && (!ctx->account || g_strcmp0(ctx->account, selected_account) != 0)) {
+    g_free(ctx->account);
+    ctx->account = g_strdup(selected_account);
+  }
+  on_user_decision(decision, remember, ctx);
+}
+
 static void on_approval_requested(GDBusConnection *connection,
                                   const gchar *sender_name,
                                   const gchar *object_path,
@@ -82,11 +179,38 @@ static void on_approval_requested(GDBusConnection *connection,
   AppUI *ui = (AppUI*)user_data;
   const gchar *app_id=NULL, *account=NULL, *kind=NULL, *preview=NULL, *request_id=NULL;
   g_variant_get(parameters, "(sssss)", &app_id, &account, &kind, &preview, &request_id);
+  /* Resolve account: if missing, use active account */
+  gchar *effective_account = NULL;
+  if (account && account[0] != '\0') {
+    effective_account = g_strdup(account);
+  } else if (ui->accounts) {
+    accounts_store_get_active(ui->accounts, &effective_account);
+  }
+  const gchar *acct = effective_account ? effective_account : account;
+  /* Auto-approve/deny if remembered */
+  if (ui->policy) {
+    extern gboolean policy_store_get(struct _PolicyStore*, const gchar*, const gchar*, gboolean*);
+    gboolean remembered = FALSE, remembered_decision = FALSE;
+    remembered = policy_store_get(ui->policy, app_id, acct, &remembered_decision);
+    if (remembered) {
+      ApproveCtx *actx = g_new0(ApproveCtx, 1);
+      actx->ui = ui;
+      actx->request_id = g_strdup(request_id);
+      actx->app_id = g_strdup(app_id);
+      actx->account = g_strdup(acct);
+      /* Directly call ApproveRequest with remembered decision (remember=false as it's already stored) */
+      on_user_decision(remembered_decision, FALSE, actx);
+      g_free(effective_account);
+      return;
+    }
+  }
   ApproveCtx *ctx = g_new0(ApproveCtx, 1);
   ctx->ui = ui;
   ctx->request_id = g_strdup(request_id);
   ctx->app_id = g_strdup(app_id);
-  gnostr_show_approval_dialog(ui->win, account, app_id, preview, on_user_decision, ctx);
+  ctx->account = g_strdup(acct);
+  gnostr_show_approval_dialog(ui->win, acct, app_id, preview, ui->accounts, on_user_decision_with_account, ctx);
+  g_free(effective_account);
 }
 
 static void name_appeared(GDBusConnection *conn, const gchar *name, const gchar *owner, gpointer user_data) {
@@ -185,12 +309,23 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
   gtk_box_append(GTK_BOX(home_container), home_header);
   gtk_box_append(GTK_BOX(home_container), gnostr_home_page_new());
 
-  GtkWidget *perms = gnostr_permissions_page_new();
-  GtkWidget *settings = gnostr_settings_page_new();
+  /* Initialize policy store */
+  extern struct _PolicyStore *policy_store_new(void);
+  extern void policy_store_load(struct _PolicyStore*);
+  ui->policy = policy_store_new();
+  policy_store_load(ui->policy);
+
+  GtkWidget *perms = gnostr_permissions_page_new(ui->policy);
+  /* Initialize accounts store */
+  ui->accounts = accounts_store_new();
+  accounts_store_load(ui->accounts);
+  GtkWidget *settings = gnostr_settings_page_new(ui->accounts);
 
   gtk_stack_add_titled(ui->stack, home_container, "home", "Home");
-  gtk_stack_add_titled(ui->stack, perms, "permissions", "Permissions");
-  gtk_stack_add_titled(ui->stack, settings, "settings", "Settings");
+  ui->perms_page = perms;
+  gtk_stack_add_titled(ui->stack, ui->perms_page, "permissions", "Permissions");
+  ui->settings_page = settings;
+  gtk_stack_add_titled(ui->stack, ui->settings_page, "settings", "Settings");
 
   gtk_box_append(GTK_BOX(root), GTK_WIDGET(ui->stack));
 
