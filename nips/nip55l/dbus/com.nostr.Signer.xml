@@ -54,6 +54,7 @@
       <arg type="s" direction="in" name="request_id" />
       <arg type="b" direction="in" name="decision" />
       <arg type="b" direction="in" name="remember" />
+      <arg type="t" direction="in" name="ttl_seconds" />
       <arg type="b" direction="out" name="ok" />
     </method>
     <signal name="ApprovalRequested">

@@ -20,6 +20,7 @@
 #ifdef NIP55L_HAVE_LIBSECRET
 #include <libsecret/secret.h>
 #include <sys/types.h>
+#include <unistd.h>
 /* Identity-backed storage: one item per identity; attributes allow selection by key_id or npub. */
 static const SecretSchema SIGNER_IDENTITY_SCHEMA = {
   "org.gnostr.Signer/identity",
@@ -64,6 +65,48 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
       uint8_t sk[32]; if (nostr_nip19_decode_nsec(nsec, sk)!=0) return NOSTR_SIGNER_ERROR_INVALID_KEY;
       *out_sk_hex = bin_to_hex(sk, 32); return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND;
     }
+    /* Try libsecret fallback by linked owner (current uid) */
+#ifdef NIP55L_HAVE_LIBSECRET
+    {
+      SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, NULL);
+      if (service) {
+        GError *gerr = NULL;
+        GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
+        gchar uid_buf[32];
+        g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
+        g_hash_table_insert(attrs, (gpointer)"owner_uid", (gpointer)uid_buf);
+        GList *items = secret_service_search_sync(service, &SIGNER_IDENTITY_SCHEMA, attrs,
+                                                  SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK, NULL, &gerr);
+        g_hash_table_unref(attrs);
+        if (gerr) { g_error_free(gerr); gerr = NULL; }
+        SecretItem *item = NULL;
+        if (items) {
+          /* Accept the first match for this uid */
+          item = SECRET_ITEM(g_object_ref(items->data));
+        }
+        if (items) g_list_free_full(items, g_object_unref);
+        if (item) {
+          SecretValue *sv = secret_item_get_secret(item);
+          const gchar *sec = sv ? secret_value_get_text(sv) : NULL;
+          int rc_l = NOSTR_SIGNER_ERROR_NOT_FOUND;
+          if (sec) {
+            if (is_hex_64(sec)) { *out_sk_hex = strdup(sec); rc_l = *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND; }
+            else if (strncmp(sec, "nsec1", 5)==0) {
+              uint8_t sk[32]; rc_l = (nostr_nip19_decode_nsec(sec, sk)==0) ? 0 : NOSTR_SIGNER_ERROR_INVALID_KEY;
+              if (rc_l==0) { *out_sk_hex = bin_to_hex(sk, 32); if (!*out_sk_hex) rc_l = NOSTR_SIGNER_ERROR_BACKEND; }
+            } else {
+              rc_l = NOSTR_SIGNER_ERROR_INVALID_KEY;
+            }
+          }
+          if (sv) secret_value_unref(sv);
+          g_object_unref(item);
+          g_object_unref(service);
+          return rc_l;
+        }
+        if (service) g_object_unref(service);
+      }
+    }
+#endif
     return NOSTR_SIGNER_ERROR_NOT_FOUND;
   }
   if (is_hex_64(cand)) { *out_sk_hex = strdup(cand); return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND; }
@@ -100,6 +143,52 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
       }
       secret_password_free(secret);
       return rc_l;
+    }
+    /* Fallback: search by current owner_uid if selector lookup failed */
+    {
+      SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, NULL);
+      if (service) {
+        GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
+        gchar uid_buf[32];
+        g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
+        g_hash_table_insert(attrs, (gpointer)"owner_uid", (gpointer)uid_buf);
+        GError *gerr2 = NULL;
+        GList *items = secret_service_search_sync(service, &SIGNER_IDENTITY_SCHEMA, attrs,
+                                                  SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK, NULL, &gerr2);
+        g_hash_table_unref(attrs);
+        if (gerr2) { g_error_free(gerr2); gerr2 = NULL; }
+        SecretItem *item = NULL;
+        if (items) item = SECRET_ITEM(g_object_ref(items->data));
+        if (items) g_list_free_full(items, g_object_unref);
+        if (item) {
+          SecretValue *sv = secret_item_get_secret(item);
+          const gchar *sec = sv ? secret_value_get_text(sv) : NULL;
+          if (sec) {
+            if (is_hex_64(sec)) { *out_sk_hex = strdup(sec); rc_l = *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND; }
+            else if (strncmp(sec, "nsec1", 5)==0) {
+              uint8_t sk[32]; rc_l = (nostr_nip19_decode_nsec(sec, sk)==0) ? 0 : NOSTR_SIGNER_ERROR_INVALID_KEY;
+              if (rc_l==0) { *out_sk_hex = bin_to_hex(sk, 32); if (!*out_sk_hex) rc_l = NOSTR_SIGNER_ERROR_BACKEND; }
+            } else {
+              rc_l = NOSTR_SIGNER_ERROR_INVALID_KEY;
+            }
+          }
+          if (sv) secret_value_unref(sv);
+          g_object_unref(item);
+          g_object_unref(service);
+          return rc_l;
+        }
+        g_object_unref(service);
+      }
+    }
+    /* Final fallback: environment variables */
+    {
+      const char *ehex = getenv("NOSTR_SIGNER_SECKEY_HEX");
+      if (ehex && is_hex_64(ehex)) { *out_sk_hex = strdup(ehex); return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND; }
+      const char *nsec = getenv("NOSTR_SIGNER_NSEC");
+      if (nsec && strncmp(nsec, "nsec1", 5)==0) {
+        uint8_t sk[32]; if (nostr_nip19_decode_nsec(nsec, sk)!=0) return NOSTR_SIGNER_ERROR_INVALID_KEY;
+        *out_sk_hex = bin_to_hex(sk, 32); return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND;
+      }
     }
   }
 #endif
@@ -254,19 +343,39 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
   if (!key) return NOSTR_SIGNER_ERROR_INVALID_ARG;
 #ifdef NIP55L_HAVE_LIBSECRET
   /* Interpret 'identity' as selector. Write both key_id and npub attributes to the same value. */
-  const char *sel = (identity && *identity) ? identity : "";
+  const char *sel_in = (identity && *identity) ? identity : NULL;
+  /* Normalize key to hex and derive npub for attributes */
+  char *sk_hex = NULL;
+  if (is_hex_64(key)) sk_hex = strdup(key);
+  else if (strncmp(key, "nsec1", 5)==0) {
+    uint8_t sk[32]; if (nostr_nip19_decode_nsec(key, sk)!=0) return NOSTR_SIGNER_ERROR_INVALID_KEY; sk_hex = bin_to_hex(sk, 32);
+  } else {
+    return NOSTR_SIGNER_ERROR_INVALID_KEY;
+  }
+  if (!sk_hex) return NOSTR_SIGNER_ERROR_BACKEND;
+  char *pk_hex = nostr_key_get_public(sk_hex);
+  if (!pk_hex) { free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  uint8_t pk[32]; if (!nostr_hex2bin(pk, pk_hex, sizeof pk)) { free(pk_hex); free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
+  char *npub = NULL; if (nostr_nip19_encode_npub(pk, &npub)!=0 || !npub) { free(pk_hex); free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  free(pk_hex);
+  /* Choose key_id: prefer provided identity, else derived npub */
+  const char *key_id_attr = sel_in ? sel_in : npub;
   GError *gerr = NULL;
+  gchar uid_buf[32]; g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
   gboolean ok = secret_password_store_sync(&SIGNER_IDENTITY_SCHEMA,
                                            SECRET_COLLECTION_DEFAULT,
                                            "Gnostr Identity Key",
-                                            key,
+                                             sk_hex,
                                             NULL,
                                             &gerr,
-                                            "key_id", sel,
-                                            "npub", sel,
+                                            "key_id", key_id_attr,
+                                            "npub", npub,
+                                            "owner_uid", uid_buf,
                                             "hardware", "false",
                                             NULL);
   if (gerr) { g_error_free(gerr); }
+  free(sk_hex);
+  free(npub);
   return ok ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
 #else
   (void)identity; return NOSTR_SIGNER_ERROR_NOT_FOUND;

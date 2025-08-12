@@ -55,6 +55,13 @@
       <arg name="relays_json" type="s" direction="out"/>
     </method>
 
+    <method name="ApproveRequest">
+      <arg name="request_id" type="s" direction="in"/>
+      <arg name="decision" type="b" direction="in"/>
+      <arg name="remember" type="b" direction="in"/>
+      <arg name="ttl_seconds" type="t" direction="in"/>
+      <arg name="ok" type="b" direction="out"/>
+    </method>
     <!-- Future: Signals for approval UI lifecycle could be added here. -->
   </interface>
 </node>

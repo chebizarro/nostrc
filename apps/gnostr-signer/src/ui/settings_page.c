@@ -335,7 +335,7 @@ static void import_call_done(GObject *src, GAsyncResult *res, gpointer user_data
       ctx->on_success(ident ? ident : "", ctx->cb_user_data);
       g_free(ident);
     }
-    GtkAlertDialog *ad = gtk_alert_dialog_new(ok?"Key imported (session only)":"Import failed");
+    GtkAlertDialog *ad = gtk_alert_dialog_new(ok?"Key stored securely":"Import failed");
     gtk_alert_dialog_show(ad, parent);
     g_object_unref(ad);
   }
@@ -358,8 +358,8 @@ static void on_import_ok_clicked(GtkButton *btn, gpointer user_data){
   const gchar *secret = gtk_editable_get_text(GTK_EDITABLE(ctx->entry_secret));
   g_autofree gchar *identity = dropdown_get_selected_string(ctx->ident_dd);
   GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(ctx->dialog));
-  if (!secret || !*secret || !identity || !*identity) {
-    GtkAlertDialog *ad = gtk_alert_dialog_new("Key and identity are required");
+  if (!secret || !*secret) {
+    GtkAlertDialog *ad = gtk_alert_dialog_new("Private key is required");
     gtk_alert_dialog_show(ad, parent);
     g_object_unref(ad);
     if (ctx->dialog) gtk_window_destroy(GTK_WINDOW(ctx->dialog));
@@ -376,7 +376,7 @@ static void on_import_ok_clicked(GtkButton *btn, gpointer user_data){
     return;
   }
   g_dbus_connection_call(bus, SIGNER_NAME, SIGNER_PATH, "org.nostr.Signer", "StoreKey",
-                         g_variant_new("(ss)", secret, identity), G_VARIANT_TYPE("(b)"),
+                         g_variant_new("(ss)", secret, identity ? identity : ""), G_VARIANT_TYPE("(b)"),
                          G_DBUS_CALL_FLAGS_NONE, 5000, NULL, import_call_done, ctx);
   g_object_unref(bus);
 }
@@ -388,7 +388,7 @@ void on_import_clicked(GtkButton *btn, gpointer user_data){
   GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(ui->page));
 
   GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-  GtkWidget *lbl = gtk_label_new("Paste hex private key (64 hex) or nsec. It will be kept in memory for this session only.");
+  GtkWidget *lbl = gtk_label_new("Paste hex private key (64 hex) or nsec. It will be stored securely.");
   gtk_label_set_wrap(GTK_LABEL(lbl), TRUE);
   GtkWidget *entry = gtk_entry_new();
   gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "nsec1... or 64-hex...");
@@ -445,7 +445,7 @@ void gnostr_settings_open_import_dialog_with_callback(GtkWindow *parent, Account
                                                       void (*on_success)(const char*, gpointer), gpointer user_data){
   if (!parent || !as) return;
   GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-  GtkWidget *lbl = gtk_label_new("Paste hex private key (64 hex) or nsec:\nIt will be kept in memory for this session only.");
+  GtkWidget *lbl = gtk_label_new("Paste hex private key (64 hex) or nsec. It will be stored securely.");
   gtk_label_set_wrap(GTK_LABEL(lbl), TRUE);
   GtkWidget *entry = gtk_entry_new();
   gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "nsec1... or 64-hex...");

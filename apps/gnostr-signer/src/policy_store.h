@@ -6,7 +6,8 @@ typedef struct _PolicyStore PolicyStore;
 typedef struct {
   gchar *app_id;
   gchar *identity;
-  gboolean decision; /* TRUE=approve, FALSE=deny */
+  gboolean decision;        /* TRUE=approve, FALSE=deny */
+  guint64 expires_at;       /* unix epoch seconds; 0 = forever */
 } PolicyEntry;
 
 PolicyStore *policy_store_new(void);
@@ -23,8 +24,11 @@ gboolean policy_store_get(PolicyStore *ps, const gchar *app_id, const gchar *ide
 /* Set or update decision. */
 void policy_store_set(PolicyStore *ps, const gchar *app_id, const gchar *identity, gboolean decision);
 
+/* Set or update decision with TTL (in seconds). ttl_seconds==0 means forever. */
+void policy_store_set_with_ttl(PolicyStore *ps, const gchar *app_id, const gchar *identity, gboolean decision, guint64 ttl_seconds);
+
 /* Remove a policy; returns TRUE if removed. */
 gboolean policy_store_unset(PolicyStore *ps, const gchar *app_id, const gchar *identity);
 
-/* Enumerate all entries; caller owns returned GPtrArray of PolicyEntry* and each entry fields. */
+/* Enumerate all entries (including expired); caller owns returned GPtrArray of PolicyEntry* and each entry fields. */
 GPtrArray *policy_store_list(PolicyStore *ps);

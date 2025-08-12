@@ -20,6 +20,11 @@
               </object>
             </child>
             <child>
+              <object class="GtkMenuButton" id="btn_menu">
+                <property name="icon-name">open-menu-symbolic</property>
+              </object>
+            </child>
+            <child>
               <object class="GtkButton" id="btn_settings">
                 <property name="icon-name">emblem-system-symbolic</property>
                 <signal name="clicked" handler="on_settings_clicked" swapped="no"/>

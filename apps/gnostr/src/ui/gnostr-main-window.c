@@ -2,6 +2,7 @@
 #include "gnostr-composer.h"
 #include "../ipc/signer_ipc.h"
 #include <gio/gio.h>
+#include <gtk/gtk.h>
 #include <time.h>
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/gnostr-main-window.ui"
@@ -12,6 +13,7 @@ struct _GnostrMainWindow {
   GtkWidget *stack;
   GtkWidget *timeline;
   GtkWidget *btn_settings;
+  GtkWidget *btn_menu;
   GtkWidget *composer;
 };
 
@@ -40,7 +42,7 @@ static void post_ctx_free(PostCtx *ctx){
 }
 
 static void on_sign_event_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  (void)user_data;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   NostrSignerProxy *proxy = (NostrSignerProxy*)source;
   GError *error = NULL;
   char *signature = NULL;
@@ -53,19 +55,27 @@ static void on_sign_event_done(GObject *source, GAsyncResult *res, gpointer user
               remote ? remote : "");
     if (remote) g_dbus_error_strip_remote_error(error);
     g_clear_error(&error);
-    PostCtx *ctx = (PostCtx*)user_data;
+    /* UI feedback */
+    if (GTK_IS_WINDOW(self)) {
+      GtkAlertDialog *dlg = gtk_alert_dialog_new("Signing failed");
+      gtk_alert_dialog_set_detail(dlg, "The signer could not sign your event. Check your identity and permissions.");
+      gtk_alert_dialog_show(dlg, GTK_WINDOW(self));
+      g_object_unref(dlg);
+    }
+    PostCtx *ctx = (PostCtx*)g_object_steal_data(G_OBJECT(self), "postctx-temp");
     post_ctx_free(ctx);
     return;
   }
   g_message("signature: %s", signature ? signature : "<null>");
   g_free(signature);
-  PostCtx *ctx = (PostCtx*)user_data;
+  PostCtx *ctx = (PostCtx*)g_object_steal_data(G_OBJECT(self), "postctx-temp");
   post_ctx_free(ctx);
 }
 
 static void on_get_pubkey_done(GObject *source, GAsyncResult *res, gpointer user_data){
   NostrSignerProxy *proxy = (NostrSignerProxy*)source;
-  PostCtx *ctx = (PostCtx*)user_data;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  PostCtx *ctx = (PostCtx*)g_object_get_data(G_OBJECT(self), "postctx-temp");
   GError *error = NULL;
   char *npub = NULL;
   gboolean ok = nostr_org_nostr_signer_call_get_public_key_finish(proxy, &npub, res, &error);
@@ -77,10 +87,19 @@ static void on_get_pubkey_done(GObject *source, GAsyncResult *res, gpointer user
               remote ? remote : "");
     if (remote) g_dbus_error_strip_remote_error(error);
     g_clear_error(&error);
+    if (GTK_IS_WINDOW(self)) {
+      GtkAlertDialog *dlg = gtk_alert_dialog_new("Identity unavailable");
+      gtk_alert_dialog_set_detail(dlg, "No signing identity is configured. Import or select an identity in GNostr Signer.");
+      gtk_alert_dialog_show(dlg, GTK_WINDOW(self));
+      g_object_unref(dlg);
+    }
     post_ctx_free(ctx);
     return;
   }
   g_message("using identity npub=%s", npub ? npub : "<null>");
+  /* Ensure SignEvent uses the same identity returned here */
+  g_clear_pointer(&ctx->current_user, g_free);
+  ctx->current_user = g_strdup(npub ? npub : "");
   g_free(npub);
   /* Proceed to SignEvent */
   g_message("calling SignEvent (async)... json-len=%zu", strlen(ctx->event_json));
@@ -91,7 +110,7 @@ static void on_get_pubkey_done(GObject *source, GAsyncResult *res, gpointer user
       ctx->app_id,
       NULL,
       on_sign_event_done,
-      ctx);
+      self);
 }
 
 static void on_composer_post_requested(GnostrComposer *composer, const char *text, gpointer user_data) {
@@ -135,8 +154,9 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
   PostCtx *ctx = g_new0(PostCtx, 1);
   ctx->proxy = proxy;
   ctx->event_json = event_json; /* take ownership */
-  ctx->current_user = g_strdup(""); // default session identity
+  ctx->current_user = g_strdup(""); // will be set to npub after GetPublicKey
   ctx->app_id = g_strdup("org.gnostr.Client");
+  g_object_set_data_full(G_OBJECT(self), "postctx-temp", ctx, (GDestroyNotify)post_ctx_free);
 
   /* Pre-check identity exists and is configured */
   g_message("calling GetPublicKey (async) to verify identity...");
@@ -144,7 +164,7 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
       proxy,
       NULL,
       on_get_pubkey_done,
-      ctx);
+      self);
 
   // TODO: assemble full event (id/sig/pubkey), publish to relay, push into timeline
 }
@@ -155,6 +175,7 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, stack);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, timeline);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_settings);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_menu);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, composer);
   gtk_widget_class_bind_template_callback(widget_class, on_settings_clicked);
 }
@@ -162,6 +183,13 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
 static void gnostr_main_window_init(GnostrMainWindow *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
   g_return_if_fail(self->composer != NULL);
+  /* Build app menu for header button */
+  if (self->btn_menu) {
+    GMenu *menu = g_menu_new();
+    g_menu_append(menu, "Quit", "app.quit");
+    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(self->btn_menu), G_MENU_MODEL(menu));
+    g_object_unref(menu);
+  }
   g_message("connecting post-requested handler on composer=%p", (void*)self->composer);
   g_signal_connect(self->composer, "post-requested",
                    G_CALLBACK(on_composer_post_requested), self);

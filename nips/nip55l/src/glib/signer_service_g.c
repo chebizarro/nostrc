@@ -83,23 +83,47 @@ static gboolean acl_load_decision(const char *method, const char *app_id, const 
     if (err) g_clear_error(&err);
     g_key_file_unref(kf); return FALSE;
   }
-  gboolean ok = FALSE;
+  gboolean found = FALSE; gboolean allow = FALSE; gboolean expired = FALSE;
   gchar *key = g_strdup_printf("%s:%s", app_id, identity);
   gchar *val = g_key_file_get_string(kf, method, key, NULL);
-  if (val){ ok = (g_strcmp0(val, "allow")==0); g_free(val); }
+  if (val){
+    /* Format: "allow" | "deny" | "allow:<until_unixts>" | "deny:<until_unixts>" */
+    const char *p = strchr(val, ':');
+    guint64 until = 0;
+    if (p){
+      allow = (g_ascii_strncasecmp(val, "allow", 5)==0);
+      until = g_ascii_strtoull(p+1, NULL, 10);
+      guint64 now = (guint64)(g_get_real_time() / 1000000);
+      expired = (until > 0 && now >= until);
+    } else {
+      allow = (g_strcmp0(val, "allow")==0);
+    }
+    found = TRUE;
+    g_free(val);
+  }
   g_free(key);
   g_key_file_unref(kf);
-  if (ok) *decision_out = TRUE; /* allow */
-  return ok;
+  if (!found || expired) return FALSE;
+  *decision_out = allow;
+  return TRUE;
 }
 
-static gboolean acl_save_decision(const char *method, const char *app_id, const char *identity, gboolean allow){
+static gboolean acl_save_decision(const char *method, const char *app_id, const char *identity, gboolean allow, guint64 ttl_seconds){
   if (!method || !app_id || !identity) return FALSE;
   GKeyFile *kf = g_key_file_new();
   GError *err=NULL;
   g_key_file_load_from_file(kf, acl_file_path(), G_KEY_FILE_NONE, NULL);
   gchar *key = g_strdup_printf("%s:%s", app_id, identity);
-  g_key_file_set_string(kf, method, key, allow?"allow":"deny");
+  gchar *val = NULL;
+  if (ttl_seconds > 0){
+    guint64 now = (guint64)(g_get_real_time() / 1000000);
+    guint64 until = now + ttl_seconds;
+    val = g_strdup_printf("%s:%" G_GUINT64_FORMAT, allow?"allow":"deny", until);
+  } else {
+    val = g_strdup(allow?"allow":"deny");
+  }
+  g_key_file_set_string(kf, method, key, val);
+  g_free(val);
   g_free(key);
   gsize len=0; gchar *data = g_key_file_to_data(kf, &len, NULL);
   if (data){
@@ -135,7 +159,9 @@ static gboolean handle_get_public_key(NostrSigner *object, GDBusMethodInvocation
   (void)object;
   char *npub = NULL; int rc = nostr_nip55l_get_public_key(&npub);
   if (rc!=0 || !npub) {
-    g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_FAILED, "get_public_key failed");
+    gchar *msg = g_strdup_printf("get_public_key failed (rc=%d)", rc);
+    g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_FAILED, msg);
+    g_free(msg);
     return TRUE;
   }
   nostr_signer_complete_get_public_key(object, invocation, npub);
@@ -149,6 +175,7 @@ static gboolean handle_sign_event(NostrSigner *object, GDBusMethodInvocation *in
   (void)object;
   const gchar *sender = g_dbus_method_invocation_get_sender(invocation);
   if (!app_id || !*app_id) app_id = sender ? sender : "";
+  g_message("handle_sign_event: app_id=%s identity=%s sender=%s", app_id?app_id:"(null)", identity?identity:"(null)", sender?sender:"(null)");
   gboolean acl_decision = FALSE;
   if (acl_load_decision("SignEvent", app_id, identity, &acl_decision)) {
     if (acl_decision) {
@@ -172,6 +199,7 @@ static gboolean handle_sign_event(NostrSigner *object, GDBusMethodInvocation *in
   g_hash_table_insert(pending, g_strdup(req_id), ps);
 
   gchar *preview = build_event_preview(eventJson);
+  g_message("emit ApprovalRequested: app_id=%s identity=%s request_id=%s", app_id?app_id:"(null)", identity?identity:"(null)", req_id?req_id:"(null)");
   nostr_signer_emit_approval_requested(object,
     app_id?app_id:"",
     identity?identity:"",
@@ -185,37 +213,57 @@ static gboolean handle_sign_event(NostrSigner *object, GDBusMethodInvocation *in
 }
 
 static gboolean handle_approve_request(NostrSigner *object, GDBusMethodInvocation *invocation,
-                                       const gchar *request_id, gboolean decision, gboolean remember)
+                                       const gchar *request_id, gboolean decision, gboolean remember, guint64 ttl_seconds)
 {
   (void)object;
   gboolean handled = FALSE; const gchar *sender = g_dbus_method_invocation_get_sender(invocation);
+  g_message("handle_approve_request: request_id=%s decision=%s remember=%s ttl=%" G_GUINT64_FORMAT,
+            request_id?request_id:"(null)", decision?"true":"false", remember?"true":"false", ttl_seconds);
   if (pending && request_id) {
     PendingSign *ps = g_hash_table_lookup(pending, request_id);
     if (ps) {
       handled = TRUE;
       if (decision) {
+        /* Fallback: if identity is empty, use the active identity */
+        if (!ps->identity || !*ps->identity) {
+          char *npub = NULL; int grc = nostr_nip55l_get_public_key(&npub);
+          if (grc==0 && npub) {
+            g_free(ps->identity);
+            ps->identity = g_strdup(npub);
+            g_message("approve: identity empty; using active npub=%s", ps->identity);
+            free(npub);
+          } else {
+            g_message("approve: identity empty and active npub unavailable (rc=%d)", grc);
+          }
+        }
         char *sig=NULL; int rc = nostr_nip55l_sign_event(ps->event_json, ps->identity, ps->app_id, &sig);
+        g_message("approve: signing rc=%d app_id=%s identity=%s", rc, ps->app_id?ps->app_id:"(null)", ps->identity?ps->identity:"(null)");
         if (rc==0 && sig) {
           nostr_signer_complete_approve_request(object, invocation, TRUE);
           g_dbus_method_invocation_return_value(ps->invocation, g_variant_new("(s)", sig));
+          g_message("approve: sign success, returning signature");
           free(sig);
           if (remember) {
             acl_save_decision("SignEvent",
                               (ps->app_id && *ps->app_id) ? ps->app_id : (sender?sender:""),
                               ps->identity ? ps->identity : "",
-                              decision);
+                              decision,
+                              ttl_seconds);
           }
         } else {
+          g_message("approve: sign failed, returning error");
           g_dbus_method_invocation_return_dbus_error(ps->invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "sign failed");
           nostr_signer_complete_approve_request(object, invocation, FALSE);
         }
       } else {
+        g_message("approve: user denied");
         g_dbus_method_invocation_return_dbus_error(ps->invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL, "user denied");
         if (remember) {
           acl_save_decision("SignEvent",
                             (ps->app_id && *ps->app_id) ? ps->app_id : (sender?sender:""),
                             ps->identity ? ps->identity : "",
-                            decision);
+                            decision,
+                            ttl_seconds);
         }
         nostr_signer_complete_approve_request(object, invocation, TRUE);
       }
