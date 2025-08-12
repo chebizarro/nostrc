@@ -2,7 +2,7 @@
 #define NOSTR_JSON_H
 
 #include "nostr-envelope.h"
-#include "event.h"
+#include "nostr-event.h"
 #include "nostr-filter.h"
 #include <stdbool.h>
 

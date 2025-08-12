@@ -20,6 +20,9 @@ NostrTag *nostr_tag_new(const char *key, ...) {
         str = va_arg(args, const char *);
     }
 
+    // End the first traversal before reusing the va_list
+    va_end(args);
+
     tag = new_string_array(count);
 
     if (tag == NULL) {
@@ -85,9 +88,11 @@ const char *nostr_tag_get_relay(const NostrTag *tag) {
 
 NostrTags *nostr_tags_new(size_t count, ...) {
     va_list args;
-
-    // Allocate memory for array of Tag pointers
-    NostrTag **new_tags = (NostrTag **)malloc(count * sizeof(NostrTag *));
+    
+    // Determine initial capacity (ensure non-zero so append works)
+    size_t capacity = count > 0 ? count : 4;
+    // Allocate memory for array of Tag pointers with capacity
+    NostrTag **new_tags = (NostrTag **)malloc(capacity * sizeof(NostrTag *));
     if (!new_tags)
         return NULL; // Handle memory allocation failure
 
@@ -112,6 +117,7 @@ NostrTags *nostr_tags_new(size_t count, ...) {
     // Assign the newly created tag array and count
     tags->data = new_tags;
     tags->count = count;
+    tags->capacity = capacity;
 
     return tags;
 }
@@ -131,8 +137,12 @@ const char *nostr_tags_get_d(NostrTags *tags) {
         return NULL;
 
     for (size_t i = 0; i < tags->count; i++) {
-        if (nostr_tag_starts_with(tags->data[i], nostr_tag_new("d", ""))) {
-            return nostr_tag_get(tags->data[i], 1);
+        NostrTag *t = tags->data[i];
+        if (!t) continue;
+        const char *key = nostr_tag_get_key(t);
+        if (key && strcmp(key, "d") == 0) {
+            /* Return the value (index 1) if present */
+            return nostr_tag_get(t, 1);
         }
     }
     return NULL;
@@ -260,6 +270,7 @@ NostrTags *nostr_tags_append_unique(NostrTags *tags, NostrTag *tag) {
     tags->data = new_data;
     tags->data[tags->count] = tag;
     tags->count = new_count;
+    tags->capacity = new_count;
     return tags;
 }
 
@@ -339,6 +350,16 @@ void nostr_tags_set(NostrTags *tags, size_t index, NostrTag *tag) {
 
 void nostr_tags_append(NostrTags *tags, NostrTag *tag) {
     if (!tags) return;
+    if (tags->count >= tags->capacity) {
+        size_t new_capacity = tags->capacity ? tags->capacity * 2 : 4;
+        NostrTag **new_data = (NostrTag **)realloc(tags->data, new_capacity * sizeof(NostrTag *));
+        if (!new_data) {
+            // Allocation failed; do not modify state
+            return;
+        }
+        tags->data = new_data;
+        tags->capacity = new_capacity;
+    }
     tags->data[tags->count++] = tag;
 }
 

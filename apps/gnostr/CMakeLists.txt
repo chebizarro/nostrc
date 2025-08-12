@@ -53,6 +53,8 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR})
 add_executable(${APP_CLIENT_BIN} ${APP_SRC})
 target_compile_features(${APP_CLIENT_BIN} PRIVATE c_std_11)
 target_compile_definitions(${APP_CLIENT_BIN} PRIVATE APP_ID="${APP_CLIENT_FLATPAK_ID}" APP_NAME="${APP_CLIENT_NAME}")
+# Enable real SimplePool-backed timeline fetching in the UI
+target_compile_definitions(${APP_CLIENT_BIN} PRIVATE GNOSTR_ENABLE_REAL_SIMPLEPOOL)
 # Link libnostr GLib if available; fall back to core libnostr where needed
 if (TARGET nostr)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE libnostr nostr_json)
@@ -61,5 +63,32 @@ target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB)
 if (SQLITE3_FOUND)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::SQLITE3)
 endif()
+
+# Local sanitizer helper (root apply_sanitizers() is defined after add_subdirectory(apps))
+# Use GNOSTR_ENABLE_* toggles for the app; fallback to GO_ENABLE_* if unset.
+option(GNOSTR_ENABLE_ASAN "Enable AddressSanitizer for GNostr app" OFF)
+option(GNOSTR_ENABLE_UBSAN "Enable UBSan for GNostr app" OFF)
+option(GNOSTR_ENABLE_TSAN "Enable TSan for GNostr app" OFF)
+
+function(_gnostr_apply_sanitizers target)
+  if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    # Prefer GNOSTR_* toggles; fallback to GO_* to match root cache if the app-specific ones are OFF.
+    if (GNOSTR_ENABLE_TSAN OR GO_ENABLE_TSAN)
+      target_compile_options(${target} PRIVATE -fsanitize=thread)
+      target_link_options(${target} PRIVATE -fsanitize=thread)
+    else()
+      if (GNOSTR_ENABLE_ASAN OR GO_ENABLE_ASAN)
+        target_compile_options(${target} PRIVATE -fsanitize=address)
+        target_link_options(${target} PRIVATE -fsanitize=address)
+      endif()
+      if (GNOSTR_ENABLE_UBSAN OR GO_ENABLE_UBSAN)
+        target_compile_options(${target} PRIVATE -fsanitize=undefined)
+        target_link_options(${target} PRIVATE -fsanitize=undefined)
+      endif()
+    endif()
+  endif()
+endfunction()
+
+_gnostr_apply_sanitizers(${APP_CLIENT_BIN})
 
 install(TARGETS ${APP_CLIENT_BIN} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

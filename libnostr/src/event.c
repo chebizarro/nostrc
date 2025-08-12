@@ -43,7 +43,7 @@ void nostr_event_free(NostrEvent *event) {
 static NostrTag *tag_clone(const NostrTag *src) {
     if (!src) return NULL;
     size_t n = nostr_tag_size(src);
-    NostrTag *dst = nostr_tag_new(nostr_tag_get_key(src));
+    NostrTag *dst = nostr_tag_new(nostr_tag_get_key(src), NULL);
     for (size_t i = 0; i < n; i++) {
         const char *s = nostr_tag_get(src, i);
         if (s) nostr_tag_append(dst, s);

@@ -17,6 +17,7 @@ typedef StringArray NostrTag;
 typedef struct _NostrTags {
     StringArray **data;
     size_t count;
+    size_t capacity; /* internal capacity for data array */
 } NostrTags;
 
 /* Constructors and ownership */

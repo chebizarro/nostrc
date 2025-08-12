@@ -6,11 +6,146 @@
 
 NostrJsonInterface *json_interface = NULL;
 
+/* --- Minimal default JSON backend (jansson) --- */
+static void default_json_init(void) {}
+static void default_json_cleanup(void) {}
+
+static char *default_serialize_filter(const NostrFilter *filter) {
+    if (!filter) return strdup("{}");
+    json_t *obj = json_object();
+    if (!obj) return NULL;
+
+    /* ids */
+    size_t n = nostr_filter_ids_len(filter);
+    if (n > 0) {
+        json_t *arr = json_array();
+        for (size_t i = 0; i < n; ++i) {
+            const char *s = nostr_filter_ids_get(filter, i);
+            if (s) json_array_append_new(arr, json_string(s));
+        }
+        json_object_set_new(obj, "ids", arr);
+    }
+
+    /* kinds */
+    n = nostr_filter_kinds_len(filter);
+    if (n > 0) {
+        json_t *arr = json_array();
+        for (size_t i = 0; i < n; ++i) {
+            int k = nostr_filter_kinds_get(filter, i);
+            json_array_append_new(arr, json_integer(k));
+        }
+        json_object_set_new(obj, "kinds", arr);
+    }
+
+    /* authors */
+    n = nostr_filter_authors_len(filter);
+    if (n > 0) {
+        json_t *arr = json_array();
+        for (size_t i = 0; i < n; ++i) {
+            const char *s = nostr_filter_authors_get(filter, i);
+            if (s) json_array_append_new(arr, json_string(s));
+        }
+        json_object_set_new(obj, "authors", arr);
+    }
+
+    /* since / until */
+    int64_t since = nostr_filter_get_since_i64(filter);
+    if (since > 0) json_object_set_new(obj, "since", json_integer(since));
+    int64_t until = nostr_filter_get_until_i64(filter);
+    if (until > 0) json_object_set_new(obj, "until", json_integer(until));
+
+    /* limit */
+    int lim = nostr_filter_get_limit(filter);
+    if (lim > 0) json_object_set_new(obj, "limit", json_integer(lim));
+
+    /* search */
+    const char *search = nostr_filter_get_search(filter);
+    if (search && *search) json_object_set_new(obj, "search", json_string(search));
+
+    char *out = json_dumps(obj, JSON_COMPACT);
+    json_decref(obj);
+    return out;
+}
+
+static int default_deserialize_event(NostrEvent *event, const char *json_str) {
+    if (!event || !json_str) return 0;
+    json_error_t err; json_t *root = json_loads(json_str, 0, &err);
+    if (!root) return 0;
+    json_t *val = NULL;
+
+    /* id */
+    val = json_object_get(root, "id");
+    if (val && json_is_string(val)) event->id = strdup(json_string_value(val));
+
+    /* pubkey */
+    val = json_object_get(root, "pubkey");
+    if (val && json_is_string(val)) event->pubkey = strdup(json_string_value(val));
+
+    /* created_at */
+    val = json_object_get(root, "created_at");
+    if (val && json_is_integer(val)) event->created_at = (int64_t)json_integer_value(val);
+
+    /* kind */
+    val = json_object_get(root, "kind");
+    if (val && json_is_integer(val)) event->kind = (int)json_integer_value(val);
+
+    /* content */
+    val = json_object_get(root, "content");
+    if (val && json_is_string(val)) event->content = strdup(json_string_value(val));
+
+    /* sig */
+    val = json_object_get(root, "sig");
+    if (val && json_is_string(val)) event->sig = strdup(json_string_value(val));
+
+    /* tags: array of arrays of strings */
+    val = json_object_get(root, "tags");
+    if (val && json_is_array(val)) {
+        size_t tn = json_array_size(val);
+        NostrTags *tags = nostr_tags_new(0);
+        for (size_t i = 0; i < tn; ++i) {
+            json_t *tag = json_array_get(val, i);
+            if (!tag || !json_is_array(tag)) continue;
+            const char *a = NULL, *b = NULL, *c = NULL;
+            json_t *e0 = json_array_get(tag, 0);
+            json_t *e1 = json_array_get(tag, 1);
+            json_t *e2 = json_array_get(tag, 2);
+            if (e0 && json_is_string(e0)) a = json_string_value(e0);
+            if (e1 && json_is_string(e1)) b = json_string_value(e1);
+            if (e2 && json_is_string(e2)) c = json_string_value(e2);
+            NostrTag *nt = nostr_tag_new(a ? a : "", b, c, NULL);
+            nostr_tags_append(tags, nt);
+        }
+        event->tags = tags;
+    }
+
+    json_decref(root);
+    return 1;
+}
+
+static char *default_serialize_event(const NostrEvent *event) { (void)event; return NULL; }
+static char *default_serialize_envelope(const NostrEnvelope *envelope) { (void)envelope; return NULL; }
+static int default_deserialize_envelope(NostrEnvelope *envelope, const char *json) { (void)envelope; (void)json; return -1; }
+
+static void ensure_default_json(void) {
+    if (json_interface) return;
+    static NostrJsonInterface default_iface;
+    default_iface.init = default_json_init;
+    default_iface.cleanup = default_json_cleanup;
+    default_iface.serialize_event = default_serialize_event;
+    default_iface.deserialize_event = default_deserialize_event;
+    default_iface.serialize_envelope = default_serialize_envelope;
+    default_iface.deserialize_envelope = default_deserialize_envelope;
+    default_iface.serialize_filter = default_serialize_filter;
+    default_iface.deserialize_filter = NULL;
+    json_interface = &default_iface;
+}
+
 void nostr_set_json_interface(NostrJsonInterface *interface) {
     json_interface = interface;
 }
 
 void nostr_json_init(void) {
+    ensure_default_json();
     if (json_interface && json_interface->init) {
         json_interface->init();
     }
@@ -23,6 +158,7 @@ void nostr_json_cleanup(void) {
 }
 
 char *nostr_event_serialize(const NostrEvent *event) {
+    ensure_default_json();
     if (json_interface && json_interface->serialize_event) {
         return json_interface->serialize_event(event);
     }
@@ -30,6 +166,7 @@ char *nostr_event_serialize(const NostrEvent *event) {
 }
 
 int nostr_event_deserialize(NostrEvent *event, const char *json_str) {
+    ensure_default_json();
     if (json_interface && json_interface->deserialize_event) {
         return json_interface->deserialize_event(event, json_str);
     }
@@ -37,6 +174,7 @@ int nostr_event_deserialize(NostrEvent *event, const char *json_str) {
 }
 
 char *nostr_envelope_serialize(const NostrEnvelope *envelope) {
+    ensure_default_json();
     if (json_interface && json_interface->serialize_envelope) {
         return json_interface->serialize_envelope(envelope);
     }
@@ -44,6 +182,7 @@ char *nostr_envelope_serialize(const NostrEnvelope *envelope) {
 }
 
 int nostr_envelope_deserialize(NostrEnvelope *envelope, const char *json) {
+    ensure_default_json();
     if (json_interface && json_interface->deserialize_envelope) {
         return json_interface->deserialize_envelope(envelope, json);
     }
@@ -51,6 +190,7 @@ int nostr_envelope_deserialize(NostrEnvelope *envelope, const char *json) {
 }
 
 char *nostr_filter_serialize(const NostrFilter *filter) {
+    ensure_default_json();
     if (json_interface && json_interface->serialize_filter) {
         return json_interface->serialize_filter(filter);
     }
@@ -58,6 +198,7 @@ char *nostr_filter_serialize(const NostrFilter *filter) {
 }
 
 int nostr_filter_deserialize(NostrFilter *filter, const char *json) {
+    ensure_default_json();
     if (json_interface && json_interface->deserialize_filter) {
         return json_interface->deserialize_filter(filter, json);
     }

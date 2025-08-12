@@ -1,0 +1,11 @@
+prefix=/usr/local
+exec_prefix=${prefix}
+libdir=/usr/local/lib
+includedir=/usr/local/include/nostr
+
+Name: libnostr
+Description: Nostr protocol implementation for C (core + optional GLib integration)
+Version: 
+Requires: glib-2.0 >= 2.50, gobject-2.0 >= 2.50
+Libs: -L${libdir} -lnostr
+Cflags: -I${includedir}

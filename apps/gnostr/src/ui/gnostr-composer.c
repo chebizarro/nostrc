@@ -18,6 +18,16 @@ enum {
 
 static guint signals[N_SIGNALS] = {0};
 
+static void gnostr_composer_dispose(GObject *obj) {
+  /* If we had extra owned objects, clear them here. Template children are owned by hierarchy. */
+  G_OBJECT_CLASS(gnostr_composer_parent_class)->dispose(obj);
+}
+
+static void gnostr_composer_finalize(GObject *obj) {
+  gtk_widget_dispose_template(GTK_WIDGET(obj), GNOSTR_TYPE_COMPOSER);
+  G_OBJECT_CLASS(gnostr_composer_parent_class)->finalize(obj);
+}
+
 static void on_post_clicked(GnostrComposer *self, GtkButton *button) {
   (void)button;
   // Read text from GtkTextView and emit signal to controller
@@ -44,6 +54,9 @@ static void on_post_clicked(GnostrComposer *self, GtkButton *button) {
 
 static void gnostr_composer_class_init(GnostrComposerClass *klass) {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
+  GObjectClass *gobj_class = G_OBJECT_CLASS(klass);
+  gobj_class->dispose = gnostr_composer_dispose;
+  gobj_class->finalize = gnostr_composer_finalize;
   gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BIN_LAYOUT);
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
   gtk_widget_class_bind_template_child(widget_class, GnostrComposer, root);

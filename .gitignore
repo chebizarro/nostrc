@@ -1,17 +1,15 @@
 # Ignore build directories
 build/
-build_tsan/
-build-shared/
-build-static/
-build-asan/
+build*/
 tmp*/
 out/
 /bin/
 /lib/
-/CMakeFiles/
-/CMakeCache.txt
-/Makefile
-/cmake_install.cmake
+CMakeFiles/
+CMakeCache.txt
+Makefile
+cmake_install.cmake
+CTestTestfile.cmake
 
 # Ignore IDE and editor-specific files
 .vscode/
