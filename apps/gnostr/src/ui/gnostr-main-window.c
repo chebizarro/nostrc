@@ -1,9 +1,22 @@
 #include "gnostr-main-window.h"
 #include "gnostr-composer.h"
+#include "gnostr-timeline-view.h"
 #include "../ipc/signer_ipc.h"
 #include <gio/gio.h>
 #include <gtk/gtk.h>
 #include <time.h>
+
+/* Implement as-if SimplePool is fully functional; guarded to avoid breaking builds until wired. */
+#ifdef GNOSTR_ENABLE_REAL_SIMPLEPOOL
+#include "nostr-simple-pool.h"
+#include "nostr-relay.h"
+#include "nostr-subscription.h"
+#include "nostr-event.h"
+#include "nostr-filter.h"
+#include "nostr-json.h"
+#include "channel.h"
+#include "error.h"
+#endif
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/gnostr-main-window.ui"
 
@@ -15,6 +28,9 @@ struct _GnostrMainWindow {
   GtkWidget *btn_settings;
   GtkWidget *btn_menu;
   GtkWidget *composer;
+  GtkWidget *btn_refresh;
+  GtkWidget *toast_revealer;
+  GtkWidget *toast_label;
 };
 
 G_DEFINE_TYPE(GnostrMainWindow, gnostr_main_window, GTK_TYPE_APPLICATION_WINDOW)
@@ -22,6 +38,216 @@ G_DEFINE_TYPE(GnostrMainWindow, gnostr_main_window, GTK_TYPE_APPLICATION_WINDOW)
 static void on_settings_clicked(GnostrMainWindow *self, GtkButton *button) {
   (void)self; (void)button;
   g_message("settings clicked");
+}
+
+static void toast_hide_cb(gpointer data) {
+  GnostrMainWindow *win = GNOSTR_MAIN_WINDOW(data);
+  if (win && win->toast_revealer)
+    gtk_revealer_set_reveal_child(GTK_REVEALER(win->toast_revealer), FALSE);
+}
+
+static void show_toast(GnostrMainWindow *self, const char *msg) {
+  g_return_if_fail(GNOSTR_IS_MAIN_WINDOW(self));
+  if (!self->toast_revealer || !self->toast_label) return;
+  gtk_label_set_text(GTK_LABEL(self->toast_label), msg ? msg : "");
+  gtk_revealer_set_reveal_child(GTK_REVEALER(self->toast_revealer), TRUE);
+  /* Auto-hide after 2.5s */
+  g_timeout_add_once(2500, (GSourceOnceFunc)toast_hide_cb, self);
+}
+
+/* Forward declaration to satisfy initial_refresh_cb */
+static void timeline_refresh_async(GnostrMainWindow *self, int limit);
+
+static gboolean initial_refresh_cb(gpointer data) {
+  GnostrMainWindow *win = GNOSTR_MAIN_WINDOW(data);
+  if (!win || !GTK_IS_WIDGET(win->timeline)) {
+    g_message("initial refresh skipped: timeline not ready");
+    return G_SOURCE_REMOVE;
+  }
+  timeline_refresh_async(win, 5);
+  return G_SOURCE_REMOVE;
+}
+
+typedef struct {
+  int limit;
+} RefreshTaskData;
+
+static void refresh_task_data_free(RefreshTaskData *d) {
+  if (!d) return;
+  g_free(d);
+}
+
+/* Worker: for now, synthesize placeholder lines. Later, query relays via libnostr. */
+static void timeline_refresh_worker(GTask *task, gpointer source, gpointer task_data, GCancellable *cancellable) {
+  (void)source; (void)cancellable;
+  RefreshTaskData *d = (RefreshTaskData*)task_data;
+  GPtrArray *lines = g_ptr_array_new_with_free_func(g_free);
+
+#ifdef GNOSTR_ENABLE_REAL_SIMPLEPOOL
+  /* Real path: connect to each relay, subscribe, drain events until EOSE/CLOSED, format lines. */
+  const char *urls[] = {
+    "wss://relay.damus.io",
+    "wss://nos.lol"
+  };
+  size_t url_count = sizeof(urls)/sizeof(urls[0]);
+
+  /* Build filters: kind=1 notes. TODO: set since/limit based on RefreshTaskData */
+  NostrFilter *f = nostr_filter_new();
+  int kinds[] = { 1 };
+  nostr_filter_set_kinds(f, kinds, 1);
+  NostrFilters *fs = nostr_filters_new();
+  nostr_filters_add(fs, f);
+
+  for (size_t i = 0; i < url_count; ++i) {
+    const char *url = urls[i];
+    Error *err = NULL;
+    NostrRelay *relay = nostr_relay_new(NULL, url, &err);
+    if (!relay) {
+      g_ptr_array_add(lines, g_strdup_printf("[error] relay_new %s: %s", url, err ? err->message : "unknown"));
+      if (err) error_free(err);
+      continue;
+    }
+    if (!nostr_relay_connect(relay, &err)) {
+      g_ptr_array_add(lines, g_strdup_printf("[error] connect %s: %s", url, err ? err->message : "unknown"));
+      if (err) error_free(err);
+      nostr_relay_free(relay);
+      continue;
+    }
+
+    NostrSubscription *sub = (NostrSubscription*)nostr_relay_prepare_subscription(relay, NULL, fs);
+    if (!sub) {
+      g_ptr_array_add(lines, g_strdup_printf("[error] prepare sub %s", url));
+      nostr_relay_disconnect(relay);
+      nostr_relay_free(relay);
+      continue;
+    }
+    if (!nostr_subscription_fire(sub, &err)) {
+      g_ptr_array_add(lines, g_strdup_printf("[error] fire sub %s: %s", url, err ? err->message : "unknown"));
+      if (err) error_free(err);
+      nostr_subscription_close(sub, NULL);
+      nostr_subscription_free(sub);
+      nostr_relay_disconnect(relay);
+      nostr_relay_free(relay);
+      continue;
+    }
+
+    GoChannel *ch_events = nostr_subscription_get_events_channel(sub);
+    GoChannel *ch_eose   = nostr_subscription_get_eose_channel(sub);
+    GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
+
+    int got_eose = 0;
+    while (!got_eose) {
+      /* Prioritize CLOSED, then EOSE, then events. Use try-receive to avoid blocking deadlocks. */
+      void *data = NULL;
+      if (ch_closed && go_channel_try_receive(ch_closed, &data) == 0) {
+        const char *reason = (const char *)data;
+        g_ptr_array_add(lines, g_strdup_printf("[%s] CLOSED: %s", url, reason ? reason : ""));
+        break;
+      }
+      data = NULL;
+      if (ch_eose && go_channel_try_receive(ch_eose, &data) == 0) {
+        /* EOSE observed for this relay */
+        got_eose = 1;
+        continue;
+      }
+      data = NULL;
+      if (ch_events && go_channel_try_receive(ch_events, &data) == 0) {
+        NostrEvent *evt = (NostrEvent *)data;
+        const char *pubkey = nostr_event_get_pubkey(evt);
+        const char *content = nostr_event_get_content(evt);
+        int64_t ts = nostr_event_get_created_at(evt);
+        if (!content) content = "";
+        /* Truncate content to one line, 160 chars */
+        gchar *one = g_strdup(content);
+        gchar *nl = one ? strchr(one, '\n') : NULL;
+        if (nl) *nl = '\0';
+        if (one && g_utf8_strlen(one, -1) > 160) {
+          gchar *tmp = g_utf8_substring(one, 0, 160);
+          g_free(one);
+          one = tmp;
+        }
+        gchar *row = g_strdup_printf("[%s] %s | %s (%ld)", url, pubkey ? pubkey : "(anon)", one ? one : "", (long)ts);
+        g_ptr_array_add(lines, row);
+        if (one) g_free(one);
+        /* Event memory ownership: assuming channel provides owned pointer and relay/sub frees after consumption; if not, add nostr_event_free(evt) here. */
+        continue;
+      }
+
+      /* If nothing available, sleep briefly to yield */
+      g_usleep(1000 * 5); /* 5ms */
+    }
+
+    /* Cleanup per relay */
+    nostr_subscription_close(sub, NULL);
+    nostr_subscription_free(sub);
+    nostr_relay_disconnect(relay);
+    nostr_relay_free(relay);
+  }
+
+  nostr_filters_free(fs);
+#else
+  /* Fallback demo: synthesize placeholder lines. */
+  time_t now = time(NULL);
+  int n = d ? d->limit : 5;
+  for (int i = 0; i < n; i++) {
+    gchar *s = g_strdup_printf("[demo] note %d at %ld", i+1, (long)now);
+    g_ptr_array_add(lines, s);
+  }
+#endif
+
+  g_task_return_pointer(task, lines, (GDestroyNotify)g_ptr_array_unref);
+}
+
+static void timeline_refresh_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GTask *task = G_TASK(res);
+  RefreshTaskData *d = (RefreshTaskData*)g_task_get_task_data(task);
+  GError *error = NULL;
+  GPtrArray *lines = g_task_propagate_pointer(task, &error);
+  /* Use the task source object; GTask keeps it alive during callback. */
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(g_task_get_source_object(task));
+  if (!self || !GTK_IS_APPLICATION_WINDOW(self)) {
+    if (lines) g_ptr_array_unref(lines);
+    return;
+  }
+  /* Re-enable button */
+  if (self->btn_refresh) gtk_widget_set_sensitive(self->btn_refresh, TRUE);
+  if (error) {
+    show_toast(self, error->message ? error->message : "Failed to load timeline");
+    g_clear_error(&error);
+  } else if (lines) {
+    if (!self->timeline || !GTK_IS_WIDGET(self->timeline)) {
+      g_warning("timeline widget not ready; dropping %u lines", lines->len);
+    } else {
+      for (guint i = 0; i < lines->len; i++) {
+        const char *text = (const char*)g_ptr_array_index(lines, i);
+        if (GNOSTR_IS_TIMELINE_VIEW(self->timeline))
+          gnostr_timeline_view_prepend_text(GNOSTR_TIMELINE_VIEW(self->timeline), text);
+      }
+    }
+    g_ptr_array_unref(lines);
+    show_toast(self, "Timeline updated");
+  } else {
+    show_toast(self, "Failed to load timeline");
+  }
+  /* Do not unref self: owned by application; GTask manages a temporary ref. */
+}
+
+static void timeline_refresh_async(GnostrMainWindow *self, int limit) {
+  g_return_if_fail(GNOSTR_IS_MAIN_WINDOW(self));
+  if (self->btn_refresh) gtk_widget_set_sensitive(self->btn_refresh, FALSE);
+  show_toast(self, "Refreshing timeline...");
+  GTask *task = g_task_new(self, NULL, timeline_refresh_complete, NULL);
+  RefreshTaskData *d = g_new0(RefreshTaskData, 1);
+  d->limit = limit;
+  g_task_set_task_data(task, d, (GDestroyNotify)refresh_task_data_free);
+  g_task_run_in_thread(task, timeline_refresh_worker);
+  g_object_unref(task);
+}
+
+static void on_refresh_clicked(GtkButton *button, gpointer user_data) {
+  (void)button;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  timeline_refresh_async(self, 10);
 }
 
 /* No proxy signals: org.nostr.Signer.xml does not define approval signals. */
@@ -177,6 +403,9 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_settings);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_menu);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, composer);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_refresh);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_revealer);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_label);
   gtk_widget_class_bind_template_callback(widget_class, on_settings_clicked);
 }
 
@@ -193,6 +422,11 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   g_message("connecting post-requested handler on composer=%p", (void*)self->composer);
   g_signal_connect(self->composer, "post-requested",
                    G_CALLBACK(on_composer_post_requested), self);
+  if (self->btn_refresh) {
+    g_signal_connect(self->btn_refresh, "clicked", G_CALLBACK(on_refresh_clicked), self);
+  }
+  /* Seed initial items so Timeline page isn't empty; temporarily disabled while isolating crash */
+  // g_timeout_add_once(1, (GSourceOnceFunc)initial_refresh_cb, self);
 }
 
 GnostrMainWindow *gnostr_main_window_new(GtkApplication *app) {

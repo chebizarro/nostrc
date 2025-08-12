@@ -8,60 +8,91 @@
     <property name="default-height">640</property>
 
     <child>
-      <object class="GtkBox">
-        <property name="orientation">vertical</property>
-        <property name="spacing">0</property>
-
+      <object class="GtkOverlay" id="root_overlay">
         <child>
-          <object class="GtkHeaderBar">
-            <child type="title">
-              <object class="GtkStackSwitcher">
-                <property name="stack">stack</property>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="spacing">0</property>
+
+            <child>
+              <object class="GtkHeaderBar">
+                <child type="title">
+                  <object class="GtkStackSwitcher">
+                    <property name="stack">stack</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_refresh">
+                    <property name="icon-name">view-refresh-symbolic</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkMenuButton" id="btn_menu">
+                    <property name="icon-name">open-menu-symbolic</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_settings">
+                    <property name="icon-name">emblem-system-symbolic</property>
+                    <signal name="clicked" handler="on_settings_clicked" swapped="no"/>
+                  </object>
+                </child>
               </object>
             </child>
+
             <child>
-              <object class="GtkMenuButton" id="btn_menu">
-                <property name="icon-name">open-menu-symbolic</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkButton" id="btn_settings">
-                <property name="icon-name">emblem-system-symbolic</property>
-                <signal name="clicked" handler="on_settings_clicked" swapped="no"/>
+              <object class="GtkStack" id="stack">
+                <property name="transition-type">crossfade</property>
+                <property name="vexpand">true</property>
+
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="title">Timeline</property>
+                    <property name="child">
+                      <object class="GnostrTimelineView" id="timeline">
+                        <property name="hexpand">true</property>
+                        <property name="vexpand">true</property>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="title">Compose</property>
+                    <property name="child">
+                      <object class="GnostrComposer" id="composer">
+                        <property name="hexpand">true</property>
+                        <property name="vexpand">true</property>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+
               </object>
             </child>
           </object>
         </child>
-
-        <child>
-          <object class="GtkStack" id="stack">
+        <child type="overlay">
+          <object class="GtkRevealer" id="toast_revealer">
             <property name="transition-type">crossfade</property>
-            <property name="vexpand">true</property>
-
+            <property name="halign">center</property>
+            <property name="valign">end</property>
+            <property name="margin-bottom">24</property>
             <child>
-              <object class="GtkStackPage">
-                <property name="title">Timeline</property>
-                <property name="child">
-                  <object class="GnostrTimelineView" id="timeline">
-                    <property name="hexpand">true</property>
-                    <property name="vexpand">true</property>
+              <object class="GtkFrame">
+                <property name="css-classes">card</property>
+                <child>
+                  <object class="GtkLabel" id="toast_label">
+                    <property name="label">Toast</property>
+                    <property name="margin-start">12</property>
+                    <property name="margin-end">12</property>
+                    <property name="margin-top">8</property>
+                    <property name="margin-bottom">8</property>
                   </object>
-                </property>
+                </child>
               </object>
             </child>
-
-            <child>
-              <object class="GtkStackPage">
-                <property name="title">Compose</property>
-                <property name="child">
-                  <object class="GnostrComposer" id="composer">
-                    <property name="hexpand">true</property>
-                    <property name="vexpand">true</property>
-                  </object>
-                </property>
-              </object>
-            </child>
-
           </object>
         </child>
       </object>
