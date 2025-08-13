@@ -1,9 +1,120 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
-  <!-- A simple row widget: just a label. Root is the label so ListItem child is a GtkLabel. -->
-  <object class="GtkLabel" id="label">
-    <property name="wrap">true</property>
-    <property name="xalign">0.0</property>
-    <property name="selectable">false</property>
+  <!-- Rich timeline row resembling a social post -->
+  <object class="GtkBox" id="row">
+    <property name="orientation">vertical</property>
+    <property name="spacing">6</property>
+    <property name="margin-start">10</property>
+    <property name="margin-end">10</property>
+    <property name="margin-top">8</property>
+    <property name="margin-bottom">8</property>
+
+    <!-- Header line: avatar + identity + timestamp -->
+    <child>
+      <object class="GtkBox" id="header_line">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">8</property>
+
+        <!-- Thread indicator bar -->
+        <child>
+          <object class="GtkBox" id="thread_indicator">
+            <property name="width-request">4</property>
+            <property name="height-request">40</property>
+            <property name="halign">start</property>
+            <property name="valign">fill</property>
+            <style>
+              <class name="thread-indicator"/>
+            </style>
+          </object>
+        </child>
+
+        <!-- Avatar placeholder -->
+        <child>
+          <object class="GtkBox" id="avatar">
+            <property name="width-request">36</property>
+            <property name="height-request">36</property>
+            <property name="halign">start</property>
+            <property name="valign">start</property>
+            <style>
+              <class name="avatar"/>
+            </style>
+            <child>
+              <object class="GtkLabel" id="avatar_initials">
+                <property name="label">AN</property>
+                <property name="xalign">0.5</property>
+                <property name="yalign">0.5</property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Identity and timestamp -->
+        <child>
+          <object class="GtkBox" id="identity_time">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">6</property>
+            <property name="hexpand">true</property>
+
+            <child>
+              <object class="GtkLabel" id="display_name">
+                <property name="label">Anonymous</property>
+                <property name="xalign">0.0</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="handle">
+                <property name="label">@anon</property>
+                <property name="xalign">0.0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="timestamp">
+                <property name="label">now</property>
+                <property name="hexpand">true</property>
+                <property name="halign">end</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+
+    <!-- Content -->
+    <child>
+      <object class="GtkLabel" id="content">
+        <property name="wrap">true</property>
+        <property name="xalign">0.0</property>
+        <property name="selectable">false</property>
+      </object>
+    </child>
+
+    <!-- Actions -->
+    <child>
+      <object class="GtkBox" id="actions">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">6</property>
+        <child>
+          <object class="GtkButton" id="reply_button">
+            <property name="label">Reply</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="like_button">
+            <property name="label">Like</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="share_button">
+            <property name="label">Share</property>
+          </object>
+        </child>
+      </object>
+    </child>
   </object>
 </interface>

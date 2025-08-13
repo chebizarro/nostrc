@@ -142,6 +142,9 @@ struct _GnostrMainWindow {
   /* Session state */
   GHashTable *seen_texts; /* owned; keys are g_strdup(text), values unused */
   GHashTable *seen_ids;   /* owned; keys are g_strdup(event id hex), values unused */
+  /* Thread model */
+  GListStore *thread_roots;    /* owned; element-type TimelineItem */
+  GHashTable *nodes_by_id;     /* owned; key: id string -> TimelineItem* (weak) */
   /* Tuning knobs (UI-editable) */
   guint batch_max;             /* default 5; max items per UI batch post */
   guint post_interval_ms;      /* default 150; max ms before forcing a batch */
@@ -177,6 +180,14 @@ static void gnostr_main_window_dispose(GObject *obj) {
   }
   if (self->pool_cancellable) {
     g_cancellable_cancel(self->pool_cancellable);
+  }
+  if (self->nodes_by_id) {
+    g_hash_table_destroy(self->nodes_by_id);
+    self->nodes_by_id = NULL;
+  }
+  if (self->thread_roots) {
+    g_object_unref(self->thread_roots);
+    self->thread_roots = NULL;
   }
   G_OBJECT_CLASS(gnostr_main_window_parent_class)->dispose(obj);
 }
@@ -339,29 +350,155 @@ static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_url
   *out_filters = fs;
 }
 
-/* Convert pool event batch to timeline lines and apply */
+/* Lightweight UI event payload captured from NostrEvent */
+typedef struct UiEventRow {
+  char *id;
+  char *parent_id; /* from 'e' tag if present */
+  char *pubkey;
+  int64_t created_at;
+  char *content;
+} UiEventRow;
+
+static void ui_event_row_free(gpointer p) {
+  UiEventRow *r = (UiEventRow*)p;
+  if (!r) return;
+  g_free(r->id);
+  g_free(r->parent_id);
+  g_free(r->pubkey);
+  g_free(r->content);
+  g_free(r);
+}
+
+typedef struct IdleApplyEventsCtx {
+  GnostrMainWindow *self;
+  GPtrArray *rows; /* UiEventRow* */
+} IdleApplyEventsCtx;
+
+static void idle_apply_events_ctx_free(IdleApplyEventsCtx *c) {
+  if (!c) return;
+  if (c->rows) g_ptr_array_free(c->rows, TRUE);
+  g_free(c);
+}
+
+/* Insert or link TimelineItem into thread graph */
+static void thread_graph_insert(GnostrMainWindow *self, UiEventRow *r) {
+  if (!self || !r) return;
+  if (!self->thread_roots) {
+    extern GType timeline_item_get_type(void);
+    self->thread_roots = g_list_store_new(timeline_item_get_type());
+  }
+  if (!self->nodes_by_id) self->nodes_by_id = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  extern GType timeline_item_get_type(void);
+  GType ti = timeline_item_get_type();
+  if (!ti) return;
+  /* Create TimelineItem for this event */
+  gpointer item = g_object_new(ti,
+                               "display-name", "Anonymous",
+                               "handle", "@anon",
+                               "timestamp", "", /* TODO: pretty ts */
+                               "content", r->content ? r->content : "",
+                               "depth", 0,
+                               NULL);
+  if (r->id) g_object_set(item, "id", r->id, NULL);
+  if (r->pubkey) g_object_set(item, "pubkey", r->pubkey, NULL);
+  g_object_set(item, "created-at", (gint64)r->created_at, NULL);
+
+  /* Try to link to parent if known */
+  TimelineItem *parent = NULL;
+  if (r->parent_id && *r->parent_id) {
+    parent = (TimelineItem*)g_hash_table_lookup(self->nodes_by_id, r->parent_id);
+  }
+  if (parent) {
+    /* depth = parent.depth + 1; root-id = parent.root-id if set else parent.id */
+    guint pdepth = 0; gchar *proot = NULL; gchar *pid = NULL;
+    g_object_get(parent, "depth", &pdepth, "root-id", &proot, "id", &pid, NULL);
+    guint cdepth = pdepth + 1;
+    const char *root_id = (proot && *proot) ? proot : pid;
+    g_object_set(item, "depth", cdepth, NULL);
+    if (root_id && *root_id) g_object_set(item, "root-id", root_id, NULL);
+    g_free(proot); g_free(pid);
+    gnostr_timeline_item_add_child(parent, (TimelineItem*)item);
+  } else {
+    /* Insert as a new root: depth=0, root-id=self id if available */
+    if (r->id && *r->id) g_object_set(item, "root-id", r->id, NULL);
+    g_list_store_insert(self->thread_roots, 0, item);
+  }
+  /* Register id mapping after insertion to allow future children */
+  if (r->id && !g_hash_table_contains(self->nodes_by_id, r->id))
+    g_hash_table_insert(self->nodes_by_id, g_strdup(r->id), item);
+  /* Keep item alive via roots/parent children store; no unref here */
+}
+
+static gboolean apply_timeline_events_idle(gpointer user_data) {
+  IdleApplyEventsCtx *c = (IdleApplyEventsCtx*)user_data;
+  GnostrMainWindow *self = c ? c->self : NULL;
+  if (!self || !GNOSTR_IS_MAIN_WINDOW(self) || !c->rows) { idle_apply_events_ctx_free(c); return G_SOURCE_REMOVE; }
+  GtkWidget *timeline = g_weak_ref_get(&self->timeline_ref);
+  if (!timeline || !GTK_IS_WIDGET(timeline) || !gtk_widget_get_root(timeline)) {
+    /* Delay until widget ready */
+    g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, apply_timeline_events_idle, c, NULL);
+    if (timeline && G_IS_OBJECT(timeline)) g_object_unref(timeline);
+    return G_SOURCE_REMOVE;
+  }
+  guint applied = 0;
+  for (guint i = 0; i < c->rows->len; i++) {
+    UiEventRow *r = (UiEventRow*)g_ptr_array_index(c->rows, i);
+    /* Dedup by id */
+    if (r->id && strlen(r->id) == 64) {
+      if (!self->seen_ids) self->seen_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+      if (g_hash_table_contains(self->seen_ids, r->id)) continue;
+      g_hash_table_add(self->seen_ids, g_strdup(r->id));
+    }
+    thread_graph_insert(self, r);
+    applied++;
+  }
+  g_message("apply_timeline_events_idle: applied=%u", applied);
+  if (timeline && G_IS_OBJECT(timeline)) g_object_unref(timeline);
+  idle_apply_events_ctx_free(c);
+  return G_SOURCE_REMOVE;
+}
+
+static void schedule_apply_events(GnostrMainWindow *self, GPtrArray *rows /* UiEventRow* */) {
+  if (!self || !rows) { if (rows) g_ptr_array_free(rows, TRUE); return; }
+  IdleApplyEventsCtx *c = g_new0(IdleApplyEventsCtx, 1);
+  c->self = self;
+  c->rows = rows;
+  g_idle_add_full(G_PRIORITY_DEFAULT, apply_timeline_events_idle, c, NULL);
+}
+
+/* Convert pool event batch directly into thread graph */
 static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data) {
   (void)pool;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !batch) return;
-  /* Map events to display lines */
-  GPtrArray *lines = g_ptr_array_new_with_free_func(g_free);
+  GPtrArray *rows = g_ptr_array_new_with_free_func(ui_event_row_free);
   for (guint i = 0; i < batch->len; i++) {
     NostrEvent *evt = (NostrEvent*)g_ptr_array_index(batch, i);
-    const char *content = nostr_event_get_content(evt);
+    UiEventRow *r = g_new0(UiEventRow, 1);
     const char *eid = nostr_event_get_id(evt);
     const char *pubkey = nostr_event_get_pubkey(evt);
     int64_t ts = nostr_event_get_created_at(evt);
+    const char *content = nostr_event_get_content(evt);
     if (!content) content = "";
-    gchar *safe = g_utf8_make_valid(content, -1);
-    gchar *nl = safe ? strchr(safe, '\n') : NULL; if (nl) *nl = '\0';
-    if (safe && g_utf8_strlen(safe, -1) > 160) { gchar *tmp = g_utf8_substring(safe, 0, 160); g_free(safe); safe = tmp; }
-    if (!eid) eid = "-";
-    gchar *row = g_strdup_printf("%s\t[live] %s | %s (%ld)", eid, pubkey ? pubkey : "(anon)", safe ? safe : "", (long)ts);
-    g_ptr_array_add(lines, row);
-    if (safe) g_free(safe);
+    r->id = eid ? g_strndup(eid, 64) : NULL;
+    r->pubkey = pubkey ? g_strdup(pubkey) : NULL;
+    r->created_at = ts;
+    r->content = g_utf8_make_valid(content, -1);
+    /* parent from last 'e' tag if present */
+    NostrTags *tags = (NostrTags*)nostr_event_get_tags(evt);
+    if (tags) {
+      for (ssize_t j = (ssize_t)nostr_tags_size(tags) - 1; j >= 0; j--) {
+        NostrTag *t = nostr_tags_get(tags, (size_t)j);
+        const char *k = nostr_tag_get_key(t);
+        if (k && g_strcmp0(k, "e") == 0) {
+          const char *val = nostr_tag_get_value(t);
+          if (val && *val) { r->parent_id = g_strndup(val, 64); break; }
+        }
+      }
+    }
+    g_ptr_array_add(rows, r);
   }
-  schedule_apply_lines(self, lines);
+  schedule_apply_events(self, rows);
 }
 
 static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data) {
@@ -387,24 +524,34 @@ static void on_pool_backfill_done(GObject *source, GAsyncResult *res, gpointer u
     g_clear_error(&error);
     return;
   }
-  /* Map events to lines and apply */
-  GPtrArray *lines = g_ptr_array_new_with_free_func(g_free);
+  /* Convert to UiEventRow and apply into graph */
+  GPtrArray *rows = g_ptr_array_new_with_free_func(ui_event_row_free);
   for (guint i = 0; i < events->len; i++) {
     NostrEvent *evt = (NostrEvent*)g_ptr_array_index(events, i);
-    const char *content = nostr_event_get_content(evt);
+    UiEventRow *r = g_new0(UiEventRow, 1);
     const char *eid = nostr_event_get_id(evt);
     const char *pubkey = nostr_event_get_pubkey(evt);
     int64_t ts = nostr_event_get_created_at(evt);
+    const char *content = nostr_event_get_content(evt);
     if (!content) content = "";
-    gchar *safe = g_utf8_make_valid(content, -1);
-    gchar *nl = safe ? strchr(safe, '\n') : NULL; if (nl) *nl = '\0';
-    if (safe && g_utf8_strlen(safe, -1) > 160) { gchar *tmp = g_utf8_substring(safe, 0, 160); g_free(safe); safe = tmp; }
-    if (!eid) eid = "-";
-    gchar *row = g_strdup_printf("%s\t[bf] %s | %s (%ld)", eid, pubkey ? pubkey : "(anon)", safe ? safe : "", (long)ts);
-    g_ptr_array_add(lines, row);
-    if (safe) g_free(safe);
+    r->id = eid ? g_strndup(eid, 64) : NULL;
+    r->pubkey = pubkey ? g_strdup(pubkey) : NULL;
+    r->created_at = ts;
+    r->content = g_utf8_make_valid(content, -1);
+    NostrTags *tags = (NostrTags*)nostr_event_get_tags(evt);
+    if (tags) {
+      for (ssize_t j = (ssize_t)nostr_tags_size(tags) - 1; j >= 0; j--) {
+        NostrTag *t = nostr_tags_get(tags, (size_t)j);
+        const char *k = nostr_tag_get_key(t);
+        if (k && g_strcmp0(k, "e") == 0) {
+          const char *val = nostr_tag_get_value(t);
+          if (val && *val) { r->parent_id = g_strndup(val, 64); break; }
+        }
+      }
+    }
+    g_ptr_array_add(rows, r);
   }
-  schedule_apply_lines(self, lines);
+  schedule_apply_events(self, rows);
   if (events) g_ptr_array_unref(events);
 }
 
@@ -1112,9 +1259,33 @@ static gboolean apply_timeline_lines_idle(gpointer user_data) {
         }
       } }
       if (allow) {
-        g_debug("apply: prepend text=%.60s", text ? text : "");
-        gnostr_timeline_view_prepend_text(GNOSTR_TIMELINE_VIEW(timeline), text);
-        applied++;
+        g_debug("apply: insert root item text=%.60s", text ? text : "");
+        if (!self->thread_roots) {
+          extern GType timeline_item_get_type(void);
+          self->thread_roots = g_list_store_new(timeline_item_get_type());
+        }
+        GType ti = timeline_item_get_type();
+        if (ti) {
+          gpointer item = g_object_new(ti,
+                                       "display-name", "Anonymous",
+                                       "handle", "@anon",
+                                       "timestamp", "now",
+                                       "content", text ? text : "",
+                                       "depth", 0,
+                                       NULL);
+          /* Record id mapping if present */
+          if (id && strlen(id) == 64) {
+            g_object_set(item, "id", id, NULL);
+            if (!self->nodes_by_id)
+              self->nodes_by_id = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+            if (!g_hash_table_contains(self->nodes_by_id, id))
+              g_hash_table_insert(self->nodes_by_id, g_strndup(id, 64), item);
+          }
+          g_list_store_insert(self->thread_roots, 0, item);
+          /* If we inserted into roots after timeline set, view will update */
+          applied++;
+          g_object_unref(item);
+        }
       } else {
         skipped++;
       }
@@ -1378,15 +1549,6 @@ static void timeline_refresh_worker(GTask *task, gpointer source, gpointer task_
     ci->relay = relay;
     ci->fs = fs;
     g_ptr_array_add(deferred, ci);
-  }
-#else
-  /* Fallback demo: synthesize placeholder lines. */
-  time_t now = time(NULL);
-  int n = d ? d->limit : 5;
-  for (int i = 0; i < n; i++) {
-    gchar *s = g_strdup_printf("-\t[demo] note %d at %ld", i+1, (long)now);
-    g_ptr_array_add(batch, s);
-    maybe_post_batch(d->self, &batch, &last_post_us, interval_us);
   }
 #endif
 
@@ -1667,10 +1829,12 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   if (self->stack && self->timeline && GTK_IS_STACK(self->stack)) {
     gtk_stack_set_visible_child(GTK_STACK(self->stack), self->timeline);
   }
-  /* Seed one row to validate the view wiring */
+  /* Initialize tree model for timeline view */
   if (self->timeline && GNOSTR_IS_TIMELINE_VIEW(self->timeline)) {
-    g_message("seeding demo row into timeline view");
-    gnostr_timeline_view_prepend_text(GNOSTR_TIMELINE_VIEW(self->timeline), "[demo] GNostr timeline ready");
+    extern GType timeline_item_get_type(void);
+    self->thread_roots = g_list_store_new(timeline_item_get_type());
+    self->nodes_by_id = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    gnostr_timeline_view_set_tree_roots(GNOSTR_TIMELINE_VIEW(self->timeline), G_LIST_MODEL(self->thread_roots));
   } else {
     g_warning("timeline is not a GnostrTimelineView at init: type=%s", self->timeline ? G_OBJECT_TYPE_NAME(self->timeline) : "(null)");
   }
