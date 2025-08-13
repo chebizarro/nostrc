@@ -32,6 +32,12 @@
                   </object>
                 </child>
                 <child>
+                  <object class="GtkButton" id="btn_relays">
+                    <property name="label">Relays</property>
+                    <signal name="clicked" handler="on_relays_clicked" swapped="no"/>
+                  </object>
+                </child>
+                <child>
                   <object class="GtkButton" id="btn_settings">
                     <property name="icon-name">emblem-system-symbolic</property>
                     <signal name="clicked" handler="on_settings_clicked" swapped="no"/>

@@ -1,39 +1,422 @@
 #include "nostr_simple_pool.h"
 #include "nostr_relay.h"
+#include "nostr-subscription.h"
+#include "nostr-filter.h"
+#include "nostr-event.h"
+#include "channel.h"
+#include "context.h"
+#include "error.h"
 #include <glib.h>
+#include <gio/gio.h>
 
-/* NostrSimplePool GObject implementation */
-G_DEFINE_TYPE(NostrSimplePool, nostr_simple_pool, G_TYPE_OBJECT)
+/* GnostrSimplePool GObject implementation */
+G_DEFINE_TYPE(GnostrSimplePool, gnostr_simple_pool, G_TYPE_OBJECT)
+
+enum {
+    SIGNAL_EVENTS,
+    N_SIGNALS
+};
+
+static guint pool_signals[N_SIGNALS] = {0};
+
+/* Backfill context and worker forward decl at file scope */
+typedef struct {
+    GnostrSimplePool *self;
+    char **urls;       /* owned deep copy */
+    size_t url_count;
+    NostrFilters *filters; /* borrowed */
+} BackfillCtx;
+
+static void backfill_worker(GTask *t, gpointer _src, gpointer _task_data, GCancellable *canc);
+
+/* Forward decl for URL helpers used below */
+static void free_urls(char **urls, size_t count);
+
+static void backfill_ctx_free(BackfillCtx *b) {
+    if (!b) return;
+    free_urls(b->urls, b->url_count);
+    g_free(b);
+}
 
 static void nostr_simple_pool_finalize(GObject *object) {
-    NostrSimplePool *self = NOSTR_SIMPLE_POOL(object);
+    GnostrSimplePool *self = GNOSTR_SIMPLE_POOL(object);
     if (self->pool) {
         nostr_simple_pool_free(self->pool);
     }
-    G_OBJECT_CLASS(nostr_simple_pool_parent_class)->finalize(object);
+    G_OBJECT_CLASS(gnostr_simple_pool_parent_class)->finalize(object);
 }
 
-static void nostr_simple_pool_class_init(NostrSimplePoolClass *klass) {
+static void gnostr_simple_pool_class_init(GnostrSimplePoolClass *klass) {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
     object_class->finalize = nostr_simple_pool_finalize;
+
+    /* events: emitted with (GPtrArray* batch) where elements are strings or boxed events depending on emitter */
+    pool_signals[SIGNAL_EVENTS] = g_signal_new(
+        "events",
+        G_TYPE_FROM_CLASS(klass),
+        G_SIGNAL_RUN_LAST,
+        0, /* class offset */
+        NULL, NULL,
+        NULL, /* default C marshaller for (POINTER) is fine */
+        G_TYPE_NONE,
+        1,
+        G_TYPE_POINTER /* GPtrArray* */);
 }
 
-static void nostr_simple_pool_init(NostrSimplePool *self) {
+static void gnostr_simple_pool_init(GnostrSimplePool *self) {
     self->pool = nostr_simple_pool_new();
 }
 
-NostrSimplePool *gnostr_simple_pool_new(void) {
-    return g_object_new(NOSTR_TYPE_SIMPLE_POOL, NULL);
+GnostrSimplePool *gnostr_simple_pool_new(void) {
+    return g_object_new(GNOSTR_TYPE_SIMPLE_POOL, NULL);
 }
 
-void gnostr_simple_pool_add_relay(NostrSimplePool *self, NostrRelay *relay) {
+void gnostr_simple_pool_add_relay(GnostrSimplePool *self, NostrRelay *relay) {
     if (!self || !self->pool || !relay) return;
     const char *url = nostr_relay_get_url_const(relay);
     if (url) nostr_simple_pool_ensure_relay(self->pool, url);
 }
 
-GPtrArray *gnostr_simple_pool_query_sync(NostrSimplePool *self, NostrFilter *filter, GError **error) {
+GPtrArray *gnostr_simple_pool_query_sync(GnostrSimplePool *self, NostrFilter *filter, GError **error) {
     (void)self; (void)filter;
     if (error) *error = g_error_new_literal(g_quark_from_static_string("nostr-simple-pool"), 1, "gnostr_simple_pool_query_sync is not implemented in this wrapper");
     return NULL;
+}
+
+/* Async scaffolding: subscribe-many (persistent live) */
+typedef struct {
+    GTask *task;
+} SubscribeCtx;
+
+static void subscribe_ctx_free(SubscribeCtx *c) {
+    if (!c) return;
+    if (c->task) g_object_unref(c->task);
+    g_free(c);
+}
+
+typedef struct {
+    GObject *self_obj; /* GnostrSimplePool* as GObject */
+    char **urls;       /* owned deep copy */
+    size_t url_count;
+    NostrFilters *filters;    /* borrowed */
+    GCancellable *cancellable;/* borrowed */
+} SubscribeManyCtx;
+
+/* Helpers to deep-copy and free URL arrays */
+static char **dup_urls(const char **urls, size_t count) {
+    if (!urls || count == 0) return NULL;
+    char **out = g_new0(char*, count);
+    for (size_t i = 0; i < count; i++) {
+        const char *u = urls[i];
+        out[i] = u ? g_strdup(u) : NULL;
+    }
+    return out;
+}
+
+static void free_urls(char **urls, size_t count) {
+    if (!urls) return;
+    for (size_t i = 0; i < count; i++) {
+        g_free(urls[i]);
+    }
+    g_free(urls);
+}
+
+static gboolean emit_events_on_main(gpointer data) {
+    /* Takes ownership of arr */
+    typedef struct { GObject *obj; GPtrArray *arr; } EmitCtx;
+    EmitCtx *e = (EmitCtx *)data;
+    g_signal_emit(e->obj, pool_signals[SIGNAL_EVENTS], 0, e->arr);
+    g_ptr_array_unref(e->arr);
+    g_object_unref(e->obj);
+    g_free(e);
+    return G_SOURCE_REMOVE;
+}
+
+/* Bounded de-dup set for event ids */
+typedef struct {
+    GHashTable *set; /* key: char* (id), value: gpointer(1) */
+    GQueue *order;   /* holds same char* pointers in insertion order */
+    gsize cap;
+} DedupSet;
+
+static DedupSet *dedup_set_new(gsize cap) {
+    DedupSet *d = g_new0(DedupSet, 1);
+    d->set = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    d->order = g_queue_new();
+    d->cap = cap > 0 ? cap : 65536;
+    return d;
+}
+
+static void dedup_set_free(DedupSet *d) {
+    if (!d) return;
+    if (d->order) {
+        /* order nodes' data are same pointers as keys in set; do not free here */
+        g_queue_free(d->order);
+    }
+    if (d->set) g_hash_table_destroy(d->set);
+    g_free(d);
+}
+
+static gboolean dedup_set_seen(DedupSet *d, const char *id) {
+    if (!d || !id || !*id) return FALSE;
+    if (g_hash_table_contains(d->set, id)) return TRUE;
+    /* Insert */
+    char *key = g_strdup(id);
+    g_hash_table_insert(d->set, key, GINT_TO_POINTER(1));
+    g_queue_push_tail(d->order, key);
+    /* Evict if over cap */
+    while (g_hash_table_size(d->set) > d->cap) {
+        char *old = g_queue_pop_head(d->order);
+        if (!old) break;
+        g_hash_table_remove(d->set, old); /* frees old via key destroy */
+    }
+    return FALSE;
+}
+
+static gpointer subscribe_many_thread(gpointer user_data) {
+    SubscribeManyCtx *ctx = (SubscribeManyCtx *)user_data;
+    /* For each URL, set up a subscription */
+    typedef struct { NostrRelay *relay; NostrSubscription *sub; } SubItem;
+    GPtrArray *subs = g_ptr_array_new_with_free_func(NULL);
+
+    GoContext *bg = go_context_background();
+    for (size_t i = 0; i < ctx->url_count; i++) {
+        if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) break;
+        const char *url = ctx->urls[i];
+        if (!url || !*url) continue; /* skip empty */
+        Error *err = NULL;
+        NostrRelay *relay = nostr_relay_new(NULL, url, &err);
+        if (!relay) {
+            g_warning("simple_pool: failed to create relay for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
+            if (err) free_error(err);
+            continue;
+        }
+        if (!nostr_relay_connect(relay, &err)) {
+            g_warning("simple_pool: connect failed for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
+            if (err) free_error(err);
+            nostr_relay_free(relay);
+            continue;
+        }
+        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, bg, ctx->filters);
+        if (!sub) {
+            g_warning("simple_pool: prepare_subscription failed for %s", url);
+            nostr_relay_disconnect(relay);
+            nostr_relay_free(relay);
+            continue;
+        }
+        if (!nostr_subscription_fire(sub, &err)) {
+            g_warning("simple_pool: subscription_fire failed for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
+            if (err) free_error(err);
+            nostr_subscription_close(sub, NULL);
+            nostr_subscription_free(sub);
+            nostr_relay_disconnect(relay);
+            nostr_relay_free(relay);
+            continue;
+        }
+        SubItem item = { .relay = relay, .sub = sub };
+        g_ptr_array_add(subs, g_memdup2(&item, sizeof(SubItem)));
+    }
+
+    /* Streaming loop */
+    DedupSet *dedup = dedup_set_new(65536);
+    while (!(ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable))) {
+        GPtrArray *batch = g_ptr_array_new();
+        /* Collect from all subscriptions non-blocking */
+        for (guint i = 0; i < subs->len; i++) {
+            SubItem *it = (SubItem *)subs->pdata[i];
+            if (!it || !it->sub) continue;
+            GoChannel *ch_events = nostr_subscription_get_events_channel(it->sub);
+            void *msg = NULL;
+            int got;
+            int spin = 0;
+            /* Pull a few items per sub to avoid starvation */
+            while ((got = (ch_events ? go_channel_try_receive(ch_events, &msg) : -1)) == 0 && spin++ < 32) {
+                if (msg) {
+                    NostrEvent *ev = (NostrEvent*)msg;
+                    const char *eid = nostr_event_get_id(ev);
+                    if (eid && *eid && dedup_set_seen(dedup, eid)) {
+                        /* duplicate: drop */
+                        nostr_event_free(ev);
+                    } else {
+                        g_ptr_array_add(batch, ev);
+                    }
+                }
+                msg = NULL;
+            }
+        }
+
+        if (batch->len > 0) {
+            /* Emit on main loop */
+            typedef struct { GObject *obj; GPtrArray *arr; } EmitCtx;
+            EmitCtx *e = g_new0(EmitCtx, 1);
+            e->obj = g_object_ref(ctx->self_obj);
+            e->arr = batch; /* transfer */
+            g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, emit_events_on_main, e, NULL);
+        } else {
+            g_ptr_array_unref(batch);
+        }
+        g_usleep(1000 * 50);
+    }
+
+    /* Cleanup */
+    dedup_set_free(dedup);
+    for (guint i = 0; i < subs->len; i++) {
+        SubItem *it = (SubItem*)subs->pdata[i];
+        if (it) {
+            if (it->sub) { nostr_subscription_close(it->sub, NULL); nostr_subscription_free(it->sub); }
+            if (it->relay) { nostr_relay_disconnect(it->relay); nostr_relay_free(it->relay); }
+            g_free(it);
+        }
+    }
+    g_ptr_array_unref(subs);
+    free_urls(ctx->urls, ctx->url_count);
+    g_object_unref(ctx->self_obj);
+    g_free(ctx);
+    return NULL;
+}
+
+void gnostr_simple_pool_subscribe_many_async(GnostrSimplePool *self,
+                                             const char **urls,
+                                             size_t url_count,
+                                             NostrFilters *filters,
+                                             GCancellable *cancellable,
+                                             GAsyncReadyCallback cb,
+                                             gpointer user_data) {
+    /* Start background streaming thread */
+    SubscribeManyCtx *ctx = g_new0(SubscribeManyCtx, 1);
+    ctx->self_obj = G_OBJECT(g_object_ref(self));
+    ctx->urls = dup_urls(urls, url_count);
+    ctx->url_count = url_count;
+    ctx->filters = filters;
+    ctx->cancellable = cancellable;
+    g_thread_new("nostr-subscribe-many", subscribe_many_thread, ctx);
+
+    /* Immediate success for async setup */
+    GTask *task = g_task_new(G_OBJECT(self), cancellable, cb, user_data);
+    g_task_return_boolean(task, TRUE);
+    g_object_unref(task);
+}
+
+gboolean gnostr_simple_pool_subscribe_many_finish(GnostrSimplePool *self,
+                                                  GAsyncResult *res,
+                                                  GError **error) {
+    (void)self;
+    return g_task_propagate_boolean(G_TASK(res), error);
+}
+
+/* Async scaffolding: one-off backfill */
+void gnostr_simple_pool_backfill_async(GnostrSimplePool *self,
+                                       const char **urls,
+                                       size_t url_count,
+                                       NostrFilters *filters,
+                                       GCancellable *cancellable,
+                                       GAsyncReadyCallback cb,
+                                       gpointer user_data) {
+    BackfillCtx *ctx = g_new0(BackfillCtx, 1);
+    ctx->self = self;
+    ctx->urls = dup_urls(urls, url_count);
+    ctx->url_count = url_count;
+    ctx->filters = filters;
+
+    GTask *task = g_task_new(self ? G_OBJECT(self) : NULL, cancellable, cb, user_data);
+    /* Free deep-copied urls in destroy notify */
+    g_task_set_task_data(task, ctx, (GDestroyNotify)backfill_ctx_free);
+
+    g_task_run_in_thread(task, (GTaskThreadFunc)backfill_worker);
+}
+
+GPtrArray *gnostr_simple_pool_backfill_finish(GnostrSimplePool *self,
+                                               GAsyncResult *res,
+                                               GError **error) {
+    (void)self;
+    return g_task_propagate_pointer(G_TASK(res), error);
+}
+
+/* File-scope worker implementation */
+static void backfill_worker(GTask *t, gpointer _src, gpointer _task_data, GCancellable *canc) {
+    (void)_src;
+    BackfillCtx *b = (BackfillCtx *)_task_data;
+    GPtrArray *events = g_ptr_array_new();
+    DedupSet *dedup = dedup_set_new(131072);
+
+    GoContext *bg = go_context_background();
+    for (size_t i = 0; i < b->url_count; i++) {
+        if (canc && g_cancellable_is_cancelled(canc)) break;
+        const char *url = b->urls[i];
+        if (!url || !*url) continue; /* skip empty */
+
+        Error *err = NULL;
+        NostrRelay *relay = nostr_relay_new(NULL, url, &err);
+        if (!relay) {
+            g_warning("simple_pool: failed to create relay for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
+            if (err) free_error(err);
+            continue;
+        }
+        if (!nostr_relay_connect(relay, &err)) {
+            g_warning("simple_pool: connect failed for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
+            if (err) free_error(err);
+            nostr_relay_free(relay);
+            continue;
+        }
+
+        NostrSubscription *sub = NULL;
+        if (b->filters) {
+            sub = nostr_relay_prepare_subscription(relay, bg, b->filters);
+        } else {
+            NostrFilters empty = { .filters = NULL, .count = 0, .capacity = 0 };
+            sub = nostr_relay_prepare_subscription(relay, bg, &empty);
+        }
+        if (!sub) {
+            g_warning("simple_pool: prepare_subscription failed for %s", url);
+            nostr_relay_disconnect(relay);
+            nostr_relay_free(relay);
+            continue;
+        }
+        if (!nostr_subscription_fire(sub, &err)) {
+            g_warning("simple_pool: subscription_fire failed for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
+            if (err) free_error(err);
+            nostr_subscription_close(sub, NULL);
+            nostr_subscription_free(sub);
+            nostr_relay_disconnect(relay);
+            nostr_relay_free(relay);
+            continue;
+        }
+
+        GoChannel *ch_events = nostr_subscription_get_events_channel(sub);
+        GoChannel *ch_eose   = nostr_subscription_get_eose_channel(sub);
+        GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
+
+        gboolean got_eose = FALSE;
+        while (!got_eose && !(canc && g_cancellable_is_cancelled(canc))) {
+            void *msg = NULL;
+            if (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
+                if (msg) {
+                    NostrEvent *ev = (NostrEvent*)msg;
+                    const char *eid = nostr_event_get_id(ev);
+                    if (eid && *eid && dedup_set_seen(dedup, eid)) {
+                        nostr_event_free(ev);
+                    } else {
+                        g_ptr_array_add(events, ev);
+                    }
+                }
+            }
+            msg = NULL;
+            if (ch_eose && go_channel_try_receive(ch_eose, &msg) == 0) {
+                got_eose = TRUE;
+            }
+            msg = NULL;
+            if (ch_closed && go_channel_try_receive(ch_closed, &msg) == 0) {
+                got_eose = TRUE;
+            }
+            if (!got_eose) g_usleep(1000 * 5);
+        }
+
+        nostr_subscription_close(sub, NULL);
+        nostr_subscription_free(sub);
+        nostr_relay_disconnect(relay);
+        nostr_relay_free(relay);
+    }
+
+    g_task_return_pointer(t, events, (GDestroyNotify)g_ptr_array_unref);
+    dedup_set_free(dedup);
 }

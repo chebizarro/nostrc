@@ -19,12 +19,16 @@ enum {
 static guint signals[N_SIGNALS] = {0};
 
 static void gnostr_composer_dispose(GObject *obj) {
-  /* If we had extra owned objects, clear them here. Template children are owned by hierarchy. */
+  /* Dispose template children before chaining up so they are unparented first */
+  gtk_widget_dispose_template(GTK_WIDGET(obj), GNOSTR_TYPE_COMPOSER);
+  GnostrComposer *self = GNOSTR_COMPOSER(obj);
+  self->root = NULL;
+  self->text_view = NULL;
+  self->btn_post = NULL;
   G_OBJECT_CLASS(gnostr_composer_parent_class)->dispose(obj);
 }
 
 static void gnostr_composer_finalize(GObject *obj) {
-  gtk_widget_dispose_template(GTK_WIDGET(obj), GNOSTR_TYPE_COMPOSER);
   G_OBJECT_CLASS(gnostr_composer_parent_class)->finalize(obj);
 }
 

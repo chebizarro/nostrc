@@ -4,22 +4,127 @@
 #include "../ipc/signer_ipc.h"
 #include <gio/gio.h>
 #include <gtk/gtk.h>
+#include <gdk/gdkkeysyms.h>
 #include <time.h>
+/* SimplePool GObject wrapper for live streaming/backfill */
+#include "nostr_simple_pool.h"
+#include "nostr-event.h"
+#include "nostr-filter.h"
 
 /* Implement as-if SimplePool is fully functional; guarded to avoid breaking builds until wired. */
 #ifdef GNOSTR_ENABLE_REAL_SIMPLEPOOL
-#include "nostr-simple-pool.h"
 #include "nostr-relay.h"
 #include "nostr-subscription.h"
-#include "nostr-event.h"
-#include "nostr-filter.h"
 #include "nostr-json.h"
 #include "channel.h"
 #include "error.h"
 #include "context.h"
 #endif
 
+/* App utilities */
+#include "../util/relays.h"
 #define UI_RESOURCE "/org/gnostr/ui/ui/gnostr-main-window.ui"
+
+/* Forward declaration for async dialog completion */
+static void relays_alert_done(GtkAlertDialog *d, GAsyncResult *res, gpointer data);
+static void on_relays_save(GtkButton *b, gpointer user_data);
+
+/* Relay Manager dialog context */
+typedef struct {
+  GtkWindow *win;
+  GtkListView *list;
+  GtkSelectionModel *sel;
+  GtkStringList *model;
+  GtkEntry *entry;
+  GtkButton *btn_add;
+  GtkButton *btn_remove;
+  GtkButton *btn_save;
+  gboolean dirty;
+  GPtrArray *orig; /* owned; snapshot of sorted initial relays */
+  GtkLabel *status; /* optional status label */
+} RelaysCtx;
+
+/* Save window size to GSettings if schema is present */
+static void relays_save_window_size(GtkWindow *win) {
+  if (!win) return;
+  int w = 0, h = 0;
+  gtk_window_get_default_size(win, &w, &h);
+  if (w <= 0 || h <= 0) return;
+  GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+  if (!src) return;
+  GSettingsSchema *schema = g_settings_schema_source_lookup(src, "org.gnostr.gnostr", TRUE);
+  if (!schema) return;
+  GSettings *settings = g_settings_new("org.gnostr.gnostr");
+  g_settings_set_int(settings, "relays-window-width", w);
+  g_settings_set_int(settings, "relays-window-height", h);
+  g_object_unref(settings);
+  g_settings_schema_unref(schema);
+}
+
+static gboolean relays_on_close_request(GtkWindow *win, gpointer user_data) {
+  (void)user_data;
+  relays_save_window_size(win);
+  RelaysCtx *ctx = (RelaysCtx*)g_object_get_data(G_OBJECT(win), "relays-ctx");
+  if (!ctx || !ctx->dirty) return FALSE;
+#if GTK_CHECK_VERSION(4,10,0)
+  GtkAlertDialog *dlg = gtk_alert_dialog_new("You have unsaved changes.");
+  gtk_alert_dialog_set_detail(dlg, "Do you want to save your relay list before closing?");
+  const char *btns[] = { "_Cancel", "_Discard", "_Save", NULL };
+  gtk_alert_dialog_set_buttons(dlg, btns);
+  gtk_alert_dialog_choose(dlg, GTK_WINDOW(win), NULL,
+    (GAsyncReadyCallback)relays_alert_done, win);
+  return TRUE; /* stop default close, we'll decide in callback */
+#else
+  /* Without GtkAlertDialog, just block close if dirty */
+  return TRUE;
+#endif
+}
+
+static void relays_alert_done(GtkAlertDialog *d, GAsyncResult *res, gpointer data) {
+  GtkWindow *w = GTK_WINDOW(data);
+  GError *err = NULL;
+  int idx = gtk_alert_dialog_choose_finish(d, res, &err);
+  RelaysCtx *c = (RelaysCtx*)g_object_get_data(G_OBJECT(w), "relays-ctx");
+  if (err) { g_error_free(err); g_object_unref(d); return; }
+  if (!c) { g_object_unref(d); return; }
+  if (idx == 2) { /* Save */
+    on_relays_save(NULL, c);
+  } else if (idx == 1) { /* Discard */
+    gtk_window_destroy(w);
+  } else {
+    /* Cancel: do nothing */
+  }
+  g_object_unref(d);
+}
+
+/* Forward declarations needed early */
+typedef struct {
+  GnostrMainWindow *self; /* strong ref */
+  GPtrArray *lines;       /* transfer full */
+} IdleApplyCtx;
+
+static gboolean apply_timeline_lines_idle(gpointer user_data);
+/* Forward decl: toast helper used before its definition */
+static void show_toast(GnostrMainWindow *self, const char *msg);
+/* Forward: periodic backfill */
+static gboolean periodic_backfill_cb(gpointer data);
+/* Forward: backfill */
+/* SimplePool helpers */
+static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data);
+static void start_pool_live(GnostrMainWindow *self);
+static void start_pool_backfill(GnostrMainWindow *self, int limit);
+/* Idle trampolines */
+static void start_pool_live_idle_cb(gpointer data);
+static void start_pool_backfill_idle_cb(gpointer data);
+/* Settings persistence */
+static void gnostr_load_settings(GnostrMainWindow *self);
+static void gnostr_save_settings(GnostrMainWindow *self);
+static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data);
+static void on_pool_backfill_done(GObject *source, GAsyncResult *res, gpointer user_data);
+static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_urls, size_t *out_count, NostrFilters **out_filters, int limit);
+/* Relay list item factory */
+static void relay_item_setup(GtkSignalListItemFactory *f, GtkListItem *item, gpointer user_data);
+static void relay_item_bind(GtkSignalListItemFactory *f, GtkListItem *item, gpointer user_data);
 
 struct _GnostrMainWindow {
   GtkApplicationWindow parent_instance;
@@ -28,6 +133,7 @@ struct _GnostrMainWindow {
   GtkWidget *timeline;
   GWeakRef timeline_ref; /* weak ref to avoid UAF in async */
   GtkWidget *btn_settings;
+  GtkWidget *btn_relays;
   GtkWidget *btn_menu;
   GtkWidget *composer;
   GtkWidget *btn_refresh;
@@ -36,17 +142,105 @@ struct _GnostrMainWindow {
   /* Session state */
   GHashTable *seen_texts; /* owned; keys are g_strdup(text), values unused */
   GHashTable *seen_ids;   /* owned; keys are g_strdup(event id hex), values unused */
+  /* Tuning knobs (UI-editable) */
+  guint batch_max;             /* default 5; max items per UI batch post */
+  guint post_interval_ms;      /* default 150; max ms before forcing a batch */
+  guint eose_quiet_ms;         /* default 150; quiet ms after EOSE to stop */
+  guint per_relay_hard_ms;     /* default 5000; hard cap per relay */
+  guint default_limit;         /* default 30; timeline default limit */
+  gboolean use_since;          /* default FALSE; use since window */
+  guint since_seconds;         /* default 3600; when use_since */
+  /* Backfill interval */
+  guint backfill_interval_sec; /* default 0; disabled when 0 */
+  guint backfill_source_id;    /* GLib source id, 0 if none */
+  /* SimplePool live stream */
+  GnostrSimplePool *pool;       /* owned */
+  GCancellable    *pool_cancellable; /* owned */
+  NostrFilters    *live_filters; /* owned; current live filter set */
+  gulong           pool_events_handler; /* signal handler id */
 };
 
 G_DEFINE_TYPE(GnostrMainWindow, gnostr_main_window, GTK_TYPE_APPLICATION_WINDOW)
 
 static void gnostr_main_window_dispose(GObject *obj) {
-  /* Place for future object unrefs; template children are owned by hierarchy. */
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(obj);
+  /* Early teardown: stop timers, cancel async, disconnect signals */
+  if (self->backfill_source_id) {
+    g_source_remove(self->backfill_source_id);
+    self->backfill_source_id = 0;
+  }
+  if (self->pool) {
+    if (self->pool_events_handler) {
+      g_signal_handler_disconnect(self->pool, self->pool_events_handler);
+      self->pool_events_handler = 0;
+    }
+  }
+  if (self->pool_cancellable) {
+    g_cancellable_cancel(self->pool_cancellable);
+  }
   G_OBJECT_CLASS(gnostr_main_window_parent_class)->dispose(obj);
+}
+
+/* Factory callbacks for relay list */
+static void relay_item_setup(GtkSignalListItemFactory *f, GtkListItem *item, gpointer user_data) {
+  (void)f; (void)user_data;
+  GtkWidget *lbl = gtk_label_new("");
+  gtk_list_item_set_child(item, lbl);
+}
+
+static void relay_item_bind(GtkSignalListItemFactory *f, GtkListItem *item, gpointer user_data) {
+  (void)f;
+  GtkStringList *model = GTK_STRING_LIST(user_data);
+  GtkWidget *lbl = gtk_list_item_get_child(item);
+  guint pos = gtk_list_item_get_position(item);
+  const char *s = gtk_string_list_get_string(model, pos);
+  gtk_label_set_text(GTK_LABEL(lbl), s ? s : "");
+}
+
+/* Helper: schedule a batch of lines to be applied on the main loop. Transfers ownership of 'lines'. */
+static void schedule_apply_lines(GnostrMainWindow *self, GPtrArray *lines) {
+  if (!self || !GNOSTR_IS_MAIN_WINDOW(self) || !lines) return;
+  IdleApplyCtx *c = g_new0(IdleApplyCtx, 1);
+  c->self = g_object_ref(self);
+  c->lines = lines; /* transfer */
+  g_message("timeline_refresh_worker: scheduling main-loop apply (lines=%u)", lines->len);
+  if (g_getenv("GNOSTR_USE_IDLE")) {
+    g_idle_add_full(G_PRIORITY_DEFAULT, (GSourceFunc)apply_timeline_lines_idle, c, NULL);
+  } else {
+    g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, (GSourceFunc)apply_timeline_lines_idle, c, NULL);
+  }
+}
+
+/* Helper: post batch if size or time thresholds are reached. Resets batch on post. */
+static void maybe_post_batch(GnostrMainWindow *self,
+                             GPtrArray **pbatch,
+                             gint64 *plast_post_us,
+                             const gint64 interval_us,
+                             const guint batch_max) {
+  if (!self || !pbatch || !*pbatch || !plast_post_us) return;
+  GPtrArray *batch = *pbatch;
+  const gint64 now_us = g_get_monotonic_time();
+  if (batch->len == 0) return;
+  if (batch->len >= batch_max || now_us - *plast_post_us >= interval_us) {
+    schedule_apply_lines(self, batch);
+    *pbatch = g_ptr_array_new_with_free_func(g_free);
+    *plast_post_us = now_us;
+  }
 }
 
 static void gnostr_main_window_finalize(GObject *obj) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(obj);
+  /* Objects should already be quiesced in dispose; free leftovers */
+  if (self->pool_cancellable) {
+    g_clear_object(&self->pool_cancellable);
+  }
+  if (self->live_filters) {
+    nostr_filters_free(self->live_filters);
+    self->live_filters = NULL;
+  }
+  if (self->pool) {
+    g_clear_object(&self->pool);
+  }
   if (self->seen_texts) {
     g_hash_table_destroy(self->seen_texts);
     self->seen_texts = NULL;
@@ -60,9 +254,722 @@ static void gnostr_main_window_finalize(GObject *obj) {
   G_OBJECT_CLASS(gnostr_main_window_parent_class)->finalize(obj);
 }
 
-static void on_settings_clicked(GnostrMainWindow *self, GtkButton *button) {
-  (void)self; (void)button;
-  g_message("settings clicked");
+/* Build URLs and Filters based on env/settings. Caller must g_free(out_urls) array pointer, but not the strings. */
+static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_urls, size_t *out_count, NostrFilters **out_filters, int limit) {
+  g_return_if_fail(out_urls && out_count && out_filters);
+  const char *env_relays = g_getenv("GNOSTR_RELAYS");
+  static const char *defaults[] = { "wss://relay.damus.io", "wss://nos.lol" };
+  /* Prefer relays from config if present */
+  gboolean used_config_relays = FALSE;
+  {
+    gchar *cfg = gnostr_config_path();
+    GKeyFile *kf = g_key_file_new();
+    GError *err = NULL;
+    if (g_key_file_load_from_file(kf, cfg, G_KEY_FILE_NONE, &err)) {
+      gsize n = 0;
+      gchar **list = g_key_file_get_string_list(kf, "relays", "urls", &n, NULL);
+      if (list && n > 0) {
+        *out_urls = g_new0(const char*, n);
+        *out_count = n;
+        for (gsize i = 0; i < n; i++) {
+          const char *s = list[i] ? list[i] : "";
+          if (*s) ((char**)*out_urls)[i] = g_strdup(s);
+          else ((char**)*out_urls)[i] = g_strdup("");
+        }
+        used_config_relays = TRUE;
+      }
+      if (list) g_strfreev(list);
+    } else {
+      g_clear_error(&err);
+    }
+    g_key_file_unref(kf);
+    g_free(cfg);
+  }
+  if (!used_config_relays) {
+  if (env_relays && *env_relays) {
+    /* Split and trim each entry; skip empties */
+    gchar **list = g_strsplit(env_relays, ",", -1);
+    GPtrArray *clean = g_ptr_array_new_with_free_func(g_free);
+    for (gchar **p = list; p && *p; ++p) {
+      gchar *item = g_strdup(*p ? *p : "");
+      if (item) {
+        gchar *trimmed = g_strstrip(item); /* in-place trim */
+        if (trimmed && *trimmed) {
+          /* normalize: if starts with "ws://" or "wss://" keep; else accept as-is */
+          g_ptr_array_add(clean, g_strdup(trimmed));
+        }
+      }
+      g_free(item);
+    }
+    g_strfreev(list);
+    if (clean->len == 0) {
+      g_ptr_array_free(clean, TRUE);
+      *out_urls = g_new0(const char*, G_N_ELEMENTS(defaults));
+      *out_count = G_N_ELEMENTS(defaults);
+      for (size_t i = 0; i < *out_count; i++) ((char**)*out_urls)[i] = g_strdup(defaults[i]);
+    } else {
+      *out_urls = g_new0(const char*, clean->len);
+      *out_count = clean->len;
+      for (guint i = 0; i < clean->len; i++) {
+        ((char**)*out_urls)[i] = g_strdup((const char*)g_ptr_array_index(clean, i));
+      }
+      g_ptr_array_free(clean, TRUE);
+    }
+  } else {
+    *out_urls = g_new0(const char*, G_N_ELEMENTS(defaults));
+    *out_count = G_N_ELEMENTS(defaults);
+    for (size_t i = 0; i < *out_count; i++) ((char**)*out_urls)[i] = g_strdup(defaults[i]);
+  }
+  }
+
+  /* Filters: notes kind=1 with limit and optional since */
+  NostrFilter *f = nostr_filter_new();
+  int kinds[] = { 1 };
+  nostr_filter_set_kinds(f, kinds, 1);
+  int lim = limit > 0 ? limit : (int)self->default_limit;
+  nostr_filter_set_limit(f, lim);
+  if (self->use_since) {
+    time_t now = time(NULL);
+    int64_t since = (int64_t)now - (int64_t)self->since_seconds;
+    if (since < 0) since = 0;
+    nostr_filter_set_since_i64(f, since);
+  }
+  NostrFilters *fs = nostr_filters_new();
+  nostr_filters_add(fs, f);
+  *out_filters = fs;
+}
+
+/* Convert pool event batch to timeline lines and apply */
+static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data) {
+  (void)pool;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !batch) return;
+  /* Map events to display lines */
+  GPtrArray *lines = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; i < batch->len; i++) {
+    NostrEvent *evt = (NostrEvent*)g_ptr_array_index(batch, i);
+    const char *content = nostr_event_get_content(evt);
+    const char *eid = nostr_event_get_id(evt);
+    const char *pubkey = nostr_event_get_pubkey(evt);
+    int64_t ts = nostr_event_get_created_at(evt);
+    if (!content) content = "";
+    gchar *safe = g_utf8_make_valid(content, -1);
+    gchar *nl = safe ? strchr(safe, '\n') : NULL; if (nl) *nl = '\0';
+    if (safe && g_utf8_strlen(safe, -1) > 160) { gchar *tmp = g_utf8_substring(safe, 0, 160); g_free(safe); safe = tmp; }
+    if (!eid) eid = "-";
+    gchar *row = g_strdup_printf("%s\t[live] %s | %s (%ld)", eid, pubkey ? pubkey : "(anon)", safe ? safe : "", (long)ts);
+    g_ptr_array_add(lines, row);
+    if (safe) g_free(safe);
+  }
+  schedule_apply_lines(self, lines);
+}
+
+static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)user_data;
+  GError *error = NULL;
+  gboolean ok = gnostr_simple_pool_subscribe_many_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+  if (!ok || error) {
+    g_warning("SimplePool subscribe_many failed: %s", error ? error->message : "unknown");
+    g_clear_error(&error);
+  } else {
+    g_message("SimplePool subscribe_many started");
+  }
+}
+
+static void on_pool_backfill_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  GError *error = NULL;
+  GPtrArray *events = gnostr_simple_pool_backfill_finish(self->pool, res, &error);
+  if (!events) {
+    g_warning("SimplePool backfill failed: %s", error ? error->message : "unknown");
+    g_clear_error(&error);
+    return;
+  }
+  /* Map events to lines and apply */
+  GPtrArray *lines = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; i < events->len; i++) {
+    NostrEvent *evt = (NostrEvent*)g_ptr_array_index(events, i);
+    const char *content = nostr_event_get_content(evt);
+    const char *eid = nostr_event_get_id(evt);
+    const char *pubkey = nostr_event_get_pubkey(evt);
+    int64_t ts = nostr_event_get_created_at(evt);
+    if (!content) content = "";
+    gchar *safe = g_utf8_make_valid(content, -1);
+    gchar *nl = safe ? strchr(safe, '\n') : NULL; if (nl) *nl = '\0';
+    if (safe && g_utf8_strlen(safe, -1) > 160) { gchar *tmp = g_utf8_substring(safe, 0, 160); g_free(safe); safe = tmp; }
+    if (!eid) eid = "-";
+    gchar *row = g_strdup_printf("%s\t[bf] %s | %s (%ld)", eid, pubkey ? pubkey : "(anon)", safe ? safe : "", (long)ts);
+    g_ptr_array_add(lines, row);
+    if (safe) g_free(safe);
+  }
+  schedule_apply_lines(self, lines);
+  if (events) g_ptr_array_unref(events);
+}
+
+static void start_pool_live(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  if (!self->pool) self->pool = gnostr_simple_pool_new();
+  if (!self->pool_cancellable) self->pool_cancellable = g_cancellable_new();
+  if (self->pool_events_handler) {
+    g_signal_handler_disconnect(self->pool, self->pool_events_handler);
+    self->pool_events_handler = 0;
+  }
+  self->pool_events_handler = g_signal_connect(self->pool, "events", G_CALLBACK(on_pool_events), self);
+  const char **urls = NULL; size_t url_count = 0; NostrFilters *filters = NULL;
+  build_urls_and_filters(self, &urls, &url_count, &filters, (int)self->default_limit);
+  /* Do not free previous live_filters here to avoid races; allow leak until shutdown. */
+  self->live_filters = filters; /* take ownership for lifetime of live subscription */
+  gnostr_simple_pool_subscribe_many_async(self->pool, urls, url_count, self->live_filters, self->pool_cancellable, on_pool_subscribe_done, self);
+  /* Free duplicated url strings and array; filters owned by libnostr after async begins? Keep it alive here by not freeing immediately. */
+  for (size_t i = 0; i < url_count; i++) g_free((char*)urls[i]);
+  g_free((void*)urls);
+  /* Keep filters: the async thread borrows them. They will be freed on process exit; alternatively store to free on finalize if needed. */
+}
+
+static void start_pool_backfill(GnostrMainWindow *self, int limit) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  if (!self->pool) self->pool = gnostr_simple_pool_new();
+  const char **urls = NULL; size_t url_count = 0; NostrFilters *filters = NULL;
+  build_urls_and_filters(self, &urls, &url_count, &filters, limit);
+  gnostr_simple_pool_backfill_async(self->pool, urls, url_count, filters, NULL, on_pool_backfill_done, self);
+  for (size_t i = 0; i < url_count; i++) g_free((char*)urls[i]);
+  g_free((void*)urls);
+  /* We intentionally do not free filters here; they are borrowed by the async worker. */
+}
+
+/* Env helper */
+static guint getenv_uint_default(const char *name, guint def) {
+  const char *v = g_getenv(name);
+  if (!v || !*v) return def;
+  long long x = g_ascii_strtoll(v, NULL, 10);
+  if (x <= 0) return def;
+  if (x > G_MAXUINT) return G_MAXUINT;
+  return (guint)x;
+}
+
+typedef struct {
+  GnostrMainWindow *self; /* strong ref */
+  GtkWidget *win;         /* settings window */
+  GtkWidget *w_limit;
+  GtkWidget *w_batch;
+  GtkWidget *w_interval;
+  GtkWidget *w_quiet;
+  GtkWidget *w_hard;
+  GtkWidget *w_use_since;
+  GtkWidget *w_since;
+  GtkWidget *w_backfill_interval;
+} SettingsCtx;
+
+static void settings_ctx_free(SettingsCtx *ctx) {
+  if (!ctx) return;
+  if (ctx->self) g_object_unref(ctx->self);
+  g_free(ctx);
+}
+
+static void on_settings_save_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  SettingsCtx *ctx = (SettingsCtx*)user_data;
+  if (!ctx || !GNOSTR_IS_MAIN_WINDOW(ctx->self)) return;
+  ctx->self->default_limit     = (guint)gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ctx->w_limit));
+  ctx->self->batch_max         = (guint)gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ctx->w_batch));
+  ctx->self->post_interval_ms  = (guint)gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ctx->w_interval));
+  ctx->self->eose_quiet_ms     = (guint)gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ctx->w_quiet));
+  ctx->self->per_relay_hard_ms = (guint)gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ctx->w_hard));
+  ctx->self->use_since         = gtk_check_button_get_active(GTK_CHECK_BUTTON(ctx->w_use_since));
+  ctx->self->since_seconds     = (guint)gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ctx->w_since));
+  ctx->self->backfill_interval_sec = (guint)gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(ctx->w_backfill_interval));
+  /* restart periodic refresh timer */
+  if (ctx->self->backfill_source_id) {
+    g_source_remove(ctx->self->backfill_source_id);
+    ctx->self->backfill_source_id = 0;
+  }
+  if (ctx->self->backfill_interval_sec > 0) {
+    ctx->self->backfill_source_id = g_timeout_add_seconds_full(G_PRIORITY_DEFAULT,
+        ctx->self->backfill_interval_sec,
+        (GSourceFunc)periodic_backfill_cb,
+        g_object_ref(ctx->self),
+        (GDestroyNotify)g_object_unref);
+  }
+  /* Restart live streaming with new settings.
+   * IMPORTANT: The subscribe thread holds a borrowed reference to the provided
+   * GCancellable. Clearing/unrefing it here can cause UAF. Instead, swap in a
+   * fresh cancellable for the new subscription and only cancel the old one. */
+  if (ctx->self->pool_cancellable) {
+    GCancellable *old = ctx->self->pool_cancellable; /* keep alive */
+    ctx->self->pool_cancellable = g_cancellable_new();
+    g_cancellable_cancel(old);
+    /* Do NOT unref old here: thread may still read it. */
+  } else {
+    ctx->self->pool_cancellable = g_cancellable_new();
+  }
+  /* Do not free live_filters here: async worker may still be borrowing them. */
+  /* Stagger re-start to allow previous worker to observe cancel. */
+  g_idle_add_once((GSourceOnceFunc)start_pool_live_idle_cb, g_object_ref(ctx->self));
+  /* Schedule immediate backfill shortly after live start */
+  typedef struct { GnostrMainWindow *self; int limit; } BF;
+  BF *bf = g_new0(BF, 1); bf->self = g_object_ref(ctx->self); bf->limit = (int)ctx->self->default_limit;
+  g_timeout_add_once(50, (GSourceOnceFunc)start_pool_backfill_idle_cb, bf);
+  /* Persist settings */
+  gnostr_save_settings(ctx->self);
+  show_toast(ctx->self, "Settings saved");
+  if (ctx->win) gtk_window_destroy(GTK_WINDOW(ctx->win));
+}
+
+static void start_pool_live_idle_cb(gpointer data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
+  start_pool_live(self);
+  g_object_unref(self);
+}
+
+static void start_pool_backfill_idle_cb(gpointer data) {
+  typedef struct { GnostrMainWindow *self; int limit; } BF;
+  BF *bf = (BF*)data;
+  if (bf && GNOSTR_IS_MAIN_WINDOW(bf->self))
+    start_pool_backfill(bf->self, bf->limit);
+  if (bf && bf->self) g_object_unref(bf->self);
+  g_free(bf);
+}
+
+/* -- Settings persistence (GKeyFile) -- */
+/* moved to util/relays.c: gnostr_config_path */
+
+static void gnostr_load_settings(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  gchar *path = gnostr_config_path();
+  GKeyFile *kf = g_key_file_new();
+  GError *error = NULL;
+  if (!g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, &error)) {
+    g_clear_error(&error);
+    g_key_file_unref(kf);
+    g_free(path);
+    return;
+  }
+  const char *grp = "gnostr";
+  if (g_key_file_has_group(kf, grp)) {
+    self->default_limit        = (guint)g_key_file_get_integer(kf, grp, "default_limit", NULL);
+    self->batch_max            = (guint)g_key_file_get_integer(kf, grp, "batch_max", NULL);
+    self->post_interval_ms     = (guint)g_key_file_get_integer(kf, grp, "post_interval_ms", NULL);
+    self->eose_quiet_ms        = (guint)g_key_file_get_integer(kf, grp, "eose_quiet_ms", NULL);
+    self->per_relay_hard_ms    = (guint)g_key_file_get_integer(kf, grp, "per_relay_hard_ms", NULL);
+    self->use_since            = g_key_file_get_boolean(kf, grp, "use_since", NULL);
+    self->since_seconds        = (guint)g_key_file_get_integer(kf, grp, "since_seconds", NULL);
+    self->backfill_interval_sec= (guint)g_key_file_get_integer(kf, grp, "backfill_interval_sec", NULL);
+  }
+  g_key_file_unref(kf);
+  g_free(path);
+}
+
+static void gnostr_save_settings(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  gchar *path = gnostr_config_path();
+  GKeyFile *kf = g_key_file_new();
+  /* Load existing file to preserve other groups (e.g., [relays]) */
+  GError *error = NULL;
+  if (!g_key_file_load_from_file(kf, path, G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS, &error)) {
+    /* It's fine if it doesn't exist; we'll create a new one. */
+    g_clear_error(&error);
+  }
+  const char *grp = "gnostr";
+  g_key_file_set_integer(kf, grp, "default_limit",         (gint)self->default_limit);
+  g_key_file_set_integer(kf, grp, "batch_max",              (gint)self->batch_max);
+  g_key_file_set_integer(kf, grp, "post_interval_ms",       (gint)self->post_interval_ms);
+  g_key_file_set_integer(kf, grp, "eose_quiet_ms",          (gint)self->eose_quiet_ms);
+  g_key_file_set_integer(kf, grp, "per_relay_hard_ms",      (gint)self->per_relay_hard_ms);
+  g_key_file_set_boolean(kf, grp, "use_since",              self->use_since);
+  g_key_file_set_integer(kf, grp, "since_seconds",          (gint)self->since_seconds);
+  g_key_file_set_integer(kf, grp, "backfill_interval_sec",  (gint)self->backfill_interval_sec);
+  gsize len = 0;
+  gchar *data = g_key_file_to_data(kf, &len, NULL);
+  if (!g_file_set_contents(path, data, len, &error)) {
+    g_warning("failed to save settings: %s", error ? error->message : "unknown");
+    g_clear_error(&error);
+  }
+  g_free(data);
+  g_free(path);
+  g_key_file_unref(kf);
+}
+
+static void on_settings_cancel_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  SettingsCtx *ctx = (SettingsCtx*)user_data;
+  if (ctx && ctx->win) gtk_window_destroy(GTK_WINDOW(ctx->win));
+}
+
+/* moved to util/relays.c: relay url validation and load/save helpers */
+
+static void relays_ctx_free(RelaysCtx *c){
+  if (!c) return;
+  if (c->win) {
+    /* Window is owned elsewhere and this ctx is freed via window's destroy notify. */
+    c->win = NULL;
+  }
+  c->list = NULL;
+  c->sel = NULL;
+  c->model = NULL;
+  c->entry = NULL;
+  if (c->orig) {
+    for (guint i = 0; i < c->orig->len; i++) g_free(g_ptr_array_index(c->orig, i));
+    g_ptr_array_free(c->orig, TRUE);
+    c->orig = NULL;
+  }
+  g_free(c);
+}
+
+/* Forward declarations for signal handlers */
+static void relays_model_items_changed(GListModel *m, guint pos, guint removed, guint added, gpointer data);
+static gboolean relays_key_pressed(GtkEventControllerKey *c, guint keyval, guint keycode, GdkModifierType state, gpointer data);
+
+/* Case-insensitive compare for qsort */
+static int cmp_ascii_nocase(gconstpointer a, gconstpointer b) {
+  const char *sa = *(const char *const*)a;
+  const char *sb = *(const char *const*)b;
+  if (!sa && !sb) return 0;
+  if (!sa) return -1;
+  if (!sb) return 1;
+  return g_ascii_strcasecmp(sa, sb);
+}
+
+/* Collect strings from model into new GPtrArray (owned), optionally sorted. */
+static GPtrArray* relays_collect(RelaysCtx *c, gboolean sort) {
+  GPtrArray *arr = g_ptr_array_new_with_free_func(g_free);
+  if (!c || !c->model) return arr;
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(c->model));
+  for (guint i = 0; i < n; i++) {
+    const char *s = gtk_string_list_get_string(c->model, i);
+    if (s) g_ptr_array_add(arr, g_strdup(s));
+  }
+  if (sort) qsort(arr->pdata, arr->len, sizeof(gpointer), cmp_ascii_nocase);
+  return arr;
+}
+
+/* Replace model contents with sorted snapshot. */
+static void relays_resort_model(RelaysCtx *c) {
+  if (!c || !c->model) return;
+  GPtrArray *arr = relays_collect(c, TRUE);
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(c->model));
+  /* Build C array of const char* for splice */
+  const char **vals = g_new0(const char*, arr->len + 1);
+  for (guint i = 0; i < arr->len; i++) vals[i] = (const char*)g_ptr_array_index(arr, i);
+  vals[arr->len] = NULL; /* NULL-terminate for GTK 4 splice API */
+  gtk_string_list_splice(c->model, 0, n, vals);
+  g_free(vals);
+  /* gtk_string_list_splice copies strings; free our array */
+  g_ptr_array_free(arr, TRUE);
+}
+
+/* Compare current model against ctx->orig to update dirty/save button. */
+static void relays_update_dirty(RelaysCtx *c) {
+  if (!c) return;
+  gboolean dirty = FALSE;
+  GPtrArray *now = relays_collect(c, TRUE);
+  if (!c->orig || now->len != c->orig->len) {
+    dirty = TRUE;
+  } else {
+    for (guint i = 0; i < now->len; i++) {
+      const char *a = (const char*)g_ptr_array_index(now, i);
+      const char *b = (const char*)g_ptr_array_index(c->orig, i);
+      if (g_strcmp0(a, b) != 0) { dirty = TRUE; break; }
+    }
+  }
+  c->dirty = dirty;
+  if (c->btn_save) gtk_widget_set_sensitive(GTK_WIDGET(c->btn_save), dirty);
+  g_ptr_array_free(now, TRUE);
+}
+
+static void relays_update_status(RelaysCtx *c) {
+  if (!c) return;
+  guint n = 0;
+  if (c->model) n = g_list_model_get_n_items(G_LIST_MODEL(c->model));
+  if (c->status) {
+    gchar *markup = g_markup_printf_escaped("<small>%u relay%s • %s</small>", n, n==1?"":"s", c->dirty?"Unsaved changes":"Saved");
+    gtk_label_set_markup(c->status, markup);
+    g_free(markup);
+  }
+  if (c->win) {
+    gtk_window_set_title(c->win, c->dirty ? "Relays*" : "Relays");
+  }
+}
+
+static void on_relays_add(GtkButton *b, gpointer user_data) {
+  (void)b;
+  RelaysCtx *c = (RelaysCtx*)user_data;
+  const char *url = gtk_editable_get_text(GTK_EDITABLE(c->entry));
+  gchar *norm = gnostr_normalize_relay_url(url);
+  if (norm) {
+    /* Check for duplicates */
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(c->model));
+    gboolean exists = FALSE;
+    for (guint i = 0; i < n; i++) {
+      const char *s = gtk_string_list_get_string(c->model, i);
+      if (g_strcmp0(s, norm) == 0) { exists = TRUE; break; }
+    }
+    if (exists) {
+      GtkWindow *parent = gtk_window_get_transient_for(c->win);
+      if (GNOSTR_IS_MAIN_WINDOW(parent)) {
+        show_toast(GNOSTR_MAIN_WINDOW(parent), "Relay already in the list");
+      }
+    } else {
+      gtk_string_list_append(c->model, norm);
+      relays_resort_model(c);
+      relays_update_dirty(c);
+      relays_update_status(c);
+    }
+    gtk_editable_set_text(GTK_EDITABLE(c->entry), "");
+    g_free(norm);
+  } else {
+    /* Show a toast on the transient main window */
+    GtkWindow *parent = gtk_window_get_transient_for(c->win);
+    if (GNOSTR_IS_MAIN_WINDOW(parent)) {
+      show_toast(GNOSTR_MAIN_WINDOW(parent), "Invalid relay URL. Use ws:// or wss://");
+    }
+  }
+  /* Update button sensitivity after change */
+  if (c->btn_add) gtk_widget_set_sensitive(GTK_WIDGET(c->btn_add), FALSE);
+}
+
+static void on_relays_remove(GtkButton *b, gpointer user_data) {
+  (void)b;
+  RelaysCtx *c = (RelaysCtx*)user_data;
+  if (!c->sel) return;
+  guint pos = gtk_single_selection_get_selected(GTK_SINGLE_SELECTION(c->sel));
+  if (pos != GTK_INVALID_LIST_POSITION) gtk_string_list_remove(c->model, pos);
+  /* Update remove sensitivity */
+  if (c->btn_remove) {
+    pos = gtk_single_selection_get_selected(GTK_SINGLE_SELECTION(c->sel));
+    gtk_widget_set_sensitive(GTK_WIDGET(c->btn_remove), pos != GTK_INVALID_LIST_POSITION);
+  }
+  relays_resort_model(c);
+  relays_update_dirty(c);
+  relays_update_status(c);
+}
+
+static void on_relays_save(GtkButton *b, gpointer user_data) {
+  (void)b;
+  RelaysCtx *c = (RelaysCtx*)user_data;
+  GPtrArray *arr = g_ptr_array_new_with_free_func(g_free);
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(c->model));
+  g_message("relay_manager: preparing to save %u entries", n);
+  for (guint i = 0; i < n; i++) {
+    const char *s = gtk_string_list_get_string(c->model, i);
+    if (s && *s) {
+      g_message("relay_manager: save[%u] %s", i, s);
+      g_ptr_array_add(arr, g_strdup(s));
+    }
+  }
+  gnostr_save_relays_from(arr);
+  g_ptr_array_free(arr, TRUE);
+  show_toast(GNOSTR_MAIN_WINDOW(gtk_window_get_transient_for(c->win)), "Relays saved");
+  /* Avoid re-entrant close-request prompt by clearing dirty before destroy */
+  c->dirty = FALSE;
+  relays_update_status(c);
+  gtk_window_destroy(c->win);
+}
+
+static void on_relays_cancel(GtkButton *b, gpointer user_data) {
+  (void)b;
+  RelaysCtx *c = (RelaysCtx*)user_data;
+  gtk_window_destroy(c->win);
+}
+
+static void relays_update_buttons(RelaysCtx *c) {
+  if (!c) return;
+  /* Add enabled only when entry has a valid relay url */
+  gboolean can_add = gnostr_is_valid_relay_url(gtk_editable_get_text(GTK_EDITABLE(c->entry)));
+  if (c->btn_add) gtk_widget_set_sensitive(GTK_WIDGET(c->btn_add), can_add);
+  /* Remove enabled only when a row is selected */
+  guint pos = GTK_INVALID_LIST_POSITION;
+  if (c->sel) pos = gtk_single_selection_get_selected(GTK_SINGLE_SELECTION(c->sel));
+  if (c->btn_remove) gtk_widget_set_sensitive(GTK_WIDGET(c->btn_remove), pos != GTK_INVALID_LIST_POSITION);
+  /* Save only when dirty */
+  if (c->btn_save) gtk_widget_set_sensitive(GTK_WIDGET(c->btn_save), c->dirty);
+  relays_update_status(c);
+}
+
+static void on_relays_entry_changed(GtkEditable *editable, gpointer user_data) {
+  (void)editable;
+  RelaysCtx *c = (RelaysCtx*)user_data;
+  /* Visual validation */
+  const char *txt = gtk_editable_get_text(GTK_EDITABLE(c->entry));
+  gboolean ok = gnostr_is_valid_relay_url(txt);
+  if (ok) gtk_widget_remove_css_class(GTK_WIDGET(c->entry), "error");
+  else gtk_widget_add_css_class(GTK_WIDGET(c->entry), "error");
+  relays_update_buttons(c);
+}
+
+static void on_relays_selection_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+  (void)obj; (void)pspec;
+  RelaysCtx *c = (RelaysCtx*)user_data;
+  relays_update_buttons(c);
+}
+
+static void on_relays_clicked(GtkButton *button, GnostrMainWindow *self) {
+  (void)button;
+  g_return_if_fail(GNOSTR_IS_MAIN_WINDOW(self));
+  GtkBuilder *b = gtk_builder_new_from_resource("/org/gnostr/ui/ui/dialogs/gnostr-relay-manager.ui");
+  GtkWindow *win = GTK_WINDOW(gtk_builder_get_object(b, "relay_manager_window"));
+  if (!win) { g_warning("relay_manager_window not found in builder"); g_object_unref(b); return; }
+  gtk_window_set_transient_for(win, GTK_WINDOW(self));
+  GtkListView *list = GTK_LIST_VIEW(gtk_builder_get_object(b, "relay_list"));
+  GtkEntry *entry = GTK_ENTRY(gtk_builder_get_object(b, "relay_entry"));
+  GtkButton *btn_add = GTK_BUTTON(gtk_builder_get_object(b, "btn_add"));
+  GtkButton *btn_remove = GTK_BUTTON(gtk_builder_get_object(b, "btn_remove"));
+  GtkButton *btn_save = GTK_BUTTON(gtk_builder_get_object(b, "btn_save"));
+  GtkButton *btn_cancel = GTK_BUTTON(gtk_builder_get_object(b, "btn_cancel"));
+  GtkLabel *status = GTK_LABEL(gtk_builder_get_object(b, "status_label"));
+  /* Restore window size from GSettings if available */
+  {
+    GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+    if (src) {
+      GSettingsSchema *sch = g_settings_schema_source_lookup(src, "org.gnostr.gnostr", TRUE);
+      if (sch) {
+        GSettings *gs = g_settings_new("org.gnostr.gnostr");
+        int w = g_settings_get_int(gs, "relays-window-width");
+        int h = g_settings_get_int(gs, "relays-window-height");
+        if (w > 0 && h > 0) gtk_window_set_default_size(win, w, h);
+        g_object_unref(gs);
+        g_settings_schema_unref(sch);
+      }
+    }
+  }
+  /* Build model */
+  GtkStringList *model = gtk_string_list_new(NULL);
+  /* Load from config */
+  GPtrArray *buf = g_ptr_array_new_with_free_func(g_free);
+  gnostr_load_relays_into(buf);
+  g_message("relay_manager: loaded %u into buffer", buf->len);
+  for (guint i = 0; i < buf->len; i++) {
+    const char *u = (const char*)g_ptr_array_index(buf, i);
+    g_message("relay_manager: add to model [%u]: %s", i, u);
+    gtk_string_list_append(model, u);
+  }
+  g_ptr_array_free(buf, TRUE);
+  /* Sort initial contents */
+  {
+    RelaysCtx tmp = {0}; tmp.model = model; relays_resort_model(&tmp);
+  }
+  /* Create selection and set on list */
+  GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(model));
+  gtk_list_view_set_model(list, GTK_SELECTION_MODEL(sel));
+  /* Setup factory */
+  GtkListItemFactory *fac = gtk_signal_list_item_factory_new();
+  g_signal_connect(fac, "setup", G_CALLBACK(relay_item_setup), NULL);
+  g_signal_connect(fac, "bind", G_CALLBACK(relay_item_bind), model);
+  gtk_list_view_set_factory(list, GTK_LIST_ITEM_FACTORY(fac));
+  g_object_unref(fac);
+  /* Context */
+  RelaysCtx *ctx = g_new0(RelaysCtx, 1);
+  ctx->win = g_object_ref(win);
+  ctx->list = list;
+  ctx->sel = GTK_SELECTION_MODEL(sel);
+  ctx->model = model;
+  ctx->entry = entry;
+  ctx->btn_add = btn_add;
+  ctx->btn_remove = btn_remove;
+  ctx->btn_save = btn_save;
+  ctx->status = status;
+  /* Snapshot original (sorted) list for dirty tracking */
+  ctx->orig = relays_collect(ctx, TRUE);
+  ctx->dirty = FALSE;
+  g_signal_connect(btn_add, "clicked", G_CALLBACK(on_relays_add), ctx);
+  g_signal_connect(btn_remove, "clicked", G_CALLBACK(on_relays_remove), ctx);
+  g_signal_connect(btn_save, "clicked", G_CALLBACK(on_relays_save), ctx);
+  g_signal_connect(btn_cancel, "clicked", G_CALLBACK(on_relays_cancel), ctx);
+  g_signal_connect(entry, "changed", G_CALLBACK(on_relays_entry_changed), ctx);
+  g_signal_connect(entry, "activate", G_CALLBACK(on_relays_add), ctx);
+  g_signal_connect(sel, "notify::selected", G_CALLBACK(on_relays_selection_changed), ctx);
+  /* Track model changes for dirty flag */
+  g_signal_connect(model, "items-changed", G_CALLBACK(relays_model_items_changed), ctx);
+  /* Styling */
+  gtk_widget_add_css_class(GTK_WIDGET(btn_save), "suggested-action");
+  gtk_widget_add_css_class(GTK_WIDGET(btn_remove), "destructive-action");
+  gtk_widget_add_css_class(GTK_WIDGET(list), "card");
+  /* Keyboard shortcuts: Esc=close, Ctrl+Enter=save, Delete=remove */
+  GtkEventController *keys = gtk_event_controller_key_new();
+  g_signal_connect(keys, "key-pressed", G_CALLBACK(relays_key_pressed), ctx);
+  gtk_widget_add_controller(GTK_WIDGET(win), keys);
+  /* Initialize button states */
+  relays_update_buttons(ctx);
+  relays_update_status(ctx);
+  /* Store context before wiring close handler so it can read 'dirty' */
+  g_object_set_data_full(G_OBJECT(win), "relays-ctx", ctx, (GDestroyNotify)relays_ctx_free);
+  /* Save size on close / confirm discard */
+  g_signal_connect(win, "close-request", G_CALLBACK(relays_on_close_request), NULL);
+  g_object_unref(b);
+  gtk_window_present(GTK_WINDOW(win));
+  gtk_widget_grab_focus(GTK_WIDGET(entry));
+}
+
+/* Signal handlers (C-callable) */
+static void relays_model_items_changed(GListModel *m, guint pos, guint removed, guint added, gpointer data) {
+  (void)m; (void)pos; (void)removed; (void)added;
+  RelaysCtx *c = (RelaysCtx*)data;
+  relays_update_dirty(c);
+  relays_update_buttons(c);
+}
+
+static gboolean relays_key_pressed(GtkEventControllerKey *c, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
+  (void)c; (void)keycode;
+  RelaysCtx *rc = (RelaysCtx*)data;
+  if (keyval == GDK_KEY_Escape) { gtk_window_destroy(rc->win); return TRUE; }
+  if ((state & GDK_CONTROL_MASK) && (keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter || keyval == GDK_KEY_s || keyval == GDK_KEY_S)) {
+    on_relays_save(NULL, rc); return TRUE; }
+  if ((keyval == GDK_KEY_Delete || keyval == GDK_KEY_BackSpace)) { on_relays_remove(NULL, rc); return TRUE; }
+  return FALSE;
+}
+
+static void on_settings_clicked(GtkButton *button, GnostrMainWindow *self) {
+  (void)button;
+  g_return_if_fail(GNOSTR_IS_MAIN_WINDOW(self));
+  GtkBuilder *b = gtk_builder_new_from_resource("/org/gnostr/ui/ui/dialogs/gnostr-settings-dialog.ui");
+  GtkWindow *win = GTK_WINDOW(gtk_builder_get_object(b, "settings_window"));
+  if (!win) { g_warning("settings_window not found in builder"); g_object_unref(b); return; }
+  gtk_window_set_transient_for(win, GTK_WINDOW(self));
+  /* Lookup controls */
+  GtkWidget *w_limit   = GTK_WIDGET(gtk_builder_get_object(b, "w_limit"));
+  GtkWidget *w_batch   = GTK_WIDGET(gtk_builder_get_object(b, "w_batch"));
+  GtkWidget *w_interval= GTK_WIDGET(gtk_builder_get_object(b, "w_interval"));
+  GtkWidget *w_quiet   = GTK_WIDGET(gtk_builder_get_object(b, "w_quiet"));
+  GtkWidget *w_hard    = GTK_WIDGET(gtk_builder_get_object(b, "w_hard"));
+  GtkWidget *w_use_since = GTK_WIDGET(gtk_builder_get_object(b, "w_use_since"));
+  GtkWidget *w_since   = GTK_WIDGET(gtk_builder_get_object(b, "w_since"));
+  GtkWidget *w_backfill= GTK_WIDGET(gtk_builder_get_object(b, "w_backfill"));
+  GtkWidget *btn_save  = GTK_WIDGET(gtk_builder_get_object(b, "btn_save"));
+  GtkWidget *btn_cancel= GTK_WIDGET(gtk_builder_get_object(b, "btn_cancel"));
+  if (!w_limit || !w_batch || !w_interval || !w_quiet || !w_hard || !w_use_since || !w_since || !w_backfill || !btn_save || !btn_cancel) {
+    g_warning("settings builder missing required widgets");
+    g_object_unref(b);
+    return;
+  }
+  /* Initialize values from current settings */
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(w_limit), self->default_limit);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(w_batch), self->batch_max);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(w_interval), self->post_interval_ms);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(w_quiet), self->eose_quiet_ms);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(w_hard), self->per_relay_hard_ms);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(w_use_since), self->use_since);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(w_since), self->since_seconds);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(w_backfill), self->backfill_interval_sec);
+
+  /* Create ctx and wire signals */
+  SettingsCtx *ctx = g_new0(SettingsCtx, 1);
+  ctx->self = g_object_ref(self);
+  ctx->win = GTK_WIDGET(win);
+  ctx->w_limit = w_limit;
+  ctx->w_batch = w_batch;
+  ctx->w_interval = w_interval;
+  ctx->w_quiet = w_quiet;
+  ctx->w_hard = w_hard;
+  ctx->w_use_since = w_use_since;
+  ctx->w_since = w_since;
+  ctx->w_backfill_interval = w_backfill;
+  g_object_set_data_full(G_OBJECT(win), "settings-ctx", ctx, (GDestroyNotify)settings_ctx_free);
+  g_signal_connect(btn_save, "clicked", G_CALLBACK(on_settings_save_clicked), ctx);
+  g_signal_connect(btn_cancel, "clicked", G_CALLBACK(on_settings_cancel_clicked), ctx);
+  /* Builder can be dropped; widgets are now owned by the window */
+  g_object_unref(b);
+  gtk_window_present(GTK_WINDOW(win));
 }
 
 static void toast_hide_cb(gpointer data) {
@@ -81,12 +988,20 @@ static void show_toast(GnostrMainWindow *self, const char *msg) {
 }
 
 /* Forward declaration to satisfy initial_refresh */
-static void timeline_refresh_async(GnostrMainWindow *self, int limit);
 static gboolean initial_refresh_cb(gpointer data);
 
 /* Trampoline with correct type for g_timeout_add_once */
 static void initial_refresh_timeout_cb(gpointer data) {
   (void)initial_refresh_cb(data);
+}
+
+/* Periodic backfill callback. data is a strong ref to GnostrMainWindow (freed by destroy notify). */
+static gboolean periodic_backfill_cb(gpointer data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return G_SOURCE_REMOVE;
+  g_message("backfill: triggering timeline refresh (every %u sec)", self->backfill_interval_sec);
+  start_pool_backfill(self, (int)self->default_limit);
+  return G_SOURCE_CONTINUE;
 }
 
 static gboolean initial_refresh_cb(gpointer data) {
@@ -95,8 +1010,8 @@ static gboolean initial_refresh_cb(gpointer data) {
     g_message("initial refresh skipped: timeline not ready");
     return G_SOURCE_REMOVE;
   }
-  g_message("initial refresh: starting timeline refresh");
-  timeline_refresh_async(win, 5);
+  g_message("initial refresh: starting backfill");
+  start_pool_backfill(win, (int)win->default_limit);
   return G_SOURCE_REMOVE;
 }
 
@@ -105,10 +1020,7 @@ typedef struct {
   int limit;
 } RefreshTaskData;
 
-typedef struct {
-  GnostrMainWindow *self; /* strong ref */
-  GPtrArray *lines;       /* transfer full */
-} IdleApplyCtx;
+/* (IdleApplyCtx typedef moved earlier) */
 
 static void idle_apply_ctx_free(IdleApplyCtx *c) {
   if (!c) return;
@@ -146,14 +1058,24 @@ static gboolean apply_timeline_lines_idle(gpointer user_data) {
     /* Widget not yet in a realized hierarchy; retry shortly instead of dropping */
     g_debug("timeline not ready (tl=%p); will retry apply of %u lines", (void*)timeline, lines->len);
     g_timeout_add_once(100, (GSourceOnceFunc)apply_timeline_lines_timeout_cb, c);
-    if (timeline) g_object_unref(timeline);
+    if (timeline && G_IS_OBJECT(timeline)) g_object_unref(timeline);
     return G_SOURCE_REMOVE;
   }
   if (GNOSTR_IS_TIMELINE_VIEW(timeline)) {
     g_message("apply_timeline_lines_idle: applying %u lines to timeline=%p (type=%s)",
               lines->len, (void*)timeline, G_OBJECT_TYPE_NAME(timeline));
     const gboolean skip_dedup = g_getenv("GNOSTR_SKIP_DEDUP") != NULL;
+    const gboolean always_allow = g_getenv("GNOSTR_ALWAYS_ALLOW") != NULL;
+    guint before_count = 0;
+    if (GNOSTR_IS_TIMELINE_VIEW(timeline)) {
+      /* Peek current count for diagnostics */
+      GnostrTimelineView *tv = GNOSTR_TIMELINE_VIEW(timeline);
+      /* Access internal string_model only via public API; we don't have one.
+         We'll get count after each prepend via its own log. */
+      (void)tv;
+    }
     if (skip_dedup) g_warning("GNOSTR_SKIP_DEDUP is set: bypassing deduplication");
+    if (always_allow) g_warning("GNOSTR_ALWAYS_ALLOW is set: forcing allow of all rows");
     guint applied = 0, skipped = 0;
     for (guint i = 0; i < lines->len; i++) {
       const char *raw = (const char*)g_ptr_array_index(lines, i);
@@ -170,7 +1092,7 @@ static gboolean apply_timeline_lines_idle(gpointer user_data) {
       if (!self->seen_texts) self->seen_texts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
       gboolean allow = TRUE;
-      if (skip_dedup) {
+      if (skip_dedup || always_allow) {
         allow = TRUE;
       } else {
       if (id && g_str_has_prefix(id, "-") == FALSE && strlen(id) == 64) {
@@ -201,7 +1123,7 @@ static gboolean apply_timeline_lines_idle(gpointer user_data) {
   } else {
     g_warning("timeline widget is not GnostrTimelineView: type=%s", G_OBJECT_TYPE_NAME(timeline));
   }
-  g_object_unref(timeline);
+  if (timeline && G_IS_OBJECT(timeline)) g_object_unref(timeline);
   idle_apply_ctx_free(c);
   g_message("apply_timeline_lines_idle: exit");
   return G_SOURCE_REMOVE;
@@ -217,29 +1139,58 @@ static void refresh_task_data_free(RefreshTaskData *d) {
 static void timeline_refresh_worker(GTask *task, gpointer source, gpointer task_data, GCancellable *cancellable) {
   (void)source; (void)cancellable;
   RefreshTaskData *d = (RefreshTaskData*)task_data;
+  /* Legacy accumulator retained (unused for posting) */
   GPtrArray *lines = g_ptr_array_new_with_free_func(g_free);
   g_message("timeline_refresh_worker: start (limit=%d)", d ? d->limit : -1);
+  /* Streaming batch state */
+  GPtrArray *batch = g_ptr_array_new_with_free_func(g_free);
+  const guint batch_max = d && d->self ? GNOSTR_MAIN_WINDOW(d->self)->batch_max : 5;
+  const gint64 interval_us = (gint64)((d && d->self ? GNOSTR_MAIN_WINDOW(d->self)->post_interval_ms : 150) * G_TIME_SPAN_MILLISECOND);
+  gint64 last_post_us = g_get_monotonic_time();
 
 #ifdef GNOSTR_ENABLE_REAL_SIMPLEPOOL
   /* Real path: connect to each relay, subscribe, drain events until EOSE/CLOSED, format lines. */
-  const char *urls[] = {
+  /* Allow override relays via GNOSTR_RELAYS=ws://a,ws://b */
+  const char *env_relays = g_getenv("GNOSTR_RELAYS");
+  gchar **relay_list = NULL;
+  const char *default_urls[] = {
     "wss://relay.damus.io",
     "wss://nos.lol"
   };
-  size_t url_count = sizeof(urls)/sizeof(urls[0]);
+  size_t url_count = 0;
+  if (env_relays && *env_relays) {
+    relay_list = g_strsplit(env_relays, ",", -1);
+    /* count */
+    for (gchar **p = relay_list; p && *p; ++p) url_count++;
+    g_message("worker: using GNOSTR_RELAYS (%zu)", url_count);
+  } else {
+    url_count = sizeof(default_urls)/sizeof(default_urls[0]);
+  }
+
+  int total_collected = 0;
+  /* Defer teardown to avoid blocking between relays */
+  typedef struct { NostrSubscription *sub; NostrRelay *relay; NostrFilters *fs; } CleanupItem;
+  GPtrArray *deferred = g_ptr_array_new_with_free_func(g_free);
 
   for (size_t i = 0; i < url_count; ++i) {
-    const char *url = urls[i];
+    const char *url = env_relays ? relay_list[i] : default_urls[i];
+    if (!url || !*url) {
+      g_message("worker: relay %zu/%zu skipped (empty)", i+1, url_count);
+      continue;
+    }
+    g_message("worker: relay %zu/%zu url=%s", i+1, url_count, url);
     g_message("worker: connecting %s", url);
     Error *err = NULL;
     NostrRelay *relay = nostr_relay_new(NULL, url, &err);
     if (!relay) {
-      g_ptr_array_add(lines, g_strdup_printf("-\t[error] relay_new %s: %s", url, err ? err->message : "unknown"));
+      g_ptr_array_add(batch, g_strdup_printf("-\t[error] relay_new %s: %s", url, err ? err->message : "unknown"));
+      maybe_post_batch(d->self, &batch, &last_post_us, interval_us, batch_max);
       if (err) free_error(err);
       continue;
     }
     if (!nostr_relay_connect(relay, &err)) {
-      g_ptr_array_add(lines, g_strdup_printf("-\t[error] connect %s: %s", url, err ? err->message : "unknown"));
+      g_ptr_array_add(batch, g_strdup_printf("-\t[error] connect %s: %s", url, err ? err->message : "unknown"));
+      maybe_post_batch(d->self, &batch, &last_post_us, interval_us, batch_max);
       if (err) free_error(err);
       nostr_relay_free(relay);
       continue;
@@ -250,26 +1201,40 @@ static void timeline_refresh_worker(GTask *task, gpointer source, gpointer task_
     NostrFilter *f = nostr_filter_new();
     int kinds[] = { 1 };
     nostr_filter_set_kinds(f, kinds, 1);
-    int lim = d && d->limit > 0 ? d->limit : 20;
-    nostr_filter_set_limit(f, lim);
-    time_t now = time(NULL);
-    int64_t since = (int64_t)now - 3600; /* last 1h */
-    if (since < 0) since = 0;
-    nostr_filter_set_since_i64(f, since);
+    int lim = d && d->limit > 0 ? d->limit : (d && d->self ? (int)GNOSTR_MAIN_WINDOW(d->self)->default_limit : 30);
+    if (total_collected >= lim) {
+      g_message("worker: global limit reached (%d), stopping before %s", lim, url);
+      break;
+    }
+    int per_relay_lim = lim - total_collected;
+    /* Some relays apply limit per-subscription; request only remaining needed */
+    nostr_filter_set_limit(f, per_relay_lim);
+    /* Canonical: when asking for recent events with a limit, omit 'since'.
+       Allow opting-in via GNOSTR_USE_SINCE and optional GNOSTR_SINCE_SECONDS. */
+    if (d && d->self && GNOSTR_MAIN_WINDOW(d->self)->use_since) {
+      int window_secs = (int)GNOSTR_MAIN_WINDOW(d->self)->since_seconds;
+      time_t now = time(NULL);
+      int64_t since = (int64_t)now - window_secs;
+      if (since < 0) since = 0;
+      nostr_filter_set_since_i64(f, since);
+      g_message("worker: using since=%ld seconds ago (env)", (long)window_secs);
+    }
     NostrFilters *fs = nostr_filters_new();
     nostr_filters_add(fs, f);
 
     GoContext *bg = go_context_background();
     NostrSubscription *sub = (NostrSubscription*)nostr_relay_prepare_subscription(relay, bg, fs);
     if (!sub) {
-      g_ptr_array_add(lines, g_strdup_printf("-\t[error] prepare sub %s", url));
+      g_ptr_array_add(batch, g_strdup_printf("-\t[error] prepare sub %s", url));
+      maybe_post_batch(d->self, &batch, &last_post_us, interval_us, batch_max);
       nostr_relay_disconnect(relay);
       nostr_relay_free(relay);
       nostr_filters_free(fs);
       continue;
     }
     if (!nostr_subscription_fire(sub, &err)) {
-      g_ptr_array_add(lines, g_strdup_printf("-\t[error] fire sub %s: %s", url, err ? err->message : "unknown"));
+      g_ptr_array_add(batch, g_strdup_printf("-\t[error] fire sub %s: %s", url, err ? err->message : "unknown"));
+      maybe_post_batch(d->self, &batch, &last_post_us, interval_us, batch_max);
       if (err) free_error(err);
       nostr_subscription_close(sub, NULL);
       nostr_subscription_free(sub);
@@ -288,15 +1253,18 @@ static void timeline_refresh_worker(GTask *task, gpointer source, gpointer task_
     gint64 eose_time_us = 0;
     int collected = 0; /* per-relay count */
     const gint64 started_us = g_get_monotonic_time();
-    const gint64 per_relay_hard_us = started_us + (3 * G_TIME_SPAN_SECOND);
-    /* If busy, extend briefly when events arrive, but cap to 300ms after last event post-EOSE */
-    gint64 quiet_deadline_us = g_get_monotonic_time() + (300 * G_TIME_SPAN_MILLISECOND);
+    const guint hard_ms = (d && d->self) ? GNOSTR_MAIN_WINDOW(d->self)->per_relay_hard_ms : 5000;
+    const gint64 per_relay_hard_us = started_us + (hard_ms * G_TIME_SPAN_MILLISECOND);
+    /* If busy, extend briefly when events arrive, but cap to 750ms after last event post-EOSE */
+    const guint eose_quiet_ms = (d && d->self) ? GNOSTR_MAIN_WINDOW(d->self)->eose_quiet_ms : 150;
+    gint64 quiet_deadline_us = g_get_monotonic_time() + (eose_quiet_ms * G_TIME_SPAN_MILLISECOND);
     while (TRUE) {
       /* CLOSED wins: exit immediately */
       void *data = NULL;
       if (ch_closed && go_channel_try_receive(ch_closed, &data) == 0) {
         const char *reason = (const char *)data;
-        g_ptr_array_add(lines, g_strdup_printf("%s\t[%s] CLOSED: %s", "-", url, reason ? reason : ""));
+        g_ptr_array_add(batch, g_strdup_printf("%s\t[%s] CLOSED: %s", "-", url, reason ? reason : ""));
+        maybe_post_batch(d->self, &batch, &last_post_us, interval_us, batch_max);
         break;
       }
 
@@ -324,7 +1292,8 @@ static void timeline_refresh_worker(GTask *task, gpointer source, gpointer task_
         if (!eid) eid = "-";
         gchar *row = g_strdup_printf("%s\t[%s] %s | %s (%ld)", eid, url, pubkey ? pubkey : "(anon)", one ? one : "", (long)ts);
         g_debug("worker: row eid=%.12s... text=%.40s", eid, one ? one : "");
-        g_ptr_array_add(lines, row);
+        g_ptr_array_add(batch, row);
+        maybe_post_batch(d->self, &batch, &last_post_us, interval_us, batch_max);
         collected++;
         if (one) g_free(one);
         if (collected >= lim) {
@@ -335,7 +1304,7 @@ static void timeline_refresh_worker(GTask *task, gpointer source, gpointer task_
       }
       if (any_event) {
         /* Extend quiet deadline a bit after receiving events to allow small bursts */
-        quiet_deadline_us = g_get_monotonic_time() + (150 * G_TIME_SPAN_MILLISECOND);
+        quiet_deadline_us = g_get_monotonic_time() + (eose_quiet_ms * G_TIME_SPAN_MILLISECOND);
       }
 
       /* Observe EOSE but don't break until grace period elapses */
@@ -348,14 +1317,37 @@ static void timeline_refresh_worker(GTask *task, gpointer source, gpointer task_
 
       /* Exit conditions */
       const gint64 now_us = g_get_monotonic_time();
-      if (collected >= lim) {
+      if (collected >= per_relay_lim) {
+        /* Reached limit; flush any pending items before breaking */
+        if (batch && batch->len > 0 && d && d->self) {
+          g_message("timeline_refresh_worker: flushing remaining (limit hit, lines=%u)", batch->len);
+          schedule_apply_lines(d->self, batch);
+          batch = g_ptr_array_new_with_free_func(g_free);
+          last_post_us = now_us;
+        }
         break;
       }
       if (eose_seen) {
         /* After EOSE, exit after quiet period of ~150ms without new events */
-        if (!any_event && now_us > quiet_deadline_us) break;
-        /* Hard-cap maximum wait after EOSE to 500ms */
-        if (eose_time_us && now_us - eose_time_us > (500 * G_TIME_SPAN_MILLISECOND)) break;
+        if (!any_event && now_us > quiet_deadline_us) {
+          if (batch && batch->len > 0 && d && d->self) {
+            g_message("timeline_refresh_worker: flushing remaining (EOSE quiet, lines=%u)", batch->len);
+            schedule_apply_lines(d->self, batch);
+            batch = g_ptr_array_new_with_free_func(g_free);
+            last_post_us = now_us;
+          }
+          break;
+        }
+        /* Hard-cap maximum wait after EOSE to 1500ms */
+        if (eose_time_us && now_us - eose_time_us > (1500 * G_TIME_SPAN_MILLISECOND)) {
+          if (batch && batch->len > 0 && d && d->self) {
+            g_message("timeline_refresh_worker: flushing remaining (EOSE hard-cap, lines=%u)", batch->len);
+            schedule_apply_lines(d->self, batch);
+            batch = g_ptr_array_new_with_free_func(g_free);
+            last_post_us = now_us;
+          }
+          break;
+        }
       }
       /* Also hard-cap per relay duration to avoid indefinite loops on busy relays */
       if (now_us > per_relay_hard_us) {
@@ -367,13 +1359,25 @@ static void timeline_refresh_worker(GTask *task, gpointer source, gpointer task_
       g_usleep(1000 * 5); /* 5ms */
     }
 
-    g_message("worker: %s collected=%d (limit=%d)", url, collected, lim);
-    /* Cleanup per relay */
+    /* Flush any per-relay leftovers before teardown */
+    if (batch && batch->len > 0 && d && d->self) {
+      g_message("timeline_refresh_worker: flushing remaining (relay end, lines=%u)", batch->len);
+      schedule_apply_lines(d->self, batch);
+      batch = g_ptr_array_new_with_free_func(g_free);
+      last_post_us = g_get_monotonic_time();
+    }
+    total_collected += collected;
+    g_message("worker: %s collected=%d (per-relay lim=%d, total=%d/%d)", url, collected, per_relay_lim, total_collected, lim);
+    g_message("worker: moving on from %s", url);
+    g_message("worker: finished relay %zu/%zu, total so far %d/%d", i+1, url_count, total_collected, lim);
+    /* Minimal immediate action: close subscription to stop further events */
     nostr_subscription_close(sub, NULL);
-    nostr_subscription_free(sub);
-    nostr_relay_disconnect(relay);
-    nostr_relay_free(relay);
-    nostr_filters_free(fs);
+    /* Defer heavy teardown to post-loop to avoid blocking here */
+    CleanupItem *ci = g_new0(CleanupItem, 1);
+    ci->sub = sub;
+    ci->relay = relay;
+    ci->fs = fs;
+    g_ptr_array_add(deferred, ci);
   }
 #else
   /* Fallback demo: synthesize placeholder lines. */
@@ -381,21 +1385,36 @@ static void timeline_refresh_worker(GTask *task, gpointer source, gpointer task_
   int n = d ? d->limit : 5;
   for (int i = 0; i < n; i++) {
     gchar *s = g_strdup_printf("-\t[demo] note %d at %ld", i+1, (long)now);
-    g_ptr_array_add(lines, s);
+    g_ptr_array_add(batch, s);
+    maybe_post_batch(d->self, &batch, &last_post_us, interval_us);
   }
 #endif
 
-  /* Post UI apply directly to the main loop to ensure timely update */
-  if (d && d->self) {
-    IdleApplyCtx *c = g_new0(IdleApplyCtx, 1);
-    c->self = g_object_ref(d->self);
-    c->lines = lines; /* transfer ownership to idle ctx */
-    g_message("timeline_refresh_worker: scheduling main-loop apply (lines=%u)", lines ? lines->len : 0);
-    g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, (GSourceFunc)apply_timeline_lines_idle, c, NULL);
-  } else {
-    /* No window; just free lines */
-    g_ptr_array_unref(lines);
+#ifdef GNOSTR_ENABLE_REAL_SIMPLEPOOL
+  /* Drain deferred cleanup after processing all relays */
+  if (deferred) {
+    for (guint i = 0; i < deferred->len; ++i) {
+      CleanupItem *ci = (CleanupItem*)g_ptr_array_index(deferred, i);
+      if (!ci) continue;
+      if (ci->sub) nostr_subscription_free(ci->sub);
+      if (ci->relay) {
+        nostr_relay_disconnect(ci->relay);
+        nostr_relay_free(ci->relay);
+      }
+      if (ci->fs) nostr_filters_free(ci->fs);
+    }
+    g_ptr_array_free(deferred, TRUE);
+    g_message("worker: all relays processed, total=%d", total_collected);
   }
+#endif
+
+  /* Post any remaining batch */
+  if (batch && batch->len > 0 && d && d->self) {
+    schedule_apply_lines(d->self, batch);
+    batch = NULL; /* transferred */
+  }
+  /* Free legacy accumulator if still allocated */
+  if (lines) g_ptr_array_unref(lines);
   g_task_return_boolean(task, TRUE);
   g_message("timeline_refresh_worker: done");
 }
@@ -441,7 +1460,7 @@ static void timeline_refresh_async(GnostrMainWindow *self, int limit) {
 static void on_refresh_clicked(GtkButton *button, gpointer user_data) {
   (void)button;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  timeline_refresh_async(self, 10);
+  start_pool_backfill(self, (int)self->default_limit);
 }
 
 /* No proxy signals: org.nostr.Signer.xml does not define approval signals. */
@@ -601,12 +1620,14 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, stack);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, timeline);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_settings);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_relays);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_menu);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, composer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_refresh);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_revealer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_label);
   gtk_widget_class_bind_template_callback(widget_class, on_settings_clicked);
+  gtk_widget_class_bind_template_callback(widget_class, on_relays_clicked);
 }
 
 static void gnostr_main_window_init(GnostrMainWindow *self) {
@@ -616,6 +1637,19 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   g_weak_ref_init(&self->timeline_ref, self->timeline);
   /* Initialize dedup table */
   self->seen_texts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  /* Initialize tuning knobs from env with sensible defaults */
+  self->batch_max = getenv_uint_default("GNOSTR_BATCH_MAX", 5);
+  self->post_interval_ms = getenv_uint_default("GNOSTR_POST_INTERVAL_MS", 150);
+  self->eose_quiet_ms = getenv_uint_default("GNOSTR_EOSE_QUIET_MS", 150);
+  self->per_relay_hard_ms = getenv_uint_default("GNOSTR_PER_RELAY_HARD_MS", 5000);
+  self->default_limit = getenv_uint_default("GNOSTR_DEFAULT_LIMIT", 30);
+  self->use_since = FALSE;
+  self->since_seconds = getenv_uint_default("GNOSTR_SINCE_SECONDS", 3600);
+  self->backfill_interval_sec = getenv_uint_default("GNOSTR_BACKFILL_SEC", 0);
+
+  /* Load persisted settings (overrides env defaults) */
+  gnostr_load_settings(self);
+  self->backfill_source_id = 0;
   /* Build app menu for header button */
   if (self->btn_menu) {
     GMenu *menu = g_menu_new();
@@ -642,6 +1676,18 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   }
   /* Seed initial items so Timeline page isn't empty */
   g_timeout_add_once(150, (GSourceOnceFunc)initial_refresh_timeout_cb, self);
+
+  /* If backfill requested via env, start periodic timer */
+  if (self->backfill_interval_sec > 0) {
+    self->backfill_source_id = g_timeout_add_seconds_full(G_PRIORITY_DEFAULT,
+        self->backfill_interval_sec,
+        (GSourceFunc)periodic_backfill_cb,
+        g_object_ref(self),
+        (GDestroyNotify)g_object_unref);
+  }
+
+  /* Start live streaming via SimplePool */
+  start_pool_live(self);
 }
 
 GnostrMainWindow *gnostr_main_window_new(GtkApplication *app) {

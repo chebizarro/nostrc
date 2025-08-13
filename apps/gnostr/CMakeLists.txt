@@ -26,10 +26,13 @@ add_custom_command(
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-main-window.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-composer.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-settings-dialog.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-manager.ui
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
   VERBATIM)
 
-file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c)
+file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c)
 list(APPEND APP_SRC ${GRESOURCE_C})
 if (NOT APP_SRC)
   set(APP_SRC src/main_app.c)
@@ -55,6 +58,13 @@ target_compile_features(${APP_CLIENT_BIN} PRIVATE c_std_11)
 target_compile_definitions(${APP_CLIENT_BIN} PRIVATE APP_ID="${APP_CLIENT_FLATPAK_ID}" APP_NAME="${APP_CLIENT_NAME}")
 # Enable real SimplePool-backed timeline fetching in the UI
 target_compile_definitions(${APP_CLIENT_BIN} PRIVATE GNOSTR_ENABLE_REAL_SIMPLEPOOL)
+# Include GI wrapper and core headers for SimplePool and nostr models
+target_include_directories(${APP_CLIENT_BIN} PRIVATE
+  ${CMAKE_SOURCE_DIR}/gobject/include
+  ${CMAKE_SOURCE_DIR}/libnostr/include
+  ${CMAKE_SOURCE_DIR}/libgo/include)
+# Compile the GI wrapper implementation into the app (no separate gobject lib target)
+target_sources(${APP_CLIENT_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c)
 # Link libnostr GLib if available; fall back to core libnostr where needed
 if (TARGET nostr)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE libnostr nostr_json)
@@ -92,3 +102,21 @@ endfunction()
 _gnostr_apply_sanitizers(${APP_CLIENT_BIN})
 
 install(TARGETS ${APP_CLIENT_BIN} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# ---- Tests ----
+include(CTest)
+if (BUILD_TESTING)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0)
+  add_executable(gnostr-test-relays tests/test_relays.c)
+  target_compile_features(gnostr-test-relays PRIVATE c_std_11)
+  target_include_directories(gnostr-test-relays PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_sources(gnostr-test-relays PRIVATE src/util/relays.c)
+  target_link_libraries(gnostr-test-relays PRIVATE PkgConfig::GLIB PkgConfig::GIO)
+  _gnostr_apply_sanitizers(gnostr-test-relays)
+  add_test(NAME gnostr-test-relays COMMAND gnostr-test-relays)
+endif()
+
+# ---- GSettings schema install ----
+install(FILES data/schemas/org.gnostr.gnostr.gschema.xml
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/glib-2.0/schemas)

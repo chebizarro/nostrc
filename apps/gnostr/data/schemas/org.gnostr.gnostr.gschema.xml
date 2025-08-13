@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnostr.gnostr" path="/org/gnostr/gnostr/">
+    <key name="relays" type="as">
+      <default>[]</default>
+      <summary>Relay URLs</summary>
+      <description>
+        List of Nostr relay URLs (ws:// or wss://). Values should be normalized
+        (lowercase scheme/host, no trailing slash) for canonical storage.
+      </description>
+    </key>
+    <key name="relays-window-width" type="i">
+      <default>520</default>
+      <summary>Relay Manager window width</summary>
+      <description>Last used width for the Relay Manager dialog.</description>
+    </key>
+    <key name="relays-window-height" type="i">
+      <default>420</default>
+      <summary>Relay Manager window height</summary>
+      <description>Last used height for the Relay Manager dialog.</description>
+    </key>
+  </schema>
+</schemalist>

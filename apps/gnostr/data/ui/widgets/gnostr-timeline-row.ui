@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <!-- A simple row widget: just a label. Root is the label so ListItem child is a GtkLabel. -->
+  <object class="GtkLabel" id="label">
+    <property name="wrap">true</property>
+    <property name="xalign">0.0</property>
+    <property name="selectable">false</property>
+  </object>
+</interface>

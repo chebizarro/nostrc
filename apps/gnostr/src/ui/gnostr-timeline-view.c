@@ -18,22 +18,38 @@ static void gnostr_timeline_view_dispose(GObject *obj) {
   g_debug("timeline_view dispose: list_view=%p string_model=%p", (void*)self->list_view, (void*)self->string_model);
   if (self->list_view && GTK_IS_LIST_VIEW(self->list_view))
     gtk_list_view_set_model(GTK_LIST_VIEW(self->list_view), NULL);
-  g_clear_object(&self->selection_model);
-  g_clear_object(&self->string_model);
+  if (self->selection_model) {
+    if (G_IS_OBJECT(self->selection_model)) g_object_unref(self->selection_model);
+    self->selection_model = NULL;
+  }
+  if (self->string_model) {
+    if (G_IS_OBJECT(self->string_model)) g_object_unref(self->string_model);
+    self->string_model = NULL;
+  }
+  /* Dispose template children before chaining up so they are unparented first */
+  gtk_widget_dispose_template(GTK_WIDGET(obj), GNOSTR_TYPE_TIMELINE_VIEW);
+  self->root_scroller = NULL;
+  self->list_view = NULL;
   G_OBJECT_CLASS(gnostr_timeline_view_parent_class)->dispose(obj);
 }
 
 static void gnostr_timeline_view_finalize(GObject *obj) {
-  gtk_widget_dispose_template(GTK_WIDGET(obj), GNOSTR_TYPE_TIMELINE_VIEW);
   G_OBJECT_CLASS(gnostr_timeline_view_parent_class)->finalize(obj);
 }
 
+/* Setup: load row UI from resource and set as child */
 static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
-  GtkWidget *lbl = gtk_label_new("");
-  gtk_label_set_wrap(GTK_LABEL(lbl), TRUE);
-  gtk_list_item_set_child(item, lbl);
-  g_debug("factory setup: item=%p child=%p", (void*)item, (void*)lbl);
+  GtkBuilder *b = gtk_builder_new_from_resource("/org/gnostr/ui/ui/widgets/gnostr-timeline-row.ui");
+  GtkWidget *row = GTK_WIDGET(gtk_builder_get_object(b, "label"));
+  if (!row) {
+    g_warning("timeline row builder missing 'label'");
+    g_object_unref(b);
+    return;
+  }
+  /* ListItem takes ownership of the child */
+  gtk_list_item_set_child(item, row);
+  g_object_unref(b);
 }
 
 static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
@@ -72,7 +88,6 @@ static void gnostr_timeline_view_class_init(GnostrTimelineViewClass *klass) {
   GObjectClass *gobj_class = G_OBJECT_CLASS(klass);
   gobj_class->dispose = gnostr_timeline_view_dispose;
   gobj_class->finalize = gnostr_timeline_view_finalize;
-  gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BIN_LAYOUT);
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
   gtk_widget_class_bind_template_child(widget_class, GnostrTimelineView, root_scroller);
   gtk_widget_class_bind_template_child(widget_class, GnostrTimelineView, list_view);
@@ -80,6 +95,10 @@ static void gnostr_timeline_view_class_init(GnostrTimelineViewClass *klass) {
 
 static void gnostr_timeline_view_init(GnostrTimelineView *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+  /* Ensure our single child fills available space */
+  GtkLayoutManager *lm = gtk_box_layout_new(GTK_ORIENTATION_VERTICAL);
+  gtk_widget_set_layout_manager(GTK_WIDGET(self), lm);
+  /* Child widgets already have hexpand/vexpand in template */
   g_debug("timeline_view init: self=%p root_scroller=%p list_view=%p", (void*)self, (void*)self->root_scroller, (void*)self->list_view);
   setup_default_factory(self);
 }

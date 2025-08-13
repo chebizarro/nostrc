@@ -4,5 +4,8 @@
     <file>ui/gnostr-main-window.ui</file>
     <file>ui/widgets/gnostr-timeline-view.ui</file>
     <file>ui/widgets/gnostr-composer.ui</file>
+    <file>ui/widgets/gnostr-timeline-row.ui</file>
+    <file>ui/dialogs/gnostr-settings-dialog.ui</file>
+    <file>ui/dialogs/gnostr-relay-manager.ui</file>
   </gresource>
 </gresources>

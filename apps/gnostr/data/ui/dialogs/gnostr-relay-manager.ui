@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <object class="GtkWindow" id="relay_manager_window">
+    <property name="title">Relays</property>
+    <property name="default-width">520</property>
+    <property name="default-height">420</property>
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">12</property>
+        <property name="margin-end">12</property>
+        <property name="margin-top">12</property>
+        <property name="margin-bottom">12</property>
+
+        <child>
+          <object class="GtkBox">
+            <property name="spacing">6</property>
+            <child>
+              <object class="GtkEntry" id="relay_entry">
+                <property name="hexpand">true</property>
+                <property name="placeholder-text">wss://example.com</property>
+                <property name="tooltip-text">Enter a relay URL (ws:// or wss://). Press Enter to add.</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_add">
+                <property name="label">_Add</property>
+                <property name="use-underline">true</property>
+                <property name="tooltip-text">Add relay (Enter in field)</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_remove">
+                <property name="label">_Remove</property>
+                <property name="use-underline">true</property>
+                <property name="tooltip-text">Remove selected (Delete)</property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <child>
+          <object class="GtkLabel" id="shortcut_hint">
+            <property name="xalign">0.0</property>
+            <property name="use-markup">true</property>
+            <property name="wrap">true</property>
+            <property name="label">&lt;small&gt;Tips: Press &lt;b&gt;Enter&lt;/b&gt; to add, &lt;b&gt;Delete&lt;/b&gt; to remove, &lt;b&gt;Ctrl+Enter&lt;/b&gt; to save, &lt;b&gt;Esc&lt;/b&gt; to close.&lt;/small&gt;</property>
+          </object>
+        </child>
+
+        <child>
+          <object class="GtkScrolledWindow">
+            <property name="hexpand">true</property>
+            <property name="vexpand">true</property>
+            <child>
+              <object class="GtkListView" id="relay_list"/>
+            </child>
+          </object>
+        </child>
+
+        <child>
+          <object class="GtkLabel" id="status_label">
+            <property name="xalign">0.0</property>
+            <property name="use-markup">true</property>
+            <property name="wrap">false</property>
+            <property name="label">&lt;small&gt;0 relays • Saved&lt;/small&gt;</property>
+          </object>
+        </child>
+
+        <child>
+          <object class="GtkBox">
+            <property name="halign">end</property>
+            <property name="spacing">6</property>
+            <child>
+              <object class="GtkButton" id="btn_cancel">
+                <property name="label">_Cancel</property>
+                <property name="use-underline">true</property>
+                <property name="tooltip-text">Close without saving (Esc)</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_save">
+                <property name="label">_Save</property>
+                <property name="use-underline">true</property>
+                <property name="tooltip-text">Save relays (Ctrl+Enter)</property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+      </object>
+    </child>
+  </object>
+</interface>
