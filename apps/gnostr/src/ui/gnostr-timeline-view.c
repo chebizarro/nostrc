@@ -1,6 +1,9 @@
 #include "gnostr-timeline-view.h"
 #include <string.h>
 #include <time.h>
+#ifdef HAVE_SOUP3
+#include <libsoup/soup.h>
+#endif
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-timeline-view.ui"
 
@@ -17,6 +20,8 @@ typedef struct _TimelineItem {
   gchar *root_id;
   gchar *pubkey;
   gint64 created_at;
+  /* avatar */
+  gchar *avatar_url;
   /* children list when acting as a parent in a thread */
   GListStore *children; /* element-type: TimelineItem */
 } TimelineItem;
@@ -38,6 +43,7 @@ enum {
   PROP_ROOT_ID,
   PROP_PUBKEY,
   PROP_CREATED_AT,
+  PROP_AVATAR_URL,
   N_PROPS
 };
 
@@ -55,6 +61,7 @@ static void timeline_item_set_property(GObject *obj, guint prop_id, const GValue
     case PROP_ROOT_ID:      g_free(self->root_id);      self->root_id      = g_value_dup_string(value); break;
     case PROP_PUBKEY:       g_free(self->pubkey);       self->pubkey       = g_value_dup_string(value); break;
     case PROP_CREATED_AT:   self->created_at            = g_value_get_int64(value); break;
+    case PROP_AVATAR_URL:   g_free(self->avatar_url);   self->avatar_url   = g_value_dup_string(value); break;
     default: G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop_id, pspec);
   }
 }
@@ -71,6 +78,7 @@ static void timeline_item_get_property(GObject *obj, guint prop_id, GValue *valu
     case PROP_ROOT_ID:      g_value_set_string(value, self->root_id); break;
     case PROP_PUBKEY:       g_value_set_string(value, self->pubkey); break;
     case PROP_CREATED_AT:   g_value_set_int64 (value, self->created_at); break;
+    case PROP_AVATAR_URL:   g_value_set_string(value, self->avatar_url); break;
     default: G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop_id, pspec);
   }
 }
@@ -84,6 +92,7 @@ static void timeline_item_dispose(GObject *obj) {
   g_clear_pointer(&self->id, g_free);
   g_clear_pointer(&self->root_id, g_free);
   g_clear_pointer(&self->pubkey, g_free);
+  g_clear_pointer(&self->avatar_url, g_free);
   if (self->children) g_clear_object(&self->children);
   G_OBJECT_CLASS(timeline_item_parent_class)->dispose(obj);
 }
@@ -102,6 +111,7 @@ static void timeline_item_class_init(TimelineItemClass *klass) {
   ti_props[PROP_ROOT_ID]      = g_param_spec_string ("root-id",      "root-id",      "Root Event Id",NULL, G_PARAM_READWRITE);
   ti_props[PROP_PUBKEY]       = g_param_spec_string ("pubkey",       "pubkey",       "Pubkey",       NULL, G_PARAM_READWRITE);
   ti_props[PROP_CREATED_AT]   = g_param_spec_int64  ("created-at",   "created-at",   "Created At",   0, G_MAXINT64, 0, G_PARAM_READWRITE);
+  ti_props[PROP_AVATAR_URL]   = g_param_spec_string("avatar-url",   "avatar-url",   "Avatar URL",    NULL, G_PARAM_READWRITE);
   g_object_class_install_properties(oc, N_PROPS, ti_props);
 }
 
@@ -201,22 +211,95 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
   GtkWidget *w_timestamp    = GTK_WIDGET(gtk_builder_get_object(b, "timestamp"));
   GtkWidget *w_content      = GTK_WIDGET(gtk_builder_get_object(b, "content"));
   GtkWidget *w_avatar_init  = GTK_WIDGET(gtk_builder_get_object(b, "avatar_initials"));
+  GtkWidget *w_avatar_img   = GTK_WIDGET(gtk_builder_get_object(b, "avatar_image"));
   GtkWidget *w_indicator    = GTK_WIDGET(gtk_builder_get_object(b, "thread_indicator"));
   g_object_set_data(G_OBJECT(row), "display_name", w_display_name);
   g_object_set_data(G_OBJECT(row), "handle", w_handle);
   g_object_set_data(G_OBJECT(row), "timestamp", w_timestamp);
   g_object_set_data(G_OBJECT(row), "content", w_content);
   g_object_set_data(G_OBJECT(row), "avatar_initials", w_avatar_init);
+  g_object_set_data(G_OBJECT(row), "avatar_image", w_avatar_img);
   g_object_set_data(G_OBJECT(row), "thread_indicator", w_indicator);
   /* ListItem takes ownership of the child */
   gtk_list_item_set_child(item, row);
   g_object_unref(b);
 }
 
+/* Simple shared cache for downloaded avatar textures by URL */
+static GHashTable *avatar_texture_cache = NULL; /* key: char* url, value: GdkTexture* */
+
+static void ensure_avatar_cache(void) {
+  if (!avatar_texture_cache) avatar_texture_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
+}
+
+static gboolean str_has_prefix_http(const char *s) {
+  return s && (g_str_has_prefix(s, "http://") || g_str_has_prefix(s, "https://"));
+}
+
+typedef struct { GtkWidget *image; GtkWidget *initials; char *url; } AvatarCtx;
+static void avatar_ctx_free(AvatarCtx *c){ if(!c) return; g_free(c->url); g_free(c); }
+
+#ifdef HAVE_SOUP3
+static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  AvatarCtx *ctx = (AvatarCtx*)user_data;
+  GError *error = NULL;
+  GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
+  if (!bytes) { g_clear_error(&error); avatar_ctx_free(ctx); return; }
+  GdkTexture *tex = gdk_texture_new_from_bytes(bytes, &error);
+  g_bytes_unref(bytes);
+  if (!tex) { g_clear_error(&error); avatar_ctx_free(ctx); return; }
+  ensure_avatar_cache();
+  g_hash_table_replace(avatar_texture_cache, g_strdup(ctx->url), g_object_ref(tex));
+  if (GTK_IS_PICTURE(ctx->image)) { gtk_picture_set_paintable(GTK_PICTURE(ctx->image), GDK_PAINTABLE(tex)); gtk_widget_set_visible(ctx->image, TRUE); }
+  if (GTK_IS_WIDGET(ctx->initials)) gtk_widget_set_visible(ctx->initials, FALSE);
+  g_object_unref(tex);
+  avatar_ctx_free(ctx);
+}
+#endif
+
+static void try_set_avatar(GtkWidget *row, const char *avatar_url, const char *display, const char *handle) {
+  GtkWidget *w_init = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "avatar_initials"));
+  GtkWidget *w_img  = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "avatar_image"));
+  /* Derive initials fallback */
+  const char *src = (display && *display) ? display : (handle && *handle ? handle : "AN");
+  char initials[3] = {0};
+  int i = 0; for (const char *p = src; *p && i < 2; p++) { if (g_ascii_isalnum(*p)) initials[i++] = g_ascii_toupper(*p); }
+  if (i == 0) { initials[0] = 'A'; initials[1] = 'N'; }
+  if (GTK_IS_LABEL(w_init)) gtk_label_set_text(GTK_LABEL(w_init), initials);
+
+  if (!avatar_url || !*avatar_url || !str_has_prefix_http(avatar_url) || !GTK_IS_PICTURE(w_img)) {
+    if (GTK_IS_WIDGET(w_img)) gtk_widget_set_visible(w_img, FALSE);
+    if (GTK_IS_WIDGET(w_init)) gtk_widget_set_visible(w_init, TRUE);
+    return;
+  }
+  ensure_avatar_cache();
+  GdkTexture *cached = (GdkTexture*)g_hash_table_lookup(avatar_texture_cache, avatar_url);
+  if (cached) {
+    gtk_picture_set_paintable(GTK_PICTURE(w_img), GDK_PAINTABLE(cached));
+    gtk_widget_set_visible(w_img, TRUE);
+    if (GTK_IS_WIDGET(w_init)) gtk_widget_set_visible(w_init, FALSE);
+    return;
+  }
+#ifdef HAVE_SOUP3
+  /* Download via libsoup if available */
+  SoupSession *sess = soup_session_new();
+  SoupMessage *msg = soup_message_new("GET", avatar_url);
+  AvatarCtx *ctx = g_new0(AvatarCtx, 1); ctx->image = w_img; ctx->initials = w_init; ctx->url = g_strdup(avatar_url);
+  soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
+  g_object_unref(msg);
+  g_object_unref(sess);
+#else
+  /* libsoup not available: stick to initials */
+  if (GTK_IS_WIDGET(w_img)) gtk_widget_set_visible(w_img, FALSE);
+  if (GTK_IS_WIDGET(w_init)) gtk_widget_set_visible(w_init, TRUE);
+#endif
+}
+
 static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
   GObject *obj = gtk_list_item_get_item(item);
-  gchar *display = NULL, *handle = NULL, *ts = NULL, *content = NULL, *root_id = NULL;
+  gchar *display = NULL, *handle = NULL, *ts = NULL, *content = NULL, *root_id = NULL, *avatar_url = NULL;
   guint depth = 0; gboolean is_reply = FALSE; gint64 created_at = 0;
   if (G_IS_OBJECT(obj) && G_TYPE_CHECK_INSTANCE_TYPE(obj, timeline_item_get_type())) {
     g_object_get(obj,
@@ -227,6 +310,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                  "depth",        &depth,
                  "root-id",      &root_id,
                  "created-at",   &created_at,
+                 "avatar-url",   &avatar_url,
                  NULL);
     is_reply = depth > 0;
   }
@@ -237,6 +321,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   GtkWidget *w_timestamp    = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "timestamp"));
   GtkWidget *w_content      = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "content"));
   GtkWidget *w_avatar_init  = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "avatar_initials"));
+  GtkWidget *w_avatar_img   = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "avatar_image"));
   GtkWidget *w_indicator    = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "thread_indicator"));
 
   /* Populate */
@@ -308,6 +393,8 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     }
   }
   GtkStyleContext *row_sc = gtk_widget_get_style_context(row);
+  gtk_style_context_remove_class(row_sc, "thread-root");
+  gtk_style_context_remove_class(row_sc, "thread-reply");
   gtk_style_context_add_class(row_sc, is_reply ? "thread-reply" : "thread-root");
 
   g_debug("factory bind: item=%p content=%.60s depth=%u", (void*)item, content ? content : "", depth);

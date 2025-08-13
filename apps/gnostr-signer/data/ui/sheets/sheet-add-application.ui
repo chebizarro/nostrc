@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="SheetAddApplication" parent="AdwDialog">
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">12</property>
+        <property name="margin-end">12</property>
+        <property name="margin-top">12</property>
+        <property name="margin-bottom">12</property>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="yes">Add a new application</property>
+            <attributes><attribute name="weight" value="bold"/></attributes>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">12</property>
+            <child>
+              <object class="GtkButton" id="btn_paste">
+                <property name="label" translatable="yes">Paste from _clipboard</property>
+                <property name="use-underline">true</property>
+                <property name="tooltip-text" translatable="yes">Paste an application URI from the clipboard</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_scan">
+                <property name="label" translatable="yes">Scan a _QR Code</property>
+                <property name="use-underline">true</property>
+                <property name="tooltip-text" translatable="yes">Scan an application QR code</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_add_bunker">
+                <property name="label" translatable="yes">Add a _nsecbunker</property>
+                <property name="use-underline">true</property>
+                <property name="tooltip-text" translatable="yes">Add a nsecbunker reference</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkFrame">
+            <property name="label" translatable="yes">Preview</property>
+            <child>
+              <object class="GtkLabel" id="preview_label">
+                <property name="wrap">true</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="btn_approve">
+            <property name="label" translatable="yes">_Approve</property>
+            <property name="use-underline">true</property>
+            <property name="tooltip-text" translatable="yes">Approve and add this application</property>
+            <property name="valign">center</property>
+            <property name="vexpand">false</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="btn_cancel">
+            <property name="label" translatable="yes">_Cancel</property>
+            <property name="use-underline">true</property>
+            <property name="tooltip-text" translatable="yes">Close without changes</property>
+            <property name="valign">center</property>
+            <property name="vexpand">false</property>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

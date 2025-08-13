@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="RelayRow" parent="AdwActionRow">
+    <property name="title" translatable="yes">Relay URL</property>
+    <property name="subtitle" translatable="yes">Status</property>
+    <child type="suffix">
+      <object class="GtkSwitch" id="switch_enabled">
+        <property name="valign">center</property>
+        <property name="vexpand">false</property>
+      </object>
+    </child>
+  </template>
+</interface>

@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="SignerWindow" parent="AdwApplicationWindow">
+    <property name="default-width">920</property>
+    <property name="default-height">640</property>
+    <child>
+      <object class="AdwToolbarView" id="toolbar_view">
+        <child type="top">
+          <object class="AdwHeaderBar" id="header_bar">
+            <property name="title-widget">
+              <object class="AdwViewSwitcherTitle" id="switcher_title">
+                <property name="stack">stack</property>
+              </object>
+            </property>
+            <child type="end">
+              <object class="GtkMenuButton" id="menu_btn">
+                <property name="icon-name">open-menu-symbolic</property>
+                <property name="valign">center</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwNavigationSplitView" id="split_view">
+            <property name="min-sidebar-width">260</property>
+            <property name="max-sidebar-width">320</property>
+            <child type="sidebar">
+              <object class="AdwNavigationPage" id="sidebar_page">
+                <property name="title" translatable="yes">Sections</property>
+                <property name="child">
+                  <object class="GtkListBox" id="sidebar">
+                    <property name="selection-mode">browse</property>
+                    <child>
+                      <object class="GtkListBoxRow">
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Permissions &amp; Connection</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">8</property>
+                            <property name="margin-bottom">8</property>
+                            <property name="xalign">0</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkListBoxRow">
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Applications</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">8</property>
+                            <property name="margin-bottom">8</property>
+                            <property name="xalign">0</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkListBoxRow">
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Settings</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">8</property>
+                            <property name="margin-bottom">8</property>
+                            <property name="xalign">0</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwNavigationPage" id="content_page">
+                <property name="title" translatable="yes">GNostr Signer</property>
+                <property name="child">
+                  <object class="AdwViewStack" id="stack">
+                    <child>
+                      <object class="AdwViewStackPage">
+                        <property name="name">permissions</property>
+                        <property name="title" translatable="yes">Permissions &amp; Connection</property>
+                        <property name="child">
+                          <object class="PagePermissions" id="page_permissions"/>
+                        </property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwViewStackPage">
+                        <property name="name">applications</property>
+                        <property name="title" translatable="yes">Applications</property>
+                        <property name="child">
+                          <object class="PageApplications" id="page_applications"/>
+                        </property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwViewStackPage">
+                        <property name="name">settings</property>
+                        <property name="title" translatable="yes">Settings</property>
+                        <property name="child">
+                          <object class="PageSettings" id="page_settings"/>
+                        </property>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

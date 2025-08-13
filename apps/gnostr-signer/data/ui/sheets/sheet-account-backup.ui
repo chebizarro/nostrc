@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="SheetAccountBackup" parent="AdwDialog">
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">12</property>
+        <property name="margin-end">12</property>
+        <property name="margin-top">12</property>
+        <property name="margin-bottom">12</property>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="yes">Key Backup and Safety Tips</property>
+            <attributes><attribute name="weight" value="bold"/></attributes>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="wrap">true</property>
+            <property name="label" translatable="yes">• Never share your nsec\n• Developers will never ask for it\n• Keep a secure offline backup</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">6</property>
+            <child>
+              <object class="GtkButton" id="btn_show_seed">
+                <property name="label" translatable="yes">Show _seed words</property>
+                <property name="use-underline">true</property>
+                <property name="tooltip-text" translatable="yes">Reveal mnemonic words</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_copy_secret">
+                <property name="label" translatable="yes">_Copy my secret key</property>
+                <property name="use-underline">true</property>
+                <property name="tooltip-text" translatable="yes">Copy nsec to clipboard</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_show_qr">
+                <property name="label" translatable="yes">Show _QR Code</property>
+                <property name="use-underline">true</property>
+                <property name="tooltip-text" translatable="yes">Display QR code for scanning</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwPreferencesGroup">
+            <property name="title" translatable="yes">Create encrypted key (NIP-49)</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">_Password</property>
+                    <property name="use-underline">true</property>
+                    <property name="xalign">0</property>
+                    <property name="mnemonic-widget">entry_password</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkPasswordEntry" id="entry_password">
+                    <property name="placeholder-text" translatable="yes">Password</property>
+                    <property name="tooltip-text" translatable="yes">Enter a password for encryption</property>
+                    <property name="valign">center</property>
+                    <property name="vexpand">false</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_create_ncrypt">
+                    <property name="label" translatable="yes">_Create</property>
+                    <property name="use-underline">true</property>
+                    <property name="tooltip-text" translatable="yes">Create an encrypted key</property>
+                    <property name="valign">center</property>
+                    <property name="vexpand">false</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="btn_back">
+            <property name="label" translatable="yes">_Back to Settings</property>
+            <property name="use-underline">true</property>
+            <property name="tooltip-text" translatable="yes">Close and return to Settings</property>
+            <property name="valign">center</property>
+            <property name="vexpand">false</property>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

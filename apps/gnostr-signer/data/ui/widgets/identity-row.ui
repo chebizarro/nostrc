@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="IdentityRow" parent="AdwActionRow">
+    <property name="title" translatable="yes">Identity</property>
+    <property name="subtitle" translatable="yes">npub…</property>
+    <child type="suffix">
+      <object class="GtkButton" id="btn_select">
+        <property name="label" translatable="yes">Select</property>
+      </object>
+    </child>
+  </template>
+</interface>

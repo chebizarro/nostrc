@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="PageSettings" parent="AdwPreferencesPage">
+    <child>
+      <object class="AdwPreferencesGroup" id="group_security">
+        <property name="title" translatable="yes">Security</property>
+        <child>
+          <object class="AdwActionRow">
+            <property name="title" translatable="yes">Select Account</property>
+            <child type="suffix"><object class="GtkButton" id="btn_select_account"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwActionRow">
+            <property name="title" translatable="yes">Backup Keys</property>
+            <child type="suffix"><object class="GtkButton" id="btn_backup_keys"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="AdwPreferencesGroup" id="group_network">
+        <property name="title" translatable="yes">Network</property>
+        <child>
+          <object class="AdwActionRow">
+            <property name="title" translatable="yes">Tor/Orbot setup</property>
+            <child type="suffix"><object class="GtkButton" id="btn_orbot_setup"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwActionRow">
+            <property name="title" translatable="yes">Relays</property>
+            <child type="suffix"><object class="GtkButton" id="btn_relays"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwActionRow">
+            <property name="title" translatable="yes">Listen for new connections</property>
+            <child type="suffix"><object class="GtkSwitch" id="switch_listen"><property name="valign">center</property><property name="vexpand">false</property></object></child>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="AdwPreferencesGroup" id="group_misc">
+        <property name="title" translatable="yes">Other</property>
+        <child>
+          <object class="AdwActionRow">
+            <property name="title" translatable="yes">Logs</property>
+            <child type="suffix"><object class="GtkButton" id="btn_logs"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwActionRow">
+            <property name="title" translatable="yes">Sign policy</property>
+            <child type="suffix"><object class="GtkButton" id="btn_sign_policy"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

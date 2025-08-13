@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/org/gnostr/signer">
+    <file>css/app.css</file>
+    <file preprocess="xml-stripblanks">ui/signer-window.ui</file>
+    <file preprocess="xml-stripblanks">ui/sidebar.ui</file>
+    <file preprocess="xml-stripblanks">ui/page-permissions.ui</file>
+    <file preprocess="xml-stripblanks">ui/page-applications.ui</file>
+    <file preprocess="xml-stripblanks">ui/page-settings.ui</file>
+    <file preprocess="xml-stripblanks">ui/sheets/sheet-select-account.ui</file>
+    <file preprocess="xml-stripblanks">ui/sheets/sheet-account-backup.ui</file>
+    <file preprocess="xml-stripblanks">ui/sheets/sheet-add-application.ui</file>
+    <file preprocess="xml-stripblanks">ui/sheets/sheet-create-bunker.ui</file>
+    <file preprocess="xml-stripblanks">ui/sheets/sheet-orbot-setup.ui</file>
+    <file preprocess="xml-stripblanks">ui/widgets/app-row.ui</file>
+    <file preprocess="xml-stripblanks">ui/widgets/identity-row.ui</file>
+    <file preprocess="xml-stripblanks">ui/widgets/relay-row.ui</file>
+  </gresource>
+</gresources>

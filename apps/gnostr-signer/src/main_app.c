@@ -1,7 +1,9 @@
 #include <gtk/gtk.h>
+#include <adwaita.h>
 #include <gio/gio.h>
 #include "policy_store.h"
 #include "accounts_store.h"
+#include "ui/signer-window.h"
 
 #define SIGNER_NAME  "org.nostr.Signer"
 #define SIGNER_PATH  "/org/nostr/signer"
@@ -38,17 +40,42 @@ typedef struct {
   GHashTable *pending;
 } AppUI;
 
-static void set_status(AppUI *ui, const char *text, const char *css) {
+static void set_status(AppUI *ui, const char *text, const char *css_key) {
   gtk_label_set_text(ui->status, text);
-  if (css) {
-    GtkCssProvider *prov = gtk_css_provider_new();
-    gtk_css_provider_load_from_string(prov, css);
-    GdkDisplay *display = gdk_display_get_default();
-    if (display)
-      gtk_style_context_add_provider_for_display(display,
-        GTK_STYLE_PROVIDER(prov), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    g_object_unref(prov);
+  GtkWidget *w = GTK_WIDGET(ui->status);
+  gtk_widget_remove_css_class(w, "status-ok");
+  gtk_widget_remove_css_class(w, "status-error");
+  if (css_key) {
+    if (g_strcmp0(css_key, "ok") == 0) {
+      gtk_widget_add_css_class(w, "status-ok");
+    } else if (g_strcmp0(css_key, "error") == 0) {
+      gtk_widget_add_css_class(w, "status-error");
+    }
   }
+}
+
+
+static void on_app_preferences(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param;
+  GtkApplication *app = GTK_APPLICATION(user_data);
+  GtkWindow *win = gtk_application_get_active_window(app);
+  if (!win) return;
+  signer_window_show_page((SignerWindow*)win, "settings");
+}
+
+static void on_app_about(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param;
+  GtkApplication *app = GTK_APPLICATION(user_data);
+  GtkWindow *parent = gtk_application_get_active_window(app);
+  AdwDialog *about = adw_about_dialog_new();
+  adw_about_dialog_set_application_name(ADW_ABOUT_DIALOG(about), "GNostr Signer");
+  adw_about_dialog_set_application_icon(ADW_ABOUT_DIALOG(about), "org.gnostr.Signer");
+  adw_about_dialog_set_version(ADW_ABOUT_DIALOG(about), "0.1.0");
+  adw_about_dialog_set_website(ADW_ABOUT_DIALOG(about), "https://github.com/chebizarro/nostrc");
+  adw_about_dialog_set_issue_url(ADW_ABOUT_DIALOG(about), "https://github.com/chebizarro/nostrc/issues");
+  const char *devs[] = { "GNostr Team", NULL };
+  adw_about_dialog_set_developers(ADW_ABOUT_DIALOG(about), devs);
+  adw_dialog_present(about, parent ? GTK_WIDGET(parent) : NULL);
 }
 
 
@@ -260,17 +287,17 @@ static void on_approval_requested(GDBusConnection *connection,
   g_free(effective_identity);
 }
 
-static void name_appeared(GDBusConnection *conn, const gchar *name, const gchar *owner, gpointer user_data) {
+static void name_appeared(GDBusConnection *conn, const gchar *name, const char *owner, gpointer user_data) {
   (void)conn; (void)name; (void)owner;
   AppUI *ui = user_data;
-  set_status(ui, "Signer: Available", "label { color: #2e7d32; font-weight: bold; }");
+  set_status(ui, "Signer: Available", "ok");
   gtk_widget_set_sensitive(GTK_WIDGET(ui->btn), TRUE);
 }
 
 static void name_vanished(GDBusConnection *conn, const gchar *name, gpointer user_data) {
   (void)conn; (void)name;
   AppUI *ui = user_data;
-  set_status(ui, "Signer: Unavailable", "label { color: #c62828; font-weight: bold; }");
+  set_status(ui, "Signer: Unavailable", "error");
   gtk_widget_set_sensitive(GTK_WIDGET(ui->btn), FALSE);
 }
 
@@ -331,7 +358,7 @@ static GtkWidget *build_home_header(AppUI *ui, GtkWindow *win) {
   GtkWidget *menu_btn = gtk_menu_button_new();
   gtk_widget_set_halign(menu_btn, GTK_ALIGN_END);
   gtk_widget_set_valign(menu_btn, GTK_ALIGN_CENTER);
-  gtk_button_set_icon_name(GTK_BUTTON(menu_btn), "open-menu-symbolic");
+  gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menu_btn), "open-menu-symbolic");
   GMenu *menu = g_menu_new();
   g_menu_append(menu, "Quit", "app.quit");
   gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menu_btn), G_MENU_MODEL(menu));
@@ -342,89 +369,16 @@ static GtkWidget *build_home_header(AppUI *ui, GtkWindow *win) {
 
 static void on_activate(GtkApplication *app, gpointer user_data) {
   (void)user_data;
-  GtkWidget *win = gtk_application_window_new(app);
-  gtk_window_set_title(GTK_WINDOW(win), "GNostr Signer");
-  gtk_window_set_default_size(GTK_WINDOW(win), 720, 480);
-
-  AppUI *ui = g_new0(AppUI, 1);
-
-  GtkWidget *root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-  gtk_window_set_child(GTK_WINDOW(win), root);
-
-  // Content stack
-  ui->stack = GTK_STACK(gtk_stack_new());
-  gtk_stack_set_transition_type(ui->stack, GTK_STACK_TRANSITION_TYPE_SLIDE_LEFT_RIGHT);
-  gtk_stack_set_vhomogeneous(ui->stack, FALSE);
-
-  // Build Home page container: header + body
-  GtkWidget *home_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-  gtk_widget_set_margin_top(home_container, 16);
-  gtk_widget_set_margin_bottom(home_container, 16);
-  gtk_widget_set_margin_start(home_container, 16);
-  gtk_widget_set_margin_end(home_container, 16);
-  GtkWidget *home_header = build_home_header(ui, GTK_WINDOW(win));
-  gtk_box_append(GTK_BOX(home_container), home_header);
-  gtk_box_append(GTK_BOX(home_container), gnostr_home_page_new());
-
-  /* Initialize policy store */
-  extern struct _PolicyStore *policy_store_new(void);
-  extern void policy_store_load(struct _PolicyStore*);
-  ui->policy = policy_store_new();
-  policy_store_load(ui->policy);
-
-  /* Initialize pending request table (acts as a set of request_id strings) */
-  ui->pending = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-
-  GtkWidget *perms = gnostr_permissions_page_new(ui->policy);
-  /* Initialize accounts store */
-  ui->accounts = accounts_store_new();
-  accounts_store_load(ui->accounts);
-  GtkWidget *settings = gnostr_settings_page_new(ui->accounts);
-
-  gtk_stack_add_titled(ui->stack, home_container, "home", "Home");
-  ui->perms_page = perms;
-  gtk_stack_add_titled(ui->stack, ui->perms_page, "permissions", "Permissions");
-  ui->settings_page = settings;
-  gtk_stack_add_titled(ui->stack, ui->settings_page, "settings", "Settings");
-
-  gtk_box_append(GTK_BOX(root), GTK_WIDGET(ui->stack));
-
-  // Bottom navigation
-  GtkWidget *nav = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-  gtk_widget_add_css_class(nav, "toolbar");
-  gtk_widget_set_margin_top(nav, 4);
-  gtk_widget_set_margin_bottom(nav, 4);
-  ui->nav_home = GTK_BUTTON(gtk_button_new_with_label("Home"));
-  ui->nav_perms = GTK_BUTTON(gtk_button_new_with_label("Permissions"));
-  ui->nav_settings = GTK_BUTTON(gtk_button_new_with_label("Settings"));
-  g_signal_connect(ui->nav_home, "clicked", G_CALLBACK(on_nav_home), ui);
-  g_signal_connect(ui->nav_perms, "clicked", G_CALLBACK(on_nav_perms), ui);
-  g_signal_connect(ui->nav_settings, "clicked", G_CALLBACK(on_nav_settings), ui);
-  gtk_box_append(GTK_BOX(nav), GTK_WIDGET(ui->nav_home));
-  gtk_box_append(GTK_BOX(nav), GTK_WIDGET(ui->nav_perms));
-  gtk_box_append(GTK_BOX(nav), GTK_WIDGET(ui->nav_settings));
-  gtk_box_set_homogeneous(GTK_BOX(nav), TRUE);
-  gtk_box_append(GTK_BOX(root), nav);
-
-  // DBus name watch
-  ui->watch_id = g_bus_watch_name(G_BUS_TYPE_SESSION, SIGNER_NAME,
-                                  G_BUS_NAME_WATCHER_FLAGS_NONE,
-                                  name_appeared, name_vanished, ui, NULL);
-  ui->win = GTK_WINDOW(win);
-  ui->bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
-  if (ui->bus){
-    g_dbus_connection_signal_subscribe(ui->bus,
-                                       SIGNER_NAME,
-                                       SIGNER_NAME,
-                                       "ApprovalRequested",
-                                       SIGNER_PATH,
-                                       NULL,
-                                       G_DBUS_SIGNAL_FLAGS_NONE,
-                                       on_approval_requested,
-                                       ui,
-                                       NULL);
+  /* Load application stylesheet from resources */
+  GtkCssProvider *prov = gtk_css_provider_new();
+  gtk_css_provider_load_from_resource(prov, "/org/gnostr/signer/css/app.css");
+  GdkDisplay *display = gdk_display_get_default();
+  if (display) {
+    gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(prov), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
   }
-
+  g_object_unref(prov);
+  /* Present the new libadwaita SignerWindow shell */
+  SignerWindow *win = signer_window_new(ADW_APPLICATION(app));
   gtk_window_present(GTK_WINDOW(win));
 }
 
@@ -436,14 +390,18 @@ static void on_app_quit(GSimpleAction *action, GVariant *param, gpointer user_da
 
 int main(int argc, char **argv) {
   g_set_prgname("gnostr-signer");
-  GtkApplication *app = gtk_application_new("org.gnostr.Signer", G_APPLICATION_DEFAULT_FLAGS);
+  AdwApplication *app = adw_application_new("org.gnostr.Signer", G_APPLICATION_DEFAULT_FLAGS);
   /* Install app actions */
   static const GActionEntry app_entries[] = {
     { "quit", on_app_quit, NULL, NULL, NULL },
+    { "preferences", on_app_preferences, NULL, NULL, NULL },
+    { "about", on_app_about, NULL, NULL, NULL },
   };
   g_action_map_add_action_entries(G_ACTION_MAP(app), app_entries, G_N_ELEMENTS(app_entries), app);
   const char *quit_accels[] = { "<Primary>q", NULL };
-  gtk_application_set_accels_for_action(app, "app.quit", quit_accels);
+  gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.quit", quit_accels);
+  const char *prefs_accels[] = { "<Primary>comma", NULL };
+  gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.preferences", prefs_accels);
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
   int status = g_application_run(G_APPLICATION(app), argc, argv);
   g_object_unref(app);

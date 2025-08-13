@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="AppRow" parent="AdwActionRow">
+    <property name="title" translatable="yes">Application</property>
+    <property name="subtitle" translatable="yes">App details</property>
+    <child type="suffix">
+      <object class="GtkButton" id="btn_remove">
+        <property name="label" translatable="yes">Remove</property>
+      </object>
+    </child>
+  </template>
+</interface>

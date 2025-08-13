@@ -122,7 +122,7 @@ void gnostr_settings_page_refresh(GtkWidget *page, AccountsStore *as) {
       } else {
         ui->group_head = GTK_CHECK_BUTTON(check);
       }
-      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(check), active && g_strcmp0(active, e->id) == 0);
+      gtk_check_button_set_active(GTK_CHECK_BUTTON(check), active && g_strcmp0(active, e->id) == 0);
       g_object_set_data_full(G_OBJECT(check), "id", g_strdup(e->id), g_free);
       g_signal_connect(check, "toggled", G_CALLBACK(on_radio_toggled), ui);
       gtk_widget_set_margin_end(check, 8);

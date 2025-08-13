@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="PagePermissions" parent="AdwPreferencesPage">
+    <child>
+      <object class="AdwPreferencesGroup" id="group_policy">
+        <property name="title" translatable="yes">Approval policy</property>
+        <child>
+          <object class="AdwActionRow" id="row_basic">
+            <property name="title" translatable="yes">Approve basic actions</property>
+            <property name="subtitle" translatable="yes">Recommended for most people. This will minimize interruptions.</property>
+            <child type="suffix">
+              <object class="GtkCheckButton" id="radio_basic">
+                <property name="group">radio_manual</property>
+                <property name="active">true</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwActionRow" id="row_manual">
+            <property name="title" translatable="yes">Manually approve each app</property>
+            <property name="subtitle" translatable="yes">Recommended if you want control over each app.</property>
+            <child type="suffix">
+              <object class="GtkCheckButton" id="radio_manual">
+                <property name="active">false</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="AdwPreferencesGroup" id="group_conn">
+        <property name="title" translatable="yes">Connectivity</property>
+        <child>
+          <object class="AdwActionRow" id="row_orbot">
+            <property name="title" translatable="yes">Connect through your Orbot setup</property>
+            <child type="suffix">
+              <object class="GtkSwitch" id="switch_orbot">
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwClamp">
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">6</property>
+                    <child>
+                      <object class="GtkLinkButton" id="btn_configure_orbot">
+                        <property name="label" translatable="yes">Configure Orbot</property>
+                        <property name="uri">about:blank</property>
+                        <property name="visible">false</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

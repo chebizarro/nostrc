@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <object class="GtkListBox" id="sidebar_list">
+    <property name="selection-mode">browse</property>
+    <child>
+      <object class="GtkListBoxRow"><child><object class="GtkLabel"><property name="label" translatable="yes">Permissions &amp; Connection</property><property name="xalign">0</property><property name="margin-start">12</property><property name="margin-end">12</property><property name="margin-top">8</property><property name="margin-bottom">8</property></object></child></object>
+    </child>
+    <child>
+      <object class="GtkListBoxRow"><child><object class="GtkLabel"><property name="label" translatable="yes">Applications</property><property name="xalign">0</property><property name="margin-start">12</property><property name="margin-end">12</property><property name="margin-top">8</property><property name="margin-bottom">8</property></object></child></object>
+    </child>
+    <child>
+      <object class="GtkListBoxRow"><child><object class="GtkLabel"><property name="label" translatable="yes">Settings</property><property name="xalign">0</property><property name="margin-start">12</property><property name="margin-end">12</property><property name="margin-top">8</property><property name="margin-bottom">8</property></object></child></object>
+    </child>
+  </object>
+</interface>

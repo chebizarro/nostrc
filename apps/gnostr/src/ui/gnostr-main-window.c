@@ -6,6 +6,8 @@
 #include <gtk/gtk.h>
 #include <gdk/gdkkeysyms.h>
 #include <time.h>
+/* Metadata helpers */
+#include <jansson.h>
 /* SimplePool GObject wrapper for live streaming/backfill */
 #include "nostr_simple_pool.h"
 #include "nostr-event.h"
@@ -145,6 +147,8 @@ struct _GnostrMainWindow {
   /* Thread model */
   GListStore *thread_roots;    /* owned; element-type TimelineItem */
   GHashTable *nodes_by_id;     /* owned; key: id string -> TimelineItem* (weak) */
+  /* Metadata cache: key=pubkey hex (string), value=UserMeta* (owned) */
+  GHashTable *meta_by_pubkey;  
   /* Tuning knobs (UI-editable) */
   guint batch_max;             /* default 5; max items per UI batch post */
   guint post_interval_ms;      /* default 150; max ms before forcing a batch */
@@ -184,6 +188,10 @@ static void gnostr_main_window_dispose(GObject *obj) {
   if (self->nodes_by_id) {
     g_hash_table_destroy(self->nodes_by_id);
     self->nodes_by_id = NULL;
+  }
+  if (self->meta_by_pubkey) {
+    g_hash_table_destroy(self->meta_by_pubkey);
+    self->meta_by_pubkey = NULL;
   }
   if (self->thread_roots) {
     g_object_unref(self->thread_roots);
@@ -333,20 +341,43 @@ static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_url
   }
   }
 
-  /* Filters: notes kind=1 with limit and optional since */
-  NostrFilter *f = nostr_filter_new();
-  int kinds[] = { 1 };
-  nostr_filter_set_kinds(f, kinds, 1);
+  /* Build two filters:
+   *  - f1: notes (kind=1) with limit and optional since
+   *  - f0: profiles (kind=0) with limit but NO since (profiles are often older and would be filtered out)
+   */
   int lim = limit > 0 ? limit : (int)self->default_limit;
-  nostr_filter_set_limit(f, lim);
-  if (self->use_since) {
-    time_t now = time(NULL);
-    int64_t since = (int64_t)now - (int64_t)self->since_seconds;
-    if (since < 0) since = 0;
-    nostr_filter_set_since_i64(f, since);
-  }
   NostrFilters *fs = nostr_filters_new();
-  nostr_filters_add(fs, f);
+
+  /* f1: notes */
+  {
+    NostrFilter *f1 = nostr_filter_new();
+    int kinds1[] = { 1 };
+    nostr_filter_set_kinds(f1, kinds1, 1);
+    nostr_filter_set_limit(f1, lim);
+    if (self->use_since) {
+      time_t now = time(NULL);
+      int64_t since = (int64_t)now - (int64_t)self->since_seconds;
+      if (since < 0) since = 0;
+      nostr_filter_set_since_i64(f1, since);
+      g_message("build_urls_and_filters: notes kinds=[1] limit=%d since=%lld (use_since=1)", lim, (long long)since);
+    } else {
+      g_message("build_urls_and_filters: notes kinds=[1] limit=%d (use_since=0)", lim);
+    }
+    nostr_filters_add(fs, f1);
+  }
+
+  /* f0: profiles (no since) */
+  {
+    NostrFilter *f0 = nostr_filter_new();
+    int kinds0[] = { 0 };
+    nostr_filter_set_kinds(f0, kinds0, 1);
+    /* Keep profile fetch lightweight */
+    int lim0 = lim > 0 ? lim : 100;
+    if (lim0 <= 0) lim0 = 100;
+    nostr_filter_set_limit(f0, lim0);
+    g_message("build_urls_and_filters: profiles kinds=[0] limit=%d (no since)", lim0);
+    nostr_filters_add(fs, f0);
+  }
   *out_filters = fs;
 }
 
@@ -367,6 +398,106 @@ static void ui_event_row_free(gpointer p) {
   g_free(r->pubkey);
   g_free(r->content);
   g_free(r);
+}
+
+/* -------- User metadata cache (pubkey -> display/handle/avatar) -------- */
+typedef struct {
+  char *display;
+  char *handle;
+  char *avatar_url;
+} UserMeta;
+
+static void user_meta_free(gpointer p) {
+  UserMeta *m = (UserMeta*)p;
+  if (!m) return;
+  g_free(m->display);
+  g_free(m->handle);
+  g_free(m->avatar_url);
+  g_free(m);
+}
+
+/* hex helpers */
+static int hex_nibble(char c){ if(c>='0'&&c<='9')return c-'0'; if(c>='a'&&c<='f')return 10+(c-'a'); if(c>='A'&&c<='F')return 10+(c-'A'); return -1; }
+static int hex_to_bytes_exact(const char *hex, unsigned char *out, size_t outlen){ if(!hex||!out) return -1; size_t n=strlen(hex); if(n!=outlen*2) return -1; for(size_t i=0;i<outlen;i++){ int h=hex_nibble(hex[2*i]); int l=hex_nibble(hex[2*i+1]); if(h<0||l<0) return -1; out[i]=(unsigned char)((h<<4)|l);} return 0; }
+
+static char *short_bech(const char *bech, guint front, guint back) {
+  if (!bech) return g_strdup("");
+  size_t n = strlen(bech);
+  if (n <= front + back + 3) return g_strdup(bech);
+  GString *s = g_string_new(NULL);
+  g_string_append_len(s, bech, front);
+  g_string_append(s, "…");
+  g_string_append_len(s, bech + (n - back), back);
+  return g_string_free(s, FALSE);
+}
+
+/* Derive a reasonable handle from pubkey (npub short) if no profile */
+static char *derive_handle_from_pubkey_hex(const char *pubkey_hex) {
+  if (!pubkey_hex || strlen(pubkey_hex) != 64) return g_strdup("@anon");
+  /* Use a short hex moniker: @<first8>…<last6> */
+  char first8[9] = {0}; memcpy(first8, pubkey_hex, 8);
+  const char *tail = pubkey_hex + 64 - 6;
+  GString *h = g_string_new("@");
+  g_string_append(h, first8);
+  g_string_append(h, "…");
+  g_string_append_len(h, tail, 6);
+  return g_string_free(h, FALSE);
+}
+
+static UserMeta *ensure_user_meta(GHashTable *ht, const char *pubkey_hex) {
+  if (!ht || !pubkey_hex) return NULL;
+  UserMeta *m = (UserMeta*)g_hash_table_lookup(ht, pubkey_hex);
+  if (!m) {
+    m = g_new0(UserMeta, 1);
+    /* Defaults */
+    m->display = g_strdup("Anonymous");
+    m->handle = derive_handle_from_pubkey_hex(pubkey_hex);
+    m->avatar_url = g_strdup("");
+    g_hash_table_insert(ht, g_strdup(pubkey_hex), m);
+  }
+  return m;
+}
+
+/* Update cache from kind-0 profile content (JSON) */
+static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pubkey_hex, const char *content_json) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex || !content_json) return;
+  json_error_t jerr; json_t *root = json_loads(content_json, 0, &jerr);
+  if (!root || !json_is_object(root)) { if (root) json_decref(root); return; }
+  const char *name = NULL, *display_name = NULL, *picture = NULL, *username = NULL;
+  json_t *v = NULL;
+  if ((v = json_object_get(root, "display_name")) && json_is_string(v)) display_name = json_string_value(v);
+  if (!display_name && (v = json_object_get(root, "displayName")) && json_is_string(v)) display_name = json_string_value(v);
+  if ((v = json_object_get(root, "name")) && json_is_string(v)) name = json_string_value(v);
+  if ((v = json_object_get(root, "username")) && json_is_string(v)) username = json_string_value(v);
+  if ((v = json_object_get(root, "picture")) && json_is_string(v)) picture = json_string_value(v);
+  UserMeta *m = ensure_user_meta(self->meta_by_pubkey, pubkey_hex);
+  if (display_name && *display_name) { g_free(m->display); m->display = g_strdup(display_name); }
+  const char *handle_src = NULL;
+  if (username && *username) handle_src = username; else if (name && *name) handle_src = name;
+  if (handle_src && *handle_src) { g_free(m->handle); m->handle = g_strconcat("@", handle_src, NULL); }
+  if (picture && *picture) { g_free(m->avatar_url); m->avatar_url = g_strdup(picture); }
+  json_decref(root);
+  /* Refresh any existing TimelineItems authored by this pubkey */
+  if (self->nodes_by_id && self->meta_by_pubkey) {
+    GHashTableIter it; gpointer key=NULL, val=NULL; g_hash_table_iter_init(&it, self->nodes_by_id);
+    while (g_hash_table_iter_next(&it, &key, &val)) {
+      gpointer obj = val;
+      if (!G_IS_OBJECT(obj)) continue;
+      gchar *item_pk = NULL;
+      g_object_get(obj, "pubkey", &item_pk, NULL);
+      if (item_pk && g_strcmp0(item_pk, pubkey_hex) == 0) {
+        const UserMeta *um = (const UserMeta*)g_hash_table_lookup(self->meta_by_pubkey, pubkey_hex);
+        if (um) {
+          g_object_set(obj,
+                       "display-name", um->display ? um->display : "Anonymous",
+                       "handle",       um->handle  ? um->handle  : "@anon",
+                       "avatar-url",   um->avatar_url ? um->avatar_url : "",
+                       NULL);
+        }
+      }
+      g_free(item_pk);
+    }
+  }
 }
 
 typedef struct IdleApplyEventsCtx {
@@ -391,10 +522,26 @@ static void thread_graph_insert(GnostrMainWindow *self, UiEventRow *r) {
   extern GType timeline_item_get_type(void);
   GType ti = timeline_item_get_type();
   if (!ti) return;
-  /* Create TimelineItem for this event */
+  /* Resolve metadata for author */
+  const char *pk = r->pubkey;
+  const char *disp = "Anonymous";
+  const char *handle = "@anon";
+  const char *avatar = "";
+  if (pk && *pk) {
+    if (!self->meta_by_pubkey)
+      self->meta_by_pubkey = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, user_meta_free);
+    UserMeta *m = ensure_user_meta(self->meta_by_pubkey, pk);
+    if (m) {
+      disp = m->display ? m->display : disp;
+      handle = m->handle ? m->handle : handle;
+      avatar = m->avatar_url ? m->avatar_url : "";
+    }
+  }
+  /* Create TimelineItem for this event with resolved metadata */
   gpointer item = g_object_new(ti,
-                               "display-name", "Anonymous",
-                               "handle", "@anon",
+                               "display-name", disp,
+                               "handle", handle,
+                               "avatar-url", avatar,
                                "timestamp", "", /* TODO: pretty ts */
                                "content", r->content ? r->content : "",
                                "depth", 0,
@@ -471,17 +618,26 @@ static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer us
   (void)pool;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !batch) return;
+  g_message("on_pool_events: batch len=%u", batch->len);
   GPtrArray *rows = g_ptr_array_new_with_free_func(ui_event_row_free);
   for (guint i = 0; i < batch->len; i++) {
     NostrEvent *evt = (NostrEvent*)g_ptr_array_index(batch, i);
+    /* Handle kind-0 profile events by updating metadata cache */
+    int kind = nostr_event_get_kind(evt);
+    if (kind == 0) {
+      const char *pk0 = nostr_event_get_pubkey(evt);
+      const char *content0 = nostr_event_get_content(evt);
+      g_message("on_pool_events: got kind-0 profile (pk=%s) content_present=%s", pk0 ? pk0 : "(null)", (content0 && *content0) ? "yes" : "no");
+      if (pk0 && content0) update_meta_from_profile_json(self, pk0, content0);
+      continue;
+    }
     UiEventRow *r = g_new0(UiEventRow, 1);
     const char *eid = nostr_event_get_id(evt);
     const char *pubkey = nostr_event_get_pubkey(evt);
     int64_t ts = nostr_event_get_created_at(evt);
     const char *content = nostr_event_get_content(evt);
-    if (!content) content = "";
     r->id = eid ? g_strndup(eid, 64) : NULL;
-    r->pubkey = pubkey ? g_strdup(pubkey) : NULL;
+    r->pubkey = pubkey ? g_strndup(pubkey, 64) : NULL;
     r->created_at = ts;
     r->content = g_utf8_make_valid(content, -1);
     /* parent from last 'e' tag if present */
@@ -524,18 +680,27 @@ static void on_pool_backfill_done(GObject *source, GAsyncResult *res, gpointer u
     g_clear_error(&error);
     return;
   }
+  g_message("on_pool_backfill_done: events len=%u", events->len);
   /* Convert to UiEventRow and apply into graph */
   GPtrArray *rows = g_ptr_array_new_with_free_func(ui_event_row_free);
   for (guint i = 0; i < events->len; i++) {
     NostrEvent *evt = (NostrEvent*)g_ptr_array_index(events, i);
+    /* Handle kind-0 profile events by updating metadata cache */
+    int kind = nostr_event_get_kind(evt);
+    if (kind == 0) {
+      const char *pk0 = nostr_event_get_pubkey(evt);
+      const char *content0 = nostr_event_get_content(evt);
+      g_message("on_pool_backfill_done: got kind-0 profile (pk=%s) content_present=%s", pk0 ? pk0 : "(null)", (content0 && *content0) ? "yes" : "no");
+      if (pk0 && content0) update_meta_from_profile_json(self, pk0, content0);
+      continue;
+    }
     UiEventRow *r = g_new0(UiEventRow, 1);
     const char *eid = nostr_event_get_id(evt);
     const char *pubkey = nostr_event_get_pubkey(evt);
     int64_t ts = nostr_event_get_created_at(evt);
     const char *content = nostr_event_get_content(evt);
-    if (!content) content = "";
     r->id = eid ? g_strndup(eid, 64) : NULL;
-    r->pubkey = pubkey ? g_strdup(pubkey) : NULL;
+    r->pubkey = pubkey ? g_strndup(pubkey, 64) : NULL;
     r->created_at = ts;
     r->content = g_utf8_make_valid(content, -1);
     NostrTags *tags = (NostrTags*)nostr_event_get_tags(evt);
@@ -1799,6 +1964,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   g_weak_ref_init(&self->timeline_ref, self->timeline);
   /* Initialize dedup table */
   self->seen_texts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  /* Initialize metadata cache */
+  self->meta_by_pubkey = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, user_meta_free);
   /* Initialize tuning knobs from env with sensible defaults */
   self->batch_max = getenv_uint_default("GNOSTR_BATCH_MAX", 5);
   self->post_interval_ms = getenv_uint_default("GNOSTR_POST_INTERVAL_MS", 150);

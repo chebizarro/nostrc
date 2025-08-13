@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="SheetSelectAccount" parent="AdwDialog">
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">12</property>
+        <property name="margin-end">12</property>
+        <property name="margin-top">12</property>
+        <property name="margin-bottom">12</property>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="yes">Select Account</property>
+            <attributes><attribute name="weight" value="bold"/></attributes>
+          </object>
+        </child>
+        <child>
+          <object class="GtkListView" id="list_identities">
+            <property name="tooltip-text" translatable="yes">Choose an account, then press Enter</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="btn_add_new">
+            <property name="label" translatable="yes">Add _New Account</property>
+            <property name="use-underline">true</property>
+            <property name="tooltip-text" translatable="yes">Create a new account</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="btn_cancel">
+            <property name="label" translatable="yes">_Cancel</property>
+            <property name="use-underline">true</property>
+            <property name="tooltip-text" translatable="yes">Close without changes</property>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>
