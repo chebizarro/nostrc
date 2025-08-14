@@ -120,6 +120,8 @@ target_include_directories(nostr
   PUBLIC
   include
   $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
+  PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/store
 )
 
 if(GLIB_FOUND)
@@ -132,8 +134,64 @@ target_compile_definitions(nostr PUBLIC NOSTR_HAVE_LIBGO=1)
 option(LIBNOSTR_WITH_NOSTRDB "Enable nostrdb storage backend" OFF)
 if(LIBNOSTR_WITH_NOSTRDB)
   target_compile_definitions(nostr PUBLIC LIBNOSTR_WITH_NOSTRDB=1)
-  # Backend sources will be appended in later phases; provide stub file to satisfy references
-  list(APPEND LIBNOSTR_SOURCES src/store/nostrdb/ndb_backend.c)
+  # Attach backend sources to the existing target
+  target_sources(nostr PRIVATE src/store/nostrdb/ndb_backend.c)
+
+  # Vendored nostrdb setup: expect a subdirectory (default: third_party/nostrdb)
+  set(LIBNOSTR_NDB_VENDOR_PATH "${CMAKE_SOURCE_DIR}/third_party/nostrdb" CACHE PATH "Path to vendored nostrdb source")
+  if(EXISTS "${LIBNOSTR_NDB_VENDOR_PATH}/src/nostrdb.c")
+    message(STATUS "libnostr: using vendored nostrdb sources at ${LIBNOSTR_NDB_VENDOR_PATH}")
+    # Collect nostrdb core sources and deps
+    file(GLOB NDB_CORE_SOURCES
+      "${LIBNOSTR_NDB_VENDOR_PATH}/src/*.c"
+    )
+    file(GLOB NDB_BOLT11_SOURCES
+      "${LIBNOSTR_NDB_VENDOR_PATH}/src/bolt11/*.c"
+    )
+    file(GLOB_RECURSE NDB_CCAN_SOURCES
+      "${LIBNOSTR_NDB_VENDOR_PATH}/ccan/**/*.c"
+    )
+    # Exclude CCAN tools and benchmarks
+    list(FILTER NDB_CCAN_SOURCES EXCLUDE REGEX ".*/tools/.*")
+    list(FILTER NDB_CCAN_SOURCES EXCLUDE REGEX ".*/benchmarks?/.*")
+    # Add LMDB sources from vendored deps
+    set(NDB_LMDB_SOURCES
+      "${LIBNOSTR_NDB_VENDOR_PATH}/deps/lmdb/mdb.c"
+      "${LIBNOSTR_NDB_VENDOR_PATH}/deps/lmdb/midl.c"
+    )
+    add_library(nostrdb STATIC ${NDB_CORE_SOURCES} ${NDB_LMDB_SOURCES} ${NDB_BOLT11_SOURCES} ${NDB_CCAN_SOURCES})
+    target_include_directories(nostrdb PUBLIC
+      "${LIBNOSTR_NDB_VENDOR_PATH}/src"
+      "${LIBNOSTR_NDB_VENDOR_PATH}/src/bolt11"
+      "${LIBNOSTR_NDB_VENDOR_PATH}/ccan"
+      "${LIBNOSTR_NDB_VENDOR_PATH}/ccan/ccan"
+      "${LIBNOSTR_NDB_VENDOR_PATH}/ccan/ccan/array_size"
+      "${LIBNOSTR_NDB_VENDOR_PATH}/ccan/ccan/mem"
+      "${LIBNOSTR_NDB_VENDOR_PATH}/ccan/ccan/short_types"
+      "${LIBNOSTR_NDB_VENDOR_PATH}/ccan/ccan/crypto/sha256"
+      "${LIBNOSTR_NDB_VENDOR_PATH}/ccan/ccan/tal"
+      "${LIBNOSTR_NDB_VENDOR_PATH}/ccan/ccan/tal/str"
+      "${LIBNOSTR_NDB_VENDOR_PATH}/deps/lmdb"
+      "${LIBNOSTR_NDB_VENDOR_PATH}/deps/flatcc/include"
+      "${LIBNOSTR_NDB_VENDOR_PATH}/deps/secp256k1/include"
+    )
+    # Threads, flatcc runtime, secp256k1, and Security framework on macOS
+    find_package(Threads REQUIRED)
+    # Prefer system flatcc runtime to match headers (e.g., Homebrew flatccrt)
+    find_library(FLATCCRT_LIB flatccrt)
+    if(NOT FLATCCRT_LIB)
+      message(FATAL_ERROR "flatccrt library not found on system; please install flatcc or adjust build to compile vendored runtime.")
+    endif()
+    target_link_libraries(nostrdb PUBLIC Threads::Threads ${SECP256K1_LIB} ${FLATCCRT_LIB})
+    if(APPLE)
+      target_link_libraries(nostrdb PUBLIC "-framework Security")
+    endif()
+    # Link our libnostr against nostrdb
+    target_link_libraries(nostr PUBLIC nostrdb)
+  else()
+    message(WARNING "LIBNOSTR_WITH_NOSTRDB=ON but nostrdb sources not found at ${LIBNOSTR_NDB_VENDOR_PATH}.\n"
+                    "Please clone https://github.com/damus-io/nostrdb into third_party/nostrdb or set LIBNOSTR_NDB_VENDOR_PATH.")
+  endif()
 endif()
 
 # Install rules

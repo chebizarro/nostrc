@@ -122,7 +122,58 @@ static int default_deserialize_event(NostrEvent *event, const char *json_str) {
     return 1;
 }
 
-static char *default_serialize_event(const NostrEvent *event) { (void)event; return NULL; }
+static char *default_serialize_event(const NostrEvent *event) {
+    if (!event) return NULL;
+    json_t *obj = json_object();
+    if (!obj) return NULL;
+
+    /* id (optional) */
+    if (event->id && *event->id)
+        json_object_set_new(obj, "id", json_string(event->id));
+
+    /* pubkey */
+    if (event->pubkey && *event->pubkey)
+        json_object_set_new(obj, "pubkey", json_string(event->pubkey));
+
+    /* created_at */
+    if (event->created_at > 0)
+        json_object_set_new(obj, "created_at", json_integer(event->created_at));
+
+    /* kind */
+    json_object_set_new(obj, "kind", json_integer(event->kind));
+
+    /* tags: array of arrays of strings */
+    if (event->tags) {
+        size_t tn = nostr_tags_size(event->tags);
+        if (tn > 0) {
+            json_t *tags = json_array();
+            for (size_t i = 0; i < tn; ++i) {
+                NostrTag *t = nostr_tags_get(event->tags, i);
+                if (!t) continue;
+                size_t m = nostr_tag_size(t);
+                json_t *arr = json_array();
+                for (size_t j = 0; j < m; ++j) {
+                    const char *s = nostr_tag_get(t, j);
+                    json_array_append_new(arr, s ? json_string(s) : json_string(""));
+                }
+                json_array_append_new(tags, arr);
+            }
+            json_object_set_new(obj, "tags", tags);
+        }
+    }
+
+    /* content */
+    if (event->content)
+        json_object_set_new(obj, "content", json_string(event->content));
+
+    /* sig (optional) */
+    if (event->sig && *event->sig)
+        json_object_set_new(obj, "sig", json_string(event->sig));
+
+    char *out = json_dumps(obj, JSON_COMPACT);
+    json_decref(obj);
+    return out;
+}
 static char *default_serialize_envelope(const NostrEnvelope *envelope) { (void)envelope; return NULL; }
 static int default_deserialize_envelope(NostrEnvelope *envelope, const char *json) { (void)envelope; (void)json; return -1; }
 

@@ -13,7 +13,8 @@ typedef enum {
   LN_ERR_FILTER_PARSE = 1005,
   LN_ERR_QUERY = 1006,
   LN_ERR_TEXTSEARCH = 1007,
-  LN_ERR_OOM = 1008
+  LN_ERR_OOM = 1008,
+  LN_ERR_NOT_FOUND = 1009
 } ln_err_t;
 
 #ifdef __cplusplus

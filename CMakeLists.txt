@@ -62,6 +62,13 @@ find_library(NSYNC_LIB nsync REQUIRED)
 target_link_libraries(relay_smoke PRIVATE ${NSYNC_LIB})
 apply_sanitizers(relay_smoke)
 
+# NostrdB store demo
+add_executable(ndb_store_demo examples/ndb_store_demo.c)
+target_link_libraries(ndb_store_demo PRIVATE libnostr nostr_json nostrdb)
+target_include_directories(ndb_store_demo PRIVATE ${NSYNC_INCLUDE_DIR})
+target_link_libraries(ndb_store_demo PRIVATE ${NSYNC_LIB})
+apply_sanitizers(ndb_store_demo)
+
 ## GLib demo: only if libnostr built with GLib support
 if (TARGET nostr)
   get_target_property(_nostr_defs nostr COMPILE_DEFINITIONS)
