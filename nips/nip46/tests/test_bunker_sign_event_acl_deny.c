@@ -12,8 +12,6 @@
 static int string_eq(const char *a, const char *b){ return a && b && strcmp(a,b)==0; }
 
 static int run_sign_without_connect_should_deny(void){
-    extern NostrJsonInterface *jansson_impl;
-    nostr_set_json_interface(jansson_impl);
     nostr_json_init();
 
     const char *client_sk = "0000000000000000000000000000000000000000000000000000000000000001";
@@ -71,8 +69,6 @@ static int run_sign_without_connect_should_deny(void){
 }
 
 static int run_sign_after_connect_without_permission_should_deny(void){
-    extern NostrJsonInterface *jansson_impl;
-    nostr_set_json_interface(jansson_impl);
     nostr_json_init();
 
     const char *client_sk = "0000000000000000000000000000000000000000000000000000000000000001";

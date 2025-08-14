@@ -51,6 +51,8 @@ endif()
 # Export include dirs for downstream targets; expose public headers under this module's include/.
 target_include_directories(nostr_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(nostr_json PUBLIC include)
+# Also include libnostr headers for cross-module includes in monorepo builds
+target_include_directories(nostr_json PRIVATE ${CMAKE_SOURCE_DIR}/libnostr/include)
 
 # Link with Jansson, libnostr (types/util), and nsync.
 target_link_directories(nostr_json PRIVATE ${LWS_LIBRARY_DIRS})

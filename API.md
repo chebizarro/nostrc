@@ -45,6 +45,7 @@ Ownership: Functions returning `char*` allocate memory; caller must free.
 
 - `nostr_json` shared library implementing JSON interop using `jansson`.
 - Typical calls from `libnostr` go through `json.h` interfaces; applications can call higher-level APIs in `libnostr` and receive JSON strings.
+- Helper: `nostr_json_get_raw(const char* json, const char* key, char** out_raw)` returns a compact JSON string for a top-level key's value (quoted for strings; compact JSON for objects/arrays). Caller frees.
 
 ## libgo
 
@@ -67,6 +68,7 @@ Examples:
 ## Examples
 
 - `examples/` contains `main.c`, `json_glib.c`, `json_cjson.c` showing typical flows.
+- NIP-46: response parsing sets `NostrNip46Response.result` to a plain string if the JSON result is a string; otherwise to compact JSON text suitable for direct `nostr_event_deserialize()` or other JSON-consuming APIs.
 
 ## ABI and Versioning
 

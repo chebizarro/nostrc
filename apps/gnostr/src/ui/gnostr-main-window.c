@@ -12,6 +12,10 @@
 #include "nostr_simple_pool.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
+/* NostrdB storage */
+#include "../storage_ndb.h"
+/* JSON interface */
+#include "json.h"
 
 /* Implement as-if SimplePool is fully functional; guarded to avoid breaking builds until wired. */
 #ifdef GNOSTR_ENABLE_REAL_SIMPLEPOOL
@@ -110,22 +114,116 @@ static gboolean apply_timeline_lines_idle(gpointer user_data);
 static void show_toast(GnostrMainWindow *self, const char *msg);
 /* Forward: periodic backfill */
 static gboolean periodic_backfill_cb(gpointer data);
-/* Forward: backfill */
-/* SimplePool helpers */
-static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data);
-static void start_pool_live(GnostrMainWindow *self);
+/* NostrdB helpers */
+static char *build_backfill_filters_json(GnostrMainWindow *self, int limit);
+static void ndb_backfill_worker(GTask *task, gpointer source, gpointer task_data, GCancellable *cancellable);
 static void start_pool_backfill(GnostrMainWindow *self, int limit);
-/* Idle trampolines */
+/* Lightweight UI event payload captured from NostrEvent (needed early) */
+typedef struct UiEventRow {
+  char *id;
+  char *parent_id; /* from 'e' tag if present */
+  char *pubkey;
+  int64_t created_at;
+  char *content;
+} UiEventRow;
+/* Helpers used by backfill worker */
+static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pubkey_hex, const char *content_json);
+static void schedule_apply_events(GnostrMainWindow *self, GPtrArray *rows /* UiEventRow* */);
+static void ui_event_row_free(gpointer p);
 static void start_pool_live_idle_cb(gpointer data);
 static void start_pool_backfill_idle_cb(gpointer data);
 /* Settings persistence */
 static void gnostr_load_settings(GnostrMainWindow *self);
 static void gnostr_save_settings(GnostrMainWindow *self);
 static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data);
-static void on_pool_backfill_done(GObject *source, GAsyncResult *res, gpointer user_data);
 static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_urls, size_t *out_count, NostrFilters **out_filters, int limit);
 /* Relay list item factory */
 static void relay_item_setup(GtkSignalListItemFactory *f, GtkListItem *item, gpointer user_data);
+
+/* ---- NostrdB helpers ---- */
+
+typedef struct {
+  GnostrMainWindow *self; /* strong ref */
+  int limit;
+} NdbBackfillCtx;
+
+static void ndb_backfill_ctx_free(gpointer p) {
+  NdbBackfillCtx *d = (NdbBackfillCtx*)p;
+  if (!d) return;
+  if (d->self) g_object_unref(d->self);
+  g_free(d);
+}
+
+static void ndb_backfill_worker(GTask *task, gpointer source, gpointer task_data, GCancellable *cancellable) {
+  (void)source; (void)cancellable;
+  NdbBackfillCtx *d = (NdbBackfillCtx*)task_data;
+  if (!d || !GNOSTR_IS_MAIN_WINDOW(d->self)) { g_task_return_boolean(task, FALSE); return; }
+  char *filters_json = build_backfill_filters_json(d->self, d->limit);
+  if (!filters_json) { g_task_return_boolean(task, FALSE); return; }
+  void *txn = NULL; char **arr = NULL; int n = 0;
+  if (storage_ndb_begin_query(&txn) != 1) { free(filters_json); g_task_return_boolean(task, FALSE); return; }
+  int rc = storage_ndb_query(txn, filters_json, &arr, &n);
+  free(filters_json);
+  if (rc != 0) {
+    storage_ndb_end_query(txn);
+    g_task_return_boolean(task, FALSE);
+    return;
+  }
+  /* Build UiEventRow list by deserializing events */
+  GPtrArray *rows = g_ptr_array_new_with_free_func(ui_event_row_free);
+  for (int i = 0; i < n; i++) {
+    const char *js = arr[i]; if (!js) continue;
+    NostrEvent *evt = nostr_event_new();
+    if (!evt) continue;
+    if (nostr_event_deserialize(evt, js) != 0) { nostr_event_free(evt); continue; }
+    UiEventRow *r = g_new0(UiEventRow, 1);
+    /* id */
+    const char *id_hex = evt->id; /* struct is public */
+    if (id_hex && *id_hex) r->id = g_strdup(id_hex);
+    /* pubkey */
+    const char *pk = nostr_event_get_pubkey(evt);
+    if (pk) r->pubkey = g_strdup(pk);
+    r->created_at = nostr_event_get_created_at(evt);
+    /* content & metadata cache for profiles */
+    const char *content = nostr_event_get_content(evt);
+    if (content && *content) r->content = g_utf8_make_valid(content, -1);
+    int kind = nostr_event_get_kind(evt);
+    if (kind == 0 && pk && content) {
+      update_meta_from_profile_json(d->self, pk, content);
+    }
+    /* parent from last 'e' tag if present */
+    NostrTags *tags = (NostrTags*)nostr_event_get_tags(evt);
+    if (tags) {
+      for (ssize_t j = (ssize_t)nostr_tags_size(tags) - 1; j >= 0; j--) {
+        NostrTag *t = nostr_tags_get(tags, (size_t)j);
+        const char *k = nostr_tag_get_key(t);
+        if (k && g_strcmp0(k, "e") == 0) {
+          const char *val = nostr_tag_get_value(t);
+          if (val && *val) { r->parent_id = g_strndup(val, 64); break; }
+        }
+      }
+    }
+    g_ptr_array_add(rows, r);
+    nostr_event_free(evt);
+  }
+  storage_ndb_free_results(arr, n);
+  storage_ndb_end_query(txn);
+  /* Schedule apply on main loop */
+  schedule_apply_events(d->self, rows);
+  g_task_return_boolean(task, TRUE);
+}
+
+/* Start a backfill using NostrdB (replaces relay backfill). */
+static void start_pool_backfill(GnostrMainWindow *self, int limit) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  GTask *t = g_task_new(self, NULL, NULL, NULL);
+  NdbBackfillCtx *ctx = g_new0(NdbBackfillCtx, 1);
+  ctx->self = g_object_ref(self);
+  ctx->limit = limit;
+  g_task_set_task_data(t, ctx, ndb_backfill_ctx_free);
+  g_task_run_in_thread(t, ndb_backfill_worker);
+  g_object_unref(t);
+}
 static void relay_item_bind(GtkSignalListItemFactory *f, GtkListItem *item, gpointer user_data);
 
 struct _GnostrMainWindow {
@@ -168,6 +266,40 @@ struct _GnostrMainWindow {
 };
 
 G_DEFINE_TYPE(GnostrMainWindow, gnostr_main_window, GTK_TYPE_APPLICATION_WINDOW)
+
+/* Build a JSON array string of filters equivalent to build_urls_and_filters() output. */
+static char *build_backfill_filters_json(GnostrMainWindow *self, int limit) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return NULL;
+  int lim = limit > 0 ? limit : (int)self->default_limit;
+  json_t *arr = json_array();
+  if (!arr) return NULL;
+  /* f1: notes (kind=1) with optional since */
+  {
+    json_t *f1 = json_object();
+    json_t *kinds = json_array(); json_array_append_new(kinds, json_integer(1));
+    json_object_set_new(f1, "kinds", kinds);
+    json_object_set_new(f1, "limit", json_integer(lim));
+    if (self->use_since) {
+      time_t now = time(NULL);
+      int64_t since = (int64_t)now - (int64_t)self->since_seconds;
+      if (since < 0) since = 0;
+      json_object_set_new(f1, "since", json_integer((json_int_t)since));
+    }
+    json_array_append_new(arr, f1);
+  }
+  /* f0: profiles (kind=0) no since */
+  {
+    json_t *f0 = json_object();
+    json_t *kinds = json_array(); json_array_append_new(kinds, json_integer(0));
+    json_object_set_new(f0, "kinds", kinds);
+    int lim0 = lim > 0 ? lim : 100; if (lim0 <= 0) lim0 = 100;
+    json_object_set_new(f0, "limit", json_integer(lim0));
+    json_array_append_new(arr, f0);
+  }
+  char *s = json_dumps(arr, JSON_COMPACT);
+  json_decref(arr);
+  return s;
+}
 
 static void gnostr_main_window_dispose(GObject *obj) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(obj);
@@ -381,14 +513,6 @@ static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_url
   *out_filters = fs;
 }
 
-/* Lightweight UI event payload captured from NostrEvent */
-typedef struct UiEventRow {
-  char *id;
-  char *parent_id; /* from 'e' tag if present */
-  char *pubkey;
-  int64_t created_at;
-  char *content;
-} UiEventRow;
 
 static void ui_event_row_free(gpointer p) {
   UiEventRow *r = (UiEventRow*)p;
@@ -652,6 +776,16 @@ static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer us
         }
       }
     }
+    /* Ingest into NostrdB: serialize event JSON and store */
+    char *json = nostr_event_serialize(evt);
+    if (json) {
+      int irc = storage_ndb_ingest_event_json(json, NULL);
+      if (irc != 0) {
+        /* LN_OK is typically 0; if API differs, this log still helps */
+        g_debug("ndb ingest rc=%d", irc);
+      }
+      free(json);
+    }
     g_ptr_array_add(rows, r);
   }
   schedule_apply_events(self, rows);
@@ -669,56 +803,6 @@ static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer 
   }
 }
 
-static void on_pool_backfill_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  (void)source;
-  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  GError *error = NULL;
-  GPtrArray *events = gnostr_simple_pool_backfill_finish(self->pool, res, &error);
-  if (!events) {
-    g_warning("SimplePool backfill failed: %s", error ? error->message : "unknown");
-    g_clear_error(&error);
-    return;
-  }
-  g_message("on_pool_backfill_done: events len=%u", events->len);
-  /* Convert to UiEventRow and apply into graph */
-  GPtrArray *rows = g_ptr_array_new_with_free_func(ui_event_row_free);
-  for (guint i = 0; i < events->len; i++) {
-    NostrEvent *evt = (NostrEvent*)g_ptr_array_index(events, i);
-    /* Handle kind-0 profile events by updating metadata cache */
-    int kind = nostr_event_get_kind(evt);
-    if (kind == 0) {
-      const char *pk0 = nostr_event_get_pubkey(evt);
-      const char *content0 = nostr_event_get_content(evt);
-      g_message("on_pool_backfill_done: got kind-0 profile (pk=%s) content_present=%s", pk0 ? pk0 : "(null)", (content0 && *content0) ? "yes" : "no");
-      if (pk0 && content0) update_meta_from_profile_json(self, pk0, content0);
-      continue;
-    }
-    UiEventRow *r = g_new0(UiEventRow, 1);
-    const char *eid = nostr_event_get_id(evt);
-    const char *pubkey = nostr_event_get_pubkey(evt);
-    int64_t ts = nostr_event_get_created_at(evt);
-    const char *content = nostr_event_get_content(evt);
-    r->id = eid ? g_strndup(eid, 64) : NULL;
-    r->pubkey = pubkey ? g_strndup(pubkey, 64) : NULL;
-    r->created_at = ts;
-    r->content = g_utf8_make_valid(content, -1);
-    NostrTags *tags = (NostrTags*)nostr_event_get_tags(evt);
-    if (tags) {
-      for (ssize_t j = (ssize_t)nostr_tags_size(tags) - 1; j >= 0; j--) {
-        NostrTag *t = nostr_tags_get(tags, (size_t)j);
-        const char *k = nostr_tag_get_key(t);
-        if (k && g_strcmp0(k, "e") == 0) {
-          const char *val = nostr_tag_get_value(t);
-          if (val && *val) { r->parent_id = g_strndup(val, 64); break; }
-        }
-      }
-    }
-    g_ptr_array_add(rows, r);
-  }
-  schedule_apply_events(self, rows);
-  if (events) g_ptr_array_unref(events);
-}
 
 static void start_pool_live(GnostrMainWindow *self) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
@@ -740,16 +824,7 @@ static void start_pool_live(GnostrMainWindow *self) {
   /* Keep filters: the async thread borrows them. They will be freed on process exit; alternatively store to free on finalize if needed. */
 }
 
-static void start_pool_backfill(GnostrMainWindow *self, int limit) {
-  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  if (!self->pool) self->pool = gnostr_simple_pool_new();
-  const char **urls = NULL; size_t url_count = 0; NostrFilters *filters = NULL;
-  build_urls_and_filters(self, &urls, &url_count, &filters, limit);
-  gnostr_simple_pool_backfill_async(self->pool, urls, url_count, filters, NULL, on_pool_backfill_done, self);
-  for (size_t i = 0; i < url_count; i++) g_free((char*)urls[i]);
-  g_free((void*)urls);
-  /* We intentionally do not free filters here; they are borrowed by the async worker. */
-}
+/* (legacy SimplePool backfill removed; using NostrdB worker) */
 
 /* Env helper */
 static guint getenv_uint_default(const char *name, guint def) {

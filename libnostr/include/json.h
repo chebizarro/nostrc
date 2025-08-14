@@ -61,6 +61,21 @@ int nostr_json_get_int(const char *json,
 int nostr_json_get_bool(const char *json,
                         const char *entry_key,
                         bool *out_val);
+
+/* Get raw JSON (compact string) at top-level entry_key.
+ * Returns 0 on success and sets *out_raw to a newly-allocated string representing
+ * the JSON value at entry_key (object, array, string with quotes, number, etc.).
+ * Caller must free *out_raw. Returns -1 if key is missing or parse fails. */
+int nostr_json_get_raw(const char *json,
+                       const char *entry_key,
+                       char **out_raw);
+/* Parse a top-level JSON array of numbers into an owned int buffer.
+ * Semantics:
+ *  - Every element must be numeric (integer or real); reals are truncated to int.
+ *  - Returns 0 on success, -1 on error (e.g., non-numeric element).
+ *  - On success, '*out_items' is non-NULL and must be freed by the caller, even when
+ *    '*out_count == 0' (empty array yields a non-NULL buffer for convenience).
+ */
 int nostr_json_get_int_array(const char *json,
                              const char *entry_key,
                              int **out_items,
@@ -75,6 +90,7 @@ int nostr_json_get_bool_at(const char *json,
                            const char *object_key,
                            const char *entry_key,
                            bool *out_val);
+/* Nested variant under 'object_key'. Same semantics as nostr_json_get_int_array(). */
 int nostr_json_get_int_array_at(const char *json,
                                 const char *object_key,
                                 const char *entry_key,

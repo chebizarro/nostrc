@@ -77,6 +77,8 @@ add_executable(test_json_filter test_json_filter.c)
 add_executable(test_json_filter_tags test_json_filter_tags.c)
 add_executable(test_json_filter_robust test_json_filter_robust.c)
 add_executable(test_json_filter_fuzzlite test_json_filter_fuzzlite.c)
+add_executable(test_json_int_array test_json_int_array.c)
+add_executable(test_json_raw test_json_raw.c)
 
 # Link OpenSSL, libsecp256k1, nsync, and project libraries
 target_link_libraries(test_nostr PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
@@ -96,6 +98,8 @@ target_link_libraries(test_json_filter PRIVATE libnostr ${NSYNC_LIB} nostr_json 
 target_link_libraries(test_json_filter_tags PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_link_libraries(test_json_filter_robust PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_link_libraries(test_json_filter_fuzzlite PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES} ${JANSSON_LIBRARIES})
+target_link_libraries(test_json_int_array PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+target_link_libraries(test_json_raw PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 
 # Apply sanitizers to tests if enabled
 apply_sanitizers(test_nostr)
@@ -114,6 +118,8 @@ apply_sanitizers(test_json_filter)
 apply_sanitizers(test_json_filter_tags)
 apply_sanitizers(test_json_filter_robust)
 apply_sanitizers(test_json_filter_fuzzlite)
+apply_sanitizers(test_json_int_array)
+apply_sanitizers(test_json_raw)
 
 # Register tests for CTest. Run with: `ctest --output-on-failure`
 add_test(NAME test_nostr COMMAND test_nostr)
@@ -159,6 +165,8 @@ add_test(NAME test_json_filter COMMAND test_json_filter)
 add_test(NAME test_json_filter_tags COMMAND test_json_filter_tags)
 add_test(NAME test_json_filter_robust COMMAND test_json_filter_robust)
 add_test(NAME test_json_filter_fuzzlite COMMAND test_json_filter_fuzzlite)
+add_test(NAME test_json_int_array COMMAND test_json_int_array)
+add_test(NAME test_json_raw COMMAND test_json_raw)
 
 # Include directories for libsecp256k1 headers
 target_include_directories(test_nostr PRIVATE ${SECP256K1_INCLUDE_DIRS})
@@ -177,6 +185,8 @@ target_include_directories(test_json_filter PRIVATE ${SECP256K1_INCLUDE_DIRS})
 target_include_directories(test_json_filter_tags PRIVATE ${SECP256K1_INCLUDE_DIRS})
 target_include_directories(test_json_filter_robust PRIVATE ${SECP256K1_INCLUDE_DIRS})
 target_include_directories(test_json_filter_fuzzlite PRIVATE ${SECP256K1_INCLUDE_DIRS} ${JANSSON_INCLUDE_DIRS})
+target_include_directories(test_json_int_array PRIVATE ${SECP256K1_INCLUDE_DIRS})
+target_include_directories(test_json_raw PRIVATE ${SECP256K1_INCLUDE_DIRS})
 
 # Link directories for libsecp256k1
 target_link_directories(test_nostr PRIVATE ${SECP256K1_LIBRARY_DIRS})
@@ -184,6 +194,8 @@ target_link_directories(test_json_filter PRIVATE ${SECP256K1_LIBRARY_DIRS})
 target_link_directories(test_json_filter_tags PRIVATE ${SECP256K1_LIBRARY_DIRS})
 target_link_directories(test_json_filter_robust PRIVATE ${SECP256K1_LIBRARY_DIRS})
 target_link_directories(test_json_filter_fuzzlite PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(test_json_int_array PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(test_json_raw PRIVATE ${SECP256K1_LIBRARY_DIRS})
 target_link_directories(test_json_envelope PRIVATE ${SECP256K1_LIBRARY_DIRS})
 target_link_directories(test_json_event PRIVATE ${SECP256K1_LIBRARY_DIRS})
 target_link_directories(test_json_event_fuzzlite PRIVATE ${SECP256K1_LIBRARY_DIRS})

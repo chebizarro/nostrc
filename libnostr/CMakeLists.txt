@@ -24,7 +24,6 @@ endif()
 
 # Find the libwebsockets package
 pkg_check_modules(LWS REQUIRED libwebsockets)
-pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 # Optionally enable websockets support by uncommenting the lines below and
 # ensuring libwebsockets is available on the system.
 # pkg_check_modules(LWS REQUIRED libwebsockets)
@@ -43,7 +42,6 @@ set(LIBNOSTR_SOURCES
   src/json.c
   src/relay_store.c
   src/utils.c
-  src/event_extra.c
   src/simplepool.c
   # Pluggable storage interface (Phase A: registry + stubs)
   src/store/registry.c
@@ -111,7 +109,7 @@ target_include_directories(nostr PUBLIC ${LWS_INCLUDE_DIRS})
 target_link_directories(nostr PUBLIC ${LWS_LIBRARY_DIRS})
 find_package(OpenSSL REQUIRED)
 find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
-target_link_libraries(nostr PUBLIC ${LWS_LIBRARIES} libgo OpenSSL::Crypto ${SECP256K1_LIB} PkgConfig::JANSSON)
+target_link_libraries(nostr PUBLIC ${LWS_LIBRARIES} libgo OpenSSL::Crypto ${SECP256K1_LIB})
 if(NOSTR_WITH_GLIB AND GLIB_FOUND)
   target_link_libraries(nostr PUBLIC PkgConfig::GLIB)
 endif()

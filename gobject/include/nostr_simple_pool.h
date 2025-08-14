@@ -33,15 +33,4 @@ gboolean gnostr_simple_pool_subscribe_many_finish(GnostrSimplePool *self,
                                                   GAsyncResult *res,
                                                   GError **error);
 
-void gnostr_simple_pool_backfill_async(GnostrSimplePool *self,
-                                       const char **urls,
-                                       size_t url_count,
-                                       NostrFilters *filters,
-                                       GCancellable *cancellable,
-                                       GAsyncReadyCallback cb,
-                                       gpointer user_data);
-GPtrArray *gnostr_simple_pool_backfill_finish(GnostrSimplePool *self,
-                                              GAsyncResult *res,
-                                              GError **error);
-
 #endif // NOSTR_SIMPLE_POOL_H

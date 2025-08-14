@@ -16,7 +16,7 @@ target_include_directories(nostr_nip46_core PUBLIC ${NIP46_INC})
 target_include_directories(nostr_nip46_core PUBLIC
   ${CMAKE_SOURCE_DIR}/nips/nip04/include
   ${CMAKE_SOURCE_DIR}/nips/nip44/include)
-target_link_libraries(nostr_nip46_core PUBLIC nostr nip04 nostr_nip44_core)
+target_link_libraries(nostr_nip46_core PUBLIC nostr nip04 nostr_nip44_core nostr_json)
 
 # Optional GLib layer if nostr_glib is available
 set(NIP46_GLIB_SRC

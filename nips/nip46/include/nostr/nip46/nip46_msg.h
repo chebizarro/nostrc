@@ -8,7 +8,15 @@
 extern "C" {
 #endif
 
-/* Build JSON strings for NIP-46 requests and responses (unencrypted). */
+/* Build/parse JSON strings for NIP-46 requests and responses (unencrypted).
+ *
+ * Response parsing semantics:
+ *  - If the "result" field is a JSON string, `out->result` is that plain string (no quotes).
+ *  - If the "result" field is non-string (object/array/number/bool/null), `out->result`
+ *    is set to a newly-allocated compact JSON text of that value (e.g. "{\"k\":1}").
+ *    This is directly suitable for functions that expect JSON text, e.g.
+ *    `nostr_event_deserialize(event, resp.result)`.
+ */
 char *nostr_nip46_request_build(const char *id,
                                 const char *method,
                                 const char *const *params,

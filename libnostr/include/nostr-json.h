@@ -81,6 +81,19 @@ extern "C" {
  * Returns: 0 on success, non-zero on error
  */
 
+/**
+ * nostr_json_get_raw:
+ * @json: (transfer none): JSON string
+ * @entry_key: (transfer none): top-level key to fetch
+ * @out_raw: (out) (transfer full) (nullable): on success, set to a newly-allocated
+ *   compact JSON string representing the value at @entry_key. For strings, the
+ *   returned text is quoted JSON (e.g. "\"abc\""); for objects/arrays, a compact
+ *   JSON document (e.g. "{\"k\":1}"). Caller must free the returned string.
+ *
+ * Convenience facade helper to extract a top-level raw JSON value as text.
+ * Returns: 0 on success, -1 on error or missing key.
+ */
+
 /* ==== Optional GObject Interface ======================================== */
 
 #if defined(NOSTR_HAVE_GLIB) && NOSTR_HAVE_GLIB

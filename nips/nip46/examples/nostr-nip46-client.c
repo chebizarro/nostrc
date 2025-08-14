@@ -11,8 +11,6 @@
 
 static void ensure_json()
 {
-    extern NostrJsonInterface *jansson_impl;
-    nostr_set_json_interface(jansson_impl);
     nostr_json_init();
 }
 

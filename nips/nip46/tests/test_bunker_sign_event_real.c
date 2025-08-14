@@ -12,9 +12,7 @@
 static int string_eq(const char *a, const char *b){ return a && b && strcmp(a,b)==0; }
 
 int main(void){
-    /* Ensure jansson JSON interface is active for event parse/serialize */
-    extern NostrJsonInterface *jansson_impl;
-    nostr_set_json_interface(jansson_impl);
+    /* Ensure JSON provider is initialized */
     nostr_json_init();
 
     const char *client_sk = "0000000000000000000000000000000000000000000000000000000000000001";
