@@ -125,3 +125,19 @@ endif()
 # ---- GSettings schema install ----
 install(FILES data/schemas/org.gnostr.gnostr.gschema.xml
         DESTINATION ${CMAKE_INSTALL_DATADIR}/glib-2.0/schemas)
+
+# ---- Desktop entry ----
+install(FILES packaging/appimage/gnostr.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
+
+# ---- Icons (hicolor) ----
+set(ICON_BASENAME "${APP_CLIENT_FLATPAK_ID}")
+set(ICON_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor)
+set(ICON_INSTALL_ROOT ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor)
+foreach(sz IN ITEMS 16 24 32 48 64 128 256 512)
+  install(FILES ${ICON_ROOT}/${sz}x${sz}/apps/${ICON_BASENAME}.png
+          DESTINATION ${ICON_INSTALL_ROOT}/${sz}x${sz}/apps
+          OPTIONAL)
+endforeach()
+install(FILES ${ICON_ROOT}/scalable/apps/${ICON_BASENAME}.svg
+        DESTINATION ${ICON_INSTALL_ROOT}/scalable/apps
+        OPTIONAL)

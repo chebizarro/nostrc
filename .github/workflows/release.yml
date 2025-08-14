@@ -1,0 +1,522 @@
+name: Release Packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-deb:
+    name: Build .deb packages (all binaries)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev libsecret-1-dev libssl-dev \
+            libnsync-dev \
+            ruby ruby-dev rubygems \
+            git ca-certificates
+          sudo gem install --no-document fpm
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j
+      - name: Stage install tree
+        run: |
+          cmake --install build --prefix "$PWD/stage/usr"
+      - name: Build DEBs with fpm (one per binary)
+        run: |
+          set -e
+          mkdir -p dist
+          # gnostr
+          fpm -s dir -t deb -n gnostr -v ${GITHUB_REF_NAME#v} \
+            --prefix=/usr \
+            stage/usr/bin/gnostr=/usr/bin/gnostr \
+            stage/usr/share/icons/=usr/share/icons/ \
+            stage/usr/share/applications/=usr/share/applications/ \
+            -C . -p dist/gnostr_VERSION_ARCH.deb
+          # gnostr-signer
+          fpm -s dir -t deb -n gnostr-signer -v ${GITHUB_REF_NAME#v} \
+            --prefix=/usr \
+            stage/usr/bin/gnostr-signer=/usr/bin/gnostr-signer \
+            stage/usr/share/glib-2.0/schemas/=usr/share/glib-2.0/schemas/ \
+            stage/usr/share/dbus-1/services/=usr/share/dbus-1/services/ \
+            stage/usr/share/icons/=usr/share/icons/ \
+            stage/usr/share/applications/=usr/share/applications/ \
+            -C . -p dist/gnostr-signer_VERSION_ARCH.deb
+          # gnostr-signer-daemon
+          fpm -s dir -t deb -n gnostr-signer-daemon -v ${GITHUB_REF_NAME#v} \
+            --prefix=/usr \
+            stage/usr/bin/gnostr-signer-daemon=/usr/bin/gnostr-signer-daemon \
+            -C . -p dist/gnostr-signer-daemon_VERSION_ARCH.deb
+      - name: Upload DEBs
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-packages
+          path: dist/*.deb
+
+  build-appimage:
+    name: Build AppImage (gnostr-signer)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev libsecret-1-dev libssl-dev \
+            libnsync-dev \
+            wget file patchelf desktop-file-utils
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j --target gnostr-signer
+      - name: Download AppImage tools
+        run: |
+          mkdir -p appimage-tools
+          cd appimage-tools
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk.sh
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-gtk.sh appimagetool-x86_64.AppImage
+      - name: Prepare AppDir
+        run: |
+          set -e
+          APPDIR=$PWD/AppDir
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/scalable/apps"
+          cp build/apps/gnostr-signer/gnostr-signer "$APPDIR/usr/bin/gnostr-signer"
+          # Desktop file and metadata
+          cp apps/gnostr-signer/packaging/appimage/gnostr-signer.desktop "$APPDIR/usr/share/applications/"
+          # Icon
+          if [ -f apps/gnostr-signer/data/icons/hicolor/scalable/apps/org.gnostr.Signer.svg ]; then
+            cp apps/gnostr-signer/data/icons/hicolor/scalable/apps/org.gnostr.Signer.svg "$APPDIR/usr/share/icons/hicolor/scalable/apps/"
+          fi
+      - name: Build AppImage
+        run: |
+          set -e
+          export NO_APPSTREAM=1
+          ./appimage-tools/linuxdeploy-x86_64.AppImage --appdir AppDir \
+            -d AppDir/usr/share/applications/gnostr-signer.desktop \
+            --executable AppDir/usr/bin/gnostr-signer \
+            --plugin gtk
+          ./appimage-tools/appimagetool-x86_64.AppImage AppDir gnostr-signer-${GITHUB_REF_NAME#v}-x86_64.AppImage
+          mkdir -p dist
+          mv gnostr-signer-*.AppImage dist/
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: dist/*.AppImage
+
+  build-appimage-daemon-tcp:
+    name: Build AppImage (gnostr-signer-daemon TCP)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config wget file patchelf
+      - name: Configure (TCP enabled)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_TCP_IPC=ON
+      - name: Build (daemon only)
+        run: cmake --build build -j --target gnostr-signer-daemon
+      - name: Download AppImage tools
+        run: |
+          mkdir -p appimage-tools
+          cd appimage-tools
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage appimagetool-x86_64.AppImage
+      - name: Prepare AppDir
+        run: |
+          set -e
+          APPDIR=$PWD/AppDir
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications"
+          cp build/apps/gnostr-signer/gnostr-signer-daemon "$APPDIR/usr/bin/gnostr-signer-daemon"
+          # Minimal desktop (optional for CLI); enables AppImage metadata
+          cat > "$APPDIR/usr/share/applications/gnostr-signer-daemon.desktop" <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=GNostr Signer Daemon (TCP)
+          Exec=gnostr-signer-daemon
+          Terminal=true
+          Categories=Utility;
+          EOF
+      - name: Build AppImage
+        run: |
+          set -e
+          export NO_APPSTREAM=1
+          ./appimage-tools/linuxdeploy-x86_64.AppImage --appdir AppDir \
+            -d AppDir/usr/share/applications/gnostr-signer-daemon.desktop \
+            --executable AppDir/usr/bin/gnostr-signer-daemon
+          ./appimage-tools/appimagetool-x86_64.AppImage AppDir gnostr-signer-daemon-tcp-${GITHUB_REF_NAME#v}-x86_64.AppImage
+          mkdir -p dist
+          mv gnostr-signer-daemon-tcp-*.AppImage dist/
+      - name: Upload AppImage (daemon TCP)
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-daemon-tcp
+          path: dist/*.AppImage
+
+  build-appimage-gnostr:
+    name: Build AppImage (gnostr)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev libsecret-1-dev libssl-dev \
+            libnsync-dev \
+            wget file patchelf desktop-file-utils
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j --target gnostr
+      - name: Download AppImage tools
+        run: |
+          mkdir -p appimage-tools
+          cd appimage-tools
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk.sh
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-gtk.sh appimagetool-x86_64.AppImage
+      - name: Prepare AppDir
+        run: |
+          set -e
+          APPDIR=$PWD/AppDir
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/scalable/apps"
+          cp build/apps/gnostr/gnostr "$APPDIR/usr/bin/gnostr"
+          # Desktop file and metadata
+          cp apps/gnostr/packaging/appimage/gnostr.desktop "$APPDIR/usr/share/applications/"
+          # Icon
+          if [ -f apps/gnostr/data/icons/hicolor/scalable/apps/org.gnostr.Client.svg ]; then
+            cp apps/gnostr/data/icons/hicolor/scalable/apps/org.gnostr.Client.svg "$APPDIR/usr/share/icons/hicolor/scalable/apps/"
+          fi
+      - name: Build AppImage
+        run: |
+          set -e
+          export NO_APPSTREAM=1
+          ./appimage-tools/linuxdeploy-x86_64.AppImage --appdir AppDir \
+            -d AppDir/usr/share/applications/gnostr.desktop \
+            --executable AppDir/usr/bin/gnostr \
+            --plugin gtk
+          ./appimage-tools/appimagetool-x86_64.AppImage AppDir gnostr-${GITHUB_REF_NAME#v}-x86_64.AppImage
+          mkdir -p dist
+          mv gnostr-*.AppImage dist/
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-gnostr
+          path: dist/*.AppImage
+
+  build-snap-gnostr:
+    name: Build Snap (gnostr)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build snap
+        uses: snapcore/action-build@v1
+        with:
+          path: ./snap/gnostr
+      - name: Upload snap
+        uses: actions/upload-artifact@v4
+        with:
+          name: snap-gnostr
+          path: snap/gnostr/*.snap
+
+  build-snap-signer:
+    name: Build Snap (gnostr-signer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build snap
+        uses: snapcore/action-build@v1
+        with:
+          path: ./snap/gnostr-signer
+      - name: Upload snap
+        uses: actions/upload-artifact@v4
+        with:
+          name: snap-gnostr-signer
+          path: snap/gnostr-signer/*.snap
+
+  build-snap-daemon:
+    name: Build Snap (gnostr-signer-daemon)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build snap
+        uses: snapcore/action-build@v1
+        with:
+          path: ./snap/gnostr-signer-daemon
+      - name: Upload snap
+        uses: actions/upload-artifact@v4
+        with:
+          name: snap-gnostr-signer-daemon
+          path: snap/gnostr-signer-daemon/*.snap
+
+  create-release:
+    name: Create GitHub Release and upload artifacts
+    needs: [build-deb, build-deb-tcp, build-rpm, build-rpm-tcp, build-tarball-daemon, build-tarball-daemon-tcp, build-appimage, build-appimage-gnostr, build-appimage-daemon-tcp, build-snap-gnostr, build-snap-signer, build-snap-daemon, build-flatpak, build-flatpak-gnostr]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/**
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-rpm:
+    name: Build RPM packages (all binaries)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev libsecret-1-dev libssl-dev \
+            libnsync-dev ruby ruby-dev rubygems git ca-certificates
+          sudo gem install --no-document fpm
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j
+      - name: Stage install tree
+        run: cmake --install build --prefix "$PWD/stage/usr"
+      - name: Build RPMs with fpm (one per binary)
+        run: |
+          set -e
+          mkdir -p dist
+          # gnostr
+          fpm -s dir -t rpm -n gnostr -v ${GITHUB_REF_NAME#v} \
+            --prefix=/usr \
+            stage/usr/bin/gnostr=/usr/bin/gnostr \
+            stage/usr/share/icons/=usr/share/icons/ \
+            stage/usr/share/applications/=usr/share/applications/ \
+            -C . -p dist/gnostr_VERSION_ARCH.rpm
+          # gnostr-signer
+          fpm -s dir -t rpm -n gnostr-signer -v ${GITHUB_REF_NAME#v} \
+            --prefix=/usr \
+            stage/usr/bin/gnostr-signer=/usr/bin/gnostr-signer \
+            stage/usr/share/glib-2.0/schemas/=usr/share/glib-2.0/schemas/ \
+            stage/usr/share/dbus-1/services/=usr/share/dbus-1/services/ \
+            stage/usr/share/icons/=usr/share/icons/ \
+            stage/usr/share/applications/=usr/share/applications/ \
+            -C . -p dist/gnostr-signer_VERSION_ARCH.rpm
+          # gnostr-signer-daemon
+          fpm -s dir -t rpm -n gnostr-signer-daemon -v ${GITHUB_REF_NAME#v} \
+            --prefix=/usr \
+            stage/usr/bin/gnostr-signer-daemon=/usr/bin/gnostr-signer-daemon \
+            stage/usr/share/systemd/user/=usr/share/systemd/user/ \
+            -C . -p dist/gnostr-signer-daemon_VERSION_ARCH.rpm
+      - name: Upload RPMs
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-packages
+          path: dist/*.rpm
+
+  build-tarball-daemon:
+    name: Build tarball (daemon + systemd + installer)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build pkg-config
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j --target gnostr-signer-daemon
+      - name: Assemble tarball tree
+        run: |
+          set -e
+          mkdir -p tar/gnostr-signer-daemon/bin
+          mkdir -p tar/gnostr-signer-daemon/share/systemd/user
+          mkdir -p tar/gnostr-signer-daemon/scripts
+          cp build/apps/gnostr-signer/gnostr-signer-daemon tar/gnostr-signer-daemon/bin/
+          cp apps/gnostr-signer/daemon/packaging/systemd/user/gnostr-signer-daemon.service tar/gnostr-signer-daemon/share/systemd/user/
+          cp apps/gnostr-signer/daemon/packaging/tar/install.sh tar/gnostr-signer-daemon/scripts/
+          tar -C tar -czf gnostr-signer-daemon-${GITHUB_REF_NAME#v}-linux-x86_64.tar.gz gnostr-signer-daemon
+          mkdir -p dist
+          mv gnostr-signer-daemon-*.tar.gz dist/
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarball-daemon
+          path: dist/*.tar.gz
+
+  build-rpm-tcp:
+    name: Build RPM package (daemon TCP-enabled)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev libsecret-1-dev libssl-dev \
+            libnsync-dev ruby ruby-dev rubygems git ca-certificates
+          sudo gem install --no-document fpm
+      - name: Configure (TCP enabled)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_TCP_IPC=ON
+      - name: Build (daemon only)
+        run: cmake --build build -j --target gnostr-signer-daemon
+      - name: Stage install tree
+        run: cmake --install build --prefix "$PWD/stage/usr"
+      - name: Build RPM (daemon TCP variant)
+        run: |
+          set -e
+          mkdir -p dist
+          fpm -s dir -t rpm -n gnostr-signer-daemon-tcp -v ${GITHUB_REF_NAME#v} \
+            --prefix=/usr \
+            stage/usr/bin/gnostr-signer-daemon=/usr/bin/gnostr-signer-daemon \
+            stage/usr/share/systemd/user/=usr/share/systemd/user/ \
+            -C . -p dist/gnostr-signer-daemon-tcp_VERSION_ARCH.rpm
+      - name: Upload RPM TCP
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-packages-tcp
+          path: dist/*.rpm
+
+  build-tarball-daemon-tcp:
+    name: Build tarball (daemon TCP-enabled)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build pkg-config
+      - name: Configure (TCP enabled)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_TCP_IPC=ON
+      - name: Build
+        run: cmake --build build -j --target gnostr-signer-daemon
+      - name: Assemble tarball tree
+        run: |
+          set -e
+          mkdir -p tar/gnostr-signer-daemon-tcp/bin
+          mkdir -p tar/gnostr-signer-daemon-tcp/share/systemd/user
+          mkdir -p tar/gnostr-signer-daemon-tcp/scripts
+          cp build/apps/gnostr-signer/gnostr-signer-daemon tar/gnostr-signer-daemon-tcp/bin/
+          cp apps/gnostr-signer/daemon/packaging/systemd/user/gnostr-signer-daemon.service tar/gnostr-signer-daemon-tcp/share/systemd/user/
+          cp apps/gnostr-signer/daemon/packaging/tar/install.sh tar/gnostr-signer-daemon-tcp/scripts/
+          tar -C tar -czf gnostr-signer-daemon-tcp-${GITHUB_REF_NAME#v}-linux-x86_64.tar.gz gnostr-signer-daemon-tcp
+          mkdir -p dist
+          mv gnostr-signer-daemon-tcp-*.tar.gz dist/
+      - name: Upload tarball TCP
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarball-daemon-tcp
+          path: dist/*.tar.gz
+
+  build-deb-tcp:
+    name: Build .deb package (daemon TCP-enabled)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev libsecret-1-dev libssl-dev \
+            libnsync-dev ruby ruby-dev rubygems git ca-certificates
+          sudo gem install --no-document fpm
+      - name: Configure (TCP enabled)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_TCP_IPC=ON
+      - name: Build (daemon only)
+        run: cmake --build build -j --target gnostr-signer-daemon
+      - name: Stage install tree
+        run: cmake --install build --prefix "$PWD/stage/usr"
+      - name: Build DEB (daemon TCP variant)
+        run: |
+          set -e
+          mkdir -p dist
+          fpm -s dir -t deb -n gnostr-signer-daemon-tcp -v ${GITHUB_REF_NAME#v} \
+            --prefix=/usr \
+            stage/usr/bin/gnostr-signer-daemon=/usr/bin/gnostr-signer-daemon \
+            -C . -p dist/gnostr-signer-daemon-tcp_VERSION_ARCH.deb
+      - name: Upload DEB TCP
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-packages-tcp
+          path: dist/*.deb
+
+  build-flatpak:
+    name: Build Flatpak (gnostr-signer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install flatpak & builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder elfutils
+          sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak install -y flathub org.gnome.Sdk//46 org.gnome.Platform//46
+      - name: Build flatpak bundle
+        run: |
+          mkdir -p flatpak-build
+          flatpak-builder --force-clean --repo=repo flatpak-build apps/gnostr-signer/flatpak/org.gnostr.Signer.yaml
+          flatpak build-bundle repo gnostr-signer.flatpak org.gnostr.Signer
+          mkdir -p dist
+          mv gnostr-signer.flatpak dist/
+      - name: Upload Flatpak bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: dist/*.flatpak
+
+  build-flatpak-gnostr:
+    name: Build Flatpak (gnostr)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install flatpak & builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder elfutils
+          sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak install -y flathub org.gnome.Sdk//46 org.gnome.Platform//46
+      - name: Build flatpak bundle
+        run: |
+          mkdir -p flatpak-build
+          flatpak-builder --force-clean --repo=repo flatpak-build apps/gnostr/flatpak/org.gnostr.Client.yaml
+          flatpak build-bundle repo gnostr.flatpak org.gnostr.Client
+          mkdir -p dist
+          mv gnostr.flatpak dist/
+      - name: Upload Flatpak bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-gnostr
+          path: dist/*.flatpak

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=GNostr Client
+GenericName=Nostr Client
+Comment=Demo GTK client for Nostr using GNostr stack
+Exec=gnostr
+Icon=org.gnostr.Client
+Terminal=false
+Categories=Network;Utility;
+StartupWMClass=gnostr

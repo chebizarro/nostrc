@@ -45,6 +45,9 @@ set(LIBNOSTR_SOURCES
   src/utils.c
   src/event_extra.c
   src/simplepool.c
+  # Pluggable storage interface (Phase A: registry + stubs)
+  src/store/registry.c
+  src/store/store.c
 )
 
 # GI thin wrappers for macros/aliases
@@ -124,6 +127,14 @@ if(GLIB_FOUND)
   target_include_directories(nostr PUBLIC ${GLIB_INCLUDE_DIRS})
 endif()
 target_compile_definitions(nostr PUBLIC NOSTR_HAVE_LIBGO=1)
+
+# Optional nostrdb backend (Phase A: flag only; backend implementation added in later phases)
+option(LIBNOSTR_WITH_NOSTRDB "Enable nostrdb storage backend" OFF)
+if(LIBNOSTR_WITH_NOSTRDB)
+  target_compile_definitions(nostr PUBLIC LIBNOSTR_WITH_NOSTRDB=1)
+  # Backend sources will be appended in later phases; provide stub file to satisfy references
+  list(APPEND LIBNOSTR_SOURCES src/store/nostrdb/ndb_backend.c)
+endif()
 
 # Install rules
 include(GNUInstallDirs)

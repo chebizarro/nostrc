@@ -1,0 +1,13 @@
+[Unit]
+Description=GNostr Signer Daemon (user)
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/gnostr-signer-daemon
+# Set endpoint with unix socket by default under XDG_RUNTIME_DIR
+Environment=NOSTR_SIGNER_ENDPOINT=unix:%t/gnostr/signer.sock
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

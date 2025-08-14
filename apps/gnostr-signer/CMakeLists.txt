@@ -46,7 +46,9 @@ target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/ni
 target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA nostr_nip55l_core)
 
 # Daemon providing DBus (55L) and UDS (5F) fallback (skeleton now)
-add_executable(gnostr-signer-daemon daemon/main_daemon.c daemon/uds_sockd.c)
+option(ENABLE_TCP_IPC "Enable TCP IPC backend in gnostr-signer-daemon" OFF)
+
+add_executable(gnostr-signer-daemon daemon/main_daemon.c daemon/uds_sockd.c daemon/ipc.c)
 target_compile_features(gnostr-signer-daemon PRIVATE c_std_11)
 target_compile_definitions(gnostr-signer-daemon PRIVATE 
   DBUS_BUS_NAME="${DBUS_BUS_NAME}" DBUS_OBJECT_PATH="${DBUS_OBJECT_PATH}" DBUS_INTERFACE="${DBUS_INTERFACE}")
@@ -56,6 +58,10 @@ target_include_directories(gnostr-signer-daemon PRIVATE ${NSYNC_INCLUDE_DIR})
 find_library(NSYNC_LIB nsync REQUIRED)
 target_link_libraries(gnostr-signer-daemon PRIVATE nostr_nip55l_glib nostr_nip5f_core PkgConfig::GLIB ${NSYNC_LIB})
 
+if (ENABLE_TCP_IPC)
+  target_compile_definitions(gnostr-signer-daemon PRIVATE GNOSTR_ENABLE_TCP_IPC=1)
+endif()
+
 # Data install (schemas, dbus, desktop)
 install(TARGETS ${APP_SIGNER_BIN} gnostr-signer-daemon RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
@@ -63,7 +69,11 @@ install(TARGETS ${APP_SIGNER_BIN} gnostr-signer-daemon RUNTIME DESTINATION ${CMA
 install(FILES data/org.gnostr.Signer.gschema.xml DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/glib-2.0/schemas)
 # DBus service (session)
 install(FILES data/org.nostr.Signer.service DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/dbus-1/services)
-# Desktop file and icons/metainfo can be added later
+# Systemd user unit (daemon)
+install(FILES daemon/packaging/systemd/user/gnostr-signer-daemon.service
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/systemd/user)
+# Desktop file
+install(FILES packaging/appimage/gnostr-signer.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
 
 # Icons (hicolor theme). Place files under data/icons/hicolor/<size>/apps/
 # Expected names: org.gnostr.Signer.png for raster, org.gnostr.Signer.svg for scalable

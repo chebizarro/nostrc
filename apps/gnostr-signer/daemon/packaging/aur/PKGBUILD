@@ -1,0 +1,28 @@
+# Maintainer: Your Name <you@example.com>
+_pkgname=gnostr-signer-daemon
+pkgname=${_pkgname}
+pkgver=0.0.0
+pkgrel=1
+pkgdesc="GNostr Signer Daemon (UDS-only)"
+arch=('x86_64')
+url="https://github.com/chebizarro/nostrc"
+license=('MIT')
+depends=('glib2' 'jansson' 'openssl' 'libsecp256k1' 'libwebsockets' 'libsecret' 'gtk4' 'libadwaita')
+makedepends=('cmake' 'ninja' 'pkgconf' 'git')
+source=("${pkgname}-${pkgver}.tar.gz::https://github.com/chebizarro/nostrc/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "nostrc-${pkgver}"
+  cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+  cmake --build build -j --target gnostr-signer-daemon
+}
+
+package() {
+  cd "nostrc-${pkgver}"
+  DESTDIR="${pkgdir}" cmake --install build --prefix /usr
+}
+
+# Post-install notes:
+#  - Enable user service: systemctl --user enable --now gnostr-signer-daemon
+#  - Default endpoint: unix:%t/gnostr/signer.sock (set via service Environment)

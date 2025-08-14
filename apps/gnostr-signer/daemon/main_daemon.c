@@ -1,19 +1,20 @@
 #include <gio/gio.h>
 #include <signal.h>
 #include "nip55l_dbus_names.h"
+#include "ipc.h"
 
 // Use nip55l GLib implementation. This exports the full signer protocol.
 // Prototypes provided by nips/nip55l/src/glib/signer_service_g.c
 extern guint signer_export(GDBusConnection *conn, const char *object_path);
 extern void  signer_unexport(GDBusConnection *conn, guint reg_id);
 
-// NIP-5F Unix domain socket fallback server
-int gnostr_uds_sockd_start(const char *socket_path);
-void gnostr_uds_sockd_stop(void);
+// IPC abstraction (POSIX UDS / TCP / Windows named pipe) from ipc.h
 
 
 static GMainLoop *loop = NULL;
 static guint obj_reg_id = 0;
+
+static GnostrIpcServer *ipc_srv = NULL;
 
 static void on_bus_acquired(GDBusConnection *connection, const gchar *name, gpointer user_data) {
   (void)name; (void)user_data;
@@ -23,10 +24,19 @@ static void on_bus_acquired(GDBusConnection *connection, const gchar *name, gpoi
     if (loop) g_main_loop_quit(loop);
   } else {
     g_message("gnostr-signer: exported at %s on %s", ORG_NOSTR_SIGNER_OBJECT_PATH, ORG_NOSTR_SIGNER_BUS);
-    // Start UDS fallback listener (NIP-5F)
-    const char *sock = g_getenv("NOSTR_SIGNER_SOCK");
-    if (gnostr_uds_sockd_start(sock) != 0) {
-      g_warning("gnostr-signer: failed to start UDS signer (NIP-5F)");
+    // Start IPC listener. Endpoint selection via env:
+    //  NOSTR_SIGNER_ENDPOINT examples:
+    //    unix:/run/user/1000/gnostr/signer.sock
+    //    tcp:127.0.0.1:5897
+    //    npipe:\\.\pipe\gnostr-signer (Windows)
+    const char *endpoint = g_getenv("NOSTR_SIGNER_ENDPOINT");
+    if (!endpoint || !*endpoint) {
+      endpoint = g_getenv("NOSTR_SIGNER_SOCK"); // legacy
+    }
+    ipc_srv = gnostr_ipc_server_start(endpoint);
+    if (!ipc_srv) {
+      const char *ep = (endpoint && *endpoint) ? endpoint : "(default)";
+      g_warning("gnostr-signer: failed to start IPC server for endpoint '%s'", ep);
     }
   }
 }
@@ -43,15 +53,15 @@ static void on_name_lost(GDBusConnection *connection, const gchar *name, gpointe
     obj_reg_id = 0;
   }
   g_warning("gnostr-signer: lost name or could not acquire bus, exiting");
-  // Stop UDS fallback
-  gnostr_uds_sockd_stop();
+  // Stop IPC server
+  if (ipc_srv) { gnostr_ipc_server_stop(ipc_srv); ipc_srv = NULL; }
   if (loop) g_main_loop_quit(loop);
 }
 
 static void handle_sig(int sig) {
   (void)sig;
-  // Stop UDS fallback early to unblock accept loop
-  gnostr_uds_sockd_stop();
+  // Stop IPC early to unblock accept loop
+  if (ipc_srv) { gnostr_ipc_server_stop(ipc_srv); ipc_srv = NULL; }
   if (loop) g_main_loop_quit(loop);
 }
 

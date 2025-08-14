@@ -1,0 +1,54 @@
+name: gnostr-signer
+base: core22
+version: 0.1.0
+summary: GNostr Signer (GTK)
+description: |
+  GNostr Signer GTK application. Securely authorize Nostr app requests.
+
+grade: stable
+confinement: strict
+
+apps:
+  gnostr-signer:
+    command: usr/bin/gnostr-signer
+    desktop: usr/share/applications/gnostr-signer.desktop
+    extensions: [gnome]
+    plugs: [network, network-bind, wayland, x11]
+
+parts:
+  app:
+    plugin: cmake
+    source: ../..
+    build-packages:
+      - build-essential
+      - cmake
+      - ninja-build
+      - pkg-config
+      - libgtk-4-dev
+      - libadwaita-1-dev
+      - libjansson-dev
+      - libwebsockets-dev
+      - libsecret-1-dev
+      - libssl-dev
+      - libnsync-dev
+    stage-packages:
+      - libgtk-4-1
+      - libadwaita-1-0
+      - libjansson4
+      - libwebsockets16
+      - libsecret-1-0
+      - libssl3
+      - libnsync
+    override-build: |
+      cmake -S $SNAPCRAFT_PROJECT_DIR -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      cmake --build build -j --target gnostr-signer
+      cmake --install build --prefix $SNAPCRAFT_PART_INSTALL/usr
+      # Desktop file and icon
+      mkdir -p $SNAPCRAFT_PART_INSTALL/usr/share/applications
+      if [ -f apps/gnostr-signer/packaging/appimage/gnostr-signer.desktop ]; then
+        cp apps/gnostr-signer/packaging/appimage/gnostr-signer.desktop $SNAPCRAFT_PART_INSTALL/usr/share/applications/
+      fi
+      if [ -f apps/gnostr-signer/data/icons/hicolor/scalable/apps/org.gnostr.Signer.svg ]; then
+        mkdir -p $SNAPCRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps
+        cp apps/gnostr-signer/data/icons/hicolor/scalable/apps/org.gnostr.Signer.svg $SNAPCRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/
+      fi

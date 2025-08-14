@@ -1,0 +1,53 @@
+name: gnostr
+base: core22
+version: 0.1.0
+summary: GNostr Client (GTK)
+description: |
+  Demo GTK desktop client for Nostr using the GNostr stack.
+
+grade: stable
+confinement: strict
+
+apps:
+  gnostr:
+    command: usr/bin/gnostr
+    desktop: usr/share/applications/gnostr.desktop
+    extensions: [gnome]
+
+parts:
+  app:
+    plugin: cmake
+    source: ../..
+    build-packages:
+      - build-essential
+      - cmake
+      - ninja-build
+      - pkg-config
+      - libgtk-4-dev
+      - libadwaita-1-dev
+      - libjansson-dev
+      - libwebsockets-dev
+      - libsecret-1-dev
+      - libssl-dev
+      - libnsync-dev
+    stage-packages:
+      - libgtk-4-1
+      - libadwaita-1-0
+      - libjansson4
+      - libwebsockets16
+      - libsecret-1-0
+      - libssl3
+      - libnsync
+    override-build: |
+      cmake -S $SNAPCRAFT_PROJECT_DIR -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      cmake --build build -j --target gnostr
+      cmake --install build --prefix $SNAPCRAFT_PART_INSTALL/usr
+      # Desktop file and icon
+      mkdir -p $SNAPCRAFT_PART_INSTALL/usr/share/applications
+      if [ -f apps/gnostr/packaging/appimage/gnostr.desktop ]; then
+        cp apps/gnostr/packaging/appimage/gnostr.desktop $SNAPCRAFT_PART_INSTALL/usr/share/applications/
+      fi
+      if [ -f apps/gnostr/data/icons/hicolor/scalable/apps/org.gnostr.Client.svg ]; then
+        mkdir -p $SNAPCRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps
+        cp apps/gnostr/data/icons/hicolor/scalable/apps/org.gnostr.Client.svg $SNAPCRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/
+      fi

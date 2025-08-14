@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=GNostr Signer
+GenericName=Nostr Signer
+Comment=Authorize Nostr app requests securely
+Exec=gnostr-signer
+Icon=org.gnostr.Signer
+Terminal=false
+Categories=Network;Utility;
+StartupWMClass=gnostr-signer

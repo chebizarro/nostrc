@@ -1,0 +1,25 @@
+app-id: org.gnostr.Signer
+runtime: org.gnome.Platform
+runtime-version: '46'
+sdk: org.gnome.Sdk
+command: gnostr-signer
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --filesystem=home
+modules:
+  - name: nostrc
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+    sources:
+      - type: dir
+        path: ../..
+    build-commands:
+      - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - cmake --build build -j --target gnostr-signer
+      - DESTDIR="${FLATPAK_DEST}" cmake --install build
+      - install -Dm755 build/apps/gnostr-signer/gnostr-signer /app/bin/gnostr-signer
+      - install -Dm644 apps/gnostr-signer/data/icons/hicolor/scalable/apps/org.gnostr.Signer.svg /app/share/icons/hicolor/scalable/apps/org.gnostr.Signer.svg
+      - install -Dm644 apps/gnostr-signer/packaging/appimage/gnostr-signer.desktop /app/share/applications/gnostr-signer.desktop

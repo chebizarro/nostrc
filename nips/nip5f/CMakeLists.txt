@@ -70,10 +70,23 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip5f_negative_env.c)
   add_test(NAME test_nip5f_negative_env COMMAND test_nip5f_negative_env)
 endif()
 
+# TCP test (optional; skips when endpoint/token not set)
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip5f_tcp.c)
+  add_executable(test_nip5f_tcp ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip5f_tcp.c)
+  target_link_libraries(test_nip5f_tcp PRIVATE nostr_nip5f_core nostr nostr_json)
+  add_test(NAME test_nip5f_tcp COMMAND test_nip5f_tcp)
+  set_tests_properties(test_nip5f_tcp PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
 # Examples
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/nip5f_client_example.c)
   add_executable(nip5f_client_example ${CMAKE_CURRENT_SOURCE_DIR}/examples/nip5f_client_example.c)
   target_link_libraries(nip5f_client_example PRIVATE nostr_nip5f_core nostr nostr_json)
+endif()
+
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/nip5f_tcp_client_example.c)
+  add_executable(nip5f_tcp_client_example ${CMAKE_CURRENT_SOURCE_DIR}/examples/nip5f_tcp_client_example.c)
+  target_link_libraries(nip5f_tcp_client_example PRIVATE nostr_nip5f_core nostr nostr_json)
 endif()
 
 install(TARGETS nostr_nip5f_core nostr-signer-sockd)

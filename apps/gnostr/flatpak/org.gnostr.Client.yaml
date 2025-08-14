@@ -1,0 +1,25 @@
+app-id: org.gnostr.Client
+runtime: org.gnome.Platform
+runtime-version: '46'
+sdk: org.gnome.Sdk
+command: gnostr
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --filesystem=home
+modules:
+  - name: nostrc
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+    sources:
+      - type: dir
+        path: ../..
+    build-commands:
+      - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - cmake --build build -j --target gnostr
+      - DESTDIR="${FLATPAK_DEST}" cmake --install build
+      - install -Dm755 build/apps/gnostr/gnostr /app/bin/gnostr
+      - install -Dm644 apps/gnostr/data/icons/hicolor/scalable/apps/org.gnostr.Client.svg /app/share/icons/hicolor/scalable/apps/org.gnostr.Client.svg || true
+      - install -Dm644 apps/gnostr/packaging/appimage/gnostr.desktop /app/share/applications/gnostr.desktop
