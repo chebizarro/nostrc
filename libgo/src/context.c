@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+#include <time.h>
 #include "context.h"
 #include "channel.h"
 #include <errno.h>
