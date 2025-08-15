@@ -26,7 +26,6 @@ add_subdirectory(libgo)
 add_subdirectory(libnostr)
 add_subdirectory(libjson)
 
-## Vendored libwally-core is handled by subprojects (e.g., libnostr, nip06) as needed.
 
 # NIPs are added via NipOptions.cmake per-NIP toggles; avoid adding nips/ twice.
 

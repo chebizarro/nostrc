@@ -3,9 +3,6 @@
 /*
  * libnostr global initialization and cleanup
  *
- * If built with libwally (LIBNOSTR_WITH_WALLY=1), nostr_global_init() will
- * call wally_init(0) and nostr_global_cleanup() will call wally_cleanup(0).
- *
  * By default, constructor/destructor attributes will auto-initialize on load
  * unless NOSTR_DISABLE_AUTO_INIT is defined.
  */

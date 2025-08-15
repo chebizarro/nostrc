@@ -75,8 +75,7 @@ endif()
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-## Disable libwally integration: using in-tree minimal BIP39/BIP32 instead.
-set(LIBNOSTR_WALLY_ENABLED OFF)
+## libwally integration removed: project uses in-tree minimal BIP39/BIP32.
 
 
 # Configure header: nostr-config.h
@@ -122,19 +121,7 @@ if(NOSTR_WITH_GLIB AND GLIB_FOUND)
   target_link_libraries(nostr PUBLIC PkgConfig::GLIB)
 endif()
 
-# Link libwally if enabled
-if(LIBNOSTR_WALLY_ENABLED)
-  target_compile_definitions(nostr PUBLIC LIBNOSTR_WITH_WALLY=1)
-  if(WITH_SYSTEM_LIBWALLY AND WALLYCORE_LIB)
-    target_include_directories(nostr PUBLIC ${WALLYCORE_INCLUDE_DIR})
-    target_link_libraries(nostr PUBLIC ${WALLYCORE_LIB})
-  else()
-    # Vendored target
-    target_link_libraries(nostr PUBLIC wallycore)
-  endif()
-else()
-  target_compile_definitions(nostr PUBLIC LIBNOSTR_WITH_WALLY=0)
-endif()
+# (libwally previously controlled via LIBNOSTR_WALLY_ENABLED; fully removed.)
 
 target_include_directories(nostr
   PUBLIC

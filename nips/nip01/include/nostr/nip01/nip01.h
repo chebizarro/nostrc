@@ -135,7 +135,17 @@ int  nostr_nip01_filter_limit(NostrFilterBuilder *fb, int limit);
 
 /**
  * nostr_nip01_filter_build:
- * @out: (out) (transfer full): deep-copied filter to take ownership of
+ * @out: (out) (transfer full): destination filter that will TAKE OWNERSHIP of
+ *       the builder's internal filter contents via move semantics.
+ *
+ * Notes:
+ * - The builder performs a shallow move of all internal pointers/arrays into
+ *   @out and then resets its internal pointer to NULL. No deep copy occurs.
+ * - The builder remains valid and can be disposed. After a successful build,
+ *   `nostr_nip01_filter_builder_dispose()` is a no-op for the moved filter.
+ * - If @out is stack-allocated, call `nostr_filter_clear(&out)` when done.
+ *   If @out is heap-allocated (from `nostr_filter_new()`), call
+ *   `nostr_filter_free(out)`.
  *
  * Returns: 0 on success, -errno on failure.
  */

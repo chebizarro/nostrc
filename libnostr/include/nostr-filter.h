@@ -45,12 +45,31 @@ void          nostr_filter_free(NostrFilter *filter);
  * without freeing the struct itself. Safe to use for stack-allocated filters
  * (e.g., results of `nostr_nip01_filter_build()` when the destination is a
  * stack variable). After this call, the filter is reset to an empty state.
+ *
+ * Notes:
+ * - This function is also safe to call on a zeroed filter (e.g., after
+ *   `nostr_filters_add()` which zeros the source to prevent double-free).
  */
 void          nostr_filter_clear(NostrFilter *filter);
 bool          nostr_filter_matches(NostrFilter *filter, NostrEvent *event);
 bool          nostr_filter_match_ignoring_timestamp(NostrFilter *filter, NostrEvent *event);
 
 NostrFilters *nostr_filters_new(void);
+/**
+ * nostr_filters_add:
+ * @filters: (not nullable): destination vector
+ * @filter: (inout) (transfer full): source filter whose contents will be MOVED
+ *
+ * Appends a filter to @filters by moving its contents into the internal array
+ * slot using shallow copy. The source @filter is then zeroed with memset to
+ * prevent accidental double-free by the caller.
+ *
+ * Ownership: @filters takes full ownership of the filter contents. Caller must
+ * not use or free internal members of @filter after this call. It is safe to
+ * call `nostr_filter_clear(filter)` afterwards; it will be a no-op.
+ *
+ * Returns: %true on success, %false on failure.
+ */
 bool          nostr_filters_add(NostrFilters *filters, NostrFilter *filter);
 void          nostr_filters_free(NostrFilters *filters);
 bool          nostr_filters_match(NostrFilters *filters, NostrEvent *event);

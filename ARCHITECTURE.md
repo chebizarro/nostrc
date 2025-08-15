@@ -59,7 +59,7 @@ NIP modules (nips/*) extend libnostr capabilities and are compiled as submodules
 - `libnostr` is a static library by default, built with `-fPIC` to support shared linkage.
 - `libjson` is currently a shared library (`SHARED`) that links against `jansson`, `libnostr`, and `nsync`.
 - `libgo` is a static library providing concurrency utilities with `nsync`.
-- Optional `libwally-core` provides BIP39/BIP32 primitives for NIP-06 when enabled. Global init/cleanup paths call `wally_init(0)`/`wally_cleanup(0)` via `nostr_global_init()`/`nostr_global_cleanup()`.
+  
 - Tests link against `libnostr`, `nostr_json`, OpenSSL, libsecp256k1, and `nsync`.
 
 ## Performance Considerations

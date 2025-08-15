@@ -21,7 +21,7 @@ int main() {
                 char* private_key = nostr_nip06_private_key_from_seed(seed);
                 if (private_key) {
                     printf("Private Key: %s\n", private_key);
-                    free(private_key); // allocated by libwally in our implementation
+                    free(private_key);
                 }
 
                 free(seed);
@@ -30,7 +30,7 @@ int main() {
             printf("Seed words are invalid.\n");
         }
 
-        free(seed_words); // mnemonic allocated by libwally; free() is fine on this build
+        free(seed_words);
     } else {
         printf("Failed to generate seed words.\n");
     }

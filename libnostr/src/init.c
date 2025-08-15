@@ -1,7 +1,6 @@
 #include <stdatomic.h>
 #include <errno.h>
 #include "nostr-init.h"
-#include "nostr-wally.h"
 
 static atomic_int g_init_refcnt = 0;
 
@@ -23,13 +22,7 @@ int nostr_global_init(void)
     return 0;
   }
 
-#if defined(LIBNOSTR_WITH_WALLY) && (LIBNOSTR_WITH_WALLY+0)==1
-  if (wally_init(0) != WALLY_OK) {
-    // Roll back refcount on failure
-    atomic_store(&g_init_refcnt, 0);
-    return EIO;
-  }
-#endif
+  /* libwally integration removed */
 
   return 0;
 }
@@ -41,9 +34,7 @@ void nostr_global_cleanup(void)
     return; // not initialized or already cleaned
   prev = atomic_fetch_sub(&g_init_refcnt, 1);
   if (prev == 1) {
-#if defined(LIBNOSTR_WITH_WALLY) && (LIBNOSTR_WITH_WALLY+0)==1
-    (void)wally_cleanup(0);
-#endif
+    /* libwally integration removed */
   }
 }
 
