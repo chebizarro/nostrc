@@ -1,11 +1,16 @@
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE
+#else
 #define _POSIX_C_SOURCE 200809L
-#include <time.h>
+#endif
+
 #include "context.h"
 #include "channel.h"
 #include <errno.h>
 #include <nsync.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 void go_context_cancel(GoContext *ctx) {
     nsync_mu_lock(&ctx->mutex);
@@ -17,7 +22,7 @@ void go_context_cancel(GoContext *ctx) {
         // Also make ctx->done observable by non-blocking selects
         // Best-effort: try to enqueue a single token, then close to wake any waiters
         if (ctx->done) {
-            (void)go_channel_try_send(ctx->done, (void*)ctx); // token value unused
+            (void)go_channel_try_send(ctx->done, (void *)ctx); // token value unused
             go_channel_close(ctx->done);
         }
     }
@@ -66,7 +71,7 @@ void go_context_free(GoContext *ctx) {
 
 // Wrapper functions
 int go_context_is_canceled(const void *ctxp) {
-    GoContext *ctx = (GoContext*)ctxp;
+    GoContext *ctx = (GoContext *)ctxp;
     return ctx && ctx->vtable && ctx->vtable->is_canceled ? ctx->vtable->is_canceled(ctx) : true;
 }
 
@@ -76,12 +81,12 @@ GoChannel *go_context_done(GoContext *ctx) {
 
 Error *go_context_err(GoContext *ctx) {
     if (ctx && ctx->vtable && ctx->vtable->err) {
-        const char* err = ctx->vtable->err(ctx);
-        if (err) return new_error(-1, err);
+        const char *err = ctx->vtable->err(ctx);
+        if (err)
+            return new_error(-1, err);
     }
     return NULL;
 }
-
 
 void go_context_wait(GoContext *ctx) {
     if (ctx && ctx->vtable && ctx->vtable->wait) {
@@ -133,7 +138,7 @@ bool deadline_context_is_canceled(void *ctx) {
 }
 
 void deadline_context_wait(void *dctx) {
-    GoContext *ctx = (GoContext*)dctx;
+    GoContext *ctx = (GoContext *)dctx;
     nsync_mu_lock(&ctx->mutex);
 
     while (!ctx->canceled) {
@@ -148,7 +153,8 @@ void deadline_context_wait(void *dctx) {
             if (ctx->vtable->is_canceled(ctx)) {
                 if (!ctx->canceled) {
                     ctx->canceled = true;
-                    if (!ctx->err_msg) ctx->err_msg = "context deadline exceeded";
+                    if (!ctx->err_msg)
+                        ctx->err_msg = "context deadline exceeded";
                     nsync_cv_broadcast(&ctx->cond);
                 }
                 break;

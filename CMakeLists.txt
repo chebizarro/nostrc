@@ -149,5 +149,9 @@ if (NOSTR_ENABLE_GI)
   endif()
 endif()
 
-add_definitions(-D_POSIX_C_SOURCE=200809L)
+if(APPLE)
+    add_definitions(-D_DARWIN_C_SOURCE)
+else()
+    add_definitions(-D_POSIX_C_SOURCE=200809L)
+endif()
 
