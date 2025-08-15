@@ -75,7 +75,7 @@ endif()
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-## libwally integration removed: project uses in-tree minimal BIP39/BIP32.
+## External vendor integration removed: project uses in-tree minimal BIP39/BIP32.
 
 
 # Configure header: nostr-config.h
@@ -121,7 +121,7 @@ if(NOSTR_WITH_GLIB AND GLIB_FOUND)
   target_link_libraries(nostr PUBLIC PkgConfig::GLIB)
 endif()
 
-# (libwally previously controlled via LIBNOSTR_WALLY_ENABLED; fully removed.)
+# (Previous external vendor toggles fully removed.)
 
 target_include_directories(nostr
   PUBLIC

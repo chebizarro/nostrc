@@ -22,7 +22,7 @@ int nostr_global_init(void)
     return 0;
   }
 
-  /* libwally integration removed */
+  /* External crypto integration hooks previously used here have been removed. */
 
   return 0;
 }
@@ -34,7 +34,7 @@ void nostr_global_cleanup(void)
     return; // not initialized or already cleaned
   prev = atomic_fetch_sub(&g_init_refcnt, 1);
   if (prev == 1) {
-    /* libwally integration removed */
+    /* External crypto integration hooks previously used here have been removed. */
   }
 }
 

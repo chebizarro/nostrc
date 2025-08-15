@@ -78,7 +78,7 @@ char *nostr_bip39_generate(int word_count) {
   size_t total_len = 0;
   for (int i = 0; i < word_count; ++i) {
     const char *w = g_words[idx[i]];
-    size_t wl = 0; while (w[wl] && w[wl] != '\n') wl++;
+    size_t wl = 0; while (w[wl] && w[wl] != '\n' && w[wl] != '\r') wl++;
     total_len += wl;
   }
   total_len += (size_t)(word_count - 1) + 1; /* spaces + NUL */
@@ -87,7 +87,7 @@ char *nostr_bip39_generate(int word_count) {
   size_t p = 0;
   for (int i = 0; i < word_count; ++i) {
     const char *w = g_words[idx[i]];
-    size_t wl = 0; while (w[wl] && w[wl] != '\n') wl++;
+    size_t wl = 0; while (w[wl] && w[wl] != '\n' && w[wl] != '\r') wl++;
     memcpy(out + p, w, wl);
     p += wl;
     if (i + 1 < word_count) out[p++] = ' ';
@@ -102,7 +102,7 @@ static int word_index(const char *w, size_t wl) {
   while (lo <= hi) {
     int mid = (lo + hi) / 2;
     const char *mw = g_words[mid];
-    size_t ml = 0; while (mw[ml] && mw[ml] != '\n') ml++;
+    size_t ml = 0; while (mw[ml] && mw[ml] != '\n' && mw[ml] != '\r') ml++;
     int c = (int)memcmp(w, mw, wl < ml ? wl : ml);
     if (c == 0) {
       if (wl == ml) return mid;
@@ -168,7 +168,10 @@ bool nostr_bip39_validate(const char *mnemonic) {
     if (wl == 0 || wl > 8) return false; /* max len ~8 for english list */
     if (wc >= 24) return false;
     int wi = word_index(start, wl);
-    if (wi < 0) return false;
+    if (wi < 0) {
+      fprintf(stderr, "bip39: unknown word: %.*s\n", (int)wl, start);
+      return false;
+    }
     idx[wc++] = wi;
     while (*s == ' ') s++;
   }
@@ -204,6 +207,7 @@ bool nostr_bip39_validate(const char *mnemonic) {
     int have = (bits[ENT_bytes] >> (7 - b)) & 1;
     if (want != have) { ok = 0; break; }
   }
+  if (!ok) fprintf(stderr, "bip39: checksum mismatch (wc=%d)\n", wc);
   return ok ? true : false;
 }
 
