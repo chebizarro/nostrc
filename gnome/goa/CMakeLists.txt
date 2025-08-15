@@ -15,7 +15,10 @@ target_link_libraries(goa-gnostr PRIVATE
 
 target_compile_features(goa-gnostr PRIVATE c_std_11)
 
-target_include_directories(goa-gnostr PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(goa-gnostr PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${GOA_BACKEND_INCLUDE_DIRS}
+)
 
 target_compile_definitions(goa-gnostr PRIVATE GOA_API_IS_SUBJECT_TO_CHANGE=1)
 
