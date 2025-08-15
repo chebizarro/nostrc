@@ -37,6 +37,11 @@ static const SecretSchema SIGNER_IDENTITY_SCHEMA = {
 };
 #endif
 
+#ifdef NIP55L_HAVE_KEYCHAIN
+#include <CoreFoundation/CoreFoundation.h>
+#include <Security/Security.h>
+#endif
+
 static int is_hex_64(const char *s) {
   if (!s) return 0; size_t n = strlen(s); if (n != 64) return 0; for (size_t i=0;i<n;i++){ char c=s[i]; if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F'))) return 0; } return 1;
 }
@@ -377,6 +382,57 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
   free(sk_hex);
   free(npub);
   return ok ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
+#elif defined(NIP55L_HAVE_KEYCHAIN)
+  /* macOS Keychain fallback */
+  const char *sel_in = (identity && *identity) ? identity : NULL;
+  /* Normalize key to hex and derive npub for attributes */
+  char *sk_hex = NULL;
+  if (is_hex_64(key)) sk_hex = strdup(key);
+  else if (strncmp(key, "nsec1", 5)==0) {
+    uint8_t skb[32]; if (nostr_nip19_decode_nsec(key, skb)!=0) return NOSTR_SIGNER_ERROR_INVALID_KEY; sk_hex = bin_to_hex(skb, 32);
+  } else {
+    return NOSTR_SIGNER_ERROR_INVALID_KEY;
+  }
+  if (!sk_hex) return NOSTR_SIGNER_ERROR_BACKEND;
+  char *pk_hex = nostr_key_get_public(sk_hex);
+  if (!pk_hex) { free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  uint8_t pk[32]; if (!nostr_hex2bin(pk, pk_hex, sizeof pk)) { free(pk_hex); free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
+  char *npub = NULL; if (nostr_nip19_encode_npub(pk, &npub)!=0 || !npub) { free(pk_hex); free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  free(pk_hex);
+  const char *key_id_attr = sel_in ? sel_in : npub;
+
+  /* Prepare secret bytes */
+  uint8_t skb[32];
+  if (!nostr_hex2bin(skb, sk_hex, sizeof skb)) { free(sk_hex); free(npub); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
+
+  /* Keychain write using SecItem APIs */
+  CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  if (!query) { free(sk_hex); free(npub); return NOSTR_SIGNER_ERROR_BACKEND; }
+  CFStringRef service = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+  CFStringRef account = CFStringCreateWithCString(NULL, key_id_attr, kCFStringEncodingUTF8);
+  CFStringRef label = CFStringCreateWithCString(NULL, "Gnostr Identity", kCFStringEncodingUTF8);
+  CFStringRef comment = CFStringCreateWithCString(NULL, npub, kCFStringEncodingUTF8);
+  CFDataRef secretData = CFDataCreate(NULL, skb, (CFIndex)sizeof(skb));
+  CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(query, kSecAttrService, service);
+  CFDictionarySetValue(query, kSecAttrAccount, account);
+  CFDictionarySetValue(query, kSecAttrLabel, label);
+  if (comment) CFDictionarySetValue(query, kSecAttrComment, comment);
+  /* Replace existing if present */
+  SecItemDelete(query);
+  CFDictionarySetValue(query, kSecValueData, secretData);
+  CFDictionarySetValue(query, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlock);
+  OSStatus st = SecItemAdd(query, NULL);
+  if (service) CFRelease(service);
+  if (account) CFRelease(account);
+  if (label) CFRelease(label);
+  if (comment) CFRelease(comment);
+  if (secretData) CFRelease(secretData);
+  if (query) CFRelease(query);
+  free(sk_hex);
+  free(npub);
+  return (st == errSecSuccess) ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
 #else
   (void)identity; return NOSTR_SIGNER_ERROR_NOT_FOUND;
 #endif

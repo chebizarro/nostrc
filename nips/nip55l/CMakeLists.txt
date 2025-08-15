@@ -21,10 +21,24 @@ target_link_libraries(nostr_nip55l_core PUBLIC nostr nip04 nip19 nostr_nip44_cor
 
 # Optional libsecret for key storage
 if (PkgConfig_FOUND)
-  pkg_check_modules(LIBSECRET QUIET IMPORTED_TARGET libsecret-1)
-  if (LIBSECRET_FOUND)
-    target_link_libraries(nostr_nip55l_core PUBLIC PkgConfig::LIBSECRET)
-    target_compile_definitions(nostr_nip55l_core PRIVATE -DNIP55L_HAVE_LIBSECRET)
+  # On macOS prefer Keychain; skip libsecret even if present
+  if (NOT APPLE)
+    pkg_check_modules(LIBSECRET QUIET IMPORTED_TARGET libsecret-1)
+    if (LIBSECRET_FOUND)
+      target_link_libraries(nostr_nip55l_core PUBLIC PkgConfig::LIBSECRET)
+      target_compile_definitions(nostr_nip55l_core PRIVATE -DNIP55L_HAVE_LIBSECRET)
+    endif()
+  endif()
+endif()
+
+# macOS Keychain fallback when libsecret is not present
+if (APPLE)
+  find_library(SECURITY_FRAMEWORK Security)
+  find_library(COREFOUNDATION_FRAMEWORK CoreFoundation)
+  if (SECURITY_FRAMEWORK AND COREFOUNDATION_FRAMEWORK)
+    target_link_libraries(nostr_nip55l_core PUBLIC ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
+    target_compile_definitions(nostr_nip55l_core PRIVATE -DNIP55L_HAVE_KEYCHAIN)
+    message(STATUS "NIP-55L: Using macOS Keychain for secure storage")
   endif()
 endif()
 
