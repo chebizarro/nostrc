@@ -3,6 +3,7 @@
 #define GOA_API_IS_SUBJECT_TO_CHANGE 1
 #endif
 #include <goa/goa.h>
+#include <goa/goa-backend.h>
 #include <glib-object.h>
 
 G_BEGIN_DECLS
