@@ -59,3 +59,34 @@ GHashTable *gnostr_secret_store_find_all(GError **error){
   g_object_unref(service);
   return result;
 }
+
+gboolean gnostr_secret_store_delete_by_identity(const gchar *npub,
+                                                const gchar *uid,
+                                                GError **error){
+  GError *local_err = NULL;
+  SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, &local_err);
+  if (!service){ if (error) *error = local_err; else if (local_err) g_clear_error(&local_err); return FALSE; }
+
+  GHashTable *attrs = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  g_hash_table_insert(attrs, g_strdup("type"), g_strdup("nostr-key"));
+  if (npub && *npub) g_hash_table_insert(attrs, g_strdup("npub"), g_strdup(npub));
+  if (uid  && *uid)  g_hash_table_insert(attrs, g_strdup("uid"),  g_strdup(uid));
+
+  GList *items = secret_service_search_sync(service, &gnostr_secret_schema, attrs,
+                                            SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK,
+                                            NULL, &local_err);
+  g_hash_table_destroy(attrs);
+  if (local_err){ if (error) *error = local_err; else g_clear_error(&local_err); g_object_unref(service); return FALSE; }
+
+  gboolean all_ok = TRUE;
+  for (GList *l = items; l; l = l->next){
+    SecretItem *it = l->data;
+    if (!secret_item_delete_sync(it, NULL, &local_err)){
+      all_ok = FALSE;
+      if (error && !*error) *error = local_err; else if (local_err) g_clear_error(&local_err);
+    }
+  }
+  g_list_free_full(items, g_object_unref);
+  g_object_unref(service);
+  return all_ok;
+}

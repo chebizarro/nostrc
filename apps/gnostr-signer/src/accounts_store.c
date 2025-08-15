@@ -93,7 +93,13 @@ gboolean accounts_store_remove(AccountsStore *as, const gchar *id) {
   if (!as || !id) return FALSE;
   gboolean removed = g_hash_table_remove(as->map, id);
   if (removed && as->active && g_strcmp0(as->active, id) == 0) {
+    /* pick a new active if any remain */
     g_clear_pointer(&as->active, g_free);
+    GHashTableIter it; gpointer key=NULL, val=NULL;
+    g_hash_table_iter_init(&it, as->map);
+    if (g_hash_table_iter_next(&it, &key, &val)) {
+      as->active = g_strdup((const gchar*)key);
+    }
   }
   return removed;
 }

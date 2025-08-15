@@ -1,5 +1,8 @@
 #include <gtk/gtk.h>
 #include "../accounts_store.h"
+#ifdef GNOSTR_HAVE_LIBSECRET
+#include "gnome/seahorse/secret_store.h"
+#endif
 #include <gio/gio.h>
 #include <nostr/nip55l/signer_ops.h>
 #include <unistd.h>
@@ -73,6 +76,15 @@ static void on_remove_confirm(GObject *source, GAsyncResult *res, gpointer user_
   int resp = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(source), res, &err);
   if (err) { g_warning("Remove confirm failed: %s", err->message); g_clear_error(&err); }
   if (resp == 0 && rc && rc->ui && rc->ui->as && rc->id) {
+    /* Delete secret material for this identity (npub) before removing from store */
+    #ifdef GNOSTR_HAVE_LIBSECRET
+    GError *derr = NULL;
+    if (!gnostr_secret_store_delete_by_identity(rc->id, NULL, &derr)){
+      if (derr) { g_warning("Failed to delete secret for %s: %s", rc->id, derr->message); g_clear_error(&derr); }
+    }
+    #else
+    g_message("Secret deletion not available (libsecret not present). Skipping delete for %s", rc->id);
+    #endif
     accounts_store_remove(rc->ui->as, rc->id);
     accounts_store_save(rc->ui->as);
     extern void gnostr_settings_page_refresh(GtkWidget*, AccountsStore*);

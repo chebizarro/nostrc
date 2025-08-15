@@ -94,7 +94,28 @@ if (GNOSTR_ENABLE_GOA)
   pkg_check_modules(GOA REQUIRED IMPORTED_TARGET goa-1.0)
   pkg_check_modules(GOA_BACKEND REQUIRED IMPORTED_TARGET goa-backend-1.0)
   pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
-  add_subdirectory(gnome/goa)
+
+  # Probe whether the installed goa-backend headers actually expose a complete
+  # GoaProviderClass definition (some distros keep it private, making subclassing impossible).
+  include(CheckCSourceCompiles)
+  set(CMAKE_REQUIRED_INCLUDES
+    ${GOA_INCLUDE_DIRS}
+    ${GOA_BACKEND_INCLUDE_DIRS}
+  )
+  set(CMAKE_REQUIRED_DEFINITIONS
+    -DGOA_API_IS_SUBJECT_TO_CHANGE=1
+    -DGOA_BACKEND_API_IS_SUBJECT_TO_CHANGE=1
+  )
+  check_c_source_compiles("#include <goa/goa.h>\n#include <goabackend/goabackend.h>\nint main(void){ return (int)sizeof(GoaProviderClass); }" GOA_PROVIDERCLASS_AVAILABLE)
+  unset(CMAKE_REQUIRED_INCLUDES)
+  unset(CMAKE_REQUIRED_DEFINITIONS)
+
+  if (GOA_PROVIDERCLASS_AVAILABLE)
+    add_subdirectory(gnome/goa)
+  else()
+    message(WARNING "GNOSTR_ENABLE_GOA requested, but goa-backend headers do not expose a complete GoaProviderClass on this system. Disabling GOA provider build.")
+    set(GNOSTR_ENABLE_GOA OFF CACHE BOOL "Build GNOME Online Accounts provider" FORCE)
+  endif()
   # Install DBus service activation + desktop/appdata if present
   install(FILES gnome/dbus/com.nostr.Signer.service
           DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/services)

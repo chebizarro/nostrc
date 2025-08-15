@@ -45,6 +45,20 @@ target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/ni
 # Link against core to resolve owner APIs
 target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA nostr_nip55l_core)
 
+# Include project root so we can include gnome/seahorse/secret_store.h from the app
+target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR})
+
+# If Seahorse helper lib is built, link it to enable secret deletion helpers
+if (TARGET gnostr-secret)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE gnostr-secret)
+  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_LIBSECRET=1)
+endif()
+
+# Alternatively, if libsecret was detected directly here, enable the codepath too
+if (LIBSECRET_FOUND)
+  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_LIBSECRET=1)
+endif()
+
 # Daemon providing DBus (55L) and UDS (5F) fallback (skeleton now)
 option(ENABLE_TCP_IPC "Enable TCP IPC backend in gnostr-signer-daemon" OFF)
 
