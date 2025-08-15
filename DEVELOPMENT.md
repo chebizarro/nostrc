@@ -10,6 +10,7 @@
   - jansson (libjansson)
   - nsync
   - Optional: libwebsockets (if enabling relay over websockets)
+  - Optional: libwally-core (BIP39/BIP32 for NIP-06). Enabled by default via vendored source.
 
 On macOS (Homebrew):
 
@@ -138,6 +139,9 @@ After installing dependencies, clear and reconfigure the build:
 ```sh
 rm -rf build
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+# libwally options (Phase L1):
+#  -DWITH_LIBWALLY=ON  (default) builds vendored third_party/libwally-core
+#  -DWITH_SYSTEM_LIBWALLY=ON prefers system wally if available
 cmake --build build -j
 ```
 

@@ -1,32 +1,24 @@
 #include "nip06.h"
-#include <wally_bip39.h>
-#include <wally_core.h>
-#include <wally_bip32.h>
+#include <nostr/crypto/bip39.h>
+#include <nostr/crypto/bip32.h>
 #include <openssl/rand.h>
 #include <stdlib.h>
 #include <string.h>
 
+/* Generate a 24-word English mnemonic per BIP-39. */
 char *nostr_nip06_generate_mnemonic(void) {
-    uint8_t entropy[32];
-    if (RAND_bytes(entropy, (int)sizeof(entropy)) != 1) {
-        return NULL;
-    }
-    char *mnemonic = NULL;
-    if (bip39_mnemonic_from_bytes(NULL, entropy, sizeof(entropy), &mnemonic) != WALLY_OK) {
-        return NULL;
-    }
-    return mnemonic; /* libwally allocs; caller must free */
+    return nostr_bip39_generate(24);
 }
 
 bool nostr_nip06_validate_mnemonic(const char *mnemonic) {
-    return mnemonic && bip39_mnemonic_validate(NULL, mnemonic) == WALLY_OK;
+    return nostr_bip39_validate(mnemonic);
 }
 
 unsigned char *nostr_nip06_seed_from_mnemonic(const char *mnemonic) {
     if (!mnemonic) return NULL;
-    unsigned char *seed = (unsigned char *)malloc(BIP39_SEED_LEN_512);
+    unsigned char *seed = (unsigned char *)malloc(64);
     if (!seed) return NULL;
-    if (bip39_mnemonic_to_seed(mnemonic, "", seed, BIP39_SEED_LEN_512, NULL) != WALLY_OK) {
+    if (!nostr_bip39_seed(mnemonic, "", seed)) {
         free(seed);
         return NULL;
     }
@@ -34,30 +26,31 @@ unsigned char *nostr_nip06_seed_from_mnemonic(const char *mnemonic) {
 }
 
 static char *hex_from_priv_key32(const unsigned char *key32) {
-    char *hex = NULL;
-    if (wally_hex_from_bytes(key32, 32, &hex) != WALLY_OK) return NULL;
-    return hex; /* libwally allocs; caller must free */
+    static const char *hexchars = "0123456789abcdef";
+    char *hex = (char *)malloc(65);
+    if (!hex) return NULL;
+    for (size_t i = 0; i < 32; ++i) {
+        hex[2*i]   = hexchars[(key32[i] >> 4) & 0xF];
+        hex[2*i+1] = hexchars[key32[i] & 0xF];
+    }
+    hex[64] = '\0';
+    return hex;
 }
 
 char *nostr_nip06_private_key_from_seed_account(const unsigned char *seed, unsigned int account) {
     if (!seed) return NULL;
-    struct ext_key master_key;
-    if (bip32_key_from_seed(seed, BIP39_SEED_LEN_512, BIP32_VER_MAIN_PRIVATE, 0, &master_key) != WALLY_OK) {
-        return NULL;
-    }
     uint32_t path[] = {
-        BIP32_INITIAL_HARDENED_CHILD + 44,
-        BIP32_INITIAL_HARDENED_CHILD + 1237,
-        BIP32_INITIAL_HARDENED_CHILD + account,
-        0,
-        0,
+        0x80000000u | 44u,
+        0x80000000u | 1237u,
+        0x80000000u | account,
+        0u,
+        0u,
     };
-    struct ext_key derived;
-    if (bip32_key_from_parent_path(&master_key, path, sizeof(path)/sizeof(path[0]), BIP32_FLAG_KEY_PRIVATE, &derived) != WALLY_OK) {
+    unsigned char out32[32];
+    if (!nostr_bip32_priv_from_master_seed(seed, 64, path, sizeof(path)/sizeof(path[0]), out32)) {
         return NULL;
     }
-    /* ext_key.priv_key is 33 bytes with a leading 0; use last 32 bytes */
-    return hex_from_priv_key32(derived.priv_key + 1);
+    return hex_from_priv_key32(out32);
 }
 
 char *nostr_nip06_private_key_from_seed(const unsigned char *seed) {

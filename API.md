@@ -35,6 +35,18 @@ Ownership: Functions returning `char*` allocate memory; caller must free.
   - Connect to relay(s)
   - Send/receive events matching filters
 
+#### Filters — ownership and cleanup
+
+- Types: `NostrFilter`, `NostrFilters` (dynamic vector)
+- Heap vs stack lifecycle:
+  - Use `nostr_filter_free(NostrFilter* heap_filter)` to free filters created with `nostr_filter_new()`.
+  - Use `nostr_filter_clear(NostrFilter* stack_filter)` to free internal members of a stack-allocated filter without freeing the struct.
+- Builder semantics (`nostr_nip01_filter_builder_*`):
+  - `nostr_nip01_filter_build(&builder, &out_filter)` transfers ownership of internal pointers into `out_filter` via shallow copy and sets the builder's internal pointer to NULL.
+  - Always call `nostr_nip01_filter_builder_dispose(&builder)`; it is a no-op for filter internals after a successful build.
+  - If `out_filter` is stack-allocated, call `nostr_filter_clear(&out_filter)` when done. If heap-allocated, call `nostr_filter_free(out_filter)`.
+  - When appending a filter into `NostrFilters` with `nostr_filters_add(fs, &f)`, ownership is moved into the vector, and the source `f` is zeroed; callers must not clear/free `f` afterward.
+
 ### JSON — `json.h`
 - Abstractions for JSON interface used by the library (implemented by `libjson`).
 

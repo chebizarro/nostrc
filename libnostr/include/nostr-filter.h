@@ -37,6 +37,16 @@ typedef struct _NostrFilters {
 /* Constructors / matchers */
 NostrFilter  *nostr_filter_new(void);
 void          nostr_filter_free(NostrFilter *filter);
+/**
+ * nostr_filter_clear:
+ * @filter: (nullable): filter to clear
+ *
+ * Frees all heap-allocated contents of @filter (ids, kinds, authors, tags, search)
+ * without freeing the struct itself. Safe to use for stack-allocated filters
+ * (e.g., results of `nostr_nip01_filter_build()` when the destination is a
+ * stack variable). After this call, the filter is reset to an empty state.
+ */
+void          nostr_filter_clear(NostrFilter *filter);
 bool          nostr_filter_matches(NostrFilter *filter, NostrEvent *event);
 bool          nostr_filter_match_ignoring_timestamp(NostrFilter *filter, NostrEvent *event);
 

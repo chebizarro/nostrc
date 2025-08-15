@@ -1,6 +1,7 @@
 #include "go.h"
 #include "nostr_jansson.h"
 #include "nostr-event.h"
+#include "nostr-filter.h"
 #include "nostr-event-extra.h"
 #include "nostr-tag.h"
 #include <jansson.h>
@@ -308,7 +309,11 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
         for (size_t i = 2; i < json_array_size(json_obj); i++) {
             json_t *json_filter = json_array_get(json_obj, i);
             NostrFilter f = {0};
-            if (jansson_filter_deserialize(&f, json_filter) != 0) { continue; }
+            if (jansson_filter_deserialize(&f, json_filter) != 0) {
+                /* ensure no leaks on error */
+                nostr_filter_clear(&f);
+                continue;
+            }
             nostr_filters_add(fs, &f);
         }
         env->filters = fs;
@@ -335,7 +340,11 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
         for (size_t i = 3; i < json_array_size(json_obj); i++) {
             json_t *json_filter = json_array_get(json_obj, i);
             NostrFilter f = {0};
-            if (jansson_filter_deserialize(&f, json_filter) != 0) { continue; }
+            if (jansson_filter_deserialize(&f, json_filter) != 0) {
+                /* ensure no leaks on error */
+                nostr_filter_clear(&f);
+                continue;
+            }
             nostr_filters_add(fs, &f);
         }
         env->filters = fs;

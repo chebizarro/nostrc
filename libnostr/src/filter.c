@@ -80,6 +80,24 @@ void nostr_filter_free(NostrFilter *filter) {
     free_filter(filter);
 }
 
+/* Clear contents of a stack- or heap-allocated filter without freeing struct */
+void nostr_filter_clear(NostrFilter *filter) {
+    if (!filter) return;
+    /* Free any heap members and null internal pointers */
+    free_filter_contents(filter);
+    /* Reinitialize arrays to a usable empty state */
+    string_array_init(&filter->ids);
+    int_array_init(&filter->kinds);
+    string_array_init(&filter->authors);
+    /* Tags can be lazily allocated on demand */
+    filter->tags = NULL;
+    /* Reset scalars */
+    filter->since = 0;
+    filter->until = 0;
+    filter->limit = 0;
+    filter->limit_zero = false;
+}
+
 /* Deep-copy helpers for tags */
 static NostrTag *filter_tag_clone(const NostrTag *src) {
     if (!src) return NULL;
@@ -175,7 +193,10 @@ bool nostr_filters_add(NostrFilters *filters, NostrFilter *filter) {
         }
     }
 
-    filters->filters[filters->count] = *filter; // Copy the filter into the array
+    /* Move semantics: transfer ownership of internals into the array slot */
+    filters->filters[filters->count] = *filter; // shallow copy fields
+    /* Invalidate source to prevent double-free by callers */
+    memset(filter, 0, sizeof(*filter));
     filters->count++;
     return true;
 }

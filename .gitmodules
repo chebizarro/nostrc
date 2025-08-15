@@ -4,3 +4,6 @@
 	branch = master
 	shallow = true
 	ignore = dirty
+[submodule "third_party/libwally-core"]
+	path = third_party/libwally-core
+	url = https://github.com/ElementsProject/libwally-core

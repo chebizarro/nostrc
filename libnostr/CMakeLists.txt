@@ -34,6 +34,7 @@ set(LIBNOSTR_SOURCES
   src/tag.c
   src/event.c
   src/envelope.c
+  src/init.c
   src/filter.c
   src/connection.c
   src/relay.c
@@ -46,6 +47,10 @@ set(LIBNOSTR_SOURCES
   # Pluggable storage interface (Phase A: registry + stubs)
   src/store/registry.c
   src/store/store.c
+  # Minimal internal crypto for NIP-06 (BIP39/BIP32 subset)
+  src/crypto/bip39_wordlist_en.c
+  src/crypto/bip39.c
+  src/crypto/bip32.c
 )
 
 # GI thin wrappers for macros/aliases
@@ -69,6 +74,9 @@ endif()
 
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+## Disable libwally integration: using in-tree minimal BIP39/BIP32 instead.
+set(LIBNOSTR_WALLY_ENABLED OFF)
 
 
 # Configure header: nostr-config.h
@@ -112,6 +120,20 @@ find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
 target_link_libraries(nostr PUBLIC ${LWS_LIBRARIES} libgo OpenSSL::Crypto ${SECP256K1_LIB})
 if(NOSTR_WITH_GLIB AND GLIB_FOUND)
   target_link_libraries(nostr PUBLIC PkgConfig::GLIB)
+endif()
+
+# Link libwally if enabled
+if(LIBNOSTR_WALLY_ENABLED)
+  target_compile_definitions(nostr PUBLIC LIBNOSTR_WITH_WALLY=1)
+  if(WITH_SYSTEM_LIBWALLY AND WALLYCORE_LIB)
+    target_include_directories(nostr PUBLIC ${WALLYCORE_INCLUDE_DIR})
+    target_link_libraries(nostr PUBLIC ${WALLYCORE_LIB})
+  else()
+    # Vendored target
+    target_link_libraries(nostr PUBLIC wallycore)
+  endif()
+else()
+  target_compile_definitions(nostr PUBLIC LIBNOSTR_WITH_WALLY=0)
 endif()
 
 target_include_directories(nostr
