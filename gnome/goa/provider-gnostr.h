@@ -2,6 +2,9 @@
 #ifndef GOA_API_IS_SUBJECT_TO_CHANGE
 #define GOA_API_IS_SUBJECT_TO_CHANGE 1
 #endif
+#ifndef GOA_BACKEND_API_IS_SUBJECT_TO_CHANGE
+#define GOA_BACKEND_API_IS_SUBJECT_TO_CHANGE 1
+#endif
 #include <goa/goa.h>
 #include <goa/goabackend.h>
 #include <glib-object.h>
