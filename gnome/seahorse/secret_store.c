@@ -32,7 +32,8 @@ gboolean gnostr_secret_store_save_software_key(const gchar *npub,
                                     "uid", uid ? uid : "",
                                     "curve", "secp256k1",
                                     "origin", "software",
-                                    NULL);
+                                    NULL, /* end attributes */
+                                    error);
 }
 
 GHashTable *gnostr_secret_store_find_all(GError **error){

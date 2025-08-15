@@ -1,4 +1,7 @@
 #pragma once
+#ifndef GOA_API_IS_SUBJECT_TO_CHANGE
+#define GOA_API_IS_SUBJECT_TO_CHANGE 1
+#endif
 #include <goa/goa.h>
 #include <glib-object.h>
 
