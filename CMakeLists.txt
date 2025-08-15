@@ -92,6 +92,7 @@ if (GNOSTR_ENABLE_GOA)
   pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)
   pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
   pkg_check_modules(GOA REQUIRED IMPORTED_TARGET goa-1.0)
+  pkg_check_modules(GOA_BACKEND REQUIRED IMPORTED_TARGET goa-backend-1.0)
   pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
   add_subdirectory(gnome/goa)
   # Install DBus service activation + desktop/appdata if present
