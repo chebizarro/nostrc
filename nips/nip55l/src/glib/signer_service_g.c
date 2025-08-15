@@ -2,8 +2,12 @@
 #include <string.h>
 #include <stdlib.h>
 #include <glib/gstdio.h>
+#include <ctype.h>
 
 #include "nostr/nip55l/signer_ops.h"
+#include <nip19.h>
+#include <keys.h>
+#include <nostr-utils.h>
 #include "signer_dbus.h"
 #include "nostr/nip55l/error.h"
 #include "nip55l_dbus_names.h"
@@ -344,13 +348,58 @@ static gboolean handle_store_key(NostrSigner *object, GDBusMethodInvocation *inv
   if (!rate_limit_ok(sender)) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT, "rate limited"); return TRUE; }
   int rc = nostr_nip55l_store_key(key, identity);
   if (rc == 0) {
-    /* Best-effort derive npub to return to client. Core already normalizes and stores.
-     * We query current active npub which, under libsecret owner_uid fallback, will
-     * resolve to the just-stored key for this user. If unavailable, return empty. */
-    char *npub = NULL; int grc = nostr_nip55l_get_public_key(&npub);
-    const char *out_npub = (grc==0 && npub) ? npub : "";
-    g_dbus_method_invocation_return_value(invocation, g_variant_new("(bs)", TRUE, out_npub));
-    if (npub) free(npub);
+    /* Prefer deriving npub directly from the provided key to avoid relying on
+     * environment/libsecret/keychain fallbacks. If derivation fails, fall back
+     * to querying the active public key. */
+    const char *out_npub_c = "";
+    char *to_free = NULL;
+    if (key && *key) {
+      char *sk_hex = NULL;
+      if (g_str_has_prefix(key, "nsec1")) {
+        uint8_t sk[32];
+        if (nostr_nip19_decode_nsec(key, sk) == 0) {
+          sk_hex = (char*)malloc(65);
+          if (sk_hex) { for (int i=0;i<32;i++){ sprintf(sk_hex+2*i, "%02x", sk[i]); } sk_hex[64]='\0'; }
+        }
+      } else {
+        /* Accept 64-hex secret key */
+        size_t n = strlen(key);
+        gboolean hex64 = (n==64);
+        if (hex64) {
+          hex64 = TRUE;
+          for (size_t i=0;i<n;i++){
+            char c = key[i];
+            if (!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F'))) { hex64=FALSE; break; }
+          }
+        }
+        if (hex64) {
+          sk_hex = g_strdup(key);
+          if (sk_hex) { for (size_t i=0;i<n;i++){ sk_hex[i] = (char)g_ascii_tolower(sk_hex[i]); } }
+        }
+      }
+      if (sk_hex) {
+        char *pk_hex = nostr_key_get_public(sk_hex);
+        free(sk_hex);
+        if (pk_hex) {
+          uint8_t pk[32];
+          if (nostr_hex2bin(pk, pk_hex, sizeof pk)) {
+            char *npub_tmp=NULL;
+            if (nostr_nip19_encode_npub(pk, &npub_tmp) == 0 && npub_tmp) {
+              out_npub_c = to_free = npub_tmp;
+            }
+          }
+          free(pk_hex);
+        }
+      }
+    }
+    if (to_free == NULL) {
+      /* Fallback to active key */
+      char *npub = NULL; int grc = nostr_nip55l_get_public_key(&npub);
+      if (grc==0 && npub) { out_npub_c = to_free = npub; }
+    }
+    g_message("StoreKey ok=true; returning npub='%s' (empty means unavailable)", out_npub_c);
+    g_dbus_method_invocation_return_value(invocation, g_variant_new("(bs)", TRUE, out_npub_c));
+    if (to_free) free(to_free);
   } else {
     /* Map core error codes to DBus error names for actionable client messages */
     const char *ename = "org.nostr.Signer.Error";

@@ -37,6 +37,9 @@ typedef struct {
   GtkWidget *dialog;
 } ClearCtx;
 
+/* Global handle to the last-created settings page for cross-component callbacks */
+static GtkWidget *g_settings_page_global = NULL;
+
 /* Helper to extract selected string from GtkDropDown backed by GtkStringList */
 static gchar *dropdown_get_selected_string(GtkDropDown *dd){
   if (!dd) return NULL;
@@ -182,19 +185,21 @@ static void on_add_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 GtkWidget *gnostr_settings_page_new(AccountsStore *as) {
-  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-  gtk_widget_set_margin_top(box, 16);
-  gtk_widget_set_margin_bottom(box, 16);
-  gtk_widget_set_margin_start(box, 16);
-  gtk_widget_set_margin_end(box, 16);
-
   SettingsUI *ui = g_new0(SettingsUI, 1);
-  g_object_set_data_full(G_OBJECT(box), "settings_ui", ui, g_free);
-  ui->page = box;
+  GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+  gtk_widget_set_margin_top(page, 16);
+  gtk_widget_set_margin_bottom(page, 16);
+  gtk_widget_set_margin_start(page, 16);
+  gtk_widget_set_margin_end(page, 16);
+
+  g_object_set_data_full(G_OBJECT(page), "settings_ui", ui, (GDestroyNotify)g_free);
+  /* Remember global settings page for callback-based updates */
+  g_settings_page_global = page;
+  ui->page = page;
 
   GtkWidget *title = gtk_label_new("Settings");
   gtk_widget_add_css_class(title, "title-1");
-  gtk_box_append(GTK_BOX(box), title);
+  gtk_box_append(GTK_BOX(page), title);
 
   /* Key material notice + actions */
   GtkWidget *secrets_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -206,7 +211,7 @@ GtkWidget *gnostr_settings_page_new(AccountsStore *as) {
   gtk_box_append(GTK_BOX(secrets_row), secrets_note);
   gtk_box_append(GTK_BOX(secrets_row), btn_import);
   gtk_box_append(GTK_BOX(secrets_row), btn_clear);
-  gtk_box_append(GTK_BOX(box), secrets_row);
+  gtk_box_append(GTK_BOX(page), secrets_row);
 
   /* Add form */
   GtkWidget *form = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -220,7 +225,7 @@ GtkWidget *gnostr_settings_page_new(AccountsStore *as) {
   gtk_box_append(GTK_BOX(form), ui->add_id);
   gtk_box_append(GTK_BOX(form), ui->add_label);
   gtk_box_append(GTK_BOX(form), add_btn);
-  gtk_box_append(GTK_BOX(box), form);
+  gtk_box_append(GTK_BOX(page), form);
 
   /* Linked user section */
   ui->linked_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -234,7 +239,7 @@ GtkWidget *gnostr_settings_page_new(AccountsStore *as) {
   gtk_widget_set_halign(ui->linked_label, GTK_ALIGN_START);
   gtk_box_append(GTK_BOX(ui->linked_box), ui->link_btn);
   gtk_box_append(GTK_BOX(ui->linked_box), ui->clear_link_btn);
-  gtk_box_append(GTK_BOX(box), ui->linked_box);
+  gtk_box_append(GTK_BOX(page), ui->linked_box);
 
   /* Handlers */
   extern void on_link_current_user_clicked(GtkButton*, gpointer);
@@ -245,10 +250,10 @@ GtkWidget *gnostr_settings_page_new(AccountsStore *as) {
   /* Accounts list */
   GtkWidget *list = gtk_list_box_new();
   ui->list = list;
-  gtk_box_append(GTK_BOX(box), list);
+  gtk_box_append(GTK_BOX(page), list);
 
   ui->as = as;
-  gnostr_settings_page_refresh(box, as);
+  gnostr_settings_page_refresh(page, as);
 
   /* Wire secret actions */
   extern void on_import_clicked(GtkButton*, gpointer);
@@ -256,12 +261,26 @@ GtkWidget *gnostr_settings_page_new(AccountsStore *as) {
   g_signal_connect(btn_import, "clicked", G_CALLBACK(on_import_clicked), ui);
   g_signal_connect(btn_clear,  "clicked", G_CALLBACK(on_clear_clicked), ui);
 
-  return box;
+  return page;
 }
 
 GtkWidget *gnostr_settings_page_new(AccountsStore *as);
 
 /* ---- Key Import/Clear helpers (C callbacks) ---- */
+
+/* External helper: apply a successful import (npub,label) to AccountsStore and refresh UI. */
+void gnostr_settings_apply_import_success(const char *npub, const char *label){
+  if (!g_settings_page_global || !npub || !*npub) return;
+  SettingsUI *ui = g_object_get_data(G_OBJECT(g_settings_page_global), "settings_ui");
+  if (!ui || !ui->as) return;
+  if (!accounts_store_add(ui->as, npub, label)) {
+    /* If already exists, update label when provided */
+    if (label && *label) { accounts_store_set_label(ui->as, npub, label); }
+  }
+  accounts_store_set_active(ui->as, npub);
+  accounts_store_save(ui->as);
+  gnostr_settings_page_refresh(g_settings_page_global, ui->as);
+}
 
 /* ---- Linked user helpers ---- */
 static gchar *get_active_identity(SettingsUI *ui){

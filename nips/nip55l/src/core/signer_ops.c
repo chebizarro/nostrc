@@ -111,6 +111,34 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
         if (service) g_object_unref(service);
       }
     }
+#elif defined(NIP55L_HAVE_KEYCHAIN)
+    /* macOS Keychain: find any identity item in this user's keychain */
+    {
+      CFMutableDictionaryRef q = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+      if (!q) return NOSTR_SIGNER_ERROR_BACKEND;
+      CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
+      CFStringRef service = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+      if (service) { CFDictionarySetValue(q, kSecAttrService, service); }
+      CFDictionarySetValue(q, kSecReturnData, kCFBooleanTrue);
+      CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitOne);
+      CFTypeRef result = NULL; OSStatus st = SecItemCopyMatching(q, &result);
+      if (service) CFRelease(service);
+      if (q) CFRelease(q);
+      if (st == errSecSuccess && result) {
+        CFDataRef d = (CFDataRef)result;
+        const UInt8 *bytes = CFDataGetBytePtr(d);
+        CFIndex blen = CFDataGetLength(d);
+        int rc_kc = NOSTR_SIGNER_ERROR_NOT_FOUND;
+        if (blen == 32 && bytes) {
+          char *hex = bin_to_hex((const uint8_t*)bytes, 32);
+          if (hex) { *out_sk_hex = hex; rc_kc = 0; }
+          else rc_kc = NOSTR_SIGNER_ERROR_BACKEND;
+        }
+        CFRelease(d);
+        return rc_kc;
+      }
+    }
 #endif
     return NOSTR_SIGNER_ERROR_NOT_FOUND;
   }
@@ -195,6 +223,49 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
         *out_sk_hex = bin_to_hex(sk, 32); return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND;
       }
     }
+  }
+#elif defined(NIP55L_HAVE_KEYCHAIN)
+  /* Treat current_user as identity selector when provided */
+  {
+    CFMutableDictionaryRef q = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+      &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    if (!q) return NOSTR_SIGNER_ERROR_BACKEND;
+    CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
+    CFStringRef service = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+    if (service) CFDictionarySetValue(q, kSecAttrService, service);
+    /* Try account == selector */
+    CFStringRef account = CFStringCreateWithCString(NULL, cand, kCFStringEncodingUTF8);
+    if (account) CFDictionarySetValue(q, kSecAttrAccount, account);
+    CFDictionarySetValue(q, kSecReturnData, kCFBooleanTrue);
+    CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitOne);
+    CFTypeRef result = NULL; OSStatus st = SecItemCopyMatching(q, &result);
+    if (st != errSecSuccess) {
+      /* Try comment == selector */
+      if (account) { CFDictionaryRemoveValue(q, kSecAttrAccount); }
+      CFStringRef comment = CFStringCreateWithCString(NULL, cand, kCFStringEncodingUTF8);
+      if (comment) {
+        CFDictionarySetValue(q, kSecAttrComment, comment);
+        st = SecItemCopyMatching(q, &result);
+        CFRelease(comment);
+      }
+    }
+    if (service) CFRelease(service);
+    if (account) CFRelease(account);
+    if (st == errSecSuccess && result) {
+      CFDataRef d = (CFDataRef)result;
+      const UInt8 *bytes = CFDataGetBytePtr(d);
+      CFIndex blen = CFDataGetLength(d);
+      int rc_kc = NOSTR_SIGNER_ERROR_NOT_FOUND;
+      if (blen == 32 && bytes) {
+        char *hex = bin_to_hex((const uint8_t*)bytes, 32);
+        if (hex) { *out_sk_hex = hex; rc_kc = 0; }
+        else rc_kc = NOSTR_SIGNER_ERROR_BACKEND;
+      }
+      CFRelease(d);
+      CFRelease(q);
+      return rc_kc;
+    }
+    if (q) CFRelease(q);
   }
 #endif
   return NOSTR_SIGNER_ERROR_INVALID_KEY;
@@ -449,6 +520,29 @@ int nostr_nip55l_clear_key(const char *identity){
                                             "npub", sel, NULL);
   if (gerr) { g_error_free(gerr); }
   return (ok1 || ok2) ? 0 : NOSTR_SIGNER_ERROR_NOT_FOUND;
+#elif defined(NIP55L_HAVE_KEYCHAIN)
+  /* Delete by selector if provided; otherwise delete all for service (best-effort single delete) */
+  CFMutableDictionaryRef q = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  if (!q) return NOSTR_SIGNER_ERROR_BACKEND;
+  CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
+  CFStringRef service = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+  if (service) CFDictionarySetValue(q, kSecAttrService, service);
+  if (identity && *identity) {
+    CFStringRef account = CFStringCreateWithCString(NULL, identity, kCFStringEncodingUTF8);
+    if (account) CFDictionarySetValue(q, kSecAttrAccount, account);
+    OSStatus st = SecItemDelete(q);
+    if (service) CFRelease(service);
+    if (account) CFRelease(account);
+    CFRelease(q);
+    return (st == errSecSuccess) ? 0 : NOSTR_SIGNER_ERROR_NOT_FOUND;
+  } else {
+    /* Without selector: attempt one delete by service */
+    OSStatus st = SecItemDelete(q);
+    if (service) CFRelease(service);
+    CFRelease(q);
+    return (st == errSecSuccess) ? 0 : NOSTR_SIGNER_ERROR_NOT_FOUND;
+  }
 #else
   (void)identity; return NOSTR_SIGNER_ERROR_NOT_FOUND;
 #endif

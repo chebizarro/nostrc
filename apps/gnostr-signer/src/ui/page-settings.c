@@ -6,6 +6,12 @@
 #include "sheets/sheet-account-backup.h"
 #include "sheets/sheet-orbot-setup.h"
 
+/* Provided by settings_page.c for cross-component updates */
+extern void gnostr_settings_apply_import_success(const char *npub, const char *label);
+
+/* Sheet import success callback (file-scope) */
+static void on_sheet_import_success(const char *npub, const char *label, gpointer ud){ (void)ud; gnostr_settings_apply_import_success(npub, label); }
+
 struct _PageSettings {
   AdwPreferencesPage parent_instance;
   /* Template children */
@@ -36,6 +42,8 @@ static void on_select_account(GtkButton *b, gpointer user_data){
 static void on_add_account(GtkButton *b, gpointer user_data){
   (void)b; PageSettings *self = user_data; if (!self) return;
   SheetImportKey *dlg = sheet_import_key_new();
+  /* When import succeeds, Settings applies account changes and refreshes */
+  sheet_import_key_set_on_success(dlg, on_sheet_import_success, NULL);
   adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
 }
 static void on_backup_keys(GtkButton *b, gpointer user_data){

@@ -23,3 +23,6 @@ GPtrArray *accounts_store_list(AccountsStore *as); /* array of AccountEntry*; ca
 void accounts_store_set_active(AccountsStore *as, const gchar *id);
 /* returns FALSE if no active set; if out_id provided, it's newly allocated */
 gboolean accounts_store_get_active(AccountsStore *as, gchar **out_id);
+
+/* Update label for an existing id. Returns FALSE if id not found. */
+gboolean accounts_store_set_label(AccountsStore *as, const gchar *id, const gchar *label);

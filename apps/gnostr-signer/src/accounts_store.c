@@ -123,3 +123,12 @@ gboolean accounts_store_get_active(AccountsStore *as, gchar **out_id) {
   if (out_id) *out_id = g_strdup(as->active);
   return TRUE;
 }
+
+gboolean accounts_store_set_label(AccountsStore *as, const gchar *id, const gchar *label) {
+  if (!as || !id || !*id) return FALSE;
+  gpointer old_val = NULL;
+  if (!g_hash_table_lookup_extended(as->map, id, NULL, &old_val)) return FALSE;
+  /* Replace value with new label */
+  g_hash_table_replace(as->map, g_strdup(id), g_strdup(label ? label : ""));
+  return TRUE;
+}

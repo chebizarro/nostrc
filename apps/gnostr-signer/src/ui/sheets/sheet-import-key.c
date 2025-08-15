@@ -4,6 +4,7 @@
 #include <gtk/gtk.h>
 #include <adwaita.h>
 #include <gio/gio.h>
+#include <string.h>
 
 struct _SheetImportKey {
   AdwDialog parent_instance;
@@ -12,6 +13,9 @@ struct _SheetImportKey {
   GtkEntry *entry_secret;
   GtkEntry *entry_label;
   GtkCheckButton *chk_link_user;
+  /* Success callback wiring */
+  SheetImportKeySuccessCb on_success;
+  gpointer on_success_ud;
 };
 
 G_DEFINE_TYPE(SheetImportKey, sheet_import_key, ADW_TYPE_DIALOG)
@@ -21,6 +25,7 @@ typedef struct {
   GtkWindow *parent;
 } ImportCtx;
 
+/* Helper used in validation and clipboard prefill */
 static gboolean is_hex64(const char *s){
   if (!s) return FALSE; size_t n = strlen(s); if (n != 64) return FALSE;
   for (size_t i=0;i<n;i++){
@@ -28,6 +33,19 @@ static gboolean is_hex64(const char *s){
     if (!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F'))) return FALSE;
   }
   return TRUE;
+}
+
+static void clipboard_text_got(GObject *src, GAsyncResult *res, gpointer user_data){
+  SheetImportKey *self = user_data; if (!self || !self->entry_secret) return;
+  g_autoptr(GError) err = NULL;
+  char *text = gdk_clipboard_read_text_finish(GDK_CLIPBOARD(src), res, &err);
+  if (err || !text) return;
+  g_strstrip(text);
+  if (g_str_has_prefix(text, "nsec1") || g_str_has_prefix(text, "ncrypt") || is_hex64(text)){
+    gtk_editable_set_text(GTK_EDITABLE(self->entry_secret), text);
+    gtk_widget_set_sensitive(GTK_WIDGET(self->btn_ok), TRUE);
+  }
+  g_free(text);
 }
 
 static void on_secret_changed(GtkEditable *e, gpointer user_data){
@@ -52,14 +70,53 @@ static void import_call_done(GObject *src, GAsyncResult *res, gpointer user_data
     g_object_unref(ad);
     g_clear_error(&err);
   } else if (ret){
-    /* Expect (b,s): ok, npub */
-    g_variant_get(ret, "(bs)", &ok, &npub);
+    /* Expect (b,s): ok, npub. Duplicate string before unref */
+    const char *npub_in = NULL;
+    g_variant_get(ret, "(bs)", &ok, &npub_in);
+    if (npub_in) npub = g_strdup(npub_in);
     g_variant_unref(ret);
+    g_message("StoreKey reply ok=%s npub='%s'", ok?"true":"false", (npub&&*npub)?npub:"(empty)");
     if (ok){
+      /* Fallback: if npub wasn't returned, query active public key */
+      if (!(npub && *npub)){
+        GError *e2=NULL; GDBusConnection *bus2 = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &e2);
+        if (bus2){
+          GVariant *ret2 = g_dbus_connection_call_sync(bus2,
+                               "org.nostr.Signer",
+                               "/org/nostr/signer",
+                               "org.nostr.Signer",
+                               "GetPublicKey",
+                               NULL,
+                               G_VARIANT_TYPE("(s)"),
+                               G_DBUS_CALL_FLAGS_NONE,
+                               2000,
+                               NULL,
+                               &e2);
+          if (ret2){
+            const char *np=NULL; g_variant_get(ret2, "(s)", &np);
+            if (np && *np) { if (npub) g_free(npub); npub = g_strdup(np); }
+            g_variant_unref(ret2);
+          }
+          g_object_unref(bus2);
+        }
+        if (e2){ g_clear_error(&e2); }
+      }
       const char *npub_show = (npub && *npub) ? npub : "(npub unavailable)";
-      GtkAlertDialog *ad = gtk_alert_dialog_new("Key imported for %s", npub_show);
+      GtkAlertDialog *ad = gtk_alert_dialog_new("Account added and set active for %s\n(npub copied to clipboard)", npub_show);
       gtk_alert_dialog_show(ad, ctx && ctx->parent ? ctx->parent : GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(ctx->self))));
       g_object_unref(ad);
+      /* Copy npub to clipboard for convenience */
+      if (npub && *npub) {
+        GtkWidget *w = GTK_WIDGET(ctx->self);
+        GdkDisplay *dpy = gtk_widget_get_display(w);
+        if (dpy){ GdkClipboard *cb = gdk_display_get_clipboard(dpy); if (cb) gdk_clipboard_set_text(cb, npub); }
+      }
+      /* Notify parent to update AccountsStore and refresh UI */
+      if (ctx && ctx->self && ctx->self->on_success) {
+        const char *label = NULL;
+        if (ctx->self->entry_label) label = gtk_editable_get_text(GTK_EDITABLE(ctx->self->entry_label));
+        ctx->self->on_success(npub ? npub : "", label ? label : "", ctx->self->on_success_ud);
+      }
     } else {
       /* Log more diagnostics client-side */
       const char *entered = gtk_editable_get_text(GTK_EDITABLE(ctx->self->entry_secret));
@@ -147,6 +204,20 @@ static void sheet_import_key_init(SheetImportKey *self){
   if (self->entry_secret) gtk_widget_grab_focus(GTK_WIDGET(self->entry_secret));
   if (self->entry_secret) g_signal_connect(self->entry_secret, "changed", G_CALLBACK(on_secret_changed), self);
   if (self->btn_ok) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_ok), FALSE);
+  /* Prefill from clipboard if it looks like a key */
+  GtkWidget *w = GTK_WIDGET(self);
+  GdkDisplay *dpy = gtk_widget_get_display(w);
+  if (dpy){ GdkClipboard *cb = gdk_display_get_clipboard(dpy);
+    if (cb) gdk_clipboard_read_text_async(cb, NULL, clipboard_text_got, self);
+  }
 }
 
 SheetImportKey *sheet_import_key_new(void){ return g_object_new(TYPE_SHEET_IMPORT_KEY, NULL); }
+
+void sheet_import_key_set_on_success(SheetImportKey *self,
+                                     SheetImportKeySuccessCb cb,
+                                     gpointer user_data){
+  if (!self) return;
+  self->on_success = cb;
+  self->on_success_ud = user_data;
+}
