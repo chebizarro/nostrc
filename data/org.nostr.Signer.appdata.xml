@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.nostr.Signer</id>
+  <name>Gnostr Signer</name>
+  <summary>Nostr signer and encryption service</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Gnostr provides a Nostr signing service over D-Bus and integrates with GNOME Online Accounts.</p>
+  </description>
+  <provides>
+    <binary>gnostr-signer</binary>
+  </provides>
+</component>

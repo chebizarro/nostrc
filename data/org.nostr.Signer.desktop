@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Gnostr Signer
+Exec=gnostr-signer
+Icon=org.nostr.Signer
+DBusActivatable=true
+Categories=Utility;Security;

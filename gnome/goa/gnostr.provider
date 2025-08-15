@@ -1,0 +1,17 @@
+[Provider]
+Name=Gnostr
+Description=Nostr signer and encryption service
+LongName=Nostr, Notes and Other Stuff Through Relays
+LongDescription=Supply long description here
+Icon=org.nostr.Signer
+ProviderType=goa
+TrustEverything=true
+
+[Goa]
+Identity=false
+Mail=false
+Calendar=false
+Chat=false
+Files=false
+Documents=false
+Printers=false

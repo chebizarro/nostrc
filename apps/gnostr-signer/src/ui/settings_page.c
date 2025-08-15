@@ -270,7 +270,19 @@ GtkWidget *gnostr_settings_page_new(AccountsStore *as);
 
 /* External helper: apply a successful import (npub,label) to AccountsStore and refresh UI. */
 void gnostr_settings_apply_import_success(const char *npub, const char *label){
-  if (!g_settings_page_global || !npub || !*npub) return;
+  if (!npub || !*npub) return;
+  if (!g_settings_page_global) {
+    /* No live Settings page; still persist to accounts.ini */
+    AccountsStore *as = accounts_store_new();
+    accounts_store_load(as);
+    if (!accounts_store_add(as, npub, label)) {
+      if (label && *label) { accounts_store_set_label(as, npub, label); }
+    }
+    accounts_store_set_active(as, npub);
+    accounts_store_save(as);
+    accounts_store_free(as);
+    return;
+  }
   SettingsUI *ui = g_object_get_data(G_OBJECT(g_settings_page_global), "settings_ui");
   if (!ui || !ui->as) return;
   if (!accounts_store_add(ui->as, npub, label)) {

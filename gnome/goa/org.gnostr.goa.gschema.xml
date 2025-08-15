@@ -1,0 +1,19 @@
+<schemalist>
+  <schema id="org.gnostr.goa">
+    <key name="relays-json" type="s">
+      <default>""</default>
+      <summary>Relays JSON</summary>
+      <description>JSON string of relays for this account.</description>
+    </key>
+    <key name="grants-json" type="s">
+      <default>""</default>
+      <summary>Default grants</summary>
+      <description>JSON string describing default permission grants.</description>
+    </key>
+    <key name="profile-json" type="s">
+      <default>""</default>
+      <summary>Profile (kind 0) JSON</summary>
+      <description>Raw kind-0 JSON including NIP-24 extras (display_name, website, banner, bot, birthday).</description>
+    </key>
+  </schema>
+</schemalist>

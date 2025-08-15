@@ -78,6 +78,43 @@ if (ENABLE_NOSTRDB_DEMO)
   endif()
 endif()
 
+# --- GNOME integration (GOA provider, Seahorse helpers, optional PKCS#11) ---
+# Provide toggles so non-GNOME environments/builders aren't broken by missing deps.
+option(GNOSTR_ENABLE_GOA "Build GNOME Online Accounts provider" OFF)
+option(GNOSTR_ENABLE_SEAHORSE_HELPERS "Build Seahorse/Secret Service helpers" OFF)
+option(GNOSTR_WITH_PKCS11 "Build p11-kit module" OFF)
+
+if (GNOSTR_ENABLE_GOA OR GNOSTR_ENABLE_SEAHORSE_HELPERS OR GNOSTR_WITH_PKCS11)
+  find_package(PkgConfig REQUIRED)
+endif()
+
+if (GNOSTR_ENABLE_GOA)
+  pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)
+  pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
+  pkg_check_modules(GOA REQUIRED IMPORTED_TARGET goa-1.0)
+  pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
+  add_subdirectory(gnome/goa)
+  # Install DBus service activation + desktop/appdata if present
+  install(FILES gnome/dbus/com.nostr.Signer.service
+          DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/services)
+  install(FILES data/org.nostr.Signer.desktop
+          DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+  install(FILES data/org.nostr.Signer.appdata.xml
+          DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+endif()
+
+if (GNOSTR_ENABLE_SEAHORSE_HELPERS)
+  pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
+  pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
+  add_subdirectory(gnome/seahorse)
+endif()
+
+if (GNOSTR_WITH_PKCS11)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(P11KIT REQUIRED IMPORTED_TARGET p11-kit-1)
+  add_subdirectory(pkcs11)
+endif()
+
 ## GLib demo: only if libnostr built with GLib support
 if (TARGET nostr)
   get_target_property(_nostr_defs nostr COMPILE_DEFINITIONS)

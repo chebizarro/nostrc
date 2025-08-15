@@ -1,0 +1,2 @@
+module: ${libdir}/gnostr/libgnostr-pkcs11.so
+trust-policy: no
