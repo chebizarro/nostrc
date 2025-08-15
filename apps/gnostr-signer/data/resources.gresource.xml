@@ -12,6 +12,7 @@
     <file preprocess="xml-stripblanks">ui/sheets/sheet-add-application.ui</file>
     <file preprocess="xml-stripblanks">ui/sheets/sheet-create-bunker.ui</file>
     <file preprocess="xml-stripblanks">ui/sheets/sheet-orbot-setup.ui</file>
+    <file preprocess="xml-stripblanks">ui/sheets/sheet-import-key.ui</file>
     <file preprocess="xml-stripblanks">ui/widgets/app-row.ui</file>
     <file preprocess="xml-stripblanks">ui/widgets/identity-row.ui</file>
     <file preprocess="xml-stripblanks">ui/widgets/relay-row.ui</file>

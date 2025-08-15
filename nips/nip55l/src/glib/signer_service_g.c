@@ -5,6 +5,7 @@
 
 #include "nostr/nip55l/signer_ops.h"
 #include "signer_dbus.h"
+#include "nostr/nip55l/error.h"
 #include "nip55l_dbus_names.h"
 #include "nip55l_dbus_errors.h"
 
@@ -335,14 +336,39 @@ static gboolean handle_get_relays(NostrSigner *object, GDBusMethodInvocation *in
 }
 
 static gboolean handle_store_key(NostrSigner *object, GDBusMethodInvocation *invocation,
-                                 const gchar *key, const gchar *identity)
+                                  const gchar *key, const gchar *identity)
 {
   (void)object;
   const gchar *sender = g_dbus_method_invocation_get_sender(invocation);
   if (!signer_mutations_allowed()) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_PERMISSION, "key mutations disabled"); return TRUE; }
   if (!rate_limit_ok(sender)) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT, "rate limited"); return TRUE; }
   int rc = nostr_nip55l_store_key(key, identity);
-  nostr_signer_complete_store_key(object, invocation, rc==0);
+  if (rc == 0) {
+    /* Best-effort derive npub to return to client. Core already normalizes and stores.
+     * We query current active npub which, under libsecret owner_uid fallback, will
+     * resolve to the just-stored key for this user. If unavailable, return empty. */
+    char *npub = NULL; int grc = nostr_nip55l_get_public_key(&npub);
+    const char *out_npub = (grc==0 && npub) ? npub : "";
+    g_dbus_method_invocation_return_value(invocation, g_variant_new("(bs)", TRUE, out_npub));
+    if (npub) free(npub);
+  } else {
+    /* Map core error codes to DBus error names for actionable client messages */
+    const char *ename = "org.nostr.Signer.Error";
+    const char *emsg = "store failed";
+    switch (rc) {
+      case NOSTR_SIGNER_ERROR_INVALID_KEY:
+        ename = "org.nostr.Signer.InvalidKey"; emsg = "invalid private key"; break;
+      case NOSTR_SIGNER_ERROR_BACKEND:
+        ename = "org.nostr.Signer.SecretServiceUnavailable"; emsg = "secret storage backend unavailable or failed"; break;
+      case NOSTR_SIGNER_ERROR_INVALID_ARG:
+        ename = "org.nostr.Signer.InvalidArgument"; emsg = "invalid argument"; break;
+      case NOSTR_SIGNER_ERROR_NOT_FOUND:
+        ename = "org.nostr.Signer.NotFound"; emsg = "not found"; break;
+      default:
+        ename = "org.nostr.Signer.Failure"; emsg = "operation failed"; break;
+    }
+    g_dbus_method_invocation_return_dbus_error(invocation, ename, emsg);
+  }
   return TRUE;
 }
 

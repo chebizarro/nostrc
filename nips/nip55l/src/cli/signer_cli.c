@@ -27,9 +27,9 @@ static int cmd_store_key(const char *key, const char *identity){
   if (!p){ fprintf(stderr, "proxy error: %s\n", err?err->message:"?"); g_clear_error(&err); return 1; }
   GVariant *ret = g_dbus_proxy_call_sync(p, "StoreKey", g_variant_new("(ss)", key, identity?identity:"default"), G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
   if (!ret){ fprintf(stderr, "StoreKey failed: %s\n", err?err->message:"?\n"); g_clear_error(&err); g_object_unref(p); return 2; }
-  gboolean ok=FALSE; g_variant_get(ret, "(b)", &ok); g_variant_unref(ret); g_object_unref(p);
+  gboolean ok=FALSE; const gchar *npub=NULL; g_variant_get(ret, "(bs)", &ok, &npub); g_variant_unref(ret); g_object_unref(p);
   if (!ok){ fprintf(stderr, "StoreKey returned false\n"); return 3; }
-  printf("ok\n"); return 0;
+  printf("ok %s\n", npub?npub:""); return 0;
 }
 
 static int cmd_clear_key(const char *identity){

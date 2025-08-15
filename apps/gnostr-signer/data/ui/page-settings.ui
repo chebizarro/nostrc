@@ -8,6 +8,12 @@
         <property name="title" translatable="yes">Security</property>
         <child>
           <object class="AdwActionRow">
+            <property name="title" translatable="yes">Add Account</property>
+            <child type="suffix"><object class="GtkButton" id="btn_add_account"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwActionRow">
             <property name="title" translatable="yes">Select Account</property>
             <child type="suffix"><object class="GtkButton" id="btn_select_account"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
           </object>

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="SheetImportKey" parent="AdwDialog">
+    <child>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="title-widget">
+              <object class="GtkLabel">
+                <property name="label" translatable="yes">Add New Account</property>
+              </object>
+            </property>
+            <child type="start">
+              <object class="GtkButton" id="btn_cancel">
+                <property name="label" translatable="yes">Cancel</property>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkButton" id="btn_ok">
+                <property name="label" translatable="yes">Add</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="spacing">12</property>
+            <property name="margin-top">16</property>
+            <property name="margin-bottom">16</property>
+            <property name="margin-start">16</property>
+            <property name="margin-end">16</property>
+
+            <child>
+              <object class="GtkLabel">
+                <property name="wrap">true</property>
+                <property name="label" translatable="yes">Paste your private key (hex, nsec, or ncrypt). It will be stored securely via libsecret. The public key will be saved in settings.</property>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkEntry" id="entry_secret">
+                <property name="placeholder-text" translatable="yes">nsec1... or 64-hex or ncrypt...</property>
+                <property name="hexpand">true</property>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkEntry" id="entry_label">
+                <property name="placeholder-text" translatable="yes">Label (optional)</property>
+                <property name="hexpand">true</property>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkCheckButton" id="chk_link_user">
+                <property name="label" translatable="yes">Link to current Linux user</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

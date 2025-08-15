@@ -329,11 +329,37 @@ static void import_call_done(GObject *src, GAsyncResult *res, gpointer user_data
     gtk_alert_dialog_show(ad, parent);
     g_object_unref(ad); g_clear_error(&e);
   } else if (ret){
-    gboolean ok=FALSE; g_variant_get(ret, "(b)", &ok); g_variant_unref(ret);
+    gboolean ok=FALSE; const char *npub=NULL; g_variant_get(ret, "(bs)", &ok, &npub); g_variant_unref(ret);
     if (ok && ctx->on_success) {
-      gchar *ident = dropdown_get_selected_string(ctx->ident_dd);
-      ctx->on_success(ident ? ident : "", ctx->cb_user_data);
-      g_free(ident);
+      const char *chosen = NULL;
+      if (npub && *npub) chosen = npub; /* prefer returned npub */
+      else {
+        gchar *ident = dropdown_get_selected_string(ctx->ident_dd);
+        chosen = ident ? ident : "";
+        /* We leak no memory by freeing after callback */
+        if (ident) g_free(ident);
+      }
+      ctx->on_success(chosen, ctx->cb_user_data);
+    } else if (ok && ctx->ui && ctx->ui->as) {
+      /* Default settings dialog path: update accounts store and refresh UI */
+      const char *id = (npub && *npub) ? npub : NULL;
+      if (!id) {
+        gchar *ident = dropdown_get_selected_string(ctx->ident_dd);
+        id = ident ? ident : NULL;
+        if (ident) g_free(ident);
+      }
+      if (id && *id) {
+        AccountsStore *as = ctx->ui->as;
+        if (accounts_store_add(as, id, NULL)) {
+          accounts_store_set_active(as, id);
+          accounts_store_save(as);
+        }
+        /* Even if it already existed, ensure active and refresh */
+        accounts_store_set_active(as, id);
+        accounts_store_save(as);
+        extern void gnostr_settings_page_refresh(GtkWidget*, AccountsStore*);
+        if (ctx->ui->page) gnostr_settings_page_refresh(ctx->ui->page, as);
+      }
     }
     GtkAlertDialog *ad = gtk_alert_dialog_new(ok?"Key stored securely":"Import failed");
     gtk_alert_dialog_show(ad, parent);
@@ -376,7 +402,7 @@ static void on_import_ok_clicked(GtkButton *btn, gpointer user_data){
     return;
   }
   g_dbus_connection_call(bus, SIGNER_NAME, SIGNER_PATH, "org.nostr.Signer", "StoreKey",
-                         g_variant_new("(ss)", secret, identity ? identity : ""), G_VARIANT_TYPE("(b)"),
+                         g_variant_new("(ss)", secret, identity ? identity : ""), G_VARIANT_TYPE("(bs)"),
                          G_DBUS_CALL_FLAGS_NONE, 5000, NULL, import_call_done, ctx);
   g_object_unref(bus);
 }

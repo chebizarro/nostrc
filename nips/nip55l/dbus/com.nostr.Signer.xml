@@ -45,6 +45,7 @@
       <arg type="s" direction="in" name="key" />
       <arg type="s" direction="in" name="identity" />
       <arg type="b" direction="out" name="ok" />
+      <arg type="s" direction="out" name="npub" />
     </method>
     <method name="ClearKey">
       <arg type="s" direction="in" name="identity" />
@@ -70,3 +71,4 @@
     </signal>
   </interface>
 </node>
+

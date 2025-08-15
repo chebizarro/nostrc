@@ -2,12 +2,14 @@
 #include "page-settings.h"
 #include "app-resources.h"
 #include "sheets/sheet-select-account.h"
+#include "sheets/sheet-import-key.h"
 #include "sheets/sheet-account-backup.h"
 #include "sheets/sheet-orbot-setup.h"
 
 struct _PageSettings {
   AdwPreferencesPage parent_instance;
   /* Template children */
+  GtkButton *btn_add_account;
   GtkButton *btn_select_account;
   GtkButton *btn_backup_keys;
   GtkButton *btn_orbot_setup;
@@ -29,6 +31,11 @@ static GtkWindow *get_parent_window(GtkWidget *w){
 static void on_select_account(GtkButton *b, gpointer user_data){
   (void)b; PageSettings *self = user_data; if (!self) return;
   SheetSelectAccount *dlg = sheet_select_account_new();
+  adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
+}
+static void on_add_account(GtkButton *b, gpointer user_data){
+  (void)b; PageSettings *self = user_data; if (!self) return;
+  SheetImportKey *dlg = sheet_import_key_new();
   adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
 }
 static void on_backup_keys(GtkButton *b, gpointer user_data){
@@ -59,6 +66,7 @@ static void on_listen_notify(GObject *obj, GParamSpec *pspec, gpointer user_data
 static void page_settings_class_init(PageSettingsClass *klass) {
   GtkWidgetClass *wc = GTK_WIDGET_CLASS(klass);
   gtk_widget_class_set_template_from_resource(wc, APP_RESOURCE_PATH "/ui/page-settings.ui");
+  gtk_widget_class_bind_template_child(wc, PageSettings, btn_add_account);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_select_account);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_backup_keys);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_orbot_setup);
@@ -70,6 +78,8 @@ static void page_settings_class_init(PageSettingsClass *klass) {
 
 static void page_settings_init(PageSettings *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+  /* Handlers */
+  g_signal_connect(self->btn_add_account, "clicked", G_CALLBACK(on_add_account), self);
   g_signal_connect(self->btn_select_account, "clicked", G_CALLBACK(on_select_account), self);
   g_signal_connect(self->btn_backup_keys, "clicked", G_CALLBACK(on_backup_keys), self);
   g_signal_connect(self->btn_orbot_setup, "clicked", G_CALLBACK(on_orbot_setup), self);
