@@ -1,6 +1,8 @@
 #include "nostr-connection.h"
 #include "connection-private.h"
 #include "go.h"
+#include "nostr/metrics.h"
+#include "nostr-init.h"
 #include <libwebsockets.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -44,6 +46,10 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         msg->data[len] = '\0';
         msg->length = len;
 
+        // Metrics: count RX bytes/messages at socket boundary
+        nostr_metric_counter_add("ws_rx_bytes", (uint64_t)len);
+        nostr_metric_counter_add("ws_rx_messages", 1);
+
         go_channel_send(conn->recv_channel, msg); // Send to receive channel
 
         break;
@@ -65,7 +71,13 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
 
             // Copy the message data and send it over the WebSocket
             memcpy(p, msg->data, msg->length);
+            // Metrics: time socket write and count TX at socket boundary
+            nostr_metric_timer t_sock = {0};
+            nostr_metric_timer_start(&t_sock);
             int n = lws_write(wsi, p, msg->length, LWS_WRITE_TEXT);
+            nostr_metric_timer_stop(&t_sock, nostr_metric_histogram_get("ws_socket_write_ns"));
+            nostr_metric_counter_add("ws_socket_tx_bytes", (uint64_t)msg->length);
+            nostr_metric_counter_add("ws_socket_tx_messages", 1);
             if (n < 0) {
                 fprintf(stderr, "Error writing WebSocket message\n");
                 free(msg->data);
@@ -181,6 +193,8 @@ static void parse_ws_url(const char *url, int *use_ssl, char *host, size_t host_
 }
 
 NostrConnection *nostr_connection_new(const char *url) {
+    // Ensure global initialization runs (pulls in init.o and enables metrics auto-init)
+    nostr_global_init();
     struct lws_context_creation_info context_info;
     struct lws_client_connect_info connect_info;
     struct lws_context *context;
@@ -369,6 +383,9 @@ void nostr_connection_write_message(NostrConnection *conn, GoContext *ctx, char 
 
     // Add the message to the send channel
     go_channel_send(conn->send_channel, msg);
+    // Metrics: count enqueued bytes/messages for TX
+    nostr_metric_counter_add("ws_tx_enqueued_bytes", (uint64_t)message_length);
+    nostr_metric_counter_add("ws_tx_enqueued", 1);
 
     // Ensure that the socket becomes writable
     lws_callback_on_writable(conn->priv->wsi);
@@ -429,6 +446,10 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
                 return;
             }
         }
+
+        // Metrics: count dequeued RX bytes/messages delivered to caller
+        nostr_metric_counter_add("ws_rx_dequeued_bytes", (uint64_t)msg->length);
+        nostr_metric_counter_add("ws_rx_dequeued_messages", 1);
 
         // Free message memory
         free(msg->data);

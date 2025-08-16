@@ -53,6 +53,13 @@ set(LIBNOSTR_SOURCES
   src/crypto/bip32.c
 )
 
+# Optional metrics instrumentation
+option(NOSTR_ENABLE_METRICS "Enable internal metrics instrumentation" OFF)
+if(NOSTR_ENABLE_METRICS)
+  list(APPEND LIBNOSTR_SOURCES src/metrics.c)
+  add_definitions(-DNOSTR_ENABLE_METRICS=1)
+endif()
+
 # GI thin wrappers for macros/aliases
 # (pointer helpers moved into core utils.c)
 

@@ -10,6 +10,7 @@
 #include "subscription-private.h"
 #include "nostr-subscription.h"
 #include "nostr-utils.h"
+#include "nostr/metrics.h"
 #include "go.h"
 #include <unistd.h>
 #include <stdlib.h>
@@ -252,7 +253,15 @@ static void *write_operations(void *arg) {
         if (!conn) {
             werr = new_error(1, "no connection");
         } else {
+            // Metrics: time WS write and count bytes
+            nostr_metric_timer t = {0};
+            nostr_metric_timer_start(&t);
             nostr_connection_write_message(conn, r->priv->connection_context, req->msg, &werr);
+            nostr_metric_timer_stop(&t, nostr_metric_histogram_get("ws_write_ns"));
+            if (req->msg) {
+                nostr_metric_counter_add("ws_tx_bytes", (uint64_t)strlen(req->msg));
+                nostr_metric_counter_add("ws_tx_messages", 1);
+            }
         }
         // The writer owns req->msg copy
         if (req->msg) free(req->msg);
@@ -286,13 +295,20 @@ static void *message_loop(void *arg) {
         nsync_mu_unlock(&r->priv->mutex);
         if (!conn) break;
 
+        nostr_metric_timer t_read = {0};
+        nostr_metric_timer_start(&t_read);
         nostr_connection_read_message(conn, r->priv->connection_context, buf, sizeof(buf), &err);
+        nostr_metric_timer_stop(&t_read, nostr_metric_histogram_get("ws_read_ns"));
         if (err) {
             free_error(err);
             err = NULL;
             break;
         }
         if (buf[0] == '\0') continue;
+
+        size_t blen_for_metrics = strlen(buf);
+        nostr_metric_counter_add("ws_rx_bytes", (uint64_t)blen_for_metrics);
+        nostr_metric_counter_add("ws_rx_messages", 1);
 
         // Optional inbound raw debug: show what we received before parsing
         const char *dbg_in_env = getenv("NOSTR_DEBUG_INCOMING");
@@ -305,7 +321,10 @@ static void *message_loop(void *arg) {
                     (blen > show ? "..." : ""));
         }
 
+        nostr_metric_timer t_parse = {0};
+        nostr_metric_timer_start(&t_parse);
         NostrEnvelope *envelope = nostr_envelope_parse(buf);
+        nostr_metric_timer_stop(&t_parse, nostr_metric_histogram_get("envelope_parse_ns"));
         if (!envelope) {
             if (dbg_in_env && *dbg_in_env && strcmp(dbg_in_env, "0") != 0) {
                 size_t blen = strlen(buf);
@@ -352,7 +371,17 @@ static void *message_loop(void *arg) {
             NostrSubscription *subscription = go_hash_map_get_int(r->subscriptions, nostr_sub_id_to_serial(env->subscription_id));
             if (subscription && env->event) {
                 // Optionally verify signature if available
-                if (!r->assume_valid && !nostr_event_check_signature(env->event)) {
+                bool verified = true;
+                if (!r->assume_valid) {
+                    nostr_metric_timer t_verify = {0};
+                    nostr_metric_timer_start(&t_verify);
+                    verified = nostr_event_check_signature(env->event);
+                    nostr_metric_timer_stop(&t_verify, nostr_metric_histogram_get("event_verify_ns"));
+                    nostr_metric_counter_add("event_verify_count", 1);
+                    if (verified) nostr_metric_counter_add("event_verify_ok", 1);
+                    else nostr_metric_counter_add("event_verify_fail", 1);
+                }
+                if (!verified) {
                     // drop invalid event
                     const char *dbg_in_env = getenv("NOSTR_DEBUG_INCOMING");
                     if (dbg_in_env && *dbg_in_env && strcmp(dbg_in_env, "0") != 0) {
@@ -362,7 +391,11 @@ static void *message_loop(void *arg) {
                         relay_debug_emit(r, tmp);
                     }
                 } else {
+                    nostr_metric_timer t_dispatch = {0};
+                    nostr_metric_timer_start(&t_dispatch);
                     nostr_subscription_dispatch_event(subscription, env->event);
+                    nostr_metric_timer_stop(&t_dispatch, nostr_metric_histogram_get("event_dispatch_ns"));
+                    nostr_metric_counter_add("event_dispatch_count", 1);
                     // ownership passed to subscription; avoid double free
                     env->event = NULL;
                 }
@@ -439,10 +472,15 @@ GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
 }
 
 void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
+    nostr_metric_timer t_ser = {0};
+    nostr_metric_timer_start(&t_ser);
     char *event_json = nostr_event_serialize(event);
+    nostr_metric_timer_stop(&t_ser, nostr_metric_histogram_get("event_serialize_ns"));
     if (!event_json)
         return;
 
+    nostr_metric_counter_add("events_published", 1);
+    nostr_metric_counter_add("ws_tx_bytes", (uint64_t)strlen(event_json));
     (void)nostr_relay_write(relay, event_json);
     free(event_json);
 }

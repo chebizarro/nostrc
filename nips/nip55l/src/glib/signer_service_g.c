@@ -359,7 +359,7 @@ static gboolean handle_store_key(NostrSigner *object, GDBusMethodInvocation *inv
         uint8_t sk[32];
         if (nostr_nip19_decode_nsec(key, sk) == 0) {
           sk_hex = (char*)malloc(65);
-          if (sk_hex) { for (int i=0;i<32;i++){ sprintf(sk_hex+2*i, "%02x", sk[i]); } sk_hex[64]='\0'; }
+          if (sk_hex) { for (int i=0;i<32;i++){ snprintf(sk_hex+2*i, 3, "%02x", sk[i]); } sk_hex[64]='\0'; }
         }
       } else {
         /* Accept 64-hex secret key */

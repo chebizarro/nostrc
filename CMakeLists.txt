@@ -12,28 +12,11 @@ enable_testing()
 # It also configures tests under `tests/` via CTest.
 
 # Options to enable/disable NIPs and NSON
-# Note: NipOptions.cmake may define per-NIP toggles if present. It is optional.
-include(${CMAKE_SOURCE_DIR}/NipOptions.cmake)
-
 # Toggle optional NSON support (custom serialization). When ON, the `nson/` subdir
 # may be built and linked by consumers that need it.
 option(ENABLE_NSON "Enable NSON compilation" OFF)
 
 # (enable_testing already called at the top)
-
-# Build order ensures libgo is available for libnostr/libjson as needed.
-add_subdirectory(libgo)
-add_subdirectory(libnostr)
-add_subdirectory(libjson)
-
-
-# NIPs are added via NipOptions.cmake per-NIP toggles; avoid adding nips/ twice.
-
-# Add test targets from `tests/`.
-add_subdirectory(tests)
-
-# GNostr apps (GTK4/GLib/libsecret) — guarded by dependency checks inside apps/CMakeLists.txt
-add_subdirectory(apps)
 
 # Sanitizer helper (Debug builds)
 function(apply_sanitizers target)
@@ -53,6 +36,75 @@ function(apply_sanitizers target)
     endif()
   endif()
 endfunction()
+
+# Also apply sanitizer options globally in Debug builds so that all libraries and
+# executables are consistently compiled and linked with the sanitizer runtimes.
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  if (GO_ENABLE_TSAN)
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=thread)
+  else()
+    if (GO_ENABLE_ASAN)
+      add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+      add_link_options(-fsanitize=address)
+      # Ensure compile/link driver always carries sanitizer in Debug
+      set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fsanitize=address -fno-omit-frame-pointer")
+      set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=address -fno-omit-frame-pointer")
+    endif()
+    if (GO_ENABLE_UBSAN)
+      add_compile_options(-fsanitize=undefined)
+      add_link_options(-fsanitize=undefined)
+      set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fsanitize=undefined")
+      set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=undefined")
+    endif()
+  endif()
+  # Ensure executables and shared libs link the sanitizer runtime
+  if (GO_ENABLE_TSAN)
+    set(CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG} -fsanitize=thread")
+    set(CMAKE_SHARED_LINKER_FLAGS_DEBUG "${CMAKE_SHARED_LINKER_FLAGS_DEBUG} -fsanitize=thread")
+    set(CMAKE_MODULE_LINKER_FLAGS_DEBUG "${CMAKE_MODULE_LINKER_FLAGS_DEBUG} -fsanitize=thread")
+    set(CMAKE_C_STANDARD_LIBRARIES "${CMAKE_C_STANDARD_LIBRARIES} -fsanitize=thread")
+    # Also set for single-config generators
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=thread")
+    set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -fsanitize=thread")
+  else()
+    if (GO_ENABLE_ASAN)
+      set(CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG} -fsanitize=address")
+      set(CMAKE_SHARED_LINKER_FLAGS_DEBUG "${CMAKE_SHARED_LINKER_FLAGS_DEBUG} -fsanitize=address")
+      set(CMAKE_MODULE_LINKER_FLAGS_DEBUG "${CMAKE_MODULE_LINKER_FLAGS_DEBUG} -fsanitize=address")
+      set(CMAKE_C_STANDARD_LIBRARIES "${CMAKE_C_STANDARD_LIBRARIES} -fsanitize=address")
+      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
+      set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address")
+      set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -fsanitize=address")
+    endif()
+    if (GO_ENABLE_UBSAN)
+      set(CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG} -fsanitize=undefined")
+      set(CMAKE_SHARED_LINKER_FLAGS_DEBUG "${CMAKE_SHARED_LINKER_FLAGS_DEBUG} -fsanitize=undefined")
+      set(CMAKE_MODULE_LINKER_FLAGS_DEBUG "${CMAKE_MODULE_LINKER_FLAGS_DEBUG} -fsanitize=undefined")
+      set(CMAKE_C_STANDARD_LIBRARIES "${CMAKE_C_STANDARD_LIBRARIES} -fsanitize=undefined")
+      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=undefined")
+      set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=undefined")
+      set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -fsanitize=undefined")
+    endif()
+  endif()
+endif()
+
+# Build order ensures libgo is available for libnostr/libjson as needed.
+add_subdirectory(libgo)
+add_subdirectory(libnostr)
+add_subdirectory(libjson)
+
+
+# NIPs are added via NipOptions.cmake per-NIP toggles; avoid adding nips/ twice.
+# Include NIP options/subdirs after global sanitizer flags so all NIP targets inherit them.
+include(${CMAKE_SOURCE_DIR}/NipOptions.cmake)
+
+# Add test targets from `tests/`.
+add_subdirectory(tests)
+
+# GNostr apps (GTK4/GLib/libsecret) — guarded by dependency checks inside apps/CMakeLists.txt
+add_subdirectory(apps)
 
 # Examples
 add_executable(relay_smoke examples/relay_smoke.c)

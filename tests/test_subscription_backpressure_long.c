@@ -11,6 +11,8 @@
 #include "nostr-relay.h"
 #include "nostr-subscription.h"
 #include "nostr-filter.h"
+#include "nostr-init.h"
+#include "nostr/metrics.h"
 
 // Internals for driving live + notice handler
 #include "../libnostr/src/subscription-private.h"
@@ -46,10 +48,17 @@ static atomic_int notice_count = 0;
 static void notice_stub(const char *msg) {
     (void)msg;
     atomic_fetch_add(&notice_count, 1);
+    // Record NOTICE occurrence
+    nostr_metric_counter_add("bp_notices", 1);
 }
 
 int main(void) {
     setenv("NOSTR_TEST_MODE", "1", 1);
+    // Ensure metrics are initialized and periodic dumps are enabled for this test
+    setenv("NOSTR_METRICS_DUMP", "1", 1);
+    setenv("NOSTR_METRICS_INTERVAL_MS", "200", 1);
+    setenv("NOSTR_METRICS_DUMP_ON_EXIT", "1", 1);
+    nostr_global_init();
 
     Error *err = NULL;
     GoContext *ctx = go_context_background();
@@ -66,6 +75,10 @@ int main(void) {
     // Activate live to allow dispatch
     atomic_store(&sub->priv->live, true);
 
+    // Metrics handles for dispatch timings
+    nostr_metric_histogram *h_dispatch = nostr_metric_histogram_get("bp_dispatch_ns");
+    nostr_metric_histogram *h_burst = nostr_metric_histogram_get("bp_burst_ns");
+
     // Prolonged dispatch for ~2 seconds: bursts, periodic EOSE and NOTICE
     const int duration_ms = 2000;
     struct timespec start; clock_gettime(CLOCK_REALTIME, &start);
@@ -77,12 +90,18 @@ int main(void) {
         if (elapsed >= duration_ms) break;
 
         // Burst 32 events; subscription should drop if full, but never deadlock
+        nostr_metric_timer t_burst; nostr_metric_timer_start(&t_burst);
         for (int b = 0; b < 32; ++b) {
+            nostr_metric_timer t; nostr_metric_timer_start(&t);
             nostr_subscription_dispatch_event(sub, make_dummy_event(i++));
+            nostr_metric_timer_stop(&t, h_dispatch);
+            nostr_metric_counter_add("bp_events_generated", 1);
         }
+        nostr_metric_timer_stop(&t_burst, h_burst);
         // Every ~100ms, dispatch EOSE and invoke NOTICE handler
         if (i % 128 == 0) {
             nostr_subscription_dispatch_eose(sub);
+            nostr_metric_counter_add("bp_eose_sent", 1);
             if (relay->priv->notice_handler) relay->priv->notice_handler("test-notice");
         }
         // Small sleep to simulate pacing
@@ -93,7 +112,10 @@ int main(void) {
         GoContext *rx_probe = ctx_with_timeout_ms(1);
         (void)go_channel_receive_with_context(sub->events, &ev, rx_probe);
         go_context_free(rx_probe);
-        if (ev) nostr_event_free((NostrEvent*)ev);
+        if (ev) {
+            nostr_metric_counter_add("bp_probe_rx", 1);
+            nostr_event_free((NostrEvent*)ev);
+        }
     }
 
     // Ensure at least one EOSE observed eventually
@@ -111,6 +133,10 @@ int main(void) {
     nostr_filters_free(fs);
     nostr_relay_free(relay);
     go_context_free(ctx);
+
+    // Emit a final metrics dump to guarantee at least one JSON line
+    nostr_metrics_dump();
+    nostr_global_cleanup();
 
     printf("test_subscription_backpressure_long: OK\n");
     return 0;
