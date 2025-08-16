@@ -51,12 +51,13 @@ set(LIBNOSTR_SOURCES
   src/crypto/bip39_wordlist_en.c
   src/crypto/bip39.c
   src/crypto/bip32.c
+  # Metrics backend (contains full and no-op implementations gated by NOSTR_ENABLE_METRICS)
+  src/metrics.c
 )
 
-# Optional metrics instrumentation
+# Optional metrics instrumentation macro (implementation is always compiled)
 option(NOSTR_ENABLE_METRICS "Enable internal metrics instrumentation" OFF)
 if(NOSTR_ENABLE_METRICS)
-  list(APPEND LIBNOSTR_SOURCES src/metrics.c)
   add_definitions(-DNOSTR_ENABLE_METRICS=1)
 endif()
 
@@ -92,6 +93,32 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-config.h.in
 # Library target (named 'nostr' so pkg-config uses -lnostr). Provide 'libnostr' alias for compatibility.
 add_library(nostr ${LIBNOSTR_SOURCES})
 add_library(libnostr ALIAS nostr)
+
+# Optional LTO/IPO and -fno-plt for libnostr
+include(CheckIPOSupported)
+include(CheckCCompilerFlag)
+option(NOSTR_ENABLE_LTO "Enable Link-Time Optimization for libnostr" OFF)
+option(NOSTR_ENABLE_FNO_PLT "Add -fno-plt if supported (ELF platforms)" OFF)
+if (NOSTR_ENABLE_LTO)
+  check_ipo_supported(RESULT nostr_ipo_supported OUTPUT nostr_ipo_msg)
+  if (nostr_ipo_supported)
+    set_property(TARGET nostr PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+  else()
+    check_c_compiler_flag("-flto" HAS_FLTO)
+    if (HAS_FLTO)
+      target_compile_options(nostr PRIVATE -flto)
+      target_link_options(nostr PRIVATE -flto)
+    endif()
+  endif()
+endif()
+
+if (NOSTR_ENABLE_FNO_PLT)
+  check_c_compiler_flag("-fno-plt" HAS_FNO_PLT)
+  if (HAS_FNO_PLT)
+    target_compile_options(nostr PRIVATE -fno-plt)
+    target_link_options(nostr PRIVATE -fno-plt)
+  endif()
+endif()
 
 # Warnings and optional -Werror
 option(GO_WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)

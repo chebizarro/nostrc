@@ -9,6 +9,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef NOSTR_CACHELINE
+#define NOSTR_CACHELINE 64
+#endif
+
 #ifndef NOSTR_ENABLE_METRICS
 #define NOSTR_ENABLE_METRICS 0
 #endif
@@ -41,17 +45,22 @@ typedef struct metrics_histogram {
     __uint128_t sum_ns; // to reduce overflow; printed as 64-bit capped
     uint64_t min_ns;
     uint64_t max_ns;
-} metrics_histogram;
+} metrics_histogram __attribute__((aligned(NOSTR_CACHELINE)));
 
 typedef struct metrics_entry {
+    // Place hot data first and align to its own cache line
+    union {
+        struct {
+            _Atomic unsigned long long counter;
+            // Pad to dedicate a full cache line to the counter to reduce ping-pong
+            char _pad_counter[NOSTR_CACHELINE - sizeof(unsigned long long)];
+        } c;
+        metrics_histogram hist;
+    } u __attribute__((aligned(NOSTR_CACHELINE)));
     struct metrics_entry *next;
     char *name;
     metric_type_t type;
-    union {
-        _Atomic unsigned long long counter;
-        metrics_histogram hist;
-    } u;
-} metrics_entry;
+} metrics_entry __attribute__((aligned(NOSTR_CACHELINE)));
 
 typedef struct metrics_shard {
     pthread_mutex_t mu;
@@ -120,7 +129,7 @@ static metrics_entry *registry_get_or_create(const char *name, metric_type_t typ
         e->u.hist.sum_ns = 0;
         // bins/count zeroed by calloc
     } else {
-        atomic_store(&e->u.counter, 0);
+        atomic_store(&e->u.c.counter, 0);
     }
     e->next = sh->head;
     sh->head = e;
@@ -173,7 +182,7 @@ static inline void tls_counters_flush(tls_counter_cache *c)
         if (!s->name || s->pending == 0) continue;
         metrics_entry *e = registry_get_or_create(s->name, MET_COUNTER);
         if (e) {
-            atomic_fetch_add(&e->u.counter, (unsigned long long)s->pending);
+            atomic_fetch_add(&e->u.c.counter, (unsigned long long)s->pending);
         }
         s->pending = 0;
     }
@@ -265,7 +274,7 @@ void nostr_metric_timer_stop(nostr_metric_timer *t, nostr_metric_histogram *h)
     pthread_mutex_unlock(&sh->mu);
 }
 
-void nostr_metric_counter_add(const char *name, uint64_t delta)
+void __attribute__((hot)) nostr_metric_counter_add(const char *name, uint64_t delta)
 {
     // Fast-path: batch into a thread-local cache
     tls_counters_add(name, delta);
@@ -301,7 +310,7 @@ void nostr_metrics_dump(void)
         pthread_mutex_lock(&sh->mu);
         for (metrics_entry *e = sh->head; e; e = e->next) {
             if (e->type != MET_COUNTER) continue;
-            unsigned long long v = atomic_load(&e->u.counter);
+            unsigned long long v = atomic_load(&e->u.c.counter);
             if (!first) fputc(',', stdout); else first = 0;
             fprintf(stdout, "\"%s\":%llu", e->name, v);
         }
