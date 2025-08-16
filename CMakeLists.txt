@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.30)
 project(nostrc)
 
 # Enable CTest early so all subdirectories can register tests (including NIPs)

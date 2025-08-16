@@ -12,7 +12,7 @@ function(apply_warnings target)
   endif()
 endfunction()
 
-cmake_minimum_required(VERSION 3.50)
+cmake_minimum_required(VERSION 3.30)
 # Concurrency primitives inspired by Go: channels, contexts, wait groups, etc.
 project(libgo)
 

@@ -1,7 +1,7 @@
 
 project(nip49)
 
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.30)
 
 set(NIP49_INC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
