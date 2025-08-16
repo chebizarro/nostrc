@@ -125,7 +125,7 @@ jobs:
             cmake --build nsync/build -j
             sudo cmake --install nsync/build
           fi
-          brew install libsecp256k1 || true
+          brew install secp256k1 || true
 
       - name: Configure fuzz driver
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DENABLE_FUZZING=ON -DENABLE_FUZZING_RUNTIME=OFF

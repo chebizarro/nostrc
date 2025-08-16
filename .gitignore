@@ -1,6 +1,7 @@
 # Ignore build directories
 build/
 build*/
+*/build*/
 tmp*/
 out/
 /bin/

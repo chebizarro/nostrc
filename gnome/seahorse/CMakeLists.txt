@@ -3,6 +3,7 @@ add_library(gnostr-secret STATIC secret_store.c secret_store.h)
 target_link_libraries(gnostr-secret PRIVATE PkgConfig::GLIB PkgConfig::LIBSECRET)
 
 target_compile_features(gnostr-secret PRIVATE c_std_11)
+target_compile_definitions(gnostr-secret PRIVATE GNOSTR_HAVE_LIBSECRET=1)
 
 install(TARGETS gnostr-secret ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 

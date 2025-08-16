@@ -4,3 +4,9 @@
 	branch = master
 	shallow = true
 	ignore = dirty
+
+[submodule "third_party/nostrdb"]
+	path = third_party/nostrdb
+	url = https://github.com/damus-io/nostrdb.git
+	branch = master
+	shallow = true

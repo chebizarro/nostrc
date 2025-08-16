@@ -54,10 +54,8 @@ if (TARGET gnostr-secret)
   target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_LIBSECRET=1)
 endif()
 
-# Alternatively, if libsecret was detected directly here, enable the codepath too
-if (LIBSECRET_FOUND)
-  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_LIBSECRET=1)
-endif()
+# Do not enable GNOSTR_HAVE_LIBSECRET unless helper lib is built; otherwise
+# we'd reference symbols not linked into the app.
 
 # Daemon providing DBus (55L) and UDS (5F) fallback (skeleton now)
 option(ENABLE_TCP_IPC "Enable TCP IPC backend in gnostr-signer-daemon" OFF)
