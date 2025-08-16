@@ -62,11 +62,13 @@ def summarize(path, interval_s=None, csv_prefix=None, svg_prefix=None):
         h = last.get(name, {})
         return h.get('p50_ns',0), h.get('p90_ns',0), h.get('p99_ns',0)
 
-    ws_read = getp('ws_read_ns')
-    ws_write = getp('ws_write_ns')
-    sock_write = getp('ws_socket_write_ns')
-    bp_dispatch = getp('bp_dispatch_ns')
-    bp_burst = getp('bp_burst_ns')
+    # Pre-select some common metrics for display if present
+    display_histos = [
+        'ws_read_ns','ws_write_ns','ws_socket_write_ns',
+        'bp_dispatch_ns','bp_burst_ns',
+        'go_chan_send_wait_ns','go_chan_recv_wait_ns','go_ctx_wait_ns'
+    ]
+    present_display = [k for k in display_histos if k in last]
 
     print(f"SUMMARY for {path}")
     print("THROUGHPUT (msgs/s, bytes/s) over intervals:")
@@ -75,9 +77,9 @@ def summarize(path, interval_s=None, csv_prefix=None, svg_prefix=None):
     print(f"  TX msgs/s: min={txm_min:.1f} avg={txm_avg:.1f} max={txm_max:.1f}")
     print(f"  TX bytes/s: min={txb_min:.0f} avg={txb_avg:.0f} max={txb_max:.0f}")
     print("LATENCY PERCENTILES (ns) from last dump:")
-    print(f"  ws_read_ns:   p50={ws_read[0]} p90={ws_read[1]} p99={ws_read[2]}")
-    print(f"  ws_write_ns:  p50={ws_write[0]} p90={ws_write[1]} p99={ws_write[2]}")
-    print(f"  socket_write: p50={sock_write[0]} p90={sock_write[1]} p99={sock_write[2]}")
+    for name in present_display:
+        p50, p90, p99 = getp(name)
+        print(f"  {name}: p50={p50} p90={p90} p99={p99}")
 
     # Backpressure metrics (bp_*)
     # Compute per-interval rates for selected counters if present
@@ -97,9 +99,7 @@ def summarize(path, interval_s=None, csv_prefix=None, svg_prefix=None):
             if series:
                 print(f"  {k}: min={min(series):.1f} avg={mean(series):.1f} max={max(series):.1f}")
         # Histograms
-        print("BACKPRESSURE LATENCIES (ns) from last dump:")
-        print(f"  bp_dispatch_ns: p50={bp_dispatch[0]} p90={bp_dispatch[1]} p99={bp_dispatch[2]}")
-        print(f"  bp_burst_ns:    p50={bp_burst[0]} p90={bp_burst[1]} p99={bp_burst[2]}")
+        # If bp_* histos are present they are already printed via all_histos
 
     # CSV Export
     if csv_prefix:
@@ -110,15 +110,15 @@ def summarize(path, interval_s=None, csv_prefix=None, svg_prefix=None):
             w.writerow(["interval_index"] + fields)
             for idx, r in enumerate(rates):
                 w.writerow([idx] + [r.get(k, 0.0) for k in fields])
-        # percentiles CSV (last dump only)
+        # percentiles CSV (last dump only) for all histograms present
         with open(f"{csv_prefix}_percentiles.csv", "w", newline='') as f:
             w = csv.writer(f)
             w.writerow(["metric","p50_ns","p90_ns","p99_ns"]) 
-            w.writerow(["ws_read_ns", *ws_read])
-            w.writerow(["ws_write_ns", *ws_write])
-            w.writerow(["ws_socket_write_ns", *sock_write])
-            w.writerow(["bp_dispatch_ns", *bp_dispatch])
-            w.writerow(["bp_burst_ns", *bp_burst])
+            for name, stats in sorted(last.items()):
+                p50 = stats.get('p50_ns',0)
+                p90 = stats.get('p90_ns',0)
+                p99 = stats.get('p99_ns',0)
+                w.writerow([name, p50, p90, p99])
 
     # SVG plots (interval rates)
     if svg_prefix and rates:

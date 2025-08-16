@@ -1,4 +1,5 @@
 #include "channel.h"
+#include "nostr/metrics.h"
 #include "context.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,6 +38,7 @@ int go_channel_try_send(GoChannel *chan, void *data) {
     nsync_mu_lock(&chan->mutex);
     if (chan->buffer == NULL) {
         nsync_mu_unlock(&chan->mutex);
+        nostr_metric_counter_add("go_chan_try_send_failures", 1);
         return -1;
     }
     if (!chan->closed && chan->size < chan->capacity) {
@@ -47,6 +49,9 @@ int go_channel_try_send(GoChannel *chan, void *data) {
         rc = 0;
     }
     nsync_mu_unlock(&chan->mutex);
+    if (rc != 0) {
+        nostr_metric_counter_add("go_chan_try_send_failures", 1);
+    }
     return rc;
 }
 
@@ -56,6 +61,7 @@ int go_channel_try_receive(GoChannel *chan, void **data) {
     nsync_mu_lock(&chan->mutex);
     if (chan->buffer == NULL) {
         nsync_mu_unlock(&chan->mutex);
+        nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
     }
     if (chan->size > 0) {
@@ -67,6 +73,9 @@ int go_channel_try_receive(GoChannel *chan, void **data) {
         rc = 0;
     }
     nsync_mu_unlock(&chan->mutex);
+    if (rc != 0) {
+        nostr_metric_counter_add("go_chan_try_recv_failures", 1);
+    }
     return rc;
 }
 
@@ -108,9 +117,11 @@ void go_channel_free(GoChannel *chan) {
 
 /* Send data to the channel */
 int go_channel_send(GoChannel *chan, void *data) {
+    nostr_metric_timer t; nostr_metric_timer_start(&t);
     nsync_mu_lock(&chan->mutex);
     if (chan->buffer == NULL) {
         nsync_mu_unlock(&chan->mutex);
+        nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_chan_send_wait_ns"));
         return -1;
     }
 
@@ -120,6 +131,7 @@ int go_channel_send(GoChannel *chan, void *data) {
 
     if (chan->closed) {
         nsync_mu_unlock(&chan->mutex);
+        nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_chan_send_wait_ns"));
         return -1; // Cannot send to a closed channel
     }
 
@@ -132,14 +144,17 @@ int go_channel_send(GoChannel *chan, void *data) {
     nsync_cv_signal(&chan->cond_empty);
 
     nsync_mu_unlock(&chan->mutex);
+    nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_chan_send_wait_ns"));
     return 0;
 }
 
 /* Receive data from the channel */
 int go_channel_receive(GoChannel *chan, void **data) {
+    nostr_metric_timer t; nostr_metric_timer_start(&t);
     nsync_mu_lock(&chan->mutex);
     if (chan->buffer == NULL) {
         nsync_mu_unlock(&chan->mutex);
+        nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_chan_recv_wait_ns"));
         return -1;
     }
 
@@ -149,6 +164,7 @@ int go_channel_receive(GoChannel *chan, void **data) {
 
     if (chan->closed && chan->size == 0) {
         nsync_mu_unlock(&chan->mutex);
+        nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_chan_recv_wait_ns"));
         return -1; // Channel is closed and empty
     }
 
@@ -162,15 +178,17 @@ int go_channel_receive(GoChannel *chan, void **data) {
     nsync_cv_signal(&chan->cond_full);
 
     nsync_mu_unlock(&chan->mutex);
+    nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_chan_recv_wait_ns"));
     return 0;
 }
 
 /* Send data to the channel with cancellation context */
 int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
-
+    nostr_metric_timer t; nostr_metric_timer_start(&t);
     nsync_mu_lock(&chan->mutex);
     if (chan->buffer == NULL) {
         nsync_mu_unlock(&chan->mutex);
+        nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_chan_send_wait_ns"));
         return -1;
     }
 
@@ -183,6 +201,7 @@ int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
 
     if (chan->closed || (ctx && go_context_is_canceled(ctx))) {
         nsync_mu_unlock(&chan->mutex);
+        nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_chan_send_wait_ns"));
         return -1; // Channel closed or canceled
     }
 
@@ -200,10 +219,11 @@ int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
 
 /* Receive data from the channel with cancellation context */
 int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx) {
-
+    nostr_metric_timer t; nostr_metric_timer_start(&t);
     nsync_mu_lock(&chan->mutex);
     if (chan->buffer == NULL) {
         nsync_mu_unlock(&chan->mutex);
+        nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_chan_recv_wait_ns"));
         return -1;
     }
 
@@ -216,6 +236,7 @@ int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx
 
     if ((chan->closed && chan->size == 0) || (ctx && go_context_is_canceled(ctx))) {
         nsync_mu_unlock(&chan->mutex);
+        nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_chan_recv_wait_ns"));
         return -1; // Channel is closed and empty or canceled
     }
 
@@ -241,6 +262,7 @@ void go_channel_close(GoChannel *chan) {
         // Wake up all potential waiters so they can observe closed state
         nsync_cv_broadcast(&chan->cond_full);
         nsync_cv_broadcast(&chan->cond_empty);
+        nostr_metric_counter_add("go_chan_close_broadcasts", 1);
     }
 
     nsync_mu_unlock(&chan->mutex);

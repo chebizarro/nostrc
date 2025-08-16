@@ -6,6 +6,7 @@
 
 #include "context.h"
 #include "channel.h"
+#include "nostr/metrics.h"
 #include <errno.h>
 #include <nsync.h>
 #include <stdlib.h>
@@ -13,12 +14,14 @@
 #include <time.h>
 
 void go_context_cancel(GoContext *ctx) {
+    nostr_metric_counter_add("go_ctx_cancel_invocations", 1);
     nsync_mu_lock(&ctx->mutex);
     if (!ctx->canceled) {
         ctx->canceled = 1;
         ctx->err_msg = "context canceled";
         // Wake all waiters; avoid any blocking operations here
         nsync_cv_broadcast(&ctx->cond);
+        nostr_metric_counter_add("go_ctx_cancel_broadcasts", 1);
         // Also make ctx->done observable by non-blocking selects
         // Best-effort: try to enqueue a single token, then close to wake any waiters
         if (ctx->done) {
@@ -54,12 +57,14 @@ bool base_context_is_canceled(void *ctx) {
 
 void base_context_wait(void *ctx) {
     GoContext *base_ctx = (GoContext *)ctx;
+    nostr_metric_timer t; nostr_metric_timer_start(&t);
     nsync_mu_lock(&base_ctx->mutex);
 
     while (!base_ctx->canceled) {
         nsync_cv_wait(&base_ctx->cond, &base_ctx->mutex);
     }
     nsync_mu_unlock(&base_ctx->mutex);
+    nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_ctx_wait_ns"));
 }
 
 // Wrapper functions to avoid direct vtable access
@@ -139,6 +144,7 @@ bool deadline_context_is_canceled(void *ctx) {
 
 void deadline_context_wait(void *dctx) {
     GoContext *ctx = (GoContext *)dctx;
+    nostr_metric_timer t; nostr_metric_timer_start(&t);
     nsync_mu_lock(&ctx->mutex);
 
     while (!ctx->canceled) {
@@ -150,18 +156,28 @@ void deadline_context_wait(void *dctx) {
 
         if (result == 0 || result == ETIMEDOUT) {
             // Check cancel/deadline and mark canceled if needed
-            if (ctx->vtable->is_canceled(ctx)) {
-                if (!ctx->canceled) {
-                    ctx->canceled = true;
-                    if (!ctx->err_msg)
-                        ctx->err_msg = "context deadline exceeded";
-                    nsync_cv_broadcast(&ctx->cond);
+            if (!ctx->canceled) {
+                GoDeadlineContext *dctx = (GoDeadlineContext *)ctx;
+                // Check if deadline reached
+                if (/* deadline exceeded */ 1) {
+                    // conservative: use timespec in dctx during signal path
+                    struct timespec now;
+                    clock_gettime(CLOCK_REALTIME, &now);
+                    if (now.tv_sec > dctx->deadline.tv_sec ||
+                        (now.tv_sec == dctx->deadline.tv_sec && now.tv_nsec > dctx->deadline.tv_nsec)) {
+                        ctx->canceled = true;
+                        if (!ctx->err_msg)
+                            ctx->err_msg = "context deadline exceeded";
+                        nsync_cv_broadcast(&ctx->cond);
+                        nostr_metric_counter_add("go_ctx_deadline_broadcasts", 1);
+                    }
+                    break;
                 }
-                break;
             }
         }
     }
     nsync_mu_unlock(&ctx->mutex);
+    nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_ctx_wait_ns"));
 }
 
 GoContext *go_with_deadline(GoContext *parent, struct timespec deadline) {

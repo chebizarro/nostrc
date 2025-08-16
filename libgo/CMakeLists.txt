@@ -18,6 +18,8 @@ project(libgo)
 
 # Include the header files
 include_directories(include)
+# Also include libnostr public headers for metrics integration
+include_directories(${CMAKE_SOURCE_DIR}/libnostr/include)
 
 set(LIBGO_SOURCES
     src/go.c
@@ -39,7 +41,7 @@ enable_testing()
 # Build static library exposing public headers from `include/`.
 add_library(libgo ${LIBGO_SOURCES})
 
-target_include_directories(libgo PUBLIC include)
+target_include_directories(libgo PUBLIC include ${CMAKE_SOURCE_DIR}/libnostr/include)
 
 # No additional link requirements for the core library here.
 
@@ -80,7 +82,7 @@ include_directories(${NSYNC_INCLUDE_DIR})
 # When building libgo as a shared library, we must link nsync directly;
 # otherwise undefined symbols (nsync_*) will fail the link step.
 # Expose nsync to consumers as PUBLIC so downstreams inherit it via CMake.
-target_link_libraries(libgo PUBLIC ${NSYNC_LIB} pthread)
+target_link_libraries(libgo PUBLIC ${NSYNC_LIB} pthread nostr)
 target_include_directories(libgo PUBLIC ${NSYNC_INCLUDE_DIR})
 
 # Create the test executables for channels and contexts
