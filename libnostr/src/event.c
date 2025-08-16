@@ -175,7 +175,7 @@ char *nostr_event_get_id(NostrEvent *event) {
 
     // Convert the binary hash to a hex string
     for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
-        sprintf(&id[i * 2], "%02x", hash[i]);
+        snprintf(&id[i * 2], 3, "%02x", hash[i]);
     }
     id[SHA256_DIGEST_LENGTH * 2] = '\0'; // Null terminate the string
 
@@ -314,7 +314,7 @@ int nostr_event_sign(NostrEvent *event, const char *private_key) {
         return -1;
     }
     for (size_t i = 0; i < 64; i++) {
-        sprintf(&event->sig[i * 2], "%02x", sig_bin[i]);
+        snprintf(&event->sig[i * 2], 3, "%02x", sig_bin[i]);
     }
     event->sig[64 * 2] = '\0';
 

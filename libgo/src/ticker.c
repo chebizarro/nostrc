@@ -1,6 +1,6 @@
+#include <unistd.h>
 #include "ticker.h"
 #include <pthread.h>
-#include <unistd.h>
 
 void *ticker_thread_func(void *arg) {
     Ticker *ticker = (Ticker *)arg;

@@ -1,3 +1,4 @@
+#include <string.h>
 #include "string_array.h"
 
 StringArray *new_string_array(int capacity) {

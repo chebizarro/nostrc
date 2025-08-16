@@ -1,7 +1,7 @@
+#include <unistd.h>
 #include "select.h"
 #include "channel.h"
 #include <stdlib.h>
-#include <unistd.h>
 
 int go_select(GoSelectCase *cases, size_t num_cases) {
     // Simple fair-ish polling select using non-blocking ops

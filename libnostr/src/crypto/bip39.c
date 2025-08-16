@@ -180,7 +180,6 @@ bool nostr_bip39_validate(const char *mnemonic) {
   /* Rebuild bitstream from indices (11 bits each) */
   const int ENT_bits = (wc == 12 ? 128 : wc == 15 ? 160 : wc == 18 ? 192 : wc == 21 ? 224 : 256);
   const int CS_bits = ENT_bits / 32;
-  const int total_bits = ENT_bits + CS_bits; /* == 11 * wc */
   unsigned char bits[33] = {0}; /* up to 264 bits */
   int bitpos = 0;
   for (int i = 0; i < wc; ++i) {

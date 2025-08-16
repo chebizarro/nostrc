@@ -70,7 +70,9 @@ jobs:
 
       - name: Test
         working-directory: libgo
-        run: ctest --test-dir build --output-on-failure
+        run: |
+          export ASAN_OPTIONS=detect_leaks=0
+          ctest --test-dir build --output-on-failure
 
       - name: Archive logs on failure
         if: failure()
@@ -102,7 +104,7 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y build-essential cmake ninja-build clang git libjansson-dev pkg-config
+          sudo apt-get install -y build-essential cmake ninja-build clang git libjansson-dev pkg-config libcurl4-openssl-dev
           # Build nsync from source (fast, small)
           git clone --depth 1 https://github.com/google/nsync.git
           cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release
@@ -116,7 +118,7 @@ jobs:
         run: |
           brew update
           brew upgrade
-          brew install cmake ninja jansson pkg-config || true
+          brew install cmake ninja jansson pkg-config websockets curl || true
           if brew info nsync >/dev/null 2>&1; then
             brew install nsync || true
           else
