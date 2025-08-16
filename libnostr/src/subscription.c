@@ -27,9 +27,26 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     }
 
     sub->priv->count_result = NULL;
-    sub->events = go_channel_create(1);
-    sub->end_of_stored_events = go_channel_create(1);
-    sub->closed_reason = go_channel_create(1);
+    // Allow tuning channel capacities via environment for stress/backpressure analysis
+    int ev_cap = 1, eose_cap = 1, closed_cap = 1;
+    const char *ev_cap_s = getenv("NOSTR_SUB_EVENTS_CAP");
+    if (ev_cap_s && *ev_cap_s) {
+        int v = atoi(ev_cap_s);
+        if (v > 0) ev_cap = v;
+    }
+    const char *eose_cap_s = getenv("NOSTR_SUB_EOSE_CAP");
+    if (eose_cap_s && *eose_cap_s) {
+        int v = atoi(eose_cap_s);
+        if (v > 0) eose_cap = v;
+    }
+    const char *closed_cap_s = getenv("NOSTR_SUB_CLOSED_CAP");
+    if (closed_cap_s && *closed_cap_s) {
+        int v = atoi(closed_cap_s);
+        if (v > 0) closed_cap = v;
+    }
+    sub->events = go_channel_create(ev_cap);
+    sub->end_of_stored_events = go_channel_create(eose_cap);
+    sub->closed_reason = go_channel_create(closed_cap);
     sub->priv->live = false;
     sub->priv->eosed = false;
     sub->priv->closed = false;

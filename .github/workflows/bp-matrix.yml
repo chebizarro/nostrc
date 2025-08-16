@@ -1,0 +1,45 @@
+name: Backpressure Capacity Matrix
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  bp-matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libssl-dev libglib2.0-dev libgirepository1.0-dev libcjson-dev
+
+      - name: Configure (CMake)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j2
+
+      - name: Run capacity matrix
+        run: |
+          python3 scripts/run_bp_matrix.py \
+            --caps "1,2,4,8,16,32,64" \
+            --duration-ms 15000 \
+            --burst 128 \
+            --sleep-us 500 \
+            --interval-ms 200 \
+            --outdir build/bp_matrix
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bp-matrix-artifacts
+          path: build/bp_matrix

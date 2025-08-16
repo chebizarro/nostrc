@@ -45,7 +45,12 @@ int go_channel_try_send(GoChannel *chan, void *data) {
         chan->buffer[chan->in] = data;
         chan->in = (chan->in + 1) % chan->capacity;
         chan->size++;
+        // success + depth sample (post-increment size)
+        nostr_metric_counter_add("go_chan_send_successes", 1);
+        nostr_metric_counter_add("go_chan_send_depth_samples", 1);
+        nostr_metric_counter_add("go_chan_send_depth_sum", chan->size);
         nsync_cv_signal(&chan->cond_empty);
+        nostr_metric_counter_add("go_chan_signal_empty", 1);
         rc = 0;
     }
     nsync_mu_unlock(&chan->mutex);
@@ -69,7 +74,12 @@ int go_channel_try_receive(GoChannel *chan, void **data) {
         if (data) *data = tmp;
         chan->out = (chan->out + 1) % chan->capacity;
         chan->size--;
+        // success + depth sample (post-decrement size)
+        nostr_metric_counter_add("go_chan_recv_successes", 1);
+        nostr_metric_counter_add("go_chan_recv_depth_samples", 1);
+        nostr_metric_counter_add("go_chan_recv_depth_sum", chan->size);
         nsync_cv_signal(&chan->cond_full);
+        nostr_metric_counter_add("go_chan_signal_full", 1);
         rc = 0;
     }
     nsync_mu_unlock(&chan->mutex);
@@ -118,6 +128,7 @@ void go_channel_free(GoChannel *chan) {
 /* Send data to the channel */
 int go_channel_send(GoChannel *chan, void *data) {
     nostr_metric_timer t; nostr_metric_timer_start(&t);
+    int blocked = 0;
     nsync_mu_lock(&chan->mutex);
     if (chan->buffer == NULL) {
         nsync_mu_unlock(&chan->mutex);
@@ -126,7 +137,9 @@ int go_channel_send(GoChannel *chan, void *data) {
     }
 
     while (chan->size == chan->capacity && !chan->closed) {
+        if (!blocked) { nostr_metric_counter_add("go_chan_block_sends", 1); blocked = 1; }
         nsync_cv_wait(&chan->cond_full, &chan->mutex);
+        nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
     }
 
     if (chan->closed) {
@@ -139,9 +152,14 @@ int go_channel_send(GoChannel *chan, void *data) {
     chan->buffer[chan->in] = data;
     chan->in = (chan->in + 1) % chan->capacity;
     chan->size++;
+    // success + depth sample (post-increment size)
+    nostr_metric_counter_add("go_chan_send_successes", 1);
+    nostr_metric_counter_add("go_chan_send_depth_samples", 1);
+    nostr_metric_counter_add("go_chan_send_depth_sum", chan->size);
 
     // Signal receivers that data is available
     nsync_cv_signal(&chan->cond_empty);
+    nostr_metric_counter_add("go_chan_signal_empty", 1);
 
     nsync_mu_unlock(&chan->mutex);
     nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_chan_send_wait_ns"));
@@ -151,6 +169,7 @@ int go_channel_send(GoChannel *chan, void *data) {
 /* Receive data from the channel */
 int go_channel_receive(GoChannel *chan, void **data) {
     nostr_metric_timer t; nostr_metric_timer_start(&t);
+    int blocked = 0;
     nsync_mu_lock(&chan->mutex);
     if (chan->buffer == NULL) {
         nsync_mu_unlock(&chan->mutex);
@@ -159,7 +178,9 @@ int go_channel_receive(GoChannel *chan, void **data) {
     }
 
     while (chan->size == 0 && !chan->closed) {
+        if (!blocked) { nostr_metric_counter_add("go_chan_block_recvs", 1); blocked = 1; }
         nsync_cv_wait(&chan->cond_empty, &chan->mutex);
+        nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
     }
 
     if (chan->closed && chan->size == 0) {
@@ -173,9 +194,14 @@ int go_channel_receive(GoChannel *chan, void **data) {
     if (data) *data = tmp;
     chan->out = (chan->out + 1) % chan->capacity;
     chan->size--;
+    // success + depth sample (post-decrement size)
+    nostr_metric_counter_add("go_chan_recv_successes", 1);
+    nostr_metric_counter_add("go_chan_recv_depth_samples", 1);
+    nostr_metric_counter_add("go_chan_recv_depth_sum", chan->size);
 
     // Signal senders that space is available
     nsync_cv_signal(&chan->cond_full);
+    nostr_metric_counter_add("go_chan_signal_full", 1);
 
     nsync_mu_unlock(&chan->mutex);
     nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_chan_recv_wait_ns"));
@@ -185,6 +211,7 @@ int go_channel_receive(GoChannel *chan, void **data) {
 /* Send data to the channel with cancellation context */
 int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
     nostr_metric_timer t; nostr_metric_timer_start(&t);
+    int blocked = 0;
     nsync_mu_lock(&chan->mutex);
     if (chan->buffer == NULL) {
         nsync_mu_unlock(&chan->mutex);
@@ -194,9 +221,11 @@ int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
 
     channel_wait_arg_t wa = { .c = chan, .ctx = ctx };
     while (chan->size == chan->capacity && !chan->closed && !(ctx && go_context_is_canceled(ctx))) {
+        if (!blocked) { nostr_metric_counter_add("go_chan_block_sends", 1); blocked = 1; }
         // Wait with a short deadline so time-based contexts can be observed
         nsync_time dl = nsync_time_add(nsync_time_now(), nsync_time_ms(50));
         nsync_mu_wait_with_deadline(&chan->mutex, channel_send_pred, &wa, NULL, dl, NULL);
+        nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
     }
 
     if (chan->closed || (ctx && go_context_is_canceled(ctx))) {
@@ -220,6 +249,7 @@ int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
 /* Receive data from the channel with cancellation context */
 int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx) {
     nostr_metric_timer t; nostr_metric_timer_start(&t);
+    int blocked = 0;
     nsync_mu_lock(&chan->mutex);
     if (chan->buffer == NULL) {
         nsync_mu_unlock(&chan->mutex);
@@ -229,9 +259,11 @@ int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx
 
     channel_wait_arg_t wa = { .c = chan, .ctx = ctx };
     while (chan->size == 0 && !chan->closed && !(ctx && go_context_is_canceled(ctx))) {
+        if (!blocked) { nostr_metric_counter_add("go_chan_block_recvs", 1); blocked = 1; }
         // Wait with a short deadline so time-based contexts can be observed
         nsync_time dl = nsync_time_add(nsync_time_now(), nsync_time_ms(50));
         nsync_mu_wait_with_deadline(&chan->mutex, channel_recv_pred, &wa, NULL, dl, NULL);
+        nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
     }
 
     if ((chan->closed && chan->size == 0) || (ctx && go_context_is_canceled(ctx))) {
@@ -245,9 +277,14 @@ int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx
     if (data) *data = tmp2;
     chan->out = (chan->out + 1) % chan->capacity;
     chan->size--;
+    // success + depth sample (post-decrement size)
+    nostr_metric_counter_add("go_chan_recv_successes", 1);
+    nostr_metric_counter_add("go_chan_recv_depth_samples", 1);
+    nostr_metric_counter_add("go_chan_recv_depth_sum", chan->size);
 
     // Signal senders that space is available
     nsync_cv_signal(&chan->cond_full);
+    nostr_metric_counter_add("go_chan_signal_full", 1);
 
     nsync_mu_unlock(&chan->mutex);
     return 0;

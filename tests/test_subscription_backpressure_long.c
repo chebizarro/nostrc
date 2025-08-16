@@ -79,8 +79,13 @@ int main(void) {
     nostr_metric_histogram *h_dispatch = nostr_metric_histogram_get("bp_dispatch_ns");
     nostr_metric_histogram *h_burst = nostr_metric_histogram_get("bp_burst_ns");
 
-    // Prolonged dispatch for ~2 seconds: bursts, periodic EOSE and NOTICE
-    const int duration_ms = 2000;
+    // Prolonged dispatch: allow override via env for longer stress
+    int duration_ms = 2000;
+    const char *dur_s = getenv("BP_DURATION_MS");
+    if (dur_s && *dur_s) {
+        int v = atoi(dur_s);
+        if (v > 0) duration_ms = v;
+    }
     struct timespec start; clock_gettime(CLOCK_REALTIME, &start);
 
     int i = 0;
@@ -89,9 +94,15 @@ int main(void) {
         long elapsed = (long)((now.tv_sec - start.tv_sec) * 1000 + (now.tv_nsec - start.tv_nsec) / 1000000);
         if (elapsed >= duration_ms) break;
 
-        // Burst 32 events; subscription should drop if full, but never deadlock
+        // Burst events; allow override via env BP_BURST
+        int burst = 32;
+        const char *burst_s = getenv("BP_BURST");
+        if (burst_s && *burst_s) {
+            int v = atoi(burst_s);
+            if (v > 0) burst = v;
+        }
         nostr_metric_timer t_burst; nostr_metric_timer_start(&t_burst);
-        for (int b = 0; b < 32; ++b) {
+        for (int b = 0; b < burst; ++b) {
             nostr_metric_timer t; nostr_metric_timer_start(&t);
             nostr_subscription_dispatch_event(sub, make_dummy_event(i++));
             nostr_metric_timer_stop(&t, h_dispatch);
@@ -104,8 +115,14 @@ int main(void) {
             nostr_metric_counter_add("bp_eose_sent", 1);
             if (relay->priv->notice_handler) relay->priv->notice_handler("test-notice");
         }
-        // Small sleep to simulate pacing
-        usleep(2000);
+        // Small sleep to simulate pacing (override via BP_SLEEP_US)
+        int sleep_us = 2000;
+        const char *sleep_s = getenv("BP_SLEEP_US");
+        if (sleep_s && *sleep_s) {
+            int v = atoi(sleep_s);
+            if (v >= 0) sleep_us = v;
+        }
+        if (sleep_us > 0) usleep(sleep_us);
 
         // Non-blocking probe to ensure we can observe activity and no stalls
         void *ev = NULL;

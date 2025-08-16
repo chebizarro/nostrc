@@ -44,6 +44,24 @@ def summarize(path, interval_s=None, csv_prefix=None, svg_prefix=None):
         # backpressure per-interval counters if present
         for k in ['bp_events_generated','bp_probe_rx','bp_eose_sent','bp_notices']:
             row[f'{k}_per_s'] = (b.get(k,0) - a.get(k,0)) / interval_s
+        # libgo channel/context counters per-interval rates
+        for k in [
+            'go_chan_try_send_failures','go_chan_try_recv_failures',
+            'go_chan_signal_empty','go_chan_signal_full',
+            'go_chan_block_sends','go_chan_block_recvs',
+            'go_chan_send_successes','go_chan_recv_successes',
+            'go_ctx_cancel_invocations','go_ctx_cancel_broadcasts']:
+            row[f'{k}_per_s'] = (b.get(k,0) - a.get(k,0)) / interval_s
+        # Derived ratios for send-side
+        send_fail_d = (b.get('go_chan_try_send_failures',0) - a.get('go_chan_try_send_failures',0))
+        send_succ_d = (b.get('go_chan_send_successes',0) - a.get('go_chan_send_successes',0))
+        denom_send = send_fail_d + send_succ_d
+        row['go_chan_send_failure_ratio'] = (send_fail_d/denom_send) if denom_send > 0 else 0.0
+        # Derived ratios for recv-side
+        recv_fail_d = (b.get('go_chan_try_recv_failures',0) - a.get('go_chan_try_recv_failures',0))
+        recv_succ_d = (b.get('go_chan_recv_successes',0) - a.get('go_chan_recv_successes',0))
+        denom_recv = recv_fail_d + recv_succ_d
+        row['go_chan_recv_failure_ratio'] = (recv_fail_d/denom_recv) if denom_recv > 0 else 0.0
         rates.append(row)
 
     def agg(key):
@@ -58,6 +76,7 @@ def summarize(path, interval_s=None, csv_prefix=None, svg_prefix=None):
     txb_min, txb_avg, txb_max = agg('tx_bytes_per_s')
 
     last = objs[-1].get('histograms',{})
+    last_c = objs[-1].get('counters',{})
     def getp(name):
         h = last.get(name, {})
         return h.get('p50_ns',0), h.get('p90_ns',0), h.get('p99_ns',0)
@@ -80,6 +99,16 @@ def summarize(path, interval_s=None, csv_prefix=None, svg_prefix=None):
     for name in present_display:
         p50, p90, p99 = getp(name)
         print(f"  {name}: p50={p50} p90={p90} p99={p99}")
+
+    # Queue depth averages from cumulative counters
+    send_samples = last_c.get('go_chan_send_depth_samples', 0)
+    recv_samples = last_c.get('go_chan_recv_depth_samples', 0)
+    send_avg_depth = (last_c.get('go_chan_send_depth_sum', 0) / send_samples) if send_samples else 0.0
+    recv_avg_depth = (last_c.get('go_chan_recv_depth_sum', 0) / recv_samples) if recv_samples else 0.0
+    if send_samples or recv_samples:
+        print("QUEUE DEPTH (avg, last cumulative):")
+        print(f"  send_avg_depth={send_avg_depth:.2f} (samples={send_samples})")
+        print(f"  recv_avg_depth={recv_avg_depth:.2f} (samples={recv_samples})")
 
     # Backpressure metrics (bp_*)
     # Compute per-interval rates for selected counters if present
@@ -176,10 +205,18 @@ def summarize(path, interval_s=None, csv_prefix=None, svg_prefix=None):
             s = [r.get(f'{k}_per_s',0.0) for r in rates]
             if any(s):
                 bp_series[k] = s
+        # Channel rates plot (optional quick view)
+        chan_series = {}
+        for k in ['go_chan_try_send_failures','go_chan_send_successes','go_chan_signal_empty','go_chan_block_sends']:
+            s = [r.get(f'{k}_per_s',0.0) for r in rates]
+            if any(s):
+                chan_series[k] = s
         write_svg(msgs, f"{svg_prefix}_rates_msgs.svg", "WebSocket Messages per Second")
         write_svg(bytes_series, f"{svg_prefix}_rates_bytes.svg", "WebSocket Bytes per Second")
         if bp_series:
             write_svg(bp_series, f"{svg_prefix}_bp_rates.svg", "Backpressure Rates per Second")
+        if chan_series:
+            write_svg(chan_series, f"{svg_prefix}_chan_rates.svg", "Channel Rates per Second")
     return 0
 
 if __name__ == '__main__':

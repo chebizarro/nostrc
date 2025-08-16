@@ -25,7 +25,10 @@ void go_context_cancel(GoContext *ctx) {
         // Also make ctx->done observable by non-blocking selects
         // Best-effort: try to enqueue a single token, then close to wake any waiters
         if (ctx->done) {
-            (void)go_channel_try_send(ctx->done, (void *)ctx); // token value unused
+            int rc = go_channel_try_send(ctx->done, (void *)ctx); // token value unused
+            if (rc == 0) {
+                nostr_metric_counter_add("go_ctx_done_enqueued", 1);
+            }
             go_channel_close(ctx->done);
         }
     }
@@ -58,10 +61,13 @@ bool base_context_is_canceled(void *ctx) {
 void base_context_wait(void *ctx) {
     GoContext *base_ctx = (GoContext *)ctx;
     nostr_metric_timer t; nostr_metric_timer_start(&t);
+    int blocked = 0;
     nsync_mu_lock(&base_ctx->mutex);
 
     while (!base_ctx->canceled) {
+        if (!blocked) { nostr_metric_counter_add("go_ctx_block_waits", 1); blocked = 1; }
         nsync_cv_wait(&base_ctx->cond, &base_ctx->mutex);
+        nostr_metric_counter_add("go_ctx_wait_wakeups", 1);
     }
     nsync_mu_unlock(&base_ctx->mutex);
     nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_ctx_wait_ns"));
@@ -145,6 +151,7 @@ bool deadline_context_is_canceled(void *ctx) {
 void deadline_context_wait(void *dctx) {
     GoContext *ctx = (GoContext *)dctx;
     nostr_metric_timer t; nostr_metric_timer_start(&t);
+    int blocked = 0;
     nsync_mu_lock(&ctx->mutex);
 
     while (!ctx->canceled) {
@@ -152,7 +159,9 @@ void deadline_context_wait(void *dctx) {
         nsync_time abs_deadline = nsync_time_add(nsync_time_now(), nsync_time_ms(1000));
 
         // Wait with deadline, checking the result
+        if (!blocked) { nostr_metric_counter_add("go_ctx_block_waits", 1); blocked = 1; }
         int result = nsync_cv_wait_with_deadline(&ctx->cond, &ctx->mutex, abs_deadline, NULL);
+        nostr_metric_counter_add("go_ctx_wait_wakeups", 1);
 
         if (result == 0 || result == ETIMEDOUT) {
             // Check cancel/deadline and mark canceled if needed
