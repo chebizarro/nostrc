@@ -4,6 +4,35 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+// Branch prediction hints
+#ifndef NOSTR_LIKELY
+#define NOSTR_LIKELY(x)   __builtin_expect(!!(x), 1)
+#define NOSTR_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif
+
+// Fast-path index increment helpers with power-of-two wrap
+static inline void go_channel_inc_in(GoChannel *chan) {
+    size_t i = chan->in + 1;
+    if (NOSTR_LIKELY(chan->is_pow2)) {
+        chan->in = i & chan->mask;
+    } else if (NOSTR_UNLIKELY(i == chan->capacity)) {
+        chan->in = 0;
+    } else {
+        chan->in = i;
+    }
+}
+
+static inline void go_channel_inc_out(GoChannel *chan) {
+    size_t o = chan->out + 1;
+    if (NOSTR_LIKELY(chan->is_pow2)) {
+        chan->out = o & chan->mask;
+    } else if (NOSTR_UNLIKELY(o == chan->capacity)) {
+        chan->out = 0;
+    } else {
+        chan->out = o;
+    }
+}
+
 typedef struct { GoChannel *c; GoContext *ctx; } channel_wait_arg_t;
 
 static int channel_send_pred(const void *arg) {
@@ -42,15 +71,19 @@ int go_channel_try_send(GoChannel *chan, void *data) {
         return -1;
     }
     if (!chan->closed && chan->size < chan->capacity) {
+        int was_empty = (chan->size == 0);
         chan->buffer[chan->in] = data;
-        chan->in = (chan->in + 1) % chan->capacity;
+        go_channel_inc_in(chan);
         chan->size++;
         // success + depth sample (post-increment size)
         nostr_metric_counter_add("go_chan_send_successes", 1);
         nostr_metric_counter_add("go_chan_send_depth_samples", 1);
         nostr_metric_counter_add("go_chan_send_depth_sum", chan->size);
-        nsync_cv_signal(&chan->cond_empty);
-        nostr_metric_counter_add("go_chan_signal_empty", 1);
+        // Signal receivers only on 0->1 transition
+        if (was_empty) {
+            nsync_cv_broadcast(&chan->cond_empty);
+            nostr_metric_counter_add("go_chan_signal_empty", 1);
+        }
         rc = 0;
     }
     nsync_mu_unlock(&chan->mutex);
@@ -70,16 +103,20 @@ int go_channel_try_receive(GoChannel *chan, void **data) {
         return -1;
     }
     if (chan->size > 0) {
+        int was_full = (chan->size == chan->capacity);
         void *tmp = chan->buffer[chan->out];
         if (data) *data = tmp;
-        chan->out = (chan->out + 1) % chan->capacity;
+        go_channel_inc_out(chan);
         chan->size--;
         // success + depth sample (post-decrement size)
         nostr_metric_counter_add("go_chan_recv_successes", 1);
         nostr_metric_counter_add("go_chan_recv_depth_samples", 1);
         nostr_metric_counter_add("go_chan_recv_depth_sum", chan->size);
-        nsync_cv_signal(&chan->cond_full);
-        nostr_metric_counter_add("go_chan_signal_full", 1);
+        // Signal senders only on full->not-full transition
+        if (was_full) {
+            nsync_cv_broadcast(&chan->cond_full);
+            nostr_metric_counter_add("go_chan_signal_full", 1);
+        }
         rc = 0;
     }
     nsync_mu_unlock(&chan->mutex);
@@ -100,6 +137,8 @@ GoChannel *go_channel_create(size_t capacity) {
     GoChannel *chan = malloc(sizeof(GoChannel));
     chan->buffer = malloc(sizeof(void *) * capacity);
     chan->capacity = capacity;
+    chan->is_pow2 = (capacity != 0) && ((capacity & (capacity - 1)) == 0);
+    chan->mask = chan->is_pow2 ? (capacity - 1) : 0;
     chan->size = 0;
     chan->in = 0;
     chan->out = 0;
@@ -129,6 +168,8 @@ void go_channel_free(GoChannel *chan) {
 int go_channel_send(GoChannel *chan, void *data) {
     nostr_metric_timer t; nostr_metric_timer_start(&t);
     int blocked = 0;
+    int have_tw = 0; // whether we started wake->progress timer
+    nostr_metric_timer tw; // wake->progress timer
     nsync_mu_lock(&chan->mutex);
     if (chan->buffer == NULL) {
         nsync_mu_unlock(&chan->mutex);
@@ -139,7 +180,17 @@ int go_channel_send(GoChannel *chan, void *data) {
     while (chan->size == chan->capacity && !chan->closed) {
         if (!blocked) { nostr_metric_counter_add("go_chan_block_sends", 1); blocked = 1; }
         nsync_cv_wait(&chan->cond_full, &chan->mutex);
+        // woke up
         nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
+        if (chan->size == chan->capacity && !chan->closed) {
+            // condition not yet satisfied -> spurious or non-productive wakeup
+            nostr_metric_counter_add("go_chan_send_wait_spurious", 1);
+        } else {
+            // condition satisfied -> measure wake->progress latency
+            nostr_metric_counter_add("go_chan_send_wait_productive", 1);
+            nostr_metric_timer_start(&tw);
+            have_tw = 1;
+        }
     }
 
     if (chan->closed) {
@@ -149,20 +200,26 @@ int go_channel_send(GoChannel *chan, void *data) {
     }
 
     // Add data to the buffer
+    int was_empty = (chan->size == 0);
     chan->buffer[chan->in] = data;
-    chan->in = (chan->in + 1) % chan->capacity;
+    go_channel_inc_in(chan);
     chan->size++;
     // success + depth sample (post-increment size)
     nostr_metric_counter_add("go_chan_send_successes", 1);
     nostr_metric_counter_add("go_chan_send_depth_samples", 1);
     nostr_metric_counter_add("go_chan_send_depth_sum", chan->size);
 
-    // Signal receivers that data is available
-    nsync_cv_signal(&chan->cond_empty);
-    nostr_metric_counter_add("go_chan_signal_empty", 1);
+    // Signal receivers that data is available only on 0->1
+    if (was_empty) {
+        nsync_cv_broadcast(&chan->cond_empty);
+        nostr_metric_counter_add("go_chan_signal_empty", 1);
+    }
 
     nsync_mu_unlock(&chan->mutex);
     nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_chan_send_wait_ns"));
+    if (have_tw) {
+        nostr_metric_timer_stop(&tw, nostr_metric_histogram_get("go_chan_send_wakeup_to_progress_ns"));
+    }
     return 0;
 }
 
@@ -170,6 +227,8 @@ int go_channel_send(GoChannel *chan, void *data) {
 int go_channel_receive(GoChannel *chan, void **data) {
     nostr_metric_timer t; nostr_metric_timer_start(&t);
     int blocked = 0;
+    int have_tw = 0; // whether we started wake->progress timer
+    nostr_metric_timer tw; // wake->progress timer
     nsync_mu_lock(&chan->mutex);
     if (chan->buffer == NULL) {
         nsync_mu_unlock(&chan->mutex);
@@ -180,7 +239,15 @@ int go_channel_receive(GoChannel *chan, void **data) {
     while (chan->size == 0 && !chan->closed) {
         if (!blocked) { nostr_metric_counter_add("go_chan_block_recvs", 1); blocked = 1; }
         nsync_cv_wait(&chan->cond_empty, &chan->mutex);
+        // woke up
         nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
+        if (chan->size == 0 && !chan->closed) {
+            nostr_metric_counter_add("go_chan_recv_wait_spurious", 1);
+        } else {
+            nostr_metric_counter_add("go_chan_recv_wait_productive", 1);
+            nostr_metric_timer_start(&tw);
+            have_tw = 1;
+        }
     }
 
     if (chan->closed && chan->size == 0) {
@@ -190,21 +257,27 @@ int go_channel_receive(GoChannel *chan, void **data) {
     }
 
     // Get data from the buffer
+    int was_full = (chan->size == chan->capacity);
     void *tmp = chan->buffer[chan->out];
     if (data) *data = tmp;
-    chan->out = (chan->out + 1) % chan->capacity;
+    go_channel_inc_out(chan);
     chan->size--;
     // success + depth sample (post-decrement size)
     nostr_metric_counter_add("go_chan_recv_successes", 1);
     nostr_metric_counter_add("go_chan_recv_depth_samples", 1);
     nostr_metric_counter_add("go_chan_recv_depth_sum", chan->size);
 
-    // Signal senders that space is available
-    nsync_cv_signal(&chan->cond_full);
-    nostr_metric_counter_add("go_chan_signal_full", 1);
+    // Signal senders that space is available only on full->not-full
+    if (was_full) {
+        nsync_cv_broadcast(&chan->cond_full);
+        nostr_metric_counter_add("go_chan_signal_full", 1);
+    }
 
     nsync_mu_unlock(&chan->mutex);
     nostr_metric_timer_stop(&t, nostr_metric_histogram_get("go_chan_recv_wait_ns"));
+    if (have_tw) {
+        nostr_metric_timer_stop(&tw, nostr_metric_histogram_get("go_chan_recv_wakeup_to_progress_ns"));
+    }
     return 0;
 }
 
@@ -212,6 +285,8 @@ int go_channel_receive(GoChannel *chan, void **data) {
 int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
     nostr_metric_timer t; nostr_metric_timer_start(&t);
     int blocked = 0;
+    int have_tw = 0;
+    nostr_metric_timer tw;
     nsync_mu_lock(&chan->mutex);
     if (chan->buffer == NULL) {
         nsync_mu_unlock(&chan->mutex);
@@ -225,7 +300,15 @@ int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
         // Wait with a short deadline so time-based contexts can be observed
         nsync_time dl = nsync_time_add(nsync_time_now(), nsync_time_ms(50));
         nsync_mu_wait_with_deadline(&chan->mutex, channel_send_pred, &wa, NULL, dl, NULL);
+        // woke up (deadline or condition)
         nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
+        if (chan->size == chan->capacity && !chan->closed && !(ctx && go_context_is_canceled(ctx))) {
+            nostr_metric_counter_add("go_chan_send_wait_spurious", 1);
+        } else {
+            nostr_metric_counter_add("go_chan_send_wait_productive", 1);
+            nostr_metric_timer_start(&tw);
+            have_tw = 1;
+        }
     }
 
     if (chan->closed || (ctx && go_context_is_canceled(ctx))) {
@@ -235,12 +318,21 @@ int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
     }
 
     // Add data to the buffer
+    int was_empty2 = (chan->size == 0);
     chan->buffer[chan->in] = data;
-    chan->in = (chan->in + 1) % chan->capacity;
+    chan->in++;
+    if (chan->in == chan->capacity) chan->in = 0;
     chan->size++;
+    // success + depth sample (post-increment size)
+    nostr_metric_counter_add("go_chan_send_successes", 1);
+    nostr_metric_counter_add("go_chan_send_depth_samples", 1);
+    nostr_metric_counter_add("go_chan_send_depth_sum", chan->size);
 
-    // Signal receivers that data is available
-    nsync_cv_signal(&chan->cond_empty);
+    // Signal receivers that data is available only on 0->1
+    if (was_empty2) {
+        nsync_cv_broadcast(&chan->cond_empty);
+        nostr_metric_counter_add("go_chan_signal_empty", 1);
+    }
 
     nsync_mu_unlock(&chan->mutex);
     return 0;
@@ -250,6 +342,8 @@ int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
 int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx) {
     nostr_metric_timer t; nostr_metric_timer_start(&t);
     int blocked = 0;
+    int have_tw = 0;
+    nostr_metric_timer tw;
     nsync_mu_lock(&chan->mutex);
     if (chan->buffer == NULL) {
         nsync_mu_unlock(&chan->mutex);
@@ -263,7 +357,15 @@ int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx
         // Wait with a short deadline so time-based contexts can be observed
         nsync_time dl = nsync_time_add(nsync_time_now(), nsync_time_ms(50));
         nsync_mu_wait_with_deadline(&chan->mutex, channel_recv_pred, &wa, NULL, dl, NULL);
+        // woke up
         nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
+        if (chan->size == 0 && !chan->closed && !(ctx && go_context_is_canceled(ctx))) {
+            nostr_metric_counter_add("go_chan_recv_wait_spurious", 1);
+        } else {
+            nostr_metric_counter_add("go_chan_recv_wait_productive", 1);
+            nostr_metric_timer_start(&tw);
+            have_tw = 1;
+        }
     }
 
     if ((chan->closed && chan->size == 0) || (ctx && go_context_is_canceled(ctx))) {
@@ -273,18 +375,21 @@ int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx
     }
 
     // Get data from the buffer
+    int was_full2 = (chan->size == chan->capacity);
     void *tmp2 = chan->buffer[chan->out];
     if (data) *data = tmp2;
-    chan->out = (chan->out + 1) % chan->capacity;
+    go_channel_inc_out(chan);
     chan->size--;
     // success + depth sample (post-decrement size)
     nostr_metric_counter_add("go_chan_recv_successes", 1);
     nostr_metric_counter_add("go_chan_recv_depth_samples", 1);
     nostr_metric_counter_add("go_chan_recv_depth_sum", chan->size);
 
-    // Signal senders that space is available
-    nsync_cv_signal(&chan->cond_full);
-    nostr_metric_counter_add("go_chan_signal_full", 1);
+    // Signal senders that space is available only on full->not-full
+    if (was_full2) {
+        nsync_cv_broadcast(&chan->cond_full);
+        nostr_metric_counter_add("go_chan_signal_full", 1);
+    }
 
     nsync_mu_unlock(&chan->mutex);
     return 0;

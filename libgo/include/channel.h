@@ -8,6 +8,9 @@
 typedef struct GoChannel {
     void **buffer;
     size_t capacity;
+    // If capacity is a power of two, we use mask for fast wrap
+    size_t mask;
+    int is_pow2;
     size_t size;
     size_t in;
     size_t out;

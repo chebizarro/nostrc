@@ -50,7 +50,10 @@ def summarize(path, interval_s=None, csv_prefix=None, svg_prefix=None):
             'go_chan_signal_empty','go_chan_signal_full',
             'go_chan_block_sends','go_chan_block_recvs',
             'go_chan_send_successes','go_chan_recv_successes',
-            'go_ctx_cancel_invocations','go_ctx_cancel_broadcasts']:
+            'go_ctx_cancel_invocations','go_ctx_cancel_broadcasts',
+            # wakeup productivity counters
+            'go_chan_send_wait_wakeups','go_chan_send_wait_spurious','go_chan_send_wait_productive',
+            'go_chan_recv_wait_wakeups','go_chan_recv_wait_spurious','go_chan_recv_wait_productive']:
             row[f'{k}_per_s'] = (b.get(k,0) - a.get(k,0)) / interval_s
         # Derived ratios for send-side
         send_fail_d = (b.get('go_chan_try_send_failures',0) - a.get('go_chan_try_send_failures',0))
