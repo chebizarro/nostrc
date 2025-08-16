@@ -5,20 +5,38 @@
 #include "refptr.h"
 #include <nsync.h>
 
+#ifndef NOSTR_CACHELINE
+#define NOSTR_CACHELINE 64
+#endif
+
 typedef struct GoChannel {
+    // Immutable after create
     void **buffer;
     size_t capacity;
     // If capacity is a power of two, we use mask for fast wrap
     size_t mask;
     int is_pow2;
-    size_t size;
+
+    // Separate hot fields across cache lines to reduce false sharing.
+    // Producer index (writer: senders)
+    char _pad0[NOSTR_CACHELINE - ((sizeof(void*) + sizeof(size_t)*2 + sizeof(int)) % NOSTR_CACHELINE ? (sizeof(void*) + sizeof(size_t)*2 + sizeof(int)) % NOSTR_CACHELINE : NOSTR_CACHELINE)];
     size_t in;
+
+    // Consumer index (writer: receivers)
+    char _pad1[NOSTR_CACHELINE - (sizeof(size_t) % NOSTR_CACHELINE ? sizeof(size_t) % NOSTR_CACHELINE : NOSTR_CACHELINE)];
     size_t out;
+
+    // Size is updated by both; keep on its own line
+    char _pad2[NOSTR_CACHELINE - (sizeof(size_t) % NOSTR_CACHELINE ? sizeof(size_t) % NOSTR_CACHELINE : NOSTR_CACHELINE)];
+    size_t size;
+    int closed;
+
+    // Synchronization primitives; keep away from hot counters
+    char _pad3[NOSTR_CACHELINE - ((sizeof(size_t) + sizeof(int)) % NOSTR_CACHELINE ? (sizeof(size_t) + sizeof(int)) % NOSTR_CACHELINE : NOSTR_CACHELINE)];
     nsync_mu mutex;
     nsync_cv cond_full;
     nsync_cv cond_empty;
-    int closed;
-} GoChannel;
+} __attribute__((aligned(NOSTR_CACHELINE))) GoChannel;
 
 GoChannel *go_channel_create(size_t capacity);
 void go_channel_free(GoChannel *chan);

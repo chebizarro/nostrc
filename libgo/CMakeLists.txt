@@ -16,6 +16,29 @@ cmake_minimum_required(VERSION 3.30)
 # Concurrency primitives inspired by Go: channels, contexts, wait groups, etc.
 project(libgo)
 
+# Optional: enable more aggressive local optimizations for libgo
+include(CheckCCompilerFlag)
+option(GO_OPTIMIZE_NATIVE "Build libgo with -O3 -march=native and related perf flags" OFF)
+function(apply_libgo_optimizations target)
+  if (GO_OPTIMIZE_NATIVE)
+    # Compile-time optimization level (does not override user's global, only augments target)
+    check_c_compiler_flag("-O3" HAS_O3)
+    if (HAS_O3)
+      target_compile_options(${target} PRIVATE -O3)
+    endif()
+    # CPU tuning to local machine
+    check_c_compiler_flag("-march=native" HAS_MARCH_NATIVE)
+    if (HAS_MARCH_NATIVE)
+      target_compile_options(${target} PRIVATE -march=native)
+    endif()
+    # Avoid interposition overheads inside this TU
+    check_c_compiler_flag("-fno-semantic-interposition" HAS_FNO_SEM_INT)
+    if (HAS_FNO_SEM_INT)
+      target_compile_options(${target} PRIVATE -fno-semantic-interposition)
+    endif()
+  endif()
+endfunction()
+
 # Include the header files
 include_directories(include)
 # Also include libnostr public headers for metrics integration
@@ -70,6 +93,7 @@ endfunction()
 
 apply_warnings(libgo)
 apply_sanitizers(libgo)
+apply_libgo_optimizations(libgo)
 
 # Find the nsync library and headers manually; used by tests and may be used by
 # consumers for synchronization in conjunction with libgo.

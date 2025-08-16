@@ -103,12 +103,25 @@ def write_svg_xy(series_map, x_values, filename, title, y_label=""):
 
 def aggregate(base_dir: Path, out_prefix: Path):
     rows = []
-    # Iterate modes and capacities
-    for mode_dir in sorted(base_dir.glob('mode_*')):
-        mode = mode_dir.name.split('_',1)[1]
+    # Detect whether base_dir is a combo dir containing mode_* subdirs,
+    # or already a mode dir containing cap_* subdirs.
+    mode_dirs = sorted(base_dir.glob('mode_*'))
+    if mode_dirs:
+        iterator = []
+        for mode_dir in mode_dirs:
+            mode = mode_dir.name.split('_', 1)[1]
+            iterator.append((mode, mode_dir))
+    else:
+        # Treat base_dir as a single mode directory. Infer mode name if possible.
+        name = base_dir.name
+        mode = name.split('_', 1)[1] if name.startswith('mode_') else 'unknown'
+        iterator = [(mode, base_dir)]
+
+    # Iterate selected mode directories and their capacities
+    for mode, mode_dir in iterator:
         for cap_dir in sorted(mode_dir.glob('cap_*')):
             try:
-                cap = int(cap_dir.name.split('_',1)[1])
+                cap = int(cap_dir.name.split('_', 1)[1])
             except Exception:
                 continue
             rates_path = cap_dir / 'cap_rates.csv'
@@ -121,7 +134,7 @@ def aggregate(base_dir: Path, out_prefix: Path):
                 continue
             # fields of interest (averages over intervals)
             def avg_field(name):
-                vals = [r.get(name,0.0) for r in rates_rows]
+                vals = [r.get(name, 0.0) for r in rates_rows]
                 return mean(vals) if vals else 0.0
             rx_msgs = avg_field('rx_msgs_per_s')
             tx_msgs = avg_field('tx_msgs_per_s')
@@ -141,19 +154,19 @@ def aggregate(base_dir: Path, out_prefix: Path):
             r_spur_ratio = (r_spur / r_wake) if r_wake > 0 else 0.0
             # percentiles
             pct = read_percentiles_csv(pct_path)
-            sw_p50 = pct.get('go_chan_send_wait_ns',{}).get('p50_ns',0)
-            sw_p90 = pct.get('go_chan_send_wait_ns',{}).get('p90_ns',0)
-            sw_p99 = pct.get('go_chan_send_wait_ns',{}).get('p99_ns',0)
-            rw_p50 = pct.get('go_chan_recv_wait_ns',{}).get('p50_ns',0)
-            rw_p90 = pct.get('go_chan_recv_wait_ns',{}).get('p90_ns',0)
-            rw_p99 = pct.get('go_chan_recv_wait_ns',{}).get('p99_ns',0)
+            sw_p50 = pct.get('go_chan_send_wait_ns', {}).get('p50_ns', 0)
+            sw_p90 = pct.get('go_chan_send_wait_ns', {}).get('p90_ns', 0)
+            sw_p99 = pct.get('go_chan_send_wait_ns', {}).get('p99_ns', 0)
+            rw_p50 = pct.get('go_chan_recv_wait_ns', {}).get('p50_ns', 0)
+            rw_p90 = pct.get('go_chan_recv_wait_ns', {}).get('p90_ns', 0)
+            rw_p99 = pct.get('go_chan_recv_wait_ns', {}).get('p99_ns', 0)
             # wakeup-to-progress latency percentiles
-            swp_p50 = pct.get('go_chan_send_wakeup_to_progress_ns',{}).get('p50_ns',0)
-            swp_p90 = pct.get('go_chan_send_wakeup_to_progress_ns',{}).get('p90_ns',0)
-            swp_p99 = pct.get('go_chan_send_wakeup_to_progress_ns',{}).get('p99_ns',0)
-            rwp_p50 = pct.get('go_chan_recv_wakeup_to_progress_ns',{}).get('p50_ns',0)
-            rwp_p90 = pct.get('go_chan_recv_wakeup_to_progress_ns',{}).get('p90_ns',0)
-            rwp_p99 = pct.get('go_chan_recv_wakeup_to_progress_ns',{}).get('p99_ns',0)
+            swp_p50 = pct.get('go_chan_send_wakeup_to_progress_ns', {}).get('p50_ns', 0)
+            swp_p90 = pct.get('go_chan_send_wakeup_to_progress_ns', {}).get('p90_ns', 0)
+            swp_p99 = pct.get('go_chan_send_wakeup_to_progress_ns', {}).get('p99_ns', 0)
+            rwp_p50 = pct.get('go_chan_recv_wakeup_to_progress_ns', {}).get('p50_ns', 0)
+            rwp_p90 = pct.get('go_chan_recv_wakeup_to_progress_ns', {}).get('p90_ns', 0)
+            rwp_p99 = pct.get('go_chan_recv_wakeup_to_progress_ns', {}).get('p99_ns', 0)
             # depth avgs
             send_avg_depth, recv_avg_depth = read_depth_avgs(mjsonl)
             rows.append({
@@ -297,7 +310,7 @@ def aggregate(base_dir: Path, out_prefix: Path):
 
 def main():
     ap = argparse.ArgumentParser(description='Aggregate bp matrix outputs into CSV/SVG comparisons')
-    ap.add_argument('--base', type=str, required=True, help='base directory (e.g., build/bp_matrix)')
+    ap.add_argument('--base', type=str, required=True, help='base directory: either a combo dir containing mode_* or a single mode_* dir containing cap_*')
     ap.add_argument('--out-prefix', type=str, default=None, help='output prefix path for summary (default: <base>/summary)')
     args = ap.parse_args()
     base = Path(args.base)

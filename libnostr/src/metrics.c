@@ -61,6 +61,8 @@ typedef struct metrics_shard {
 static pthread_once_t g_once = PTHREAD_ONCE_INIT;
 static metrics_shard g_shards[NOSTR_METRICS_SHARDS];
 static uint64_t g_bounds_ns[NOSTR_HIST_NUM_BINS];
+// Forward declaration for TLS flush interval (defined later with default)
+static uint64_t g_tls_flush_ns;
 
 static void metrics_init_once(void)
 {
@@ -72,6 +74,15 @@ static void metrics_init_once(void)
     for (int i = 0; i < NOSTR_HIST_NUM_BINS; ++i) {
         g_bounds_ns[i] = (uint64_t)(v);
         v *= k_hist_factor;
+    }
+    // Optional: configure TLS counter flush interval from environment
+    const char *env_flush = getenv("NOSTR_COUNTER_FLUSH_NS");
+    if (env_flush && *env_flush) {
+        char *endp = NULL;
+        unsigned long long x = strtoull(env_flush, &endp, 10);
+        if (endp != env_flush && x > 0) {
+            g_tls_flush_ns = (uint64_t)x;
+        }
     }
 }
 
@@ -121,6 +132,85 @@ typedef struct nostr_metric_histogram {
     int shard;
     metrics_entry *entry; // type == MET_HISTOGRAM
 } nostr_metric_histogram;
+
+// ----------------------------
+// Per-thread counter batching
+// ----------------------------
+// We keep a tiny TLS cache of (name,pending) and periodically flush to the
+// global registry to reduce contention on atomic_fetch_add and shard mutexes.
+// This preserves the public API and call sites.
+
+#ifndef NOSTR_COUNTER_TLS_SLOTS
+#define NOSTR_COUNTER_TLS_SLOTS 32
+#endif
+#ifndef NOSTR_COUNTER_FLUSH_NS
+#define NOSTR_COUNTER_FLUSH_NS 1000000ull /* 1 ms */
+#endif
+static uint64_t g_tls_flush_ns = NOSTR_COUNTER_FLUSH_NS;
+
+typedef struct tls_counter_slot {
+    const char *name;     // key (assumed long-lived string literal in hot paths)
+    uint64_t pending;     // accumulated delta
+} tls_counter_slot;
+
+typedef struct tls_counter_cache {
+    uint64_t last_flush_ns;
+    int used;
+    tls_counter_slot slots[NOSTR_COUNTER_TLS_SLOTS];
+} tls_counter_cache;
+
+#if defined(__APPLE__) || defined(__GNUC__)
+static __thread tls_counter_cache g_tls_counters;
+#else
+static _Thread_local tls_counter_cache g_tls_counters;
+#endif
+
+static inline void tls_counters_flush(tls_counter_cache *c)
+{
+    if (!c) return;
+    for (int i = 0; i < c->used; ++i) {
+        tls_counter_slot *s = &c->slots[i];
+        if (!s->name || s->pending == 0) continue;
+        metrics_entry *e = registry_get_or_create(s->name, MET_COUNTER);
+        if (e) {
+            atomic_fetch_add(&e->u.counter, (unsigned long long)s->pending);
+        }
+        s->pending = 0;
+    }
+    c->last_flush_ns = nostr_now_ns();
+}
+
+static inline void tls_counters_add(const char *name, uint64_t delta)
+{
+    tls_counter_cache *c = &g_tls_counters;
+    // Time-based flush
+    uint64_t now = nostr_now_ns();
+    if (c->last_flush_ns == 0) c->last_flush_ns = now;
+    if (now - c->last_flush_ns > g_tls_flush_ns) {
+        tls_counters_flush(c);
+    }
+
+    // Try to find existing slot (pointer match for speed)
+    for (int i = 0; i < c->used; ++i) {
+        if (c->slots[i].name == name) {
+            c->slots[i].pending += delta;
+            return;
+        }
+    }
+    // New slot if space
+    if (c->used < NOSTR_COUNTER_TLS_SLOTS) {
+        c->slots[c->used].name = name;
+        c->slots[c->used].pending = delta;
+        c->used++;
+        return;
+    }
+    // Cache full: flush everything then insert into first slot
+    tls_counters_flush(c);
+    c->used = 0;
+    c->slots[c->used].name = name;
+    c->slots[c->used].pending = delta;
+    c->used = 1;
+}
 
 static inline int hist_bin_index(uint64_t ns)
 {
@@ -177,9 +267,8 @@ void nostr_metric_timer_stop(nostr_metric_timer *t, nostr_metric_histogram *h)
 
 void nostr_metric_counter_add(const char *name, uint64_t delta)
 {
-    metrics_entry *e = registry_get_or_create(name, MET_COUNTER);
-    if (!e) return;
-    atomic_fetch_add(&e->u.counter, (unsigned long long)delta);
+    // Fast-path: batch into a thread-local cache
+    tls_counters_add(name, delta);
 }
 
 static uint64_t percentile_estimate(const metrics_histogram *h, double p)
@@ -199,6 +288,8 @@ static uint64_t percentile_estimate(const metrics_histogram *h, double p)
 
 void nostr_metrics_dump(void)
 {
+    // Flush TLS counters for this thread before snapshotting
+    tls_counters_flush(&g_tls_counters);
     // Output a compact JSON object containing counters and histograms
     // {"counters":{...},"histograms":{...}}
     pthread_once(&g_once, metrics_init_once);
