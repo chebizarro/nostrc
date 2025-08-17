@@ -325,14 +325,20 @@ int main(int argc, char **argv) {
     int prod = (argc > 2) ? atoi(argv[2]) : 1;
     int cons = (argc > 3) ? atoi(argv[3]) : 1;
     size_t total = (argc > 4) ? parse_size(argv[4], 1000000) : 1000000; // default 1M msgs
+    // Optional 5th arg: timeout seconds (overrides env)
+    if (argc > 5 && argv[5] && *argv[5]) {
+        setenv("CHAN_BENCH_TIMEOUT_SECS", argv[5], 1);
+    }
 
     const char *iters = getenv("NOSTR_SPIN_ITERS");
     const char *us = getenv("NOSTR_SPIN_US");
     int sweep = get_env_int("CHAN_BENCH_SWEEP", 0);
     int pin = get_env_int("CHAN_BENCH_PIN", 0);
     int base = get_env_int("CHAN_BENCH_BASE_CPU", 0);
-    printf("NOSTR_SPIN_ITERS=%s NOSTR_SPIN_US=%s PIN=%d BASE_CPU=%d SWEEP=%d\n",
-           iters ? iters : "(default)", us ? us : "(default)", pin, base, sweep);
+    const char *to = getenv("CHAN_BENCH_TIMEOUT_SECS");
+    printf("NOSTR_SPIN_ITERS=%s NOSTR_SPIN_US=%s PIN=%d BASE_CPU=%d SWEEP=%d TIMEOUT=%s\n",
+           iters ? iters : "(default)", us ? us : "(default)", pin, base, sweep,
+           to && *to ? to : "(none)");
     fflush(stdout);
 
     if (!sweep) {
