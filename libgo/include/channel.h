@@ -4,39 +4,48 @@
 #include "context.h"
 #include "refptr.h"
 #include <nsync.h>
+#include <stdatomic.h>
+#include <stddef.h> // offsetof
 
 #ifndef NOSTR_CACHELINE
 #define NOSTR_CACHELINE 64
+#endif
+
+// Enforce power-of-two capacity for channels by default to enable fast mask-based wraparound
+#ifndef NOSTR_CHANNEL_ENFORCE_POW2_CAP
+#define NOSTR_CHANNEL_ENFORCE_POW2_CAP 1
 #endif
 
 typedef struct GoChannel {
     // Immutable after create
     void **buffer;
     size_t capacity;
-    // If capacity is a power of two, we use mask for fast wrap
+    // Optional per-slot sequence numbers for MPMC lock-free try paths
+    _Atomic size_t *slot_seq;
+    // Mask for fast wrap (capacity is enforced to power-of-two)
     size_t mask;
-    int is_pow2;
 
     // Separate hot fields across cache lines to reduce false sharing.
-    // Producer index (writer: senders)
-    char _pad0[NOSTR_CACHELINE - ((sizeof(void*) + sizeof(size_t)*2 + sizeof(int)) % NOSTR_CACHELINE ? (sizeof(void*) + sizeof(size_t)*2 + sizeof(int)) % NOSTR_CACHELINE : NOSTR_CACHELINE)];
-    size_t in;
-
-    // Consumer index (writer: receivers)
-    char _pad1[NOSTR_CACHELINE - (sizeof(size_t) % NOSTR_CACHELINE ? sizeof(size_t) % NOSTR_CACHELINE : NOSTR_CACHELINE)];
-    size_t out;
-
-    // Size is updated by both; keep on its own line
-    char _pad2[NOSTR_CACHELINE - (sizeof(size_t) % NOSTR_CACHELINE ? sizeof(size_t) % NOSTR_CACHELINE : NOSTR_CACHELINE)];
-    size_t size;
-    int closed;
-
-    // Synchronization primitives; keep away from hot counters
-    char _pad3[NOSTR_CACHELINE - ((sizeof(size_t) + sizeof(int)) % NOSTR_CACHELINE ? (sizeof(size_t) + sizeof(int)) % NOSTR_CACHELINE : NOSTR_CACHELINE)];
-    nsync_mu mutex;
+    // Use C11 alignment to ensure cacheline boundaries irrespective of prior fields.
+    _Alignas(NOSTR_CACHELINE) _Atomic size_t in;   // Producer index (writers: senders)
+    _Alignas(NOSTR_CACHELINE) _Atomic size_t out;  // Consumer index (writers: receivers)
+    _Alignas(NOSTR_CACHELINE) size_t size;         // Occupancy (if maintained)
+    _Alignas(NOSTR_CACHELINE) int closed;          // Closed flag
+    _Alignas(NOSTR_CACHELINE) nsync_mu mutex;      // Mutex separated from hot counters
     nsync_cv cond_full;
     nsync_cv cond_empty;
+    // Double-free guard: set to 1 when freed. Placed at end to avoid shifting aligned fields.
+    _Atomic int freed;
 } __attribute__((aligned(NOSTR_CACHELINE))) GoChannel;
+
+// Compile-time checks to ensure hot fields start at cacheline boundaries.
+// This helps avoid false sharing between producers/consumers and sync vars.
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Static_assert((offsetof(GoChannel, in)   % NOSTR_CACHELINE) == 0,  "GoChannel.in not cacheline-aligned");
+_Static_assert((offsetof(GoChannel, out)  % NOSTR_CACHELINE) == 0,  "GoChannel.out not cacheline-aligned");
+_Static_assert((offsetof(GoChannel, size) % NOSTR_CACHELINE) == 0,  "GoChannel.size not cacheline-aligned");
+_Static_assert((offsetof(GoChannel, mutex) % NOSTR_CACHELINE) == 0, "GoChannel.mutex not cacheline-aligned");
+#endif
 
 GoChannel *go_channel_create(size_t capacity);
 void go_channel_free(GoChannel *chan);

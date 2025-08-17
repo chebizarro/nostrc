@@ -7,7 +7,7 @@ option(GO_WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
 
 function(apply_warnings target)
   target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
-  if (GO_WARNINGS_AS_ERRORS)
+  if(GO_WARNINGS_AS_ERRORS)
     target_compile_options(${target} PRIVATE -Werror)
   endif()
 endfunction()
@@ -22,20 +22,20 @@ include(CheckIPOSupported)
 option(GO_OPTIMIZE_NATIVE "Build libgo with -O3 -march=native and related perf flags" OFF)
 option(GO_ENABLE_LTO "Enable Link-Time Optimization for libgo" OFF)
 function(apply_libgo_optimizations target)
-  if (GO_OPTIMIZE_NATIVE)
+  if(GO_OPTIMIZE_NATIVE)
     # Compile-time optimization level (does not override user's global, only augments target)
     check_c_compiler_flag("-O3" HAS_O3)
-    if (HAS_O3)
+    if(HAS_O3)
       target_compile_options(${target} PRIVATE -O3)
     endif()
     # CPU tuning to local machine
     check_c_compiler_flag("-march=native" HAS_MARCH_NATIVE)
-    if (HAS_MARCH_NATIVE)
+    if(HAS_MARCH_NATIVE)
       target_compile_options(${target} PRIVATE -march=native)
     endif()
     # Avoid interposition overheads inside this TU
     check_c_compiler_flag("-fno-semantic-interposition" HAS_FNO_SEM_INT)
-    if (HAS_FNO_SEM_INT)
+    if(HAS_FNO_SEM_INT)
       target_compile_options(${target} PRIVATE -fno-semantic-interposition)
     endif()
   endif()
@@ -46,18 +46,25 @@ include_directories(include)
 # Also include libnostr public headers for metrics integration
 include_directories(${CMAKE_SOURCE_DIR}/libnostr/include)
 
+# Allow tuning of channel prefetch distance at compile time.
+# Default matches channel.c internal default when not defined.
+set(NOSTR_PREFETCH_DISTANCE "1" CACHE STRING "Prefetch distance (in slots) for libgo channels")
+
+# Allow configuration of cacheline size for padding/alignment.
+set(NOSTR_CACHELINE "64" CACHE STRING "Assumed cacheline size for padding/alignment in libgo (bytes)")
+
 set(LIBGO_SOURCES
-    src/go.c
-    src/context.c
-    src/channel.c
-	src/wait_group.c
-	src/hash_map.c
-	src/counter.c
-	src/select.c
-	src/string_array.c
-	src/int_array.c
-    src/ticker.c
-    src/error.c
+  src/go.c
+  src/context.c
+  src/channel.c
+  src/wait_group.c
+  src/hash_map.c
+  src/counter.c
+  src/select.c
+  src/string_array.c
+  src/int_array.c
+  src/ticker.c
+  src/error.c
 )
 
 # Enable CTest for module-specific tests
@@ -67,8 +74,62 @@ enable_testing()
 add_library(libgo ${LIBGO_SOURCES})
 
 target_include_directories(libgo PUBLIC include ${CMAKE_SOURCE_DIR}/libnostr/include)
+target_compile_definitions(libgo PUBLIC NOSTR_PREFETCH_DISTANCE=${NOSTR_PREFETCH_DISTANCE})
+target_compile_definitions(libgo PUBLIC NOSTR_CACHELINE=${NOSTR_CACHELINE})
+
+# Allow A/B testing of refined signaling vs broadcast.
+option(GO_CHANNEL_REFINED_SIGNALING "Use single-wakeup signaling in channels (signal on 0->1 and full->not-full)" ON)
+if(GO_CHANNEL_REFINED_SIGNALING)
+  target_compile_definitions(libgo PUBLIC NOSTR_REFINED_SIGNALING=1)
+else()
+  target_compile_definitions(libgo PUBLIC NOSTR_REFINED_SIGNALING=0)
+endif()
+
+# Optionally derive channel occupancy from indices to avoid hot size updates
+option(GO_CHANNEL_DERIVE_SIZE "Compute channel occupancy from indices instead of maintaining size" OFF)
+option(GO_CHANNEL_ATOMIC_TRY "Use atomic lockless full/empty check in try paths" ON)
+option(GO_CHANNEL_MPMC_SLOTS "Enable MPMC lock-free per-slot sequence protocol for channels" ON)
+if(GO_CHANNEL_DERIVE_SIZE)
+  target_compile_definitions(libgo PRIVATE NOSTR_CHANNEL_DERIVE_SIZE=1)
+endif()
+if(GO_CHANNEL_ATOMIC_TRY)
+  target_compile_definitions(libgo PRIVATE NOSTR_CHANNEL_ATOMIC_TRY=1)
+else()
+  target_compile_definitions(libgo PRIVATE NOSTR_CHANNEL_ATOMIC_TRY=0)
+endif()
+if(GO_CHANNEL_MPMC_SLOTS)
+  target_compile_definitions(libgo PRIVATE NOSTR_CHANNEL_MPMC_SLOTS=1)
+else()
+  target_compile_definitions(libgo PRIVATE NOSTR_CHANNEL_MPMC_SLOTS=0)
+endif()
 
 # No additional link requirements for the core library here.
+
+# Optionally disable metrics in hot paths for maximum throughput
+option(GO_CHANNEL_DISABLE_METRICS "Compile out channel hot-path metrics" OFF)
+if(GO_CHANNEL_DISABLE_METRICS)
+  target_compile_definitions(libgo PRIVATE NOSTR_CHANNEL_DISABLE_METRICS=1)
+endif()
+
+# Optionally enforce power-of-two capacity (round up) for faster masking
+option(GO_CHANNEL_ENFORCE_POW2_CAP "Round capacity up to next power of two for channels" OFF)
+if(GO_CHANNEL_ENFORCE_POW2_CAP)
+  target_compile_definitions(libgo PRIVATE NOSTR_CHANNEL_ENFORCE_POW2_CAP=1)
+endif()
+
+# Optional arch-specific short-wait hints
+option(GO_CHANNEL_X86_TPAUSE "Use x86 WAITPKG TPAUSE for short waits" OFF)
+if(GO_CHANNEL_X86_TPAUSE)
+  target_compile_definitions(libgo PRIVATE NOSTR_X86_TPAUSE=1)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64|i.86")
+    target_compile_options(libgo PRIVATE -mwaitpkg)
+  endif()
+endif()
+
+option(GO_CHANNEL_ARM_WFE "Use ARM WFE/SEV for short waits and wakeups" OFF)
+if(GO_CHANNEL_ARM_WFE)
+  target_compile_definitions(libgo PRIVATE NOSTR_ARM_WFE=1)
+endif()
 
 # Sanitizer options
 option(GO_ENABLE_ASAN "Enable AddressSanitizer" OFF)
@@ -76,16 +137,16 @@ option(GO_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
 option(GO_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 
 function(apply_sanitizers target)
-  if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-    if (GO_ENABLE_TSAN)
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    if(GO_ENABLE_TSAN)
       target_compile_options(${target} PRIVATE -fsanitize=thread)
       target_link_options(${target} PRIVATE -fsanitize=thread)
     else()
-      if (GO_ENABLE_ASAN)
+      if(GO_ENABLE_ASAN)
         target_compile_options(${target} PRIVATE -fsanitize=address)
         target_link_options(${target} PRIVATE -fsanitize=address)
       endif()
-      if (GO_ENABLE_UBSAN)
+      if(GO_ENABLE_UBSAN)
         target_compile_options(${target} PRIVATE -fsanitize=undefined)
         target_link_options(${target} PRIVATE -fsanitize=undefined)
       endif()
@@ -98,13 +159,13 @@ apply_sanitizers(libgo)
 apply_libgo_optimizations(libgo)
 
 # Optional LTO for libgo
-if (GO_ENABLE_LTO)
+if(GO_ENABLE_LTO)
   check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
-  if (ipo_supported)
+  if(ipo_supported)
     set_property(TARGET libgo PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
   else()
     check_c_compiler_flag("-flto" HAS_FLTO)
-    if (HAS_FLTO)
+    if(HAS_FLTO)
       target_compile_options(libgo PRIVATE -flto)
       target_link_options(libgo PRIVATE -flto)
     endif()

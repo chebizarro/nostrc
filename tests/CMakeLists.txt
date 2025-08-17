@@ -8,6 +8,8 @@ option(ENABLE_FUZZING_RUNTIME "Link libFuzzer runtime (requires Clang libclang_r
 # Unit/integration test binaries for nostrc. Uses CTest (enabled at the root).
 
 enable_testing()
+# Directory-wide fallback timeout (seconds) so no test can run forever
+set_property(DIRECTORY PROPERTY TEST_TIMEOUT 90)
 
 # Sanitizer helper (Debug builds)
 function(apply_sanitizers target)
@@ -175,6 +177,28 @@ add_test(NAME test_json_filter_fuzzlite COMMAND test_json_filter_fuzzlite)
 add_test(NAME test_json_int_array COMMAND test_json_int_array)
 add_test(NAME test_json_raw COMMAND test_json_raw)
 add_test(NAME test_filters_move_semantics COMMAND test_filters_move_semantics)
+
+# Per-test timeouts (seconds) — keep tight to surface stalls early
+set_tests_properties(test_nostr PROPERTIES TIMEOUT 20)
+set_tests_properties(test_relay PROPERTIES TIMEOUT 30)
+set_tests_properties(test_relay_shutdown PROPERTIES TIMEOUT 30)
+set_tests_properties(test_subscription_lifecycle PROPERTIES TIMEOUT 30)
+set_tests_properties(test_subscription_backpressure PROPERTIES TIMEOUT 45)
+set_tests_properties(test_subscription_backpressure_long PROPERTIES TIMEOUT 90)
+set_tests_properties(test_subscription_blocking_depth PROPERTIES TIMEOUT 45)
+set_tests_properties(test_relay_unsubscribe PROPERTIES TIMEOUT 30)
+set_tests_properties(test_connection_shutdown_order PROPERTIES TIMEOUT 30)
+set_tests_properties(test_envelope_parse PROPERTIES TIMEOUT 20)
+set_tests_properties(test_json_event PROPERTIES TIMEOUT 20)
+set_tests_properties(test_json_event_fuzzlite PROPERTIES TIMEOUT 30)
+set_tests_properties(test_json_envelope PROPERTIES TIMEOUT 20)
+set_tests_properties(test_json_filter PROPERTIES TIMEOUT 20)
+set_tests_properties(test_json_filter_tags PROPERTIES TIMEOUT 20)
+set_tests_properties(test_json_filter_robust PROPERTIES TIMEOUT 45)
+set_tests_properties(test_json_filter_fuzzlite PROPERTIES TIMEOUT 45)
+set_tests_properties(test_json_int_array PROPERTIES TIMEOUT 20)
+set_tests_properties(test_json_raw PROPERTIES TIMEOUT 20)
+set_tests_properties(test_filters_move_semantics PROPERTIES TIMEOUT 20)
 
 # Include directories for libsecp256k1 headers
 target_include_directories(test_nostr PRIVATE ${SECP256K1_INCLUDE_DIRS})

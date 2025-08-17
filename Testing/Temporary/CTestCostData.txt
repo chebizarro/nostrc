@@ -44,7 +44,7 @@ GoSelectTest 1 0.659537
 GoWaitGroupTest 1 0.670882
 GoChannelCloseTest 1 0.813432
 GoSelectMultiTest 1 0.261001
-GoChannelStressTest 1 0.250774
+GoChannelStressTest 1 0
 GoContextStressTest 1 0.387231
 GoSelectClosedTest 1 0.315649
 GoSelectCancelTest 1 0.414936
@@ -72,3 +72,4 @@ test_json_filter_robust 1 0.466855
 test_json_filter_fuzzlite 1 0.52052
 gnostr-test-relays 1 0.5206
 ---
+GoChannelStressTest

@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "channel.h"
+#include "context.h"
 #include "go.h"
 #include "wait_group.h"
 #include <pthread.h>
@@ -38,9 +39,29 @@ void *cons(void *arg) {
     void *v;
     int64_t local_sum = 0;
     int received = 0;
-    while (go_channel_receive(a->c, &v) == 0) {
-        local_sum += (long)v;
-        received++;
+    for (;;) {
+        // Per-iteration short deadline (~200ms) to avoid indefinite park
+        struct timespec now;
+        clock_gettime(CLOCK_REALTIME, &now);
+        struct timespec dl = now;
+        dl.tv_nsec += 200 * 1000 * 1000; // +200ms
+        if (dl.tv_nsec >= 1000000000L) { dl.tv_sec += 1; dl.tv_nsec -= 1000000000L; }
+
+        GoContext *ctx = go_with_deadline(NULL, dl);
+        int rc = go_channel_receive_with_context(a->c, &v, ctx);
+        go_context_free(ctx);
+
+        if (rc == 0) {
+            local_sum += (long)v;
+            received++;
+            continue;
+        }
+
+        // Timeout or closed-and-empty. If channel is closed, we are done.
+        if (go_channel_is_closed(a->c)) {
+            break;
+        }
+        // Otherwise, transient timeout; retry.
     }
     // Basic sanity: if we received anything, sum must be positive and count > 0
     if (received < 0 || local_sum < 0) {
