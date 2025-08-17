@@ -60,9 +60,19 @@
                             <property name="margin-bottom">8</property>
                             <property name="spacing">8</property>
                             <child>
-                              <object class="GtkLabel">
+                              <object class="GtkLabel" id="lbl_signin_status">
                                 <property name="label">Not signed in</property>
                                 <property name="css-classes">title-4</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="lbl_profile_name">
+                                <property name="label"></property>
+                                <property name="wrap">true</property>
+                                <property name="wrap-mode">word-char</property>
+                                <property name="max-width-chars">28</property>
+                                <property name="ellipsize">end</property>
+                                <property name="css-classes">dim-label</property>
                               </object>
                             </child>
                             <child>
@@ -75,6 +85,12 @@
                               <object class="GtkButton" id="btn_pair_remote">
                                 <property name="label">Pair Remote Signer (NIP-46)</property>
                                 <signal name="clicked" handler="on_avatar_pair_remote_clicked" swapped="no"/>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkButton" id="btn_sign_out">
+                                <property name="label">Sign out</property>
+                                <signal name="clicked" handler="on_avatar_sign_out_clicked" swapped="no"/>
                               </object>
                             </child>
                           </object>

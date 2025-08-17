@@ -20,6 +20,9 @@
 #include "json.h"
 /* Relays helpers */
 #include "../util/relays.h"
+#ifdef HAVE_SOUP3
+#include <libsoup/soup.h>
+#endif
 /* NIP-19 helpers */
 #include "../../../nips/nip19/include/nip19.h"
 /* NIP-46 client (remote signer pairing) */
@@ -40,6 +43,8 @@
 static char *client_settings_get_current_npub(void);
 static char *hex_encode_lower(const uint8_t *buf, size_t len);
 static void show_toast(GnostrMainWindow *self, const char *msg);
+
+/* Avatar HTTP downloader (libsoup) helpers declared later, after struct definition */
 static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pubkey_hex, const char *content_json);
 static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data);
 
@@ -55,6 +60,11 @@ struct _GnostrMainWindow {
   GtkWidget *btn_menu;
   GtkWidget *btn_avatar;
   GtkWidget *avatar_popover;
+  GtkWidget *lbl_signin_status;
+  GtkWidget *lbl_profile_name;
+  GtkWidget *btn_login_local;
+  GtkWidget *btn_pair_remote;
+  GtkWidget *btn_sign_out;
   GtkWidget *composer;
   GtkWidget *btn_refresh;
   GtkWidget *toast_revealer;
@@ -69,6 +79,8 @@ struct _GnostrMainWindow {
   GHashTable *meta_by_ptr;     /* owned; maps ptr to nodes */
   GHashTable *meta_by_id;       /* owned; maps event_id to nodes */
   GHashTable *meta_by_pubkey;   /* owned; maps pubkey to UserMeta */
+  /* In-memory avatar texture cache: key=url (string), value=GdkTexture* */
+  GHashTable *avatar_tex_cache;
   
   /* Profile subscription */
   gulong profile_sub_id;        /* signal handler ID for profile events */
@@ -94,6 +106,48 @@ struct _GnostrMainWindow {
   NostrFilters    *live_filters; /* owned; current live filter set */
   gulong           pool_events_handler; /* signal handler id */
 };
+
+/* ---- Avatar HTTP downloader (libsoup) ---- */
+#ifdef HAVE_SOUP3
+typedef struct {
+  GnostrMainWindow *self; /* strong ref */
+  char *url;               /* owned */
+} AvatarHttpCtx;
+static void avatar_http_ctx_free(AvatarHttpCtx *c){ if(!c) return; if (c->self) g_object_unref(c->self); g_free(c->url); g_free(c); }
+static gboolean avatar_apply_texture_idle(gpointer data) {
+  AvatarHttpCtx *c = (AvatarHttpCtx*)data; if (!c || !GNOSTR_IS_MAIN_WINDOW(c->self)) { avatar_http_ctx_free(c); return G_SOURCE_REMOVE; }
+  /* If cache has the texture, set it to btn_avatar */
+  GdkTexture *tex = c->self->avatar_tex_cache ? g_hash_table_lookup(c->self->avatar_tex_cache, c->url) : NULL;
+  if (tex && c->self->btn_avatar) {
+    GtkWidget *img = gtk_image_new_from_paintable(GDK_PAINTABLE(tex));
+    gtk_widget_set_size_request(img, 24, 24);
+    gtk_menu_button_set_child(GTK_MENU_BUTTON(c->self->btn_avatar), img);
+  }
+  avatar_http_ctx_free(c);
+  return G_SOURCE_REMOVE;
+}
+static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  SoupSession *sess = SOUP_SESSION(source);
+  AvatarHttpCtx *ctx = (AvatarHttpCtx*)user_data;
+  if (!ctx || !GNOSTR_IS_MAIN_WINDOW(ctx->self)) { avatar_http_ctx_free(ctx); return; }
+  GError *error = NULL;
+  GBytes *bytes = soup_session_send_and_read_finish(sess, res, &error);
+  if (!bytes) { g_clear_error(&error); avatar_http_ctx_free(ctx); return; }
+  GdkTexture *tex = gdk_texture_new_from_bytes(bytes, &error);
+  g_bytes_unref(bytes);
+  if (!tex) { g_clear_error(&error); avatar_http_ctx_free(ctx); return; }
+  /* Cache and apply on main loop */
+  if (ctx->self->avatar_tex_cache) {
+    gpointer old = g_hash_table_lookup(ctx->self->avatar_tex_cache, ctx->url);
+    if (old) {
+      g_hash_table_replace(ctx->self->avatar_tex_cache, g_strdup(ctx->url), tex);
+    } else {
+      g_hash_table_insert(ctx->self->avatar_tex_cache, g_strdup(ctx->url), tex);
+    }
+  }
+  g_idle_add_full(G_PRIORITY_DEFAULT, avatar_apply_texture_idle, ctx, NULL);
+}
+#endif
 
 /* Forward declaration for async dialog completion */
 static void relays_alert_done(GtkAlertDialog *d, GAsyncResult *res, gpointer data);
@@ -138,6 +192,28 @@ static void relays_save_window_size(GtkWindow *win) {
   g_settings_set_int(settings, "relays-window-height", h);
   g_object_unref(settings);
   g_settings_schema_unref(schema);
+}
+
+/* Pre-populate profile from local NostrdB cache if available */
+static void prepopulate_profile_from_cache(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  g_autofree char *npub = client_settings_get_current_npub();
+  if (!npub || !*npub) return;
+  uint8_t pub32[32] = {0};
+  if (nostr_nip19_decode_npub(npub, pub32) != 0) return;
+  void *txn = NULL; char *json = NULL; int jlen = 0;
+  if (storage_ndb_begin_query(&txn) != 1) return;
+  int rc = storage_ndb_get_profile_by_pubkey(txn, pub32, &json, &jlen);
+  if (rc == 0 && json) {
+    NostrEvent *evt = nostr_event_new();
+    if (evt && nostr_event_deserialize(evt, json) == 0) {
+      const char *pk = nostr_event_get_pubkey(evt);
+      const char *content = nostr_event_get_content(evt);
+      if (pk && content) update_meta_from_profile_json(self, pk, content);
+    }
+    if (evt) nostr_event_free(evt);
+  }
+  storage_ndb_end_query(txn);
 }
 
 /* ---- Profile subscription management ---- */
@@ -633,6 +709,10 @@ static void gnostr_main_window_finalize(GObject *obj) {
     g_hash_table_destroy(self->seen_ids);
     self->seen_ids = NULL;
   }
+  if (self->avatar_tex_cache) {
+    g_hash_table_destroy(self->avatar_tex_cache);
+    self->avatar_tex_cache = NULL;
+  }
   if (self->nip46_session) {
     /* Should be NULL from dispose, but guard and free */
     nostr_nip46_session_free(self->nip46_session);
@@ -867,6 +947,108 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
       g_free(item_pk);
     }
   }
+  /* If this metadata is for the current identity, update header UI (name + avatar) */
+  {
+    g_autofree char *npub = client_settings_get_current_npub();
+    if (npub && *npub) {
+      uint8_t pk32[32] = {0};
+      if (nostr_nip19_decode_npub(npub, pk32) == 0) {
+        g_autofree char *cur_hex = hex_encode_lower(pk32, 32);
+        if (cur_hex && g_strcmp0(cur_hex, pubkey_hex) == 0) {
+          /* Update profile name label */
+          if (self->lbl_profile_name) {
+            if (m->display && m->handle) {
+              gchar *line = g_strdup_printf("%s  (%s)", m->display, m->handle);
+              gtk_label_set_text(GTK_LABEL(self->lbl_profile_name), line);
+              g_free(line);
+            } else if (m->display) {
+              gtk_label_set_text(GTK_LABEL(self->lbl_profile_name), m->display);
+            } else if (m->handle) {
+              gtk_label_set_text(GTK_LABEL(self->lbl_profile_name), m->handle);
+            }
+          }
+          /* Update avatar button tooltip */
+          if (self->btn_avatar) {
+            gchar *tip = NULL;
+            if (m->display && m->handle)
+              tip = g_strdup_printf("%s — %s", m->display, m->handle);
+            else if (m->display)
+              tip = g_strdup(m->display);
+            else if (m->handle)
+              tip = g_strdup(m->handle);
+            if (tip) { gtk_widget_set_tooltip_text(self->btn_avatar, tip); g_free(tip); }
+          }
+          /* Try to set a local avatar image if picture points to a local file */
+          if (self->btn_avatar) {
+            gboolean set_image = FALSE;
+            if (m->avatar_url && *m->avatar_url) {
+              const char *url = m->avatar_url;
+              if (g_str_has_prefix(url, "file://")) {
+                GFile *f = g_file_new_for_uri(url);
+                if (f) {
+                  GError *e = NULL;
+                  GdkTexture *tex = gdk_texture_new_from_file(f, &e);
+                  if (tex) {
+                    GtkWidget *img = gtk_image_new_from_paintable(GDK_PAINTABLE(tex));
+                    gtk_widget_set_size_request(img, 24, 24);
+                    gtk_menu_button_set_child(GTK_MENU_BUTTON(self->btn_avatar), img);
+                    set_image = TRUE;
+                    g_object_unref(tex);
+                  }
+                  if (e) g_error_free(e);
+                  g_object_unref(f);
+                }
+              } else if (!g_str_has_prefix(url, "http://") && !g_str_has_prefix(url, "https://")) {
+                /* Treat as filesystem path */
+                if (g_file_test(url, G_FILE_TEST_EXISTS)) {
+                  GFile *f = g_file_new_for_path(url);
+                  if (f) {
+                    GError *e = NULL;
+                    GdkTexture *tex = gdk_texture_new_from_file(f, &e);
+                    if (tex) {
+                      GtkWidget *img = gtk_image_new_from_paintable(GDK_PAINTABLE(tex));
+                      gtk_widget_set_size_request(img, 24, 24);
+                      gtk_menu_button_set_child(GTK_MENU_BUTTON(self->btn_avatar), img);
+                      set_image = TRUE;
+                      g_object_unref(tex);
+                    }
+                    if (e) g_error_free(e);
+                    g_object_unref(f);
+                  }
+                }
+              }
+            }
+            if (!set_image) {
+              /* Fallback to theme icon */
+              g_object_set(self->btn_avatar, "icon-name", "avatar-default-symbolic", NULL);
+              gtk_menu_button_set_child(GTK_MENU_BUTTON(self->btn_avatar), NULL);
+            }
+          }
+        }
+      }
+    }
+  }
+  /* Update any existing timeline items authored by this pubkey */
+  if (self->nodes_by_id && self->meta_by_pubkey) {
+    GHashTableIter it; gpointer key=NULL, val=NULL; g_hash_table_iter_init(&it, self->nodes_by_id);
+    while (g_hash_table_iter_next(&it, &key, &val)) {
+      gpointer obj = val;
+      if (!G_IS_OBJECT(obj)) continue;
+      gchar *item_pk = NULL;
+      g_object_get(obj, "pubkey", &item_pk, NULL);
+      if (item_pk && g_strcmp0(item_pk, pubkey_hex) == 0) {
+        const UserMeta *um = (const UserMeta*)g_hash_table_lookup(self->meta_by_pubkey, pubkey_hex);
+        if (um) {
+          g_object_set(obj,
+                       "display-name", um->display ? um->display : "Anonymous",
+                       "handle",       um->handle  ? um->handle  : "@anon",
+                       "avatar-url",   um->avatar_url ? um->avatar_url : "",
+                       NULL);
+        }
+      }
+      g_free(item_pk);
+    }
+  }
 }
 
 typedef struct IdleApplyEventsCtx {
@@ -1075,8 +1257,6 @@ static void start_pool_live(GnostrMainWindow *self) {
   g_free((void*)urls);
   /* Keep filters: the async thread borrows them. They will be freed on process exit; alternatively store to free on finalize if needed. */
 }
-
-/* (legacy SimplePool backfill removed; using NostrdB worker) */
 
 /* Env helper */
 static guint getenv_uint_default(const char *name, guint def) {
@@ -1516,6 +1696,14 @@ static void pair_remote_complete(GObject *source, GAsyncResult *res, gpointer us
   gchar *msg = g_strdup_printf("Paired remote signer: %s", w->npub);
   show_toast(ctx->self, msg);
   g_free(msg);
+  /* Update status label */
+  if (ctx->self->lbl_signin_status && GTK_IS_LABEL(ctx->self->lbl_signin_status)) {
+    gtk_label_set_text(GTK_LABEL(ctx->self->lbl_signin_status), "Signed in");
+  }
+  /* Toggle buttons: disable login/pair, enable sign out */
+  if (ctx->self->btn_login_local) gtk_widget_set_sensitive(ctx->self->btn_login_local, FALSE);
+  if (ctx->self->btn_pair_remote) gtk_widget_set_sensitive(ctx->self->btn_pair_remote, FALSE);
+  if (ctx->self->btn_sign_out) gtk_widget_set_sensitive(ctx->self->btn_sign_out, TRUE);
   gnostr_profile_fetch_async(ctx->self);
   start_profile_subscription(ctx->self);
   if (ctx->win) gtk_window_destroy(ctx->win);
@@ -1777,6 +1965,14 @@ static void on_avatar_get_pubkey_done(GObject *source, GAsyncResult *res, gpoint
     gchar *msg = g_strdup_printf("Signed in: %s", npub);
     show_toast(self, msg);
     g_free(msg);
+    /* Update status label */
+    if (self->lbl_signin_status && GTK_IS_LABEL(self->lbl_signin_status)) {
+      gtk_label_set_text(GTK_LABEL(self->lbl_signin_status), "Signed in");
+    }
+    /* Toggle buttons: disable login/pair, enable sign out */
+    if (self->btn_login_local) gtk_widget_set_sensitive(self->btn_login_local, FALSE);
+    if (self->btn_pair_remote) gtk_widget_set_sensitive(self->btn_pair_remote, FALSE);
+    if (self->btn_sign_out) gtk_widget_set_sensitive(self->btn_sign_out, TRUE);
     /* Persist identity */
     client_settings_set_current_npub(npub);
     /* Fetch profile metadata for this identity and subscribe for updates */
@@ -1811,6 +2007,31 @@ static void on_avatar_login_local_clicked(GtkButton *button, GnostrMainWindow *s
   }
   show_toast(self, "Contacting local signer…");
   nostr_org_nostr_signer_call_get_public_key(proxy, NULL, on_avatar_get_pubkey_done, self);
+}
+
+/* Avatar popover: Sign out clicked */
+static void on_avatar_sign_out_clicked(GtkButton *button, GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  GtkWidget *w = GTK_WIDGET(button);
+  GtkPopover *pop = GTK_POPOVER(gtk_widget_get_ancestor(w, GTK_TYPE_POPOVER));
+  if (pop) gtk_popover_popdown(pop);
+  client_settings_set_current_npub("");
+  if (self->nip46_session) {
+    nostr_nip46_session_free(self->nip46_session);
+    self->nip46_session = NULL;
+  }
+  gtk_label_set_text(GTK_LABEL(self->lbl_signin_status), "Not signed in");
+  if (self->lbl_profile_name) gtk_label_set_text(GTK_LABEL(self->lbl_profile_name), "");
+  if (self->btn_avatar) {
+    /* Reset to default icon and clear any custom child */
+    g_object_set(self->btn_avatar, "icon-name", "avatar-default-symbolic", NULL);
+    gtk_menu_button_set_child(GTK_MENU_BUTTON(self->btn_avatar), NULL);
+    gtk_widget_set_tooltip_text(self->btn_avatar, "Login / Account");
+  }
+  gtk_widget_set_sensitive(self->btn_login_local, TRUE);
+  gtk_widget_set_sensitive(self->btn_pair_remote, TRUE);
+  gtk_widget_set_sensitive(self->btn_sign_out, FALSE);
+  show_toast(self, "Signed out");
 }
 
 /* Avatar popover: Pair Remote Signer (NIP-46) clicked */
@@ -2522,6 +2743,11 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_menu);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_avatar);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, avatar_popover);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, lbl_signin_status);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, lbl_profile_name);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_login_local);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_pair_remote);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_sign_out);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, composer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_refresh);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_revealer);
@@ -2530,6 +2756,7 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_callback(widget_class, on_relays_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_avatar_login_local_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_avatar_pair_remote_clicked);
+  gtk_widget_class_bind_template_callback(widget_class, on_avatar_sign_out_clicked);
 }
 
 static void gnostr_main_window_init(GnostrMainWindow *self) {
@@ -2541,6 +2768,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   self->seen_texts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   /* Initialize metadata cache */
   self->meta_by_pubkey = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, user_meta_free);
+  /* Initialize avatar texture cache */
+  self->avatar_tex_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_object_unref);
   /* Initialize tuning knobs from env with sensible defaults */
   self->batch_max = getenv_uint_default("GNOSTR_BATCH_MAX", 5);
   self->post_interval_ms = getenv_uint_default("GNOSTR_POST_INTERVAL_MS", 150);
@@ -2603,9 +2832,26 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
 
   /* Start live streaming via SimplePool */
   start_pool_live(self);
-  /* If identity is already set, fetch its profile metadata and subscribe for updates */
+  /* If identity is already set, pre-populate from cache, then fetch profile metadata and subscribe for updates */
+  prepopulate_profile_from_cache(self);
   gnostr_profile_fetch_async(self);
   start_profile_subscription(self);
+
+  /* Initialize button sensitivity based on current sign-in state */
+  {
+    g_autofree char *npub = client_settings_get_current_npub();
+    gboolean signed_in = (npub && *npub);
+    /* Initialize label */
+    if (self->lbl_signin_status && GTK_IS_LABEL(self->lbl_signin_status)) {
+      gtk_label_set_text(GTK_LABEL(self->lbl_signin_status), signed_in ? "Signed in" : "Not signed in");
+    }
+    if (self->btn_login_local && GTK_IS_WIDGET(self->btn_login_local))
+      gtk_widget_set_sensitive(self->btn_login_local, !signed_in);
+    if (self->btn_pair_remote && GTK_IS_WIDGET(self->btn_pair_remote))
+      gtk_widget_set_sensitive(self->btn_pair_remote, !signed_in);
+    if (self->btn_sign_out && GTK_IS_WIDGET(self->btn_sign_out))
+      gtk_widget_set_sensitive(self->btn_sign_out, signed_in);
+  }
 }
 
 GnostrMainWindow *gnostr_main_window_new(GtkApplication *app) {
