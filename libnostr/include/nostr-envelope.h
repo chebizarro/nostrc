@@ -97,6 +97,11 @@ NostrEnvelopeType nostr_envelope_get_type(const NostrEnvelope *env);
 NostrEnvelope *nostr_envelope_parse(const char *json);
 void nostr_envelope_free(NostrEnvelope *envelope);
 
+/* Compact fast-path deserializer (used by json.c with backend fallback) */
+int nostr_envelope_deserialize_compact(NostrEnvelope *envelope, const char *json);
+/* Compact fast-path serializer (used by json.c with backend fallback) */
+char *nostr_envelope_serialize_compact(const NostrEnvelope *envelope);
+
 /* EVENT */
 const char    *nostr_event_envelope_get_subscription_id(const NostrEventEnvelope *env);
 NostrEvent    *nostr_event_envelope_get_event(const NostrEventEnvelope *env);

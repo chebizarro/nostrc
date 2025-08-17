@@ -1,6 +1,8 @@
 #include "nostr-envelope.h"
 #include "nostr-event.h"
 #include "json.h"
+#include <string.h>
+#include <stdlib.h>
 
 // Helper function to create a new Envelope
 NostrEnvelope *create_envelope(NostrEnvelopeType type) {
@@ -9,6 +11,435 @@ NostrEnvelope *create_envelope(NostrEnvelopeType type) {
         return NULL;
     envelope->type = type;
     return envelope;
+}
+
+/* === Compact fast-path serializer === */
+static char *json_escape_string_min(const char *s) {
+    if (!s) return NULL;
+    size_t extra = 0;
+    for (const char *p = s; *p; ++p) {
+        if (*p == '"' || *p == '\\') extra++;
+    }
+    size_t len = strlen(s);
+    char *out = (char *)malloc(len + extra + 3); // quotes + null
+    if (!out) return NULL;
+    char *w = out;
+    *w++ = '"';
+    for (const char *p = s; *p; ++p) {
+        if (*p == '"' || *p == '\\') *w++ = '\\';
+        *w++ = *p;
+    }
+    *w++ = '"';
+    *w = '\0';
+    return out;
+}
+
+char *nostr_envelope_serialize_compact(const NostrEnvelope *base) {
+    if (!base) return NULL;
+    switch (base->type) {
+    case NOSTR_ENVELOPE_EVENT: {
+        const NostrEventEnvelope *env = (const NostrEventEnvelope *)base;
+        if (!env->event) return NULL;
+        char *ev = nostr_event_serialize(env->event);
+        if (!ev) return NULL;
+        char *sid = NULL;
+        if (env->subscription_id) sid = json_escape_string_min(env->subscription_id);
+        // Compute size: ["EVENT", ("sid",)? ev ]
+        const char *prefix = "[\"EVENT\",";
+        const char *prefix_no_sid = "[\"EVENT\",";
+        size_t sz = 0;
+        if (sid) {
+            sz = strlen(prefix) + strlen(sid) + 1 /* comma */ + strlen(ev) + 1/*]*/ + 1;
+        } else {
+            // no sid form: ["EVENT",ev]
+            sz = strlen(prefix_no_sid) + strlen(ev) + 1/*]*/ + 1;
+        }
+        char *out = (char *)malloc(sz);
+        if (!out) { free(ev); free(sid); return NULL; }
+        if (sid) {
+            // ["EVENT",SID,EV]
+            snprintf(out, sz, "[\"EVENT\",%s,%s]", sid, ev);
+        } else {
+            snprintf(out, sz, "[\"EVENT\",%s]", ev);
+        }
+        free(ev);
+        free(sid);
+        return out;
+    }
+    case NOSTR_ENVELOPE_OK: {
+        const NostrOKEnvelope *env = (const NostrOKEnvelope *)base;
+        if (!env->event_id) return NULL;
+        char *eid = json_escape_string_min(env->event_id);
+        if (!eid) return NULL;
+        const char *booltxt = env->ok ? "true" : "false";
+        char *rsn = NULL;
+        size_t sz = 0;
+        if (env->reason) {
+            rsn = json_escape_string_min(env->reason);
+            if (!rsn) { free(eid); return NULL; }
+            // ["OK",eid,bool,rsn]
+            sz = 6 + strlen(eid) + 1 + strlen(booltxt) + 1 + strlen(rsn) + 1; // rough
+        } else {
+            // ["OK",eid,bool]
+            sz = 6 + strlen(eid) + 1 + strlen(booltxt) + 1; // rough
+        }
+        sz += 16; // padding for brackets/commas/quotes
+        char *out = (char *)malloc(sz);
+        if (!out) { free(eid); free(rsn); return NULL; }
+        if (rsn)
+            snprintf(out, sz, "[\"OK\",%s,%s,%s]", eid, booltxt, rsn);
+        else
+            snprintf(out, sz, "[\"OK\",%s,%s]", eid, booltxt);
+        free(eid);
+        free(rsn);
+        return out;
+    }
+    case NOSTR_ENVELOPE_NOTICE: {
+        const NostrNoticeEnvelope *env = (const NostrNoticeEnvelope *)base;
+        if (!env->message) return NULL;
+        char *msg = json_escape_string_min(env->message);
+        if (!msg) return NULL;
+        size_t sz = 12 + strlen(msg) + 1;
+        char *out = (char *)malloc(sz);
+        if (!out) { free(msg); return NULL; }
+        snprintf(out, sz, "[\"NOTICE\",%s]", msg);
+        free(msg);
+        return out;
+    }
+    case NOSTR_ENVELOPE_EOSE: {
+        const NostrEOSEEnvelope *env = (const NostrEOSEEnvelope *)base;
+        if (!env->message) return NULL;
+        char *msg = json_escape_string_min(env->message);
+        if (!msg) return NULL;
+        size_t sz = 10 + strlen(msg) + 1;
+        char *out = (char *)malloc(sz);
+        if (!out) { free(msg); return NULL; }
+        snprintf(out, sz, "[\"EOSE\",%s]", msg);
+        free(msg);
+        return out;
+    }
+    case NOSTR_ENVELOPE_CLOSED: {
+        const NostrClosedEnvelope *env = (const NostrClosedEnvelope *)base;
+        if (!env->subscription_id || !env->reason) return NULL;
+        char *sid = json_escape_string_min(env->subscription_id);
+        char *rsn = sid ? json_escape_string_min(env->reason) : NULL;
+        if (!sid || !rsn) { free(sid); free(rsn); return NULL; }
+        size_t sz = 12 + strlen(sid) + 1 + strlen(rsn) + 1;
+        char *out = (char *)malloc(sz);
+        if (!out) { free(sid); free(rsn); return NULL; }
+        snprintf(out, sz, "[\"CLOSED\",%s,%s]", sid, rsn);
+        free(sid); free(rsn);
+        return out;
+    }
+    case NOSTR_ENVELOPE_AUTH: {
+        const NostrAuthEnvelope *env = (const NostrAuthEnvelope *)base;
+        if (env->event) {
+            char *ev = nostr_event_serialize(env->event);
+            if (!ev) return NULL;
+            size_t sz = 10 + strlen(ev) + 1;
+            char *out = (char *)malloc(sz);
+            if (!out) { free(ev); return NULL; }
+            snprintf(out, sz, "[\"AUTH\",%s]", ev);
+            free(ev);
+            return out;
+        } else if (env->challenge) {
+            char *ch = json_escape_string_min(env->challenge);
+            if (!ch) return NULL;
+            size_t sz = 10 + strlen(ch) + 1;
+            char *out = (char *)malloc(sz);
+            if (!out) { free(ch); return NULL; }
+            snprintf(out, sz, "[\"AUTH\",%s]", ch);
+            free(ch);
+            return out;
+        }
+        return NULL;
+    }
+    case NOSTR_ENVELOPE_REQ:
+    {
+        const NostrReqEnvelope *env = (const NostrReqEnvelope *)base;
+        if (!env->subscription_id || !env->filters) return NULL;
+        char *sid = json_escape_string_min(env->subscription_id);
+        if (!sid) return NULL;
+        // Serialize each filter
+        size_t total = 10 + strlen(sid) + 1; // header approx
+        char **parts = NULL; size_t nparts = 0;
+        if (env->filters && env->filters->count > 0) {
+            parts = (char **)calloc(env->filters->count, sizeof(char *));
+            if (!parts) { free(sid); return NULL; }
+            for (size_t i = 0; i < env->filters->count; ++i) {
+                char *fj = nostr_filter_serialize_compact(&env->filters->filters[i]);
+                if (!fj) { for (size_t j=0;j<i;++j) free(parts[j]); free(parts); free(sid); return NULL; }
+                parts[nparts++] = fj;
+                total += strlen(fj) + 1; // comma
+            }
+        }
+        total += 16; // brackets and commas
+        char *out = (char *)malloc(total);
+        if (!out) { for (size_t j=0;j<nparts;++j) free(parts[j]); free(parts); free(sid); return NULL; }
+        char *w = out;
+        w += sprintf(w, "[\"REQ\",%s", sid);
+        for (size_t i = 0; i < nparts; ++i) {
+            w += sprintf(w, ",%s", parts[i]);
+        }
+        w += sprintf(w, "]");
+        *w = '\0';
+        for (size_t i=0;i<nparts;++i) free(parts[i]);
+        free(parts);
+        free(sid);
+        return out;
+    }
+    case NOSTR_ENVELOPE_COUNT:
+    {
+        const NostrCountEnvelope *env = (const NostrCountEnvelope *)base;
+        if (!env->subscription_id) return NULL;
+        char *sid = json_escape_string_min(env->subscription_id);
+        if (!sid) return NULL;
+        // Count object
+        char countbuf[64];
+        snprintf(countbuf, sizeof(countbuf), "{\"count\":%d}", env->count);
+        size_t total = 12 + strlen(sid) + strlen(countbuf) + 1;
+        char **parts = NULL; size_t nparts = 0;
+        if (env->filters && env->filters->count > 0) {
+            parts = (char **)calloc(env->filters->count, sizeof(char *));
+            if (!parts) { free(sid); return NULL; }
+            for (size_t i = 0; i < env->filters->count; ++i) {
+                char *fj = nostr_filter_serialize_compact(&env->filters->filters[i]);
+                if (!fj) { for (size_t j=0;j<i;++j) free(parts[j]); free(parts); free(sid); return NULL; }
+                parts[nparts++] = fj;
+                total += strlen(fj) + 1;
+            }
+        }
+        total += 16;
+        char *out = (char *)malloc(total);
+        if (!out) { for (size_t j=0;j<nparts;++j) free(parts[j]); free(parts); free(sid); return NULL; }
+        char *w = out;
+        w += sprintf(w, "[\"COUNT\",%s,%s", sid, countbuf);
+        for (size_t i = 0; i < nparts; ++i) {
+            w += sprintf(w, ",%s", parts[i]);
+        }
+        w += sprintf(w, "]");
+        *w = '\0';
+        for (size_t i=0;i<nparts;++i) free(parts[i]);
+        free(parts);
+        free(sid);
+        return out;
+    }
+    default:
+        return NULL; // force backend fallback for now
+    }
+}
+
+/* Forward decls for local JSON helpers used below */
+static const char *skip_ws(const char *p);
+static char *parse_json_string(const char **pp);
+static const char *parse_comma(const char *p);
+static char *parse_json_object(const char **pp);
+
+/* === Compact fast-path deserializer === */
+int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
+    if (!base || !json) return 0;
+    const char *p = skip_ws(json);
+    if (*p != '[') return 0; ++p; // skip [
+    // first: label
+    char *label = parse_json_string(&p);
+    if (!label) return 0;
+    const char *q = parse_comma(p);
+    if (!q) { free(label); return 0; }
+    p = q; p = skip_ws(p);
+
+    int ok = 0;
+    switch (base->type) {
+    case NOSTR_ENVELOPE_EVENT: {
+        if (strcmp(label, "EVENT") != 0) break;
+        NostrEventEnvelope *env = (NostrEventEnvelope *)base;
+        // Optional sub id
+        if (*p == '"') {
+            env->subscription_id = parse_json_string(&p);
+            if (!env->subscription_id) break;
+            q = parse_comma(p); if (!q) break; p = skip_ws(q);
+        }
+        // Next must be event object
+        char *event_json = parse_json_object(&p);
+        if (!event_json) break;
+        NostrEvent *ev = nostr_event_new();
+        int succ = nostr_event_deserialize(ev, event_json);
+        free(event_json);
+        if (!succ) { nostr_event_free(ev); break; }
+        env->event = ev;
+        ok = 1;
+        break;
+    }
+    case NOSTR_ENVELOPE_REQ: {
+        if (strcmp(label, "REQ") != 0) break;
+        NostrReqEnvelope *env = (NostrReqEnvelope *)base;
+        env->subscription_id = parse_json_string(&p);
+        if (!env->subscription_id) break;
+        // zero or more filter objects
+        NostrFilters *filters = nostr_filters_new();
+        if (!filters) break;
+        while (1) {
+            q = parse_comma(p);
+            if (!q) break;
+            p = skip_ws(q);
+            if (*p != '{') break;
+            char *obj = parse_json_object(&p);
+            if (!obj) break;
+            NostrFilter f = {0};
+            if (nostr_filter_deserialize_compact(&f, obj)) {
+                (void)nostr_filters_add(filters, &f); // moves and zeros f
+            } else {
+                // not a filter object; ignore for REQ
+                nostr_filter_clear(&f);
+            }
+            free(obj);
+        }
+        env->filters = filters;
+        ok = 1;
+        break;
+    }
+    case NOSTR_ENVELOPE_COUNT: {
+        if (strcmp(label, "COUNT") != 0) break;
+        NostrCountEnvelope *env = (NostrCountEnvelope *)base;
+        env->subscription_id = parse_json_string(&p);
+        if (!env->subscription_id) break;
+        NostrFilters *filters = nostr_filters_new();
+        if (!filters) break;
+        env->count = 0;
+        while (1) {
+            q = parse_comma(p);
+            if (!q) break;
+            p = skip_ws(q);
+            if (*p != '{') break;
+            const char *savep = p;
+            char *obj = parse_json_object(&p);
+            if (!obj) break;
+            // Detect count object
+            if (strstr(obj, "\"count\"")) {
+                // naive extract: find first digit after ':'
+                const char *cpos = strchr(obj, ':');
+                if (cpos) {
+                    while (*++cpos == ' ' || *cpos == '\t') {}
+                    env->count = atoi(cpos);
+                }
+            } else {
+                // treat as filter
+                NostrFilter f = {0};
+                if (nostr_filter_deserialize_compact(&f, obj)) {
+                    (void)nostr_filters_add(filters, &f);
+                } else {
+                    nostr_filter_clear(&f);
+                }
+            }
+            free(obj);
+            (void)savep;
+        }
+        env->filters = filters;
+        ok = 1;
+        break;
+    }
+    case NOSTR_ENVELOPE_OK: {
+        if (strcmp(label, "OK") != 0) break;
+        NostrOKEnvelope *env = (NostrOKEnvelope *)base;
+        env->event_id = parse_json_string(&p);
+        if (!env->event_id) break;
+        q = parse_comma(p); if (!q) { ok = 1; break; }
+        p = skip_ws(q);
+        if (strncmp(p, "true", 4) == 0) { env->ok = true; p += 4; }
+        else if (strncmp(p, "false", 5) == 0) { env->ok = false; p += 5; }
+        else break;
+        q = parse_comma(p);
+        if (q) { p = q; env->reason = parse_json_string(&p); if (!env->reason) break; }
+        ok = 1;
+        break;
+    }
+    case NOSTR_ENVELOPE_NOTICE: {
+        if (strcmp(label, "NOTICE") != 0) break;
+        NostrNoticeEnvelope *env = (NostrNoticeEnvelope *)base;
+        env->message = parse_json_string(&p);
+        if (!env->message) break;
+        ok = 1;
+        break;
+    }
+    case NOSTR_ENVELOPE_EOSE: {
+        if (strcmp(label, "EOSE") != 0) break;
+        NostrEOSEEnvelope *env = (NostrEOSEEnvelope *)base;
+        env->message = parse_json_string(&p);
+        if (!env->message) break;
+        ok = 1;
+        break;
+    }
+    case NOSTR_ENVELOPE_CLOSED: {
+        if (strcmp(label, "CLOSED") != 0) break;
+        NostrClosedEnvelope *env = (NostrClosedEnvelope *)base;
+        env->subscription_id = parse_json_string(&p);
+        if (!env->subscription_id) break;
+        q = parse_comma(p); if (!q) { ok = 1; break; }
+        p = q;
+        env->reason = parse_json_string(&p);
+        if (!env->reason) break;
+        ok = 1;
+        break;
+    }
+    case NOSTR_ENVELOPE_AUTH: {
+        if (strcmp(label, "AUTH") != 0) break;
+        NostrAuthEnvelope *env = (NostrAuthEnvelope *)base;
+        p = skip_ws(p);
+        if (*p == '{') {
+            char *ej = parse_json_object(&p);
+            if (!ej) break;
+            NostrEvent *ev = nostr_event_new();
+            int succ = nostr_event_deserialize(ev, ej);
+            free(ej);
+            if (!succ) { nostr_event_free(ev); break; }
+            env->event = ev;
+            ok = 1;
+        } else if (*p == '"') {
+            env->challenge = parse_json_string(&p);
+            if (!env->challenge) break;
+            // optional event after comma
+            q = parse_comma(p);
+            if (q) {
+                p = skip_ws(q);
+                if (*p == '{') {
+                    char *ej = parse_json_object(&p);
+                    if (ej) {
+                        NostrEvent *ev = nostr_event_new();
+                        int succ = nostr_event_deserialize(ev, ej);
+                        free(ej);
+                        if (succ) env->event = ev; else nostr_event_free(ev);
+                    }
+                }
+            }
+            ok = 1;
+        }
+        break;
+    }
+    case NOSTR_ENVELOPE_REQ: {
+        // Let backend handle (filters expected). Return 0 to force fallback.
+        break;
+    }
+    case NOSTR_ENVELOPE_COUNT: {
+        if (strcmp(label, "COUNT") != 0) break;
+        NostrCountEnvelope *env = (NostrCountEnvelope *)base;
+        env->subscription_id = parse_json_string(&p);
+        if (!env->subscription_id) break;
+        // optional number after comma; skip objects if present
+        q = parse_comma(p);
+        if (q) {
+            p = skip_ws(q);
+            if (*p >= '0' && *p <= '9') {
+                env->count = atoi(p);
+            }
+        }
+        ok = 1; // filters left to backend in higher-level flows if needed
+        break;
+    }
+    default:
+        break;
+    }
+
+    free(label);
+    return ok;
 }
 
 // Helpers to parse JSON array framing quickly without full JSON

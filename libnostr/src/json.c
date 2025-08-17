@@ -72,6 +72,10 @@ int nostr_event_deserialize(NostrEvent *event, const char *json_str) {
 }
 
 char *nostr_envelope_serialize(const NostrEnvelope *envelope) {
+    // Prefer compact fast path
+    char *s = nostr_envelope_serialize_compact(envelope);
+    if (s) return s;
+    // Fallback to configured backend, if any
     if (json_interface && json_interface->serialize_envelope) {
         return json_interface->serialize_envelope(envelope);
     }
@@ -79,13 +83,24 @@ char *nostr_envelope_serialize(const NostrEnvelope *envelope) {
 }
 
 int nostr_envelope_deserialize(NostrEnvelope *envelope, const char *json) {
+    // Try compact fast path first
+    if (nostr_envelope_deserialize_compact(envelope, json)) {
+        if (getenv("NOSTR_DEBUG")) fprintf(stderr, "nostr_envelope_deserialize: compact path\n");
+        return 0;
+    }
+    // Fallback to configured backend
     if (json_interface && json_interface->deserialize_envelope) {
+        if (getenv("NOSTR_DEBUG")) fprintf(stderr, "nostr_envelope_deserialize: backend provider\n");
         return json_interface->deserialize_envelope(envelope, json);
     }
     return -1;
 }
 
 char *nostr_filter_serialize(const NostrFilter *filter) {
+    // Prefer compact fast path
+    char *s = nostr_filter_serialize_compact(filter);
+    if (s) return s;
+    // Fallback to configured backend, if any
     if (json_interface && json_interface->serialize_filter) {
         return json_interface->serialize_filter(filter);
     }
@@ -93,7 +108,14 @@ char *nostr_filter_serialize(const NostrFilter *filter) {
 }
 
 int nostr_filter_deserialize(NostrFilter *filter, const char *json) {
+    // Try compact fast path first
+    if (nostr_filter_deserialize_compact(filter, json)) {
+        if (getenv("NOSTR_DEBUG")) fprintf(stderr, "nostr_filter_deserialize: compact path\n");
+        return 0;
+    }
+    // Fallback to configured backend
     if (json_interface && json_interface->deserialize_filter) {
+        if (getenv("NOSTR_DEBUG")) fprintf(stderr, "nostr_filter_deserialize: backend provider\n");
         return json_interface->deserialize_filter(filter, json);
     }
     return -1;

@@ -244,6 +244,13 @@ void          nostr_filter_add_kind(NostrFilter *filter, int kind);
 void          nostr_filter_add_author(NostrFilter *filter, const char *author);
 void          nostr_filter_tags_append(NostrFilter *filter, const char *key, const char *value, const char *relay);
 
+/* Compact fast-path JSON (de)serializers */
+char         *nostr_filter_serialize_compact(const NostrFilter *filter);
+int           nostr_filter_deserialize_compact(NostrFilter *filter, const char *json);
+
+/* Backend-abstracted wrappers (prefer compact, fallback to backend) */
+int           nostr_filter_deserialize(NostrFilter *filter, const char *json);
+
 /* Optional legacy aliases (temporary): map old to new if enabled */
 #ifdef NOSTR_ENABLE_LEGACY_ALIASES
 #  define create_filter                          nostr_filter_new
