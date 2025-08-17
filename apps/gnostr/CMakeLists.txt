@@ -63,12 +63,19 @@ target_compile_definitions(${APP_CLIENT_BIN} PRIVATE GNOSTR_ENABLE_REAL_SIMPLEPO
 target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${CMAKE_SOURCE_DIR}/gobject/include
   ${CMAKE_SOURCE_DIR}/libnostr/include
-  ${CMAKE_SOURCE_DIR}/libgo/include)
+  ${CMAKE_SOURCE_DIR}/libgo/include
+  ${CMAKE_SOURCE_DIR}/nips/nip46/include)
 # Compile the GI wrapper implementation into the app (no separate gobject lib target)
 target_sources(${APP_CLIENT_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c)
-# Link libnostr GLib if available; fall back to core libnostr where needed
+# Link core libs: libnostr + JSON, plus NIP-19 and NIP-46 core used by the app
 if (TARGET nostr)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE libnostr nostr_json)
+endif()
+if (TARGET nip19)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE nip19)
+endif()
+if (TARGET nostr_nip46_core)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip46_core)
 endif()
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB)
 if (SOUP3_FOUND)

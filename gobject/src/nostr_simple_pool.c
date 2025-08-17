@@ -3,11 +3,14 @@
 #include "nostr-subscription.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
+#include "json.h"
 #include "channel.h"
 #include "context.h"
 #include "error.h"
 #include <glib.h>
 #include <gio/gio.h>
+#include <string.h>
+#include <stdbool.h>
 
 /* GnostrSimplePool GObject implementation */
 G_DEFINE_TYPE(GnostrSimplePool, gnostr_simple_pool, G_TYPE_OBJECT)
@@ -84,7 +87,7 @@ typedef struct {
     GObject *self_obj; /* GnostrSimplePool* as GObject */
     char **urls;       /* owned deep copy */
     size_t url_count;
-    NostrFilters *filters;    /* borrowed */
+    NostrFilters *filters;    /* owned deep copy for thread lifetime */
     GCancellable *cancellable;/* borrowed */
 } SubscribeManyCtx;
 
@@ -256,6 +259,11 @@ static gpointer subscribe_many_thread(gpointer user_data) {
     }
     g_ptr_array_unref(subs);
     free_urls(ctx->urls, ctx->url_count);
+    if (ctx->filters) {
+        /* Free thread-owned filters after all subscriptions are cleaned up */
+        nostr_filters_free(ctx->filters);
+        ctx->filters = NULL;
+    }
     g_object_unref(ctx->self_obj);
     g_free(ctx);
     return NULL;
@@ -273,7 +281,22 @@ void gnostr_simple_pool_subscribe_many_async(GnostrSimplePool *self,
     ctx->self_obj = G_OBJECT(g_object_ref(self));
     ctx->urls = dup_urls(urls, url_count);
     ctx->url_count = url_count;
-    ctx->filters = filters;
+    /* Deep-copy filters to decouple from caller lifetime */
+    if (filters) {
+        NostrFilters *copy = nostr_filters_new();
+        if (filters->count > 0 && filters->filters) {
+            for (size_t i = 0; i < filters->count; i++) {
+                NostrFilter *fc = nostr_filter_copy(&filters->filters[i]);
+                if (fc) {
+                    /* nostr_filters_add takes ownership and zeros fc */
+                    nostr_filters_add(copy, fc);
+                }
+            }
+        }
+        ctx->filters = copy;
+    } else {
+        ctx->filters = NULL;
+    }
     ctx->cancellable = cancellable;
     g_thread_new("nostr-subscribe-many", subscribe_many_thread, ctx);
 
@@ -288,4 +311,195 @@ gboolean gnostr_simple_pool_subscribe_many_finish(GnostrSimplePool *self,
                                                   GError **error) {
     (void)self;
     return g_task_propagate_boolean(G_TASK(res), error);
+}
+
+typedef struct {
+    GObject *self_obj;  /* GnostrSimplePool* as GObject */
+    char **urls;        /* owned deep copy */
+    size_t url_count;
+    NostrFilter *filter; /* owned copy of filter */
+    GCancellable *cancellable;  /* borrowed */
+    GTask *task;        /* owned ref to GTask for async completion */
+    GPtrArray *results; /* collected results */
+} QuerySingleCtx;
+
+/* Helper to free query context */
+static void query_single_ctx_free(QuerySingleCtx *ctx) {
+    if (!ctx) return;
+    if (ctx->urls) {
+        for (size_t i = 0; i < ctx->url_count; i++) {
+            g_free(ctx->urls[i]);
+        }
+        g_free(ctx->urls);
+    }
+    if (ctx->filter) {
+        nostr_filter_free(ctx->filter);
+    }
+    if (ctx->task) g_object_unref(ctx->task);
+    if (ctx->results) g_ptr_array_unref(ctx->results);
+    if (ctx->cancellable) g_object_unref(ctx->cancellable);
+    g_free(ctx);
+}
+
+static gboolean query_single_complete_ok(gpointer data) {
+    GTask *task = G_TASK(data);
+    g_task_return_boolean(task, TRUE);
+    /* Unref provided by destroy notify in invoke_full if set; be safe */
+    return G_SOURCE_REMOVE;
+}
+
+static gpointer query_single_thread(gpointer user_data) {
+    QuerySingleCtx *ctx = (QuerySingleCtx *)user_data;
+    GnostrSimplePool *self = GNOSTR_SIMPLE_POOL(ctx->self_obj);
+    
+    // Create results array
+    ctx->results = g_ptr_array_new_with_free_func(g_free);
+    
+    // Create a temporary subscription for each URL until we get a result
+    for (size_t i = 0; i < ctx->url_count; i++) {
+        if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) {
+            break;
+        }
+
+        const char *url = ctx->urls[i];
+        if (!url || !*url) continue;
+
+        // Create a new relay connection
+        Error *err = NULL;
+        GoContext *gctx = go_context_background();
+        NostrRelay *relay = nostr_relay_new(gctx, url, &err);
+        if (!relay) {
+            g_warning("Failed to create relay for %s: %s", url, 
+                     err ? err->message : "unknown error");
+            if (err) { free_error(err); err = NULL; }
+            continue;
+        }
+
+        // Connect to the relay
+        if (!nostr_relay_connect(relay, &err)) {
+            g_warning("Failed to connect to %s: %s", url, 
+                     err ? err->message : "unknown error");
+            if (err) { free_error(err); err = NULL; }
+            nostr_relay_free(relay);
+            continue;
+        }
+
+        // Create a subscription with the filter
+        NostrFilters *filters = nostr_filters_new();
+        NostrFilter *fcopy = nostr_filter_copy(ctx->filter);
+        nostr_filters_add(filters, fcopy); /* moves fcopy contents */
+        NostrSubscription *sub = nostr_subscription_new(relay, filters); /* takes ownership of filters */
+
+        // Fire the subscription
+        if (!nostr_subscription_fire(sub, &err)) {
+            g_warning("Failed to fire subscription to %s: %s", url, 
+                     err ? err->message : "unknown error");
+            if (err) { free_error(err); err = NULL; }
+            nostr_subscription_free(sub);
+            nostr_relay_free(relay);
+            continue;
+        }
+
+        // Wait for first event or EOSE
+        bool got_event = false;
+        while (!got_event) {
+            if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) {
+                break;
+            }
+
+            // Check for event
+            NostrEvent *evt = NULL;
+            GoChannel *ch_events = nostr_subscription_get_events_channel(sub);
+            if (ch_events && go_channel_try_receive(ch_events, (void**)&evt) == 0) {
+                char *json = nostr_event_serialize(evt);
+                if (json) {
+                    g_ptr_array_add(ctx->results, json);
+                    got_event = true;
+                }
+                nostr_event_free(evt);
+            }
+
+            // Check for EOSE
+            GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
+            if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+                break;
+            }
+
+            // Small sleep to prevent busy waiting
+            g_usleep(1000);  // 1ms
+        }
+
+        // Cleanup
+        nostr_subscription_free(sub);
+        nostr_relay_free(relay);
+
+        if (got_event) {
+            break;  // Got our event, no need to try other relays
+        }
+    }
+
+    // Schedule completion on the main thread; task owns ctx via task_data
+    g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, query_single_complete_ok,
+                               g_object_ref(ctx->task), (GDestroyNotify)g_object_unref);
+    return NULL;
+}
+
+void gnostr_simple_pool_query_single_async(GnostrSimplePool *self,
+                                          const char **urls,
+                                          size_t url_count,
+                                          const NostrFilter *filter,
+                                          GCancellable *cancellable,
+                                          GAsyncReadyCallback callback,
+                                          gpointer user_data) {
+    g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
+    g_return_if_fail(urls != NULL || url_count == 0);
+    g_return_if_fail(filter != NULL);
+
+    // Create and populate context
+    QuerySingleCtx *ctx = g_new0(QuerySingleCtx, 1);
+    ctx->self_obj = g_object_ref(G_OBJECT(self));
+    ctx->urls = g_new0(char *, url_count);
+    ctx->url_count = url_count;
+    ctx->filter = nostr_filter_copy(filter);
+    ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
+    ctx->task = g_task_new(G_OBJECT(self), cancellable, callback, user_data);
+    g_task_set_task_data(ctx->task, ctx, (GDestroyNotify)query_single_ctx_free);
+
+    // Deep copy URLs
+    for (size_t i = 0; i < url_count; i++) {
+        ctx->urls[i] = g_strdup(urls[i]);
+    }
+
+    // Start worker thread
+    GThread *thread = g_thread_new("nostr-query-single", query_single_thread, g_steal_pointer(&ctx));
+    g_thread_unref(thread);  // we don't need to join
+}
+
+GPtrArray *gnostr_simple_pool_query_single_finish(GnostrSimplePool *self,
+                                                 GAsyncResult *res,
+                                                 GError **error) {
+    g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), NULL);
+    g_return_val_if_fail(g_task_is_valid(res, self), NULL);
+
+    // Get the task data
+    gpointer data = g_task_get_task_data(G_TASK(res));
+    if (!data) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                          "Invalid task data in query_single_finish");
+        return NULL;
+    }
+    QuerySingleCtx *ctx = data;
+
+    // Propagate any error from the task
+    if (g_task_propagate_boolean(G_TASK(res), error)) {
+        // On success, return the results (transfer full ownership to caller)
+        return g_steal_pointer(&ctx->results);
+    } else {
+        // On failure, ensure we have an error set
+        if (error && *error == NULL) {
+            g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                              "Failed to complete query_single operation");
+        }
+        return NULL;
+    }
 }

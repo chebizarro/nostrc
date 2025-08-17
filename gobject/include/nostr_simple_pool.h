@@ -33,4 +33,17 @@ gboolean gnostr_simple_pool_subscribe_many_finish(GnostrSimplePool *self,
                                                   GAsyncResult *res,
                                                   GError **error);
 
+/* One-shot query API */
+void gnostr_simple_pool_query_single_async(GnostrSimplePool *self,
+                                          const char **urls,
+                                          size_t url_count,
+                                          const NostrFilter *filter,
+                                          GCancellable *cancellable,
+                                          GAsyncReadyCallback callback,
+                                          gpointer user_data);
+
+GPtrArray *gnostr_simple_pool_query_single_finish(GnostrSimplePool *self,
+                                                 GAsyncResult *res,
+                                                 GError **error);
+
 #endif // NOSTR_SIMPLE_POOL_H

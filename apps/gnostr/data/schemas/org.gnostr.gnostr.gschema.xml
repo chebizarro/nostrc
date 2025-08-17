@@ -20,4 +20,21 @@
       <description>Last used height for the Relay Manager dialog.</description>
     </key>
   </schema>
+  <!-- Client identity and login-related settings -->
+  <schema id="org.gnostr.Client" path="/org/gnostr/client/">
+    <key name="current-npub" type="s">
+      <default>''</default>
+      <summary>Currently selected identity (npub)</summary>
+      <description>
+        The bech32 npub of the active identity. Empty string means not signed in.
+      </description>
+    </key>
+    <key name="nip46-timeout-ms" type="i">
+      <default>15000</default>
+      <summary>NIP-46 pairing timeout (ms)</summary>
+      <description>
+        Maximum time to wait for remote signer pairing response before aborting.
+      </description>
+    </key>
+  </schema>
 </schemalist>

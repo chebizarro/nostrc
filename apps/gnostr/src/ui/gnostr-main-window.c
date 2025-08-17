@@ -12,24 +12,88 @@
 #include "nostr_simple_pool.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
+/* Canonical JSON helpers (for nostr_event_from_json, etc.) */
+#include "nostr-json.h"
 /* NostrdB storage */
 #include "../storage_ndb.h"
 /* JSON interface */
 #include "json.h"
+/* Relays helpers */
+#include "../util/relays.h"
+/* NIP-19 helpers */
+#include "../../../nips/nip19/include/nip19.h"
+/* NIP-46 client (remote signer pairing) */
+#include "nostr/nip46/nip46_client.h"
 
 /* Implement as-if SimplePool is fully functional; guarded to avoid breaking builds until wired. */
 #ifdef GNOSTR_ENABLE_REAL_SIMPLEPOOL
 #include "nostr-relay.h"
 #include "nostr-subscription.h"
-#include "nostr-json.h"
 #include "channel.h"
 #include "error.h"
 #include "context.h"
 #endif
 
-/* App utilities */
-#include "../util/relays.h"
 #define UI_RESOURCE "/org/gnostr/ui/ui/gnostr-main-window.ui"
+
+/* Forward declarations for local helpers used before their definitions */
+static char *client_settings_get_current_npub(void);
+static char *hex_encode_lower(const uint8_t *buf, size_t len);
+static void show_toast(GnostrMainWindow *self, const char *msg);
+static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pubkey_hex, const char *content_json);
+static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data);
+
+/* Define the window instance struct early so functions can access fields */
+struct _GnostrMainWindow {
+  GtkApplicationWindow parent_instance;
+  // Template children
+  GtkWidget *stack;
+  GtkWidget *timeline;
+  GWeakRef timeline_ref; /* weak ref to avoid UAF in async */
+  GtkWidget *btn_settings;
+  GtkWidget *btn_relays;
+  GtkWidget *btn_menu;
+  GtkWidget *btn_avatar;
+  GtkWidget *avatar_popover;
+  GtkWidget *composer;
+  GtkWidget *btn_refresh;
+  GtkWidget *toast_revealer;
+  GtkWidget *toast_label;
+  /* Session state */
+  GHashTable *seen_texts; /* owned; keys are g_strdup(text), values unused */
+  GHashTable *seen_ids;   /* owned; keys are g_strdup(event id hex), values unused */
+  /* Thread model */
+  GListStore *thread_roots;    /* owned; element-type TimelineItem */
+  GHashTable *nodes_by_id;     /* owned; key: id string -> TimelineItem* (weak) */
+  /* Metadata cache: key=pubkey hex (string), value=UserMeta* (owned) */
+  GHashTable *meta_by_ptr;     /* owned; maps ptr to nodes */
+  GHashTable *meta_by_id;       /* owned; maps event_id to nodes */
+  GHashTable *meta_by_pubkey;   /* owned; maps pubkey to UserMeta */
+  
+  /* Profile subscription */
+  gulong profile_sub_id;        /* signal handler ID for profile events */
+  GCancellable *profile_sub_cancellable; /* cancellable for profile sub */
+  
+  /* Remote signer (NIP-46) session */
+  NostrNip46Session *nip46_session; /* owned */
+  
+  /* Tuning knobs (UI-editable) */
+  guint batch_max;             /* default 5; max items per UI batch post */
+  guint post_interval_ms;      /* default 150; max ms before forcing a batch */
+  guint eose_quiet_ms;         /* default 150; quiet ms after EOSE to stop */
+  guint per_relay_hard_ms;     /* default 5000; hard cap per relay */
+  guint default_limit;         /* default 30; timeline default limit */
+  gboolean use_since;          /* default FALSE; use since window */
+  guint since_seconds;         /* default 3600; when use_since */
+  /* Backfill interval */
+  guint backfill_interval_sec; /* default 0; disabled when 0 */
+  guint backfill_source_id;    /* GLib source id, 0 if none */
+  /* SimplePool live stream */
+  GnostrSimplePool *pool;       /* owned */
+  GCancellable    *pool_cancellable; /* owned */
+  NostrFilters    *live_filters; /* owned; current live filter set */
+  gulong           pool_events_handler; /* signal handler id */
+};
 
 /* Forward declaration for async dialog completion */
 static void relays_alert_done(GtkAlertDialog *d, GAsyncResult *res, gpointer data);
@@ -50,6 +114,15 @@ typedef struct {
   GtkLabel *status; /* optional status label */
 } RelaysCtx;
 
+/* Pairing dialog context */
+typedef struct {
+  GnostrMainWindow *self; /* strong ref */
+  GtkWindow *win;         /* dialog window */
+  GtkEntry *entry_uri;    /* uri input */
+  GtkButton *btn_connect; /* connect button */
+  GtkLabel *lbl_status;   /* status label */
+} PairCtx;
+
 /* Save window size to GSettings if schema is present */
 static void relays_save_window_size(GtkWindow *win) {
   if (!win) return;
@@ -65,6 +138,167 @@ static void relays_save_window_size(GtkWindow *win) {
   g_settings_set_int(settings, "relays-window-height", h);
   g_object_unref(settings);
   g_settings_schema_unref(schema);
+}
+
+/* ---- Profile subscription management ---- */
+
+/* Cancel any existing profile subscription */
+static void cancel_profile_subscription(GnostrMainWindow *self) {
+  if (!self->pool || !self->profile_sub_id) return;
+  
+  g_cancellable_cancel(self->profile_sub_cancellable);
+  g_clear_object(&self->profile_sub_cancellable);
+  self->profile_sub_id = 0;
+}
+
+/* Handle incoming profile events from persistent subscription */
+static void on_profile_event(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  
+  for (guint i = 0; i < batch->len; i++) {
+    const char *json = g_ptr_array_index(batch, i);
+    if (!json) continue;
+
+    NostrEvent *evt = nostr_event_new();
+    if (!evt) continue;
+    if (nostr_event_deserialize(evt, json) != 0) { nostr_event_free(evt); continue; }
+
+    if (nostr_event_get_kind(evt) == 0) {  // kind-0: profile metadata
+      const char *pk = nostr_event_get_pubkey(evt);
+      const char *content = nostr_event_get_content(evt);
+      if (pk && content) {
+        update_meta_from_profile_json(self, pk, content);
+      }
+    }
+
+    nostr_event_free(evt);
+  }
+}
+
+/* Start a persistent subscription for profile updates */
+static void start_profile_subscription(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->pool) return;
+  
+  // Cancel any existing subscription first
+  cancel_profile_subscription(self);
+  
+  // Get current identity
+  g_autofree char *npub = client_settings_get_current_npub();
+  if (!npub || !*npub) return;
+  
+  uint8_t pub32[32] = {0};
+  if (nostr_nip19_decode_npub(npub, pub32) != 0) return;
+  
+  g_autofree char *pub_hex = hex_encode_lower(pub32, 32);
+  if (!pub_hex || strlen(pub_hex) != 64) return;
+  
+  // Create filters set for kind-0 events from our pubkey
+  NostrFilters *filters = nostr_filters_new();
+  if (!filters) return;
+  NostrFilter *filter = nostr_filter_new();
+  if (!filter) { nostr_filters_free(filters); return; }
+  nostr_filter_add_kind(filter, 0);
+  nostr_filter_add_author(filter, pub_hex);
+  nostr_filters_add(filters, filter);
+  /* filter shell can be freed after adding; internals are retained by filters */
+  nostr_filter_free(filter);
+  
+  // Get relay URLs
+  GPtrArray *relays = g_ptr_array_new_with_free_func(g_free);
+  gnostr_load_relays_into(relays);
+  if (relays->len == 0) {
+    g_ptr_array_free(relays, TRUE);
+    nostr_filter_free(filter);
+    return;
+  }
+  
+  // Convert to const char** array
+  const char **urls = g_new0(const char*, relays->len + 1);
+  for (guint i = 0; i < relays->len; i++) {
+    urls[i] = g_strdup(g_ptr_array_index(relays, i));
+  }
+  
+  // Create new cancellable for this subscription
+  self->profile_sub_cancellable = g_cancellable_new();
+  
+  // Connect to pool events for this subscription
+  self->profile_sub_id = g_signal_connect_data(
+    self->pool, "events", G_CALLBACK(on_profile_event), g_object_ref(self),
+    (GClosureNotify)g_object_unref, G_CONNECT_AFTER);
+  
+  // Start the subscription
+  gnostr_simple_pool_subscribe_many_async(
+    self->pool,
+    urls,
+    relays->len,
+    filters,
+    self->profile_sub_cancellable,
+    on_pool_subscribe_done,
+    g_object_ref(self)
+  );
+  
+  // Cleanup
+  for (guint i = 0; i < relays->len; i++) {
+    g_free((char*)urls[i]);
+  }
+  g_free(urls);
+  g_ptr_array_free(relays, TRUE);
+  // Note: filters are kept alive by the subscription
+}
+
+/* ---- Profile fetch (single-shot query for kind-0 of current identity) ---- */
+static void gnostr_profile_fetch_async(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  /* Read current identity */
+  g_autofree char *npub = client_settings_get_current_npub();
+  if (!npub || !*npub) { g_message("profile_fetch: no current npub set"); return; }
+  uint8_t pub32[32] = {0};
+  if (nostr_nip19_decode_npub(npub, pub32) != 0) {
+    g_warning("profile_fetch: failed to decode npub");
+    return;
+  }
+  g_autofree char *pub_hex = hex_encode_lower(pub32, 32);
+  if (!pub_hex || strlen(pub_hex) != 64) { g_warning("profile_fetch: bad hex"); return; }
+
+  /* Build filter: kind=0, authors=[pub_hex], limit=1 */
+  NostrFilters *filters = nostr_filters_new();
+  if (!filters) return;
+  NostrFilter *f = nostr_filter_new();
+  if (!f) { nostr_filters_free(filters); return; }
+  nostr_filter_add_kind(f, 0);
+  nostr_filter_add_author(f, pub_hex);
+  nostr_filter_set_limit(f, 1);
+  (void)nostr_filters_add(filters, f);
+  /* f contents moved; free the shell safely */
+  nostr_filter_free(f);
+
+  /* Collect relay URLs */
+  GPtrArray *arr = g_ptr_array_new_with_free_func(g_free);
+  gnostr_load_relays_into(arr);
+  if (arr->len == 0) {
+    g_ptr_array_free(arr, TRUE);
+    nostr_filters_free(filters);
+    g_message("profile_fetch: no relays configured");
+    return;
+  }
+  size_t url_count = arr->len;
+  const char **urls = g_new0(const char*, url_count);
+  for (guint i = 0; i < url_count; i++) urls[i] = g_strdup((const char*)g_ptr_array_index(arr, i));
+  g_ptr_array_free(arr, TRUE);
+
+  /* Ensure pool/cancellable and events handler */
+  if (!self->pool) self->pool = gnostr_simple_pool_new();
+  if (!self->pool_cancellable) self->pool_cancellable = g_cancellable_new();
+  if (!self->pool_events_handler) {
+    self->pool_events_handler = g_signal_connect(self->pool, "events", G_CALLBACK(on_profile_event), self);
+  }
+
+  show_toast(self, "Fetching profile…");
+  gnostr_simple_pool_subscribe_many_async(self->pool, urls, url_count, filters, self->pool_cancellable, on_pool_subscribe_done, self);
+  /* Free duplicated url strings and array; filters kept alive for subscription lifetime */
+  for (size_t i = 0; i < url_count; i++) g_free((char*)urls[i]);
+  g_free((void*)urls);
 }
 
 static gboolean relays_on_close_request(GtkWindow *win, gpointer user_data) {
@@ -110,8 +344,6 @@ typedef struct {
 } IdleApplyCtx;
 
 static gboolean apply_timeline_lines_idle(gpointer user_data);
-/* Forward decl: toast helper used before its definition */
-static void show_toast(GnostrMainWindow *self, const char *msg);
 /* Forward: periodic backfill */
 static gboolean periodic_backfill_cb(gpointer data);
 /* NostrdB helpers */
@@ -127,15 +359,50 @@ typedef struct UiEventRow {
   char *content;
 } UiEventRow;
 /* Helpers used by backfill worker */
-static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pubkey_hex, const char *content_json);
 static void schedule_apply_events(GnostrMainWindow *self, GPtrArray *rows /* UiEventRow* */);
 static void ui_event_row_free(gpointer p);
 static void start_pool_live_idle_cb(gpointer data);
 static void start_pool_backfill_idle_cb(gpointer data);
 /* Settings persistence */
 static void gnostr_load_settings(GnostrMainWindow *self);
+/* Profile fetch */
+static void gnostr_profile_fetch_async(GnostrMainWindow *self);
+
+/* Client settings helpers */
+static void client_settings_set_current_npub(const char *npub) {
+  GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+  if (!src) return;
+  GSettingsSchema *schema = g_settings_schema_source_lookup(src, "org.gnostr.Client", TRUE);
+  if (!schema) return;
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  g_settings_set_string(settings, "current-npub", npub ? npub : "");
+  g_object_unref(settings);
+  g_settings_schema_unref(schema);
+}
+
+static char *client_settings_get_current_npub(void) {
+  GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+  if (!src) return NULL;
+  GSettingsSchema *schema = g_settings_schema_source_lookup(src, "org.gnostr.Client", TRUE);
+  if (!schema) return NULL;
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  gchar *s = g_settings_get_string(settings, "current-npub");
+  g_object_unref(settings);
+  g_settings_schema_unref(schema);
+  if (s && *s) return s;
+  g_clear_pointer(&s, g_free);
+  return NULL;
+}
+
+/* Small helper: hex-encode bytes to lowercase hex string */
+static char *hex_encode_lower(const uint8_t *buf, size_t len) {
+  static const char *hex = "0123456789abcdef";
+  if (!buf || len == 0) return g_strdup("");
+  char *out = g_malloc0(len * 2 + 1);
+  for (size_t i = 0; i < len; i++) { out[2*i] = hex[(buf[i] >> 4) & 0xF]; out[2*i+1] = hex[buf[i] & 0xF]; }
+  return out;
+}
 static void gnostr_save_settings(GnostrMainWindow *self);
-static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data);
 static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_urls, size_t *out_count, NostrFilters **out_filters, int limit);
 /* Relay list item factory */
 static void relay_item_setup(GtkSignalListItemFactory *f, GtkListItem *item, gpointer user_data);
@@ -226,45 +493,6 @@ static void start_pool_backfill(GnostrMainWindow *self, int limit) {
 }
 static void relay_item_bind(GtkSignalListItemFactory *f, GtkListItem *item, gpointer user_data);
 
-struct _GnostrMainWindow {
-  GtkApplicationWindow parent_instance;
-  // Template children
-  GtkWidget *stack;
-  GtkWidget *timeline;
-  GWeakRef timeline_ref; /* weak ref to avoid UAF in async */
-  GtkWidget *btn_settings;
-  GtkWidget *btn_relays;
-  GtkWidget *btn_menu;
-  GtkWidget *composer;
-  GtkWidget *btn_refresh;
-  GtkWidget *toast_revealer;
-  GtkWidget *toast_label;
-  /* Session state */
-  GHashTable *seen_texts; /* owned; keys are g_strdup(text), values unused */
-  GHashTable *seen_ids;   /* owned; keys are g_strdup(event id hex), values unused */
-  /* Thread model */
-  GListStore *thread_roots;    /* owned; element-type TimelineItem */
-  GHashTable *nodes_by_id;     /* owned; key: id string -> TimelineItem* (weak) */
-  /* Metadata cache: key=pubkey hex (string), value=UserMeta* (owned) */
-  GHashTable *meta_by_pubkey;  
-  /* Tuning knobs (UI-editable) */
-  guint batch_max;             /* default 5; max items per UI batch post */
-  guint post_interval_ms;      /* default 150; max ms before forcing a batch */
-  guint eose_quiet_ms;         /* default 150; quiet ms after EOSE to stop */
-  guint per_relay_hard_ms;     /* default 5000; hard cap per relay */
-  guint default_limit;         /* default 30; timeline default limit */
-  gboolean use_since;          /* default FALSE; use since window */
-  guint since_seconds;         /* default 3600; when use_since */
-  /* Backfill interval */
-  guint backfill_interval_sec; /* default 0; disabled when 0 */
-  guint backfill_source_id;    /* GLib source id, 0 if none */
-  /* SimplePool live stream */
-  GnostrSimplePool *pool;       /* owned */
-  GCancellable    *pool_cancellable; /* owned */
-  NostrFilters    *live_filters; /* owned; current live filter set */
-  gulong           pool_events_handler; /* signal handler id */
-};
-
 G_DEFINE_TYPE(GnostrMainWindow, gnostr_main_window, GTK_TYPE_APPLICATION_WINDOW)
 
 /* Build a JSON array string of filters equivalent to build_urls_and_filters() output. */
@@ -328,6 +556,11 @@ static void gnostr_main_window_dispose(GObject *obj) {
   if (self->thread_roots) {
     g_object_unref(self->thread_roots);
     self->thread_roots = NULL;
+  }
+  /* Free nip46 session early */
+  if (self->nip46_session) {
+    nostr_nip46_session_free(self->nip46_session);
+    self->nip46_session = NULL;
   }
   G_OBJECT_CLASS(gnostr_main_window_parent_class)->dispose(obj);
 }
@@ -399,6 +632,11 @@ static void gnostr_main_window_finalize(GObject *obj) {
   if (self->seen_ids) {
     g_hash_table_destroy(self->seen_ids);
     self->seen_ids = NULL;
+  }
+  if (self->nip46_session) {
+    /* Should be NULL from dispose, but guard and free */
+    nostr_nip46_session_free(self->nip46_session);
+    self->nip46_session = NULL;
   }
   g_weak_ref_clear(&self->timeline_ref);
   gtk_widget_dispose_template(GTK_WIDGET(obj), GNOSTR_TYPE_MAIN_WINDOW);
@@ -599,7 +837,14 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
   const char *handle_src = NULL;
   if (username && *username) handle_src = username; else if (name && *name) handle_src = name;
   if (handle_src && *handle_src) { g_free(m->handle); m->handle = g_strconcat("@", handle_src, NULL); }
-  if (picture && *picture) { g_free(m->avatar_url); m->avatar_url = g_strdup(picture); }
+  if (picture && *picture) {
+    g_free(m->avatar_url);
+    m->avatar_url = g_strdup(picture);
+  } else {
+    /* RoboHash fallback using pubkey hex for deterministic avatar */
+    g_free(m->avatar_url);
+    m->avatar_url = g_strdup_printf("https://robohash.org/%s.png?size=80x80&set=set1", pubkey_hex);
+  }
   json_decref(root);
   /* Refresh any existing TimelineItems authored by this pubkey */
   if (self->nodes_by_id && self->meta_by_pubkey) {
@@ -812,6 +1057,13 @@ static void start_pool_live(GnostrMainWindow *self) {
     g_signal_handler_disconnect(self->pool, self->pool_events_handler);
     self->pool_events_handler = 0;
   }
+  // Clean up any existing subscriptions
+  if (self->pool_cancellable) {
+    g_cancellable_cancel(self->pool_cancellable);
+    g_clear_object(&self->pool_cancellable);
+  }
+  // Clean up profile subscription
+  cancel_profile_subscription(self);
   self->pool_events_handler = g_signal_connect(self->pool, "events", G_CALLBACK(on_pool_events), self);
   const char **urls = NULL; size_t url_count = 0; NostrFilters *filters = NULL;
   build_urls_and_filters(self, &urls, &url_count, &filters, (int)self->default_limit);
@@ -1154,6 +1406,146 @@ static void on_relays_save(GtkButton *b, gpointer user_data) {
   gtk_window_destroy(c->win);
 }
 
+/* ---- NIP-46 Pairing UI and async worker ---- */
+
+static void pair_ctx_free(PairCtx *c) {
+  if (!c) return;
+  if (c->self) g_object_unref(c->self);
+  c->win = NULL; c->entry_uri = NULL; c->btn_connect = NULL; c->lbl_status = NULL;
+  g_free(c);
+}
+
+typedef struct {
+  char *uri;                    /* in */
+  char *requested_perms;        /* in */
+  /* out */
+  NostrNip46Session *session;   /* created on success */
+  char *npub;                   /* derived from remote pubkey */
+  char *error;                  /* error message */
+} PairWorker;
+
+static void pair_worker_free(PairWorker *w) {
+  if (!w) return;
+  g_free(w->uri);
+  g_free(w->requested_perms);
+  if (w->session) nostr_nip46_session_free(w->session);
+  g_free(w->npub);
+  g_free(w->error);
+  g_free(w);
+}
+
+/* minimal hex -> bytes helper */
+static gboolean hex_to_bytes32(const char *hex, uint8_t out[32]) {
+  if (!hex) return FALSE;
+  size_t n = strlen(hex);
+  if (n != 64) return FALSE;
+  for (size_t i = 0; i < 32; i++) {
+    char c1 = hex[2*i], c2 = hex[2*i+1];
+    int v1 = (c1 >= '0' && c1 <= '9') ? (c1 - '0') : (c1 >= 'a' && c1 <= 'f') ? (c1 - 'a' + 10) : (c1 >= 'A' && c1 <= 'F') ? (c1 - 'A' + 10) : -1;
+    int v2 = (c2 >= '0' && c2 <= '9') ? (c2 - '0') : (c2 >= 'a' && c2 <= 'f') ? (c2 - 'a' + 10) : (c2 >= 'A' && c2 <= 'F') ? (c2 - 'A' + 10) : -1;
+    if (v1 < 0 || v2 < 0) return FALSE;
+    out[i] = (uint8_t)((v1 << 4) | v2);
+  }
+  return TRUE;
+}
+
+static void pair_remote_worker(GTask *task, gpointer source, gpointer task_data, GCancellable *cancellable) {
+  (void)source; (void)cancellable;
+  PairWorker *w = (PairWorker*)task_data;
+  if (!w || !w->uri) { g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "invalid worker args"); return; }
+  NostrNip46Session *s = nostr_nip46_client_new();
+  if (!s) { g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "failed to allocate nip46 session"); return; }
+  int rc = nostr_nip46_client_connect(s, w->uri, w->requested_perms ? w->requested_perms : "get_public_key,sign_event,encrypt,decrypt");
+  if (rc != 0) {
+    nostr_nip46_session_free(s);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CONNECTION_REFUSED, "Failed to connect to remote signer");
+    return;
+  }
+  char *pub_hex = NULL;
+  rc = nostr_nip46_client_get_public_key(s, &pub_hex);
+  if (rc != 0 || !pub_hex) {
+    nostr_nip46_session_free(s);
+    if (pub_hex) free(pub_hex);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Remote signer did not provide a public key");
+    return;
+  }
+  uint8_t pk[32] = {0};
+  if (!hex_to_bytes32(pub_hex, pk)) {
+    nostr_nip46_session_free(s);
+    free(pub_hex);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid public key from remote signer");
+    return;
+  }
+  char *npub = NULL;
+  if (nostr_nip19_encode_npub(pk, &npub) != 0 || !npub) {
+    nostr_nip46_session_free(s);
+    free(pub_hex);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to encode npub");
+    return;
+  }
+  free(pub_hex);
+  w->session = s;
+  w->npub = npub;
+  g_task_return_boolean(task, TRUE);
+}
+
+static void pair_remote_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  PairCtx *ctx = (PairCtx*)user_data;
+  GTask *task = G_TASK(res);
+  PairWorker *w = (PairWorker*)g_task_get_task_data(task);
+  GError *error = NULL;
+  gboolean ok = g_task_propagate_boolean(task, &error);
+  if (!ctx || !ctx->self) { if (error) g_error_free(error); if (w) pair_worker_free(w); pair_ctx_free(ctx); return; }
+  if (!ok || error) {
+    const char *msg = error && error->message ? error->message : "Pairing failed";
+    if (ctx->lbl_status) gtk_label_set_text(ctx->lbl_status, msg);
+    if (ctx->btn_connect) gtk_widget_set_sensitive(GTK_WIDGET(ctx->btn_connect), TRUE);
+    show_toast(ctx->self, msg);
+    g_clear_error(&error);
+    if (w) pair_worker_free(w);
+    return;
+  }
+  /* Success: adopt session, persist npub, fetch profile */
+  if (ctx->self->nip46_session) {
+    nostr_nip46_session_free(ctx->self->nip46_session);
+  }
+  ctx->self->nip46_session = w->session; /* take ownership */
+  w->session = NULL;
+  client_settings_set_current_npub(w->npub);
+  gchar *msg = g_strdup_printf("Paired remote signer: %s", w->npub);
+  show_toast(ctx->self, msg);
+  g_free(msg);
+  gnostr_profile_fetch_async(ctx->self);
+  start_profile_subscription(ctx->self);
+  if (ctx->win) gtk_window_destroy(ctx->win);
+  pair_worker_free(w);
+  pair_ctx_free(ctx);
+}
+
+static void on_pair_cancel(GtkButton *b, gpointer user_data) {
+  (void)b;
+  PairCtx *ctx = (PairCtx*)user_data;
+  if (ctx && ctx->win) gtk_window_destroy(ctx->win);
+}
+
+static void on_pair_connect(GtkButton *b, gpointer user_data) {
+  (void)b;
+  PairCtx *ctx = (PairCtx*)user_data;
+  if (!ctx || !GNOSTR_IS_MAIN_WINDOW(ctx->self)) return;
+  const char *uri = gtk_editable_get_text(GTK_EDITABLE(ctx->entry_uri));
+  if (!uri || !*uri) { if (ctx->lbl_status) gtk_label_set_text(ctx->lbl_status, "Enter a bunker:// or nostrconnect:// URI"); return; }
+  if (ctx->btn_connect) gtk_widget_set_sensitive(GTK_WIDGET(ctx->btn_connect), FALSE);
+  if (ctx->lbl_status) gtk_label_set_text(ctx->lbl_status, "Connecting…");
+  GTask *task = g_task_new(NULL, NULL, pair_remote_complete, ctx);
+  PairWorker *w = g_new0(PairWorker, 1);
+  w->uri = g_strdup(uri);
+  w->requested_perms = g_strdup("get_public_key,sign_event,encrypt,decrypt");
+  g_task_set_task_data(task, w, (GDestroyNotify)pair_worker_free);
+  g_task_run_in_thread(task, pair_remote_worker);
+  g_object_unref(task);
+}
+
 static void on_relays_cancel(GtkButton *b, gpointer user_data) {
   (void)b;
   RelaysCtx *c = (RelaysCtx*)user_data;
@@ -1357,6 +1749,110 @@ static void on_settings_clicked(GtkButton *button, GnostrMainWindow *self) {
   /* Builder can be dropped; widgets are now owned by the window */
   g_object_unref(b);
   gtk_window_present(GTK_WINDOW(win));
+}
+
+/* Finish handler for GetPublicKey from local signer */
+static void on_avatar_get_pubkey_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  NostrSignerProxy *proxy = (NostrSignerProxy*)source;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  GError *error = NULL;
+  char *npub = NULL;
+  gboolean ok = nostr_org_nostr_signer_call_get_public_key_finish(proxy, &npub, res, &error);
+  if (!ok) {
+    const gchar *remote = error ? g_dbus_error_get_remote_error(error) : NULL;
+    g_warning("Avatar GetPublicKey failed: %s%s%s",
+              error ? error->message : "unknown error",
+              remote ? " (remote=" : "",
+              remote ? remote : "");
+    if (GTK_IS_WINDOW(self)) {
+      GtkAlertDialog *dlg = gtk_alert_dialog_new("Local Signer not available");
+      gtk_alert_dialog_set_detail(dlg, "Could not contact org.nostr.Signer. Is the signer running?");
+      gtk_alert_dialog_show(dlg, GTK_WINDOW(self));
+      g_object_unref(dlg);
+    }
+    g_clear_error(&error);
+    return;
+  }
+  if (npub && *npub) {
+    gchar *msg = g_strdup_printf("Signed in: %s", npub);
+    show_toast(self, msg);
+    g_free(msg);
+    /* Persist identity */
+    client_settings_set_current_npub(npub);
+    /* Fetch profile metadata for this identity and subscribe for updates */
+    gnostr_profile_fetch_async(self);
+    start_profile_subscription(self);
+  } else {
+    show_toast(self, "Signer returned empty public key");
+  }
+  g_free(npub);
+}
+
+/* Avatar popover: Login with Local Signer clicked */
+static void on_avatar_login_local_clicked(GtkButton *button, GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  /* Close the popover if present */
+  GtkWidget *w = GTK_WIDGET(button);
+  GtkPopover *pop = GTK_POPOVER(gtk_widget_get_ancestor(w, GTK_TYPE_POPOVER));
+  if (pop) gtk_popover_popdown(pop);
+  /* Acquire proxy (sync, fast) and call GetPublicKey async */
+  GError *err = NULL;
+  NostrSignerProxy *proxy = gnostr_signer_proxy_get(&err);
+  if (!proxy) {
+    g_warning("signer proxy get failed: %s", err ? err->message : "unknown");
+    if (GTK_IS_WINDOW(self)) {
+      GtkAlertDialog *dlg = gtk_alert_dialog_new("Local Signer not found");
+      gtk_alert_dialog_set_detail(dlg, "Install or start the signer application to login.");
+      gtk_alert_dialog_show(dlg, GTK_WINDOW(self));
+      g_object_unref(dlg);
+    }
+    g_clear_error(&err);
+    return;
+  }
+  show_toast(self, "Contacting local signer…");
+  nostr_org_nostr_signer_call_get_public_key(proxy, NULL, on_avatar_get_pubkey_done, self);
+}
+
+/* Avatar popover: Pair Remote Signer (NIP-46) clicked */
+static void on_avatar_pair_remote_clicked(GtkButton *button, GnostrMainWindow *self) {
+  (void)button;
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  /* Close the popover if present */
+  GtkWidget *w = GTK_WIDGET(button);
+  GtkPopover *pop = GTK_POPOVER(gtk_widget_get_ancestor(w, GTK_TYPE_POPOVER));
+  if (pop) gtk_popover_popdown(pop);
+  /* Build a simple dialog for entering the pairing URI */
+  GtkWindow *win = GTK_WINDOW(gtk_window_new());
+  gtk_window_set_transient_for(win, GTK_WINDOW(self));
+  gtk_window_set_title(win, "Pair Remote Signer (NIP-46)");
+  gtk_window_set_default_size(win, 520, 140);
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+  GtkWidget *lbl = gtk_label_new("Paste bunker:// or nostrconnect:// URI:");
+  GtkWidget *entry = gtk_entry_new();
+  gtk_editable_set_text(GTK_EDITABLE(entry), "bunker://");
+  GtkWidget *status = gtk_label_new("");
+  gtk_widget_add_css_class(status, "dim-label");
+  GtkWidget *btnrow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  GtkWidget *btn_cancel = gtk_button_new_with_label("Cancel");
+  GtkWidget *btn_connect = gtk_button_new_with_label("Connect");
+  gtk_box_append(GTK_BOX(btnrow), btn_cancel);
+  gtk_box_append(GTK_BOX(btnrow), btn_connect);
+  gtk_box_append(GTK_BOX(box), lbl);
+  gtk_box_append(GTK_BOX(box), entry);
+  gtk_box_append(GTK_BOX(box), status);
+  gtk_box_append(GTK_BOX(box), btnrow);
+  gtk_window_set_child(win, box);
+  PairCtx *ctx = g_new0(PairCtx, 1);
+  ctx->self = g_object_ref(self);
+  ctx->win = win;
+  ctx->entry_uri = GTK_ENTRY(entry);
+  ctx->btn_connect = GTK_BUTTON(btn_connect);
+  ctx->lbl_status = GTK_LABEL(status);
+  g_signal_connect(btn_cancel, "clicked", G_CALLBACK(on_pair_cancel), ctx);
+  g_signal_connect(btn_connect, "clicked", G_CALLBACK(on_pair_connect), ctx);
+  /* Destroy notify ensures context freed when window is closed by WM */
+  g_object_set_data_full(G_OBJECT(win), "pair-ctx", ctx, (GDestroyNotify)pair_ctx_free);
+  gtk_window_present(win);
 }
 
 static void toast_hide_cb(gpointer data) {
@@ -2024,12 +2520,16 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_settings);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_relays);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_menu);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_avatar);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, avatar_popover);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, composer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_refresh);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_revealer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_label);
   gtk_widget_class_bind_template_callback(widget_class, on_settings_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_relays_clicked);
+  gtk_widget_class_bind_template_callback(widget_class, on_avatar_login_local_clicked);
+  gtk_widget_class_bind_template_callback(widget_class, on_avatar_pair_remote_clicked);
 }
 
 static void gnostr_main_window_init(GnostrMainWindow *self) {
@@ -2061,11 +2561,20 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(self->btn_menu), G_MENU_MODEL(menu));
     g_object_unref(menu);
   }
+  /* Ensure avatar menu button has a popover attached (from template) */
+  if (self->btn_avatar && self->avatar_popover) {
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(self->btn_avatar), GTK_WIDGET(self->avatar_popover));
+  }
   g_message("connecting post-requested handler on composer=%p", (void*)self->composer);
   g_signal_connect(self->composer, "post-requested",
                    G_CALLBACK(on_composer_post_requested), self);
   if (self->btn_refresh) {
     g_signal_connect(self->btn_refresh, "clicked", G_CALLBACK(on_refresh_clicked), self);
+  }
+  if (self->btn_avatar) {
+    /* Ensure avatar button is interactable */
+    gtk_widget_set_sensitive(self->btn_avatar, TRUE);
+    gtk_widget_set_tooltip_text(self->btn_avatar, "Login / Account");
   }
   /* Ensure Timeline page is visible initially */
   if (self->stack && self->timeline && GTK_IS_STACK(self->stack)) {
@@ -2094,6 +2603,9 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
 
   /* Start live streaming via SimplePool */
   start_pool_live(self);
+  /* If identity is already set, fetch its profile metadata and subscribe for updates */
+  gnostr_profile_fetch_async(self);
+  start_profile_subscription(self);
 }
 
 GnostrMainWindow *gnostr_main_window_new(GtkApplication *app) {
