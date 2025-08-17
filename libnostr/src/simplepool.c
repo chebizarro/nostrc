@@ -20,6 +20,7 @@ NostrSimplePool *nostr_simple_pool_new(void) {
     pthread_mutex_init(&pool->pool_mutex, NULL);
     pool->auth_handler = NULL;
     pool->event_middleware = NULL;
+    pool->batch_middleware = NULL;
     pool->signature_checker = NULL;
     pool->running = false;
     pool->subs = NULL;
@@ -29,8 +30,38 @@ NostrSimplePool *nostr_simple_pool_new(void) {
     pool->dedup_ring = NULL;
     pool->dedup_len = 0;
     pool->dedup_head = 0;
+    // Behavior: auto-unsub on EOSE is off by default; env can enable
+    pool->auto_unsub_on_eose = false;
+    const char *auto_env = getenv("NOSTR_SIMPLE_POOL_AUTO_UNSUB_EOSE");
+    if (auto_env && *auto_env && strcmp(auto_env, "0") != 0) {
+        pool->auto_unsub_on_eose = true;
+    }
 
     return pool;
+}
+
+/* Convenience configuration API implementations */
+void nostr_simple_pool_set_event_middleware(NostrSimplePool *pool,
+                                            void (*cb)(NostrIncomingEvent *)) {
+    if (!pool) return;
+    pthread_mutex_lock(&pool->pool_mutex);
+    pool->event_middleware = cb;
+    pthread_mutex_unlock(&pool->pool_mutex);
+}
+
+void nostr_simple_pool_set_batch_middleware(NostrSimplePool *pool,
+                                            void (*cb)(NostrIncomingEvent *items, size_t count)) {
+    if (!pool) return;
+    pthread_mutex_lock(&pool->pool_mutex);
+    pool->batch_middleware = cb;
+    pthread_mutex_unlock(&pool->pool_mutex);
+}
+
+void nostr_simple_pool_set_auto_unsub_on_eose(NostrSimplePool *pool, bool enable) {
+    if (!pool) return;
+    pthread_mutex_lock(&pool->pool_mutex);
+    pool->auto_unsub_on_eose = enable;
+    pthread_mutex_unlock(&pool->pool_mutex);
 }
 
 // Function to free a SimplePool
@@ -160,8 +191,7 @@ void *simple_pool_thread_func(void *arg) {
         pthread_mutex_unlock(&pool->pool_mutex);
 
         // Batch to deliver to middleware after scan
-        typedef struct { NostrEvent *event; NostrRelay *relay; } BatchItem;
-        BatchItem *batch = NULL; size_t batch_len = 0; size_t batch_cap = 0;
+        NostrIncomingEvent *batch = NULL; size_t batch_len = 0; size_t batch_cap = 0;
 
         int did_work = 0; // any events processed or subs pruned
 
@@ -184,14 +214,14 @@ void *simple_pool_thread_func(void *arg) {
                         nostr_event_free(ev);
                     } else {
                         // Add to batch (or free if no middleware)
-                        if (pool->event_middleware) {
+                        if (pool->event_middleware || pool->batch_middleware) {
                             if (batch_len == batch_cap) {
                                 size_t new_cap = batch_cap ? batch_cap * 2 : 64;
-                                BatchItem *nb = (BatchItem *)realloc(batch, new_cap * sizeof(BatchItem));
+                                NostrIncomingEvent *nb = (NostrIncomingEvent *)realloc(batch, new_cap * sizeof(NostrIncomingEvent));
                                 if (!nb) { nostr_event_free(ev); break; }
                                 batch = nb; batch_cap = new_cap;
                             }
-                            batch[batch_len++] = (BatchItem){ .event = ev, .relay = nostr_subscription_get_relay(sub) };
+                            batch[batch_len++] = (NostrIncomingEvent){ .event = ev, .relay = nostr_subscription_get_relay(sub) };
                         } else {
                             // default: free to avoid leak; real users should set middleware
                             nostr_event_free(ev);
@@ -219,15 +249,44 @@ void *simple_pool_thread_func(void *arg) {
                     pthread_mutex_unlock(&pool->pool_mutex);
                     did_work = 1;
                 }
+
+                // EOSE handling: optionally auto-unsubscribe
+                GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
+                if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+                    if (pool->auto_unsub_on_eose) {
+                        pthread_mutex_lock(&pool->pool_mutex);
+                        for (size_t j = 0; j < pool->subs_count; j++) {
+                            if (pool->subs[j] == sub) {
+                                nostr_subscription_unsubscribe(sub);
+                                nostr_subscription_close(sub, NULL);
+                                nostr_subscription_free(sub);
+                                for (size_t k = j + 1; k < pool->subs_count; k++) pool->subs[k - 1] = pool->subs[k];
+                                pool->subs_count--;
+                                if (pool->subs_count == 0) { free(pool->subs); pool->subs = NULL; }
+                                break;
+                            }
+                        }
+                        pthread_mutex_unlock(&pool->pool_mutex);
+                    }
+                    did_work = 1;
+                }
             }
             rr_start = (start + 1) % local_count;
         }
 
         // Deliver batch to middleware outside of any locks
-        if (batch_len > 0 && pool->event_middleware) {
-            for (size_t i = 0; i < batch_len; i++) {
-                NostrIncomingEvent incoming = { .event = batch[i].event, .relay = batch[i].relay };
-                pool->event_middleware(&incoming);
+        if (batch_len > 0) {
+            if (pool->batch_middleware) {
+                pool->batch_middleware(batch, batch_len);
+            } else if (pool->event_middleware) {
+                for (size_t i = 0; i < batch_len; i++) {
+                    pool->event_middleware(&batch[i]);
+                }
+            } else {
+                // No middleware: free events to avoid leaks
+                for (size_t i = 0; i < batch_len; i++) {
+                    if (batch[i].event) nostr_event_free(batch[i].event);
+                }
             }
         }
         // If no middleware, events were already freed on receipt

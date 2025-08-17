@@ -35,6 +35,8 @@ typedef struct _NostrSimplePool {
     pthread_mutex_t pool_mutex;
     void (*auth_handler)(NostrEvent *);
     void (*event_middleware)(NostrIncomingEvent *);
+    /* Optional batch middleware: if set, pool may invoke this with a batch for efficiency. */
+    void (*batch_middleware)(NostrIncomingEvent *items, size_t count);
     bool (*signature_checker)(NostrEvent);
     bool running;
     pthread_t thread;
@@ -48,6 +50,8 @@ typedef struct _NostrSimplePool {
     char **dedup_ring;     /* circular buffer of last IDs */
     size_t dedup_len;
     size_t dedup_head;
+    /* Behavior flags */
+    bool auto_unsub_on_eose; /* if true, unsubscribe subs upon EOSE (default: false) */
 } NostrSimplePool;
 
 typedef struct _NostrDirectedFilters {
@@ -106,6 +110,15 @@ void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_
  * @filter: (transfer none): filter
  */
 void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilter filter);
+
+/**
+ * Convenience configuration API
+ */
+void nostr_simple_pool_set_event_middleware(NostrSimplePool *pool,
+                                            void (*cb)(NostrIncomingEvent *));
+void nostr_simple_pool_set_batch_middleware(NostrSimplePool *pool,
+                                            void (*cb)(NostrIncomingEvent *items, size_t count));
+void nostr_simple_pool_set_auto_unsub_on_eose(NostrSimplePool *pool, bool enable);
 
 #ifdef __cplusplus
 }
