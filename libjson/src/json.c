@@ -94,7 +94,7 @@ int jansson_event_deserialize(NostrEvent *event, const char *json_str) {
     json_error_t error;
     json_t *json_obj = json_loads(json_str, 0, &error);
     if (!json_obj) {
-        fprintf(stderr, "Error parsing JSON: %s\n", error.text);
+        if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Error parsing JSON: %s\n", error.text);
         return -1;
     }
     int err = _deserialize_event(event, json_obj);
@@ -268,11 +268,11 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
     json_error_t error;
     json_t *json_obj = json_loads(json_str, 0, &error);
     if (!json_obj) {
-        fprintf(stderr, "Error parsing JSON: %s\n", error.text);
+        if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Error parsing JSON: %s\n", error.text);
         return -1;
     }
     if (!json_is_array(json_obj)) {
-        fprintf(stderr, "Error: root is not an array\n");
+        if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Error: root is not an array\n");
         json_decref(json_obj);
         return -1;
     }
@@ -297,7 +297,7 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
     }
     case NOSTR_ENVELOPE_REQ: {
         if (json_array_size(json_obj) < 3) {
-            fprintf(stderr, "Failed to decode REQ envelope: missing filters\n");
+            if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Failed to decode REQ envelope: missing filters\n");
             break;
         }
         NostrReqEnvelope *env = (NostrReqEnvelope *)envelope;
@@ -321,7 +321,7 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
     }
     case NOSTR_ENVELOPE_COUNT: {
         if (json_array_size(json_obj) < 4) {
-            fprintf(stderr, "Failed to decode COUNT envelope: missing filters\n");
+            if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Failed to decode COUNT envelope: missing filters\n");
             break;
         }
         NostrCountEnvelope *env = (NostrCountEnvelope *)envelope;
@@ -352,7 +352,7 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
     }
     case NOSTR_ENVELOPE_NOTICE: {
         if (json_array_size(json_obj) < 2) {
-            fprintf(stderr, "Failed to decode NOTICE envelope\n");
+            if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Failed to decode NOTICE envelope\n");
             break;
         }
         NostrNoticeEnvelope *env = (NostrNoticeEnvelope *)envelope;
@@ -363,7 +363,7 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
     }
     case NOSTR_ENVELOPE_EOSE: {
         if (json_array_size(json_obj) < 2) {
-            fprintf(stderr, "Failed to decode EOSE envelope\n");
+            if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Failed to decode EOSE envelope\n");
             break;
         }
         NostrEOSEEnvelope *env = (NostrEOSEEnvelope *)envelope;
@@ -374,7 +374,7 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
     }
     case NOSTR_ENVELOPE_CLOSE: {
         if (json_array_size(json_obj) < 2) {
-            fprintf(stderr, "Failed to decode CLOSE envelope\n");
+            if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Failed to decode CLOSE envelope\n");
             break;
         }
         NostrCloseEnvelope *env = (NostrCloseEnvelope *)envelope;
@@ -385,7 +385,7 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
     }
     case NOSTR_ENVELOPE_CLOSED: {
         if (json_array_size(json_obj) < 3) {
-            fprintf(stderr, "Failed to decode CLOSED envelope\n");
+            if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Failed to decode CLOSED envelope\n");
             break;
         }
         NostrClosedEnvelope *env = (NostrClosedEnvelope *)envelope;
@@ -398,7 +398,7 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
     }
     case NOSTR_ENVELOPE_OK: {
         if (json_array_size(json_obj) < 3) {
-            fprintf(stderr, "Failed to decode OK envelope\n");
+            if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Failed to decode OK envelope\n");
             break;
         }
         NostrOKEnvelope *env = (NostrOKEnvelope *)envelope;
@@ -415,7 +415,7 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
     }
     case NOSTR_ENVELOPE_AUTH: {
         if (json_array_size(json_obj) < 2) {
-            fprintf(stderr, "Failed to decode AUTH envelope\n");
+            if (getenv("NOSTR_DEBUG")) fprintf(stderr, "Failed to decode AUTH envelope\n");
             break;
         }
         NostrAuthEnvelope *env = (NostrAuthEnvelope *)envelope;

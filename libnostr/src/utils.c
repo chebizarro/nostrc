@@ -173,60 +173,52 @@ bool nostr_similar(const int *as, size_t as_len, const int *bs, size_t bs_len) {
 }
 
 
-// Function to escape a string for JSON encoding
+// Function to escape a string for JSON encoding (without surrounding quotes)
 char *nostr_escape_string(const char *s) {
+    if (!s) return strdup("");
     size_t len = strlen(s);
-    size_t escaped_len = len * 2 + 2; // rough estimate
-    char *escaped = (char *)malloc(escaped_len);
-    if (!escaped) {
-        return NULL;
-    }
+    // Rough estimate: worst case every char needs escaping (e.g., \u00XX) => up to 6x
+    size_t cap = len * 6 + 1;
+    char *escaped = (char *)malloc(cap);
+    if (!escaped) return NULL;
 
     char *dst = escaped;
-    *dst++ = '"';
     for (size_t i = 0; i < len; i++) {
-        char c = s[i];
+        unsigned char c = (unsigned char)s[i];
         switch (c) {
         case '"':
-            *dst++ = '\\';
-            *dst++ = '"';
+            *dst++ = '\\'; *dst++ = '"';
             break;
         case '\\':
-            *dst++ = '\\';
-            *dst++ = '\\';
+            *dst++ = '\\'; *dst++ = '\\';
             break;
         case '\b':
-            *dst++ = '\\';
-            *dst++ = 'b';
+            *dst++ = '\\'; *dst++ = 'b';
             break;
         case '\t':
-            *dst++ = '\\';
-            *dst++ = 't';
+            *dst++ = '\\'; *dst++ = 't';
             break;
         case '\n':
-            *dst++ = '\\';
-            *dst++ = 'n';
+            *dst++ = '\\'; *dst++ = 'n';
             break;
         case '\f':
-            *dst++ = '\\';
-            *dst++ = 'f';
+            *dst++ = '\\'; *dst++ = 'f';
             break;
         case '\r':
-            *dst++ = '\\';
-            *dst++ = 'r';
+            *dst++ = '\\'; *dst++ = 'r';
             break;
         default:
             if (iscntrl(c)) {
-                dst += sprintf(dst, "\\u%04x", c);
+                // ensure capacity (up to 6 bytes: \uXXXX)
+                int n = sprintf(dst, "\\u%04x", c);
+                dst += n;
             } else {
-                *dst++ = c;
+                *dst++ = (char)c;
             }
             break;
         }
     }
-    *dst++ = '"';
     *dst = '\0';
-
     return escaped;
 }
 

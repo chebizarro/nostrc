@@ -1,4 +1,5 @@
 #include "nostr-event.h"
+#include "json.h"
 #include "nostr-tag.h"
 #include "nostr-utils.h"
 #include <openssl/rand.h>
@@ -201,6 +202,8 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json) {
 
     while (1) {
         p = skip_ws_local(p);
+        /* Allow and skip commas between members */
+        if (*p == ',') { ++p; continue; }
         if (*p == '}') { ++p; break; }
         // Dispatch by key (in-place match, no allocation for known keys)
         if (match_key_advance(&p, "kind")) {
@@ -377,90 +380,16 @@ NostrEvent *nostr_event_copy(const NostrEvent *src) {
     return e;
 }
 
-static char *nostr_event_serialize(NostrEvent *event) {
-    if (!event || !event->pubkey || !event->content)
-        return NULL;
-
-    // Initial capacity for the serialized string
-    size_t capacity = 1024;
-    char *result = malloc(capacity);
-    if (!result)
-        return NULL;
-
-    // Create the header part: [0,"PubKey",CreatedAt,Kind,
-    size_t needed = snprintf(
-        result, capacity,
-        "[0,\"%s\",%lld,%d,",
-        event->pubkey, (long long)event->created_at, event->kind);
-    if (needed >= capacity) {
-        capacity = needed + 1;
-        char *temp = realloc(result, capacity);
-        if (!temp) {
-            free(result);
-            return NULL;
-        }
-        result = temp;
-        snprintf(result, capacity, "[0,\"%s\",%lld,%d,", event->pubkey, (long long)event->created_at, event->kind);
-    }
-
-    // Serialize tags
-    char *tags_json = nostr_tags_to_json(event->tags);
-    if (!tags_json) {
-        free(result);
-        return NULL;
-    }
-
-    // Reallocate buffer for tags
-    needed = strlen(result) + strlen(tags_json) + 2;
-    if (needed > capacity) {
-        capacity = needed;
-        char *temp = realloc(result, capacity);
-        if (!temp) {
-            free(result);
-            return NULL;
-        }
-        result = temp;
-    }
-    strcat(result, tags_json); // Append the serialized tags
-    strcat(result, ",");
-
-    // Free the tags JSON string after use
-    free(tags_json);
-
-    // Escape and append content
-    char *escaped_content = nostr_escape_string(event->content);
-    if (!escaped_content) {
-        free(result);
-        return NULL;
-    }
-
-    // Reallocate buffer for content
-    needed = strlen(result) + strlen(escaped_content) + 2;
-    if (needed > capacity) {
-        capacity = needed;
-        char *temp = realloc(result, capacity);
-        if (!temp) {
-            free(result);
-            return NULL;
-        }
-        result = temp;
-    }
-    strcat(result, "\"");
-    strcat(result, escaped_content); // Append escaped content
-    strcat(result, "\"]");           // Close the JSON array
-
-    // Free the escaped content string
-    free(escaped_content);
-
-    return result; // Return the final serialized JSON string
-}
+/* Legacy array serializer removed: rely on compact/public JSON serializers */
 
 char *nostr_event_get_id(NostrEvent *event) {
     if (!event)
         return NULL;
 
     // Serialize the event
-    char *serialized = nostr_event_serialize(event);
+    char *serialized = nostr_event_serialize_compact(event);
+    if (!serialized)
+        serialized = nostr_event_serialize(event); /* public API fallback */
     if (!serialized)
         return NULL;
 
@@ -519,7 +448,8 @@ bool nostr_event_check_signature(NostrEvent *event) {
         }
     }
     if (!have_hash) {
-        char *serialized = nostr_event_serialize(event);
+        char *serialized = nostr_event_serialize_compact(event);
+        if (!serialized) serialized = nostr_event_serialize(event); /* public API fallback */
         if (!serialized) {
             fprintf(stderr, "Failed to serialize event\n");
             secp256k1_context_destroy(ctx);
@@ -551,7 +481,8 @@ int nostr_event_sign(NostrEvent *event, const char *private_key) {
         return -1;
 
     unsigned char hash[32]; // Schnorr requires a 32-byte hash
-    char *serialized = nostr_event_serialize(event);
+    char *serialized = nostr_event_serialize_compact(event);
+    if (!serialized) serialized = nostr_event_serialize(event); /* public API fallback */
     if (!serialized)
         return -1;
 

@@ -16,18 +16,46 @@ NostrEnvelope *create_envelope(NostrEnvelopeType type) {
 /* === Compact fast-path serializer === */
 static char *json_escape_string_min(const char *s) {
     if (!s) return NULL;
-    size_t extra = 0;
+    // First pass: compute required size with escaping
+    size_t needed = 2; // quotes
     for (const char *p = s; *p; ++p) {
-        if (*p == '"' || *p == '\\') extra++;
+        unsigned char c = (unsigned char)*p;
+        switch (c) {
+        case '"': case '\\': case '\b': case '\f': case '\n': case '\r': case '\t':
+            needed += 2; // \x
+            break;
+        default:
+            if (c < 0x20) {
+                needed += 6; // \u00XX
+            } else {
+                needed += 1;
+            }
+        }
     }
-    size_t len = strlen(s);
-    char *out = (char *)malloc(len + extra + 3); // quotes + null
+    char *out = (char *)malloc(needed + 1);
     if (!out) return NULL;
     char *w = out;
     *w++ = '"';
     for (const char *p = s; *p; ++p) {
-        if (*p == '"' || *p == '\\') *w++ = '\\';
-        *w++ = *p;
+        unsigned char c = (unsigned char)*p;
+        switch (c) {
+        case '"': *w++ = '\\'; *w++ = '"'; break;
+        case '\\': *w++ = '\\'; *w++ = '\\'; break;
+        case '\b': *w++ = '\\'; *w++ = 'b'; break;
+        case '\f': *w++ = '\\'; *w++ = 'f'; break;
+        case '\n': *w++ = '\\'; *w++ = 'n'; break;
+        case '\r': *w++ = '\\'; *w++ = 'r'; break;
+        case '\t': *w++ = '\\'; *w++ = 't'; break;
+        default:
+            if (c < 0x20) {
+                static const char hex[] = "0123456789abcdef";
+                *w++ = '\\'; *w++ = 'u'; *w++ = '0'; *w++ = '0';
+                *w++ = hex[(c >> 4) & 0xF];
+                *w++ = hex[c & 0xF];
+            } else {
+                *w++ = (char)c;
+            }
+        }
     }
     *w++ = '"';
     *w = '\0';
@@ -235,16 +263,27 @@ static char *parse_json_string(const char **pp);
 static const char *parse_comma(const char *p);
 static char *parse_json_object(const char **pp);
 
+static int debug_enabled(void) {
+    const char *e = getenv("NOSTR_DEBUG");
+    return e && *e && strcmp(e, "0") != 0;
+}
+
 /* === Compact fast-path deserializer === */
 int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
     if (!base || !json) return 0;
+    if (debug_enabled()) {
+        fprintf(stderr, "[compact] parse envelope: %s\n", json);
+    }
     const char *p = skip_ws(json);
     if (*p != '[') return 0; ++p; // skip [
     // first: label
     char *label = parse_json_string(&p);
-    if (!label) return 0;
+    if (!label) {
+        if (debug_enabled()) fprintf(stderr, "[compact] failed to parse label string at: %.32s\n", p);
+        return 0;
+    }
     const char *q = parse_comma(p);
-    if (!q) { free(label); return 0; }
+    if (!q) { if (debug_enabled()) fprintf(stderr, "[compact] missing comma after label '%s' at: %.32s\n", label, p); free(label); return 0; }
     p = q; p = skip_ws(p);
 
     int ok = 0;
@@ -264,7 +303,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
         NostrEvent *ev = nostr_event_new();
         int succ = nostr_event_deserialize(ev, event_json);
         free(event_json);
-        if (!succ) { nostr_event_free(ev); break; }
+        if (succ != 0) { nostr_event_free(ev); break; }
         env->event = ev;
         ok = 1;
         break;
@@ -313,15 +352,32 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
             const char *savep = p;
             char *obj = parse_json_object(&p);
             if (!obj) break;
-            // Detect count object
-            if (strstr(obj, "\"count\"")) {
-                // naive extract: find first digit after ':'
-                const char *cpos = strchr(obj, ':');
-                if (cpos) {
-                    while (*++cpos == ' ' || *cpos == '\t') {}
-                    env->count = atoi(cpos);
+            // Detect count object strictly: first key must be "count" and value a number
+            const char *op = obj;
+            op = skip_ws(op);
+            if (*op == '{') op++;
+            op = skip_ws(op);
+            int is_count_obj = 0;
+            if (*op == '"') {
+                // parse key string
+                op++;
+                const char *ks = op;
+                while (*op && *op != '"') {
+                    if (*op == '\\' && *(op+1)) op += 2; else op++;
                 }
-            } else {
+                size_t klen = (size_t)(op - ks);
+                if (*op == '"') op++;
+                op = skip_ws(op);
+                if (*op == ':') { op++; op = skip_ws(op); }
+                if (klen == 5 && strncmp(ks, "count", 5) == 0) {
+                    // number may be negative, but count should be >=0; parse int
+                    int sign = 1; if (*op == '+') { op++; } else if (*op == '-') { sign = -1; op++; }
+                    long val = 0; int any = 0;
+                    while (*op >= '0' && *op <= '9') { val = val * 10 + (*op - '0'); op++; any = 1; }
+                    if (any) { env->count = (int)(sign * val); is_count_obj = 1; }
+                }
+            }
+            if (!is_count_obj) {
                 // treat as filter
                 NostrFilter f = {0};
                 if (nostr_filter_deserialize_compact(&f, obj)) {
@@ -390,7 +446,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
             NostrEvent *ev = nostr_event_new();
             int succ = nostr_event_deserialize(ev, ej);
             free(ej);
-            if (!succ) { nostr_event_free(ev); break; }
+            if (succ != 0) { nostr_event_free(ev); break; }
             env->event = ev;
             ok = 1;
         } else if (*p == '"') {
@@ -406,7 +462,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
                         NostrEvent *ev = nostr_event_new();
                         int succ = nostr_event_deserialize(ev, ej);
                         free(ej);
-                        if (succ) env->event = ev; else nostr_event_free(ev);
+                        if (succ == 0) env->event = ev; else nostr_event_free(ev);
                     }
                 }
             }
@@ -414,30 +470,16 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
         }
         break;
     }
-    case NOSTR_ENVELOPE_REQ: {
-        // Let backend handle (filters expected). Return 0 to force fallback.
-        break;
-    }
-    case NOSTR_ENVELOPE_COUNT: {
-        if (strcmp(label, "COUNT") != 0) break;
-        NostrCountEnvelope *env = (NostrCountEnvelope *)base;
-        env->subscription_id = parse_json_string(&p);
-        if (!env->subscription_id) break;
-        // optional number after comma; skip objects if present
-        q = parse_comma(p);
-        if (q) {
-            p = skip_ws(q);
-            if (*p >= '0' && *p <= '9') {
-                env->count = atoi(p);
-            }
-        }
-        ok = 1; // filters left to backend in higher-level flows if needed
-        break;
-    }
     default:
+        if (debug_enabled()) fprintf(stderr, "[compact] unsupported type %d for label '%s'\n", base->type, label);
         break;
     }
 
+    if (!ok && debug_enabled()) {
+        // Try to show where we are
+        const char *tail = skip_ws(p);
+        fprintf(stderr, "[compact] parse failed for type %d after label '%s' near: %.64s\n", base->type, label, tail);
+    }
     free(label);
     return ok;
 }
@@ -448,21 +490,84 @@ static const char *skip_ws(const char *p) {
     return p;
 }
 
+// Encode a Unicode code point as UTF-8 into out, return bytes written (1-4)
+static int utf8_encode(uint32_t cp, char *out) {
+    if (cp <= 0x7F) { out[0] = (char)cp; return 1; }
+    if (cp <= 0x7FF) { out[0] = (char)(0xC0 | (cp >> 6)); out[1] = (char)(0x80 | (cp & 0x3F)); return 2; }
+    if (cp <= 0xFFFF) { out[0] = (char)(0xE0 | (cp >> 12)); out[1] = (char)(0x80 | ((cp >> 6) & 0x3F)); out[2] = (char)(0x80 | (cp & 0x3F)); return 3; }
+    out[0] = (char)(0xF0 | (cp >> 18)); out[1] = (char)(0x80 | ((cp >> 12) & 0x3F)); out[2] = (char)(0x80 | ((cp >> 6) & 0x3F)); out[3] = (char)(0x80 | (cp & 0x3F)); return 4;
+}
+
+static int hexval(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+    return -1;
+}
+
 static char *parse_json_string(const char **pp) {
     const char *p = skip_ws(*pp);
     if (*p != '"') return NULL;
-    ++p; // skip opening quote
-    const char *start = p;
-    // naive: assumes no escaped quotes; sufficient for protocol labels/ids
-    while (*p && *p != '"') ++p;
-    if (*p != '"') return NULL;
-    size_t len = (size_t)(p - start);
-    char *s = (char *)malloc(len + 1);
-    if (!s) return NULL;
-    memcpy(s, start, len);
-    s[len] = '\0';
-    *pp = p + 1; // skip closing quote
-    return s;
+    ++p; // after opening quote
+    // Allocate a buffer pessimistically equal to remaining input segment length
+    size_t cap = 64; size_t len = 0;
+    char *buf = (char *)malloc(cap);
+    if (!buf) return NULL;
+    while (*p) {
+        char c = *p++;
+        if (c == '"') { // end of string
+            break;
+        } else if (c == '\\') { // escape sequence
+            char e = *p++;
+            char outc;
+            switch (e) {
+            case '"': outc = '"'; goto emit_one;
+            case '\\': outc = '\\'; goto emit_one;
+            case '/': outc = '/'; goto emit_one;
+            case 'b': outc = '\b'; goto emit_one;
+            case 'f': outc = '\f'; goto emit_one;
+            case 'n': outc = '\n'; goto emit_one;
+            case 'r': outc = '\r'; goto emit_one;
+            case 't': outc = '\t'; goto emit_one;
+            case 'u': {
+                // parse 4 hex digits
+                int h1 = hexval(p[0]); int h2 = hexval(p[1]); int h3 = hexval(p[2]); int h4 = hexval(p[3]);
+                if (h1 < 0 || h2 < 0 || h3 < 0 || h4 < 0) { free(buf); return NULL; }
+                uint32_t cp = (uint32_t)((h1<<12) | (h2<<8) | (h3<<4) | h4);
+                p += 4;
+                // Handle UTF-16 surrogate pairs \uD800-\uDBFF followed by \uDC00-\uDFFF
+                if (cp >= 0xD800 && cp <= 0xDBFF && p[0] == '\\' && p[1] == 'u') {
+                    int h5 = hexval(p[2]); int h6 = hexval(p[3]); int h7 = hexval(p[4]); int h8 = hexval(p[5]);
+                    if (h5 >= 0 && h6 >= 0 && h7 >= 0 && h8 >= 0) {
+                        uint32_t low = (uint32_t)((h5<<12) | (h6<<8) | (h7<<4) | h8);
+                        if (low >= 0xDC00 && low <= 0xDFFF) {
+                            p += 6;
+                            cp = 0x10000 + (((cp - 0xD800) << 10) | (low - 0xDC00));
+                        }
+                    }
+                }
+                char tmp[4];
+                int n = utf8_encode(cp, tmp);
+                if (len + (size_t)n >= cap) { cap *= 2; char *nb = (char *)realloc(buf, cap); if (!nb) { free(buf); return NULL; } buf = nb; }
+                for (int i=0;i<n;i++) buf[len++] = tmp[i];
+                continue;
+            }
+            default:
+                free(buf); return NULL;
+            }
+emit_one:
+            if (len + 1 >= cap) { cap *= 2; char *nb = (char *)realloc(buf, cap); if (!nb) { free(buf); return NULL; } buf = nb; }
+            buf[len++] = outc;
+        } else {
+            if (len + 1 >= cap) { cap *= 2; char *nb = (char *)realloc(buf, cap); if (!nb) { free(buf); return NULL; } buf = nb; }
+            buf[len++] = c;
+        }
+    }
+    // Null-terminate
+    if (len + 1 >= cap) { char *nb = (char *)realloc(buf, len + 1); if (!nb) { free(buf); return NULL; } buf = nb; }
+    buf[len] = '\0';
+    *pp = p; // already after closing quote
+    return buf;
 }
 
 static const char *parse_comma(const char *p) {
@@ -515,148 +620,43 @@ NostrEnvelope *nostr_envelope_parse(const char *message) {
     const char *p = skip_ws(message);
     if (*p != '[') return NULL;
     ++p; // skip [
-    // First element: label string
+    // Peek label to decide which envelope to allocate
     char *label = parse_json_string(&p);
     if (!label) return NULL;
-    // Next must be comma
-    const char *q = parse_comma(p);
-    if (!q) { free(label); return NULL; }
-    p = q;
-
-    NostrEnvelope *envelope = NULL;
+    NostrEnvelope *env = NULL;
     if (strcmp(label, "EVENT") == 0) {
-        NostrEventEnvelope *env = (NostrEventEnvelope *)malloc(sizeof(NostrEventEnvelope));
-        if (!env) { free(label); return NULL; }
-        env->base.type = NOSTR_ENVELOPE_EVENT;
-        // Second element: subscription id
-        char *sid = parse_json_string(&p);
-        if (!sid) { free(env); free(label); return NULL; }
-        env->subscription_id = sid;
-        // Comma then event object starts; capture the balanced object
-        q = parse_comma(p);
-        if (!q) { free(env->subscription_id); free(env); free(label); return NULL; }
-        p = skip_ws(q);
-        char *event_json = parse_json_object(&p);
-        if (!event_json) { free(env->subscription_id); free(env); free(label); return NULL; }
-        // hand exact object JSON to event deserializer
-        NostrEvent *event = nostr_event_new();
-        int ok = nostr_event_deserialize(event, event_json);
-        if (!ok) {
-            nostr_event_free(event);
-            free(event_json);
-            free(env->subscription_id);
-            free(env);
-            free(label);
-            return NULL;
-        }
-        free(event_json);
-        env->event = event;
-        envelope = (NostrEnvelope *)env;
-    } else if (strcmp(label, "EOSE") == 0) {
-        NostrEOSEEnvelope *env = (NostrEOSEEnvelope *)malloc(sizeof(NostrEOSEEnvelope));
-        if (!env) { free(label); return NULL; }
-        env->base.type = NOSTR_ENVELOPE_EOSE;
-        // Second element: subscription id (string) is required
-        char *sid = parse_json_string(&p);
-        if (!sid) { free(env); free(label); return NULL; }
-        // We don't currently use it; store in message for debugging
-        env->message = sid;
-        envelope = (NostrEnvelope *)env;
-    } else if (strcmp(label, "NOTICE") == 0) {
-        NostrNoticeEnvelope *env = (NostrNoticeEnvelope *)malloc(sizeof(NostrNoticeEnvelope));
-        if (!env) { free(label); return NULL; }
-        env->base.type = NOSTR_ENVELOPE_NOTICE;
-        char *msg = parse_json_string(&p);
-        env->message = msg;
-        envelope = (NostrEnvelope *)env;
-    } else if (strcmp(label, "CLOSED") == 0) {
-        NostrClosedEnvelope *env = (NostrClosedEnvelope *)malloc(sizeof(NostrClosedEnvelope));
-        if (!env) { free(label); return NULL; }
-        env->base.type = NOSTR_ENVELOPE_CLOSED;
-        // sub id
-        char *sid = parse_json_string(&p);
-        if (!sid) { free(env); free(label); return NULL; }
-        env->subscription_id = sid;
-        q = parse_comma(p);
-        if (!q) { free(env->subscription_id); free(env); free(label); return NULL; }
-        p = q;
-        char *reason = parse_json_string(&p);
-        if (!reason) { free(env->subscription_id); free(env); free(label); return NULL; }
-        env->reason = reason;
-        envelope = (NostrEnvelope *)env;
+        env = (NostrEnvelope *)malloc(sizeof(NostrEventEnvelope));
+        if (env) env->type = NOSTR_ENVELOPE_EVENT;
     } else if (strcmp(label, "OK") == 0) {
-        NostrOKEnvelope *env = (NostrOKEnvelope *)malloc(sizeof(NostrOKEnvelope));
-        if (!env) { free(label); return NULL; }
-        env->base.type = NOSTR_ENVELOPE_OK;
-        // event id
-        char *eid = parse_json_string(&p);
-        env->event_id = eid;
-        q = parse_comma(p);
-        if (!q) { envelope = (NostrEnvelope *)env; goto done; }
-        p = skip_ws(q);
-        // parse boolean ok (true/false)
-        if (strncmp(p, "true", 4) == 0) { env->ok = true; p += 4; }
-        else if (strncmp(p, "false", 5) == 0) { env->ok = false; p += 5; }
-        else { free(env->event_id); free(env); free(label); return NULL; }
-        q = parse_comma(p);
-        if (q) {
-            p = q;
-            char *rsn = parse_json_string(&p);
-            if (!rsn) { free(env->event_id); free(env); free(label); return NULL; }
-            env->reason = rsn;
-        }
-        envelope = (NostrEnvelope *)env;
-    } else if (strcmp(label, "COUNT") == 0) {
-        NostrCountEnvelope *env = (NostrCountEnvelope *)malloc(sizeof(NostrCountEnvelope));
-        if (!env) { free(label); return NULL; }
-        env->base.type = NOSTR_ENVELOPE_COUNT;
-        // sub id
-        char *sid = parse_json_string(&p);
-        env->subscription_id = sid;
-        // count may be a number or object; we only look for number
-        q = parse_comma(p);
-        if (!q) { envelope = (NostrEnvelope *)env; goto done; }
-        p = skip_ws(q);
-        if (*p >= '0' && *p <= '9') {
-            env->count = atoi(p);
-        }
-        envelope = (NostrEnvelope *)env;
+        env = (NostrEnvelope *)malloc(sizeof(NostrOKEnvelope));
+        if (env) env->type = NOSTR_ENVELOPE_OK;
+    } else if (strcmp(label, "NOTICE") == 0) {
+        env = (NostrEnvelope *)malloc(sizeof(NostrNoticeEnvelope));
+        if (env) env->type = NOSTR_ENVELOPE_NOTICE;
+    } else if (strcmp(label, "EOSE") == 0) {
+        env = (NostrEnvelope *)malloc(sizeof(NostrEOSEEnvelope));
+        if (env) env->type = NOSTR_ENVELOPE_EOSE;
+    } else if (strcmp(label, "CLOSED") == 0) {
+        env = (NostrEnvelope *)malloc(sizeof(NostrClosedEnvelope));
+        if (env) env->type = NOSTR_ENVELOPE_CLOSED;
     } else if (strcmp(label, "AUTH") == 0) {
-        NostrAuthEnvelope *env = (NostrAuthEnvelope *)malloc(sizeof(NostrAuthEnvelope));
-        if (!env) { free(label); return NULL; }
-        env->base.type = NOSTR_ENVELOPE_AUTH;
-        char *challenge = parse_json_string(&p);
-        env->challenge = challenge;
-        // optional embedded event after comma
-        const char *comma = parse_comma(p);
-        if (comma) {
-            p = skip_ws(comma);
-            if (*p == '{') {
-                char *ej = parse_json_object(&p);
-                if (ej) {
-                    NostrEvent *ev = nostr_event_new();
-                    int ok = nostr_event_deserialize(ev, ej);
-                    if (ok) {
-                        env->event = ev;
-                    } else {
-                        nostr_event_free(ev);
-                    }
-                    free(ej);
-                }
-            }
-        }
-        envelope = (NostrEnvelope *)env;
+        env = (NostrEnvelope *)malloc(sizeof(NostrAuthEnvelope));
+        if (env) env->type = NOSTR_ENVELOPE_AUTH;
     } else if (strcmp(label, "REQ") == 0) {
-        NostrReqEnvelope *env = (NostrReqEnvelope *)malloc(sizeof(NostrReqEnvelope));
-        if (!env) { free(label); return NULL; }
-        env->base.type = NOSTR_ENVELOPE_REQ;
-        env->subscription_id = parse_json_string(&p);
-        envelope = (NostrEnvelope *)env;
+        env = (NostrEnvelope *)malloc(sizeof(NostrReqEnvelope));
+        if (env) env->type = NOSTR_ENVELOPE_REQ;
+    } else if (strcmp(label, "COUNT") == 0) {
+        env = (NostrEnvelope *)malloc(sizeof(NostrCountEnvelope));
+        if (env) env->type = NOSTR_ENVELOPE_COUNT;
     }
-
-done:
     free(label);
-    return envelope;
+    if (!env) return NULL;
+    // Delegate parsing to unified deserializer (compact fast-path + backend fallback)
+    if (nostr_envelope_deserialize(env, message) != 0) {
+        nostr_envelope_free(env);
+        return NULL;
+    }
+    return env;
 }
 
 // Function to free an Envelope struct
@@ -712,7 +712,7 @@ int event_envelope_unmarshal_json(NostrEventEnvelope *envelope, const char *json
     // Parse the JSON to check the number of elements in the array
     NostrEvent *event = nostr_event_new();
     int err = nostr_event_deserialize(event, json_data);
-    if (!err)
+    if (err != 0)
         return -1;
 
     envelope->event = event;

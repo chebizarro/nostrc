@@ -57,7 +57,7 @@ int nostr_event_deserialize(NostrEvent *event, const char *json_str) {
         event->tags = shadow.tags; shadow.tags = NULL;
         event->content = shadow.content; shadow.content = NULL;
         event->sig = shadow.sig; shadow.sig = NULL;
-        return 1;
+        return 0;
     } else {
         // Clean any partial allocations in shadow before falling back
         if (getenv("NOSTR_DEBUG")) fprintf(stderr, "nostr_event_deserialize: compact failed, falling back\n");

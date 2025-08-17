@@ -335,8 +335,14 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
     /* 1) Decrypt NIP-04 */
     char *plain = NULL; char *err = NULL;
     if (nostr_nip04_decrypt(ciphertext, client_pubkey_hex, s->secret, &plain, &err) != 0 || !plain) {
+        if (getenv("NOSTR_DEBUG")) {
+            fprintf(stderr, "[nip46] decrypt failed: %s\n", err ? err : "(no error)" );
+        }
         if (err) free(err);
         return -1;
+    }
+    if (getenv("NOSTR_DEBUG")) {
+        fprintf(stderr, "[nip46] decrypted request: %s\n", plain);
     }
 
     /* 2) Parse request */
@@ -345,6 +351,9 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
         free(plain);
         nostr_nip46_request_free(&req);
         return -1;
+    }
+    if (getenv("NOSTR_DEBUG")) {
+        fprintf(stderr, "[nip46] parsed method: %s, n_params=%zu\n", req.method, req.n_params);
     }
 
     /* 3) Dispatch */
@@ -366,6 +375,9 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
             reply_json = nostr_nip46_response_build_err(req.id, "forbidden");
         } else {
         if (req.n_params < 1 || !req.params || !req.params[0]) { nostr_nip46_request_free(&req); free(plain); return -1; }
+        if (getenv("NOSTR_DEBUG")) {
+            fprintf(stderr, "[nip46] sign_event: incoming event JSON param: %s\n", req.params[0]);
+        }
         if (s->cbs.sign_cb) {
             char *signed_event_json = s->cbs.sign_cb(req.params[0], s->cbs.user_data);
             if (!signed_event_json) {
@@ -399,6 +411,9 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
                     if (!signed_json) {
                         reply_json = nostr_nip46_response_build_err(req.id, "serialize_failed");
                     } else {
+                        if (getenv("NOSTR_DEBUG")) {
+                            fprintf(stderr, "[nip46] sign_event: serialized signed event JSON: %s\n", signed_json);
+                        }
                         reply_json = nostr_nip46_response_build_ok(req.id, signed_json);
                         free(signed_json);
                     }
@@ -433,6 +448,9 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
     if (s->last_reply_json) { free(s->last_reply_json); s->last_reply_json=NULL; }
     if (reply_json) {
         s->last_reply_json = strdup(reply_json);
+        if (getenv("NOSTR_DEBUG")) {
+            fprintf(stderr, "[nip46] reply (plaintext): %s\n", reply_json);
+        }
     }
 
     /* 4) Encrypt reply */
@@ -441,6 +459,9 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
     if (reply_json && nostr_nip04_encrypt(reply_json, client_pubkey_hex, s->secret, &cipher, &e2) == 0 && cipher) {
         *out_cipher_reply = cipher;
         rc = 0;
+    }
+    if (rc != 0 && getenv("NOSTR_DEBUG")) {
+        fprintf(stderr, "[nip46] encrypt failed: %s\n", e2 ? e2 : "(no error)" );
     }
     if (e2) free(e2);
 

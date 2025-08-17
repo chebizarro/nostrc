@@ -291,7 +291,6 @@ static void *message_loop(void *arg) {
     char buf[4096];
     Error *err = NULL;
     for (;;) {
-        memset(buf, 0, sizeof(buf));
         nsync_mu_lock(&r->priv->mutex);
         NostrConnection *conn = r->connection;
         nsync_mu_unlock(&r->priv->mutex);
@@ -318,7 +317,7 @@ static void *message_loop(void *arg) {
         const char *dbg_in_env = getenv("NOSTR_DEBUG_INCOMING");
         if (dbg_in_env && *dbg_in_env && strcmp(dbg_in_env, "0") != 0) {
             // Limit to a sane number of bytes to avoid flooding
-            size_t blen = strlen(buf);
+            size_t blen = blen_for_metrics;
             size_t show = blen < 512 ? blen : 512;
             fprintf(stderr, "[incoming] %.*s%s\n",
                     (int)show, buf,

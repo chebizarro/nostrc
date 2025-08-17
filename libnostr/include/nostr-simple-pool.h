@@ -38,6 +38,16 @@ typedef struct _NostrSimplePool {
     bool (*signature_checker)(NostrEvent);
     bool running;
     pthread_t thread;
+    /* Subscriptions and runtime state */
+    struct NostrSubscription **subs;
+    size_t subs_count;
+    NostrFilters *filters_shared; /* shared among current subs; owned */
+    /* De-duplication (when enabled via API param) */
+    bool dedup_unique;
+    size_t dedup_cap;      /* max remembered IDs */
+    char **dedup_ring;     /* circular buffer of last IDs */
+    size_t dedup_len;
+    size_t dedup_head;
 } NostrSimplePool;
 
 typedef struct _NostrDirectedFilters {
