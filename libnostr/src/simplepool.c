@@ -25,7 +25,7 @@ NostrSimplePool *nostr_simple_pool_new(void) {
     pool->subs = NULL;
     pool->subs_count = 0;
     pool->dedup_unique = false;
-    pool->dedup_cap = 4096; /* lightweight default */
+    pool->dedup_cap = 65536; /* align with GObject reference scale */
     pool->dedup_ring = NULL;
     pool->dedup_len = 0;
     pool->dedup_head = 0;
@@ -142,35 +142,105 @@ static int pool_seen(NostrSimplePool *pool, const char *id) {
 void *simple_pool_thread_func(void *arg) {
     NostrSimplePool *pool = (NostrSimplePool *)arg;
 
+    // Adaptive backoff between 2ms and 50ms
+    unsigned backoff_us = 2000;
+    const unsigned backoff_min = 2000;
+    const unsigned backoff_max = 50000;
+    size_t rr_start = 0; // round-robin start index for fairness
+
     while (pool->running) {
-        // Pull a small batch from each subscription non-blocking
-        for (size_t i = 0; i < pool->subs_count; i++) {
-            NostrSubscription *sub = pool->subs[i];
-            if (!sub) continue;
-            GoChannel *ch = nostr_subscription_get_events_channel(sub);
-            if (!ch) continue;
-            void *msg = NULL;
-            int spins = 0;
-            while (go_channel_try_receive(ch, &msg) == 0 && spins++ < 64) {
-                if (!msg) break;
-                NostrEvent *ev = (NostrEvent *)msg;
-                const char *eid = nostr_event_get_id(ev);
-                if (pool_seen(pool, eid)) {
-                    nostr_event_free(ev);
-                } else {
-                    if (pool->event_middleware) {
-                        NostrIncomingEvent incoming = { .event = ev, .relay = nostr_subscription_get_relay(sub) };
-                        pool->event_middleware(&incoming);
-                    } else {
-                        // default: free to avoid leak; real users should set middleware
+        // Snapshot subs under lock to avoid races while iterating
+        pthread_mutex_lock(&pool->pool_mutex);
+        size_t local_count = pool->subs_count;
+        NostrSubscription **local_subs = NULL;
+        if (local_count > 0 && pool->subs) {
+            local_subs = (NostrSubscription **)malloc(local_count * sizeof(NostrSubscription *));
+            if (local_subs) memcpy(local_subs, pool->subs, local_count * sizeof(NostrSubscription *));
+        }
+        pthread_mutex_unlock(&pool->pool_mutex);
+
+        // Batch to deliver to middleware after scan
+        typedef struct { NostrEvent *event; NostrRelay *relay; } BatchItem;
+        BatchItem *batch = NULL; size_t batch_len = 0; size_t batch_cap = 0;
+
+        int did_work = 0; // any events processed or subs pruned
+
+        if (local_subs && local_count > 0) {
+            // Fairness: start at rotating index
+            size_t start = rr_start % local_count;
+            for (size_t ofs = 0; ofs < local_count; ofs++) {
+                size_t i = (start + ofs) % local_count;
+                NostrSubscription *sub = local_subs[i];
+                if (!sub) continue;
+                GoChannel *ch = nostr_subscription_get_events_channel(sub);
+                if (!ch) continue;
+                void *msg = NULL;
+                int spins = 0;
+                while (go_channel_try_receive(ch, &msg) == 0 && spins++ < 32) {
+                    if (!msg) break;
+                    NostrEvent *ev = (NostrEvent *)msg;
+                    const char *eid = nostr_event_get_id(ev);
+                    if (pool_seen(pool, eid)) {
                         nostr_event_free(ev);
+                    } else {
+                        // Add to batch (or free if no middleware)
+                        if (pool->event_middleware) {
+                            if (batch_len == batch_cap) {
+                                size_t new_cap = batch_cap ? batch_cap * 2 : 64;
+                                BatchItem *nb = (BatchItem *)realloc(batch, new_cap * sizeof(BatchItem));
+                                if (!nb) { nostr_event_free(ev); break; }
+                                batch = nb; batch_cap = new_cap;
+                            }
+                            batch[batch_len++] = (BatchItem){ .event = ev, .relay = nostr_subscription_get_relay(sub) };
+                        } else {
+                            // default: free to avoid leak; real users should set middleware
+                            nostr_event_free(ev);
+                        }
+                        did_work = 1;
                     }
+                    msg = NULL;
                 }
-                msg = NULL;
+
+                // Opportunistically prune CLOSED subscriptions (non-blocking)
+                GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
+                void *closed_msg = NULL;
+                if (ch_closed && go_channel_try_receive(ch_closed, &closed_msg) == 0) {
+                    pthread_mutex_lock(&pool->pool_mutex);
+                    for (size_t j = 0; j < pool->subs_count; j++) {
+                        if (pool->subs[j] == sub) {
+                            nostr_subscription_close(sub, NULL);
+                            nostr_subscription_free(sub);
+                            for (size_t k = j + 1; k < pool->subs_count; k++) pool->subs[k - 1] = pool->subs[k];
+                            pool->subs_count--;
+                            if (pool->subs_count == 0) { free(pool->subs); pool->subs = NULL; }
+                            break;
+                        }
+                    }
+                    pthread_mutex_unlock(&pool->pool_mutex);
+                    did_work = 1;
+                }
             }
+            rr_start = (start + 1) % local_count;
         }
 
-        sleep(SEEN_ALREADY_DROP_TICK);
+        // Deliver batch to middleware outside of any locks
+        if (batch_len > 0 && pool->event_middleware) {
+            for (size_t i = 0; i < batch_len; i++) {
+                NostrIncomingEvent incoming = { .event = batch[i].event, .relay = batch[i].relay };
+                pool->event_middleware(&incoming);
+            }
+        }
+        // If no middleware, events were already freed on receipt
+        free(batch);
+        free(local_subs);
+
+        // Adaptive sleep/backoff
+        if (did_work) {
+            backoff_us = backoff_min;
+        } else {
+            backoff_us = (backoff_us < backoff_max) ? (backoff_us * 2) : backoff_max;
+        }
+        usleep(backoff_us);
     }
 
     return NULL;
@@ -184,8 +254,32 @@ void nostr_simple_pool_start(NostrSimplePool *pool) {
 
 // Function to stop the SimplePool
 void nostr_simple_pool_stop(NostrSimplePool *pool) {
+    if (!pool) return;
     pool->running = false;
-    pthread_join(pool->thread, NULL);
+    if (pool->thread) pthread_join(pool->thread, NULL);
+    // On stop: unsubscribe/close/free any active subs and clear list
+    pthread_mutex_lock(&pool->pool_mutex);
+    if (pool->subs) {
+        for (size_t i = 0; i < pool->subs_count; i++) {
+            NostrSubscription *sub = pool->subs[i];
+            if (!sub) continue;
+            nostr_subscription_unsubscribe(sub);
+            nostr_subscription_close(sub, NULL);
+            nostr_subscription_free(sub);
+        }
+        free(pool->subs);
+        pool->subs = NULL;
+        pool->subs_count = 0;
+    }
+    // Optionally disconnect relays on stop when NOSTR_SIMPLE_POOL_DISCONNECT=1
+    const char *disc = getenv("NOSTR_SIMPLE_POOL_DISCONNECT");
+    int do_disc = (disc && *disc && strcmp(disc, "0") != 0) ? 1 : 0;
+    if (do_disc && pool->relays) {
+        for (size_t i = 0; i < pool->relay_count; i++) {
+            if (pool->relays[i]) nostr_relay_disconnect(pool->relays[i]);
+        }
+    }
+    pthread_mutex_unlock(&pool->pool_mutex);
 }
 
 // Function to subscribe to multiple relays
@@ -237,10 +331,100 @@ void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_
 
 // Function to query a single event from multiple relays
 void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilter filter) {
-    for (size_t i = 0; i < url_count; i++) {
-        nostr_simple_pool_ensure_relay(pool, urls[i]);
+    if (!pool || !urls || url_count == 0) return;
+
+    // Feature gate: ONESHOT behavior (block briefly per URL until first event or EOSE), else delegate to subscribe
+    const char *oneshot_env = getenv("NOSTR_SIMPLE_POOL_ONESHOT");
+    int oneshot = (oneshot_env && *oneshot_env && strcmp(oneshot_env, "0") != 0) ? 1 : 0;
+    unsigned timeout_ms = 1000; // default 1s per URL
+    const char *to_env = getenv("NOSTR_SIMPLE_POOL_Q_TIMEOUT_MS");
+    if (to_env && *to_env) { unsigned v = (unsigned)atoi(to_env); if (v > 0) timeout_ms = v; }
+
+    if (!oneshot) {
+        // Ensure relays exist/connected
+        for (size_t i = 0; i < url_count; i++) {
+            if (urls[i] && *urls[i]) nostr_simple_pool_ensure_relay(pool, urls[i]);
+        }
+        // Wrap the single filter into a Filters container and delegate to subscribe with de-dup enabled.
+        NostrFilters one;
+        memset(&one, 0, sizeof(one));
+        one.count = 1;
+        one.filters = (NostrFilter *)calloc(1, sizeof(NostrFilter));
+        if (!one.filters) return;
+        NostrFilter *dup = nostr_filter_copy(&filter);
+        if (dup) { one.filters[0] = *dup; free(dup); } else { memset(&one.filters[0], 0, sizeof(NostrFilter)); }
+        nostr_simple_pool_subscribe(pool, urls, url_count, one, true /* unique/dedup */);
+        free(one.filters);
+        return;
     }
 
-    // Implement query logic here
-    (void)filter;
+    // ONESHOT path: create ephemeral subscriptions, deliver first event via middleware, then close.
+    GoContext *bg = go_context_background();
+    for (size_t i = 0; i < url_count; i++) {
+        const char *url = urls[i];
+        if (!url || !*url) continue;
+        nostr_simple_pool_ensure_relay(pool, url);
+        // Find the relay object
+        NostrRelay *relay = NULL;
+        pthread_mutex_lock(&pool->pool_mutex);
+        for (size_t r = 0; r < pool->relay_count; r++) {
+            if (pool->relays[r] && strcmp(pool->relays[r]->url, url) == 0) { relay = pool->relays[r]; break; }
+        }
+        pthread_mutex_unlock(&pool->pool_mutex);
+        if (!relay) continue;
+
+        // Build a filters object with the single filter
+        NostrFilters *fs = nostr_filters_new();
+        if (!fs) continue;
+        NostrFilter *dup = nostr_filter_copy(&filter);
+        if (dup) { NostrFilter tmp = *dup; free(dup); (void)nostr_filters_add(fs, &tmp); } else { NostrFilter tmp = {0}; (void)nostr_filters_add(fs, &tmp); }
+
+        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, bg, fs);
+        if (!sub) { nostr_filters_free(fs); continue; }
+        Error *err = NULL;
+        if (!nostr_subscription_fire(sub, &err)) {
+            if (err) free_error(err);
+            nostr_subscription_close(sub, NULL);
+            nostr_subscription_free(sub);
+            // fs is owned by sub now if fire succeeded; since it failed, free fs
+            nostr_filters_free(fs);
+            continue;
+        }
+
+        // Wait for first event or EOSE/timeout
+        GoChannel *ch_ev = nostr_subscription_get_events_channel(sub);
+        GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
+        const unsigned step_us = 5 * 1000; // 5ms polling
+        unsigned waited = 0;
+        int done = 0;
+        while (!done && waited < timeout_ms) {
+            void *msg = NULL;
+            if (ch_ev && go_channel_try_receive(ch_ev, &msg) == 0 && msg) {
+                NostrEvent *ev = (NostrEvent *)msg;
+                if (!pool_seen(pool, nostr_event_get_id(ev))) {
+                    if (pool->event_middleware) {
+                        NostrIncomingEvent incoming = { .event = ev, .relay = relay };
+                        pool->event_middleware(&incoming);
+                    } else {
+                        nostr_event_free(ev);
+                    }
+                } else {
+                    nostr_event_free(ev);
+                }
+                done = 1; // first event consumed
+                break;
+            }
+            // Check EOSE: stop if seen
+            if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+                break;
+            }
+            usleep(step_us);
+            waited += (step_us / 1000);
+        }
+
+        // Close/free ephemeral subscription
+        nostr_subscription_close(sub, NULL);
+        nostr_subscription_free(sub);
+        // fs freed by sub free via nostr_subscription_set_filters ownership
+    }
 }
