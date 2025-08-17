@@ -107,11 +107,10 @@ NostrEnvelope *nostr_envelope_parse(const char *message) {
         p = skip_ws(q);
         char *event_json = parse_json_object(&p);
         if (!event_json) { free(env->subscription_id); free(env); free(label); return NULL; }
-        // hand exact object JSON to nostr_event_deserialize
+        // hand exact object JSON to event deserializer
         NostrEvent *event = nostr_event_new();
         int ok = nostr_event_deserialize(event, event_json);
         if (!ok) {
-            // If it failed, free and return NULL
             nostr_event_free(event);
             free(event_json);
             free(env->subscription_id);
@@ -205,7 +204,8 @@ NostrEnvelope *nostr_envelope_parse(const char *message) {
                 char *ej = parse_json_object(&p);
                 if (ej) {
                     NostrEvent *ev = nostr_event_new();
-                    if (nostr_event_deserialize(ev, ej)) {
+                    int ok = nostr_event_deserialize(ev, ej);
+                    if (ok) {
                         env->event = ev;
                     } else {
                         nostr_event_free(ev);

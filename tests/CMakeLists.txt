@@ -83,6 +83,7 @@ add_executable(test_json_filter_fuzzlite test_json_filter_fuzzlite.c)
 add_executable(test_json_int_array test_json_int_array.c)
 add_executable(test_json_raw test_json_raw.c)
 add_executable(test_filters_move_semantics test_filters_move_semantics.c)
+add_executable(microbench_json microbench_json.c)
 
 # Link OpenSSL, libsecp256k1, nsync, and project libraries
 target_link_libraries(test_nostr PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
@@ -106,6 +107,7 @@ target_link_libraries(test_json_filter_fuzzlite PRIVATE libnostr ${NSYNC_LIB} no
 target_link_libraries(test_json_int_array PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_link_libraries(test_json_raw PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_link_libraries(test_filters_move_semantics PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+target_link_libraries(microbench_json PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 
 # Apply sanitizers to tests if enabled
 apply_sanitizers(test_nostr)
@@ -128,6 +130,7 @@ apply_sanitizers(test_json_filter_fuzzlite)
 apply_sanitizers(test_json_int_array)
 apply_sanitizers(test_json_raw)
 apply_sanitizers(test_filters_move_semantics)
+apply_sanitizers(microbench_json)
 
 # Register tests for CTest. Run with: `ctest --output-on-failure`
 add_test(NAME test_nostr COMMAND test_nostr)
@@ -221,6 +224,7 @@ target_include_directories(test_json_filter_fuzzlite PRIVATE ${SECP256K1_INCLUDE
 target_include_directories(test_json_int_array PRIVATE ${SECP256K1_INCLUDE_DIRS})
 target_include_directories(test_json_raw PRIVATE ${SECP256K1_INCLUDE_DIRS})
 target_include_directories(test_filters_move_semantics PRIVATE ${SECP256K1_INCLUDE_DIRS})
+target_include_directories(microbench_json PRIVATE ${SECP256K1_INCLUDE_DIRS})
 
 # Link directories for libsecp256k1
 target_link_directories(test_nostr PRIVATE ${SECP256K1_LIBRARY_DIRS})
@@ -231,6 +235,7 @@ target_link_directories(test_json_filter_fuzzlite PRIVATE ${SECP256K1_LIBRARY_DI
 target_link_directories(test_json_int_array PRIVATE ${SECP256K1_LIBRARY_DIRS})
 target_link_directories(test_json_raw PRIVATE ${SECP256K1_LIBRARY_DIRS})
 target_link_directories(test_filters_move_semantics PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(microbench_json PRIVATE ${SECP256K1_LIBRARY_DIRS})
 target_link_directories(test_json_envelope PRIVATE ${SECP256K1_LIBRARY_DIRS})
 target_link_directories(test_json_event PRIVATE ${SECP256K1_LIBRARY_DIRS})
 target_link_directories(test_json_event_fuzzlite PRIVATE ${SECP256K1_LIBRARY_DIRS})

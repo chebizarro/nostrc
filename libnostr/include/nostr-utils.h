@@ -91,6 +91,15 @@ char *nostr_normalize_ok_message(const char *reason, const char *prefix);
 bool nostr_hex2bin(unsigned char *bin, const char *hex, size_t bin_len);
 
 /**
+ * nostr_bin2hex:
+ * @bin: (transfer none): input bytes
+ * @len: length of @bin
+ *
+ * Returns: (transfer full): newly-allocated lowercase hex string or NULL
+ */
+char *nostr_bin2hex(const unsigned char *bin, size_t len);
+
+/**
  * nostr_sub_id_to_serial:
  * @sub_id: (transfer none)
  *

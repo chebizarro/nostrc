@@ -182,6 +182,17 @@ void nostr_event_set_sig(NostrEvent *event, const char *sig);
 
 /* No further remapping here to prevent recursive macro definitions. */
 
+/* Fast-path JSON serialization for hot paths (avoids backend/jansson).
+ * Returns a newly-allocated compact JSON object string representing the event.
+ * Only includes fields that are set (id, pubkey, created_at, kind, tags, content, sig).
+ */
+char *nostr_event_serialize_compact(const NostrEvent *event);
+
+/* Fast-path JSON deserialization from a compact object string.
+ * Returns 1 on success, 0 on parse error. Populates provided @event.
+ */
+int nostr_event_deserialize_compact(NostrEvent *event, const char *json);
+
 #ifdef __cplusplus
 }
 #endif

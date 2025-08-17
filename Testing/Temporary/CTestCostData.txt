@@ -71,5 +71,85 @@ test_json_filter_tags 1 0.395404
 test_json_filter_robust 1 0.466855
 test_json_filter_fuzzlite 1 0.52052
 gnostr-test-relays 1 0.5206
+test_subscription_blocking_depth 0 0
+test_json_int_array 0 0
+test_json_raw 0 0
+test_filters_move_semantics 0 0
 ---
 GoChannelStressTest
+test_nip49_roundtrip
+GoChannelTest
+GoContextTimeoutTest
+GoContextCancelTest
+test_subscription_backpressure_long
+test_nip05_resolve_json_errors
+test_nip05_resolve_json_names
+test_nip05_resolve_json_relays
+test_nip05_parse
+test_relay_unsubscribe
+test_nip49_vectors
+test_nip19_tlv
+test_nip49_negative
+GoTickerTest
+test_nip19
+test_nip46_bunker_reply
+test_nip46_client_connect_edge
+test_nip46_bunker_sign_event_real
+test_nip46_bunker_connect_auth
+test_nip46_bunker_sign_event_cb
+test_nip46_bunker_roundtrip
+test_nip46_client_api
+test_subscription_lifecycle
+test_nip46_client_connect
+test_nip5f_negative_env
+test_nip5f_loopback
+test_nip49_payload
+test_nip49_spec_source
+test_nip47_nwc_crypto
+test_nip47_nwc_envelope
+test_nip47_nwc_info
+test_nip47_nwc_uri
+test_nip47_nwc_session
+GoChannelCloseTest
+test_nip47_spec_source
+test_subscription_backpressure
+test_nip44_roundtrip
+test_nip44_convkey
+test_nip46_bunker_sign_event_acl_deny
+GoWaitGroupTest
+test_connection_shutdown_order
+GoSelectTest
+test_relay_shutdown
+test_nip46_bunker_uri_issue
+test_roundtrip
+test_nip44_vectors
+test_nip46_uri
+test_nip46_envelope_build
+gnostr-test-relays
+test_json_filter_fuzzlite
+test_nip46_msg
+test_json_filter_robust
+test_json_event
+GoLongAdderStressTest
+test_nostr
+GoIntArrayTest
+GoStringArrayTest
+GoErrorTest
+test_relay
+GoSelectCancelTest
+test_json_filter_tags
+GoHashMapTest2
+GoContextStressTest
+test_interop
+test_json_event_fuzzlite
+test_envelope_parse
+test_json_envelope
+test_json_filter
+GoSelectClosedTest
+GoRefPtrTest
+GoSelectMultiTest
+test_nip5f_tcp
+test_subscription_blocking_depth
+test_json_int_array
+test_json_raw
+test_filters_move_semantics

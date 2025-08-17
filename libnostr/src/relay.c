@@ -257,7 +257,9 @@ static void *write_operations(void *arg) {
             nostr_metric_timer t = {0};
             nostr_metric_timer_start(&t);
             nostr_connection_write_message(conn, r->priv->connection_context, req->msg, &werr);
-            nostr_metric_timer_stop(&t, nostr_metric_histogram_get("ws_write_ns"));
+            static nostr_metric_histogram *h_ws_write_ns;
+            if (!h_ws_write_ns) h_ws_write_ns = nostr_metric_histogram_get("ws_write_ns");
+            nostr_metric_timer_stop(&t, h_ws_write_ns);
             if (req->msg) {
                 nostr_metric_counter_add("ws_tx_bytes", (uint64_t)strlen(req->msg));
                 nostr_metric_counter_add("ws_tx_messages", 1);
@@ -298,7 +300,9 @@ static void *message_loop(void *arg) {
         nostr_metric_timer t_read = {0};
         nostr_metric_timer_start(&t_read);
         nostr_connection_read_message(conn, r->priv->connection_context, buf, sizeof(buf), &err);
-        nostr_metric_timer_stop(&t_read, nostr_metric_histogram_get("ws_read_ns"));
+        static nostr_metric_histogram *h_ws_read_ns;
+        if (!h_ws_read_ns) h_ws_read_ns = nostr_metric_histogram_get("ws_read_ns");
+        nostr_metric_timer_stop(&t_read, h_ws_read_ns);
         if (err) {
             free_error(err);
             err = NULL;
@@ -324,7 +328,9 @@ static void *message_loop(void *arg) {
         nostr_metric_timer t_parse = {0};
         nostr_metric_timer_start(&t_parse);
         NostrEnvelope *envelope = nostr_envelope_parse(buf);
-        nostr_metric_timer_stop(&t_parse, nostr_metric_histogram_get("envelope_parse_ns"));
+        static nostr_metric_histogram *h_envelope_parse_ns;
+        if (!h_envelope_parse_ns) h_envelope_parse_ns = nostr_metric_histogram_get("envelope_parse_ns");
+        nostr_metric_timer_stop(&t_parse, h_envelope_parse_ns);
         if (!envelope) {
             if (dbg_in_env && *dbg_in_env && strcmp(dbg_in_env, "0") != 0) {
                 size_t blen = strlen(buf);
@@ -376,7 +382,9 @@ static void *message_loop(void *arg) {
                     nostr_metric_timer t_verify = {0};
                     nostr_metric_timer_start(&t_verify);
                     verified = nostr_event_check_signature(env->event);
-                    nostr_metric_timer_stop(&t_verify, nostr_metric_histogram_get("event_verify_ns"));
+                    static nostr_metric_histogram *h_event_verify_ns;
+                    if (!h_event_verify_ns) h_event_verify_ns = nostr_metric_histogram_get("event_verify_ns");
+                    nostr_metric_timer_stop(&t_verify, h_event_verify_ns);
                     nostr_metric_counter_add("event_verify_count", 1);
                     if (verified) nostr_metric_counter_add("event_verify_ok", 1);
                     else nostr_metric_counter_add("event_verify_fail", 1);
@@ -394,7 +402,9 @@ static void *message_loop(void *arg) {
                     nostr_metric_timer t_dispatch = {0};
                     nostr_metric_timer_start(&t_dispatch);
                     nostr_subscription_dispatch_event(subscription, env->event);
-                    nostr_metric_timer_stop(&t_dispatch, nostr_metric_histogram_get("event_dispatch_ns"));
+                    static nostr_metric_histogram *h_event_dispatch_ns;
+                    if (!h_event_dispatch_ns) h_event_dispatch_ns = nostr_metric_histogram_get("event_dispatch_ns");
+                    nostr_metric_timer_stop(&t_dispatch, h_event_dispatch_ns);
                     nostr_metric_counter_add("event_dispatch_count", 1);
                     // ownership passed to subscription; avoid double free
                     env->event = NULL;
@@ -474,8 +484,10 @@ GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
 void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
     nostr_metric_timer t_ser = {0};
     nostr_metric_timer_start(&t_ser);
-    char *event_json = nostr_event_serialize(event);
-    nostr_metric_timer_stop(&t_ser, nostr_metric_histogram_get("event_serialize_ns"));
+    char *event_json = nostr_event_serialize_compact(event);
+    static nostr_metric_histogram *h_event_serialize_ns;
+    if (!h_event_serialize_ns) h_event_serialize_ns = nostr_metric_histogram_get("event_serialize_ns");
+    nostr_metric_timer_stop(&t_ser, h_event_serialize_ns);
     if (!event_json)
         return;
 

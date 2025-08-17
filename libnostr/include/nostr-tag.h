@@ -35,6 +35,8 @@ const char *nostr_tag_get(const NostrTag *tag, size_t index);
 void       nostr_tag_set(NostrTag *tag, size_t index, const char *value);
 void       nostr_tag_append(NostrTag *tag, const char *value);
 void       nostr_tag_add(NostrTag *tag, const char *value);
+/* Capacity management */
+void       nostr_tag_reserve(NostrTag *tag, size_t capacity);
 
 /* Tags (array of Tag) */
 NostrTags *nostr_tags_new(size_t count, ...);
@@ -51,6 +53,8 @@ size_t     nostr_tags_size(const NostrTags *tags);
 NostrTag  *nostr_tags_get(const NostrTags *tags, size_t index);
 void       nostr_tags_set(NostrTags *tags, size_t index, NostrTag *tag);
 void       nostr_tags_append(NostrTags *tags, NostrTag *tag);
+/* Capacity management */
+void       nostr_tags_reserve(NostrTags *tags, size_t capacity);
 
 #ifdef __cplusplus
 }

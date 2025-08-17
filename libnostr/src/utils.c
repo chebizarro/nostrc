@@ -256,17 +256,44 @@ int64_t nostr_sub_id_to_serial(const char *sub_id) {
     return -1; // unexpected suffix
 }
 
-// Convert hex string to binary
+// Fast hex helpers
+static inline int hex_nibble(unsigned char c) {
+    // 0-9 => 0..9, A-F/a-f => 10..15, else -1
+    if (c >= '0' && c <= '9') return (int)(c - '0');
+    c |= 0x20; // fold to lowercase
+    if (c >= 'a' && c <= 'f') return 10 + (int)(c - 'a');
+    return -1;
+}
+
+// Convert hex string to binary (lower/upper accepted). Returns false on malformed input.
 bool nostr_hex2bin(unsigned char *bin, const char *hex, size_t bin_len) {
     if (!bin || !hex) return false;
     size_t hex_len = strlen(hex);
     if (hex_len != bin_len * 2) return false;
-    for (size_t i = 0; i < bin_len; i++) {
-        unsigned int byte = 0;
-        if (sscanf(hex + 2 * i, "%2x", &byte) != 1) {
-            return false;
-        }
-        bin[i] = (unsigned char)byte;
+    const unsigned char *p = (const unsigned char *)hex;
+    for (size_t i = 0; i < bin_len; ++i) {
+        int hi = hex_nibble(p[0]); if (hi < 0) return false;
+        int lo = hex_nibble(p[1]); if (lo < 0) return false;
+        bin[i] = (unsigned char)((hi << 4) | lo);
+        p += 2;
     }
     return true;
+}
+
+// Convert binary to lowercase hex string. Caller must free.
+char *nostr_bin2hex(const unsigned char *bin, size_t len) {
+    if (!bin) return NULL;
+    static const char hexdig[16] = {
+        '0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'
+    };
+    size_t out_len = len * 2;
+    char *out = (char *)malloc(out_len + 1);
+    if (!out) return NULL;
+    for (size_t i = 0, j = 0; i < len; ++i) {
+        unsigned char b = bin[i];
+        out[j++] = hexdig[b >> 4];
+        out[j++] = hexdig[b & 0x0F];
+    }
+    out[out_len] = '\0';
+    return out;
 }

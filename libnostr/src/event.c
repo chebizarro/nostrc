@@ -1,5 +1,4 @@
 #include "nostr-event.h"
-#include "nostr-event.h"
 #include "nostr-tag.h"
 #include "nostr-utils.h"
 #include <openssl/rand.h>
@@ -10,7 +9,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include "string_array.h"
+#include <stdint.h>
+
+static inline int hexval_char(char ch) {
+    if (ch >= '0' && ch <= '9') return ch - '0';
+    if (ch >= 'a' && ch <= 'f') return 10 + (ch - 'a');
+    if (ch >= 'A' && ch <= 'F') return 10 + (ch - 'A');
+    return -1;
+}
 
 NostrEvent *nostr_event_new(void) {
     NostrEvent *event = (NostrEvent *)malloc(sizeof(NostrEvent));
@@ -26,6 +34,299 @@ NostrEvent *nostr_event_new(void) {
     event->sig = NULL;
 
     return event;
+}
+
+/* ---- Compact JSON object deserializer (simple, unescaped, no-tags fast path) ---- */
+
+static const char *skip_ws_local(const char *p) {
+    while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') ++p;
+    return p;
+}
+
+/* Match a JSON key in-place: expects p to point at '"'. If it matches
+ * the given key literal, advances *pp to the character after the colon
+ * (value start, possibly with whitespace) and returns 1. Otherwise 0. */
+static int match_key_advance(const char **pp, const char *key) {
+    const char *p = skip_ws_local(*pp);
+    if (*p != '"') return 0;
+    ++p;
+    const char *k = key;
+    while (*k && *p == *k) { ++p; ++k; }
+    if (*k != '\0' || *p != '"') return 0; /* not exact match */
+    ++p; /* after closing quote */
+    p = skip_ws_local(p);
+    if (*p != ':') return 0;
+    ++p; /* after ':' */
+    *pp = p;
+    return 1;
+}
+
+static const char *find_key(const char *json, const char *key) {
+    size_t klen = strlen(key);
+    const char *p = json;
+    while ((p = strstr(p, key)) != NULL) {
+        // ensure it's a JSON key: preceded by '"' and followed by '"'
+        if (p > json && *(p-1) == '"' && *(p + klen) == '"') {
+            const char *q = p + klen + 1; // after closing quote
+            q = skip_ws_local(q);
+            if (*q == ':') return q + 1; // point to value start (maybe ws)
+        }
+        p += klen;
+    }
+    return NULL;
+}
+
+static int parse_json_string_fast(const char **pp, char **out) {
+    const char *p = skip_ws_local(*pp);
+    if (*p != '"') return 0;
+    ++p;
+    const char *start = p;
+    // First scan to see if there are any escapes; if none, copy directly
+    const char *q = p;
+    int has_escape = 0;
+    while (*q && *q != '"') {
+        if (*q == '\\') { has_escape = 1; break; }
+        ++q;
+    }
+    if (!*q) return 0; // missing closing quote
+    if (!has_escape) {
+        size_t len = (size_t)(q - start);
+        char *s = (char *)malloc(len + 1);
+        if (!s) return 0;
+        memcpy(s, start, len);
+        s[len] = '\0';
+        *out = s;
+        *pp = q + 1;
+        return 1;
+    }
+    // Has escapes: decode common ones; bail on unicode (\u)
+    // Allocate buffer equal to remaining length as upper bound
+    size_t cap = (size_t)(strlen(p) + 1);
+    char *buf = (char *)malloc(cap);
+    if (!buf) return 0;
+    size_t len = 0;
+    while (*p && *p != '"') {
+        unsigned char c = (unsigned char)*p++;
+        if (c == '\\') {
+            char e = *p++;
+            switch (e) {
+                case '"': buf[len++] = '"'; break;
+                case '\\': buf[len++] = '\\'; break;
+                case '/': buf[len++] = '/'; break;
+                case 'b': buf[len++] = '\b'; break;
+                case 'f': buf[len++] = '\f'; break;
+                case 'n': buf[len++] = '\n'; break;
+                case 'r': buf[len++] = '\r'; break;
+                case 't': buf[len++] = '\t'; break;
+                case 'u': {
+                    // Decode \uXXXX (with surrogate pair support) into UTF-8
+                    int h0 = hexval_char(*p); if (h0 < 0) { free(buf); return 0; } ++p;
+                    int h1 = hexval_char(*p); if (h1 < 0) { free(buf); return 0; } ++p;
+                    int h2 = hexval_char(*p); if (h2 < 0) { free(buf); return 0; } ++p;
+                    int h3 = hexval_char(*p); if (h3 < 0) { free(buf); return 0; } ++p;
+                    uint32_t cp = (uint32_t)((h0 << 12) | (h1 << 8) | (h2 << 4) | h3);
+                    // Handle surrogate pairs
+                    if (cp >= 0xD800 && cp <= 0xDBFF) {
+                        // Expect next sequence: \uDC00-\uDFFF
+                        if (*p != '\\' || *(p+1) != 'u') { free(buf); return 0; }
+                        p += 2;
+                        int g0 = hexval_char(*p); if (g0 < 0) { free(buf); return 0; } ++p;
+                        int g1 = hexval_char(*p); if (g1 < 0) { free(buf); return 0; } ++p;
+                        int g2 = hexval_char(*p); if (g2 < 0) { free(buf); return 0; } ++p;
+                        int g3 = hexval_char(*p); if (g3 < 0) { free(buf); return 0; } ++p;
+                        uint32_t low = (uint32_t)((g0 << 12) | (g1 << 8) | (g2 << 4) | g3);
+                        if (low < 0xDC00 || low > 0xDFFF) { free(buf); return 0; }
+                        cp = 0x10000 + (((cp - 0xD800) << 10) | (low - 0xDC00));
+                    } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
+                        // Lone low surrogate is invalid
+                        free(buf); return 0;
+                    }
+                    // UTF-8 encode
+                    if (cp <= 0x7F) {
+                        if (len + 1 + 1 > cap) { size_t ncap = cap * 2; while (len + 2 > ncap) ncap *= 2; char *tmp = realloc(buf, ncap); if (!tmp) { free(buf); return 0; } buf = tmp; cap = ncap; }
+                        buf[len++] = (char)cp;
+                    } else if (cp <= 0x7FF) {
+                        if (len + 2 + 1 > cap) { size_t ncap = cap * 2; while (len + 3 > ncap) ncap *= 2; char *tmp = realloc(buf, ncap); if (!tmp) { free(buf); return 0; } buf = tmp; cap = ncap; }
+                        buf[len++] = (char)(0xC0 | (cp >> 6));
+                        buf[len++] = (char)(0x80 | (cp & 0x3F));
+                    } else if (cp <= 0xFFFF) {
+                        if (len + 3 + 1 > cap) { size_t ncap = cap * 2; while (len + 4 > ncap) ncap *= 2; char *tmp = realloc(buf, ncap); if (!tmp) { free(buf); return 0; } buf = tmp; cap = ncap; }
+                        buf[len++] = (char)(0xE0 | (cp >> 12));
+                        buf[len++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                        buf[len++] = (char)(0x80 | (cp & 0x3F));
+                    } else {
+                        if (len + 4 + 1 > cap) { size_t ncap = cap * 2; while (len + 5 > ncap) ncap *= 2; char *tmp = realloc(buf, ncap); if (!tmp) { free(buf); return 0; } buf = tmp; cap = ncap; }
+                        buf[len++] = (char)(0xF0 | (cp >> 18));
+                        buf[len++] = (char)(0x80 | ((cp >> 12) & 0x3F));
+                        buf[len++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                        buf[len++] = (char)(0x80 | (cp & 0x3F));
+                    }
+                    break;
+                }
+                default:
+                    // invalid escape
+                    free(buf);
+                    return 0;
+            }
+        } else {
+            buf[len++] = (char)c;
+        }
+    }
+    if (*p != '"') { free(buf); return 0; }
+    buf[len] = '\0';
+    *out = buf;
+    *pp = p + 1;
+    return 1;
+}
+
+static int parse_json_int64_simple(const char **pp, long long *out) {
+    const char *p = skip_ws_local(*pp);
+    int neg = 0; long long v = 0; int any = 0;
+    if (*p == '-') { neg = 1; ++p; }
+    while (*p >= '0' && *p <= '9') { v = v * 10 + (*p - '0'); ++p; any = 1; }
+    if (!any) return 0;
+    *out = neg ? -v : v;
+    *pp = p;
+    return 1;
+}
+
+int nostr_event_deserialize_compact(NostrEvent *event, const char *json) {
+    if (!event || !json) return 0;
+    const char *p = skip_ws_local(json);
+    if (*p != '{') return 0;
+    ++p; // after '{'
+
+    int have_kind = 0;
+    int have_created_at = 0;
+
+    while (1) {
+        p = skip_ws_local(p);
+        if (*p == '}') { ++p; break; }
+        // Dispatch by key (in-place match, no allocation for known keys)
+        if (match_key_advance(&p, "kind")) {
+            long long v = 0;
+            if (!parse_json_int64_simple(&p, &v)) { return 0; }
+            event->kind = (int)v; have_kind = 1;
+        } else if (match_key_advance(&p, "created_at")) {
+            long long ts = 0;
+            if (!parse_json_int64_simple(&p, &ts)) { return 0; }
+            event->created_at = (int64_t)ts; have_created_at = 1;
+        } else if (match_key_advance(&p, "pubkey")) {
+            char *s = NULL;
+            if (!parse_json_string_fast(&p, &s)) { return 0; }
+            if (event->pubkey) free(event->pubkey);
+            event->pubkey = s;
+        } else if (match_key_advance(&p, "id")) {
+            char *s = NULL;
+            if (!parse_json_string_fast(&p, &s)) { return 0; }
+            if (event->id) free(event->id);
+            event->id = s;
+        } else if (match_key_advance(&p, "sig")) {
+            char *s = NULL;
+            if (!parse_json_string_fast(&p, &s)) { return 0; }
+            if (event->sig) free(event->sig);
+            event->sig = s;
+        } else if (match_key_advance(&p, "content")) {
+            char *s = NULL;
+            if (!parse_json_string_fast(&p, &s)) { return 0; }
+            if (event->content) free(event->content);
+            event->content = s;
+        } else if (match_key_advance(&p, "tags")) {
+            const char *t = skip_ws_local(p);
+            if (*t != '[') { return 0; }
+            ++t; // into tags array
+            /* Pre-count number of tags at top-level to reserve capacity */
+            const char *scan = t; int depth = 1; size_t tag_count = 0;
+            while (*scan && depth) {
+                scan = skip_ws_local(scan);
+                if (*scan == '[' && depth == 1) { ++tag_count; ++scan; }
+                else if (*scan == '"') { char *d=NULL; if (!parse_json_string_fast(&scan, &d)) return 0; free(d); }
+                else if (*scan == '[') { ++depth; ++scan; }
+                else if (*scan == ']') { --depth; ++scan; }
+                else { ++scan; }
+            }
+            if (depth) { return 0; }
+            NostrTags *parsed = nostr_tags_new(tag_count);
+            if (!parsed) { return 0; }
+            /* If tags_new pre-filled data slots with garbage, reset count to 0 but keep capacity */
+            parsed->count = 0;
+            nostr_tags_reserve(parsed, tag_count > 0 ? tag_count : 4);
+            t = skip_ws_local(t);
+            while (*t && *t != ']') {
+                if (*t != '[') { nostr_tags_free(parsed); return 0; }
+                ++t; // into a tag array
+                NostrTag *tag = nostr_tag_new(NULL, NULL);
+                if (!tag) { nostr_tags_free(parsed); return 0; }
+                /* Reserve elements for this tag by scanning until closing ']' */
+                const char *t2 = t; size_t elem_count = 0;
+                while (*t2 && *t2 != ']') {
+                    t2 = skip_ws_local(t2);
+                    if (*t2 == '"') { char *tmp=NULL; if (!parse_json_string_fast(&t2, &tmp)) { nostr_tag_free(tag); nostr_tags_free(parsed); return 0; } free(tmp); ++elem_count; t2 = skip_ws_local(t2); if (*t2 == ',') { ++t2; } }
+                    else { break; }
+                }
+                if (elem_count > 0) nostr_tag_reserve(tag, elem_count);
+                t = skip_ws_local(t);
+                while (*t && *t != ']') {
+                    char *sv = NULL;
+                    if (!parse_json_string_fast(&t, &sv)) { nostr_tag_free(tag); nostr_tags_free(parsed); return 0; }
+                    nostr_tag_append(tag, sv);
+                    free(sv);
+                    t = skip_ws_local(t);
+                    if (*t == ',') { ++t; t = skip_ws_local(t); }
+                }
+                if (*t != ']') { nostr_tag_free(tag); nostr_tags_free(parsed); return 0; }
+                ++t; // after closing tag array
+                nostr_tags_append(parsed, tag);
+                t = skip_ws_local(t);
+                if (*t == ',') { ++t; t = skip_ws_local(t); }
+            }
+            if (*t != ']') { nostr_tags_free(parsed); return 0; }
+            ++t; // after closing tags
+            if (event->tags) nostr_tags_free(event->tags);
+            event->tags = parsed;
+            p = t; // advance parser position
+        } else {
+            // Unknown key: skip its value generically (string/number/object/array/true/false/null)
+            // Minimal skipper for compact inputs
+            const char *t = p;
+            if (*t == '"') {
+                char *dummy = NULL;
+                if (!parse_json_string_fast(&t, &dummy)) { return 0; }
+                free(dummy);
+            } else if (*t == '{') {
+                int depth = 1; ++t;
+                while (*t && depth) {
+                    if (*t == '"') {
+                        char *d = NULL; if (!parse_json_string_fast(&t, &d)) { return 0; } free(d);
+                    } else if (*t == '{') { ++depth; ++t; }
+                    else if (*t == '}') { --depth; ++t; }
+                    else { ++t; }
+                }
+                if (depth) { return 0; }
+            } else if (*t == '[') {
+                int depth = 1; ++t;
+                while (*t && depth) {
+                    if (*t == '"') {
+                        char *d = NULL; if (!parse_json_string_fast(&t, &d)) { return 0; } free(d);
+                    } else if (*t == '[') { ++depth; ++t; }
+                    else if (*t == ']') { --depth; ++t; }
+                    else { ++t; }
+                }
+                if (depth) { return 0; }
+            } else { // number, true, false, null — advance until delimiter
+                while (*t && *t!=',' && *t!='}' && *t!=']' && *t!='\n' && *t!='\r' && *t!='\t' && *t!=' ') ++t;
+            }
+            p = t;
+        }
+        // consume comma or closing brace between pairs
+        p = skip_ws_local(p);
+        if (*p == ',') { ++p; continue; }
+        if (*p == '}') { ++p; break; }
+        // otherwise, invalid separator
+        return 0;
+    }
+
+    return 1;
 }
 
 void nostr_event_free(NostrEvent *event) {
@@ -168,17 +469,8 @@ char *nostr_event_get_id(NostrEvent *event) {
     SHA256((unsigned char *)serialized, strlen(serialized), hash);
     free(serialized);
 
-    // Allocate memory for the event ID (64 hex characters + null terminator)
-    char *id = (char *)malloc(SHA256_DIGEST_LENGTH * 2 + 1);
-    if (!id)
-        return NULL; // Check for allocation failure
-
     // Convert the binary hash to a hex string
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
-        snprintf(&id[i * 2], 3, "%02x", hash[i]);
-    }
-    id[SHA256_DIGEST_LENGTH * 2] = '\0'; // Null terminate the string
-
+    char *id = nostr_bin2hex(hash, SHA256_DIGEST_LENGTH);
     return id;
 }
 
@@ -308,15 +600,8 @@ int nostr_event_sign(NostrEvent *event, const char *private_key) {
     }
 
     // Convert the signature to a hex string and store it in the event
-    event->sig = (char *)malloc(64 * 2 + 1);
-    if (!event->sig) {
-        secp256k1_context_destroy(ctx);
-        return -1;
-    }
-    for (size_t i = 0; i < 64; i++) {
-        snprintf(&event->sig[i * 2], 3, "%02x", sig_bin[i]);
-    }
-    event->sig[64 * 2] = '\0';
+    event->sig = nostr_bin2hex(sig_bin, 64);
+    if (!event->sig) { secp256k1_context_destroy(ctx); return -1; }
 
     // Generate and set the event ID
     event->id = nostr_event_get_id(event);
@@ -406,4 +691,101 @@ void nostr_event_set_sig(NostrEvent *event, const char *sig) {
     if (!event) return;
     if (event->sig) { free(event->sig); event->sig = NULL; }
     if (sig) event->sig = strdup(sig);
+}
+
+/* ---- Compact, allocation-light JSON serializer (object form) ---- */
+
+static int append_str(char **buf, size_t *cap, size_t *len, const char *s) {
+    size_t sl = strlen(s);
+    if (*len + sl + 1 > *cap) {
+        size_t ncap = (*cap) * 2;
+        if (ncap < *len + sl + 1) ncap = *len + sl + 1;
+        char *tmp = (char *)realloc(*buf, ncap);
+        if (!tmp) return -1;
+        *buf = tmp; *cap = ncap;
+    }
+    memcpy(*buf + *len, s, sl);
+    *len += sl;
+    (*buf)[*len] = '\0';
+    return 0;
+}
+
+static int append_fmt(char **buf, size_t *cap, size_t *len, const char *fmt, ...) {
+    va_list ap;
+    while (1) {
+        va_start(ap, fmt);
+        int avail = (int)(*cap - *len);
+        int n = vsnprintf(*buf + *len, avail, fmt, ap);
+        va_end(ap);
+        if (n < 0) return -1;
+        if (n < avail) { *len += (size_t)n; return 0; }
+        size_t ncap = (*cap) * 2;
+        if (ncap < *len + (size_t)n + 1) ncap = *len + (size_t)n + 1;
+        char *tmp = (char *)realloc(*buf, ncap);
+        if (!tmp) return -1;
+        *buf = tmp; *cap = ncap;
+    }
+}
+
+char *nostr_event_serialize_compact(const NostrEvent *event) {
+    if (!event) return NULL;
+    size_t cap = 256; size_t len = 0;
+    char *out = (char *)malloc(cap);
+    if (!out) return NULL;
+    out[0] = '\0';
+
+    if (append_str(&out, &cap, &len, "{") != 0) { free(out); return NULL; }
+    bool first = true;
+    /* helper to add comma between fields */
+    #define ADD_COMMA() do { if (!first) { if (append_str(&out, &cap, &len, ",") != 0) { free(out); return NULL; } } first = false; } while (0)
+
+    // id
+    if (event->id && *event->id) {
+        ADD_COMMA();
+        if (append_fmt(&out, &cap, &len, "\"id\":\"%s\"", event->id) != 0) { free(out); return NULL; }
+    }
+    // pubkey
+    if (event->pubkey && *event->pubkey) {
+        ADD_COMMA();
+        if (append_fmt(&out, &cap, &len, "\"pubkey\":\"%s\"", event->pubkey) != 0) { free(out); return NULL; }
+    }
+    // created_at
+    if (event->created_at > 0) {
+        ADD_COMMA();
+        if (append_fmt(&out, &cap, &len, "\"created_at\":%lld", (long long)event->created_at) != 0) { free(out); return NULL; }
+    }
+    // kind
+    ADD_COMMA();
+    if (append_fmt(&out, &cap, &len, "\"kind\":%d", event->kind) != 0) { free(out); return NULL; }
+
+    // tags
+    if (event->tags) {
+        char *tags_json = nostr_tags_to_json(event->tags);
+        if (!tags_json) { free(out); return NULL; }
+        ADD_COMMA();
+        if (append_str(&out, &cap, &len, "\"tags\":") != 0) { free(tags_json); free(out); return NULL; }
+        if (append_str(&out, &cap, &len, tags_json) != 0) { free(tags_json); free(out); return NULL; }
+        free(tags_json);
+    }
+
+    // content
+    if (event->content) {
+        char *escaped = nostr_escape_string(event->content);
+        if (!escaped) { free(out); return NULL; }
+        ADD_COMMA();
+        if (append_str(&out, &cap, &len, "\"content\":\"") != 0) { free(escaped); free(out); return NULL; }
+        if (append_str(&out, &cap, &len, escaped) != 0) { free(escaped); free(out); return NULL; }
+        if (append_str(&out, &cap, &len, "\"") != 0) { free(escaped); free(out); return NULL; }
+        free(escaped);
+    }
+
+    // sig
+    if (event->sig && *event->sig) {
+        ADD_COMMA();
+        if (append_fmt(&out, &cap, &len, "\"sig\":\"%s\"", event->sig) != 0) { free(out); return NULL; }
+    }
+
+    if (append_str(&out, &cap, &len, "}") != 0) { free(out); return NULL; }
+    #undef ADD_COMMA
+    return out;
 }

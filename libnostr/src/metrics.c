@@ -47,6 +47,12 @@ typedef struct metrics_histogram {
     uint64_t max_ns;
 } metrics_histogram __attribute__((aligned(NOSTR_CACHELINE)));
 
+// Forward-declare histogram handle used by public API (opaque to callers)
+typedef struct nostr_metric_histogram {
+    int shard;
+    struct metrics_entry *entry; // type == MET_HISTOGRAM
+} nostr_metric_histogram;
+
 typedef struct metrics_entry {
     // Place hot data first and align to its own cache line
     union {
@@ -60,6 +66,8 @@ typedef struct metrics_entry {
     struct metrics_entry *next;
     char *name;
     metric_type_t type;
+    int shard_index;                         // cached shard index for this name
+    nostr_metric_histogram *hist_handle;     // cached handle for fast returns
 } metrics_entry __attribute__((aligned(NOSTR_CACHELINE)));
 
 typedef struct metrics_shard {
@@ -114,6 +122,12 @@ static metrics_entry *registry_get_or_create(const char *name, metric_type_t typ
     pthread_mutex_lock(&sh->mu);
     for (metrics_entry *e = sh->head; e; e = e->next) {
         if (e->type == type && strcmp(e->name, name) == 0) {
+            // Ensure cached fields populated for histograms
+            e->shard_index = si;
+            if (type == MET_HISTOGRAM && e->hist_handle == NULL) {
+                nostr_metric_histogram *handle = (nostr_metric_histogram *)malloc(sizeof(*handle));
+                if (handle) { handle->shard = si; handle->entry = e; e->hist_handle = handle; }
+            }
             pthread_mutex_unlock(&sh->mu);
             return e;
         }
@@ -123,11 +137,15 @@ static metrics_entry *registry_get_or_create(const char *name, metric_type_t typ
     if (!e) { pthread_mutex_unlock(&sh->mu); return NULL; }
     e->name = strdup(name);
     e->type = type;
+    e->shard_index = si;
     if (type == MET_HISTOGRAM) {
         e->u.hist.min_ns = UINT64_MAX;
         e->u.hist.max_ns = 0;
         e->u.hist.sum_ns = 0;
         // bins/count zeroed by calloc
+        // Create and cache a single handle per histogram metric
+        nostr_metric_histogram *handle = (nostr_metric_histogram *)malloc(sizeof(*handle));
+        if (handle) { handle->shard = si; handle->entry = e; e->hist_handle = handle; }
     } else {
         atomic_store(&e->u.c.counter, 0);
     }
@@ -136,11 +154,6 @@ static metrics_entry *registry_get_or_create(const char *name, metric_type_t typ
     pthread_mutex_unlock(&sh->mu);
     return e;
 }
-
-typedef struct nostr_metric_histogram {
-    int shard;
-    metrics_entry *entry; // type == MET_HISTOGRAM
-} nostr_metric_histogram;
 
 // ----------------------------
 // Per-thread counter batching
@@ -247,15 +260,10 @@ static void hist_record_locked(metrics_histogram *h, uint64_t ns)
 nostr_metric_histogram *nostr_metric_histogram_get(const char *name)
 {
     pthread_once(&g_once, metrics_init_once);
-    uint64_t h = fnv1a_64(name);
-    int si = shard_index(h);
     metrics_entry *e = registry_get_or_create(name, MET_HISTOGRAM);
     if (!e) return NULL;
-    nostr_metric_histogram *handle = (nostr_metric_histogram *)malloc(sizeof(*handle));
-    if (!handle) return NULL;
-    handle->shard = si;
-    handle->entry = e;
-    return handle;
+    // Return cached handle (created once under shard mutex)
+    return e->hist_handle;
 }
 
 void nostr_metric_timer_start(nostr_metric_timer *t)

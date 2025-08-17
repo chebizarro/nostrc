@@ -385,3 +385,21 @@ void nostr_tag_add(NostrTag *tag, const char *value) {
     if (!tag) return;
     string_array_add((StringArray *)tag, value);
 }
+
+void nostr_tag_reserve(NostrTag *tag, size_t capacity) {
+    if (!tag) return;
+    if (tag->capacity >= capacity) return;
+    char **new_data = (char **)realloc(tag->data, capacity * sizeof(char *));
+    if (!new_data) return; /* leave unchanged on alloc failure */
+    tag->data = new_data;
+    tag->capacity = capacity;
+}
+
+void nostr_tags_reserve(NostrTags *tags, size_t capacity) {
+    if (!tags) return;
+    if (tags->capacity >= capacity) return;
+    NostrTag **new_data = (NostrTag **)realloc(tags->data, capacity * sizeof(NostrTag *));
+    if (!new_data) return; /* leave unchanged on alloc failure */
+    tags->data = new_data;
+    tags->capacity = capacity;
+}
