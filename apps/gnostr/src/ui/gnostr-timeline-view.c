@@ -205,6 +205,7 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
     g_object_unref(b);
     return;
   }
+  g_message("factory_setup_cb: created row=%p for item=%p", (void*)row, (void*)item);
   /* Cache pointers to frequently-updated subwidgets on the row for fast lookup in bind */
   GtkWidget *w_display_name = GTK_WIDGET(gtk_builder_get_object(b, "display_name"));
   GtkWidget *w_handle       = GTK_WIDGET(gtk_builder_get_object(b, "handle"));
@@ -221,6 +222,7 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
   g_object_set_data(G_OBJECT(row), "avatar_image", w_avatar_img);
   g_object_set_data(G_OBJECT(row), "thread_indicator", w_indicator);
   /* ListItem takes ownership of the child */
+  g_message("factory_setup_cb: setting list item child row=%p", (void*)row);
   gtk_list_item_set_child(item, row);
   g_object_unref(b);
 }
@@ -430,6 +432,8 @@ static void gnostr_timeline_view_class_init(GnostrTimelineViewClass *klass) {
   GObjectClass *gobj_class = G_OBJECT_CLASS(klass);
   gobj_class->dispose = gnostr_timeline_view_dispose;
   gobj_class->finalize = gnostr_timeline_view_finalize;
+  /* Ensure this widget can have children in templates by declaring a layout manager type */
+  gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BOX_LAYOUT);
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
   gtk_widget_class_bind_template_child(widget_class, GnostrTimelineView, root_scroller);
   gtk_widget_class_bind_template_child(widget_class, GnostrTimelineView, list_view);
@@ -437,9 +441,6 @@ static void gnostr_timeline_view_class_init(GnostrTimelineViewClass *klass) {
 
 static void gnostr_timeline_view_init(GnostrTimelineView *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
-  /* Ensure our single child fills available space */
-  GtkLayoutManager *lm = gtk_box_layout_new(GTK_ORIENTATION_VERTICAL);
-  gtk_widget_set_layout_manager(GTK_WIDGET(self), lm);
   /* Child widgets already have hexpand/vexpand in template */
   g_debug("timeline_view init: self=%p root_scroller=%p list_view=%p", (void*)self, (void*)self->root_scroller, (void*)self->list_view);
   setup_default_factory(self);
@@ -478,6 +479,12 @@ void gnostr_timeline_view_set_model(GnostrTimelineView *self, GtkSelectionModel 
 /* New: set tree roots model (GListModel of TimelineItem), creating a GtkTreeListModel passthrough */
 void gnostr_timeline_view_set_tree_roots(GnostrTimelineView *self, GListModel *roots) {
   g_return_if_fail(GNOSTR_IS_TIMELINE_VIEW(self));
+  g_message("timeline_view_set_tree_roots: self=%p roots=%p list_view=%p", (void*)self, (void*)roots, (void*)self->list_view);
+  /* Detach any existing model from the list view FIRST to drop its ref safely */
+  if (self->list_view) {
+    gtk_list_view_set_model(GTK_LIST_VIEW(self->list_view), NULL);
+  }
+  /* Now clear our held refs */
   if (self->selection_model) g_clear_object(&self->selection_model);
   if (self->tree_model) g_clear_object(&self->tree_model);
   if (roots) {
@@ -486,10 +493,13 @@ void gnostr_timeline_view_set_tree_roots(GnostrTimelineView *self, GListModel *r
                                                (GtkTreeListModelCreateModelFunc)timeline_child_model_func,
                                                NULL, NULL);
     self->selection_model = GTK_SELECTION_MODEL(gtk_single_selection_new(G_LIST_MODEL(self->tree_model)));
+    /* Take ownership of a non-floating ref so we can clear it later safely */
+    g_object_ref_sink(self->selection_model);
   } else {
     self->tree_model = NULL;
     self->selection_model = NULL;
   }
+  g_message("timeline_view_set_tree_roots: applying selection model=%p", (void*)self->selection_model);
   gtk_list_view_set_model(GTK_LIST_VIEW(self->list_view), self->selection_model);
 }
 

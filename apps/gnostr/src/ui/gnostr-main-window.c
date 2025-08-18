@@ -43,6 +43,10 @@
 static char *client_settings_get_current_npub(void);
 static char *hex_encode_lower(const uint8_t *buf, size_t len);
 static void show_toast(GnostrMainWindow *self, const char *msg);
+/* Pre-populate profile from local DB */
+static void prepopulate_profile_from_cache(GnostrMainWindow *self);
+/* Initial backfill timeout trampoline */
+static void initial_refresh_timeout_cb(gpointer data);
 
 /* Avatar HTTP downloader (libsoup) helpers declared later, after struct definition */
 static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pubkey_hex, const char *content_json);
@@ -122,6 +126,12 @@ static gboolean avatar_apply_texture_idle(gpointer data) {
     GtkWidget *img = gtk_image_new_from_paintable(GDK_PAINTABLE(tex));
     gtk_widget_set_size_request(img, 24, 24);
     gtk_menu_button_set_child(GTK_MENU_BUTTON(c->self->btn_avatar), img);
+    /* Guard: ensure popover remains attached */
+    GtkPopover *pop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(c->self->btn_avatar));
+    if (!pop && c->self->avatar_popover) {
+      g_message("avatar guard: reattaching popover after setting child");
+      gtk_menu_button_set_popover(GTK_MENU_BUTTON(c->self->btn_avatar), GTK_WIDGET(c->self->avatar_popover));
+    }
   }
   avatar_http_ctx_free(c);
   return G_SOURCE_REMOVE;
@@ -250,6 +260,10 @@ static void on_profile_event(GnostrSimplePool *pool, GPtrArray *batch, gpointer 
 
     nostr_event_free(evt);
   }
+
+  /* DB-only mode startup: prepopulate profile from DB and start initial backfill */
+  prepopulate_profile_from_cache(self);
+  g_timeout_add_once(150, (GSourceOnceFunc)initial_refresh_timeout_cb, g_object_ref(self));
 }
 
 /* Start a persistent subscription for profile updates */
@@ -504,8 +518,16 @@ static void ndb_backfill_worker(GTask *task, gpointer source, gpointer task_data
   char *filters_json = build_backfill_filters_json(d->self, d->limit);
   if (!filters_json) { g_task_return_boolean(task, FALSE); return; }
   void *txn = NULL; char **arr = NULL; int n = 0;
-  if (storage_ndb_begin_query(&txn) != 1) { free(filters_json); g_task_return_boolean(task, FALSE); return; }
-  int rc = storage_ndb_query(txn, filters_json, &arr, &n);
+  g_message("ndb_backfill_worker: begin_query... (limit=%d)", d->limit);
+  int rc = storage_ndb_begin_query(&txn);
+  if (rc != 0) {
+    g_warning("ndb_backfill_worker: begin_query failed");
+    free(filters_json);
+    g_task_return_boolean(task, FALSE);
+    return;
+  }
+  rc = storage_ndb_query(txn, filters_json, &arr, &n);
+  g_message("ndb_backfill_worker: filters=%s rc=%d n=%d", filters_json, rc, n);
   free(filters_json);
   if (rc != 0) {
     storage_ndb_end_query(txn);
@@ -552,6 +574,7 @@ static void ndb_backfill_worker(GTask *task, gpointer source, gpointer task_data
   storage_ndb_free_results(arr, n);
   storage_ndb_end_query(txn);
   /* Schedule apply on main loop */
+  g_message("ndb_backfill_worker: scheduling %u rows to apply", rows ? rows->len : 0);
   schedule_apply_events(d->self, rows);
   g_task_return_boolean(task, TRUE);
 }
@@ -992,6 +1015,12 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
                     GtkWidget *img = gtk_image_new_from_paintable(GDK_PAINTABLE(tex));
                     gtk_widget_set_size_request(img, 24, 24);
                     gtk_menu_button_set_child(GTK_MENU_BUTTON(self->btn_avatar), img);
+                    /* Guard: ensure popover remains attached */
+                    GtkPopover *pop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(self->btn_avatar));
+                    if (!pop && self->avatar_popover) {
+                      g_message("avatar guard: reattaching popover after setting child (file://) ");
+                      gtk_menu_button_set_popover(GTK_MENU_BUTTON(self->btn_avatar), GTK_WIDGET(self->avatar_popover));
+                    }
                     set_image = TRUE;
                     g_object_unref(tex);
                   }
@@ -1009,6 +1038,12 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
                       GtkWidget *img = gtk_image_new_from_paintable(GDK_PAINTABLE(tex));
                       gtk_widget_set_size_request(img, 24, 24);
                       gtk_menu_button_set_child(GTK_MENU_BUTTON(self->btn_avatar), img);
+                      /* Guard: ensure popover remains attached */
+                      GtkPopover *pop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(self->btn_avatar));
+                      if (!pop && self->avatar_popover) {
+                        g_message("avatar guard: reattaching popover after setting child (http) ");
+                        gtk_menu_button_set_popover(GTK_MENU_BUTTON(self->btn_avatar), GTK_WIDGET(self->avatar_popover));
+                      }
                       set_image = TRUE;
                       g_object_unref(tex);
                     }
@@ -1022,6 +1057,11 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
               /* Fallback to theme icon */
               g_object_set(self->btn_avatar, "icon-name", "avatar-default-symbolic", NULL);
               gtk_menu_button_set_child(GTK_MENU_BUTTON(self->btn_avatar), NULL);
+              /* Guard: ensure popover remains attached */
+              if (self->btn_avatar && self->avatar_popover && !gtk_menu_button_get_popover(GTK_MENU_BUTTON(self->btn_avatar))) {
+                g_message("avatar guard: reattaching popover after clearing child");
+                gtk_menu_button_set_popover(GTK_MENU_BUTTON(self->btn_avatar), GTK_WIDGET(self->avatar_popover));
+              }
             }
           }
         }
@@ -1052,13 +1092,14 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
 }
 
 typedef struct IdleApplyEventsCtx {
-  GnostrMainWindow *self;
+  GnostrMainWindow *self; /* strong ref */
   GPtrArray *rows; /* UiEventRow* */
 } IdleApplyEventsCtx;
 
 static void idle_apply_events_ctx_free(IdleApplyEventsCtx *c) {
   if (!c) return;
   if (c->rows) g_ptr_array_free(c->rows, TRUE);
+  if (c->self) g_object_unref(c->self);
   g_free(c);
 }
 
@@ -1068,6 +1109,13 @@ static void thread_graph_insert(GnostrMainWindow *self, UiEventRow *r) {
   if (!self->thread_roots) {
     extern GType timeline_item_get_type(void);
     self->thread_roots = g_list_store_new(timeline_item_get_type());
+    /* Attach to view on first creation to ensure UI updates */
+    GtkWidget *timeline = g_weak_ref_get(&self->timeline_ref);
+    if (timeline && G_TYPE_CHECK_INSTANCE_TYPE(timeline, GNOSTR_TYPE_TIMELINE_VIEW)) {
+      g_message("thread_graph_insert: setting timeline roots model (%p)", (void*)self->thread_roots);
+      gnostr_timeline_view_set_tree_roots(GNOSTR_TIMELINE_VIEW(timeline), G_LIST_MODEL(self->thread_roots));
+    }
+    if (timeline && G_IS_OBJECT(timeline)) g_object_unref(timeline);
   }
   if (!self->nodes_by_id) self->nodes_by_id = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   extern GType timeline_item_get_type(void);
@@ -1134,6 +1182,8 @@ static gboolean apply_timeline_events_idle(gpointer user_data) {
   GtkWidget *timeline = g_weak_ref_get(&self->timeline_ref);
   if (!timeline || !GTK_IS_WIDGET(timeline) || !gtk_widget_get_root(timeline)) {
     /* Delay until widget ready */
+    g_message("apply_timeline_events_idle: deferring (timeline=%p, is_widget=%d, has_root=%d)",
+              (void*)timeline, (int)(timeline && GTK_IS_WIDGET(timeline)), (int)(timeline && gtk_widget_get_root(timeline) != NULL));
     g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, apply_timeline_events_idle, c, NULL);
     if (timeline && G_IS_OBJECT(timeline)) g_object_unref(timeline);
     return G_SOURCE_REMOVE;
@@ -1150,7 +1200,7 @@ static gboolean apply_timeline_events_idle(gpointer user_data) {
     thread_graph_insert(self, r);
     applied++;
   }
-  g_message("apply_timeline_events_idle: applied=%u", applied);
+  g_message("apply_timeline_events_idle: applied=%u (scheduled=%u)", applied, c->rows ? c->rows->len : 0);
   if (timeline && G_IS_OBJECT(timeline)) g_object_unref(timeline);
   idle_apply_events_ctx_free(c);
   return G_SOURCE_REMOVE;
@@ -1159,8 +1209,9 @@ static gboolean apply_timeline_events_idle(gpointer user_data) {
 static void schedule_apply_events(GnostrMainWindow *self, GPtrArray *rows /* UiEventRow* */) {
   if (!self || !rows) { if (rows) g_ptr_array_free(rows, TRUE); return; }
   IdleApplyEventsCtx *c = g_new0(IdleApplyEventsCtx, 1);
-  c->self = self;
+  c->self = g_object_ref(self);
   c->rows = rows;
+  g_message("schedule_apply_events: posting %u row(s) to main loop", rows->len);
   g_idle_add_full(G_PRIORITY_DEFAULT, apply_timeline_events_idle, c, NULL);
 }
 
@@ -1170,7 +1221,6 @@ static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer us
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !batch) return;
   g_message("on_pool_events: batch len=%u", batch->len);
-  GPtrArray *rows = g_ptr_array_new_with_free_func(ui_event_row_free);
   for (guint i = 0; i < batch->len; i++) {
     NostrEvent *evt = (NostrEvent*)g_ptr_array_index(batch, i);
     /* Handle kind-0 profile events by updating metadata cache */
@@ -1213,9 +1263,10 @@ static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer us
       }
       free(json);
     }
-    g_ptr_array_add(rows, r);
+    /* Free transient UiEventRow if ever allocated in future paths (none now) */
   }
-  schedule_apply_events(self, rows);
+  /* DB-only rendering: trigger a DB backfill to apply UI updates */
+  start_pool_backfill(self, (int)self->default_limit);
 }
 
 static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data) {
@@ -1324,9 +1375,7 @@ static void on_settings_save_clicked(GtkButton *btn, gpointer user_data) {
     ctx->self->pool_cancellable = g_cancellable_new();
   }
   /* Do not free live_filters here: async worker may still be borrowing them. */
-  /* Stagger re-start to allow previous worker to observe cancel. */
-  g_idle_add_once((GSourceOnceFunc)start_pool_live_idle_cb, g_object_ref(ctx->self));
-  /* Schedule immediate backfill shortly after live start */
+  /* DB-only mode: schedule a backfill to refresh the timeline */
   typedef struct { GnostrMainWindow *self; int limit; } BF;
   BF *bf = g_new0(BF, 1); bf->self = g_object_ref(ctx->self); bf->limit = (int)ctx->self->default_limit;
   g_timeout_add_once(50, (GSourceOnceFunc)start_pool_backfill_idle_cb, bf);
@@ -1337,9 +1386,8 @@ static void on_settings_save_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 static void start_pool_live_idle_cb(gpointer data) {
-  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
-  start_pool_live(self);
-  g_object_unref(self);
+  /* DB-only mode: no-op */
+  if (data) g_object_unref(data);
 }
 
 static void start_pool_backfill_idle_cb(gpointer data) {
@@ -1704,8 +1752,9 @@ static void pair_remote_complete(GObject *source, GAsyncResult *res, gpointer us
   if (ctx->self->btn_login_local) gtk_widget_set_sensitive(ctx->self->btn_login_local, FALSE);
   if (ctx->self->btn_pair_remote) gtk_widget_set_sensitive(ctx->self->btn_pair_remote, FALSE);
   if (ctx->self->btn_sign_out) gtk_widget_set_sensitive(ctx->self->btn_sign_out, TRUE);
-  gnostr_profile_fetch_async(ctx->self);
-  start_profile_subscription(ctx->self);
+  /* DB-only: load profile from DB and backfill timeline */
+  prepopulate_profile_from_cache(ctx->self);
+  start_pool_backfill(ctx->self, (int)ctx->self->default_limit);
   if (ctx->win) gtk_window_destroy(ctx->win);
   pair_worker_free(w);
   pair_ctx_free(ctx);
@@ -1975,9 +2024,9 @@ static void on_avatar_get_pubkey_done(GObject *source, GAsyncResult *res, gpoint
     if (self->btn_sign_out) gtk_widget_set_sensitive(self->btn_sign_out, TRUE);
     /* Persist identity */
     client_settings_set_current_npub(npub);
-    /* Fetch profile metadata for this identity and subscribe for updates */
-    gnostr_profile_fetch_async(self);
-    start_profile_subscription(self);
+    /* DB-only: prepopulate from DB and trigger backfill */
+    prepopulate_profile_from_cache(self);
+    start_pool_backfill(self, (int)self->default_limit);
   } else {
     show_toast(self, "Signer returned empty public key");
   }
@@ -2026,6 +2075,11 @@ static void on_avatar_sign_out_clicked(GtkButton *button, GnostrMainWindow *self
     /* Reset to default icon and clear any custom child */
     g_object_set(self->btn_avatar, "icon-name", "avatar-default-symbolic", NULL);
     gtk_menu_button_set_child(GTK_MENU_BUTTON(self->btn_avatar), NULL);
+    /* Guard: ensure popover remains attached */
+    if (self->avatar_popover && !gtk_menu_button_get_popover(GTK_MENU_BUTTON(self->btn_avatar))) {
+      g_message("avatar guard: reattaching popover after sign-out");
+      gtk_menu_button_set_popover(GTK_MENU_BUTTON(self->btn_avatar), GTK_WIDGET(self->avatar_popover));
+    }
     gtk_widget_set_tooltip_text(self->btn_avatar, "Login / Account");
   }
   gtk_widget_set_sensitive(self->btn_login_local, TRUE);
@@ -2761,11 +2815,41 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
 
 static void gnostr_main_window_init(GnostrMainWindow *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+  /* Sanity logging and guard for avatar popover attachment */
+  GtkPopover *init_pop = NULL;
+  if (self->btn_avatar) init_pop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(self->btn_avatar));
+  g_message("main_window_init: btn_avatar=%p avatar_popover=%p popover_now=%p",
+            (void*)self->btn_avatar, (void*)self->avatar_popover, (void*)init_pop);
+  if (self->btn_avatar && self->avatar_popover && !init_pop) {
+    GtkWidget *ap = GTK_WIDGET(self->avatar_popover);
+    GtkWidget *ap_parent = ap ? gtk_widget_get_parent(ap) : NULL;
+    if (ap_parent == NULL) {
+      g_message("main_window_init: popover missing; attaching template popover");
+      gtk_menu_button_set_popover(GTK_MENU_BUTTON(self->btn_avatar), GTK_WIDGET(self->avatar_popover));
+    } else {
+      g_debug("main_window_init: popover already parented elsewhere (%p); skipping reattach", (void*)ap_parent);
+    }
+  }
   g_return_if_fail(self->composer != NULL);
   /* Initialize weak refs to template children needed in async paths */
   g_weak_ref_init(&self->timeline_ref, self->timeline);
+  /* Prepare timeline roots model and attach to view so subsequent inserts render */
+  if (!self->thread_roots) {
+    extern GType timeline_item_get_type(void);
+    self->thread_roots = g_list_store_new(timeline_item_get_type());
+    if (self->timeline && G_TYPE_CHECK_INSTANCE_TYPE(self->timeline, GNOSTR_TYPE_TIMELINE_VIEW)) {
+      g_message("main_window_init: setting timeline roots model (%p)", (void*)self->thread_roots);
+      gnostr_timeline_view_set_tree_roots(GNOSTR_TIMELINE_VIEW(self->timeline), G_LIST_MODEL(self->thread_roots));
+    } else {
+      g_debug("main_window_init: timeline widget not a GnostrTimelineView (type=%s)", self->timeline ? G_OBJECT_TYPE_NAME(self->timeline) : "(null)");
+    }
+  }
   /* Initialize dedup table */
   self->seen_texts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  /* Initialize id -> node index for thread linking */
+  if (!self->nodes_by_id) {
+    self->nodes_by_id = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  }
   /* Initialize metadata cache */
   self->meta_by_pubkey = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, user_meta_free);
   /* Initialize avatar texture cache */
@@ -2790,10 +2874,6 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(self->btn_menu), G_MENU_MODEL(menu));
     g_object_unref(menu);
   }
-  /* Ensure avatar menu button has a popover attached (from template) */
-  if (self->btn_avatar && self->avatar_popover) {
-    gtk_menu_button_set_popover(GTK_MENU_BUTTON(self->btn_avatar), GTK_WIDGET(self->avatar_popover));
-  }
   g_message("connecting post-requested handler on composer=%p", (void*)self->composer);
   g_signal_connect(self->composer, "post-requested",
                    G_CALLBACK(on_composer_post_requested), self);
@@ -2809,17 +2889,38 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   if (self->stack && self->timeline && GTK_IS_STACK(self->stack)) {
     gtk_stack_set_visible_child(GTK_STACK(self->stack), self->timeline);
   }
-  /* Initialize tree model for timeline view */
-  if (self->timeline && GNOSTR_IS_TIMELINE_VIEW(self->timeline)) {
-    extern GType timeline_item_get_type(void);
-    self->thread_roots = g_list_store_new(timeline_item_get_type());
-    self->nodes_by_id = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-    gnostr_timeline_view_set_tree_roots(GNOSTR_TIMELINE_VIEW(self->timeline), G_LIST_MODEL(self->thread_roots));
-  } else {
-    g_warning("timeline is not a GnostrTimelineView at init: type=%s", self->timeline ? G_OBJECT_TYPE_NAME(self->timeline) : "(null)");
-  }
   /* Seed initial items so Timeline page isn't empty */
   g_timeout_add_once(150, (GSourceOnceFunc)initial_refresh_timeout_cb, self);
+
+  /* Optional: enable live subscriptions at startup when GNOSTR_LIVE is set */
+  {
+    const char *live = g_getenv("GNOSTR_LIVE");
+    if (live && *live && g_strcmp0(live, "0") != 0) {
+      g_message("main_window_init: GNOSTR_LIVE set; starting live subscriptions");
+      start_pool_live(self);
+      /* Also start profile subscription if identity is configured */
+      start_profile_subscription(self);
+    }
+  }
+
+  /* Optional: insert a synthetic timeline event when GNOSTR_SYNTH is set (for wiring validation) */
+  {
+    const char *synth = g_getenv("GNOSTR_SYNTH");
+    if (synth && *synth && g_strcmp0(synth, "0") != 0) {
+      g_message("main_window_init: GNOSTR_SYNTH set; inserting synthetic timeline event");
+      GPtrArray *rows = g_ptr_array_new_with_free_func(ui_event_row_free);
+      UiEventRow *r = g_new0(UiEventRow, 1);
+      /* Stable 64-hex id derived from timestamp string */
+      gint64 now_sec = g_get_real_time() / 1000000;
+      g_autofree char *seed = g_strdup_printf("gnostr-synth-%" G_GINT64_FORMAT, now_sec);
+      r->id = g_compute_checksum_for_string(G_CHECKSUM_SHA256, seed, -1);
+      r->pubkey = g_strdup("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+      r->created_at = now_sec;
+      r->content = g_strdup("Hello Timeline (synth)");
+      g_ptr_array_add(rows, r);
+      schedule_apply_events(self, rows);
+    }
+  }
 
   /* If backfill requested via env, start periodic timer */
   if (self->backfill_interval_sec > 0) {
@@ -2830,12 +2931,7 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
         (GDestroyNotify)g_object_unref);
   }
 
-  /* Start live streaming via SimplePool */
-  start_pool_live(self);
-  /* If identity is already set, pre-populate from cache, then fetch profile metadata and subscribe for updates */
-  prepopulate_profile_from_cache(self);
-  gnostr_profile_fetch_async(self);
-  start_profile_subscription(self);
+  /* DB-only: startup profile prepopulation and backfill are handled above in init */
 
   /* Initialize button sensitivity based on current sign-in state */
   {
