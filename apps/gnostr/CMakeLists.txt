@@ -34,6 +34,8 @@ add_custom_command(
   VERBATIM)
 
 file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c)
+# Exclude CLI entrypoint from the GUI app target to avoid duplicate main()
+list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/cli_live_logger.c)
 list(APPEND APP_SRC ${GRESOURCE_C})
 if (NOT APP_SRC)
   set(APP_SRC src/main_app.c)
@@ -112,6 +114,37 @@ function(_gnostr_apply_sanitizers target)
 endfunction()
 
 _gnostr_apply_sanitizers(${APP_CLIENT_BIN})
+
+# ---- Headless live logger CLI ----
+add_executable(gnostr-live-log src/cli_live_logger.c)
+target_compile_features(gnostr-live-log PRIVATE c_std_11)
+target_compile_definitions(gnostr-live-log PRIVATE GNOSTR_ENABLE_REAL_SIMPLEPOOL)
+target_include_directories(gnostr-live-log PRIVATE
+  ${CMAKE_SOURCE_DIR}/gobject/include
+  ${CMAKE_SOURCE_DIR}/libnostr/include
+  ${CMAKE_SOURCE_DIR}/libgo/include
+  ${CMAKE_SOURCE_DIR}/nips/nip46/include)
+# Compile GI wrapper into the CLI as well
+target_sources(gnostr-live-log PRIVATE
+  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/storage_ndb.c)
+if (TARGET nostr)
+  target_link_libraries(gnostr-live-log PRIVATE libnostr nostr_json)
+endif()
+if (TARGET nip19)
+  target_link_libraries(gnostr-live-log PRIVATE nip19)
+endif()
+if (TARGET nostr_nip46_core)
+  target_link_libraries(gnostr-live-log PRIVATE nostr_nip46_core)
+endif()
+if (TARGET libgo)
+  target_link_libraries(gnostr-live-log PRIVATE libgo)
+endif()
+target_link_libraries(gnostr-live-log PRIVATE PkgConfig::GLIB)
+if (SQLITE3_FOUND)
+  target_link_libraries(gnostr-live-log PRIVATE PkgConfig::SQLITE3)
+endif()
+_gnostr_apply_sanitizers(gnostr-live-log)
 
 install(TARGETS ${APP_CLIENT_BIN} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 

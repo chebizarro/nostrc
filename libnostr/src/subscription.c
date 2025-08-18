@@ -28,7 +28,8 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
 
     sub->priv->count_result = NULL;
     // Allow tuning channel capacities via environment for stress/backpressure analysis
-    int ev_cap = 1, eose_cap = 1, closed_cap = 1;
+    // Defaults chosen to tolerate relay backfill bursts without loss.
+    int ev_cap = 4096, eose_cap = 8, closed_cap = 8;
     const char *ev_cap_s = getenv("NOSTR_SUB_EVENTS_CAP");
     if (ev_cap_s && *ev_cap_s) {
         int v = atoi(ev_cap_s);
@@ -51,6 +52,9 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     sub->priv->eosed = false;
     sub->priv->closed = false;
     sub->priv->unsubbed = false;
+    // Instrumentation counters
+    atomic_store(&sub->priv->events_enqueued, 0);
+    atomic_store(&sub->priv->events_dropped, 0);
     nsync_mu_init(&sub->priv->sub_mutex);
     // Initialize wait group for lifecycle thread
     go_wait_group_init(&sub->priv->wg);
@@ -151,13 +155,17 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
             if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
                 fprintf(stderr, "[sub %s] dispatch_event: dropped (queue full/closed)\n", sub->priv->id);
             }
+            atomic_fetch_add(&sub->priv->events_dropped, 1);
             nostr_event_free(event);
+        } else {
+            atomic_fetch_add(&sub->priv->events_enqueued, 1);
         }
     } else {
         // Not live anymore; drop event to avoid blocking
         if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
             fprintf(stderr, "[sub %s] dispatch_event: dropped (not live)\n", sub->priv->id);
         }
+        atomic_fetch_add(&sub->priv->events_dropped, 1);
         nostr_event_free(event);
     }
 
@@ -471,4 +479,14 @@ bool nostr_subscription_is_eosed(const NostrSubscription *sub) {
 bool nostr_subscription_is_closed(const NostrSubscription *sub) {
     if (!sub || !sub->priv) return false;
     return atomic_load(&sub->priv->closed);
+}
+
+unsigned long long nostr_subscription_events_enqueued(const NostrSubscription *sub) {
+    if (!sub || !sub->priv) return 0;
+    return atomic_load(&sub->priv->events_enqueued);
+}
+
+unsigned long long nostr_subscription_events_dropped(const NostrSubscription *sub) {
+    if (!sub || !sub->priv) return 0;
+    return atomic_load(&sub->priv->events_dropped);
 }

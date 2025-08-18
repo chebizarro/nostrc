@@ -126,6 +126,18 @@ bool          nostr_subscription_is_eosed(const NostrSubscription *sub);
  */
 bool          nostr_subscription_is_closed(const NostrSubscription *sub);
 
+/* Instrumentation: counters */
+/**
+ * nostr_subscription_events_enqueued:
+ * Returns total number of events successfully enqueued into the subscription's event channel.
+ */
+unsigned long long nostr_subscription_events_enqueued(const NostrSubscription *sub);
+/**
+ * nostr_subscription_events_dropped:
+ * Returns total number of events dropped at dispatch due to queue full/closed or not-live.
+ */
+unsigned long long nostr_subscription_events_dropped(const NostrSubscription *sub);
+
 #ifdef __cplusplus
 }
 #endif

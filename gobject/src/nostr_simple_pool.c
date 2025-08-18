@@ -165,7 +165,7 @@ static gboolean dedup_set_seen(DedupSet *d, const char *id) {
 static gpointer subscribe_many_thread(gpointer user_data) {
     SubscribeManyCtx *ctx = (SubscribeManyCtx *)user_data;
     /* For each URL, set up a subscription */
-    typedef struct { NostrRelay *relay; NostrSubscription *sub; } SubItem;
+    typedef struct { NostrRelay *relay; NostrSubscription *sub; gboolean eosed; guint64 emitted; gint64 start_us; gint64 eose_us; } SubItem;
     GPtrArray *subs = g_ptr_array_new_with_free_func(NULL);
 
     GoContext *bg = go_context_background();
@@ -202,24 +202,24 @@ static gpointer subscribe_many_thread(gpointer user_data) {
             nostr_relay_free(relay);
             continue;
         }
-        SubItem item = { .relay = relay, .sub = sub };
+        SubItem item = { .relay = relay, .sub = sub, .eosed = FALSE, .emitted = 0, .start_us = g_get_monotonic_time(), .eose_us = -1 };
         g_ptr_array_add(subs, g_memdup2(&item, sizeof(SubItem)));
     }
 
     /* Streaming loop */
     DedupSet *dedup = dedup_set_new(65536);
+    gboolean bootstrap_emitted = FALSE;
     while (!(ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable))) {
         GPtrArray *batch = g_ptr_array_new();
-        /* Collect from all subscriptions non-blocking */
+        gboolean any = FALSE;
+        /* Collect from all subscriptions non-blocking, drain until empty */
         for (guint i = 0; i < subs->len; i++) {
             SubItem *it = (SubItem *)subs->pdata[i];
             if (!it || !it->sub) continue;
             GoChannel *ch_events = nostr_subscription_get_events_channel(it->sub);
             void *msg = NULL;
-            int got;
-            int spin = 0;
-            /* Pull a few items per sub to avoid starvation */
-            while ((got = (ch_events ? go_channel_try_receive(ch_events, &msg) : -1)) == 0 && spin++ < 32) {
+            while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
+                any = TRUE;
                 if (msg) {
                     NostrEvent *ev = (NostrEvent*)msg;
                     const char *eid = nostr_event_get_id(ev);
@@ -228,9 +228,18 @@ static gpointer subscribe_many_thread(gpointer user_data) {
                         nostr_event_free(ev);
                     } else {
                         g_ptr_array_add(batch, ev);
+                        it->emitted++;
                     }
                 }
                 msg = NULL;
+            }
+            /* Drain EOSE signals */
+            GoChannel *ch_eose = nostr_subscription_get_eose_channel(it->sub);
+            if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+                it->eosed = TRUE;
+                if (it->eose_us < 0 && it->start_us > 0) {
+                    it->eose_us = g_get_monotonic_time() - it->start_us;
+                }
             }
         }
 
@@ -244,7 +253,32 @@ static gpointer subscribe_many_thread(gpointer user_data) {
         } else {
             g_ptr_array_unref(batch);
         }
-        g_usleep(1000 * 50);
+        /* If all subs have signaled EOSE once, mark bootstrap complete (log only once) */
+        if (!bootstrap_emitted && subs->len > 0) {
+            gboolean all_eosed = TRUE;
+            for (guint i = 0; i < subs->len; i++) {
+                SubItem *it = (SubItem *)subs->pdata[i];
+                if (it && !it->eosed) { all_eosed = FALSE; break; }
+            }
+            if (all_eosed) {
+                bootstrap_emitted = TRUE;
+                g_message("simple_pool: bootstrap complete (EOSE from all relays)");
+            }
+        }
+        /* Adaptive sleep: if nothing was read, back off a bit; otherwise, immediately iterate */
+        if (!any) g_usleep(1000 * 5); /* 5ms idle sleep to reduce CPU */
+    }
+
+    /* Print per-subscription stats */
+    for (guint i = 0; i < subs->len; i++) {
+        SubItem *it = (SubItem*)subs->pdata[i];
+        if (!it || !it->sub) continue;
+        const char *url = it->relay ? nostr_relay_get_url_const(it->relay) : "<no-relay>";
+        unsigned long long enq = nostr_subscription_events_enqueued(it->sub);
+        unsigned long long drop = nostr_subscription_events_dropped(it->sub);
+        double eose_ms = (it->eose_us >= 0) ? (it->eose_us / 1000.0) : -1.0;
+        g_message("simple_pool: stats url=%s enqueued=%llu emitted=%" G_GUINT64_FORMAT " dropped=%llu eose_ms=%.3f",
+                  url ? url : "<null>", enq, it->emitted, drop, eose_ms);
     }
 
     /* Cleanup */
@@ -279,6 +313,7 @@ void gnostr_simple_pool_subscribe_many_async(GnostrSimplePool *self,
     /* Start background streaming thread */
     SubscribeManyCtx *ctx = g_new0(SubscribeManyCtx, 1);
     ctx->self_obj = G_OBJECT(g_object_ref(self));
+    /* Deep copy URLs for thread lifetime */
     ctx->urls = dup_urls(urls, url_count);
     ctx->url_count = url_count;
     /* Deep-copy filters to decouple from caller lifetime */

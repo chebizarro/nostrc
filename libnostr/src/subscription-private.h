@@ -24,6 +24,9 @@ typedef struct _SubscriptionPrivate {
     nsync_mu sub_mutex;
     // Wait for lifecycle thread to exit before freeing
     GoWaitGroup wg;
+    // Instrumentation: counters for events
+    _Atomic unsigned long long events_enqueued;
+    _Atomic unsigned long long events_dropped;
 } SubscriptionPrivate;
 
 struct NostrSubscription; /* forward */

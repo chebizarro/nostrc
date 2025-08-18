@@ -34,7 +34,9 @@ int storage_ndb_ingest_ldjson(const char *buf, size_t len)
 int storage_ndb_ingest_event_json(const char *json, const char *relay_opt)
 {
   if (!g_store || !json) return LN_ERR_INGEST;
-  return ln_store_ingest_event_json(g_store, json, -1, relay_opt);
+  /* Ensure explicit length; some backends may not accept -1 */
+  size_t len = strlen(json);
+  return ln_store_ingest_event_json(g_store, json, (int)len, relay_opt);
 }
 
 int storage_ndb_begin_query(void **txn_out)

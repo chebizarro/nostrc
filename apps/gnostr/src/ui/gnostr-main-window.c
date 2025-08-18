@@ -42,6 +42,7 @@
 /* Forward declarations for local helpers used before their definitions */
 static char *client_settings_get_current_npub(void);
 static char *hex_encode_lower(const uint8_t *buf, size_t len);
+static gboolean hex_to_bytes32(const char *hex, uint8_t out[32]);
 static void show_toast(GnostrMainWindow *self, const char *msg);
 /* Pre-populate profile from local DB */
 static void prepopulate_profile_from_cache(GnostrMainWindow *self);
@@ -118,6 +119,30 @@ typedef struct {
   char *url;               /* owned */
 } AvatarHttpCtx;
 static void avatar_http_ctx_free(AvatarHttpCtx *c){ if(!c) return; if (c->self) g_object_unref(c->self); g_free(c->url); g_free(c); }
+
+/* Explicit avatar button click: ensure popover is attached and present it */
+static void on_avatar_button_clicked(GtkButton *button, GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  g_message("avatar: clicked (btn=%p)", (void*)button);
+  if (!self->btn_avatar) {
+    g_warning("avatar: btn_avatar is NULL");
+    return;
+  }
+  GtkPopover *pop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(self->btn_avatar));
+  if (!pop && self->avatar_popover) {
+    g_message("avatar: popover missing, reattaching template popover");
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(self->btn_avatar), GTK_WIDGET(self->avatar_popover));
+    pop = GTK_POPOVER(self->avatar_popover);
+  }
+  if (pop) {
+    gtk_popover_popup(pop);
+  } else {
+    g_warning("avatar: no popover available to show");
+  }
+}
+
+/* Gesture handler to support GTK4 (GtkMenuButton has no "clicked" signal) */
+
 static gboolean avatar_apply_texture_idle(gpointer data) {
   AvatarHttpCtx *c = (AvatarHttpCtx*)data; if (!c || !GNOSTR_IS_MAIN_WINDOW(c->self)) { avatar_http_ctx_free(c); return G_SOURCE_REMOVE; }
   /* If cache has the texture, set it to btn_avatar */
@@ -208,18 +233,26 @@ static void relays_save_window_size(GtkWindow *win) {
 static void prepopulate_profile_from_cache(GnostrMainWindow *self) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
   g_autofree char *npub = client_settings_get_current_npub();
-  if (!npub || !*npub) return;
+  if (!npub || !*npub) { g_debug("prepopulate_profile_from_cache: no npub set"); return; }
   uint8_t pub32[32] = {0};
-  if (nostr_nip19_decode_npub(npub, pub32) != 0) return;
+  if (nostr_nip19_decode_npub(npub, pub32) != 0) { g_warning("prepopulate_profile_from_cache: failed to decode npub"); return; }
   void *txn = NULL; char *json = NULL; int jlen = 0;
-  if (storage_ndb_begin_query(&txn) != 1) return;
+  int brc = storage_ndb_begin_query(&txn);
+  if (brc != 0) { g_warning("prepopulate_profile_from_cache: begin_query failed rc=%d", brc); return; }
   int rc = storage_ndb_get_profile_by_pubkey(txn, pub32, &json, &jlen);
+  g_message("prepopulate_profile_from_cache: get_profile rc=%d len=%d json_present=%s", rc, jlen, json?"yes":"no");
   if (rc == 0 && json) {
     NostrEvent *evt = nostr_event_new();
-    if (evt && nostr_event_deserialize(evt, json) == 0) {
+    if (!evt) {
+      g_warning("prepopulate_profile_from_cache: failed to alloc NostrEvent");
+    } else if (nostr_event_deserialize(evt, json) == 0) {
       const char *pk = nostr_event_get_pubkey(evt);
       const char *content = nostr_event_get_content(evt);
+      g_message("prepopulate_profile_from_cache: deserialized kind=%d pk=%s content_present=%s",
+                nostr_event_get_kind(evt), pk?pk:"(null)", (content&&*content)?"yes":"no");
       if (pk && content) update_meta_from_profile_json(self, pk, content);
+    } else {
+      g_warning("prepopulate_profile_from_cache: nostr_event_deserialize failed");
     }
     if (evt) nostr_event_free(evt);
   }
@@ -241,24 +274,43 @@ static void cancel_profile_subscription(GnostrMainWindow *self) {
 static void on_profile_event(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  
+  g_message("on_profile_event: batch len=%u", batch?batch->len:0);
   for (guint i = 0; i < batch->len; i++) {
-    const char *json = g_ptr_array_index(batch, i);
-    if (!json) continue;
-
-    NostrEvent *evt = nostr_event_new();
-    if (!evt) continue;
-    if (nostr_event_deserialize(evt, json) != 0) { nostr_event_free(evt); continue; }
-
-    if (nostr_event_get_kind(evt) == 0) {  // kind-0: profile metadata
+    NostrEvent *evt = (NostrEvent*)g_ptr_array_index(batch, i);
+    if (!evt) { g_debug("on_profile_event: [%u] null evt", i); continue; }
+    int kind = nostr_event_get_kind(evt);
+    if (kind == 0) {  // kind-0: profile metadata
       const char *pk = nostr_event_get_pubkey(evt);
       const char *content = nostr_event_get_content(evt);
+      g_message("on_profile_event: [%u] kind-0 pk=%s content_present=%s", i, pk?pk:"(null)", (content&&*content)?"yes":"no");
       if (pk && content) {
         update_meta_from_profile_json(self, pk, content);
       }
     }
 
-    nostr_event_free(evt);
+    /* Ingest raw json for profile into NostrdB and verify read-back */
+    {
+      char *json = nostr_event_serialize(evt);
+      int irc = json ? storage_ndb_ingest_event_json(json, NULL) : -1;
+      const char *eid = nostr_event_get_id(evt);
+      g_message("ndb_ingest(profile_sub): kind=%d id=%s rc=%d", kind, eid?eid:"(null)", irc);
+      if (kind == 0) {
+        const char *pk_hex = nostr_event_get_pubkey(evt);
+        uint8_t pk32[32] = {0};
+        if (pk_hex && hex_to_bytes32(pk_hex, pk32)) {
+          void *txn = NULL; char *pjson = NULL; int plen = 0;
+          int brc = storage_ndb_begin_query(&txn);
+          if (brc == 0) {
+            int prc = storage_ndb_get_profile_by_pubkey(txn, pk32, &pjson, &plen);
+            g_message("ndb_profile_readback(profile_sub): pk=%s rc=%d len=%d present=%s", pk_hex, prc, plen, pjson?"yes":"no");
+            storage_ndb_end_query(txn);
+          } else {
+            g_warning("ndb_profile_readback(profile_sub): begin_query failed rc=%d", brc);
+          }
+        }
+      }
+      if (json) free(json);
+    }
   }
 
   /* DB-only mode startup: prepopulate profile from DB and start initial backfill */
@@ -282,6 +334,7 @@ static void start_profile_subscription(GnostrMainWindow *self) {
   
   g_autofree char *pub_hex = hex_encode_lower(pub32, 32);
   if (!pub_hex || strlen(pub_hex) != 64) return;
+  g_message("start_profile_subscription: pubkey=%s", pub_hex);
   
   // Create filters set for kind-0 events from our pubkey
   NostrFilters *filters = nostr_filters_new();
@@ -299,7 +352,7 @@ static void start_profile_subscription(GnostrMainWindow *self) {
   gnostr_load_relays_into(relays);
   if (relays->len == 0) {
     g_ptr_array_free(relays, TRUE);
-    nostr_filter_free(filter);
+    nostr_filters_free(filters);
     return;
   }
   
@@ -307,6 +360,10 @@ static void start_profile_subscription(GnostrMainWindow *self) {
   const char **urls = g_new0(const char*, relays->len + 1);
   for (guint i = 0; i < relays->len; i++) {
     urls[i] = g_strdup(g_ptr_array_index(relays, i));
+  }
+  g_message("start_profile_subscription: relays=%u", relays->len);
+  for (guint i = 0; i < relays->len; i++) {
+    g_message("  relay[%u]=%s", i, urls[i]);
   }
   
   // Create new cancellable for this subscription
@@ -536,46 +593,74 @@ static void ndb_backfill_worker(GTask *task, gpointer source, gpointer task_data
   }
   /* Build UiEventRow list by deserializing events */
   GPtrArray *rows = g_ptr_array_new_with_free_func(ui_event_row_free);
+  /* Track unique pubkeys seen in the fetched events */
+  GHashTable *authors = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   for (int i = 0; i < n; i++) {
-    const char *js = arr[i]; if (!js) continue;
+    const char *js = arr[i];
+    if (!js) continue;
     NostrEvent *evt = nostr_event_new();
     if (!evt) continue;
     if (nostr_event_deserialize(evt, js) != 0) { nostr_event_free(evt); continue; }
-    UiEventRow *r = g_new0(UiEventRow, 1);
-    /* id */
-    const char *id_hex = evt->id; /* struct is public */
-    if (id_hex && *id_hex) r->id = g_strdup(id_hex);
-    /* pubkey */
-    const char *pk = nostr_event_get_pubkey(evt);
-    if (pk) r->pubkey = g_strdup(pk);
-    r->created_at = nostr_event_get_created_at(evt);
-    /* content & metadata cache for profiles */
-    const char *content = nostr_event_get_content(evt);
-    if (content && *content) r->content = g_utf8_make_valid(content, -1);
     int kind = nostr_event_get_kind(evt);
-    if (kind == 0 && pk && content) {
-      update_meta_from_profile_json(d->self, pk, content);
-    }
-    /* parent from last 'e' tag if present */
-    NostrTags *tags = (NostrTags*)nostr_event_get_tags(evt);
-    if (tags) {
-      for (ssize_t j = (ssize_t)nostr_tags_size(tags) - 1; j >= 0; j--) {
-        NostrTag *t = nostr_tags_get(tags, (size_t)j);
-        const char *k = nostr_tag_get_key(t);
-        if (k && g_strcmp0(k, "e") == 0) {
-          const char *val = nostr_tag_get_value(t);
-          if (val && *val) { r->parent_id = g_strndup(val, 64); break; }
+    if (kind == 1) {
+      UiEventRow *r = g_new0(UiEventRow, 1);
+      /* id */
+      const char *id_hex = evt->id; /* struct is public */
+      if (id_hex && *id_hex) r->id = g_strdup(id_hex);
+      /* pubkey */
+      const char *pk = nostr_event_get_pubkey(evt);
+      if (pk) {
+        r->pubkey = g_strdup(pk);
+        /* record author for later profile fetch */
+        if (!g_hash_table_contains(authors, pk)) g_hash_table_insert(authors, g_strdup(pk), GINT_TO_POINTER(1));
+      }
+      r->created_at = nostr_event_get_created_at(evt);
+      /* content */
+      const char *content = nostr_event_get_content(evt);
+      if (content && *content) r->content = g_utf8_make_valid(content, -1);
+      /* parent from last 'e' tag if present */
+      NostrTags *tags = (NostrTags*)nostr_event_get_tags(evt);
+      if (tags) {
+        size_t tlen = nostr_tags_size(tags);
+        for (size_t j = 0; j < tlen; j++) {
+          NostrTag *t = nostr_tags_get(tags, (size_t)j);
+          const char *k = nostr_tag_get_key(t);
+          if (k && g_strcmp0(k, "e") == 0) {
+            const char *val = nostr_tag_get_value(t);
+            if (val && *val) { r->parent_id = g_strndup(val, 64); break; }
+          }
         }
       }
+      g_ptr_array_add(rows, r);
     }
-    g_ptr_array_add(rows, r);
     nostr_event_free(evt);
   }
-  storage_ndb_free_results(arr, n);
-  storage_ndb_end_query(txn);
-  /* Schedule apply on main loop */
+  /* Second phase: For each unique author, try to read their profile (kind 0) from DB and update meta cache */
+  if (authors) {
+    GHashTableIter it; gpointer key, val; (void)val;
+    g_hash_table_iter_init(&it, authors);
+    while (g_hash_table_iter_next(&it, &key, &val)) {
+      const char *pk_hex = (const char*)key;
+      if (!pk_hex || strlen(pk_hex) != 64) continue;
+      uint8_t pk32[32] = {0};
+      if (!hex_to_bytes32(pk_hex, pk32)) continue;
+      char *pjson = NULL; int plen = 0;
+      int prc = storage_ndb_get_profile_by_pubkey(txn, pk32, &pjson, &plen);
+      if (prc == 0 && pjson) {
+        /* Deserialize and update meta from content */
+        NostrEvent *pevt = nostr_event_new();
+        if (pevt && nostr_event_deserialize(pevt, pjson) == 0) {
+          const char *content = nostr_event_get_content(pevt);
+          if (content && *content) update_meta_from_profile_json(d->self, pk_hex, content);
+        }
+        if (pevt) nostr_event_free(pevt);
+      }
+    }
+    g_hash_table_destroy(authors);
+  }
   g_message("ndb_backfill_worker: scheduling %u rows to apply", rows ? rows->len : 0);
   schedule_apply_events(d->self, rows);
+  storage_ndb_end_query(txn);
   g_task_return_boolean(task, TRUE);
 }
 
@@ -613,15 +698,6 @@ static char *build_backfill_filters_json(GnostrMainWindow *self, int limit) {
       json_object_set_new(f1, "since", json_integer((json_int_t)since));
     }
     json_array_append_new(arr, f1);
-  }
-  /* f0: profiles (kind=0) no since */
-  {
-    json_t *f0 = json_object();
-    json_t *kinds = json_array(); json_array_append_new(kinds, json_integer(0));
-    json_object_set_new(f0, "kinds", kinds);
-    int lim0 = lim > 0 ? lim : 100; if (lim0 <= 0) lim0 = 100;
-    json_object_set_new(f0, "limit", json_integer(lim0));
-    json_array_append_new(arr, f0);
   }
   char *s = json_dumps(arr, JSON_COMPACT);
   json_decref(arr);
@@ -826,15 +902,14 @@ static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_url
     NostrFilter *f1 = nostr_filter_new();
     int kinds1[] = { 1 };
     nostr_filter_set_kinds(f1, kinds1, 1);
-    nostr_filter_set_limit(f1, lim);
     if (self->use_since) {
       time_t now = time(NULL);
       int64_t since = (int64_t)now - (int64_t)self->since_seconds;
       if (since < 0) since = 0;
       nostr_filter_set_since_i64(f1, since);
-      g_message("build_urls_and_filters: notes kinds=[1] limit=%d since=%lld (use_since=1)", lim, (long long)since);
+      g_message("build_urls_and_filters: notes kinds=[1] since=%lld (use_since=1, no limit)", (long long)since);
     } else {
-      g_message("build_urls_and_filters: notes kinds=[1] limit=%d (use_since=0)", lim);
+      g_message("build_urls_and_filters: notes kinds=[1] (use_since=0, no limit)");
     }
     nostr_filters_add(fs, f1);
   }
@@ -844,11 +919,8 @@ static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_url
     NostrFilter *f0 = nostr_filter_new();
     int kinds0[] = { 0 };
     nostr_filter_set_kinds(f0, kinds0, 1);
-    /* Keep profile fetch lightweight */
-    int lim0 = lim > 0 ? lim : 100;
-    if (lim0 <= 0) lim0 = 100;
-    nostr_filter_set_limit(f0, lim0);
-    g_message("build_urls_and_filters: profiles kinds=[0] limit=%d (no since)", lim0);
+    /* No limit for live profile hydration; relays will cap as needed */
+    g_message("build_urls_and_filters: profiles kinds=[0] (no since, no limit)");
     nostr_filters_add(fs, f0);
   }
   *out_filters = fs;
@@ -869,6 +941,8 @@ static void ui_event_row_free(gpointer p) {
 typedef struct {
   char *display;
   char *handle;
+  char *nip05;
+  char *npub_short;
   char *avatar_url;
 } UserMeta;
 
@@ -877,6 +951,8 @@ static void user_meta_free(gpointer p) {
   if (!m) return;
   g_free(m->display);
   g_free(m->handle);
+  g_free(m->nip05);
+  g_free(m->npub_short);
   g_free(m->avatar_url);
   g_free(m);
 }
@@ -896,17 +972,18 @@ static char *short_bech(const char *bech, guint front, guint back) {
   return g_string_free(s, FALSE);
 }
 
-/* Derive a reasonable handle from pubkey (npub short) if no profile */
+/* Compute a truncated npub and return as a handle like @npub1xxx…yyyy */
 static char *derive_handle_from_pubkey_hex(const char *pubkey_hex) {
   if (!pubkey_hex || strlen(pubkey_hex) != 64) return g_strdup("@anon");
-  /* Use a short hex moniker: @<first8>…<last6> */
-  char first8[9] = {0}; memcpy(first8, pubkey_hex, 8);
-  const char *tail = pubkey_hex + 64 - 6;
-  GString *h = g_string_new("@");
-  g_string_append(h, first8);
-  g_string_append(h, "…");
-  g_string_append_len(h, tail, 6);
-  return g_string_free(h, FALSE);
+  uint8_t pk[32] = {0};
+  if (hex_to_bytes_exact(pubkey_hex, pk, sizeof(pk)) != 0) return g_strdup("@anon");
+  char *npub = NULL;
+  if (nostr_nip19_encode_npub(pk, &npub) != 0 || !npub) return g_strdup("@anon");
+  /* Keep a reasonably informative short bech32 */
+  g_autofree char *shorted = short_bech(npub, 12, 6);
+  char *out = g_strconcat("@", shorted, NULL);
+  free(npub);
+  return out;
 }
 
 static UserMeta *ensure_user_meta(GHashTable *ht, const char *pubkey_hex) {
@@ -915,8 +992,20 @@ static UserMeta *ensure_user_meta(GHashTable *ht, const char *pubkey_hex) {
   if (!m) {
     m = g_new0(UserMeta, 1);
     /* Defaults */
-    m->display = g_strdup("Anonymous");
+    m->display = NULL; /* leave empty so UI can fall back to handle */
     m->handle = derive_handle_from_pubkey_hex(pubkey_hex);
+    /* Also store a truncated npub string for future use */
+    do {
+      uint8_t pk[32] = {0};
+      if (hex_to_bytes_exact(pubkey_hex, pk, sizeof(pk)) == 0) {
+        char *npub = NULL;
+        if (nostr_nip19_encode_npub(pk, &npub) == 0 && npub) {
+          m->npub_short = short_bech(npub, 12, 6);
+          free(npub);
+        }
+      }
+      if (!m->npub_short) m->npub_short = g_strdup("");
+    } while (0);
     m->avatar_url = g_strdup("");
     g_hash_table_insert(ht, g_strdup(pubkey_hex), m);
   }
@@ -925,21 +1014,35 @@ static UserMeta *ensure_user_meta(GHashTable *ht, const char *pubkey_hex) {
 
 /* Update cache from kind-0 profile content (JSON) */
 static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pubkey_hex, const char *content_json) {
-  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex || !content_json) return;
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex || !content_json) { g_debug("update_meta_from_profile_json: bad args"); return; }
+  g_message("update_meta_from_profile_json: entry pubkey=%s json_len=%zu", pubkey_hex, strlen(content_json));
   json_error_t jerr; json_t *root = json_loads(content_json, 0, &jerr);
-  if (!root || !json_is_object(root)) { if (root) json_decref(root); return; }
-  const char *name = NULL, *display_name = NULL, *picture = NULL, *username = NULL;
+  if (!root || !json_is_object(root)) { g_warning("profile_json: parse failed at line %d col %d: %s", jerr.line, jerr.column, jerr.text[0] ? jerr.text : ""); if (root) json_decref(root); return; }
+  const char *name = NULL, *display_name = NULL, *picture = NULL, *username = NULL, *nip05 = NULL;
   json_t *v = NULL;
   if ((v = json_object_get(root, "display_name")) && json_is_string(v)) display_name = json_string_value(v);
   if (!display_name && (v = json_object_get(root, "displayName")) && json_is_string(v)) display_name = json_string_value(v);
   if ((v = json_object_get(root, "name")) && json_is_string(v)) name = json_string_value(v);
   if ((v = json_object_get(root, "username")) && json_is_string(v)) username = json_string_value(v);
   if ((v = json_object_get(root, "picture")) && json_is_string(v)) picture = json_string_value(v);
+  if ((v = json_object_get(root, "nip05")) && json_is_string(v)) nip05 = json_string_value(v);
   UserMeta *m = ensure_user_meta(self->meta_by_pubkey, pubkey_hex);
   if (display_name && *display_name) { g_free(m->display); m->display = g_strdup(display_name); }
+  /* Store nip05 if it looks valid (simple check) */
+  if (nip05 && *nip05) {
+    gboolean looks_ok = (strchr(nip05, '@') != NULL) || (strchr(nip05, '.') != NULL);
+    if (looks_ok) { g_free(m->nip05); m->nip05 = g_strdup(nip05); }
+  }
+  /* Fallback handle selection: username/name > nip05 > @npub_short */
   const char *handle_src = NULL;
   if (username && *username) handle_src = username; else if (name && *name) handle_src = name;
-  if (handle_src && *handle_src) { g_free(m->handle); m->handle = g_strconcat("@", handle_src, NULL); }
+  if (handle_src && *handle_src) {
+    g_free(m->handle); m->handle = g_strconcat("@", handle_src, NULL);
+  } else if (m->nip05 && *m->nip05) {
+    g_free(m->handle); m->handle = g_strdup(m->nip05);
+  } else if (m->npub_short && *m->npub_short) {
+    g_free(m->handle); m->handle = g_strconcat("@", m->npub_short, NULL);
+  }
   if (picture && *picture) {
     g_free(m->avatar_url);
     m->avatar_url = g_strdup(picture);
@@ -948,10 +1051,12 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
     g_free(m->avatar_url);
     m->avatar_url = g_strdup_printf("https://robohash.org/%s.png?size=80x80&set=set1", pubkey_hex);
   }
+  g_debug("profile_json: extracted display='%s' handle='%s' nip05='%s' picture='%s'", m->display?m->display:"", m->handle?m->handle:"", m->nip05?m->nip05:"", m->avatar_url?m->avatar_url:"");
   json_decref(root);
   /* Refresh any existing TimelineItems authored by this pubkey */
   if (self->nodes_by_id && self->meta_by_pubkey) {
     GHashTableIter it; gpointer key=NULL, val=NULL; g_hash_table_iter_init(&it, self->nodes_by_id);
+    guint updated = 0;
     while (g_hash_table_iter_next(&it, &key, &val)) {
       gpointer obj = val;
       if (!G_IS_OBJECT(obj)) continue;
@@ -961,14 +1066,16 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
         const UserMeta *um = (const UserMeta*)g_hash_table_lookup(self->meta_by_pubkey, pubkey_hex);
         if (um) {
           g_object_set(obj,
-                       "display-name", um->display ? um->display : "Anonymous",
+                       "display-name", um->display ? um->display : "",
                        "handle",       um->handle  ? um->handle  : "@anon",
                        "avatar-url",   um->avatar_url ? um->avatar_url : "",
                        NULL);
+          updated++;
         }
       }
       g_free(item_pk);
     }
+    g_message("update_meta_from_profile_json: updated %u existing timeline items for %s", updated, pubkey_hex);
   }
   /* If this metadata is for the current identity, update header UI (name + avatar) */
   {
@@ -1080,7 +1187,7 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
         const UserMeta *um = (const UserMeta*)g_hash_table_lookup(self->meta_by_pubkey, pubkey_hex);
         if (um) {
           g_object_set(obj,
-                       "display-name", um->display ? um->display : "Anonymous",
+                       "display-name", um->display ? um->display : "",
                        "handle",       um->handle  ? um->handle  : "@anon",
                        "avatar-url",   um->avatar_url ? um->avatar_url : "",
                        NULL);
@@ -1123,7 +1230,7 @@ static void thread_graph_insert(GnostrMainWindow *self, UiEventRow *r) {
   if (!ti) return;
   /* Resolve metadata for author */
   const char *pk = r->pubkey;
-  const char *disp = "Anonymous";
+  const char *disp = "";
   const char *handle = "@anon";
   const char *avatar = "";
   if (pk && *pk) {
@@ -1131,7 +1238,7 @@ static void thread_graph_insert(GnostrMainWindow *self, UiEventRow *r) {
       self->meta_by_pubkey = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, user_meta_free);
     UserMeta *m = ensure_user_meta(self->meta_by_pubkey, pk);
     if (m) {
-      disp = m->display ? m->display : disp;
+      disp = m->display ? m->display : "";
       handle = m->handle ? m->handle : handle;
       avatar = m->avatar_url ? m->avatar_url : "";
     }
@@ -1228,8 +1335,32 @@ static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer us
     if (kind == 0) {
       const char *pk0 = nostr_event_get_pubkey(evt);
       const char *content0 = nostr_event_get_content(evt);
-      g_message("on_pool_events: got kind-0 profile (pk=%s) content_present=%s", pk0 ? pk0 : "(null)", (content0 && *content0) ? "yes" : "no");
-      if (pk0 && content0) update_meta_from_profile_json(self, pk0, content0);
+      g_message("on_pool_events: got kind-0 profile (pk=%s) content_present=%s", pk0, content0 && *content0 ? "yes" : "no");
+      if (pk0 && content0 && *content0)
+        update_meta_from_profile_json(self, pk0, content0);
+      /* Persist to NostrdB as well (live path), then verify read-back */
+      char *json = nostr_event_serialize(evt);
+      int irc = storage_ndb_ingest_event_json(json, NULL);
+      g_message("ndb_ingest(live): kind=%d id=%s rc=%d", kind, nostr_event_get_id(evt), irc);
+      if (pk0 && strlen(pk0) == 64) {
+        uint8_t pk32[32] = {0};
+        if (hex_to_bytes32(pk0, pk32)) {
+          void *txn = NULL;
+          int brc = storage_ndb_begin_query(&txn);
+          if (brc == 0) {
+            char *pjson = NULL; int plen = 0;
+            int prc = storage_ndb_get_profile_by_pubkey(txn, pk32, &pjson, &plen);
+            g_message("ndb_profile_readback(live): pk=%s rc=%d len=%d present=%s", pk0, prc, plen, pjson?"yes":"no");
+            storage_ndb_end_query(txn);
+          } else {
+            g_warning("ndb_profile_readback(live): begin_query failed rc=%d", brc);
+          }
+        } else {
+          g_warning("ndb_profile_readback(live): invalid pubkey hex");
+        }
+      }
+      free(json);
+      /* Skip adding profile events as timeline rows */
       continue;
     }
     UiEventRow *r = g_new0(UiEventRow, 1);
@@ -1257,11 +1388,27 @@ static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer us
     char *json = nostr_event_serialize(evt);
     if (json) {
       int irc = storage_ndb_ingest_event_json(json, NULL);
-      if (irc != 0) {
-        /* LN_OK is typically 0; if API differs, this log still helps */
-        g_debug("ndb ingest rc=%d", irc);
-      }
+      const char *eid = nostr_event_get_id(evt);
+      g_message("ndb_ingest: kind=%d id=%s rc=%d", kind, eid?eid:"(null)", irc);
       free(json);
+      /* For profiles, attempt immediate read-back to validate persistence */
+      if (kind == 0) {
+        const char *pk_hex = nostr_event_get_pubkey(evt);
+        unsigned char pk32[32] = {0};
+        if (pk_hex && hex_to_bytes_exact(pk_hex, pk32, sizeof pk32) == 0) {
+          void *txn = NULL; char *pjson = NULL; int plen = 0;
+          int brc = storage_ndb_begin_query(&txn);
+          if (brc == 0) {
+            int prc = storage_ndb_get_profile_by_pubkey(txn, pk32, &pjson, &plen);
+            g_message("ndb_profile_readback: pk=%s rc=%d len=%d present=%s", pk_hex, prc, plen, pjson?"yes":"no");
+            storage_ndb_end_query(txn);
+          } else {
+            g_warning("ndb_profile_readback: begin_query failed rc=%d", brc);
+          }
+        } else {
+          g_warning("ndb_profile_readback: invalid pubkey hex");
+        }
+      }
     }
     /* Free transient UiEventRow if ever allocated in future paths (none now) */
   }
@@ -1302,7 +1449,15 @@ static void start_pool_live(GnostrMainWindow *self) {
   build_urls_and_filters(self, &urls, &url_count, &filters, (int)self->default_limit);
   /* Do not free previous live_filters here to avoid races; allow leak until shutdown. */
   self->live_filters = filters; /* take ownership for lifetime of live subscription */
-  gnostr_simple_pool_subscribe_many_async(self->pool, urls, url_count, self->live_filters, self->pool_cancellable, on_pool_subscribe_done, self);
+  gnostr_simple_pool_subscribe_many_async(
+    self->pool,
+    urls,
+    url_count,
+    self->live_filters,
+    self->pool_cancellable,
+    on_pool_subscribe_done,
+    self
+  );
   /* Free duplicated url strings and array; filters owned by libnostr after async begins? Keep it alive here by not freeing immediately. */
   for (size_t i = 0; i < url_count; i++) g_free((char*)urls[i]);
   g_free((void*)urls);
@@ -1838,14 +1993,14 @@ static void on_relays_clicked(GtkButton *button, GnostrMainWindow *self) {
   {
     GSettingsSchemaSource *src = g_settings_schema_source_get_default();
     if (src) {
-      GSettingsSchema *sch = g_settings_schema_source_lookup(src, "org.gnostr.gnostr", TRUE);
-      if (sch) {
-        GSettings *gs = g_settings_new("org.gnostr.gnostr");
-        int w = g_settings_get_int(gs, "relays-window-width");
-        int h = g_settings_get_int(gs, "relays-window-height");
+      GSettingsSchema *schema = g_settings_schema_source_lookup(src, "org.gnostr.gnostr", TRUE);
+      if (schema) {
+        GSettings *settings = g_settings_new("org.gnostr.gnostr");
+        int w = g_settings_get_int(settings, "relays-window-width");
+        int h = g_settings_get_int(settings, "relays-window-height");
         if (w > 0 && h > 0) gtk_window_set_default_size(win, w, h);
-        g_object_unref(gs);
-        g_settings_schema_unref(sch);
+        g_object_unref(settings);
+        g_settings_schema_unref(schema);
       }
     }
   }
@@ -2024,7 +2179,7 @@ static void on_avatar_get_pubkey_done(GObject *source, GAsyncResult *res, gpoint
     if (self->btn_sign_out) gtk_widget_set_sensitive(self->btn_sign_out, TRUE);
     /* Persist identity */
     client_settings_set_current_npub(npub);
-    /* DB-only: prepopulate from DB and trigger backfill */
+    /* DB-only: load profile from DB and backfill timeline */
     prepopulate_profile_from_cache(self);
     start_pool_backfill(self, (int)self->default_limit);
   } else {
@@ -2396,7 +2551,7 @@ static void timeline_refresh_worker(GTask *task, gpointer source, gpointer task_
     if (d && d->self && GNOSTR_MAIN_WINDOW(d->self)->use_since) {
       int window_secs = (int)GNOSTR_MAIN_WINDOW(d->self)->since_seconds;
       time_t now = time(NULL);
-      int64_t since = (int64_t)now - window_secs;
+      int64_t since = (int64_t)now - (int64_t)window_secs;
       if (since < 0) since = 0;
       nostr_filter_set_since_i64(f, since);
       g_message("worker: using since=%ld seconds ago (env)", (long)window_secs);
@@ -2806,6 +2961,7 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_refresh);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_revealer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_label);
+  /* Avatar button/popover */
   gtk_widget_class_bind_template_callback(widget_class, on_settings_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_relays_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_avatar_login_local_clicked);
@@ -2820,15 +2976,9 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   if (self->btn_avatar) init_pop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(self->btn_avatar));
   g_message("main_window_init: btn_avatar=%p avatar_popover=%p popover_now=%p",
             (void*)self->btn_avatar, (void*)self->avatar_popover, (void*)init_pop);
-  if (self->btn_avatar && self->avatar_popover && !init_pop) {
-    GtkWidget *ap = GTK_WIDGET(self->avatar_popover);
-    GtkWidget *ap_parent = ap ? gtk_widget_get_parent(ap) : NULL;
-    if (ap_parent == NULL) {
-      g_message("main_window_init: popover missing; attaching template popover");
-      gtk_menu_button_set_popover(GTK_MENU_BUTTON(self->btn_avatar), GTK_WIDGET(self->avatar_popover));
-    } else {
-      g_debug("main_window_init: popover already parented elsewhere (%p); skipping reattach", (void*)ap_parent);
-    }
+  if (self->btn_avatar && self->avatar_popover) {
+    /* Unconditionally associate the popover to avoid ambiguity */
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(self->btn_avatar), GTK_WIDGET(self->avatar_popover));
   }
   g_return_if_fail(self->composer != NULL);
   /* Initialize weak refs to template children needed in async paths */

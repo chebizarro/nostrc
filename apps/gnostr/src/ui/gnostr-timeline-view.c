@@ -1,6 +1,8 @@
 #include "gnostr-timeline-view.h"
 #include <string.h>
 #include <time.h>
+#include <errno.h>
+#include <sys/stat.h>
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -229,9 +231,44 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
 
 /* Simple shared cache for downloaded avatar textures by URL */
 static GHashTable *avatar_texture_cache = NULL; /* key: char* url, value: GdkTexture* */
+static char *avatar_cache_dir = NULL; /* disk cache dir */
 
 static void ensure_avatar_cache(void) {
   if (!avatar_texture_cache) avatar_texture_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
+}
+
+/* Ensure disk cache directory exists: $XDG_CACHE_HOME/gnostr/avatars */
+static const char *ensure_avatar_cache_dir(void) {
+  if (avatar_cache_dir) return avatar_cache_dir;
+  const char *base = g_get_user_cache_dir();
+  if (!base || !*base) base = ".";
+  char *dir = g_build_filename(base, "gnostr", "avatars", NULL);
+  GError *err = NULL;
+  if (g_mkdir_with_parents(dir, 0700) != 0) {
+    g_warning("avatar cache: mkdir failed (%s): %s", dir, g_strerror(errno));
+  }
+  avatar_cache_dir = dir; /* keep */
+  return avatar_cache_dir;
+}
+
+/* Build a safe cache path from URL using SHA256 */
+static char *avatar_path_for_url(const char *url) {
+  if (!url || !*url) return NULL;
+  const char *dir = ensure_avatar_cache_dir();
+  g_autofree char *hex = g_compute_checksum_for_string(G_CHECKSUM_SHA256, url, -1);
+  return g_build_filename(dir, hex, NULL);
+}
+
+/* Try to load texture from disk cache; returns new ref or NULL */
+static GdkTexture *try_load_avatar_from_disk(const char *url) {
+  if (!url || !*url) return NULL;
+  g_autofree char *path = avatar_path_for_url(url);
+  if (!path) return NULL;
+  if (!g_file_test(path, G_FILE_TEST_IS_REGULAR)) return NULL;
+  GError *err = NULL;
+  GdkTexture *tex = gdk_texture_new_from_filename(path, &err);
+  if (!tex) { g_clear_error(&err); return NULL; }
+  return tex; /* transfer */
 }
 
 static gboolean str_has_prefix_http(const char *s) {
@@ -248,7 +285,17 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
   if (!bytes) { g_clear_error(&error); avatar_ctx_free(ctx); return; }
-  GdkTexture *tex = gdk_texture_new_from_bytes(bytes, &error);
+  /* Persist to disk cache */
+  g_autofree char *path = avatar_path_for_url(ctx->url);
+  if (path) {
+    gsize len = 0; const guint8 *data = g_bytes_get_data(bytes, &len);
+    GError *werr = NULL; (void)g_file_set_contents(path, (const char*)data, (gssize)len, &werr);
+    if (werr) g_clear_error(&werr);
+  }
+  /* Load texture from memory as fallback; prefer disk read if available */
+  GdkTexture *tex = NULL;
+  if (path) tex = gdk_texture_new_from_filename(path, NULL);
+  if (!tex) tex = gdk_texture_new_from_bytes(bytes, &error);
   g_bytes_unref(bytes);
   if (!tex) { g_clear_error(&error); avatar_ctx_free(ctx); return; }
   ensure_avatar_cache();
@@ -283,6 +330,17 @@ static void try_set_avatar(GtkWidget *row, const char *avatar_url, const char *d
     if (GTK_IS_WIDGET(w_init)) gtk_widget_set_visible(w_init, FALSE);
     return;
   }
+  /* Disk cache check */
+  GdkTexture *disk_tex = try_load_avatar_from_disk(avatar_url);
+  if (disk_tex) {
+    ensure_avatar_cache();
+    g_hash_table_replace(avatar_texture_cache, g_strdup(avatar_url), g_object_ref(disk_tex));
+    gtk_picture_set_paintable(GTK_PICTURE(w_img), GDK_PAINTABLE(disk_tex));
+    gtk_widget_set_visible(w_img, TRUE);
+    if (GTK_IS_WIDGET(w_init)) gtk_widget_set_visible(w_init, FALSE);
+    g_object_unref(disk_tex);
+    return;
+  }
 #ifdef HAVE_SOUP3
   /* Download via libsoup if available */
   SoupSession *sess = soup_session_new();
@@ -296,6 +354,69 @@ static void try_set_avatar(GtkWidget *row, const char *avatar_url, const char *d
   if (GTK_IS_WIDGET(w_img)) gtk_widget_set_visible(w_img, FALSE);
   if (GTK_IS_WIDGET(w_init)) gtk_widget_set_visible(w_init, TRUE);
 #endif
+}
+
+/* Notify handlers to react to TimelineItem property changes after initial bind */
+static void on_item_notify_display_name(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  GtkWidget *row = GTK_WIDGET(user_data);
+  if (!GTK_IS_WIDGET(row)) return;
+  gchar *display = NULL;
+  gchar *handle = NULL;
+  g_object_get(obj, "display-name", &display, "handle", &handle, NULL);
+  GtkWidget *w_display_name = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "display_name"));
+  const char *eff = (display && *display) ? display : ((handle && *handle) ? handle : "Anonymous");
+  if (GTK_IS_LABEL(w_display_name)) gtk_label_set_text(GTK_LABEL(w_display_name), eff);
+  /* Also refresh initials fallback */
+  gchar *avatar_url = NULL;
+  g_object_get(obj, "avatar-url", &avatar_url, NULL);
+  try_set_avatar(row, avatar_url, display, handle);
+  g_free(display);
+  g_free(handle);
+  g_free(avatar_url);
+}
+
+static void on_item_notify_handle(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  GtkWidget *row = GTK_WIDGET(user_data);
+  if (!GTK_IS_WIDGET(row)) return;
+  gchar *handle = NULL;
+  g_object_get(obj, "handle", &handle, NULL);
+  GtkWidget *w_handle = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "handle"));
+  if (GTK_IS_LABEL(w_handle)) gtk_label_set_text(GTK_LABEL(w_handle), handle ? handle : "@anon");
+  /* Also refresh initials fallback */
+  gchar *display = NULL, *avatar_url = NULL;
+  g_object_get(obj, "display-name", &display, "avatar-url", &avatar_url, NULL);
+  try_set_avatar(row, avatar_url, display, handle);
+  /* Recompute effective display label if display-name is empty */
+  GtkWidget *w_display_name = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "display_name"));
+  if (GTK_IS_LABEL(w_display_name)) {
+    const char *eff = (display && *display) ? display : (handle && *handle ? handle : "Anonymous");
+    gtk_label_set_text(GTK_LABEL(w_display_name), eff);
+  }
+  g_free(display);
+  g_free(handle);
+  g_free(avatar_url);
+}
+
+static void on_item_notify_avatar_url(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  GtkWidget *row = GTK_WIDGET(user_data);
+  if (!GTK_IS_WIDGET(row)) return;
+  gchar *url = NULL, *display = NULL, *handle = NULL;
+  g_object_get(obj, "avatar-url", &url, "display-name", &display, "handle", &handle, NULL);
+  try_set_avatar(row, url, display, handle);
+  g_free(url); g_free(display); g_free(handle);
+}
+
+/* Unbind cleanup: disconnect any notify handlers tied to this row */
+static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
+  (void)f; (void)data;
+  GObject *obj = gtk_list_item_get_item(item);
+  GtkWidget *row = gtk_list_item_get_child(item);
+  if (!obj || !GTK_IS_WIDGET(row)) return;
+  /* We connected notify signals with user_data=row; disconnect by data */
+  g_signal_handlers_disconnect_by_data(obj, row);
 }
 
 static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
@@ -327,7 +448,10 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   GtkWidget *w_indicator    = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "thread_indicator"));
 
   /* Populate */
-  if (GTK_IS_LABEL(w_display_name)) gtk_label_set_text(GTK_LABEL(w_display_name), display ? display : "Anonymous");
+  if (GTK_IS_LABEL(w_display_name)) {
+    const char *eff = (display && *display) ? display : ((handle && *handle) ? handle : "Anonymous");
+    gtk_label_set_text(GTK_LABEL(w_display_name), eff);
+  }
   if (GTK_IS_LABEL(w_handle))       gtk_label_set_text(GTK_LABEL(w_handle), handle ? handle : "@anon");
   if (GTK_IS_LABEL(w_timestamp)) {
     /* Pretty relative time from created_at if available */
@@ -401,12 +525,20 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 
   g_debug("factory bind: item=%p content=%.60s depth=%u", (void*)item, content ? content : "", depth);
   g_free(display); g_free(handle); g_free(ts); g_free(content); g_free(root_id);
+
+  /* Connect reactive updates so that later metadata changes update UI */
+  if (obj) {
+    g_signal_connect(obj, "notify::display-name", G_CALLBACK(on_item_notify_display_name), row);
+    g_signal_connect(obj, "notify::handle",       G_CALLBACK(on_item_notify_handle),       row);
+    g_signal_connect(obj, "notify::avatar-url",   G_CALLBACK(on_item_notify_avatar_url),   row);
+  }
 }
 
 static void setup_default_factory(GnostrTimelineView *self) {
   GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
   g_signal_connect(factory, "setup", G_CALLBACK(factory_setup_cb), NULL);
   g_signal_connect(factory, "bind", G_CALLBACK(factory_bind_cb), NULL);
+  g_signal_connect(factory, "unbind", G_CALLBACK(factory_unbind_cb), NULL);
   gtk_list_view_set_factory(GTK_LIST_VIEW(self->list_view), factory);
   g_object_unref(factory);
   g_debug("setup_default_factory: list_view=%p", (void*)self->list_view);
