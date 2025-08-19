@@ -53,6 +53,60 @@ static void initial_refresh_timeout_cb(gpointer data);
 static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pubkey_hex, const char *content_json);
 static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data);
 
+/* Demand-driven profile fetch helpers */
+static void enqueue_profile_author(GnostrMainWindow *self, const char *pubkey_hex);
+static gboolean profile_fetch_fire_idle(gpointer data);
+static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer user_data);
+static void profile_dispatch_next(GnostrMainWindow *self);
+
+/* Forward decl: relay URL builder used by profile fetch */
+static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_urls, size_t *out_count, NostrFilters **out_filters, int limit);
+
+/* Forward decl: main-loop trampoline to enqueue a single author */
+static gboolean enqueue_author_on_main(gpointer data);
+
+typedef struct {
+  GnostrMainWindow *self; /* strong ref */
+  char *pubkey_hex;       /* owned */
+} EnqueueAuthorCtx;
+
+static gboolean enqueue_author_on_main(gpointer data) {
+  EnqueueAuthorCtx *c = (EnqueueAuthorCtx*)data;
+  if (c && GNOSTR_IS_MAIN_WINDOW(c->self) && c->pubkey_hex)
+    enqueue_profile_author(c->self, c->pubkey_hex);
+  if (c) {
+    if (c->self) g_object_unref(c->self);
+    g_free(c->pubkey_hex);
+    g_free(c);
+  }
+  return G_SOURCE_REMOVE;
+}
+
+typedef struct {
+  char *pubkey_hex;   /* owned */
+  char *content_json; /* owned */
+} ProfileApplyCtx;
+
+static gboolean profile_apply_on_main(gpointer data) {
+  ProfileApplyCtx *c = (ProfileApplyCtx*)data;
+  if (c && c->pubkey_hex && c->content_json) {
+    GList *tops = gtk_window_list_toplevels();
+    for (GList *l = tops; l; l = l->next) {
+      if (GNOSTR_IS_MAIN_WINDOW(l->data)) {
+        update_meta_from_profile_json(GNOSTR_MAIN_WINDOW(l->data), c->pubkey_hex, c->content_json);
+        break;
+      }
+    }
+    g_list_free(tops);
+  }
+  if (c) {
+    g_free(c->pubkey_hex);
+    g_free(c->content_json);
+    g_free(c);
+  }
+  return G_SOURCE_REMOVE;
+}
+
 /* Define the window instance struct early so functions can access fields */
 struct _GnostrMainWindow {
   GtkApplicationWindow parent_instance;
@@ -90,6 +144,17 @@ struct _GnostrMainWindow {
   /* Profile subscription */
   gulong profile_sub_id;        /* signal handler ID for profile events */
   GCancellable *profile_sub_cancellable; /* cancellable for profile sub */
+ 
+  /* Background profile prefetch (paginate kind-1 authors) */
+  gulong bg_prefetch_handler;   /* signal handler ID */
+  GCancellable *bg_prefetch_cancellable; /* cancellable for paginator */
+  guint bg_prefetch_interval_ms; /* default 250ms between pages */
+  
+  /* Demand-driven profile fetch (debounced batch) */
+  GPtrArray   *profile_fetch_queue;   /* owned; char* pubkey hex to fetch */
+  guint        profile_fetch_source_id; /* GLib source id for debounce */
+  guint        profile_fetch_debounce_ms; /* default 150ms */
+  GCancellable *profile_fetch_cancellable; /* async cancellable */
   
   /* Remote signer (NIP-46) session */
   NostrNip46Session *nip46_session; /* owned */
@@ -110,6 +175,12 @@ struct _GnostrMainWindow {
   GCancellable    *pool_cancellable; /* owned */
   NostrFilters    *live_filters; /* owned; current live filter set */
   gulong           pool_events_handler; /* signal handler id */
+ 
+  /* Sequential profile batch dispatch state */
+  GPtrArray      *profile_batches;       /* owned; elements: GPtrArray* of char* authors */
+  guint           profile_batch_pos;     /* next batch index */
+  const char    **profile_batch_urls;    /* owned array pointer; strings not owned */
+  size_t          profile_batch_url_count;
 };
 
 /* ---- Avatar HTTP downloader (libsoup) ---- */
@@ -119,6 +190,293 @@ typedef struct {
   char *url;               /* owned */
 } AvatarHttpCtx;
 static void avatar_http_ctx_free(AvatarHttpCtx *c){ if(!c) return; if (c->self) g_object_unref(c->self); g_free(c->url); g_free(c); }
+
+/* ---- Demand-driven profile fetch (debounced) ---- */
+static void enqueue_profile_author(GnostrMainWindow *self, const char *pubkey_hex) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex || strlen(pubkey_hex) != 64) return;
+  if (!self->profile_fetch_queue)
+    self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
+  /* Dedup linear scan (queue is expected to stay small) */
+  for (guint i = 0; i < self->profile_fetch_queue->len; i++) {
+    const char *s = (const char*)g_ptr_array_index(self->profile_fetch_queue, i);
+    if (g_strcmp0(s, pubkey_hex) == 0) goto schedule_only; /* already queued */
+  }
+  g_ptr_array_add(self->profile_fetch_queue, g_strdup(pubkey_hex));
+schedule_only:
+  /* Debounce triggering */
+  if (self->profile_fetch_source_id) {
+    /* already scheduled; let it fire */
+  } else {
+    guint delay = self->profile_fetch_debounce_ms ? self->profile_fetch_debounce_ms : 150;
+    /* schedule timeout -> idle trampoline to preserve callback types */
+    GnostrMainWindow *ref = g_object_ref(self);
+    self->profile_fetch_source_id = g_timeout_add_full(G_PRIORITY_DEFAULT, delay, (GSourceFunc)profile_fetch_fire_idle, ref, (GDestroyNotify)g_object_unref);
+  }
+}
+
+/* Public wrappers so other UI components (e.g., timeline view) can request prefetch */
+void gnostr_main_window_enqueue_profile_author(GnostrMainWindow *self, const char *pubkey_hex) {
+  enqueue_profile_author(self, pubkey_hex);
+}
+
+void gnostr_main_window_enqueue_profile_authors(GnostrMainWindow *self, const char **pubkey_hexes, size_t count) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hexes || count == 0) return;
+  for (size_t i = 0; i < count; i++) {
+    const char *pk = pubkey_hexes[i];
+    if (pk && strlen(pk) == 64) enqueue_profile_author(self, pk);
+  }
+}
+
+static gboolean profile_fetch_fire_idle(gpointer data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return G_SOURCE_REMOVE;
+  self->profile_fetch_source_id = 0;
+  if (!self->pool) self->pool = gnostr_simple_pool_new();
+  if (!self->profile_fetch_queue || self->profile_fetch_queue->len == 0) return G_SOURCE_REMOVE;
+  /* Snapshot and clear queue */
+  GPtrArray *authors = self->profile_fetch_queue;
+  self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
+  /* Build relay URLs */
+  const char **urls = NULL; size_t url_count = 0; NostrFilters *dummy = NULL;
+  build_urls_and_filters(self, &urls, &url_count, &dummy, 0 /* unused for profiles */);
+  if (!urls || url_count == 0) {
+    g_message("profile_fetch: no relays configured; dropping %u author(s)", authors->len);
+    g_ptr_array_free(authors, TRUE);
+    if (dummy) nostr_filters_free(dummy);
+    return G_SOURCE_REMOVE;
+  }
+  /* Build batch list but dispatch sequentially (EOSE-gated) */
+  const guint total = authors->len;
+  const guint batch_sz = 16; /* start conservative */
+  const guint n_batches = (total + batch_sz - 1) / batch_sz;
+  g_message("profile_fetch: queueing %u author(s) across %zu relay(s) into %u batch(es)", total, url_count, n_batches);
+  /* Init/clear prior sequence if any (should be none normally) */
+  if (self->profile_batches) {
+    for (guint i = 0; i < self->profile_batches->len; i++) {
+      GPtrArray *b = g_ptr_array_index(self->profile_batches, i);
+      if (b) g_ptr_array_free(b, TRUE);
+    }
+    g_ptr_array_free(self->profile_batches, TRUE);
+    self->profile_batches = NULL;
+  }
+  /* Do not set a free-func: we'll free each batch when its callback completes,
+     and clean up any remaining (if canceled) at sequence end. */
+  self->profile_batches = g_ptr_array_new();
+  self->profile_batch_pos = 0;
+  /* Capture relay URLs for the whole sequence (free array pointer at end only) */
+  self->profile_batch_urls = urls; /* take ownership of array pointer */
+  self->profile_batch_url_count = url_count;
+  /* Partition authors into batches; transfer ownership into batch arrays */
+  for (guint off = 0; off < total; off += batch_sz) {
+    guint n = (off + batch_sz <= total) ? batch_sz : (total - off);
+    GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
+    for (guint j = 0; j < n; j++) {
+      char *s = (char*)g_ptr_array_index(authors, off + j);
+      /* transfer: clear original slot to avoid double free */
+      g_ptr_array_index(authors, off + j) = NULL;
+      g_ptr_array_add(b, s);
+    }
+    g_ptr_array_add(self->profile_batches, b);
+  }
+  /* Original authors container can now be freed (most slots NULL) */
+  if (authors) g_ptr_array_free(authors, TRUE);
+  /* Free filters from build_urls_and_filters */
+  if (dummy) nostr_filters_free(dummy);
+  /* Kick off the first batch */
+  profile_dispatch_next(self);
+  return G_SOURCE_REMOVE;
+}
+
+typedef struct ProfileBatchCtx {
+  GnostrMainWindow *self;      /* strong ref */
+  GPtrArray        *batch;     /* owned; char* */
+} ProfileBatchCtx;
+
+static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GnostrSimplePool *pool = GNOSTR_SIMPLE_POOL(source); (void)pool;
+  ProfileBatchCtx *ctx = (ProfileBatchCtx*)user_data;
+  GError *error = NULL;
+  GPtrArray *jsons = gnostr_simple_pool_fetch_profiles_by_authors_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+  if (error) {
+    g_warning("profile_fetch: finish error: %s", error->message);
+    g_clear_error(&error);
+  }
+  /* Update cache/UI from returned events */
+  if (jsons) {
+    for (guint i = 0; i < jsons->len; i++) {
+      const char *evt_json = (const char*)g_ptr_array_index(jsons, i);
+      if (!evt_json || !*evt_json) continue;
+      NostrEvent *evt = nostr_event_new();
+      if (evt && nostr_event_deserialize(evt, evt_json) == 0) {
+        const char *pk_hex = nostr_event_get_pubkey(evt);
+        const char *content = nostr_event_get_content(evt);
+        if (pk_hex && content) {
+          /* Dispatch to main loop to update UI and caches safely */
+          ProfileApplyCtx *pctx = g_new0(ProfileApplyCtx, 1);
+          pctx->pubkey_hex = g_strdup(pk_hex);
+          pctx->content_json = g_strdup(content);
+          g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, profile_apply_on_main, pctx, NULL);
+        }
+      }
+      if (evt) nostr_event_free(evt);
+    }
+    g_ptr_array_free(jsons, TRUE);
+  }
+  /* Done with this batch's author list */
+  if (ctx && ctx->batch) g_ptr_array_free(ctx->batch, TRUE);
+  /* Advance to next batch */
+  if (ctx && GNOSTR_IS_MAIN_WINDOW(ctx->self)) {
+    GnostrMainWindow *self = ctx->self;
+    profile_dispatch_next(self);
+    g_object_unref(self);
+  }
+  g_free(ctx);
+}
+
+/* Send next queued profile batch if any; otherwise clean up sequence state */
+static void profile_dispatch_next(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  if (!self->profile_batches || self->profile_batch_pos >= self->profile_batches->len) {
+    /* Sequence complete */
+    g_message("profile_fetch: all batches complete");
+    if (self->profile_batches) {
+      /* Free any remaining batches not processed (should normally be none) */
+      for (guint i = 0; i < self->profile_batches->len; i++) {
+        GPtrArray *rem = g_ptr_array_index(self->profile_batches, i);
+        if (rem) g_ptr_array_free(rem, TRUE);
+      }
+      g_ptr_array_free(self->profile_batches, TRUE);
+      self->profile_batches = NULL;
+    }
+    self->profile_batch_pos = 0;
+    if (self->profile_batch_urls) { g_free((void*)self->profile_batch_urls); self->profile_batch_urls = NULL; }
+    self->profile_batch_url_count = 0;
+    return;
+  }
+  GPtrArray *b = g_ptr_array_index(self->profile_batches, self->profile_batch_pos);
+  self->profile_batch_pos++;
+  if (!b || b->len == 0) { profile_dispatch_next(self); return; }
+  /* Clear the slot so final cleanup won't double free */
+  g_ptr_array_index(self->profile_batches, self->profile_batch_pos - 1) = NULL;
+  const guint n = b->len;
+  /* Build transient vector of const char* to pass to async; safe to free right after call */
+  const char **vec = g_new0(const char*, n);
+  for (guint i = 0; i < n; i++) vec[i] = (const char*)g_ptr_array_index(b, i);
+  g_message("profile_fetch: dispatching batch %u/%u size=%u", self->profile_batch_pos, self->profile_batches->len, n);
+  ProfileBatchCtx *ctx = g_new0(ProfileBatchCtx, 1);
+  ctx->self = g_object_ref(self);
+  ctx->batch = b; /* transfer to ctx; freed in callback */
+  gnostr_simple_pool_fetch_profiles_by_authors_async(
+      self->pool,
+      self->profile_batch_urls,
+      self->profile_batch_url_count,
+      vec,
+      n,
+      0 /* no explicit limit; collect until EOSE */,
+      self->profile_fetch_cancellable,
+      on_profiles_batch_done,
+      ctx);
+  g_free((void*)vec);
+}
+
+/* ---- Background profile prefetch via paginator-with-interval ---- */
+typedef struct BgPrefetchCtx {
+  GnostrMainWindow *self; /* strong ref */
+  const char **urls;      /* owned strings */
+  size_t url_count;
+  NostrFilter *filter;    /* owned until async setup finishes */
+} BgPrefetchCtx;
+
+static void bg_prefetch_ctx_free(BgPrefetchCtx *c){
+  if (!c) return;
+  if (c->self) g_object_unref(c->self);
+  if (c->urls) {
+    for (size_t i = 0; i < c->url_count; i++) g_free((char*)c->urls[i]);
+    g_free((void*)c->urls);
+  }
+  if (c->filter) nostr_filter_free(c->filter);
+  g_free(c);
+}
+
+/* Events handler: receives batches of NostrEvent* from paginator */
+static void on_bg_timeline_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data) {
+  (void)pool;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !batch) return;
+  g_message("bg_prefetch: received batch len=%u", batch->len);
+  for (guint i = 0; i < batch->len; i++) {
+    NostrEvent *evt = (NostrEvent*)g_ptr_array_index(batch, i);
+    if (!evt) continue;
+    if (nostr_event_get_kind(evt) == 1) {
+      const char *pk = nostr_event_get_pubkey(evt);
+      if (pk && strlen(pk) == 64) enqueue_profile_author(self, pk);
+    }
+  }
+}
+
+static void on_bg_paginate_ready(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  BgPrefetchCtx *ctx = (BgPrefetchCtx*)user_data;
+  if (!ctx || !GNOSTR_IS_MAIN_WINDOW(ctx->self)) { bg_prefetch_ctx_free(ctx); return; }
+  GError *error = NULL;
+  gboolean ok = gnostr_simple_pool_paginate_with_interval_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+  if (!ok || error) {
+    g_warning("bg_prefetch: paginate setup failed: %s", error ? error->message : "unknown error");
+    g_clear_error(&error);
+  } else {
+    g_message("bg_prefetch: paginate setup ok (relays=%zu, interval=%ums)", ctx->url_count, ctx->self->bg_prefetch_interval_ms);
+  }
+  /* After setup, we can free the filter and urls we supplied */
+  bg_prefetch_ctx_free(ctx);
+}
+
+static void start_bg_profile_prefetch(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  if (!self->pool) self->pool = gnostr_simple_pool_new();
+  if (!self->bg_prefetch_cancellable) self->bg_prefetch_cancellable = g_cancellable_new();
+
+  /* Build relay URL list */
+  GPtrArray *relays = g_ptr_array_new_with_free_func(g_free);
+  gnostr_load_relays_into(relays);
+  if (relays->len == 0) { g_ptr_array_free(relays, TRUE); g_message("bg_prefetch: no relays configured"); return; }
+  const size_t url_count = relays->len;
+  const char **urls = g_new0(const char*, url_count);
+  for (guint i = 0; i < url_count; i++) urls[i] = g_strdup((const char*)g_ptr_array_index(relays, i));
+  g_ptr_array_free(relays, TRUE);
+
+  /* Build filter: kind=1 timeline; limit per page ~= default_limit */
+  NostrFilter *f = nostr_filter_new();
+  if (!f) { for (size_t i = 0; i < url_count; i++) g_free((char*)urls[i]); g_free((void*)urls); return; }
+  nostr_filter_add_kind(f, 1);
+  int limit = (int)(self->default_limit ? self->default_limit : 30);
+  nostr_filter_set_limit(f, limit);
+
+  if (!self->bg_prefetch_handler) {
+    /* Connect AFTER so other specific handlers (e.g., profiles) can run first */
+    self->bg_prefetch_handler = g_signal_connect_data(
+      self->pool, "events", G_CALLBACK(on_bg_timeline_events), g_object_ref(self),
+      (GClosureNotify)g_object_unref, G_CONNECT_AFTER);
+  }
+
+  BgPrefetchCtx *ctx = g_new0(BgPrefetchCtx, 1);
+  ctx->self = g_object_ref(self);
+  ctx->urls = urls;
+  ctx->url_count = url_count;
+  ctx->filter = f;
+
+  guint interval = self->bg_prefetch_interval_ms ? self->bg_prefetch_interval_ms : 250;
+  g_message("bg_prefetch: starting paginator (interval=%ums, limit=%d, relays=%zu)", interval, limit, url_count);
+  gnostr_simple_pool_paginate_with_interval_async(
+    self->pool,
+    ctx->urls,
+    ctx->url_count,
+    ctx->filter,
+    interval,
+    self->bg_prefetch_cancellable,
+    on_bg_paginate_ready,
+    ctx
+  );
+}
 
 /* Explicit avatar button click: ensure popover is attached and present it */
 static void on_avatar_button_clicked(GtkButton *button, GnostrMainWindow *self) {
@@ -497,6 +855,8 @@ static gboolean periodic_backfill_cb(gpointer data);
 static char *build_backfill_filters_json(GnostrMainWindow *self, int limit);
 static void ndb_backfill_worker(GTask *task, gpointer source, gpointer task_data, GCancellable *cancellable);
 static void start_pool_backfill(GnostrMainWindow *self, int limit);
+/* Background profile prefetch */
+static void start_bg_profile_prefetch(GnostrMainWindow *self);
 /* Lightweight UI event payload captured from NostrEvent (needed early) */
 typedef struct UiEventRow {
   char *id;
@@ -655,6 +1015,18 @@ static void ndb_backfill_worker(GTask *task, gpointer source, gpointer task_data
         }
         if (pevt) nostr_event_free(pevt);
       }
+      /* Always schedule demand-driven profile fetch to get latest */
+      {
+        GnostrMainWindow *self = d->self;
+        if (GNOSTR_IS_MAIN_WINDOW(self)) {
+          EnqueueAuthorCtx *ectx = g_new0(EnqueueAuthorCtx, 1);
+          ectx->self = g_object_ref(self);
+          ectx->pubkey_hex = g_strdup(pk_hex);
+          g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, enqueue_author_on_main, ectx, NULL);
+        } else {
+          (void)pk_hex;
+        }
+      }
     }
     g_hash_table_destroy(authors);
   }
@@ -711,6 +1083,14 @@ static void gnostr_main_window_dispose(GObject *obj) {
     g_source_remove(self->backfill_source_id);
     self->backfill_source_id = 0;
   }
+  if (self->profile_fetch_source_id) {
+    g_source_remove(self->profile_fetch_source_id);
+    self->profile_fetch_source_id = 0;
+  }
+  if (self->bg_prefetch_handler && self->pool) {
+    g_signal_handler_disconnect(self->pool, self->bg_prefetch_handler);
+    self->bg_prefetch_handler = 0;
+  }
   if (self->pool) {
     if (self->pool_events_handler) {
       g_signal_handler_disconnect(self->pool, self->pool_events_handler);
@@ -719,6 +1099,9 @@ static void gnostr_main_window_dispose(GObject *obj) {
   }
   if (self->pool_cancellable) {
     g_cancellable_cancel(self->pool_cancellable);
+  }
+  if (self->profile_fetch_cancellable) {
+    g_cancellable_cancel(self->profile_fetch_cancellable);
   }
   if (self->nodes_by_id) {
     g_hash_table_destroy(self->nodes_by_id);
@@ -736,6 +1119,10 @@ static void gnostr_main_window_dispose(GObject *obj) {
   if (self->nip46_session) {
     nostr_nip46_session_free(self->nip46_session);
     self->nip46_session = NULL;
+  }
+  if (self->bg_prefetch_cancellable) {
+    g_cancellable_cancel(self->bg_prefetch_cancellable);
+    g_clear_object(&self->bg_prefetch_cancellable);
   }
   G_OBJECT_CLASS(gnostr_main_window_parent_class)->dispose(obj);
 }
@@ -811,6 +1198,10 @@ static void gnostr_main_window_finalize(GObject *obj) {
   if (self->avatar_tex_cache) {
     g_hash_table_destroy(self->avatar_tex_cache);
     self->avatar_tex_cache = NULL;
+  }
+  if (self->profile_fetch_queue) {
+    g_ptr_array_free(self->profile_fetch_queue, TRUE);
+    self->profile_fetch_queue = NULL;
   }
   if (self->nip46_session) {
     /* Should be NULL from dispose, but guard and free */
@@ -1020,36 +1411,62 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
   if (!root || !json_is_object(root)) { g_warning("profile_json: parse failed at line %d col %d: %s", jerr.line, jerr.column, jerr.text[0] ? jerr.text : ""); if (root) json_decref(root); return; }
   const char *name = NULL, *display_name = NULL, *picture = NULL, *username = NULL, *nip05 = NULL;
   json_t *v = NULL;
-  if ((v = json_object_get(root, "display_name")) && json_is_string(v)) display_name = json_string_value(v);
-  if (!display_name && (v = json_object_get(root, "displayName")) && json_is_string(v)) display_name = json_string_value(v);
-  if ((v = json_object_get(root, "name")) && json_is_string(v)) name = json_string_value(v);
-  if ((v = json_object_get(root, "username")) && json_is_string(v)) username = json_string_value(v);
-  if ((v = json_object_get(root, "picture")) && json_is_string(v)) picture = json_string_value(v);
-  if ((v = json_object_get(root, "nip05")) && json_is_string(v)) nip05 = json_string_value(v);
+  gboolean has_display_name_snake = FALSE, has_display_name_camel = FALSE, has_name = FALSE, has_username = FALSE, has_picture = FALSE, has_nip05 = FALSE;
+  if ((v = json_object_get(root, "display_name")) && json_is_string(v)) { display_name = json_string_value(v); has_display_name_snake = TRUE; }
+  if (!display_name && (v = json_object_get(root, "displayName")) && json_is_string(v)) { display_name = json_string_value(v); has_display_name_camel = TRUE; }
+  if ((v = json_object_get(root, "name")) && json_is_string(v)) { name = json_string_value(v); has_name = TRUE; }
+  if ((v = json_object_get(root, "username")) && json_is_string(v)) { username = json_string_value(v); has_username = TRUE; }
+  if ((v = json_object_get(root, "picture")) && json_is_string(v)) { picture = json_string_value(v); has_picture = TRUE; }
+  if ((v = json_object_get(root, "nip05")) && json_is_string(v)) { nip05 = json_string_value(v); has_nip05 = TRUE; }
+  g_debug("profile_json: keys present disp_name_snake=%s dispName_camel=%s name=%s username=%s picture=%s nip05=%s",
+          has_display_name_snake?"yes":"no", has_display_name_camel?"yes":"no", has_name?"yes":"no", has_username?"yes":"no", has_picture?"yes":"no", has_nip05?"yes":"no");
   UserMeta *m = ensure_user_meta(self->meta_by_pubkey, pubkey_hex);
-  if (display_name && *display_name) { g_free(m->display); m->display = g_strdup(display_name); }
+  if (display_name && *display_name) {
+    g_debug("profile_json: selected display_name='%s' (source=%s)", display_name, has_display_name_snake?"display_name":(has_display_name_camel?"displayName":"unknown"));
+    g_free(m->display); m->display = g_strdup(display_name);
+  }
   /* Store nip05 if it looks valid (simple check) */
   if (nip05 && *nip05) {
     gboolean looks_ok = (strchr(nip05, '@') != NULL) || (strchr(nip05, '.') != NULL);
+    g_debug("profile_json: nip05='%s' looks_ok=%s", nip05, looks_ok?"yes":"no");
     if (looks_ok) { g_free(m->nip05); m->nip05 = g_strdup(nip05); }
   }
   /* Fallback handle selection: username/name > nip05 > @npub_short */
   const char *handle_src = NULL;
   if (username && *username) handle_src = username; else if (name && *name) handle_src = name;
   if (handle_src && *handle_src) {
+    g_debug("profile_json: handle from %s -> '@%s'", (username&&*username)?"username":"name", handle_src);
     g_free(m->handle); m->handle = g_strconcat("@", handle_src, NULL);
   } else if (m->nip05 && *m->nip05) {
+    g_debug("profile_json: handle from nip05 -> '%s'", m->nip05);
     g_free(m->handle); m->handle = g_strdup(m->nip05);
   } else if (m->npub_short && *m->npub_short) {
+    g_debug("profile_json: handle from npub_short -> '@%s'", m->npub_short);
     g_free(m->handle); m->handle = g_strconcat("@", m->npub_short, NULL);
   }
-  if (picture && *picture) {
-    g_free(m->avatar_url);
-    m->avatar_url = g_strdup(picture);
-  } else {
-    /* RoboHash fallback using pubkey hex for deterministic avatar */
-    g_free(m->avatar_url);
-    m->avatar_url = g_strdup_printf("https://robohash.org/%s.png?size=80x80&set=set1", pubkey_hex);
+  /* Update avatar URL and prefetch if it changed */
+  {
+    const char *old_url = m->avatar_url ? m->avatar_url : "";
+    gboolean changed = FALSE;
+    if (picture && *picture) {
+      const char *scheme = (g_str_has_prefix(picture, "http://")||g_str_has_prefix(picture, "https://"))?"http":(g_str_has_prefix(picture, "file://")?"file":"path");
+      g_debug("profile_json: picture present scheme=%s url='%s'", scheme, picture);
+      changed = (g_strcmp0(old_url, picture) != 0);
+      g_free(m->avatar_url);
+      m->avatar_url = g_strdup(picture);
+    } else {
+      /* RoboHash fallback using pubkey hex for deterministic avatar */
+      gchar *fallback = g_strdup_printf("https://robohash.org/%s.png?size=80x80&set=set1", pubkey_hex);
+      g_debug("profile_json: no picture -> using fallback url='%s'", fallback);
+      changed = (g_strcmp0(old_url, fallback) != 0);
+      g_free(m->avatar_url);
+      m->avatar_url = fallback; /* take ownership */
+    }
+    g_debug("profile_json: avatar url %s (old='%s' new='%s')", changed?"changed":"unchanged", old_url, m->avatar_url?m->avatar_url:"(null)");
+    if (changed && m->avatar_url && *m->avatar_url) {
+      g_message("avatar_prefetch: scheduling fetch for %s", m->avatar_url);
+      gnostr_avatar_prefetch(m->avatar_url);
+    }
   }
   g_debug("profile_json: extracted display='%s' handle='%s' nip05='%s' picture='%s'", m->display?m->display:"", m->handle?m->handle:"", m->nip05?m->nip05:"", m->avatar_url?m->avatar_url:"");
   json_decref(root);
@@ -1085,6 +1502,7 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
       if (nostr_nip19_decode_npub(npub, pk32) == 0) {
         g_autofree char *cur_hex = hex_encode_lower(pk32, 32);
         if (cur_hex && g_strcmp0(cur_hex, pubkey_hex) == 0) {
+          g_debug("profile_header: updating header UI for current identity %s", pubkey_hex);
           /* Update profile name label */
           if (self->lbl_profile_name) {
             if (m->display && m->handle) {
@@ -1114,6 +1532,7 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
             if (m->avatar_url && *m->avatar_url) {
               const char *url = m->avatar_url;
               if (g_str_has_prefix(url, "file://")) {
+                g_debug("profile_header: trying local file texture from uri '%s'", url);
                 GFile *f = g_file_new_for_uri(url);
                 if (f) {
                   GError *e = NULL;
@@ -1136,6 +1555,7 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
                 }
               } else if (!g_str_has_prefix(url, "http://") && !g_str_has_prefix(url, "https://")) {
                 /* Treat as filesystem path */
+                g_debug("profile_header: trying local file texture from path '%s'", url);
                 if (g_file_test(url, G_FILE_TEST_EXISTS)) {
                   GFile *f = g_file_new_for_path(url);
                   if (f) {
@@ -1162,6 +1582,7 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
             }
             if (!set_image) {
               /* Fallback to theme icon */
+              g_debug("profile_header: no local texture applied; keeping icon theme fallback");
               g_object_set(self->btn_avatar, "icon-name", "avatar-default-symbolic", NULL);
               gtk_menu_button_set_child(GTK_MENU_BUTTON(self->btn_avatar), NULL);
               /* Guard: ensure popover remains attached */
@@ -2971,6 +3392,12 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
 
 static void gnostr_main_window_init(GnostrMainWindow *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+  /* Report HTTP avatar support availability */
+#ifdef HAVE_SOUP3
+  g_message("http: libsoup3 enabled; avatar HTTP fetch active");
+#else
+  g_warning("http: libsoup3 NOT enabled; avatar HTTP fetch disabled");
+#endif
   /* Sanity logging and guard for avatar popover attachment */
   GtkPopover *init_pop = NULL;
   if (self->btn_avatar) init_pop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(self->btn_avatar));
@@ -3052,6 +3479,19 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
       start_profile_subscription(self);
     }
   }
+
+  /* Init demand-driven profile fetch state */
+  self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
+  self->profile_fetch_source_id = 0;
+  self->profile_fetch_debounce_ms = 150;
+  self->profile_fetch_cancellable = g_cancellable_new();
+  if (!self->pool) self->pool = gnostr_simple_pool_new();
+
+  /* Init background prefetch defaults and kick it off */
+  self->bg_prefetch_handler = 0;
+  self->bg_prefetch_cancellable = g_cancellable_new();
+  self->bg_prefetch_interval_ms = 250;
+  start_bg_profile_prefetch(self);
 
   /* Optional: insert a synthetic timeline event when GNOSTR_SYNTH is set (for wiring validation) */
   {

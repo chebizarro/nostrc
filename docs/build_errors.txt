@@ -1,0 +1,700 @@
+Change Dir: '/Users/bizarro/Documents/Projects/nostrc/build'
+
+Run Build Command(s): /opt/homebrew/bin/cmake -E env VERBOSE=1 /usr/bin/make -f Makefile -j1
+/opt/homebrew/bin/cmake -P /Users/bizarro/Documents/Projects/nostrc/build/CMakeFiles/VerifyGlobs.cmake
+/opt/homebrew/bin/cmake -S/Users/bizarro/Documents/Projects/nostrc -B/Users/bizarro/Documents/Projects/nostrc/build --check-build-system CMakeFiles/Makefile.cmake 0
+/opt/homebrew/bin/cmake -E cmake_progress_start /Users/bizarro/Documents/Projects/nostrc/build/CMakeFiles /Users/bizarro/Documents/Projects/nostrc/build//CMakeFiles/progress.marks
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f CMakeFiles/Makefile2 all
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libnostr/CMakeFiles/nostrdb.dir/build.make libnostr/CMakeFiles/nostrdb.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libnostr /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libnostr /Users/bizarro/Documents/Projects/nostrc/build/libnostr/CMakeFiles/nostrdb.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libnostr/CMakeFiles/nostrdb.dir/build.make libnostr/CMakeFiles/nostrdb.dir/build
+make[2]: Nothing to be done for `libnostr/CMakeFiles/nostrdb.dir/build'.
+[  7%] Built target nostrdb
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libnostr/CMakeFiles/nostr.dir/build.make libnostr/CMakeFiles/nostr.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libnostr /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libnostr /Users/bizarro/Documents/Projects/nostrc/build/libnostr/CMakeFiles/nostr.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libnostr/CMakeFiles/nostr.dir/build.make libnostr/CMakeFiles/nostr.dir/build
+make[2]: Nothing to be done for `libnostr/CMakeFiles/nostr.dir/build'.
+[ 13%] Built target nostr
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/libgo.dir/build.make libgo/CMakeFiles/libgo.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/libgo.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/libgo.dir/build.make libgo/CMakeFiles/libgo.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/libgo.dir/build'.
+[ 16%] Built target libgo
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libjson/CMakeFiles/nostr_json.dir/build.make libjson/CMakeFiles/nostr_json.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libjson /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libjson /Users/bizarro/Documents/Projects/nostrc/build/libjson/CMakeFiles/nostr_json.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libjson/CMakeFiles/nostr_json.dir/build.make libjson/CMakeFiles/nostr_json.dir/build
+make[2]: Nothing to be done for `libjson/CMakeFiles/nostr_json.dir/build'.
+[ 16%] Built target nostr_json
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f CMakeFiles/relay_smoke.dir/build.make CMakeFiles/relay_smoke.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/CMakeFiles/relay_smoke.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f CMakeFiles/relay_smoke.dir/build.make CMakeFiles/relay_smoke.dir/build
+make[2]: Nothing to be done for `CMakeFiles/relay_smoke.dir/build'.
+[ 16%] Built target relay_smoke
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f CMakeFiles/json_provider_demo.dir/build.make CMakeFiles/json_provider_demo.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/CMakeFiles/json_provider_demo.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f CMakeFiles/json_provider_demo.dir/build.make CMakeFiles/json_provider_demo.dir/build
+make[2]: Nothing to be done for `CMakeFiles/json_provider_demo.dir/build'.
+[ 17%] Built target json_provider_demo
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_context_cancel_test.dir/build.make libgo/CMakeFiles/go_context_cancel_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/go_context_cancel_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_context_cancel_test.dir/build.make libgo/CMakeFiles/go_context_cancel_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/go_context_cancel_test.dir/build'.
+[ 18%] Built target go_context_cancel_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_channel_test.dir/build.make libgo/CMakeFiles/go_channel_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/go_channel_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_channel_test.dir/build.make libgo/CMakeFiles/go_channel_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/go_channel_test.dir/build'.
+[ 18%] Built target go_channel_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_context_timeout_test.dir/build.make libgo/CMakeFiles/go_context_timeout_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/go_context_timeout_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_context_timeout_test.dir/build.make libgo/CMakeFiles/go_context_timeout_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/go_context_timeout_test.dir/build'.
+[ 19%] Built target go_context_timeout_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_ticker_test.dir/build.make libgo/CMakeFiles/go_ticker_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/go_ticker_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_ticker_test.dir/build.make libgo/CMakeFiles/go_ticker_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/go_ticker_test.dir/build'.
+[ 19%] Built target go_ticker_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_select_test.dir/build.make libgo/CMakeFiles/go_select_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/go_select_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_select_test.dir/build.make libgo/CMakeFiles/go_select_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/go_select_test.dir/build'.
+[ 19%] Built target go_select_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_wait_group_test.dir/build.make libgo/CMakeFiles/go_wait_group_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/go_wait_group_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_wait_group_test.dir/build.make libgo/CMakeFiles/go_wait_group_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/go_wait_group_test.dir/build'.
+[ 20%] Built target go_wait_group_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_channel_close_test.dir/build.make libgo/CMakeFiles/go_channel_close_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/go_channel_close_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_channel_close_test.dir/build.make libgo/CMakeFiles/go_channel_close_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/go_channel_close_test.dir/build'.
+[ 20%] Built target go_channel_close_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_select_multi_test.dir/build.make libgo/CMakeFiles/go_select_multi_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/go_select_multi_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_select_multi_test.dir/build.make libgo/CMakeFiles/go_select_multi_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/go_select_multi_test.dir/build'.
+[ 21%] Built target go_select_multi_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_channel_stress_test.dir/build.make libgo/CMakeFiles/go_channel_stress_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/go_channel_stress_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_channel_stress_test.dir/build.make libgo/CMakeFiles/go_channel_stress_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/go_channel_stress_test.dir/build'.
+[ 22%] Built target go_channel_stress_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_context_stress_test.dir/build.make libgo/CMakeFiles/go_context_stress_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/go_context_stress_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_context_stress_test.dir/build.make libgo/CMakeFiles/go_context_stress_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/go_context_stress_test.dir/build'.
+[ 23%] Built target go_context_stress_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/error_test.dir/build.make libgo/CMakeFiles/error_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/error_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/error_test.dir/build.make libgo/CMakeFiles/error_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/error_test.dir/build'.
+[ 24%] Built target error_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/refptr_test.dir/build.make libgo/CMakeFiles/refptr_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/refptr_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/refptr_test.dir/build.make libgo/CMakeFiles/refptr_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/refptr_test.dir/build'.
+[ 25%] Built target refptr_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/hash_map_test2.dir/build.make libgo/CMakeFiles/hash_map_test2.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/hash_map_test2.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/hash_map_test2.dir/build.make libgo/CMakeFiles/hash_map_test2.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/hash_map_test2.dir/build'.
+[ 26%] Built target hash_map_test2
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/int_array_test.dir/build.make libgo/CMakeFiles/int_array_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/int_array_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/int_array_test.dir/build.make libgo/CMakeFiles/int_array_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/int_array_test.dir/build'.
+[ 26%] Built target int_array_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/string_array_test.dir/build.make libgo/CMakeFiles/string_array_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/string_array_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/string_array_test.dir/build.make libgo/CMakeFiles/string_array_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/string_array_test.dir/build'.
+[ 27%] Built target string_array_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/long_adder_stress_test.dir/build.make libgo/CMakeFiles/long_adder_stress_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/long_adder_stress_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/long_adder_stress_test.dir/build.make libgo/CMakeFiles/long_adder_stress_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/long_adder_stress_test.dir/build'.
+[ 28%] Built target long_adder_stress_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_select_closed_test.dir/build.make libgo/CMakeFiles/go_select_closed_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/go_select_closed_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_select_closed_test.dir/build.make libgo/CMakeFiles/go_select_closed_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/go_select_closed_test.dir/build'.
+[ 29%] Built target go_select_closed_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_select_cancel_test.dir/build.make libgo/CMakeFiles/go_select_cancel_test.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/go_select_cancel_test.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_select_cancel_test.dir/build.make libgo/CMakeFiles/go_select_cancel_test.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/go_select_cancel_test.dir/build'.
+[ 29%] Built target go_select_cancel_test
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_context_demo.dir/build.make libgo/CMakeFiles/go_context_demo.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/go_context_demo.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_context_demo.dir/build.make libgo/CMakeFiles/go_context_demo.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/go_context_demo.dir/build'.
+[ 29%] Built target go_context_demo
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_select_demo.dir/build.make libgo/CMakeFiles/go_select_demo.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/go_select_demo.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_select_demo.dir/build.make libgo/CMakeFiles/go_select_demo.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/go_select_demo.dir/build'.
+[ 29%] Built target go_select_demo
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_ticker_demo.dir/build.make libgo/CMakeFiles/go_ticker_demo.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/go_ticker_demo.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/go_ticker_demo.dir/build.make libgo/CMakeFiles/go_ticker_demo.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/go_ticker_demo.dir/build'.
+[ 30%] Built target go_ticker_demo
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/error_demo.dir/build.make libgo/CMakeFiles/error_demo.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/error_demo.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/error_demo.dir/build.make libgo/CMakeFiles/error_demo.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/error_demo.dir/build'.
+[ 30%] Built target error_demo
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/refptr_demo.dir/build.make libgo/CMakeFiles/refptr_demo.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/refptr_demo.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/refptr_demo.dir/build.make libgo/CMakeFiles/refptr_demo.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/refptr_demo.dir/build'.
+[ 30%] Built target refptr_demo
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/hash_map_demo.dir/build.make libgo/CMakeFiles/hash_map_demo.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/hash_map_demo.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/hash_map_demo.dir/build.make libgo/CMakeFiles/hash_map_demo.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/hash_map_demo.dir/build'.
+[ 30%] Built target hash_map_demo
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/arrays_demo.dir/build.make libgo/CMakeFiles/arrays_demo.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/arrays_demo.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/arrays_demo.dir/build.make libgo/CMakeFiles/arrays_demo.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/arrays_demo.dir/build'.
+[ 30%] Built target arrays_demo
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/long_adder_demo.dir/build.make libgo/CMakeFiles/long_adder_demo.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/long_adder_demo.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/long_adder_demo.dir/build.make libgo/CMakeFiles/long_adder_demo.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/long_adder_demo.dir/build'.
+[ 30%] Built target long_adder_demo
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/chan_bench.dir/build.make libgo/CMakeFiles/chan_bench.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/libgo /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/libgo /Users/bizarro/Documents/Projects/nostrc/build/libgo/CMakeFiles/chan_bench.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f libgo/CMakeFiles/chan_bench.dir/build.make libgo/CMakeFiles/chan_bench.dir/build
+make[2]: Nothing to be done for `libgo/CMakeFiles/chan_bench.dir/build'.
+[ 31%] Built target chan_bench
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip04/CMakeFiles/nip04.dir/build.make nips/nip04/CMakeFiles/nip04.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip04 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip04 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip04/CMakeFiles/nip04.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip04/CMakeFiles/nip04.dir/build.make nips/nip04/CMakeFiles/nip04.dir/build
+make[2]: Nothing to be done for `nips/nip04/CMakeFiles/nip04.dir/build'.
+[ 32%] Built target nip04
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip04/CMakeFiles/nip04_example.dir/build.make nips/nip04/CMakeFiles/nip04_example.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip04 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip04 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip04/CMakeFiles/nip04_example.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip04/CMakeFiles/nip04_example.dir/build.make nips/nip04/CMakeFiles/nip04_example.dir/build
+make[2]: Nothing to be done for `nips/nip04/CMakeFiles/nip04_example.dir/build'.
+[ 32%] Built target nip04_example
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip04/CMakeFiles/test_interop.dir/build.make nips/nip04/CMakeFiles/test_interop.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip04 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip04 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip04/CMakeFiles/test_interop.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip04/CMakeFiles/test_interop.dir/build.make nips/nip04/CMakeFiles/test_interop.dir/build
+make[2]: Nothing to be done for `nips/nip04/CMakeFiles/test_interop.dir/build'.
+[ 33%] Built target test_interop
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip04/CMakeFiles/test_roundtrip.dir/build.make nips/nip04/CMakeFiles/test_roundtrip.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip04 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip04 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip04/CMakeFiles/test_roundtrip.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip04/CMakeFiles/test_roundtrip.dir/build.make nips/nip04/CMakeFiles/test_roundtrip.dir/build
+make[2]: Nothing to be done for `nips/nip04/CMakeFiles/test_roundtrip.dir/build'.
+[ 33%] Built target test_roundtrip
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip05/CMakeFiles/nip05.dir/build.make nips/nip05/CMakeFiles/nip05.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip05 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip05 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip05/CMakeFiles/nip05.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip05/CMakeFiles/nip05.dir/build.make nips/nip05/CMakeFiles/nip05.dir/build
+make[2]: Nothing to be done for `nips/nip05/CMakeFiles/nip05.dir/build'.
+[ 34%] Built target nip05
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip05/CMakeFiles/nip05_example.dir/build.make nips/nip05/CMakeFiles/nip05_example.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip05 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip05 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip05/CMakeFiles/nip05_example.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip05/CMakeFiles/nip05_example.dir/build.make nips/nip05/CMakeFiles/nip05_example.dir/build
+make[2]: Nothing to be done for `nips/nip05/CMakeFiles/nip05_example.dir/build'.
+[ 34%] Built target nip05_example
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip05/CMakeFiles/test_nip05_parse.dir/build.make nips/nip05/CMakeFiles/test_nip05_parse.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip05 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip05 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip05/CMakeFiles/test_nip05_parse.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip05/CMakeFiles/test_nip05_parse.dir/build.make nips/nip05/CMakeFiles/test_nip05_parse.dir/build
+make[2]: Nothing to be done for `nips/nip05/CMakeFiles/test_nip05_parse.dir/build'.
+[ 34%] Built target test_nip05_parse
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip05/CMakeFiles/test_nip05_resolve_json_errors.dir/build.make nips/nip05/CMakeFiles/test_nip05_resolve_json_errors.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip05 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip05 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip05/CMakeFiles/test_nip05_resolve_json_errors.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip05/CMakeFiles/test_nip05_resolve_json_errors.dir/build.make nips/nip05/CMakeFiles/test_nip05_resolve_json_errors.dir/build
+make[2]: Nothing to be done for `nips/nip05/CMakeFiles/test_nip05_resolve_json_errors.dir/build'.
+[ 35%] Built target test_nip05_resolve_json_errors
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip05/CMakeFiles/test_nip05_resolve_json_names.dir/build.make nips/nip05/CMakeFiles/test_nip05_resolve_json_names.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip05 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip05 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip05/CMakeFiles/test_nip05_resolve_json_names.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip05/CMakeFiles/test_nip05_resolve_json_names.dir/build.make nips/nip05/CMakeFiles/test_nip05_resolve_json_names.dir/build
+make[2]: Nothing to be done for `nips/nip05/CMakeFiles/test_nip05_resolve_json_names.dir/build'.
+[ 35%] Built target test_nip05_resolve_json_names
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip05/CMakeFiles/test_nip05_resolve_json_relays.dir/build.make nips/nip05/CMakeFiles/test_nip05_resolve_json_relays.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip05 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip05 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip05/CMakeFiles/test_nip05_resolve_json_relays.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip05/CMakeFiles/test_nip05_resolve_json_relays.dir/build.make nips/nip05/CMakeFiles/test_nip05_resolve_json_relays.dir/build
+make[2]: Nothing to be done for `nips/nip05/CMakeFiles/test_nip05_resolve_json_relays.dir/build'.
+[ 36%] Built target test_nip05_resolve_json_relays
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip06/CMakeFiles/nip06.dir/build.make nips/nip06/CMakeFiles/nip06.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip06 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip06 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip06/CMakeFiles/nip06.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip06/CMakeFiles/nip06.dir/build.make nips/nip06/CMakeFiles/nip06.dir/build
+make[2]: Nothing to be done for `nips/nip06/CMakeFiles/nip06.dir/build'.
+[ 37%] Built target nip06
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip06/CMakeFiles/test_nip06.dir/build.make nips/nip06/CMakeFiles/test_nip06.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip06 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip06 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip06/CMakeFiles/test_nip06.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip06/CMakeFiles/test_nip06.dir/build.make nips/nip06/CMakeFiles/test_nip06.dir/build
+make[2]: Nothing to be done for `nips/nip06/CMakeFiles/test_nip06.dir/build'.
+[ 37%] Built target test_nip06
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip19/CMakeFiles/nip19.dir/build.make nips/nip19/CMakeFiles/nip19.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip19 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip19 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip19/CMakeFiles/nip19.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip19/CMakeFiles/nip19.dir/build.make nips/nip19/CMakeFiles/nip19.dir/build
+make[2]: Nothing to be done for `nips/nip19/CMakeFiles/nip19.dir/build'.
+[ 38%] Built target nip19
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip19/CMakeFiles/test_nip19.dir/build.make nips/nip19/CMakeFiles/test_nip19.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip19 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip19 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip19/CMakeFiles/test_nip19.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip19/CMakeFiles/test_nip19.dir/build.make nips/nip19/CMakeFiles/test_nip19.dir/build
+make[2]: Nothing to be done for `nips/nip19/CMakeFiles/test_nip19.dir/build'.
+[ 39%] Built target test_nip19
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip19/CMakeFiles/test_nip19_tlv.dir/build.make nips/nip19/CMakeFiles/test_nip19_tlv.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip19 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip19 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip19/CMakeFiles/test_nip19_tlv.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip19/CMakeFiles/test_nip19_tlv.dir/build.make nips/nip19/CMakeFiles/test_nip19_tlv.dir/build
+make[2]: Nothing to be done for `nips/nip19/CMakeFiles/test_nip19_tlv.dir/build'.
+[ 39%] Built target test_nip19_tlv
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip19/CMakeFiles/nrelay_multi_example.dir/build.make nips/nip19/CMakeFiles/nrelay_multi_example.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip19 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip19 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip19/CMakeFiles/nrelay_multi_example.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip19/CMakeFiles/nrelay_multi_example.dir/build.make nips/nip19/CMakeFiles/nrelay_multi_example.dir/build
+make[2]: Nothing to be done for `nips/nip19/CMakeFiles/nrelay_multi_example.dir/build'.
+[ 39%] Built target nrelay_multi_example
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip19/CMakeFiles/nip19_examples.dir/build.make nips/nip19/CMakeFiles/nip19_examples.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip19 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip19 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip19/CMakeFiles/nip19_examples.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip19/CMakeFiles/nip19_examples.dir/build.make nips/nip19/CMakeFiles/nip19_examples.dir/build
+make[2]: Nothing to be done for `nips/nip19/CMakeFiles/nip19_examples.dir/build'.
+[ 40%] Built target nip19_examples
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip44/CMakeFiles/nostr_nip44_core.dir/build.make nips/nip44/CMakeFiles/nostr_nip44_core.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip44 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip44 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip44/CMakeFiles/nostr_nip44_core.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip44/CMakeFiles/nostr_nip44_core.dir/build.make nips/nip44/CMakeFiles/nostr_nip44_core.dir/build
+make[2]: Nothing to be done for `nips/nip44/CMakeFiles/nostr_nip44_core.dir/build'.
+[ 42%] Built target nostr_nip44_core
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip44/CMakeFiles/nostr_nip44_glib.dir/build.make nips/nip44/CMakeFiles/nostr_nip44_glib.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip44 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip44 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip44/CMakeFiles/nostr_nip44_glib.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip44/CMakeFiles/nostr_nip44_glib.dir/build.make nips/nip44/CMakeFiles/nostr_nip44_glib.dir/build
+make[2]: Nothing to be done for `nips/nip44/CMakeFiles/nostr_nip44_glib.dir/build'.
+[ 42%] Built target nostr_nip44_glib
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip44/CMakeFiles/test_nip44_roundtrip.dir/build.make nips/nip44/CMakeFiles/test_nip44_roundtrip.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip44 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip44 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip44/CMakeFiles/test_nip44_roundtrip.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip44/CMakeFiles/test_nip44_roundtrip.dir/build.make nips/nip44/CMakeFiles/test_nip44_roundtrip.dir/build
+make[2]: Nothing to be done for `nips/nip44/CMakeFiles/test_nip44_roundtrip.dir/build'.
+[ 42%] Built target test_nip44_roundtrip
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip44/CMakeFiles/test_nip44_convkey.dir/build.make nips/nip44/CMakeFiles/test_nip44_convkey.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip44 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip44 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip44/CMakeFiles/test_nip44_convkey.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip44/CMakeFiles/test_nip44_convkey.dir/build.make nips/nip44/CMakeFiles/test_nip44_convkey.dir/build
+make[2]: Nothing to be done for `nips/nip44/CMakeFiles/test_nip44_convkey.dir/build'.
+[ 43%] Built target test_nip44_convkey
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip44/CMakeFiles/test_nip44_vectors.dir/build.make nips/nip44/CMakeFiles/test_nip44_vectors.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip44 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip44 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip44/CMakeFiles/test_nip44_vectors.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip44/CMakeFiles/test_nip44_vectors.dir/build.make nips/nip44/CMakeFiles/test_nip44_vectors.dir/build
+make[2]: Nothing to be done for `nips/nip44/CMakeFiles/test_nip44_vectors.dir/build'.
+[ 44%] Built target test_nip44_vectors
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip44/CMakeFiles/nip44_demo_encrypt.dir/build.make nips/nip44/CMakeFiles/nip44_demo_encrypt.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip44 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip44 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip44/CMakeFiles/nip44_demo_encrypt.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip44/CMakeFiles/nip44_demo_encrypt.dir/build.make nips/nip44/CMakeFiles/nip44_demo_encrypt.dir/build
+make[2]: Nothing to be done for `nips/nip44/CMakeFiles/nip44_demo_encrypt.dir/build'.
+[ 44%] Built target nip44_demo_encrypt
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip44/CMakeFiles/nip44_vector_demo.dir/build.make nips/nip44/CMakeFiles/nip44_vector_demo.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip44 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip44 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip44/CMakeFiles/nip44_vector_demo.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip44/CMakeFiles/nip44_vector_demo.dir/build.make nips/nip44/CMakeFiles/nip44_vector_demo.dir/build
+make[2]: Nothing to be done for `nips/nip44/CMakeFiles/nip44_vector_demo.dir/build'.
+[ 45%] Built target nip44_vector_demo
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/nostr_nip46_core.dir/build.make nips/nip46/CMakeFiles/nostr_nip46_core.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46/CMakeFiles/nostr_nip46_core.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/nostr_nip46_core.dir/build.make nips/nip46/CMakeFiles/nostr_nip46_core.dir/build
+make[2]: Nothing to be done for `nips/nip46/CMakeFiles/nostr_nip46_core.dir/build'.
+[ 47%] Built target nostr_nip46_core
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_uri.dir/build.make nips/nip46/CMakeFiles/test_nip46_uri.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46/CMakeFiles/test_nip46_uri.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_uri.dir/build.make nips/nip46/CMakeFiles/test_nip46_uri.dir/build
+make[2]: Nothing to be done for `nips/nip46/CMakeFiles/test_nip46_uri.dir/build'.
+[ 48%] Built target test_nip46_uri
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_envelope_build.dir/build.make nips/nip46/CMakeFiles/test_nip46_envelope_build.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46/CMakeFiles/test_nip46_envelope_build.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_envelope_build.dir/build.make nips/nip46/CMakeFiles/test_nip46_envelope_build.dir/build
+make[2]: Nothing to be done for `nips/nip46/CMakeFiles/test_nip46_envelope_build.dir/build'.
+[ 49%] Built target test_nip46_envelope_build
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_msg.dir/build.make nips/nip46/CMakeFiles/test_nip46_msg.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46/CMakeFiles/test_nip46_msg.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_msg.dir/build.make nips/nip46/CMakeFiles/test_nip46_msg.dir/build
+make[2]: Nothing to be done for `nips/nip46/CMakeFiles/test_nip46_msg.dir/build'.
+[ 49%] Built target test_nip46_msg
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_bunker_uri_issue.dir/build.make nips/nip46/CMakeFiles/test_nip46_bunker_uri_issue.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46/CMakeFiles/test_nip46_bunker_uri_issue.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_bunker_uri_issue.dir/build.make nips/nip46/CMakeFiles/test_nip46_bunker_uri_issue.dir/build
+make[2]: Nothing to be done for `nips/nip46/CMakeFiles/test_nip46_bunker_uri_issue.dir/build'.
+[ 50%] Built target test_nip46_bunker_uri_issue
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_client_connect.dir/build.make nips/nip46/CMakeFiles/test_nip46_client_connect.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46/CMakeFiles/test_nip46_client_connect.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_client_connect.dir/build.make nips/nip46/CMakeFiles/test_nip46_client_connect.dir/build
+make[2]: Nothing to be done for `nips/nip46/CMakeFiles/test_nip46_client_connect.dir/build'.
+[ 51%] Built target test_nip46_client_connect
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_client_connect_edge.dir/build.make nips/nip46/CMakeFiles/test_nip46_client_connect_edge.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46/CMakeFiles/test_nip46_client_connect_edge.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_client_connect_edge.dir/build.make nips/nip46/CMakeFiles/test_nip46_client_connect_edge.dir/build
+make[2]: Nothing to be done for `nips/nip46/CMakeFiles/test_nip46_client_connect_edge.dir/build'.
+[ 51%] Built target test_nip46_client_connect_edge
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_bunker_reply.dir/build.make nips/nip46/CMakeFiles/test_nip46_bunker_reply.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46/CMakeFiles/test_nip46_bunker_reply.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_bunker_reply.dir/build.make nips/nip46/CMakeFiles/test_nip46_bunker_reply.dir/build
+make[2]: Nothing to be done for `nips/nip46/CMakeFiles/test_nip46_bunker_reply.dir/build'.
+[ 51%] Built target test_nip46_bunker_reply
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_client_api.dir/build.make nips/nip46/CMakeFiles/test_nip46_client_api.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46/CMakeFiles/test_nip46_client_api.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_client_api.dir/build.make nips/nip46/CMakeFiles/test_nip46_client_api.dir/build
+make[2]: Nothing to be done for `nips/nip46/CMakeFiles/test_nip46_client_api.dir/build'.
+[ 51%] Built target test_nip46_client_api
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_bunker_roundtrip.dir/build.make nips/nip46/CMakeFiles/test_nip46_bunker_roundtrip.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46/CMakeFiles/test_nip46_bunker_roundtrip.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_bunker_roundtrip.dir/build.make nips/nip46/CMakeFiles/test_nip46_bunker_roundtrip.dir/build
+make[2]: Nothing to be done for `nips/nip46/CMakeFiles/test_nip46_bunker_roundtrip.dir/build'.
+[ 52%] Built target test_nip46_bunker_roundtrip
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_bunker_connect_auth.dir/build.make nips/nip46/CMakeFiles/test_nip46_bunker_connect_auth.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46/CMakeFiles/test_nip46_bunker_connect_auth.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_bunker_connect_auth.dir/build.make nips/nip46/CMakeFiles/test_nip46_bunker_connect_auth.dir/build
+make[2]: Nothing to be done for `nips/nip46/CMakeFiles/test_nip46_bunker_connect_auth.dir/build'.
+[ 53%] Built target test_nip46_bunker_connect_auth
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_cb.dir/build.make nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_cb.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_cb.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_cb.dir/build.make nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_cb.dir/build
+make[2]: Nothing to be done for `nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_cb.dir/build'.
+[ 54%] Built target test_nip46_bunker_sign_event_cb
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_real.dir/build.make nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_real.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_real.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_real.dir/build.make nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_real.dir/build
+make[2]: Nothing to be done for `nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_real.dir/build'.
+[ 54%] Built target test_nip46_bunker_sign_event_real
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_acl_deny.dir/build.make nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_acl_deny.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_acl_deny.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_acl_deny.dir/build.make nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_acl_deny.dir/build
+make[2]: Nothing to be done for `nips/nip46/CMakeFiles/test_nip46_bunker_sign_event_acl_deny.dir/build'.
+[ 54%] Built target test_nip46_bunker_sign_event_acl_deny
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/nostr-nip46-client.dir/build.make nips/nip46/CMakeFiles/nostr-nip46-client.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46/CMakeFiles/nostr-nip46-client.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/nostr-nip46-client.dir/build.make nips/nip46/CMakeFiles/nostr-nip46-client.dir/build
+make[2]: Nothing to be done for `nips/nip46/CMakeFiles/nostr-nip46-client.dir/build'.
+[ 54%] Built target nostr-nip46-client
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/nostr-nip46-bunker.dir/build.make nips/nip46/CMakeFiles/nostr-nip46-bunker.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip46/CMakeFiles/nostr-nip46-bunker.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip46/CMakeFiles/nostr-nip46-bunker.dir/build.make nips/nip46/CMakeFiles/nostr-nip46-bunker.dir/build
+make[2]: Nothing to be done for `nips/nip46/CMakeFiles/nostr-nip46-bunker.dir/build'.
+[ 55%] Built target nostr-nip46-bunker
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/nostr_nip47_core.dir/build.make nips/nip47/CMakeFiles/nostr_nip47_core.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47/CMakeFiles/nostr_nip47_core.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/nostr_nip47_core.dir/build.make nips/nip47/CMakeFiles/nostr_nip47_core.dir/build
+make[2]: Nothing to be done for `nips/nip47/CMakeFiles/nostr_nip47_core.dir/build'.
+[ 56%] Built target nostr_nip47_core
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/nostr_nip47_glib.dir/build.make nips/nip47/CMakeFiles/nostr_nip47_glib.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47/CMakeFiles/nostr_nip47_glib.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/nostr_nip47_glib.dir/build.make nips/nip47/CMakeFiles/nostr_nip47_glib.dir/build
+make[2]: Nothing to be done for `nips/nip47/CMakeFiles/nostr_nip47_glib.dir/build'.
+[ 57%] Built target nostr_nip47_glib
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/test_nip47_spec_source.dir/build.make nips/nip47/CMakeFiles/test_nip47_spec_source.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47/CMakeFiles/test_nip47_spec_source.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/test_nip47_spec_source.dir/build.make nips/nip47/CMakeFiles/test_nip47_spec_source.dir/build
+make[2]: Nothing to be done for `nips/nip47/CMakeFiles/test_nip47_spec_source.dir/build'.
+[ 58%] Built target test_nip47_spec_source
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/test_nip47_nwc_uri.dir/build.make nips/nip47/CMakeFiles/test_nip47_nwc_uri.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47/CMakeFiles/test_nip47_nwc_uri.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/test_nip47_nwc_uri.dir/build.make nips/nip47/CMakeFiles/test_nip47_nwc_uri.dir/build
+make[2]: Nothing to be done for `nips/nip47/CMakeFiles/test_nip47_nwc_uri.dir/build'.
+[ 58%] Built target test_nip47_nwc_uri
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/test_nip47_nwc_info.dir/build.make nips/nip47/CMakeFiles/test_nip47_nwc_info.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47/CMakeFiles/test_nip47_nwc_info.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/test_nip47_nwc_info.dir/build.make nips/nip47/CMakeFiles/test_nip47_nwc_info.dir/build
+make[2]: Nothing to be done for `nips/nip47/CMakeFiles/test_nip47_nwc_info.dir/build'.
+[ 58%] Built target test_nip47_nwc_info
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/test_nip47_nwc_envelope.dir/build.make nips/nip47/CMakeFiles/test_nip47_nwc_envelope.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47/CMakeFiles/test_nip47_nwc_envelope.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/test_nip47_nwc_envelope.dir/build.make nips/nip47/CMakeFiles/test_nip47_nwc_envelope.dir/build
+make[2]: Nothing to be done for `nips/nip47/CMakeFiles/test_nip47_nwc_envelope.dir/build'.
+[ 59%] Built target test_nip47_nwc_envelope
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/test_nip47_nwc_session.dir/build.make nips/nip47/CMakeFiles/test_nip47_nwc_session.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47/CMakeFiles/test_nip47_nwc_session.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/test_nip47_nwc_session.dir/build.make nips/nip47/CMakeFiles/test_nip47_nwc_session.dir/build
+make[2]: Nothing to be done for `nips/nip47/CMakeFiles/test_nip47_nwc_session.dir/build'.
+[ 60%] Built target test_nip47_nwc_session
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/test_nip47_nwc_crypto.dir/build.make nips/nip47/CMakeFiles/test_nip47_nwc_crypto.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47/CMakeFiles/test_nip47_nwc_crypto.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/test_nip47_nwc_crypto.dir/build.make nips/nip47/CMakeFiles/test_nip47_nwc_crypto.dir/build
+make[2]: Nothing to be done for `nips/nip47/CMakeFiles/test_nip47_nwc_crypto.dir/build'.
+[ 60%] Built target test_nip47_nwc_crypto
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/nwc_client_example.dir/build.make nips/nip47/CMakeFiles/nwc_client_example.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47/CMakeFiles/nwc_client_example.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/nwc_client_example.dir/build.make nips/nip47/CMakeFiles/nwc_client_example.dir/build
+make[2]: Nothing to be done for `nips/nip47/CMakeFiles/nwc_client_example.dir/build'.
+[ 61%] Built target nwc_client_example
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/nwc_wallet_example.dir/build.make nips/nip47/CMakeFiles/nwc_wallet_example.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47/CMakeFiles/nwc_wallet_example.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/nwc_wallet_example.dir/build.make nips/nip47/CMakeFiles/nwc_wallet_example.dir/build
+make[2]: Nothing to be done for `nips/nip47/CMakeFiles/nwc_wallet_example.dir/build'.
+[ 62%] Built target nwc_wallet_example
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/nwc_error_example.dir/build.make nips/nip47/CMakeFiles/nwc_error_example.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47/CMakeFiles/nwc_error_example.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/nwc_error_example.dir/build.make nips/nip47/CMakeFiles/nwc_error_example.dir/build
+make[2]: Nothing to be done for `nips/nip47/CMakeFiles/nwc_error_example.dir/build'.
+[ 62%] Built target nwc_error_example
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/glib_client_example.dir/build.make nips/nip47/CMakeFiles/glib_client_example.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47/CMakeFiles/glib_client_example.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/glib_client_example.dir/build.make nips/nip47/CMakeFiles/glib_client_example.dir/build
+make[2]: Nothing to be done for `nips/nip47/CMakeFiles/glib_client_example.dir/build'.
+[ 62%] Built target glib_client_example
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/glib_wallet_example.dir/build.make nips/nip47/CMakeFiles/glib_wallet_example.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip47/CMakeFiles/glib_wallet_example.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip47/CMakeFiles/glib_wallet_example.dir/build.make nips/nip47/CMakeFiles/glib_wallet_example.dir/build
+make[2]: Nothing to be done for `nips/nip47/CMakeFiles/glib_wallet_example.dir/build'.
+[ 63%] Built target glib_wallet_example
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip49/CMakeFiles/nostr_nip49_core.dir/build.make nips/nip49/CMakeFiles/nostr_nip49_core.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip49 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip49 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip49/CMakeFiles/nostr_nip49_core.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip49/CMakeFiles/nostr_nip49_core.dir/build.make nips/nip49/CMakeFiles/nostr_nip49_core.dir/build
+make[2]: Nothing to be done for `nips/nip49/CMakeFiles/nostr_nip49_core.dir/build'.
+[ 64%] Built target nostr_nip49_core
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip49/CMakeFiles/nostr_nip49_glib.dir/build.make nips/nip49/CMakeFiles/nostr_nip49_glib.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip49 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip49 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip49/CMakeFiles/nostr_nip49_glib.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip49/CMakeFiles/nostr_nip49_glib.dir/build.make nips/nip49/CMakeFiles/nostr_nip49_glib.dir/build
+make[2]: Nothing to be done for `nips/nip49/CMakeFiles/nostr_nip49_glib.dir/build'.
+[ 65%] Built target nostr_nip49_glib
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip49/CMakeFiles/test_nip49_spec_source.dir/build.make nips/nip49/CMakeFiles/test_nip49_spec_source.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip49 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip49 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip49/CMakeFiles/test_nip49_spec_source.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip49/CMakeFiles/test_nip49_spec_source.dir/build.make nips/nip49/CMakeFiles/test_nip49_spec_source.dir/build
+make[2]: Nothing to be done for `nips/nip49/CMakeFiles/test_nip49_spec_source.dir/build'.
+[ 66%] Built target test_nip49_spec_source
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip49/CMakeFiles/test_nip49_payload.dir/build.make nips/nip49/CMakeFiles/test_nip49_payload.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip49 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip49 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip49/CMakeFiles/test_nip49_payload.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip49/CMakeFiles/test_nip49_payload.dir/build.make nips/nip49/CMakeFiles/test_nip49_payload.dir/build
+make[2]: Nothing to be done for `nips/nip49/CMakeFiles/test_nip49_payload.dir/build'.
+[ 67%] Built target test_nip49_payload
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip49/CMakeFiles/test_nip49_roundtrip.dir/build.make nips/nip49/CMakeFiles/test_nip49_roundtrip.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip49 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip49 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip49/CMakeFiles/test_nip49_roundtrip.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip49/CMakeFiles/test_nip49_roundtrip.dir/build.make nips/nip49/CMakeFiles/test_nip49_roundtrip.dir/build
+make[2]: Nothing to be done for `nips/nip49/CMakeFiles/test_nip49_roundtrip.dir/build'.
+[ 67%] Built target test_nip49_roundtrip
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip49/CMakeFiles/test_nip49_negative.dir/build.make nips/nip49/CMakeFiles/test_nip49_negative.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip49 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip49 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip49/CMakeFiles/test_nip49_negative.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip49/CMakeFiles/test_nip49_negative.dir/build.make nips/nip49/CMakeFiles/test_nip49_negative.dir/build
+make[2]: Nothing to be done for `nips/nip49/CMakeFiles/test_nip49_negative.dir/build'.
+[ 67%] Built target test_nip49_negative
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip49/CMakeFiles/test_nip49_vectors.dir/build.make nips/nip49/CMakeFiles/test_nip49_vectors.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip49 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip49 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip49/CMakeFiles/test_nip49_vectors.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip49/CMakeFiles/test_nip49_vectors.dir/build.make nips/nip49/CMakeFiles/test_nip49_vectors.dir/build
+make[2]: Nothing to be done for `nips/nip49/CMakeFiles/test_nip49_vectors.dir/build'.
+[ 67%] Built target test_nip49_vectors
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip49/CMakeFiles/nostr-nip49.dir/build.make nips/nip49/CMakeFiles/nostr-nip49.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip49 /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip49 /Users/bizarro/Documents/Projects/nostrc/build/nips/nip49/CMakeFiles/nostr-nip49.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip49/CMakeFiles/nostr-nip49.dir/build.make nips/nip49/CMakeFiles/nostr-nip49.dir/build
+make[2]: Nothing to be done for `nips/nip49/CMakeFiles/nostr-nip49.dir/build'.
+[ 68%] Built target nostr-nip49
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip5f/CMakeFiles/nostr_nip5f_core.dir/build.make nips/nip5f/CMakeFiles/nostr_nip5f_core.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip5f /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip5f /Users/bizarro/Documents/Projects/nostrc/build/nips/nip5f/CMakeFiles/nostr_nip5f_core.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip5f/CMakeFiles/nostr_nip5f_core.dir/build.make nips/nip5f/CMakeFiles/nostr_nip5f_core.dir/build
+make[2]: Nothing to be done for `nips/nip5f/CMakeFiles/nostr_nip5f_core.dir/build'.
+[ 70%] Built target nostr_nip5f_core
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip5f/CMakeFiles/nostr_nip5f_glib.dir/build.make nips/nip5f/CMakeFiles/nostr_nip5f_glib.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip5f /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip5f /Users/bizarro/Documents/Projects/nostrc/build/nips/nip5f/CMakeFiles/nostr_nip5f_glib.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip5f/CMakeFiles/nostr_nip5f_glib.dir/build.make nips/nip5f/CMakeFiles/nostr_nip5f_glib.dir/build
+make[2]: Nothing to be done for `nips/nip5f/CMakeFiles/nostr_nip5f_glib.dir/build'.
+[ 71%] Built target nostr_nip5f_glib
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip5f/CMakeFiles/nostr-signer-sockd.dir/build.make nips/nip5f/CMakeFiles/nostr-signer-sockd.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip5f /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip5f /Users/bizarro/Documents/Projects/nostrc/build/nips/nip5f/CMakeFiles/nostr-signer-sockd.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip5f/CMakeFiles/nostr-signer-sockd.dir/build.make nips/nip5f/CMakeFiles/nostr-signer-sockd.dir/build
+make[2]: Nothing to be done for `nips/nip5f/CMakeFiles/nostr-signer-sockd.dir/build'.
+[ 72%] Built target nostr-signer-sockd
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip5f/CMakeFiles/test_nip5f_loopback.dir/build.make nips/nip5f/CMakeFiles/test_nip5f_loopback.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip5f /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip5f /Users/bizarro/Documents/Projects/nostrc/build/nips/nip5f/CMakeFiles/test_nip5f_loopback.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip5f/CMakeFiles/test_nip5f_loopback.dir/build.make nips/nip5f/CMakeFiles/test_nip5f_loopback.dir/build
+make[2]: Nothing to be done for `nips/nip5f/CMakeFiles/test_nip5f_loopback.dir/build'.
+[ 73%] Built target test_nip5f_loopback
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip5f/CMakeFiles/test_nip5f_negative_env.dir/build.make nips/nip5f/CMakeFiles/test_nip5f_negative_env.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip5f /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip5f /Users/bizarro/Documents/Projects/nostrc/build/nips/nip5f/CMakeFiles/test_nip5f_negative_env.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip5f/CMakeFiles/test_nip5f_negative_env.dir/build.make nips/nip5f/CMakeFiles/test_nip5f_negative_env.dir/build
+make[2]: Nothing to be done for `nips/nip5f/CMakeFiles/test_nip5f_negative_env.dir/build'.
+[ 73%] Built target test_nip5f_negative_env
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip5f/CMakeFiles/test_nip5f_tcp.dir/build.make nips/nip5f/CMakeFiles/test_nip5f_tcp.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip5f /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip5f /Users/bizarro/Documents/Projects/nostrc/build/nips/nip5f/CMakeFiles/test_nip5f_tcp.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip5f/CMakeFiles/test_nip5f_tcp.dir/build.make nips/nip5f/CMakeFiles/test_nip5f_tcp.dir/build
+make[2]: Nothing to be done for `nips/nip5f/CMakeFiles/test_nip5f_tcp.dir/build'.
+[ 74%] Built target test_nip5f_tcp
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip5f/CMakeFiles/nip5f_client_example.dir/build.make nips/nip5f/CMakeFiles/nip5f_client_example.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip5f /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip5f /Users/bizarro/Documents/Projects/nostrc/build/nips/nip5f/CMakeFiles/nip5f_client_example.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip5f/CMakeFiles/nip5f_client_example.dir/build.make nips/nip5f/CMakeFiles/nip5f_client_example.dir/build
+make[2]: Nothing to be done for `nips/nip5f/CMakeFiles/nip5f_client_example.dir/build'.
+[ 74%] Built target nip5f_client_example
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip5f/CMakeFiles/nip5f_tcp_client_example.dir/build.make nips/nip5f/CMakeFiles/nip5f_tcp_client_example.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip5f /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip5f /Users/bizarro/Documents/Projects/nostrc/build/nips/nip5f/CMakeFiles/nip5f_tcp_client_example.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip5f/CMakeFiles/nip5f_tcp_client_example.dir/build.make nips/nip5f/CMakeFiles/nip5f_tcp_client_example.dir/build
+make[2]: Nothing to be done for `nips/nip5f/CMakeFiles/nip5f_tcp_client_example.dir/build'.
+[ 75%] Built target nip5f_tcp_client_example
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip55l/CMakeFiles/nostr_nip55l_core.dir/build.make nips/nip55l/CMakeFiles/nostr_nip55l_core.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip55l /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip55l /Users/bizarro/Documents/Projects/nostrc/build/nips/nip55l/CMakeFiles/nostr_nip55l_core.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip55l/CMakeFiles/nostr_nip55l_core.dir/build.make nips/nip55l/CMakeFiles/nostr_nip55l_core.dir/build
+make[2]: Nothing to be done for `nips/nip55l/CMakeFiles/nostr_nip55l_core.dir/build'.
+[ 75%] Built target nostr_nip55l_core
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip55l/CMakeFiles/nostr_nip55l_glib.dir/build.make nips/nip55l/CMakeFiles/nostr_nip55l_glib.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip55l /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip55l /Users/bizarro/Documents/Projects/nostrc/build/nips/nip55l/CMakeFiles/nostr_nip55l_glib.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip55l/CMakeFiles/nostr_nip55l_glib.dir/build.make nips/nip55l/CMakeFiles/nostr_nip55l_glib.dir/build
+make[2]: Nothing to be done for `nips/nip55l/CMakeFiles/nostr_nip55l_glib.dir/build'.
+[ 76%] Built target nostr_nip55l_glib
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip55l/CMakeFiles/nostr-signer-daemon.dir/build.make nips/nip55l/CMakeFiles/nostr-signer-daemon.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip55l /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip55l /Users/bizarro/Documents/Projects/nostrc/build/nips/nip55l/CMakeFiles/nostr-signer-daemon.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip55l/CMakeFiles/nostr-signer-daemon.dir/build.make nips/nip55l/CMakeFiles/nostr-signer-daemon.dir/build
+make[2]: Nothing to be done for `nips/nip55l/CMakeFiles/nostr-signer-daemon.dir/build'.
+[ 77%] Built target nostr-signer-daemon
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip55l/CMakeFiles/nostr-signer-cli.dir/build.make nips/nip55l/CMakeFiles/nostr-signer-cli.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/nips/nip55l /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/nips/nip55l /Users/bizarro/Documents/Projects/nostrc/build/nips/nip55l/CMakeFiles/nostr-signer-cli.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f nips/nip55l/CMakeFiles/nostr-signer-cli.dir/build.make nips/nip55l/CMakeFiles/nostr-signer-cli.dir/build
+make[2]: Nothing to be done for `nips/nip55l/CMakeFiles/nostr-signer-cli.dir/build'.
+[ 77%] Built target nostr-signer-cli
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_nostr.dir/build.make tests/CMakeFiles/test_nostr.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_nostr.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_nostr.dir/build.make tests/CMakeFiles/test_nostr.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_nostr.dir/build'.
+[ 77%] Built target test_nostr
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_relay.dir/build.make tests/CMakeFiles/test_relay.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_relay.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_relay.dir/build.make tests/CMakeFiles/test_relay.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_relay.dir/build'.
+[ 78%] Built target test_relay
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_relay_shutdown.dir/build.make tests/CMakeFiles/test_relay_shutdown.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_relay_shutdown.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_relay_shutdown.dir/build.make tests/CMakeFiles/test_relay_shutdown.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_relay_shutdown.dir/build'.
+[ 78%] Built target test_relay_shutdown
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_subscription_lifecycle.dir/build.make tests/CMakeFiles/test_subscription_lifecycle.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_subscription_lifecycle.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_subscription_lifecycle.dir/build.make tests/CMakeFiles/test_subscription_lifecycle.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_subscription_lifecycle.dir/build'.
+[ 79%] Built target test_subscription_lifecycle
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_subscription_backpressure.dir/build.make tests/CMakeFiles/test_subscription_backpressure.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_subscription_backpressure.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_subscription_backpressure.dir/build.make tests/CMakeFiles/test_subscription_backpressure.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_subscription_backpressure.dir/build'.
+[ 80%] Built target test_subscription_backpressure
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_subscription_backpressure_long.dir/build.make tests/CMakeFiles/test_subscription_backpressure_long.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_subscription_backpressure_long.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_subscription_backpressure_long.dir/build.make tests/CMakeFiles/test_subscription_backpressure_long.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_subscription_backpressure_long.dir/build'.
+[ 80%] Built target test_subscription_backpressure_long
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_subscription_blocking_depth.dir/build.make tests/CMakeFiles/test_subscription_blocking_depth.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_subscription_blocking_depth.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_subscription_blocking_depth.dir/build.make tests/CMakeFiles/test_subscription_blocking_depth.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_subscription_blocking_depth.dir/build'.
+[ 81%] Built target test_subscription_blocking_depth
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_relay_unsubscribe.dir/build.make tests/CMakeFiles/test_relay_unsubscribe.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_relay_unsubscribe.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_relay_unsubscribe.dir/build.make tests/CMakeFiles/test_relay_unsubscribe.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_relay_unsubscribe.dir/build'.
+[ 82%] Built target test_relay_unsubscribe
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_connection_shutdown_order.dir/build.make tests/CMakeFiles/test_connection_shutdown_order.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_connection_shutdown_order.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_connection_shutdown_order.dir/build.make tests/CMakeFiles/test_connection_shutdown_order.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_connection_shutdown_order.dir/build'.
+[ 82%] Built target test_connection_shutdown_order
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_envelope_parse.dir/build.make tests/CMakeFiles/test_envelope_parse.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_envelope_parse.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_envelope_parse.dir/build.make tests/CMakeFiles/test_envelope_parse.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_envelope_parse.dir/build'.
+[ 83%] Built target test_envelope_parse
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_event.dir/build.make tests/CMakeFiles/test_json_event.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_json_event.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_event.dir/build.make tests/CMakeFiles/test_json_event.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_json_event.dir/build'.
+[ 84%] Built target test_json_event
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_event_fuzzlite.dir/build.make tests/CMakeFiles/test_json_event_fuzzlite.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_json_event_fuzzlite.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_event_fuzzlite.dir/build.make tests/CMakeFiles/test_json_event_fuzzlite.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_json_event_fuzzlite.dir/build'.
+[ 85%] Built target test_json_event_fuzzlite
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_envelope.dir/build.make tests/CMakeFiles/test_json_envelope.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_json_envelope.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_envelope.dir/build.make tests/CMakeFiles/test_json_envelope.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_json_envelope.dir/build'.
+[ 85%] Built target test_json_envelope
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_filter.dir/build.make tests/CMakeFiles/test_json_filter.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_json_filter.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_filter.dir/build.make tests/CMakeFiles/test_json_filter.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_json_filter.dir/build'.
+[ 85%] Built target test_json_filter
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_filter_tags.dir/build.make tests/CMakeFiles/test_json_filter_tags.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_json_filter_tags.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_filter_tags.dir/build.make tests/CMakeFiles/test_json_filter_tags.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_json_filter_tags.dir/build'.
+[ 86%] Built target test_json_filter_tags
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_filter_robust.dir/build.make tests/CMakeFiles/test_json_filter_robust.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_json_filter_robust.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_filter_robust.dir/build.make tests/CMakeFiles/test_json_filter_robust.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_json_filter_robust.dir/build'.
+[ 86%] Built target test_json_filter_robust
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_filter_fuzzlite.dir/build.make tests/CMakeFiles/test_json_filter_fuzzlite.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_json_filter_fuzzlite.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_filter_fuzzlite.dir/build.make tests/CMakeFiles/test_json_filter_fuzzlite.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_json_filter_fuzzlite.dir/build'.
+[ 87%] Built target test_json_filter_fuzzlite
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_int_array.dir/build.make tests/CMakeFiles/test_json_int_array.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_json_int_array.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_int_array.dir/build.make tests/CMakeFiles/test_json_int_array.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_json_int_array.dir/build'.
+[ 87%] Built target test_json_int_array
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_raw.dir/build.make tests/CMakeFiles/test_json_raw.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_json_raw.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_json_raw.dir/build.make tests/CMakeFiles/test_json_raw.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_json_raw.dir/build'.
+[ 88%] Built target test_json_raw
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_filters_move_semantics.dir/build.make tests/CMakeFiles/test_filters_move_semantics.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/test_filters_move_semantics.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/test_filters_move_semantics.dir/build.make tests/CMakeFiles/test_filters_move_semantics.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/test_filters_move_semantics.dir/build'.
+[ 88%] Built target test_filters_move_semantics
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/microbench_json.dir/build.make tests/CMakeFiles/microbench_json.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/tests /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/tests /Users/bizarro/Documents/Projects/nostrc/build/tests/CMakeFiles/microbench_json.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/microbench_json.dir/build.make tests/CMakeFiles/microbench_json.dir/build
+make[2]: Nothing to be done for `tests/CMakeFiles/microbench_json.dir/build'.
+[ 88%] Built target microbench_json
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f apps/gnostr-signer/CMakeFiles/gnostr-signer.dir/build.make apps/gnostr-signer/CMakeFiles/gnostr-signer.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/apps/gnostr-signer /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr-signer /Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr-signer/CMakeFiles/gnostr-signer.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f apps/gnostr-signer/CMakeFiles/gnostr-signer.dir/build.make apps/gnostr-signer/CMakeFiles/gnostr-signer.dir/build
+make[2]: Nothing to be done for `apps/gnostr-signer/CMakeFiles/gnostr-signer.dir/build'.
+[ 94%] Built target gnostr-signer
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f apps/gnostr-signer/CMakeFiles/gnostr-signer-daemon.dir/build.make apps/gnostr-signer/CMakeFiles/gnostr-signer-daemon.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/apps/gnostr-signer /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr-signer /Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr-signer/CMakeFiles/gnostr-signer-daemon.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f apps/gnostr-signer/CMakeFiles/gnostr-signer-daemon.dir/build.make apps/gnostr-signer/CMakeFiles/gnostr-signer-daemon.dir/build
+make[2]: Nothing to be done for `apps/gnostr-signer/CMakeFiles/gnostr-signer-daemon.dir/build'.
+[ 95%] Built target gnostr-signer-daemon
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f apps/gnostr/CMakeFiles/gnostr.dir/build.make apps/gnostr/CMakeFiles/gnostr.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/apps/gnostr /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr /Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr/CMakeFiles/gnostr.dir/DependInfo.cmake "--color="
+Dependencies file "apps/gnostr/CMakeFiles/gnostr.dir/src/ui/gnostr-timeline-view.c.o.d" is newer than depends file "/Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr/CMakeFiles/gnostr.dir/compiler_depend.internal".
+Consolidate compiler generated dependencies of target gnostr
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f apps/gnostr/CMakeFiles/gnostr.dir/build.make apps/gnostr/CMakeFiles/gnostr.dir/build
+[ 96%] Building C object apps/gnostr/CMakeFiles/gnostr.dir/src/ui/gnostr-timeline-view.c.o
+cd /Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr && /usr/bin/cc -DAPP_ID=\"org.gnostr.Client\" -DAPP_NAME=\"GNostr\" -DGNOSTR_ENABLE_REAL_SIMPLEPOOL -DHAVE_SOUP3=1 -DLIBNOSTR_WITH_NOSTRDB=1 -DNOSTR_CACHELINE=64 -DNOSTR_HAVE_GLIB=1 -DNOSTR_HAVE_LIBGO=1 -DNOSTR_PREFETCH_DISTANCE=1 -DNOSTR_REFINED_SIGNALING=1 -I/Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr -I/Users/bizarro/Documents/Projects/nostrc/gobject/include -I/Users/bizarro/Documents/Projects/nostrc/libnostr/include -I/Users/bizarro/Documents/Projects/nostrc/libgo/include -I/Users/bizarro/Documents/Projects/nostrc/nips/nip46/include -I/opt/homebrew/Cellar/libwebsockets/4.4.1/include -I/Users/bizarro/Documents/Projects/nostrc/build/libnostr/generated -I/opt/homebrew/include -I/Users/bizarro/Documents/Projects/nostrc/third_party/nostrdb/src -I/Users/bizarro/Documents/Projects/nostrc/third_party/nostrdb/src/bolt11 -I/Users/bizarro/Documents/Projects/nostrc/third_party/nostrdb/ccan -I/Users/bizarro/Documents/Projects/nostrc/third_party/nostrdb/ccan/ccan -I/Users/bizarro/Documents/Projects/nostrc/third_party/nostrdb/ccan/ccan/array_size -I/Users/bizarro/Documents/Projects/nostrc/third_party/nostrdb/ccan/ccan/mem -I/Users/bizarro/Documents/Projects/nostrc/third_party/nostrdb/ccan/ccan/short_types -I/Users/bizarro/Documents/Projects/nostrc/third_party/nostrdb/ccan/ccan/crypto/sha256 -I/Users/bizarro/Documents/Projects/nostrc/third_party/nostrdb/ccan/ccan/tal -I/Users/bizarro/Documents/Projects/nostrc/third_party/nostrdb/ccan/ccan/tal/str -I/Users/bizarro/Documents/Projects/nostrc/third_party/nostrdb/deps/lmdb -I/Users/bizarro/Documents/Projects/nostrc/third_party/nostrdb/deps/flatcc/include -I/Users/bizarro/Documents/Projects/nostrc/third_party/nostrdb/deps/secp256k1/include -I/Users/bizarro/Documents/Projects/nostrc/libjson -I/Users/bizarro/Documents/Projects/nostrc/libjson/include -I/Users/bizarro/Documents/Projects/nostrc/nips/nip19/include -I/Users/bizarro/Documents/Projects/nostrc/nips/nip04/include -I/Users/bizarro/Documents/Projects/nostrc/nips/nip44/include -isystem /opt/homebrew/Cellar/glib/2.84.4/include -isystem /opt/homebrew/Cellar/glib/2.84.4/include/glib-2.0 -isystem /opt/homebrew/Cellar/glib/2.84.4/lib/glib-2.0/include -isystem /opt/homebrew/opt/gettext/include -isystem /opt/homebrew/Cellar/pcre2/10.45/include -isystem /Library/Developer/CommandLineTools/SDKs/MacOSX15.sdk/usr/include/ffi -isystem /opt/homebrew/Cellar/openssl@3/3.5.2/include -isystem /opt/homebrew/Cellar/jansson/2.14.1/include -isystem /opt/homebrew/Cellar/gtk4/4.18.6/include/gtk-4.0 -isystem /opt/homebrew/Cellar/pango/1.56.4/include/pango-1.0 -isystem /opt/homebrew/Cellar/fribidi/1.0.16/include/fribidi -isystem /opt/homebrew/Cellar/harfbuzz/11.3.3/include/harfbuzz -isystem /opt/homebrew/Cellar/graphite2/1.3.14/include -isystem /opt/homebrew/include/gdk-pixbuf-2.0 -isystem /opt/homebrew/opt/libtiff/include -isystem /opt/homebrew/opt/zstd/include -isystem /opt/homebrew/Cellar/xz/5.8.1/include -isystem /opt/homebrew/opt/jpeg-turbo/include -isystem /opt/homebrew/Cellar/cairo/1.18.4/include/cairo -isystem /opt/homebrew/Cellar/fontconfig/2.16.0/include -isystem /opt/homebrew/opt/freetype/include/freetype2 -isystem /opt/homebrew/opt/libpng/include/libpng16 -isystem /opt/homebrew/Cellar/libxext/1.3.6/include -isystem /opt/homebrew/Cellar/xorgproto/2024.1/include -isystem /opt/homebrew/Cellar/libxrender/0.9.12/include -isystem /opt/homebrew/Cellar/libx11/1.8.12/include -isystem /opt/homebrew/Cellar/libxcb/1.17.0/include -isystem /opt/homebrew/Cellar/libxau/1.0.12/include -isystem /opt/homebrew/Cellar/libxdmcp/1.1.5/include -isystem /opt/homebrew/Cellar/pixman/0.46.4/include/pixman-1 -isystem /opt/homebrew/Cellar/graphene/1.10.8/include/graphene-1.0 -isystem /opt/homebrew/Cellar/graphene/1.10.8/lib/graphene-1.0/include -isystem /opt/homebrew/Cellar/libsoup/3.6.5/include/libsoup-3.0 -isystem /opt/homebrew/Cellar/libpsl/0.21.5_2/include -isystem /opt/homebrew/Cellar/libidn2/2.3.8/include -isystem /opt/homebrew/Cellar/libnghttp2/1.66.0/include -O2 -g -DNDEBUG -arch arm64 -MD -MT apps/gnostr/CMakeFiles/gnostr.dir/src/ui/gnostr-timeline-view.c.o -MF CMakeFiles/gnostr.dir/src/ui/gnostr-timeline-view.c.o.d -o CMakeFiles/gnostr.dir/src/ui/gnostr-timeline-view.c.o -c /Users/bizarro/Documents/Projects/nostrc/apps/gnostr/src/ui/gnostr-timeline-view.c
+/Users/bizarro/Documents/Projects/nostrc/apps/gnostr/src/ui/gnostr-timeline-view.c:89:27: error: use of undeclared identifier 'avatar_texture_cache'
+   89 |   if (g_hash_table_lookup(avatar_texture_cache, url)) return;
+      |                           ^
+/Users/bizarro/Documents/Projects/nostrc/apps/gnostr/src/ui/gnostr-timeline-view.c:93:26: error: use of undeclared identifier 'avatar_texture_cache'
+   93 |     g_hash_table_replace(avatar_texture_cache, g_strdup(url), g_object_ref(disk_tex));
+      |                          ^
+/Users/bizarro/Documents/Projects/nostrc/apps/gnostr/src/ui/gnostr-timeline-view.c:101:20: error: invalid application of 'sizeof' to an incomplete type 'AvatarCtx' (aka 'struct _AvatarCtx')
+  101 |   AvatarCtx *ctx = g_new0(AvatarCtx, 1);
+      |                    ^~~~~~~~~~~~~~~~~~~~
+/opt/homebrew/Cellar/glib/2.84.4/include/glib-2.0/glib/gmem.h:335:42: note: expanded from macro 'g_new0'
+  335 | #define g_new0(struct_type, n_structs)                  _G_NEW (struct_type, n_structs, malloc0)
+      |                                                         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/opt/homebrew/Cellar/glib/2.84.4/include/glib-2.0/glib/gmem.h:265:16: note: expanded from macro '_G_NEW'
+  265 |           gsize __s = sizeof (struct_type);                     \
+      |                       ^      ~~~~~~~~~~~~~
+/Users/bizarro/Documents/Projects/nostrc/apps/gnostr/src/ui/gnostr-timeline-view.c:13:16: note: forward declaration of 'struct _AvatarCtx'
+   13 | typedef struct _AvatarCtx AvatarCtx;
+      |                ^
+/Users/bizarro/Documents/Projects/nostrc/apps/gnostr/src/ui/gnostr-timeline-view.c:102:6: error: incomplete definition of type 'AvatarCtx' (aka 'struct _AvatarCtx')
+  102 |   ctx->image = NULL;    /* no UI to update */
+      |   ~~~^
+/Users/bizarro/Documents/Projects/nostrc/apps/gnostr/src/ui/gnostr-timeline-view.c:13:16: note: forward declaration of 'struct _AvatarCtx'
+   13 | typedef struct _AvatarCtx AvatarCtx;
+      |                ^
+/Users/bizarro/Documents/Projects/nostrc/apps/gnostr/src/ui/gnostr-timeline-view.c:103:6: error: incomplete definition of type 'AvatarCtx' (aka 'struct _AvatarCtx')
+  103 |   ctx->initials = NULL; /* no UI to update */
+      |   ~~~^
+/Users/bizarro/Documents/Projects/nostrc/apps/gnostr/src/ui/gnostr-timeline-view.c:13:16: note: forward declaration of 'struct _AvatarCtx'
+   13 | typedef struct _AvatarCtx AvatarCtx;
+      |                ^
+/Users/bizarro/Documents/Projects/nostrc/apps/gnostr/src/ui/gnostr-timeline-view.c:104:6: error: incomplete definition of type 'AvatarCtx' (aka 'struct _AvatarCtx')
+  104 |   ctx->url = g_strdup(url);
+      |   ~~~^
+/Users/bizarro/Documents/Projects/nostrc/apps/gnostr/src/ui/gnostr-timeline-view.c:13:16: note: forward declaration of 'struct _AvatarCtx'
+   13 | typedef struct _AvatarCtx AvatarCtx;
+      |                ^
+6 errors generated.
+make[2]: *** [apps/gnostr/CMakeFiles/gnostr.dir/src/ui/gnostr-timeline-view.c.o] Error 1
+make[1]: *** [apps/gnostr/CMakeFiles/gnostr.dir/all] Error 2
+make: *** [all] Error 2
+

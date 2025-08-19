@@ -209,6 +209,18 @@ char *nostr_tag_to_json(const NostrTag *tag) {
         free(escaped);
     }
 
+    // Ensure space for closing ']' and terminating NUL
+    if (len + 2 > capacity) {
+        size_t new_capacity = capacity;
+        while (len + 2 > new_capacity) new_capacity *= 2;
+        char *nbuf = realloc(buffer, new_capacity);
+        if (!nbuf) {
+            free(buffer);
+            return NULL;
+        }
+        buffer = nbuf;
+        capacity = new_capacity;
+    }
     strcat(buffer, "]"); // Close the JSON array
     return buffer;
 }
@@ -331,6 +343,18 @@ char *nostr_tags_to_json(NostrTags *tags) {
         free(tag_json);
     }
 
+    // Ensure space for closing ']' and terminating NUL
+    if (len + 2 > capacity) {
+        size_t new_capacity = capacity;
+        while (len + 2 > new_capacity) new_capacity *= 2;
+        char *nbuf = realloc(buffer, new_capacity);
+        if (!nbuf) {
+            free(buffer);
+            return NULL;
+        }
+        buffer = nbuf;
+        capacity = new_capacity;
+    }
     strcat(buffer, "]"); // Close the outer JSON array
     return buffer;
 }

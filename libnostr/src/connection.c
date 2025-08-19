@@ -138,10 +138,22 @@ static const struct lws_protocols protocols[] = {
 
 static const uint32_t retry_table[] = {1000, 2000, 3000}; // Retry intervals in ms
 
+/* Shared libwebsockets context & service thread */
+static struct lws_context *g_lws_context = NULL;
+static pthread_t g_lws_service_thread;
+static int g_lws_running = 0;
+static int g_lws_refcount = 0;
+static pthread_mutex_t g_lws_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 static void *lws_service_loop(void *arg) {
-    NostrConnection *c = (NostrConnection *)arg;
-    while (c->priv->running) {
-        lws_service(c->priv->context, 50);
+    (void)arg;
+    for (;;) {
+        pthread_mutex_lock(&g_lws_mutex);
+        int running = g_lws_running;
+        struct lws_context *ctx = g_lws_context;
+        pthread_mutex_unlock(&g_lws_mutex);
+        if (!running || !ctx) break;
+        lws_service(ctx, 50);
     }
     return NULL;
 }
@@ -199,7 +211,6 @@ NostrConnection *nostr_connection_new(const char *url) {
     nostr_global_init();
     struct lws_context_creation_info context_info;
     struct lws_client_connect_info connect_info;
-    struct lws_context *context;
 
     lws_set_log_level(LLL_USER | LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_DEBUG | LLL_HEADER | LLL_CLIENT , NULL);
 
@@ -225,15 +236,6 @@ NostrConnection *nostr_connection_new(const char *url) {
     int test_mode = (test_env && *test_env && strcmp(test_env, "0") != 0) ? 1 : 0;
 
     if (test_mode) {
-        NostrConnection *conn = calloc(1, sizeof(NostrConnection));
-        NostrConnectionPrivate *priv = calloc(1, sizeof(NostrConnectionPrivate));
-        if (!conn || !priv) {
-            if (conn) free(conn);
-            if (priv) free(priv);
-            return NULL;
-        }
-        conn->priv = priv;
-        nsync_mu_init(&conn->priv->mutex);
         conn->priv->test_mode = 1;
         conn->recv_channel = go_channel_create(16);
         conn->send_channel = go_channel_create(16);
@@ -250,20 +252,30 @@ NostrConnection *nostr_connection_new(const char *url) {
     context_info.uid = -1;
     context_info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT |
                            LWS_SERVER_OPTION_VALIDATE_UTF8;
-    context_info.fd_limit_per_thread = 1 + 1 + 1;
+    // Generous fd limit per thread since we share one context across connections
+    context_info.fd_limit_per_thread = 4096;
     context_info.pt_serv_buf_size = 32 * 1024;
 
-    context = lws_create_context(&context_info);
-    if (!context) {
-        free(conn);
-        return NULL;
+    /* Acquire or create shared context */
+    pthread_mutex_lock(&g_lws_mutex);
+    if (!g_lws_context) {
+        g_lws_context = lws_create_context(&context_info);
+        if (!g_lws_context) {
+            pthread_mutex_unlock(&g_lws_mutex);
+            free(conn);
+            free(priv);
+            return NULL;
+        }
+        g_lws_running = 1;
+        g_lws_refcount = 0; /* will increment below */
+        pthread_create(&g_lws_service_thread, NULL, lws_service_loop, NULL);
     }
-
-    conn->priv->context = context;
+    g_lws_refcount++;
+    pthread_mutex_unlock(&g_lws_mutex);
 
     // Initialize client connect info
     memset(&connect_info, 0, sizeof(connect_info));
-    connect_info.context = context;
+    connect_info.context = g_lws_context;
     char host[256];
     char path[512];
     int port = 0;
@@ -281,7 +293,22 @@ NostrConnection *nostr_connection_new(const char *url) {
 
     conn->priv->wsi = lws_client_connect_via_info(&connect_info);
     if (!conn->priv->wsi) {
-        lws_context_destroy(context);
+        /* Release shared context ref and possibly shut it down */
+        pthread_mutex_lock(&g_lws_mutex);
+        if (g_lws_refcount > 0) g_lws_refcount--;
+        int should_stop = (g_lws_refcount == 0);
+        pthread_mutex_unlock(&g_lws_mutex);
+        if (should_stop) {
+            pthread_mutex_lock(&g_lws_mutex);
+            g_lws_running = 0;
+            if (g_lws_context) lws_cancel_service(g_lws_context);
+            pthread_mutex_unlock(&g_lws_mutex);
+            pthread_join(g_lws_service_thread, NULL);
+            pthread_mutex_lock(&g_lws_mutex);
+            if (g_lws_context) { lws_context_destroy(g_lws_context); g_lws_context = NULL; }
+            pthread_mutex_unlock(&g_lws_mutex);
+        }
+        free(priv);
         free(conn);
         return NULL;
     }
@@ -289,10 +316,6 @@ NostrConnection *nostr_connection_new(const char *url) {
     lws_set_opaque_user_data(conn->priv->wsi, conn);
     conn->recv_channel = go_channel_create(16);
     conn->send_channel = go_channel_create(16);
-
-    // Start a background service loop to pump libwebsockets
-    conn->priv->running = 1;
-    pthread_create(&conn->priv->service_thread, NULL, lws_service_loop, conn);
     return conn;
 }
 
@@ -334,12 +357,21 @@ void nostr_connection_close(NostrConnection *conn) {
         // No libwebsockets context or thread in test mode
         free(conn->priv);
     } else if (conn->priv) {
-        // Signal thread to stop and join
-        conn->priv->running = 0;
-        // Wake service loop
-        lws_cancel_service(conn->priv->context);
-        pthread_join(conn->priv->service_thread, NULL);
-        lws_context_destroy(conn->priv->context);
+        /* Drop our ref to the shared context; stop/destroy if last */
+        pthread_mutex_lock(&g_lws_mutex);
+        if (g_lws_refcount > 0) g_lws_refcount--;
+        int should_stop = (g_lws_refcount == 0);
+        pthread_mutex_unlock(&g_lws_mutex);
+        if (should_stop) {
+            pthread_mutex_lock(&g_lws_mutex);
+            g_lws_running = 0;
+            if (g_lws_context) lws_cancel_service(g_lws_context);
+            pthread_mutex_unlock(&g_lws_mutex);
+            pthread_join(g_lws_service_thread, NULL);
+            pthread_mutex_lock(&g_lws_mutex);
+            if (g_lws_context) { lws_context_destroy(g_lws_context); g_lws_context = NULL; }
+            pthread_mutex_unlock(&g_lws_mutex);
+        }
         free(conn->priv);
     }
 

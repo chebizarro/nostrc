@@ -35,6 +35,8 @@ static void nostr_simple_pool_finalize(GObject *object) {
     G_OBJECT_CLASS(gnostr_simple_pool_parent_class)->finalize(object);
 }
 
+/* paginator code moved below after dedup helpers */
+
 static void gnostr_simple_pool_class_init(GnostrSimplePoolClass *klass) {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
     object_class->finalize = nostr_simple_pool_finalize;
@@ -160,6 +162,204 @@ static gboolean dedup_set_seen(DedupSet *d, const char *id) {
         g_hash_table_remove(d->set, old); /* frees old via key destroy */
     }
     return FALSE;
+}
+
+/* Background paginator with interval */
+typedef struct {
+    GObject *self_obj;      /* GnostrSimplePool* as GObject */
+    char **urls;            /* owned deep copy */
+    size_t url_count;
+    NostrFilter *base_filter; /* owned copy */
+    guint interval_ms;
+    GCancellable *cancellable; /* optional, ref-held */
+    GTask *task;            /* for immediate async completion */
+} PaginateCtx;
+
+static void paginate_ctx_free(PaginateCtx *ctx) {
+    if (!ctx) return;
+    if (ctx->urls) {
+        for (size_t i = 0; i < ctx->url_count; i++) g_free(ctx->urls[i]);
+        g_free(ctx->urls);
+    }
+    if (ctx->base_filter) nostr_filter_free(ctx->base_filter);
+    if (ctx->task) g_object_unref(ctx->task);
+    if (ctx->cancellable) g_object_unref(ctx->cancellable);
+    if (ctx->self_obj) g_object_unref(ctx->self_obj);
+    g_free(ctx);
+}
+
+static gpointer paginate_with_interval_thread(gpointer user_data) {
+    PaginateCtx *ctx = (PaginateCtx *)user_data;
+    if (!ctx) return NULL;
+
+    /* Session-level de-dup for event IDs across pages */
+    DedupSet *seen = dedup_set_new(65536);
+
+    /* Initialize until cursor from base filter */
+    NostrTimestamp next_until = 0;
+    if (ctx->base_filter) {
+        next_until = (NostrTimestamp)nostr_filter_get_until_i64(ctx->base_filter);
+    }
+
+    while (!(ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable))) {
+        /* Build per-page filters: copy base and set until */
+        NostrFilters *filters = nostr_filters_new();
+        NostrFilter *f = nostr_filter_copy(ctx->base_filter);
+        if (next_until > 0) {
+            nostr_filter_set_until_i64(f, (int64_t)next_until);
+        }
+        nostr_filters_add(filters, f); /* moves f */
+
+        /* Prepare subs per URL */
+        typedef struct { NostrRelay *relay; NostrSubscription *sub; gboolean eosed; } SubItem;
+        GPtrArray *subs = g_ptr_array_new_with_free_func(NULL);
+        GoContext *bg = go_context_background();
+        for (size_t i = 0; i < ctx->url_count; i++) {
+            if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) break;
+            const char *url = ctx->urls[i];
+            if (!url || !*url) continue;
+            Error *err = NULL;
+            NostrRelay *relay = nostr_relay_new(bg, url, &err);
+            if (!relay) {
+                if (err) { free_error(err); }
+                continue;
+            }
+            if (!nostr_relay_connect(relay, &err)) {
+                if (err) { free_error(err); }
+                nostr_relay_free(relay);
+                continue;
+            }
+            /* Prepare subscription using shared filters (no ownership transfer) */
+            NostrSubscription *sub = nostr_relay_prepare_subscription(relay, bg, filters);
+            if (!sub || !nostr_subscription_fire(sub, &err)) {
+                if (err) { free_error(err); }
+                if (sub) { nostr_subscription_free(sub); }
+                nostr_relay_disconnect(relay);
+                nostr_relay_free(relay);
+                continue;
+            }
+            SubItem item = { .relay = relay, .sub = sub, .eosed = FALSE };
+            g_ptr_array_add(subs, g_memdup2(&item, sizeof(SubItem)));
+        }
+
+        /* Drain page */
+        gboolean page_has_new = FALSE;
+        gint64 min_created_at = -1;
+        GPtrArray *batch = g_ptr_array_new();
+        for (;;) {
+            gboolean any = FALSE;
+            for (guint i = 0; i < subs->len; i++) {
+                SubItem *it = (SubItem *)subs->pdata[i];
+                if (!it || !it->sub) continue;
+                void *msg = NULL;
+                GoChannel *ch_events = nostr_subscription_get_events_channel(it->sub);
+                while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
+                    any = TRUE;
+                    if (msg) {
+                        NostrEvent *ev = (NostrEvent*)msg;
+                        const char *eid = nostr_event_get_id(ev);
+                        if (eid && *eid && dedup_set_seen(seen, eid)) {
+                            nostr_event_free(ev);
+                        } else {
+                            page_has_new = TRUE;
+                            int64_t ca = nostr_event_get_created_at(ev);
+                            if (min_created_at < 0 || (ca > 0 && ca < min_created_at)) {
+                                min_created_at = ca;
+                            }
+                            g_ptr_array_add(batch, ev);
+                        }
+                    }
+                    msg = NULL;
+                }
+                GoChannel *ch_eose = nostr_subscription_get_eose_channel(it->sub);
+                if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+                    it->eosed = TRUE;
+                }
+            }
+
+            /* Stop when all EOSE or cancelled */
+            gboolean all_eosed = TRUE;
+            for (guint i = 0; i < subs->len; i++) {
+                SubItem *it = (SubItem *)subs->pdata[i];
+                if (it && !it->eosed) { all_eosed = FALSE; break; }
+            }
+            if (all_eosed || (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable))) break;
+            if (!any) g_usleep(1000); /* 1ms */
+        }
+
+        /* Emit batch if any */
+        if (batch->len > 0) {
+            typedef struct { GObject *obj; GPtrArray *arr; } EmitCtx;
+            EmitCtx *e = g_new0(EmitCtx, 1);
+            e->obj = g_object_ref(ctx->self_obj);
+            e->arr = batch; /* transfer */
+            g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, emit_events_on_main, e, NULL);
+        } else {
+            g_ptr_array_unref(batch);
+        }
+
+        /* Cleanup subs */
+        for (guint i = 0; i < subs->len; i++) {
+            SubItem *it = (SubItem*)subs->pdata[i];
+            if (!it) continue;
+            if (it->sub) { nostr_subscription_close(it->sub, NULL); nostr_subscription_free(it->sub); }
+            if (it->relay) { nostr_relay_disconnect(it->relay); nostr_relay_free(it->relay); }
+            g_free(it);
+        }
+        g_ptr_array_unref(subs);
+        nostr_filters_free(filters);
+
+        if (!page_has_new) break; /* stop if page had only repeats */
+        if (min_created_at > 0) {
+            next_until = (NostrTimestamp)min_created_at;
+        }
+
+        /* Sleep interval before next page */
+        if (ctx->interval_ms > 0) g_usleep((gulong)ctx->interval_ms * 1000);
+    }
+
+    dedup_set_free(seen);
+    paginate_ctx_free(ctx); /* ctx->task already completed in async setup */
+    return NULL;
+}
+
+void gnostr_simple_pool_paginate_with_interval_async(GnostrSimplePool *self,
+                                                     const char **urls,
+                                                     size_t url_count,
+                                                     const NostrFilter *filter,
+                                                     guint interval_ms,
+                                                     GCancellable *cancellable,
+                                                     GAsyncReadyCallback cb,
+                                                     gpointer user_data) {
+    g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
+    g_return_if_fail(urls != NULL || url_count == 0);
+    g_return_if_fail(filter != NULL);
+
+    PaginateCtx *ctx = g_new0(PaginateCtx, 1);
+    ctx->self_obj = g_object_ref(G_OBJECT(self));
+    ctx->urls = g_new0(char*, url_count);
+    ctx->url_count = url_count;
+    for (size_t i = 0; i < url_count; i++) ctx->urls[i] = g_strdup(urls[i]);
+    ctx->base_filter = nostr_filter_copy(filter);
+    ctx->interval_ms = interval_ms;
+    ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
+    ctx->task = g_task_new(G_OBJECT(self), cancellable, cb, user_data);
+
+    /* Spawn worker */
+    GThread *thr = g_thread_new("nostr-paginate", paginate_with_interval_thread, ctx);
+    g_thread_unref(thr);
+
+    /* Immediate async success */
+    g_task_return_boolean(ctx->task, TRUE);
+    g_object_unref(ctx->task);
+    ctx->task = NULL;
+}
+
+gboolean gnostr_simple_pool_paginate_with_interval_finish(GnostrSimplePool *self,
+                                                          GAsyncResult *res,
+                                                          GError **error) {
+    (void)self;
+    return g_task_propagate_boolean(G_TASK(res), error);
 }
 
 static gpointer subscribe_many_thread(gpointer user_data) {
@@ -537,4 +737,207 @@ GPtrArray *gnostr_simple_pool_query_single_finish(GnostrSimplePool *self,
         }
         return NULL;
     }
+}
+
+/* ================= Batch fetch profiles by authors (kind 0) ================= */
+typedef struct {
+    GObject *self_obj;      /* GnostrSimplePool* as GObject */
+    char **urls;            /* deep copy */
+    size_t url_count;
+    char **authors;         /* deep copy */
+    size_t author_count;
+    int limit;              /* optional per-relay limit */
+    GCancellable *cancellable; /* optional */
+    GTask *task;            /* async completion */
+    GPtrArray *results;     /* char* JSON strings */
+} FetchProfilesCtx;
+
+static void fetch_profiles_ctx_free(FetchProfilesCtx *ctx) {
+    if (!ctx) return;
+    if (ctx->urls) { for (size_t i = 0; i < ctx->url_count; i++) g_free(ctx->urls[i]); g_free(ctx->urls); }
+    if (ctx->authors) { for (size_t i = 0; i < ctx->author_count; i++) g_free(ctx->authors[i]); g_free(ctx->authors); }
+    if (ctx->results) g_ptr_array_unref(ctx->results);
+    if (ctx->task) g_object_unref(ctx->task);
+    if (ctx->cancellable) g_object_unref(ctx->cancellable);
+    if (ctx->self_obj) g_object_unref(ctx->self_obj);
+    g_free(ctx);
+}
+
+static gboolean fetch_profiles_complete_ok(gpointer data) {
+    GTask *task = G_TASK(data);
+    g_task_return_boolean(task, TRUE);
+    return G_SOURCE_REMOVE;
+}
+
+static gpointer fetch_profiles_thread(gpointer user_data) {
+    FetchProfilesCtx *ctx = (FetchProfilesCtx *)user_data;
+    ctx->results = g_ptr_array_new_with_free_func(g_free);
+
+    /* Build filter: kinds=[0], authors=[...], optional limit */
+    NostrFilters *filters = nostr_filters_new();
+    NostrFilter *f = nostr_filter_new();
+    int kind0 = 0;
+    nostr_filter_set_kinds(f, &kind0, 1);
+    if (ctx->author_count > 0) {
+        const char **authv = (const char **)ctx->authors;
+        nostr_filter_set_authors(f, authv, ctx->author_count);
+    }
+    if (ctx->limit > 0) nostr_filter_set_limit(f, ctx->limit);
+    nostr_filters_add(filters, f);
+
+    /* Prepare per-relay subscriptions */
+    typedef struct { NostrRelay *relay; NostrSubscription *sub; GoChannel *raw; gboolean eosed; } SubItem;
+    GPtrArray *subs = g_ptr_array_new_with_free_func(NULL);
+    DedupSet *dedup = dedup_set_new(65536);
+    GoContext *bg = go_context_background();
+    for (size_t i = 0; i < ctx->url_count; i++) {
+        if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) break;
+        const char *url = ctx->urls[i];
+        if (!url || !*url) continue;
+        Error *err = NULL;
+        NostrRelay *relay = nostr_relay_new(bg, url, &err);
+        if (!relay) { if (err) free_error(err); continue; }
+        if (!nostr_relay_connect(relay, &err)) { if (err) free_error(err); nostr_relay_free(relay); continue; }
+        /* Enable raw debug channel to observe NOTICE/OK messages */
+        nostr_relay_enable_debug_raw(relay, 1);
+        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, bg, filters);
+        if (!sub || !nostr_subscription_fire(sub, &err)) {
+            if (err) free_error(err);
+            if (sub) nostr_subscription_free(sub);
+            nostr_relay_disconnect(relay);
+            nostr_relay_free(relay);
+            continue;
+        }
+        SubItem item = { .relay = relay, .sub = sub, .raw = nostr_relay_get_debug_raw_channel(relay), .eosed = FALSE };
+        g_ptr_array_add(subs, g_memdup2(&item, sizeof(SubItem)));
+    }
+
+    /* Drain until all EOSE or cancelled */
+    while (!(ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable))) {
+        gboolean any = FALSE;
+        for (guint i = 0; i < subs->len; i++) {
+            SubItem *it = (SubItem *)subs->pdata[i];
+            if (!it || !it->sub) continue;
+            GoChannel *ch_events = nostr_subscription_get_events_channel(it->sub);
+            void *msg = NULL;
+            while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
+                any = TRUE;
+                if (msg) {
+                    NostrEvent *ev = (NostrEvent*)msg;
+                    const char *eid = nostr_event_get_id(ev);
+                    if (eid && *eid && dedup_set_seen(dedup, eid)) {
+                        nostr_event_free(ev);
+                    } else {
+                        char *json = nostr_event_serialize(ev);
+                        if (json) g_ptr_array_add(ctx->results, json);
+                        nostr_event_free(ev);
+                    }
+                }
+                msg = NULL;
+            }
+            GoChannel *ch_eose = nostr_subscription_get_eose_channel(it->sub);
+            if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+                it->eosed = TRUE;
+            }
+            /* Drain CLOSED reason(s) and log */
+            GoChannel *ch_closed = nostr_subscription_get_closed_channel(it->sub);
+            void *closed_msg = NULL;
+            while (ch_closed && go_channel_try_receive(ch_closed, &closed_msg) == 0) {
+                any = TRUE;
+                const char *reason = (const char *)closed_msg;
+                const char *url = nostr_relay_get_url_const(it->relay);
+                const char *sid = nostr_subscription_get_id_const(it->sub);
+                g_warning("simple_pool: CLOSED from %s sub=%s reason=%s", url ? url : "(null)", sid ? sid : "(null)", reason ? reason : "(null)");
+                closed_msg = NULL;
+            }
+            /* Drain RAW relay messages and surface NOTICE / OK diagnostics */
+            if (it->raw) {
+                void *raw_msg = NULL;
+                int raw_drains = 0;
+                while (go_channel_try_receive(it->raw, &raw_msg) == 0) {
+                    any = TRUE;
+                    raw_drains++;
+                    const char *raw = (const char *)raw_msg;
+                    if (raw) {
+                        /* Prefer prefix checks to avoid scanning untrusted memory. */
+                        if (g_str_has_prefix(raw, "NOTICE") || g_str_has_prefix(raw, "[\"NOTICE\"")) {
+                            g_warning("simple_pool: NOTICE from %s: %s", nostr_relay_get_url_const(it->relay), raw);
+                        } else if (g_str_has_prefix(raw, "OK") || g_str_has_prefix(raw, "[\"OK\"")) {
+                            g_message("simple_pool: OK from %s: %s", nostr_relay_get_url_const(it->relay), raw);
+                        }
+                    }
+                    /* Free message copy allocated by relay_debug_emit (strdup). */
+                    g_free(raw_msg);
+                    raw_msg = NULL;
+                    /* avoid starving other channels */
+                    if (raw_drains > 16) break;
+                }
+            }
+        }
+        gboolean all_eosed = TRUE;
+        for (guint i = 0; i < subs->len; i++) {
+            SubItem *it = (SubItem *)subs->pdata[i];
+            if (it && !it->eosed) { all_eosed = FALSE; break; }
+        }
+        if (all_eosed) break;
+        if (!any) g_usleep(1000); /* 1ms */
+    }
+
+    /* Cleanup subs */
+    for (guint i = 0; i < subs->len; i++) {
+        SubItem *it = (SubItem*)subs->pdata[i];
+        if (!it) continue;
+        if (it->sub) { nostr_subscription_close(it->sub, NULL); nostr_subscription_free(it->sub); }
+        if (it->relay) { nostr_relay_disconnect(it->relay); nostr_relay_free(it->relay); }
+        g_free(it);
+    }
+    g_ptr_array_unref(subs);
+    dedup_set_free(dedup);
+    nostr_filters_free(filters);
+
+    /* Signal completion on main loop */
+    g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, fetch_profiles_complete_ok,
+                               g_object_ref(ctx->task), (GDestroyNotify)g_object_unref);
+    return NULL;
+}
+
+void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
+                                                        const char **urls,
+                                                        size_t url_count,
+                                                        const char *const *authors,
+                                                        size_t author_count,
+                                                        int limit,
+                                                        GCancellable *cancellable,
+                                                        GAsyncReadyCallback cb,
+                                                        gpointer user_data) {
+    g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
+    FetchProfilesCtx *ctx = g_new0(FetchProfilesCtx, 1);
+    ctx->self_obj = g_object_ref(G_OBJECT(self));
+    ctx->urls = g_new0(char*, url_count);
+    ctx->url_count = url_count;
+    for (size_t i = 0; i < url_count; i++) ctx->urls[i] = g_strdup(urls ? urls[i] : NULL);
+    ctx->authors = g_new0(char*, author_count);
+    ctx->author_count = author_count;
+    for (size_t i = 0; i < author_count; i++) ctx->authors[i] = g_strdup(authors ? authors[i] : NULL);
+    ctx->limit = limit;
+    ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
+    ctx->task = g_task_new(G_OBJECT(self), cancellable, cb, user_data);
+    g_task_set_task_data(ctx->task, ctx, (GDestroyNotify)fetch_profiles_ctx_free);
+
+    GThread *thr = g_thread_new("nostr-fetch-profiles", fetch_profiles_thread, ctx);
+    g_thread_unref(thr);
+}
+
+GPtrArray *gnostr_simple_pool_fetch_profiles_by_authors_finish(GnostrSimplePool *self,
+                                                               GAsyncResult *res,
+                                                               GError **error) {
+    g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), NULL);
+    g_return_val_if_fail(g_task_is_valid(res, self), NULL);
+    FetchProfilesCtx *ctx = g_task_get_task_data(G_TASK(res));
+    if (!ctx) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Invalid task data for fetch_profiles_finish");
+        return NULL;
+    }
+    if (!g_task_propagate_boolean(G_TASK(res), error)) return NULL;
+    return g_steal_pointer(&ctx->results);
 }

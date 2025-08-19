@@ -11,6 +11,10 @@ G_DECLARE_FINAL_TYPE(GnostrMainWindow, gnostr_main_window, GNOSTR, MAIN_WINDOW, 
 
 GnostrMainWindow *gnostr_main_window_new(GtkApplication *app);
 
+/* Demand-driven profile prefetch: enqueue author(s) by 64-hex pubkey */
+void gnostr_main_window_enqueue_profile_author(GnostrMainWindow *self, const char *pubkey_hex);
+void gnostr_main_window_enqueue_profile_authors(GnostrMainWindow *self, const char **pubkey_hexes, size_t count);
+
 G_END_DECLS
 
 #endif /* GNOSTR_MAIN_WINDOW_H */

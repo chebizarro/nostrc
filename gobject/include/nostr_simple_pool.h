@@ -46,4 +46,45 @@ GPtrArray *gnostr_simple_pool_query_single_finish(GnostrSimplePool *self,
                                                  GAsyncResult *res,
                                                  GError **error);
 
+/* Background paginator with interval (emits "events" signal with GPtrArray* batches).
+ * Starts a background thread that repeatedly issues one-shot subscriptions using the
+ * provided filter, advancing the filter's `until` based on the smallest created_at
+ * seen in each page, and sleeping for `interval_ms` between pages. The thread exits
+ * when no new (non-duplicate) events are observed in a page or when cancelled.
+ *
+ * The async setup completes immediately; connect to the "events" signal to receive
+ * batches of NostrEvent* as they arrive. Call the _finish() in the async callback
+ * to confirm setup success.
+ */
+void gnostr_simple_pool_paginate_with_interval_async(GnostrSimplePool *self,
+                                                     const char **urls,
+                                                     size_t url_count,
+                                                     const NostrFilter *filter,
+                                                     guint interval_ms,
+                                                     GCancellable *cancellable,
+                                                     GAsyncReadyCallback cb,
+                                                     gpointer user_data);
+
+gboolean gnostr_simple_pool_paginate_with_interval_finish(GnostrSimplePool *self,
+                                                          GAsyncResult *res,
+                                                          GError **error);
+
+/* Demand-driven batch fetch of kind-0 profiles by authors. Collects all profile
+ * events from provided relays until EOSE per relay and returns a GPtrArray of
+ * serialized JSON strings (char*) representing events. The array elements must
+ * be freed with g_free() by the caller. Results are deduplicated by event id. */
+void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
+                                                        const char **urls,
+                                                        size_t url_count,
+                                                        const char *const *authors,
+                                                        size_t author_count,
+                                                        int limit,
+                                                        GCancellable *cancellable,
+                                                        GAsyncReadyCallback cb,
+                                                        gpointer user_data);
+
+GPtrArray *gnostr_simple_pool_fetch_profiles_by_authors_finish(GnostrSimplePool *self,
+                                                               GAsyncResult *res,
+                                                               GError **error);
+
 #endif // NOSTR_SIMPLE_POOL_H

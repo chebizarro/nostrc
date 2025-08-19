@@ -35,6 +35,27 @@ void gnostr_timeline_view_set_tree_roots(GnostrTimelineView *self, GListModel *r
 void gnostr_timeline_item_add_child(TimelineItem *parent, TimelineItem *child);
 GListModel *gnostr_timeline_item_get_children(TimelineItem *item);
 
+/* Prefetch and cache an avatar image by URL (no UI required). */
+void gnostr_avatar_prefetch(const char *url);
+
+/* Avatar metrics for pipeline health. */
+typedef struct {
+  guint64 requests_total;     /* total prefetch + UI avatar set attempts with valid http(s) URL */
+  guint64 mem_cache_hits;     /* in-memory texture cache hits */
+  guint64 disk_cache_hits;    /* disk cache hits promoted to memory */
+  guint64 http_start;         /* HTTP fetches started */
+  guint64 http_ok;            /* HTTP fetches successfully completed */
+  guint64 http_error;         /* HTTP fetches failed */
+  guint64 initials_shown;     /* times we fell back to initials in UI */
+  guint64 cache_write_error;  /* errors writing fetched bytes to disk */
+} GnostrAvatarMetrics;
+
+/* Retrieve a snapshot of current avatar metrics. */
+void gnostr_avatar_metrics_get(GnostrAvatarMetrics *out);
+
+/* Convenience: log current avatar metrics via g_message. */
+void gnostr_avatar_metrics_log(void);
+
 G_END_DECLS
 
 #endif /* GNOSTR_TIMELINE_VIEW_H */
