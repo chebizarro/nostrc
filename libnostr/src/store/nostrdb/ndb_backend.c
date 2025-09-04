@@ -17,6 +17,7 @@
 #  pragma GCC diagnostic ignored "-Wno-unused-function"
 #endif
 #include "nostrdb.h"
+#include "bindings/c/profile_reader.h"
 #if defined(__clang__)
 #  pragma clang diagnostic pop
 #elif defined(__GNUC__)
@@ -399,6 +400,16 @@ static int ln_ndb_get_note_by_id(ln_store *s, void *txn, const unsigned char id[
     int n = ndb_note_json(note, buf, bufsize);
     if (n > 0 && n < bufsize) {
       buf[n] = '\0';
+#ifdef LN_NDB_DEBUG
+      size_t slen = strnlen(buf, (size_t)n + 1);
+      int head_len = n < 80 ? n : 80;
+      char head[81]; memcpy(head, buf, head_len); head[head_len] = '\0';
+      const char *tail_src = buf + (n > 80 ? (n - 80) : 0);
+      int tail_len = n < 80 ? n : 80;
+      char tail[81]; memcpy(tail, tail_src, tail_len); tail[tail_len] = '\0';
+      fprintf(stderr, "[ndb] get_profile_by_pubkey: n=%d slen=%zu nul_at_n=%s head='%s'%s tail='%s'\n",
+              n, slen, (buf[n] == '\0' ? "yes" : "no"), head, (n > 80 ? "…" : ""), tail);
+#endif
       if (json_len) *json_len = n;
       *json = buf;
       return LN_OK;
@@ -412,18 +423,36 @@ static int ln_ndb_get_profile_by_pubkey(ln_store *s, void *txn, const unsigned c
 {
   if (!s || !s->impl || !txn || !pk || !json) return LN_ERR_QUERY;
   struct ndb_txn *ntxn = (struct ndb_txn *)txn;
-  size_t len = 0;
+  size_t record_len = 0;
   uint64_t prim = 0;
-  void *blob = ndb_get_profile_by_pubkey(ntxn, pk, &len, &prim);
-  if (!blob || len == 0) return LN_ERR_NOT_FOUND;
-  /* Ensure NUL-terminated JSON copy */
-  char *out = (char *)malloc(len + 1);
-  if (!out) return LN_ERR_OOM;
-  memcpy(out, blob, len);
-  out[len] = '\0';
-  if (json_len) *json_len = (int)len;
-  *json = out;
-  return LN_OK;
+  void *root = ndb_get_profile_by_pubkey(ntxn, pk, &record_len, &prim);
+  if (!root || record_len == 0) return LN_ERR_NOT_FOUND;
+
+  /* The profile lookup returns a profile record (FlatBuffer). Extract last profile note key */
+  NdbProfileRecord_table_t record = NdbProfileRecord_as_root(root);
+  uint64_t note_key = NdbProfileRecord_note_key(record);
+  size_t note_size = 0;
+  struct ndb_note *note = ndb_get_note_by_key(ntxn, note_key, &note_size);
+  if (!note) return LN_ERR_NOT_FOUND;
+
+  /* Serialize the profile note to JSON */
+  int bufsize = (int)note_size + 256;
+  if (bufsize < 1024) bufsize = 1024;
+  char *buf = NULL;
+  for (;;) {
+    char *nb = (char *)realloc(buf, (size_t)bufsize);
+    if (!nb) { free(buf); return LN_ERR_OOM; }
+    buf = nb;
+    int n = ndb_note_json(note, buf, bufsize);
+    if (n > 0 && n < bufsize) {
+      buf[n] = '\0';
+      if (json_len) *json_len = n;
+      *json = buf;
+      return LN_OK;
+    }
+    bufsize *= 2;
+    if (bufsize > (32 * 1024 * 1024)) { free(buf); return LN_ERR_QUERY; }
+  }
 }
 
 static int ln_ndb_stat_json(ln_store *s, char **json_out)

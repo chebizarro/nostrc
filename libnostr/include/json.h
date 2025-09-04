@@ -23,6 +23,10 @@ extern NostrJsonInterface *json_interface;
 void nostr_set_json_interface(NostrJsonInterface *interface);
 void nostr_json_init(void);
 void nostr_json_cleanup(void);
+/* When enabled, compact inline parsers are bypassed and all (de)serialization
+ * goes through the configured json_interface backend instead. Useful to avoid
+ * buggy fast paths or to debug inconsistencies. */
+void nostr_json_force_fallback(bool enable);
 char *nostr_event_serialize(const NostrEvent *event);
 int nostr_event_deserialize(NostrEvent *event, const char *json);
 char *nostr_envelope_serialize(const NostrEnvelope *envelope);

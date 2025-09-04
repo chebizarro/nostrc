@@ -55,6 +55,8 @@ static void gnostr_simple_pool_class_init(GnostrSimplePoolClass *klass) {
 }
 
 static void gnostr_simple_pool_init(GnostrSimplePool *self) {
+    /* Force robust JSON backend to avoid inline compact parser issues */
+    nostr_json_force_fallback(true);
     self->pool = nostr_simple_pool_new();
 }
 
@@ -201,6 +203,7 @@ static gpointer paginate_with_interval_thread(gpointer user_data) {
         next_until = (NostrTimestamp)nostr_filter_get_until_i64(ctx->base_filter);
     }
 
+    const char *exit_reason = "";
     while (!(ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable))) {
         /* Build per-page filters: copy base and set until */
         NostrFilters *filters = nostr_filters_new();
@@ -772,17 +775,25 @@ static gboolean fetch_profiles_complete_ok(gpointer data) {
 static gpointer fetch_profiles_thread(gpointer user_data) {
     FetchProfilesCtx *ctx = (FetchProfilesCtx *)user_data;
     ctx->results = g_ptr_array_new_with_free_func(g_free);
+    /* Track which authors we have collected a profile for */
+    GHashTable *authors_needed = NULL;
+    if (ctx->author_count > 0) {
+        authors_needed = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+        for (size_t i = 0; i < ctx->author_count; i++) {
+            if (ctx->authors[i] && *ctx->authors[i]) g_hash_table_add(authors_needed, g_strdup(ctx->authors[i]));
+        }
+    }
 
-    /* Build filter: kinds=[0], authors=[...], optional limit */
+    /* Build a single filter for kind-0 profiles with all requested authors. No limit. */
     NostrFilters *filters = nostr_filters_new();
-    NostrFilter *f = nostr_filter_new();
     int kind0 = 0;
+    NostrFilter *f = nostr_filter_new();
     nostr_filter_set_kinds(f, &kind0, 1);
     if (ctx->author_count > 0) {
         const char **authv = (const char **)ctx->authors;
         nostr_filter_set_authors(f, authv, ctx->author_count);
     }
-    if (ctx->limit > 0) nostr_filter_set_limit(f, ctx->limit);
+    /* Intentionally do not set any limit here. */
     nostr_filters_add(filters, f);
 
     /* Prepare per-relay subscriptions */
@@ -812,7 +823,13 @@ static gpointer fetch_profiles_thread(gpointer user_data) {
         g_ptr_array_add(subs, g_memdup2(&item, sizeof(SubItem)));
     }
 
-    /* Drain until all EOSE or cancelled */
+    /* Drain until all EOSE or cancelled, with quiet and hard timeouts */
+    guint64 t_start = g_get_monotonic_time();
+    guint64 t_last_activity = t_start;
+    const guint64 QUIET_USEC = 2500000;  /* 2.5s without any activity */
+    const guint64 HARD_USEC  = 10000000; /* 10s hard cap */
+    const char *exit_reason = "";
+    gboolean done_all_authors = FALSE;
     while (!(ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable))) {
         gboolean any = FALSE;
         for (guint i = 0; i < subs->len; i++) {
@@ -830,11 +847,23 @@ static gpointer fetch_profiles_thread(gpointer user_data) {
                     } else {
                         char *json = nostr_event_serialize(ev);
                         if (json) g_ptr_array_add(ctx->results, json);
+                        /* Mark author as satisfied if requested */
+                        if (authors_needed) {
+                            const char *pk = nostr_event_get_pubkey(ev);
+                            if (pk && *pk) {
+                                g_hash_table_remove(authors_needed, pk);
+                                if (g_hash_table_size(authors_needed) == 0) {
+                                    done_all_authors = TRUE;
+                                }
+                            }
+                        }
                         nostr_event_free(ev);
                     }
                 }
                 msg = NULL;
+                if (done_all_authors) break;
             }
+            if (done_all_authors) break;
             GoChannel *ch_eose = nostr_subscription_get_eose_channel(it->sub);
             if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
                 it->eosed = TRUE;
@@ -874,12 +903,18 @@ static gpointer fetch_profiles_thread(gpointer user_data) {
                 }
             }
         }
+        guint64 now = g_get_monotonic_time();
+        if (any) t_last_activity = now;
         gboolean all_eosed = TRUE;
         for (guint i = 0; i < subs->len; i++) {
             SubItem *it = (SubItem *)subs->pdata[i];
             if (it && !it->eosed) { all_eosed = FALSE; break; }
         }
-        if (all_eosed) break;
+        if (done_all_authors) { exit_reason = "all_authors"; break; }
+        if (all_eosed) { exit_reason = "all_eose"; break; }
+        /* Exit if we've been quiet long enough or hit hard cap */
+        if ((now - t_last_activity) > QUIET_USEC) { exit_reason = "quiet"; break; }
+        if ((now - t_start) > HARD_USEC) { exit_reason = "hard_cap"; break; }
         if (!any) g_usleep(1000); /* 1ms */
     }
 
@@ -894,6 +929,15 @@ static gpointer fetch_profiles_thread(gpointer user_data) {
     g_ptr_array_unref(subs);
     dedup_set_free(dedup);
     nostr_filters_free(filters);
+    if (authors_needed) g_hash_table_unref(authors_needed);
+
+    /* Diagnostics: summarize */
+    guint results_count = ctx->results ? ctx->results->len : 0;
+    guint64 t_end = g_get_monotonic_time();
+    g_message("simple_pool: fetch_profiles_thread exit reason=%s results=%u relays=%zu dur_ms=%u",
+              exit_reason && *exit_reason ? exit_reason : "unknown",
+              results_count, ctx->url_count,
+              (unsigned)((t_end - t_start) / 1000));
 
     /* Signal completion on main loop */
     g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, fetch_profiles_complete_ok,
