@@ -1,5 +1,5 @@
-#include "nip19.h"
-#include "nostr-pointer.h"
+#include "nostr/nip19/nip19.h"
+#include "nostr/nip19/nostr-pointer.h"
 #include <stdlib.h>
 #include <string.h>
 

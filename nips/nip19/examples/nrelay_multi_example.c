@@ -1,4 +1,4 @@
-#include "nip19.h"
+#include "nostr/nip19/nip19.h"
 #include <stdio.h>
 #include <stdlib.h>
 

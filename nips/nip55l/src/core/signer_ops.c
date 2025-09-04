@@ -14,7 +14,7 @@
 #include <nostr-utils.h>      /* nostr_hex2bin */
 #include <nostr/nip04.h>
 #include <nostr/nip44/nip44.h>
-#include <nip19.h>
+#include <nostr/nip19/nip19.h>
 #include <keys.h>
 
 #ifdef NIP55L_HAVE_LIBSECRET

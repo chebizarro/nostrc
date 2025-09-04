@@ -66,7 +66,8 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${CMAKE_SOURCE_DIR}/gobject/include
   ${CMAKE_SOURCE_DIR}/libnostr/include
   ${CMAKE_SOURCE_DIR}/libgo/include
-  ${CMAKE_SOURCE_DIR}/nips/nip46/include)
+  ${CMAKE_SOURCE_DIR}/nips/nip46/include
+  ${CMAKE_SOURCE_DIR}/nips/nip19/include)
 # Compile the GI wrapper implementation into the app (no separate gobject lib target)
 target_sources(${APP_CLIENT_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c)
 # Link core libs: libnostr + JSON, plus NIP-19 and NIP-46 core used by the app

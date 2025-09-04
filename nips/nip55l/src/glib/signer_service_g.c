@@ -5,7 +5,7 @@
 #include <ctype.h>
 
 #include "nostr/nip55l/signer_ops.h"
-#include <nip19.h>
+#include "nostr/nip19/nip19.h"
 #include <keys.h>
 #include <nostr-utils.h>
 #include "signer_dbus.h"

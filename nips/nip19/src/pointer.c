@@ -1,5 +1,5 @@
 // NIP-19 pointer implementations (moved from core)
-#include "nostr-pointer.h"
+#include "nostr/nip19/nostr-pointer.h"
 #include <stdlib.h>
 
 NostrProfilePointer *nostr_profile_pointer_new(void) {

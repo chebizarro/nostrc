@@ -9,7 +9,7 @@
 #include <nostr-json.h>
 #include <nostr-utils.h>      /* nostr_hex2bin */
 #include <keys.h>              /* nostr_key_get_public */
-#include <nip19.h>             /* nsec decode */
+#include <nostr/nip19/nip19.h>             /* nsec decode */
 #include <nostr/nip44/nip44.h> /* nip44 v2 */
 
 static int signer_log_enabled(void) {

@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include "nip19.h"
+#include "nostr/nip19/nip19.h"
 
 static int hex2bin(const char *hex, uint8_t *out, size_t out_len) {
     size_t n = strlen(hex);

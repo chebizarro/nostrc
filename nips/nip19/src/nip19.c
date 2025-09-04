@@ -3,7 +3,7 @@
  * - "Bare keys and ids" (lines 13–25): npub, nsec, note use bech32 (not m).
  */
 
-#include "nip19.h"
+#include "nostr/nip19/nip19.h"
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>

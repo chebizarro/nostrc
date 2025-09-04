@@ -1,5 +1,5 @@
 // Updated NIP-19 examples using canonical APIs and unified pointer helpers
-#include "nip19.h"
+#include "nostr/nip19/nip19.h"
 #include <stdio.h>
 #include <stdlib.h>
 

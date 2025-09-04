@@ -2,7 +2,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <stdlib.h>
-#include "nip19.h"
+#include "nostr/nip19/nip19.h"
 
 #define HRP_NCRYPTSEC "ncryptsec"
 

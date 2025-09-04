@@ -24,7 +24,7 @@
 #include <libsoup/soup.h>
 #endif
 /* NIP-19 helpers */
-#include "../../../nips/nip19/include/nip19.h"
+#include "nostr/nip19/nip19.h"
 /* NIP-46 client (remote signer pairing) */
 #include "nostr/nip46/nip46_client.h"
 

@@ -1,7 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include "nip19.h"
+#include "nostr/nip19/nip19.h"
 
 /* Spec: docs/nips/19.md (Bare keys and ids, lines 13–25)
  * Bech32 (not m) per BIP-0173. */

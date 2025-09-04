@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include "nip19.h"
+#include "nostr/nip19/nip19.h"
 
 static int test_nprofile_roundtrip(void) {
     NostrProfilePointer *p = nostr_profile_pointer_new();
