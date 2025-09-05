@@ -4,6 +4,7 @@
 #include <libwebsockets.h>
 #include <pthread.h>
 #include "nsync.h"
+#include "../include/rate_limiter.h"
 
 struct _NostrConnectionPrivate {
     struct lws *wsi;
@@ -13,6 +14,9 @@ struct _NostrConnectionPrivate {
     pthread_t service_thread;
     int running;
     int test_mode; // when set, no real network; helpers short-circuit
+    /* Ingress rate limiting */
+    nostr_token_bucket tb_bytes;
+    nostr_token_bucket tb_frames;
 };
 
 // Struct to hold WebSocket message

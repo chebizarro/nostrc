@@ -1,5 +1,6 @@
 #include <gio/gio.h>
 #include <signal.h>
+#include <sys/resource.h>
 #include "nip55l_dbus_names.h"
 #include "ipc.h"
 
@@ -67,6 +68,10 @@ static void handle_sig(int sig) {
 
 int main(int argc, char **argv) {
   (void)argc; (void)argv;
+  // Disable core dumps when handling secrets
+  struct rlimit rl;
+  rl.rlim_cur = 0; rl.rlim_max = 0;
+  setrlimit(RLIMIT_CORE, &rl);
   signal(SIGINT, handle_sig);
   signal(SIGTERM, handle_sig);
   loop = g_main_loop_new(NULL, FALSE);

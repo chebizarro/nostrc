@@ -11,10 +11,13 @@
 #include "nostr-subscription.h"
 #include "nostr-utils.h"
 #include "nostr/metrics.h"
+#include "security_limits.h"
+#include "nostr_log.h"
 #include "go.h"
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static int shutdown_dbg_enabled(void) {
     static int inited = 0;
@@ -25,6 +28,69 @@ static int shutdown_dbg_enabled(void) {
         inited = 1;
     }
     return enabled;
+}
+
+/* === Security: invalid signature tracking (per-pubkey sliding window + ban) === */
+typedef struct InvalidSigNode {
+    char *pk;                    /* hex npub (x-only hex) */
+    int count;                   /* fails in current window */
+    time_t window_start;         /* epoch seconds */
+    time_t banned_until;         /* epoch seconds; 0 if not banned */
+    struct InvalidSigNode *next;
+} InvalidSigNode;
+
+static time_t now_epoch_s(void) {
+    struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
+    return ts.tv_sec;
+}
+
+/* Caller should hold r->priv->mutex */
+static InvalidSigNode *invalidsig_find(InvalidSigNode *head, const char *pk) {
+    for (InvalidSigNode *n = head; n; n = n->next) {
+        if (n->pk && pk && strcmp(n->pk, pk) == 0) return n;
+    }
+    return NULL;
+}
+
+/* Caller should hold r->priv->mutex */
+static InvalidSigNode *invalidsig_get_or_add(NostrRelay *r, const char *pk) {
+    InvalidSigNode *head = (InvalidSigNode *)r->priv->invalid_sig_head;
+    InvalidSigNode *n = invalidsig_find(head, pk);
+    if (n) return n;
+    n = (InvalidSigNode *)calloc(1, sizeof(InvalidSigNode));
+    if (!n) return NULL;
+    n->pk = strdup(pk ? pk : "");
+    n->window_start = now_epoch_s();
+    n->next = head;
+    r->priv->invalid_sig_head = n;
+    return n;
+}
+
+/* Public helpers used in message loop (locking done by caller) */
+int nostr_invalidsig_is_banned(NostrRelay *r, const char *pk) {
+    if (!r || !r->priv || !pk) return 0;
+    InvalidSigNode *n = invalidsig_find((InvalidSigNode *)r->priv->invalid_sig_head, pk);
+    if (!n) return 0;
+    time_t now = now_epoch_s();
+    return (n->banned_until > now) ? 1 : 0;
+}
+
+void nostr_invalidsig_record_fail(NostrRelay *r, const char *pk) {
+    if (!r || !r->priv || !pk) return;
+    InvalidSigNode *n = invalidsig_get_or_add(r, pk);
+    if (!n) return;
+    time_t now = now_epoch_s();
+    /* Slide window */
+    if (now - n->window_start > NOSTR_INVALID_SIG_WINDOW_SECONDS) {
+        n->window_start = now;
+        n->count = 0;
+    }
+    n->count++;
+    if (n->count >= NOSTR_INVALID_SIG_THRESHOLD) {
+        n->banned_until = now + NOSTR_INVALID_SIG_BAN_SECONDS;
+        n->count = 0; /* reset after ban */
+        n->window_start = now;
+    }
 }
 
 // Forward declaration for worker used before its definition
@@ -375,6 +441,20 @@ static void *message_loop(void *arg) {
             }
             NostrSubscription *subscription = go_hash_map_get_int(r->subscriptions, nostr_sub_id_to_serial(env->subscription_id));
             if (subscription && env->event) {
+                /* Security: drop events from banned pubkeys early */
+                int banned = 0;
+                if (env->event->pubkey && *env->event->pubkey) {
+                    nsync_mu_lock(&r->priv->mutex);
+                    banned = nostr_invalidsig_is_banned(r, env->event->pubkey);
+                    nsync_mu_unlock(&r->priv->mutex);
+                }
+                if (banned) {
+                    // drop banned pubkey events (rate-limited log and metric)
+                    if (env->event->pubkey)
+                        nostr_rl_log(NLOG_WARN, "relay", "drop banned pk=%.8s", env->event->pubkey);
+                    nostr_metric_counter_add("event_ban_drop", 1);
+                    break;
+                }
                 // Optionally verify signature if available
                 bool verified = true;
                 if (!r->assume_valid) {
@@ -389,6 +469,12 @@ static void *message_loop(void *arg) {
                     else nostr_metric_counter_add("event_verify_fail", 1);
                 }
                 if (!verified) {
+                    if (env->event->pubkey && *env->event->pubkey) {
+                        nsync_mu_lock(&r->priv->mutex);
+                        nostr_invalidsig_record_fail(r, env->event->pubkey);
+                        nsync_mu_unlock(&r->priv->mutex);
+                    }
+                    nostr_metric_counter_add("event_invalidsig_record", 1);
                     // drop invalid event
                     const char *dbg_in_env = getenv("NOSTR_DEBUG_INCOMING");
                     if (dbg_in_env && *dbg_in_env && strcmp(dbg_in_env, "0") != 0) {

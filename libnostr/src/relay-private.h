@@ -19,6 +19,8 @@ struct _NostrRelayPrivate {
     GoChannel *subscription_channel_close_queue;
     GoChannel *debug_raw; // optional: emits summary/raw strings for debugging
     GoWaitGroup workers;
+    /* Security: invalid signature tracker (pubkey->counters/bans). Impl in relay.c */
+    void *invalid_sig_head;
 };
 
 typedef struct _NostrRelayWriteRequest {

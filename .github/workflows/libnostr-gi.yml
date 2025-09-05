@@ -40,7 +40,7 @@ jobs:
         run: |
           brew update
           brew upgrade
-          brew install cmake ninja pkg-config glib gobject-introspection jansson secp256k1 libwebsockets openssl@3 curl || true
+          brew install cmake ninja pkg-config glib gobject-introspection jansson secp256k1 websockets openssl@3 curl || true
           if brew info nsync >/dev/null 2>&1; then
             brew install nsync || true
           else

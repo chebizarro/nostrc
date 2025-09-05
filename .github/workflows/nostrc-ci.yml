@@ -44,7 +44,7 @@ jobs:
         run: |
           brew update
           brew upgrade
-          brew install cmake ninja pkg-config jansson secp256k1 libwebsockets libsodium openssl@3 || true
+          brew install cmake ninja pkg-config jansson secp256k1 websockets libsodium openssl@3 || true
           if brew info nsync >/dev/null 2>&1; then
             brew install nsync || true
           else

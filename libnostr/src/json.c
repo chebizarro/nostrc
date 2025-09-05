@@ -1,8 +1,12 @@
 #include "json.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
+#include "security_limits.h"
+#include "nostr/metrics.h"
+#include "nostr_log.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 NostrJsonInterface *json_interface = NULL;
 static int g_json_force_fallback = -1; /* -1 = uninitialized, 0/1 set */
@@ -59,11 +63,18 @@ static void nostr_event_clear_fields(NostrEvent *e) {
 }
 
 int nostr_event_deserialize(NostrEvent *event, const char *json_str) {
+    if (!event || !json_str) return -1;
+    size_t in_len = strlen(json_str);
+    if (in_len > (size_t)NOSTR_MAX_EVENT_SIZE_BYTES) {
+        nostr_rl_log(NLOG_WARN, "json", "event reject: oversize %zu > %d", in_len, NOSTR_MAX_EVENT_SIZE_BYTES);
+        nostr_metric_counter_add("json_event_oversize_reject", 1);
+        return -1;
+    }
     if (!json_force_fallback()) {
         // Try compact fast path first using a stack-allocated shadow to avoid partial mutation
         NostrEvent shadow = {0};
         if (nostr_event_deserialize_compact(&shadow, json_str)) {
-            if (getenv("NOSTR_DEBUG")) fprintf(stderr, "nostr_event_deserialize: compact path\n");
+            nostr_metric_counter_add("json_event_compact_ok", 1);
             // Replace fields in destination
             nostr_event_clear_fields(event);
             event->id = shadow.id; shadow.id = NULL;
@@ -76,13 +87,13 @@ int nostr_event_deserialize(NostrEvent *event, const char *json_str) {
             return 0;
         } else {
             // Clean any partial allocations in shadow before falling back
-            if (getenv("NOSTR_DEBUG")) fprintf(stderr, "nostr_event_deserialize: compact failed, falling back\n");
+            nostr_metric_counter_add("json_event_compact_fail", 1);
             nostr_event_clear_fields(&shadow);
         }
     }
     // Fallback to configured backend
     if (json_interface && json_interface->deserialize_event) {
-        if (getenv("NOSTR_DEBUG")) fprintf(stderr, "nostr_event_deserialize: backend provider\n");
+        nostr_metric_counter_add("json_event_backend_used", 1);
         return json_interface->deserialize_event(event, json_str);
     }
     return -1;
@@ -102,16 +113,23 @@ char *nostr_envelope_serialize(const NostrEnvelope *envelope) {
 }
 
 int nostr_envelope_deserialize(NostrEnvelope *envelope, const char *json) {
+    if (!envelope || !json) return -1;
+    size_t in_len = strlen(json);
+    if (in_len > (size_t)NOSTR_MAX_EVENT_SIZE_BYTES) {
+        nostr_rl_log(NLOG_WARN, "json", "envelope reject: oversize %zu > %d", in_len, NOSTR_MAX_EVENT_SIZE_BYTES);
+        nostr_metric_counter_add("json_envelope_oversize_reject", 1);
+        return -1;
+    }
     if (!json_force_fallback()) {
         // Try compact fast path first
         if (nostr_envelope_deserialize_compact(envelope, json)) {
-            if (getenv("NOSTR_DEBUG")) fprintf(stderr, "nostr_envelope_deserialize: compact path\n");
+            nostr_metric_counter_add("json_envelope_compact_ok", 1);
             return 0;
         }
     }
     // Fallback to configured backend
     if (json_interface && json_interface->deserialize_envelope) {
-        if (getenv("NOSTR_DEBUG")) fprintf(stderr, "nostr_envelope_deserialize: backend provider\n");
+        nostr_metric_counter_add("json_envelope_backend_used", 1);
         return json_interface->deserialize_envelope(envelope, json);
     }
     return -1;
@@ -131,16 +149,23 @@ char *nostr_filter_serialize(const NostrFilter *filter) {
 }
 
 int nostr_filter_deserialize(NostrFilter *filter, const char *json) {
+    if (!filter || !json) return -1;
+    size_t in_len = strlen(json);
+    if (in_len > (size_t)NOSTR_MAX_EVENT_SIZE_BYTES) {
+        nostr_rl_log(NLOG_WARN, "json", "filter reject: oversize %zu > %d", in_len, NOSTR_MAX_EVENT_SIZE_BYTES);
+        nostr_metric_counter_add("json_filter_oversize_reject", 1);
+        return -1;
+    }
     if (!json_force_fallback()) {
         // Try compact fast path first
         if (nostr_filter_deserialize_compact(filter, json)) {
-            if (getenv("NOSTR_DEBUG")) fprintf(stderr, "nostr_filter_deserialize: compact path\n");
+            nostr_metric_counter_add("json_filter_compact_ok", 1);
             return 0;
         }
     }
     // Fallback to configured backend
     if (json_interface && json_interface->deserialize_filter) {
-        if (getenv("NOSTR_DEBUG")) fprintf(stderr, "nostr_filter_deserialize: backend provider\n");
+        nostr_metric_counter_add("json_filter_backend_used", 1);
         return json_interface->deserialize_filter(filter, json);
     }
     return -1;

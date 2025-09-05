@@ -3,6 +3,9 @@
 #include "go.h"
 #include "nostr/metrics.h"
 #include "nostr-init.h"
+#include "../include/security_limits.h"
+#include "../include/rate_limiter.h"
+#include "../include/nostr_log.h"
 #include <libwebsockets.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -18,6 +21,35 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
     NostrConnection *conn = (NostrConnection *)lws_get_opaque_user_data(wsi);
 
     switch (reason) {
+    case LWS_CALLBACK_CLIENT_RECEIVE: {
+        if (!conn || !conn->priv) break;
+        // Enforce hard frame cap
+        if (len > (size_t)NOSTR_MAX_FRAME_LEN_BYTES) {
+            nostr_rl_log(NLOG_WARN, "ws", "drop: frame too large (%zu > %d)", len, NOSTR_MAX_FRAME_LEN_BYTES);
+            lws_close_reason(wsi, LWS_CLOSE_STATUS_MESSAGE_TOO_LARGE, NULL, 0);
+            return -1;
+        }
+        // Token-bucket admission: frames/sec and bytes/sec
+        if (!tb_allow(&conn->priv->tb_frames, 1.0) || !tb_allow(&conn->priv->tb_bytes, (double)len)) {
+            nostr_rl_log(NLOG_WARN, "ws", "drop: rate limit exceeded (len=%zu)", len);
+            lws_close_reason(wsi, LWS_CLOSE_STATUS_POLICY_VIOLATION, NULL, 0);
+            return -1;
+        }
+        // Normal path: deliver to recv_channel as before
+        // Allocate a copy buffer and queue as a WebSocketMessage
+        WebSocketMessage *msg = (WebSocketMessage*)malloc(sizeof(WebSocketMessage));
+        if (!msg) return -1;
+        msg->length = len;
+        msg->data = (char*)malloc(len + 1);
+        if (!msg->data) { free(msg); return -1; }
+        memcpy(msg->data, in, len);
+        msg->data[len] = '\0';
+        go_channel_send(conn->recv_channel, msg);
+        // Metrics
+        nostr_metric_counter_add("ws_rx_enqueued_bytes", (uint64_t)len);
+        nostr_metric_counter_add("ws_rx_enqueued_messages", 1);
+        break;
+    }
     case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER: {
         // Add custom headers (e.g., User-Agent) before the WebSocket handshake
         if (!in || !len) break;
@@ -37,23 +69,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         printf("WebSocket connection established\n");
         lws_callback_on_writable(wsi); // Ensure the socket becomes writable
         break;
-    case LWS_CALLBACK_CLIENT_RECEIVE: {
-        // Receive a message from the WebSocket and push it into the recv_channel
-        if (!conn) break;
-        WebSocketMessage *msg = (WebSocketMessage *)malloc(sizeof(WebSocketMessage));
-        msg->data = (char *)malloc(len + 1);
-        memcpy(msg->data, in, len);
-        msg->data[len] = '\0';
-        msg->length = len;
-
-        // Metrics: count RX bytes/messages at socket boundary
-        nostr_metric_counter_add("ws_rx_bytes", (uint64_t)len);
-        nostr_metric_counter_add("ws_rx_messages", 1);
-
-        go_channel_send(conn->recv_channel, msg); // Send to receive channel
-
-        break;
-    }
+    
     case LWS_CALLBACK_CLIENT_WRITEABLE: {
         // Pop a message from the send_channel and send it over the WebSocket (non-blocking)
         if (!conn) break;
@@ -316,6 +332,9 @@ NostrConnection *nostr_connection_new(const char *url) {
     lws_set_opaque_user_data(conn->priv->wsi, conn);
     conn->recv_channel = go_channel_create(16);
     conn->send_channel = go_channel_create(16);
+    // Initialize token buckets for ingress limits
+    tb_init(&conn->priv->tb_bytes, (double)NOSTR_MAX_BYTES_PER_SEC, (double)NOSTR_MAX_BYTES_PER_SEC);
+    tb_init(&conn->priv->tb_frames, (double)NOSTR_MAX_FRAMES_PER_SEC, (double)NOSTR_MAX_FRAMES_PER_SEC);
     return conn;
 }
 

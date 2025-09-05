@@ -3,6 +3,7 @@
 #include <string.h>
 #include "nostr-filter.h"
 #include "nostr-tag.h"
+#include "security_limits.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -291,7 +292,9 @@ void nostr_filter_set_ids(NostrFilter *filter, const char *const *ids, size_t co
     string_array_free(&filter->ids);
     string_array_init(&filter->ids);
     if (!ids) return;
-    for (size_t i = 0; i < count; i++) {
+    size_t max = count;
+    if (max > (size_t)NOSTR_MAX_IDS_PER_FILTER) max = (size_t)NOSTR_MAX_IDS_PER_FILTER;
+    for (size_t i = 0; i < max; i++) {
         if (ids[i]) string_array_add(&filter->ids, ids[i]);
     }
 }
@@ -442,6 +445,8 @@ const char *nostr_filter_tag_get(const NostrFilter *filter, size_t tag_index, si
 
 void nostr_filter_add_id(NostrFilter *filter, const char *id) {
     if (!filter || !id) return;
+    size_t n = string_array_size((StringArray *)&filter->ids);
+    if (n >= (size_t)NOSTR_MAX_IDS_PER_FILTER) return;
     string_array_add(&filter->ids, id);
 }
 
@@ -457,6 +462,8 @@ void nostr_filter_add_author(NostrFilter *filter, const char *author) {
 
 void nostr_filter_tags_append(NostrFilter *filter, const char *key, const char *value, const char *relay) {
     if (!filter || !key) return;
+    /* Enforce tags-per-event cap */
+    if (filter->tags && nostr_tags_size(filter->tags) >= (size_t)NOSTR_MAX_TAGS_PER_EVENT) return;
     NostrTag *t = NULL;
     if (relay && *relay) {
         t = nostr_tag_new(key, value ? value : "", relay, NULL);
@@ -465,7 +472,11 @@ void nostr_filter_tags_append(NostrFilter *filter, const char *key, const char *
     }
     if (!t) return;
     if (!filter->tags) filter->tags = nostr_tags_new(0);
-    filter->tags = nostr_tags_append_unique(filter->tags, t);
+    if (nostr_tags_size(filter->tags) < (size_t)NOSTR_MAX_TAGS_PER_EVENT) {
+        filter->tags = nostr_tags_append_unique(filter->tags, t);
+    } else {
+        nostr_tag_free(t);
+    }
 }
 
 /* === Compact JSON fast-path for NostrFilter === */
@@ -718,12 +729,18 @@ static int parse_string_array_values_as_tags(NostrFilter *filter, const char *ta
         const char *ps = p; char *val = parse_string_dup(&ps);
         if (!val) return 0;
         // append tag [key, val]
+        if (filter->tags && nostr_tags_size(filter->tags) >= (size_t)NOSTR_MAX_TAGS_PER_EVENT) { free(val); return 0; }
         NostrTag *t = nostr_tag_new(tag_key, val, NULL);
         free(val);
         if (t) {
             if (!filter->tags) filter->tags = nostr_tags_new(0);
-            NostrTags *tmp = nostr_tags_append_unique(filter->tags, t);
-            if (tmp) filter->tags = tmp;
+            if (nostr_tags_size(filter->tags) < (size_t)NOSTR_MAX_TAGS_PER_EVENT) {
+                NostrTags *tmp = nostr_tags_append_unique(filter->tags, t);
+                if (tmp) filter->tags = tmp;
+            } else {
+                nostr_tag_free(t);
+                return 0;
+            }
         }
         p = skip_ws_f(ps);
         if (*p == ',') { ++p; p = skip_ws_f(p); continue; }

@@ -2,6 +2,7 @@
 #include "json.h"
 #include "nostr-tag.h"
 #include "nostr-utils.h"
+#include "security_limits.h"
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 #include <secp256k1.h>
@@ -239,16 +240,19 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json) {
             if (*t != '[') { return 0; }
             ++t; // into tags array
             /* Pre-count number of tags at top-level to reserve capacity */
-            const char *scan = t; int depth = 1; size_t tag_count = 0;
+            const char *scan = t; int depth = 1; int max_depth = 1; size_t tag_count = 0;
             while (*scan && depth) {
                 scan = skip_ws_local(scan);
                 if (*scan == '[' && depth == 1) { ++tag_count; ++scan; }
                 else if (*scan == '"') { char *d=NULL; if (!parse_json_string_fast(&scan, &d)) return 0; free(d); }
-                else if (*scan == '[') { ++depth; ++scan; }
+                else if (*scan == '[') { ++depth; if (depth > max_depth) max_depth = depth; ++scan; }
                 else if (*scan == ']') { --depth; ++scan; }
                 else { ++scan; }
             }
             if (depth) { return 0; }
+            /* Enforce security limits */
+            if (tag_count > (size_t)NOSTR_MAX_TAGS_PER_EVENT) { return 0; }
+            if (max_depth > NOSTR_MAX_TAG_DEPTH) { return 0; }
             NostrTags *parsed = nostr_tags_new(tag_count);
             if (!parsed) { return 0; }
             /* If tags_new pre-filled data slots with garbage, reset count to 0 but keep capacity */
