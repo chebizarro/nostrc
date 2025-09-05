@@ -168,12 +168,15 @@ int nostr_ndb_make_datasource(const char *db_path, NostrNegDataSource *out) {
   struct ndb_config cfg;
   ndb_default_config(&cfg);
   /* Use safe test-friendly config */
-  ndb_config_set_flags(&cfg, NDB_FLAG_NO_FULLTEXT | NDB_FLAG_NO_NOTE_BLOCKS | NDB_FLAG_NO_STATS);
+  unsigned long cfg_flags = (unsigned long)(NDB_FLAG_NO_FULLTEXT | NDB_FLAG_NO_NOTE_BLOCKS | NDB_FLAG_NO_STATS);
+  ndb_config_set_flags(&cfg, cfg_flags);
   /* Set a modest mapsize (e.g., 64MB) suitable for tests */
-  ndb_config_set_mapsize(&cfg, 64ull * 1024ull * 1024ull);
+  unsigned long long cfg_mapsize = 64ull * 1024ull * 1024ull;
+  ndb_config_set_mapsize(&cfg, cfg_mapsize);
   /* Keep defaults; allow missing optional subsystems. */
   if (ndb_init(&ctx->db, db_path, &cfg) != 0) {
-    fprintf(stderr, "nostr_ndb_make_datasource: ndb_init('%s') failed (see NostrDB logs if any)\n", db_path);
+    fprintf(stderr, "nostr_ndb_make_datasource: ndb_init('%s') failed (flags=0x%lx, mapsize=%llu). See NostrDB logs if any.\n",
+            db_path, cfg_flags, cfg_mapsize);
     free(ctx->db_path); free(ctx);
     return -1;
   }

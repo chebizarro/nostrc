@@ -42,4 +42,16 @@ if(TARGET nostr_nip77_ndb)
   add_executable(test_ndb_tie_break test_ndb_tie_break.c)
   target_link_libraries(test_ndb_tie_break PRIVATE nostr_nip77 nostr_nip77_ndb nostrdb)
   add_test(NAME test_ndb_tie_break COMMAND test_ndb_tie_break)
+
+  add_executable(test_ndb_session_e2e test_ndb_session_e2e.c)
+  target_link_libraries(test_ndb_session_e2e PRIVATE nostr_nip77 nostr_nip77_ndb nostrdb)
+  add_test(NAME test_ndb_session_e2e COMMAND test_ndb_session_e2e)
+
+  add_executable(test_ndb_empty test_ndb_empty.c)
+  target_link_libraries(test_ndb_empty PRIVATE nostr_nip77 nostr_nip77_ndb)
+  add_test(NAME test_ndb_empty COMMAND test_ndb_empty)
+
+  add_executable(test_ndb_perf test_ndb_perf.c)
+  target_link_libraries(test_ndb_perf PRIVATE nostr_nip77 nostr_nip77_ndb nostrdb)
+  add_test(NAME test_ndb_perf COMMAND test_ndb_perf)
 endif()
