@@ -1,0 +1,56 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "libgo-default",
+      "displayName": "libgo Default (Debug)",
+      "description": "Build libgo Debug with warnings as errors",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/libgo/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "GO_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "libgo-asan",
+      "displayName": "libgo ASan+UBSan (Debug)",
+      "description": "Build libgo with AddressSanitizer and UndefinedBehaviorSanitizer; force asm context on supported platforms",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/libgo/build-asan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "GO_ENABLE_ASAN": "ON",
+        "GO_ENABLE_UBSAN": "ON",
+        "GO_WARNINGS_AS_ERRORS": "ON",
+        "GOF_PORTABLE_CONTEXT": "OFF"
+      }
+    },
+    {
+      "name": "libgo-tsan",
+      "displayName": "libgo TSan (Debug)",
+      "description": "Build libgo with ThreadSanitizer; force asm context on supported platforms",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/libgo/build-tsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "GO_ENABLE_TSAN": "ON",
+        "GO_WARNINGS_AS_ERRORS": "ON",
+        "GOF_PORTABLE_CONTEXT": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "libgo-default", "configurePreset": "libgo-default" },
+    { "name": "libgo-asan", "configurePreset": "libgo-asan" },
+    { "name": "libgo-tsan", "configurePreset": "libgo-tsan" }
+  ],
+  "vendor": {
+    "notes": "Use: cmake --preset <name>; cmake --build --preset <name> -j."
+  }
+}

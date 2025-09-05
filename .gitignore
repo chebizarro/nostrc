@@ -37,6 +37,7 @@ Testing
 *.dll
 *.dylib
 *.exe
+*.mdb
 
 # Ignore generated documentation files
 /doxygen-docs/

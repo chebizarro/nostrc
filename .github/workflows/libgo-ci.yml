@@ -57,10 +57,10 @@ jobs:
         run: |
           case "${{ matrix.sanitizer }}" in
             asan_ubsan)
-              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON
+              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON -DGOF_PORTABLE_CONTEXT=OFF
               ;;
             tsan)
-              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON
+              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON -DGOF_PORTABLE_CONTEXT=OFF
               ;;
           esac
 
@@ -73,6 +73,67 @@ jobs:
         run: |
           export ASAN_OPTIONS=detect_leaks=0
           ctest --test-dir build --output-on-failure
+
+  gofiber-linux-sanitizers:
+    name: linux • gofiber • ${{ matrix.sanitizer }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [asan_ubsan, tsan]
+    env:
+      CMAKE_BUILD_TYPE: Debug
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+      UBSAN_OPTIONS: print_stacktrace=1
+      TSAN_OPTIONS: halt_on_error=1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Ubuntu)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y build-essential cmake ninja-build clang git libjansson-dev pkg-config libcurl4-openssl-dev
+          # Build nsync from source (fast, small)
+          git clone --depth 1 https://github.com/google/nsync.git
+          cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build nsync/build -j
+          sudo cmake --install nsync/build
+          # Optional: secp256k1 if not vendored
+          sudo apt-get install -y libsecp256k1-dev || true
+
+      - name: Configure libgo (GOF_PORTABLE_CONTEXT=OFF + sanitizers)
+        working-directory: libgo
+        run: |
+          case "${{ matrix.sanitizer }}" in
+            asan_ubsan)
+              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGOF_PORTABLE_CONTEXT=OFF -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON
+              ;;
+            tsan)
+              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGOF_PORTABLE_CONTEXT=OFF -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON
+              ;;
+          esac
+
+      - name: Build libgo
+        working-directory: libgo
+        run: cmake --build build -j
+
+      - name: Run GoFiber tests only
+        working-directory: libgo
+        run: |
+          export ASAN_OPTIONS=detect_leaks=0
+          ctest --test-dir build -R GoFiber --output-on-failure -j2
+
+      - name: Archive logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-gofiber-${{ matrix.sanitizer }}-logs
+          path: |
+            libgo/build/Testing/Temporary/*
+            libgo/build/Testing/*/LastTest.log
+            libgo/build/CTestTestfile.cmake
+          if-no-files-found: ignore
 
       - name: Archive logs on failure
         if: failure()

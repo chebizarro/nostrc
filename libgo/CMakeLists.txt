@@ -344,7 +344,7 @@ apply_sanitizers(chan_bench)
 # Fiber runtime (separate library): go_fiber  #
 ###############################################
 
-option(GOF_PORTABLE_CONTEXT "Use portable setjmp/longjmp for fiber context" ON)
+option(GOF_PORTABLE_CONTEXT "Use portable setjmp/longjmp for fiber context" OFF)
 option(GOF_ENABLE_TRACING "Enable lightweight tracing in go_fiber" OFF)
 
 set(GOF_FIBER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/fiber)
@@ -366,6 +366,10 @@ set(GOF_COMMON_SOURCES
 )
 
 if(GOF_PORTABLE_CONTEXT)
+  # Prevent deprecated portable context on macOS
+  if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    message(FATAL_ERROR "GOF_PORTABLE_CONTEXT is not supported on macOS; use assembly backends. Set GOF_PORTABLE_CONTEXT=OFF.")
+  endif()
   list(APPEND GOF_COMMON_SOURCES ${GOF_FIBER_DIR}/context/context_portable.c)
 else()
   # Prefer assembly backend where supported. Provide Darwin/arm64 and Darwin/x86_64 backends.
@@ -376,6 +380,14 @@ else()
   elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
     list(APPEND GOF_COMMON_SOURCES
       ${GOF_FIBER_DIR}/context/context_x86_64.S
+      ${GOF_FIBER_DIR}/context/context_asm.c)
+  elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
+    list(APPEND GOF_COMMON_SOURCES
+      ${GOF_FIBER_DIR}/context/context_x86_64_linux.S
+      ${GOF_FIBER_DIR}/context/context_asm.c)
+  elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+    list(APPEND GOF_COMMON_SOURCES
+      ${GOF_FIBER_DIR}/context/context_arm64_linux.S
       ${GOF_FIBER_DIR}/context/context_asm.c)
   else()
     # Fallback to portable backend on unsupported platforms to keep builds working.
@@ -417,27 +429,32 @@ add_executable(gof_test_context fiber/tests/test_context.c)
 add_executable(gof_test_chan fiber/tests/test_chan.c)
 add_executable(gof_test_io fiber/tests/test_io.c)
 add_executable(gof_test_io_timeout fiber/tests/test_io_timeout.c)
+add_executable(gof_test_starvation fiber/tests/test_starvation.c)
 target_link_libraries(gof_test_basic PRIVATE go_fiber)
 target_link_libraries(gof_test_context PRIVATE go_fiber)
 target_link_libraries(gof_test_chan PRIVATE go_fiber)
 target_link_libraries(gof_test_io PRIVATE go_fiber)
 target_link_libraries(gof_test_io_timeout PRIVATE go_fiber)
+target_link_libraries(gof_test_starvation PRIVATE go_fiber)
 apply_warnings(gof_test_basic)
 apply_warnings(gof_test_context)
 apply_warnings(gof_test_chan)
 apply_warnings(gof_test_io)
 apply_warnings(gof_test_io_timeout)
+apply_warnings(gof_test_starvation)
 apply_sanitizers(gof_test_basic)
 apply_sanitizers(gof_test_context)
 apply_sanitizers(gof_test_chan)
 apply_sanitizers(gof_test_io)
 apply_sanitizers(gof_test_io_timeout)
+apply_sanitizers(gof_test_starvation)
 
 add_test(NAME GoFiberBasicTest COMMAND gof_test_basic)
 add_test(NAME GoFiberContextTest COMMAND gof_test_context)
 add_test(NAME GoFiberChanTest COMMAND gof_test_chan)
 add_test(NAME GoFiberIoTest COMMAND gof_test_io)
 add_test(NAME GoFiberIoTimeoutTest COMMAND gof_test_io_timeout)
+add_test(NAME GoFiberStarvationTest COMMAND gof_test_starvation)
 
 # Set short timeouts for fiber tests to catch hangs
 set_tests_properties(GoFiberBasicTest PROPERTIES TIMEOUT 10)
@@ -445,6 +462,7 @@ set_tests_properties(GoFiberContextTest PROPERTIES TIMEOUT 10)
 set_tests_properties(GoFiberChanTest PROPERTIES TIMEOUT 15)
 set_tests_properties(GoFiberIoTest PROPERTIES TIMEOUT 10)
 set_tests_properties(GoFiberIoTimeoutTest PROPERTIES TIMEOUT 2)
+set_tests_properties(GoFiberStarvationTest PROPERTIES TIMEOUT 20)
 
 # Benchmarks (not added to CTest by default)
 add_executable(gof_bench_yield fiber/bench/bench_yield.c)
