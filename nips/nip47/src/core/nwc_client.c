@@ -1,6 +1,7 @@
 #include "nostr/nip47/nwc_client.h"
 #include "nostr/nip44/nip44.h"
 #include "nostr/nip04.h"
+#include "secure_buf.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -72,22 +73,27 @@ int nostr_nwc_client_encrypt(const NostrNwcClientSession *s,
   if (s->enc == NOSTR_NWC_ENC_NIP44_V2) {
     unsigned char sk[32]; unsigned char pkx[32];
     if (parse_sk32(client_sk_hex, sk) != 0) { return -1; }
-    if (parse_peer_xonly32(wallet_pub_hex, pkx) != 0) { return -1; }
+    if (parse_peer_xonly32(wallet_pub_hex, pkx) != 0) { secure_wipe(sk, sizeof sk); return -1; }
     char *b64 = NULL;
-    if (nostr_nip44_encrypt_v2(sk, pkx, (const uint8_t*)plaintext, strlen(plaintext), &b64) != 0 || !b64) { return -1; }
+    if (nostr_nip44_encrypt_v2(sk, pkx, (const uint8_t*)plaintext, strlen(plaintext), &b64) != 0 || !b64) { secure_wipe(sk, sizeof sk); return -1; }
+    secure_wipe(sk, sizeof sk);
     *out_ciphertext = b64; return 0;
   } else { /* NIP-04 */
     char sec1[67]; const char *peer = wallet_pub_hex; char *cipher = NULL; char *err = NULL;
     if (strlen(wallet_pub_hex)==64) { if (build_sec1_from_xonly(wallet_pub_hex, sec1, 0x02)==0) peer = sec1; }
-    if (nostr_nip04_encrypt(plaintext, peer, client_sk_hex, &cipher, &err) != 0 || !cipher) {
+    nostr_secure_buf sb = secure_alloc(32);
+    if (!sb.ptr || parse_sk32(client_sk_hex, (unsigned char*)sb.ptr) != 0) { if (sb.ptr) secure_free(&sb); return -1; }
+    if (nostr_nip04_encrypt_secure(plaintext, peer, &sb, &cipher, &err) != 0 || !cipher) {
+      secure_free(&sb);
       if (err) { free(err); err=NULL; }
       /* Fallback try 0x03 if we converted */
       if (peer==sec1 && build_sec1_from_xonly(wallet_pub_hex, sec1, 0x03)==0) {
-        if (nostr_nip04_encrypt(plaintext, sec1, client_sk_hex, &cipher, &err) != 0 || !cipher) { if (err) free(err); return -1; }
+        if (nostr_nip04_encrypt_secure(plaintext, sec1, &sb, &cipher, &err) != 0 || !cipher) { if (err) free(err); secure_free(&sb); return -1; }
       } else {
-        return -1;
+        secure_free(&sb); return -1;
       }
     }
+    secure_free(&sb);
     *out_ciphertext = cipher; return 0;
   }
 }
@@ -102,23 +108,28 @@ int nostr_nwc_client_decrypt(const NostrNwcClientSession *s,
   if (s->enc == NOSTR_NWC_ENC_NIP44_V2) {
     unsigned char sk[32]; unsigned char pkx[32];
     if (parse_sk32(client_sk_hex, sk) != 0) return -1;
-    if (parse_peer_xonly32(wallet_pub_hex, pkx) != 0) return -1;
+    if (parse_peer_xonly32(wallet_pub_hex, pkx) != 0) { secure_wipe(sk, sizeof sk); return -1; }
     uint8_t *plain = NULL; size_t plen = 0;
-    if (nostr_nip44_decrypt_v2(sk, pkx, ciphertext, &plain, &plen) != 0 || !plain) return -1;
+    if (nostr_nip44_decrypt_v2(sk, pkx, ciphertext, &plain, &plen) != 0 || !plain) { secure_wipe(sk, sizeof sk); return -1; }
+    secure_wipe(sk, sizeof sk);
     char *out = (char*)malloc(plen+1); if (!out){ free(plain); return -1; }
     memcpy(out, plain, plen); out[plen] = '\0'; free(plain);
     *out_plaintext = out; return 0;
   } else { /* NIP-04 */
     char sec1[67]; const char *peer = wallet_pub_hex; char *plain = NULL; char *err = NULL;
     if (strlen(wallet_pub_hex)==64) { if (build_sec1_from_xonly(wallet_pub_hex, sec1, 0x02)==0) peer = sec1; }
-    if (nostr_nip04_decrypt(ciphertext, peer, client_sk_hex, &plain, &err) != 0 || !plain) {
+    nostr_secure_buf sb = secure_alloc(32);
+    if (!sb.ptr || parse_sk32(client_sk_hex, (unsigned char*)sb.ptr) != 0) { if (sb.ptr) secure_free(&sb); return -1; }
+    if (nostr_nip04_decrypt_secure(ciphertext, peer, &sb, &plain, &err) != 0 || !plain) {
+      secure_free(&sb);
       if (err) { free(err); err=NULL; }
       if (peer==sec1 && build_sec1_from_xonly(wallet_pub_hex, sec1, 0x03)==0) {
-        if (nostr_nip04_decrypt(ciphertext, sec1, client_sk_hex, &plain, &err) != 0 || !plain) { if (err) free(err); return -1; }
+        if (nostr_nip04_decrypt_secure(ciphertext, sec1, &sb, &plain, &err) != 0 || !plain) { if (err) free(err); secure_free(&sb); return -1; }
       } else {
-        return -1;
+        secure_free(&sb); return -1;
       }
     }
+    secure_free(&sb);
     *out_plaintext = plain; return 0;
   }
 }
