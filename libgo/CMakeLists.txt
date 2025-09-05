@@ -1,5 +1,8 @@
+# Option to enable verbose fiber scheduler debug logging
+option(GOF_DEBUG "Enable debug logging in libgo_fiber scheduler" OFF)
 # Language standard and warnings
 set(CMAKE_C_STANDARD 11)
+
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
@@ -14,7 +17,8 @@ endfunction()
 
 cmake_minimum_required(VERSION 3.30)
 # Concurrency primitives inspired by Go: channels, contexts, wait groups, etc.
-project(libgo)
+project(libgo C)
+enable_language(ASM)
 
 # Optional: enable more aggressive local optimizations for libgo
 include(CheckCCompilerFlag)
@@ -335,3 +339,127 @@ apply_sanitizers(chan_bench)
 # Intentionally do not apply warnings-as-errors to examples to keep demos buildable across toolchains
 # install(TARGETS nostr DESTINATION lib)
 # install(DIRECTORY include/ DESTINATION include)
+
+###############################################
+# Fiber runtime (separate library): go_fiber  #
+###############################################
+
+option(GOF_PORTABLE_CONTEXT "Use portable setjmp/longjmp for fiber context" ON)
+option(GOF_ENABLE_TRACING "Enable lightweight tracing in go_fiber" OFF)
+
+set(GOF_FIBER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/fiber)
+set(GOF_PUBLIC_INC ${GOF_FIBER_DIR}/include)
+
+set(GOF_COMMON_SOURCES
+  ${GOF_FIBER_DIR}/sched/api.c
+  ${GOF_FIBER_DIR}/sched/sched.c
+  ${GOF_FIBER_DIR}/sched/park.c
+  ${GOF_FIBER_DIR}/stack/stack.c
+  ${GOF_FIBER_DIR}/chan/chan.c
+  ${GOF_FIBER_DIR}/io/io.c
+  ${GOF_FIBER_DIR}/io/netpoll_epoll.c
+  ${GOF_FIBER_DIR}/io/netpoll_kqueue.c
+  ${GOF_FIBER_DIR}/io/netpoll_iocp.c
+  ${GOF_FIBER_DIR}/timers/timer_bridge.c
+  ${GOF_FIBER_DIR}/debug/trace.c
+  ${GOF_FIBER_DIR}/debug/introspect.c
+)
+
+if(GOF_PORTABLE_CONTEXT)
+  list(APPEND GOF_COMMON_SOURCES ${GOF_FIBER_DIR}/context/context_portable.c)
+else()
+  # Prefer assembly backend where supported. Provide Darwin/arm64 and Darwin/x86_64 backends.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+    list(APPEND GOF_COMMON_SOURCES
+      ${GOF_FIBER_DIR}/context/context_arm64.S
+      ${GOF_FIBER_DIR}/context/context_asm.c)
+  elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
+    list(APPEND GOF_COMMON_SOURCES
+      ${GOF_FIBER_DIR}/context/context_x86_64.S
+      ${GOF_FIBER_DIR}/context/context_asm.c)
+  else()
+    # Fallback to portable backend on unsupported platforms to keep builds working.
+    list(APPEND GOF_COMMON_SOURCES ${GOF_FIBER_DIR}/context/context_portable.c)
+  endif()
+endif()
+
+add_library(go_fiber STATIC ${GOF_COMMON_SOURCES})
+target_include_directories(go_fiber PUBLIC ${GOF_PUBLIC_INC})
+if(GOF_PORTABLE_CONTEXT)
+  target_compile_definitions(go_fiber PUBLIC GOF_PORTABLE_CONTEXT=1)
+else()
+  target_compile_definitions(go_fiber PUBLIC GOF_PORTABLE_CONTEXT=0)
+endif()
+apply_warnings(go_fiber)
+apply_sanitizers(go_fiber)
+
+# Propagate GOF_DEBUG to the fiber library build only
+if(GOF_DEBUG)
+  target_compile_definitions(go_fiber PRIVATE GOF_DEBUG=1)
+endif()
+
+if(GOF_ENABLE_TRACING)
+  target_compile_definitions(go_fiber PRIVATE GOF_ENABLE_TRACING=1)
+endif()
+
+# Platform switches for netpoll
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_compile_definitions(go_fiber PRIVATE GOF_NETPOLL_EPOLL=1)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  target_compile_definitions(go_fiber PRIVATE GOF_NETPOLL_KQUEUE=1)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+  target_compile_definitions(go_fiber PRIVATE GOF_NETPOLL_IOCP=1)
+endif()
+
+# Simple unit tests for go_fiber (standalone binaries with asserts)
+add_executable(gof_test_basic fiber/tests/test_basic.c)
+add_executable(gof_test_context fiber/tests/test_context.c)
+add_executable(gof_test_chan fiber/tests/test_chan.c)
+add_executable(gof_test_io fiber/tests/test_io.c)
+add_executable(gof_test_io_timeout fiber/tests/test_io_timeout.c)
+target_link_libraries(gof_test_basic PRIVATE go_fiber)
+target_link_libraries(gof_test_context PRIVATE go_fiber)
+target_link_libraries(gof_test_chan PRIVATE go_fiber)
+target_link_libraries(gof_test_io PRIVATE go_fiber)
+target_link_libraries(gof_test_io_timeout PRIVATE go_fiber)
+apply_warnings(gof_test_basic)
+apply_warnings(gof_test_context)
+apply_warnings(gof_test_chan)
+apply_warnings(gof_test_io)
+apply_warnings(gof_test_io_timeout)
+apply_sanitizers(gof_test_basic)
+apply_sanitizers(gof_test_context)
+apply_sanitizers(gof_test_chan)
+apply_sanitizers(gof_test_io)
+apply_sanitizers(gof_test_io_timeout)
+
+add_test(NAME GoFiberBasicTest COMMAND gof_test_basic)
+add_test(NAME GoFiberContextTest COMMAND gof_test_context)
+add_test(NAME GoFiberChanTest COMMAND gof_test_chan)
+add_test(NAME GoFiberIoTest COMMAND gof_test_io)
+add_test(NAME GoFiberIoTimeoutTest COMMAND gof_test_io_timeout)
+
+# Set short timeouts for fiber tests to catch hangs
+set_tests_properties(GoFiberBasicTest PROPERTIES TIMEOUT 10)
+set_tests_properties(GoFiberContextTest PROPERTIES TIMEOUT 10)
+set_tests_properties(GoFiberChanTest PROPERTIES TIMEOUT 15)
+set_tests_properties(GoFiberIoTest PROPERTIES TIMEOUT 10)
+set_tests_properties(GoFiberIoTimeoutTest PROPERTIES TIMEOUT 2)
+
+# Benchmarks (not added to CTest by default)
+add_executable(gof_bench_yield fiber/bench/bench_yield.c)
+add_executable(gof_bench_pingpong fiber/bench/bench_pingpong.c)
+add_executable(gof_bench_sleep fiber/bench/bench_sleep.c)
+add_executable(gof_bench_poll_partition fiber/bench/bench_poll_partition.c)
+target_link_libraries(gof_bench_yield PRIVATE go_fiber)
+target_link_libraries(gof_bench_pingpong PRIVATE go_fiber)
+target_link_libraries(gof_bench_sleep PRIVATE go_fiber)
+target_link_libraries(gof_bench_poll_partition PRIVATE go_fiber)
+apply_warnings(gof_bench_yield)
+apply_warnings(gof_bench_pingpong)
+apply_warnings(gof_bench_sleep)
+apply_warnings(gof_bench_poll_partition)
+apply_sanitizers(gof_bench_yield)
+apply_sanitizers(gof_bench_pingpong)
+apply_sanitizers(gof_bench_sleep)
+apply_sanitizers(gof_bench_poll_partition)

@@ -76,4 +76,3 @@ test_json_int_array 0 0
 test_json_raw 0 0
 test_filters_move_semantics 0 0
 ---
-test_nip46_bunker_sign_event_real
