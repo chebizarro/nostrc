@@ -126,3 +126,12 @@ if(ENABLE_NIP55L)
     add_subdirectory(nips/nip55l)
 endif()
 
+
+# NIP-77 Negentropy (optional module)
+option(WITH_NIP77 "Build NIP-77 (Negentropy) optional module" ON)
+option(WITH_NIP77_GLIB "Build GLib wrapper for NIP-77" OFF)
+option(WITH_NIP77_NOSTRDB "Enable nostrdb backend for NIP-77" ON)
+if(WITH_NIP77)
+    add_subdirectory(nips/nip77)
+endif()
+
