@@ -9,5 +9,27 @@ ExecStart=%h/.local/bin/gnostr-signer-daemon
 Environment=NOSTR_SIGNER_ENDPOINT=unix:%t/gnostr/signer.sock
 Restart=on-failure
 
+# Security hardening (user service)
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service @basic-io ~@privileged
+UMask=0077
+LimitNOFILE=4096
+LimitCORE=0
+
 [Install]
 WantedBy=default.target
