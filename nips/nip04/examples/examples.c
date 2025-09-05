@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "nostr-utils.h"
+#include <secure_buf.h>
 
 int main() {
     // Example placeholder keys (replace with real hex keys for an actual run)
@@ -47,23 +48,45 @@ int main() {
         printf("shared_x: %s\n", xhex);
         free(xhex);
     }
-    if (nostr_nip04_encrypt(msg, receiver_pk_hex, sender_sk_hex, &content, &err) != 0) {
-        fprintf(stderr, "encrypt error: %s\n", err ? err : "unknown");
-        free(err);
+    // Encrypt using secure API with sender secret in secure memory
+    nostr_secure_buf sb_sender = secure_alloc(32);
+    if (!sb_sender.ptr || !nostr_hex2bin((unsigned char*)sb_sender.ptr, sender_sk_hex, 32)) {
+        fprintf(stderr, "secure alloc/hex2bin failed\n");
+        if (sb_sender.ptr) secure_free(&sb_sender);
         return 1;
     }
+    if (nostr_nip04_encrypt_secure(msg, receiver_pk_hex, &sb_sender, &content, &err) != 0) {
+        fprintf(stderr, "encrypt error: %s\n", err ? err : "unknown");
+        free(err);
+        secure_free(&sb_sender);
+        return 1;
+    }
+    secure_free(&sb_sender);
     printf("content: %s\n", content);
 
     char *pt = NULL;
-    if (nostr_nip04_decrypt(content, sender_pk_hex, receiver_sk_hex, &pt, &err) != 0) {
-        fprintf(stderr, "decrypt error: %s\n", err ? err : "unknown");
-        free(err);
+    // Decrypt using secure API with receiver secret in secure memory
+    nostr_secure_buf sb_receiver = secure_alloc(32);
+    if (!sb_receiver.ptr || !nostr_hex2bin((unsigned char*)sb_receiver.ptr, receiver_sk_hex, 32)) {
+        fprintf(stderr, "secure alloc/hex2bin failed\n");
+        if (sb_receiver.ptr) secure_free(&sb_receiver);
         free(content);
         return 1;
     }
+    if (nostr_nip04_decrypt_secure(content, sender_pk_hex, &sb_receiver, &pt, &err) != 0) {
+        fprintf(stderr, "decrypt error: %s\n", err ? err : "unknown");
+        free(err);
+        free(content);
+        secure_free(&sb_receiver);
+        return 1;
+    }
+    secure_free(&sb_receiver);
     printf("plaintext: %s\n", pt);
 
     free(content);
     free(pt);
+    // Wipe stack copies of secrets
+    volatile unsigned char *p1 = sk1; for (size_t i=0;i<sizeof sk1;i++) p1[i]=0;
+    volatile unsigned char *p2 = sk2; for (size_t i=0;i<sizeof sk2;i++) p2[i]=0;
     return 0;
 }

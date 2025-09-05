@@ -119,8 +119,14 @@ int nostr_nip5f_builtin_sign_event(const char *event_json, const char *pubkey_he
     if (signer_log_enabled()) fprintf(stderr, "[nip5f] sign_event: populated missing pubkey\n");
   }
   if (ev->created_at == 0) { ev->created_at = (int64_t)time(NULL); }
-  int src = nostr_event_sign(ev, sk_hex);
-  if (src!=0) { if (signer_log_enabled()) fprintf(stderr, "[nip5f] sign_event: nostr_event_sign failed rc=%d\n", src); nostr_event_free(ev); free(sk_hex); return -1; }
+  /* Sign with secure buffer (avoid holding hex key longer than needed) */
+  nostr_secure_buf sb = secure_alloc(32);
+  int src = -1;
+  if (sb.ptr && nostr_hex2bin((uint8_t*)sb.ptr, sk_hex, 32)) {
+    src = nostr_event_sign_secure(ev, &sb);
+  }
+  secure_free(&sb);
+  if (src!=0) { if (signer_log_enabled()) fprintf(stderr, "[nip5f] sign_event: sign_secure failed rc=%d\n", src); nostr_event_free(ev); memset(sk_hex,0,strlen(sk_hex)); free(sk_hex); return -1; }
   if (signer_log_enabled()) {
     bool ok = nostr_event_check_signature(ev);
     fprintf(stderr, "[nip5f] sign_event: signature computed; verify=%s\n", ok?"ok":"FAIL");
