@@ -4,6 +4,7 @@
 #include <openssl/rand.h>
 #include <stdlib.h>
 #include <string.h>
+#include <secure_buf.h>
 
 /* Generate a 24-word English mnemonic per BIP-39. */
 char *nostr_nip06_generate_mnemonic(void) {
@@ -50,9 +51,29 @@ char *nostr_nip06_private_key_from_seed_account(const unsigned char *seed, unsig
     if (!nostr_bip32_priv_from_master_seed(seed, 64, path, sizeof(path)/sizeof(path[0]), out32)) {
         return NULL;
     }
-    return hex_from_priv_key32(out32);
+    char *hex = hex_from_priv_key32(out32);
+    secure_wipe(out32, sizeof(out32));
+    return hex;
 }
 
 char *nostr_nip06_private_key_from_seed(const unsigned char *seed) {
     return nostr_nip06_private_key_from_seed_account(seed, 0u);
+}
+
+/* Secure variant: return a 64-byte seed in a secure buffer. Caller must secure_free(&sb). */
+nostr_secure_buf nostr_nip06_seed_secure(const char *mnemonic) {
+    nostr_secure_buf sb = {0};
+    if (!mnemonic) return sb;
+    sb = secure_alloc(64);
+    if (!sb.ptr || sb.len != 64) {
+        secure_free(&sb);
+        nostr_secure_buf empty = {0};
+        return empty;
+    }
+    if (!nostr_bip39_seed(mnemonic, "", (unsigned char *)sb.ptr)) {
+        secure_free(&sb);
+        nostr_secure_buf empty = {0};
+        return empty;
+    }
+    return sb;
 }

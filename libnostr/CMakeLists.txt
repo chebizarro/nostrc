@@ -47,6 +47,7 @@ set(LIBNOSTR_SOURCES
   src/secure_buf.c
   src/rate_limiter.c
   src/nostr_log.c
+  src/security_limits_runtime.c
   # Pluggable storage interface (Phase A: registry + stubs)
   src/store/registry.c
   src/store/store.c

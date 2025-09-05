@@ -30,6 +30,16 @@ int main(void) {
       assert(memcmp(sk, out_sk, 32) == 0);
       assert(out_sec == secs[j]);
       assert(out_ln == log_ns[i]);
+
+      // Secure decrypt variant
+      nostr_secure_buf sb = {0}; NostrNip49SecurityByte out_sec2 = 0; uint8_t out_ln2 = 0;
+      rc = nostr_nip49_decrypt_secure(enc, pw, &sb, &out_sec2, &out_ln2);
+      assert(rc == 0);
+      assert(sb.ptr && sb.len == 32);
+      assert(memcmp(sk, sb.ptr, 32) == 0);
+      assert(out_sec2 == secs[j]);
+      assert(out_ln2 == log_ns[i]);
+      secure_free(&sb);
       free(enc);
     }
   }

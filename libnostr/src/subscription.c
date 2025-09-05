@@ -7,6 +7,8 @@
 #include "nostr-relay.h"
 #include "subscription-private.h"
 #include "nostr-relay.h"
+#include "nostr/metrics.h"
+#include "nostr_log.h"
 #include <openssl/ssl.h>
 #include <unistd.h>
 #include <time.h>
@@ -78,6 +80,7 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
         fprintf(stderr, "[sub %s] create: starting lifecycle thread\n", sub->priv->id);
     }
     go(nostr_subscription_start, sub);
+    nostr_metric_counter_add("sub_created", 1);
 
     return sub;
 }
@@ -96,6 +99,7 @@ void nostr_subscription_free(NostrSubscription *sub) {
     go_wait_group_destroy(&sub->priv->wg);
     free(sub->priv);
     free(sub);
+    nostr_metric_counter_add("sub_freed", 1);
 }
 
 char *nostr_subscription_get_id(NostrSubscription *sub) {
@@ -156,9 +160,12 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
                 fprintf(stderr, "[sub %s] dispatch_event: dropped (queue full/closed)\n", sub->priv->id);
             }
             atomic_fetch_add(&sub->priv->events_dropped, 1);
+            nostr_metric_counter_add("sub_event_drop", 1);
+            nostr_rl_log(NLOG_WARN, "sub", "event drop: queue full sid=%s", sub->priv->id);
             nostr_event_free(event);
         } else {
             atomic_fetch_add(&sub->priv->events_enqueued, 1);
+            nostr_metric_counter_add("sub_event_enqueued", 1);
         }
     } else {
         // Not live anymore; drop event to avoid blocking
@@ -166,6 +173,8 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
             fprintf(stderr, "[sub %s] dispatch_event: dropped (not live)\n", sub->priv->id);
         }
         atomic_fetch_add(&sub->priv->events_dropped, 1);
+        nostr_metric_counter_add("sub_event_drop_not_live", 1);
+        nostr_rl_log(NLOG_INFO, "sub", "event drop: not live sid=%s", sub->priv->id);
         nostr_event_free(event);
     }
 
@@ -185,6 +194,7 @@ void nostr_subscription_dispatch_eose(NostrSubscription *sub) {
 
         // Wait for any "stored" events to finish processing, then signal EOSE
         go_channel_send(sub->end_of_stored_events, NULL);
+        nostr_metric_counter_add("sub_eose_signal", 1);
         if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
             fprintf(stderr, "[sub %s] dispatch_eose: signaled EOSE\n", sub->priv->id);
         }
@@ -198,6 +208,7 @@ void nostr_subscription_dispatch_closed(NostrSubscription *sub, const char *reas
     // Set the closed flag and dispatch the reason
     if (atomic_exchange(&sub->priv->closed, true) == false) {
         go_channel_send(sub->closed_reason, (void *)reason);
+        nostr_metric_counter_add("sub_closed_signal", 1);
         if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
             fprintf(stderr, "[sub %s] dispatch_closed: reason='%s'\n", sub->priv->id, reason ? reason : "");
         }
@@ -215,6 +226,7 @@ void nostr_subscription_unsubscribe(NostrSubscription *sub) {
 
     // Cancel the subscription's context
     sub->priv->cancel(sub->context);
+    nostr_metric_counter_add("sub_unsubscribe", 1);
 
     // If the subscription is still live, mark it as inactive and close it
     if (atomic_exchange(&sub->priv->live, false)) {

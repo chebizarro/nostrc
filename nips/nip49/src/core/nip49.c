@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <sodium.h>
+#include <secure_buf.h>
 
 // Internal adapters
 int nip49_kdf_scrypt(const char *password_nfkc, const uint8_t salt[16], uint8_t log_n, uint8_t out_key32[32]);
@@ -56,6 +57,60 @@ static int normalize_password(const char *in_utf8, char **out_nfkc) {
   if (!dup) return NOSTR_NIP49_ERR_ARGS;
   memcpy(dup, in_utf8, len + 1);
   *out_nfkc = dup;
+  return 0;
+}
+
+int nostr_nip49_decrypt_secure(const char *ncryptsec_bech32,
+                               const char *password_utf8,
+                               nostr_secure_buf *out_privkey,
+                               NostrNip49SecurityByte *out_security,
+                               uint8_t *out_log_n) {
+  if (!out_privkey) return NOSTR_NIP49_ERR_ARGS;
+  *out_privkey = (nostr_secure_buf){0};
+  if (!ncryptsec_bech32 || !password_utf8) return NOSTR_NIP49_ERR_ARGS;
+  ensure_sodium_init();
+
+  // Decode
+  uint8_t buf[91];
+  int rc = nip49_bech32_decode_ncryptsec(ncryptsec_bech32, buf);
+  if (rc != 0) return NOSTR_NIP49_ERR_BECH32;
+
+  NostrNip49Payload p; nostr_nip49_payload_deserialize(buf, &p);
+  if (p.version != 0x02) return NOSTR_NIP49_ERR_VERSION;
+  if (!valid_log_n(p.log_n)) return NOSTR_NIP49_ERR_ARGS;
+
+  // Normalize password
+  char *pw_nfkc = NULL;
+  rc = normalize_password(password_utf8, &pw_nfkc);
+  if (rc != 0) return rc;
+
+  // KDF
+  uint8_t key32[32];
+  rc = nip49_kdf_scrypt(pw_nfkc, p.salt, p.log_n, key32);
+  if (rc != 0) { memset(key32, 0, sizeof key32); memset(pw_nfkc, 0, strlen(pw_nfkc)); free(pw_nfkc); return NOSTR_NIP49_ERR_KDF; }
+
+  // Allocate secure buffer for plaintext key
+  nostr_secure_buf sb = secure_alloc(32);
+  if (!sb.ptr || sb.len != 32) {
+    memset(key32, 0, sizeof key32);
+    memset(pw_nfkc, 0, strlen(pw_nfkc));
+    free(pw_nfkc);
+    secure_free(&sb);
+    return NOSTR_NIP49_ERR_ARGS;
+  }
+
+  // AEAD decrypt directly into secured memory
+  rc = nip49_aead_decrypt_xchacha20poly1305(key32, p.nonce, &p.ad, 1, p.ciphertext, (uint8_t *)sb.ptr);
+
+  // Zeroize KDF and password
+  memset(key32, 0, sizeof key32);
+  memset(pw_nfkc, 0, strlen(pw_nfkc));
+  free(pw_nfkc);
+
+  if (rc != 0) { secure_free(&sb); return NOSTR_NIP49_ERR_AEAD; }
+  if (out_security) *out_security = (NostrNip49SecurityByte)p.ad;
+  if (out_log_n) *out_log_n = p.log_n;
+  *out_privkey = sb;
   return 0;
 }
 

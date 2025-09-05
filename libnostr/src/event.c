@@ -2,7 +2,7 @@
 #include "json.h"
 #include "nostr-tag.h"
 #include "nostr-utils.h"
-#include "security_limits.h"
+#include "security_limits_runtime.h"
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 #include <secp256k1.h>
@@ -251,8 +251,8 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json) {
             }
             if (depth) { return 0; }
             /* Enforce security limits */
-            if (tag_count > (size_t)NOSTR_MAX_TAGS_PER_EVENT) { return 0; }
-            if (max_depth > NOSTR_MAX_TAG_DEPTH) { return 0; }
+            if (tag_count > (size_t)nostr_limit_max_tags_per_event()) { return 0; }
+            if (max_depth > (int)nostr_limit_max_tag_depth()) { return 0; }
             NostrTags *parsed = nostr_tags_new(tag_count);
             if (!parsed) { return 0; }
             /* If tags_new pre-filled data slots with garbage, reset count to 0 but keep capacity */

@@ -1,7 +1,7 @@
 #include "json.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
-#include "security_limits.h"
+#include "security_limits_runtime.h"
 #include "nostr/metrics.h"
 #include "nostr_log.h"
 #include <stdio.h>
@@ -65,8 +65,8 @@ static void nostr_event_clear_fields(NostrEvent *e) {
 int nostr_event_deserialize(NostrEvent *event, const char *json_str) {
     if (!event || !json_str) return -1;
     size_t in_len = strlen(json_str);
-    if (in_len > (size_t)NOSTR_MAX_EVENT_SIZE_BYTES) {
-        nostr_rl_log(NLOG_WARN, "json", "event reject: oversize %zu > %d", in_len, NOSTR_MAX_EVENT_SIZE_BYTES);
+    if (in_len > (size_t)nostr_limit_max_event_size()) {
+        nostr_rl_log(NLOG_WARN, "json", "event reject: oversize %zu > %lld", in_len, (long long)nostr_limit_max_event_size());
         nostr_metric_counter_add("json_event_oversize_reject", 1);
         return -1;
     }
@@ -115,8 +115,8 @@ char *nostr_envelope_serialize(const NostrEnvelope *envelope) {
 int nostr_envelope_deserialize(NostrEnvelope *envelope, const char *json) {
     if (!envelope || !json) return -1;
     size_t in_len = strlen(json);
-    if (in_len > (size_t)NOSTR_MAX_EVENT_SIZE_BYTES) {
-        nostr_rl_log(NLOG_WARN, "json", "envelope reject: oversize %zu > %d", in_len, NOSTR_MAX_EVENT_SIZE_BYTES);
+    if (in_len > (size_t)nostr_limit_max_event_size()) {
+        nostr_rl_log(NLOG_WARN, "json", "envelope reject: oversize %zu > %lld", in_len, (long long)nostr_limit_max_event_size());
         nostr_metric_counter_add("json_envelope_oversize_reject", 1);
         return -1;
     }
@@ -151,8 +151,8 @@ char *nostr_filter_serialize(const NostrFilter *filter) {
 int nostr_filter_deserialize(NostrFilter *filter, const char *json) {
     if (!filter || !json) return -1;
     size_t in_len = strlen(json);
-    if (in_len > (size_t)NOSTR_MAX_EVENT_SIZE_BYTES) {
-        nostr_rl_log(NLOG_WARN, "json", "filter reject: oversize %zu > %d", in_len, NOSTR_MAX_EVENT_SIZE_BYTES);
+    if (in_len > (size_t)nostr_limit_max_event_size()) {
+        nostr_rl_log(NLOG_WARN, "json", "filter reject: oversize %zu > %lld", in_len, (long long)nostr_limit_max_event_size());
         nostr_metric_counter_add("json_filter_oversize_reject", 1);
         return -1;
     }

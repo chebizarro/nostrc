@@ -11,7 +11,7 @@
 #include "nostr-subscription.h"
 #include "nostr-utils.h"
 #include "nostr/metrics.h"
-#include "security_limits.h"
+#include "security_limits_runtime.h"
 #include "nostr_log.h"
 #include "go.h"
 #include <unistd.h>
@@ -81,13 +81,13 @@ void nostr_invalidsig_record_fail(NostrRelay *r, const char *pk) {
     if (!n) return;
     time_t now = now_epoch_s();
     /* Slide window */
-    if (now - n->window_start > NOSTR_INVALID_SIG_WINDOW_SECONDS) {
+    if (now - n->window_start > nostr_limit_invalidsig_window_seconds()) {
         n->window_start = now;
         n->count = 0;
     }
     n->count++;
-    if (n->count >= NOSTR_INVALID_SIG_THRESHOLD) {
-        n->banned_until = now + NOSTR_INVALID_SIG_BAN_SECONDS;
+    if (n->count >= nostr_limit_invalidsig_threshold()) {
+        n->banned_until = now + nostr_limit_invalidsig_ban_seconds();
         n->count = 0; /* reset after ban */
         n->window_start = now;
     }

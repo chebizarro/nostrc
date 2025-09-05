@@ -21,10 +21,10 @@ static int do_roundtrip(int words) {
         free(mn);
         return 1;
     }
-    unsigned char *seed = nostr_nip06_seed_from_mnemonic(mn);
-    if (!seed) { fprintf(stderr, "seed failed for %d words\n", words); free(mn); return 1; }
-    char *sk = nostr_nip06_private_key_from_seed(seed);
-    free(seed);
+    nostr_secure_buf sb = nostr_nip06_seed_secure(mn);
+    if (!sb.ptr || sb.len != 64) { fprintf(stderr, "seed(secure) failed for %d words\n", words); free(mn); return 1; }
+    char *sk = nostr_nip06_private_key_from_seed((const unsigned char*)sb.ptr);
+    secure_free(&sb);
     if (!sk) { fprintf(stderr, "derive failed for %d words\n", words); free(mn); return 1; }
     // Just sanity check hex length
     int rc = 0;

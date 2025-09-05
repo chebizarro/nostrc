@@ -54,12 +54,13 @@ jobs:
             sudo cmake --install nsync/build
           fi
 
-      - name: Configure (sanitizers + ENABLE_NIP19/49)
+      - name: Configure (sanitizers + ENABLE_NIP19/49 + fuzzers)
         run: |
           case "${{ matrix.sanitizer }}" in
             asan_ubsan)
               cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
                 -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
+                -DENABLE_FUZZING=ON -DENABLE_FUZZING_RUNTIME=ON \
                 -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON
               ;;
             tsan)
@@ -74,6 +75,18 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+      - name: Short fuzz (libFuzzer)
+        if: matrix.sanitizer == 'asan_ubsan'
+        run: |
+          set -e
+          # Run each fuzzer briefly to catch obvious issues without stalling CI
+          if [ -x build/tests/fuzz_event_deserialize ]; then \
+            ./build/tests/fuzz_event_deserialize tests/fuzz_seeds/events -max_total_time=30 || exit 1; \
+          fi
+          if [ -x build/tests/fuzz_envelope_deserialize ]; then \
+            ./build/tests/fuzz_envelope_deserialize tests/fuzz_seeds/filters -max_total_time=30 || exit 1; \
+          fi
 
       - name: Archive logs on failure
         if: failure()

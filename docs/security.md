@@ -59,3 +59,30 @@ Location: `apps/gnostr-signer/daemon/main_daemon.c`
 - Add more RL logs to other high-churn paths as needed.
 - Expand counters for queue drops/timeouts and rate-limit closes.
 - Add sanitizer/fuzz test targets around JSON→event pipelines.
+
+## TLS Posture (OpenSSL via libwebsockets)
+
+- Versions
+  - Minimum: TLS 1.2 (TLS 1.3 preferred automatically during negotiation).
+  - Options: compression and renegotiation disabled.
+
+- Cipher suites
+  - TLS 1.3: `TLS_AES_128_GCM_SHA256`, `TLS_CHACHA20_POLY1305_SHA256`, `TLS_AES_256_GCM_SHA384`.
+  - TLS 1.2 fallback (AEAD only, no CBC/SHA-1/RSA key exchange):
+    - `ECDHE-ECDSA-AES128-GCM-SHA256`, `ECDHE-RSA-AES128-GCM-SHA256`.
+    - `ECDHE-ECDSA-CHACHA20-POLY1305`, `ECDHE-RSA-CHACHA20-POLY1305`.
+    - `ECDHE-ECDSA-AES256-GCM-SHA384`, `ECDHE-RSA-AES256-GCM-SHA384`.
+
+- Key exchange groups
+  - `X25519` (preferred), `P-256` fallback.
+
+- Early data (0-RTT)
+  - Not enabled to avoid replay risk for WebSocket handshakes.
+
+- Session resumption
+  - `SSL_SESS_CACHE_SERVER` enabled; `SSL_CTX_set_num_tickets(ctx, 2)` configured.
+  - Recommend rotating ticket keys externally; enable OCSP stapling if serving TLS directly.
+
+- Operational guidance
+  - Prefer TLS offload (nginx/caddy/traefik) in front of the relay where possible.
+  - If serving TLS directly, mirror the above profile and present ECDSA P-256 certificates (optionally dual-cert ECDSA+RSA for legacy clients).

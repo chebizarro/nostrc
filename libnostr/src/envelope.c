@@ -1,6 +1,9 @@
 #include "nostr-envelope.h"
 #include "nostr-event.h"
 #include "json.h"
+#include "security_limits_runtime.h"
+#include "nostr_log.h"
+#include "nostr/metrics.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -191,10 +194,17 @@ char *nostr_envelope_serialize_compact(const NostrEnvelope *base) {
         // Serialize each filter
         size_t total = 10 + strlen(sid) + 1; // header approx
         char **parts = NULL; size_t nparts = 0;
-        if (env->filters && env->filters->count > 0) {
-            parts = (char **)calloc(env->filters->count, sizeof(char *));
+        size_t fcount = env->filters ? env->filters->count : 0;
+        size_t maxf = (size_t)nostr_limit_max_filters_per_req();
+        if (fcount > maxf) {
+            nostr_rl_log(NLOG_WARN, "req", "trimming filters: %zu > %zu", fcount, maxf);
+            nostr_metric_counter_add("req_filters_trimmed", 1);
+            fcount = maxf;
+        }
+        if (env->filters && fcount > 0) {
+            parts = (char **)calloc(fcount, sizeof(char *));
             if (!parts) { free(sid); return NULL; }
-            for (size_t i = 0; i < env->filters->count; ++i) {
+            for (size_t i = 0; i < fcount; ++i) {
                 char *fj = nostr_filter_serialize_compact(&env->filters->filters[i]);
                 if (!fj) { for (size_t j=0;j<i;++j) free(parts[j]); free(parts); free(sid); return NULL; }
                 parts[nparts++] = fj;
@@ -227,10 +237,17 @@ char *nostr_envelope_serialize_compact(const NostrEnvelope *base) {
         snprintf(countbuf, sizeof(countbuf), "{\"count\":%d}", env->count);
         size_t total = 12 + strlen(sid) + strlen(countbuf) + 1;
         char **parts = NULL; size_t nparts = 0;
-        if (env->filters && env->filters->count > 0) {
-            parts = (char **)calloc(env->filters->count, sizeof(char *));
+        size_t fcount = env->filters ? env->filters->count : 0;
+        size_t maxf = (size_t)nostr_limit_max_filters_per_req();
+        if (fcount > maxf) {
+            nostr_rl_log(NLOG_WARN, "count", "trimming filters: %zu > %zu", fcount, maxf);
+            nostr_metric_counter_add("count_filters_trimmed", 1);
+            fcount = maxf;
+        }
+        if (env->filters && fcount > 0) {
+            parts = (char **)calloc(fcount, sizeof(char *));
             if (!parts) { free(sid); return NULL; }
-            for (size_t i = 0; i < env->filters->count; ++i) {
+            for (size_t i = 0; i < fcount; ++i) {
                 char *fj = nostr_filter_serialize_compact(&env->filters->filters[i]);
                 if (!fj) { for (size_t j=0;j<i;++j) free(parts[j]); free(parts); free(sid); return NULL; }
                 parts[nparts++] = fj;
@@ -316,6 +333,8 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
         // zero or more filter objects
         NostrFilters *filters = nostr_filters_new();
         if (!filters) break;
+        size_t maxf = (size_t)nostr_limit_max_filters_per_req();
+        size_t added = 0;
         while (1) {
             q = parse_comma(p);
             if (!q) break;
@@ -323,12 +342,19 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
             if (*p != '{') break;
             char *obj = parse_json_object(&p);
             if (!obj) break;
-            NostrFilter f = {0};
-            if (nostr_filter_deserialize_compact(&f, obj)) {
-                (void)nostr_filters_add(filters, &f); // moves and zeros f
+            if (added < maxf) {
+                NostrFilter f = {0};
+                if (nostr_filter_deserialize_compact(&f, obj)) {
+                    (void)nostr_filters_add(filters, &f); // moves and zeros f
+                    added++;
+                } else {
+                    // not a filter object; ignore for REQ
+                    nostr_filter_clear(&f);
+                }
             } else {
-                // not a filter object; ignore for REQ
-                nostr_filter_clear(&f);
+                nostr_rl_log(NLOG_WARN, "req", "trim deserialization: exceeded max filters %zu", maxf);
+                nostr_metric_counter_add("req_filters_trimmed", 1);
+                // skip remaining objects silently
             }
             free(obj);
         }
@@ -344,6 +370,8 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
         NostrFilters *filters = nostr_filters_new();
         if (!filters) break;
         env->count = 0;
+        size_t maxf = (size_t)nostr_limit_max_filters_per_req();
+        size_t added = 0;
         while (1) {
             q = parse_comma(p);
             if (!q) break;
@@ -379,11 +407,17 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
             }
             if (!is_count_obj) {
                 // treat as filter
-                NostrFilter f = {0};
-                if (nostr_filter_deserialize_compact(&f, obj)) {
-                    (void)nostr_filters_add(filters, &f);
+                if (added < maxf) {
+                    NostrFilter f = {0};
+                    if (nostr_filter_deserialize_compact(&f, obj)) {
+                        (void)nostr_filters_add(filters, &f);
+                        added++;
+                    } else {
+                        nostr_filter_clear(&f);
+                    }
                 } else {
-                    nostr_filter_clear(&f);
+                    nostr_rl_log(NLOG_WARN, "count", "trim deserialization: exceeded max filters %zu", maxf);
+                    nostr_metric_counter_add("count_filters_trimmed", 1);
                 }
             }
             free(obj);

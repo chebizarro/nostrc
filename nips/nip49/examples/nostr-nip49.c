@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include "nostr/nip49/nip49.h"
+#include <secure_buf.h>
 
 static int parse_hex32(const char *hex, uint8_t out[32]) {
   if (!hex || strlen(hex) != 64) return -1;
@@ -46,10 +47,11 @@ int main(int argc, char **argv) {
       else if (strcmp(argv[i], "--password")==0 && i+1<argc) pw=argv[++i];
     }
     if (!enc || !pw) { fprintf(stderr, "missing --ncryptsec/--password\n"); return 2; }
-    uint8_t sk[32]; uint8_t ln=0; NostrNip49SecurityByte sec=0;
-    int rc = nostr_nip49_decrypt(enc, pw, sk, &sec, &ln);
+    nostr_secure_buf sb = {0}; uint8_t ln=0; NostrNip49SecurityByte sec=0;
+    int rc = nostr_nip49_decrypt_secure(enc, pw, &sb, &sec, &ln);
     if (rc != 0) { fprintf(stderr, "decrypt failed (%d)\n", rc); return 1; }
-    print_hex32(sk); printf("\nlog_n=%u security=%u\n", (unsigned)ln, (unsigned)sec);
+    print_hex32((const uint8_t*)sb.ptr); printf("\nlog_n=%u security=%u\n", (unsigned)ln, (unsigned)sec);
+    secure_free(&sb);
     return 0;
   }
   fprintf(stderr, "unknown subcommand\n");

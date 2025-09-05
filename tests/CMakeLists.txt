@@ -159,6 +159,17 @@ if(ENABLE_FUZZING)
     endif()
     # Run with corpus directory, e.g.:
     #   ./fuzz_event_deserialize ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/events -runs=0
+
+    add_executable(fuzz_envelope_deserialize fuzz_envelope_deserialize.c)
+    target_link_libraries(fuzz_envelope_deserialize PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+    target_include_directories(fuzz_envelope_deserialize PRIVATE ${SECP256K1_INCLUDE_DIRS})
+    target_link_directories(fuzz_envelope_deserialize PRIVATE ${SECP256K1_LIBRARY_DIRS})
+    if (CMAKE_C_COMPILER_ID MATCHES "Clang")
+      target_compile_options(fuzz_envelope_deserialize PRIVATE -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
+      target_link_options(fuzz_envelope_deserialize PRIVATE -fsanitize=fuzzer,address,undefined)
+    endif()
+    # Run with corpus directory, e.g.:
+    #   ./fuzz_envelope_deserialize ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters -runs=0
   else()
     add_executable(fuzz_event_driver fuzz_event_deserialize.c fuzz_driver_main.c)
     target_link_libraries(fuzz_event_driver PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
@@ -170,6 +181,17 @@ if(ENABLE_FUZZING)
     endif()
     # Run with a corpus directory or file list, e.g.:
     #   ./fuzz_event_driver ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/events
+
+    add_executable(fuzz_envelope_driver fuzz_envelope_deserialize.c fuzz_driver_main.c)
+    target_link_libraries(fuzz_envelope_driver PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+    target_include_directories(fuzz_envelope_driver PRIVATE ${SECP256K1_INCLUDE_DIRS})
+    target_link_directories(fuzz_envelope_driver PRIVATE ${SECP256K1_LIBRARY_DIRS})
+    if (CMAKE_C_COMPILER_ID MATCHES "Clang")
+      target_compile_options(fuzz_envelope_driver PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+      target_link_options(fuzz_envelope_driver PRIVATE -fsanitize=address,undefined)
+    endif()
+    # Run with a corpus directory or file list, e.g.:
+    #   ./fuzz_envelope_driver ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters
   endif()
 endif()
 add_test(NAME test_json_envelope COMMAND test_json_envelope)

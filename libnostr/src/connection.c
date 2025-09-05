@@ -3,7 +3,7 @@
 #include "go.h"
 #include "nostr/metrics.h"
 #include "nostr-init.h"
-#include "../include/security_limits.h"
+#include "../include/security_limits_runtime.h"
 #include "../include/rate_limiter.h"
 #include "../include/nostr_log.h"
 #include <libwebsockets.h>
@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <openssl/ssl.h>
 
 #define MAX_PAYLOAD_SIZE 1024
 #define MAX_HEADER_SIZE 1024
@@ -24,8 +25,8 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
     case LWS_CALLBACK_CLIENT_RECEIVE: {
         if (!conn || !conn->priv) break;
         // Enforce hard frame cap
-        if (len > (size_t)NOSTR_MAX_FRAME_LEN_BYTES) {
-            nostr_rl_log(NLOG_WARN, "ws", "drop: frame too large (%zu > %d)", len, NOSTR_MAX_FRAME_LEN_BYTES);
+        if (len > (size_t)nostr_limit_max_frame_len()) {
+            nostr_rl_log(NLOG_WARN, "ws", "drop: frame too large (%zu > %lld)", len, (long long)nostr_limit_max_frame_len());
             lws_close_reason(wsi, LWS_CLOSE_STATUS_MESSAGE_TOO_LARGE, NULL, 0);
             return -1;
         }
@@ -35,6 +36,14 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
             lws_close_reason(wsi, LWS_CLOSE_STATUS_POLICY_VIOLATION, NULL, 0);
             return -1;
         }
+        // Update RX timing/progress
+        uint64_t now_us = (uint64_t)lws_now_usecs();
+        conn->priv->last_rx_ns = now_us; /* store usec */
+        if (conn->priv->rx_window_start_ns == 0) {
+            conn->priv->rx_window_start_ns = now_us;
+            conn->priv->rx_window_bytes = 0;
+        }
+        conn->priv->rx_window_bytes += (uint64_t)len;
         // Normal path: deliver to recv_channel as before
         // Allocate a copy buffer and queue as a WebSocketMessage
         WebSocketMessage *msg = (WebSocketMessage*)malloc(sizeof(WebSocketMessage));
@@ -67,6 +76,15 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
     case LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP:
     case LWS_CALLBACK_CLIENT_ESTABLISHED:
         printf("WebSocket connection established\n");
+        // Initialize timers/progress trackers and arm periodic checks
+        if (conn && conn->priv) {
+            uint64_t now_us = (uint64_t)lws_now_usecs();
+            conn->priv->last_rx_ns = now_us;
+            conn->priv->rx_window_start_ns = now_us;
+            conn->priv->rx_window_bytes = 0;
+        }
+        // Arm a 1s timer for periodic timeout/progress checks
+        lws_set_timer_usecs(wsi, 1000000);
         lws_callback_on_writable(wsi); // Ensure the socket becomes writable
         break;
     
@@ -118,6 +136,71 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
     case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
         // Nothing to do here; higher layers manage lifecycle.
         break;
+    case LWS_CALLBACK_OPENSSL_LOAD_EXTRA_CLIENT_VERIFY_CERTS:
+    case LWS_CALLBACK_OPENSSL_CTX_LOAD_EXTRA_CLIENT_VERIFY_CERTS: {
+        // Configure OpenSSL SSL_CTX ciphers / versions / groups for client side
+        (void)user; (void)len;
+        SSL_CTX *ctx = (SSL_CTX *)in;
+        if (!ctx) break;
+        // Min protocol version: TLS 1.2 (prefer 1.3 during negotiation)
+        SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+        // Disable compression and renegotiation
+        SSL_CTX_set_options(ctx, SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION);
+        // TLS 1.3 cipher suites (server order irrelevant in TLS1.3, but set list)
+        (void)SSL_CTX_set_ciphersuites(ctx,
+          "TLS_AES_128_GCM_SHA256:"
+          "TLS_CHACHA20_POLY1305_SHA256:"
+          "TLS_AES_256_GCM_SHA384");
+        // TLS 1.2 AEAD-only cipher list
+        (void)SSL_CTX_set_cipher_list(ctx,
+          "ECDHE-ECDSA-AES128-GCM-SHA256:"
+          "ECDHE-RSA-AES128-GCM-SHA256:"
+          "ECDHE-ECDSA-CHACHA20-POLY1305:"
+          "ECDHE-RSA-CHACHA20-POLY1305:"
+          "ECDHE-ECDSA-AES256-GCM-SHA384:"
+          "ECDHE-RSA-AES256-GCM-SHA384");
+        // Groups preference (key exchange)
+        (void)SSL_CTX_set1_groups_list(ctx, "X25519:P-256");
+        // Disable 0-RTT by simply not enabling early data API calls here
+        // Session tickets (rotation advisable by external ticket key mgmt)
+        SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_SERVER);
+        SSL_CTX_set_num_tickets(ctx, 2);
+        break;
+    }
+    case LWS_CALLBACK_TIMER: {
+        if (!conn || !conn->priv) break;
+        uint64_t now_us = (uint64_t)lws_now_usecs();
+        int64_t read_to_s = nostr_limit_ws_read_timeout_seconds();
+        if (read_to_s > 0) {
+            uint64_t last_us = conn->priv->last_rx_ns ? conn->priv->last_rx_ns : now_us;
+            if (now_us - last_us > (uint64_t)read_to_s * 1000000ULL) {
+                nostr_rl_log(NLOG_WARN, "ws", "read timeout: no data for %llds", (long long)read_to_s);
+                nostr_metric_counter_add("ws_timeout_read", 1);
+                lws_close_reason(wsi, LWS_CLOSE_STATUS_POLICY_VIOLATION, NULL, 0);
+                return -1;
+            }
+        }
+        int64_t win_ms = nostr_limit_ws_progress_window_ms();
+        int64_t min_bytes = nostr_limit_ws_min_bytes_per_window();
+        if (win_ms > 0 && min_bytes > 0) {
+            uint64_t win_start = conn->priv->rx_window_start_ns ? conn->priv->rx_window_start_ns : now_us;
+            if (now_us - win_start >= (uint64_t)win_ms * 1000ULL) {
+                uint64_t bytes = conn->priv->rx_window_bytes;
+                if (bytes < (uint64_t)min_bytes) {
+                    nostr_rl_log(NLOG_WARN, "ws", "progress violation: %lluB < %lldB in %lldms", (unsigned long long)bytes, (long long)min_bytes, (long long)win_ms);
+                    nostr_metric_counter_add("ws_progress_violation", 1);
+                    lws_close_reason(wsi, LWS_CLOSE_STATUS_POLICY_VIOLATION, NULL, 0);
+                    return -1;
+                }
+                // reset window
+                conn->priv->rx_window_start_ns = now_us;
+                conn->priv->rx_window_bytes = 0;
+            }
+        }
+        // Re-arm timer for continuous checks
+        lws_set_timer_usecs(wsi, 1000000);
+        break;
+    }
     default:
         break;
     }
@@ -332,9 +415,9 @@ NostrConnection *nostr_connection_new(const char *url) {
     lws_set_opaque_user_data(conn->priv->wsi, conn);
     conn->recv_channel = go_channel_create(16);
     conn->send_channel = go_channel_create(16);
-    // Initialize token buckets for ingress limits
-    tb_init(&conn->priv->tb_bytes, (double)NOSTR_MAX_BYTES_PER_SEC, (double)NOSTR_MAX_BYTES_PER_SEC);
-    tb_init(&conn->priv->tb_frames, (double)NOSTR_MAX_FRAMES_PER_SEC, (double)NOSTR_MAX_FRAMES_PER_SEC);
+    // Initialize token buckets for ingress limits (runtime configurable)
+    tb_init(&conn->priv->tb_bytes, (double)nostr_limit_max_bytes_per_sec(), (double)nostr_limit_max_bytes_per_sec());
+    tb_init(&conn->priv->tb_frames, (double)nostr_limit_max_frames_per_sec(), (double)nostr_limit_max_frames_per_sec());
     return conn;
 }
 
