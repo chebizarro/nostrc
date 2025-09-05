@@ -43,7 +43,7 @@ target_compile_definitions(${APP_SIGNER_BIN} PRIVATE
 # NIP-55L core headers for owner/key APIs used by the UI
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip55l/include)
 # Link against core to resolve owner APIs
-target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA nostr_nip55l_core)
+target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA nostr_nip55l_core nip04)
 
 # Include project root so we can include gnome/seahorse/secret_store.h from the app
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR})
@@ -68,7 +68,7 @@ target_compile_definitions(gnostr-signer-daemon PRIVATE
 find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
 target_include_directories(gnostr-signer-daemon PRIVATE ${NSYNC_INCLUDE_DIR})
 find_library(NSYNC_LIB nsync REQUIRED)
-target_link_libraries(gnostr-signer-daemon PRIVATE nostr_nip55l_glib nostr_nip5f_core PkgConfig::GLIB ${NSYNC_LIB})
+target_link_libraries(gnostr-signer-daemon PRIVATE nostr_nip55l_glib nostr_nip5f_core nip04 PkgConfig::GLIB ${NSYNC_LIB})
 
 if (ENABLE_TCP_IPC)
   target_compile_definitions(gnostr-signer-daemon PRIVATE GNOSTR_ENABLE_TCP_IPC=1)

@@ -3,6 +3,7 @@
 #include "nostr-tag.h"
 #include "nostr-utils.h"
 #include "security_limits_runtime.h"
+#include "secure_buf.h"
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 #include <secp256k1.h>
@@ -20,6 +21,48 @@ static inline int hexval_char(char ch) {
     if (ch >= 'a' && ch <= 'f') return 10 + (ch - 'a');
     if (ch >= 'A' && ch <= 'F') return 10 + (ch - 'A');
     return -1;
+}
+
+/* Secure variant: accepts a 32-byte private key inside nostr_secure_buf. */
+int nostr_event_sign_secure(NostrEvent *event, const nostr_secure_buf *sk) {
+    if (!event || !sk || !sk->ptr || sk->len < 32) return -1;
+
+    unsigned char hash[32];
+    char *serialized = nostr_event_serialize_compact(event);
+    if (!serialized) serialized = nostr_event_serialize(event);
+    if (!serialized) return -1;
+    SHA256((unsigned char *)serialized, strlen(serialized), hash);
+    free(serialized);
+
+    secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+    if (!ctx) return -1;
+    int return_val = -1;
+    unsigned char seckey[32];
+    memcpy(seckey, sk->ptr, 32);
+    if (!secp256k1_ec_seckey_verify(ctx, seckey)) {
+        goto cleanup;
+    }
+    secp256k1_keypair keypair;
+    if (secp256k1_keypair_create(ctx, &keypair, seckey) != 1) {
+        goto cleanup;
+    }
+    unsigned char auxiliary_rand[32];
+    if (RAND_bytes(auxiliary_rand, sizeof(auxiliary_rand)) != 1) {
+        goto cleanup;
+    }
+    unsigned char sig_bin[64];
+    if (secp256k1_schnorrsig_sign32(ctx, sig_bin, hash, &keypair, auxiliary_rand) != 1) {
+        goto cleanup;
+    }
+    event->sig = nostr_bin2hex(sig_bin, 64);
+    if (!event->sig) goto cleanup;
+    event->id = nostr_event_get_id(event);
+    return_val = 0;
+cleanup:
+    /* Best-effort wipe of local secret material */
+    volatile unsigned char *p = seckey; for (size_t i=0;i<sizeof seckey;i++) p[i]=0;
+    secp256k1_context_destroy(ctx);
+    return return_val;
 }
 
 NostrEvent *nostr_event_new(void) {

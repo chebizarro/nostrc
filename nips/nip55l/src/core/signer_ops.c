@@ -17,6 +17,8 @@
 #include <nostr/nip19/nip19.h>
 #include <keys.h>
 
+#include <secure_buf.h>
+
 #ifdef NIP55L_HAVE_LIBSECRET
 #include <libsecret/secret.h>
 #include <sys/types.h>
@@ -53,6 +55,34 @@ static char *bin_to_hex(const uint8_t *buf, size_t len){
   out[len*2]='\0'; return out;
 }
 
+/* Forward declaration */
+static int resolve_seckey_hex(const char *current_user, char **out_sk_hex);
+
+/* Secure resolver: yields a 32-byte private key in a nostr_secure_buf.
+ * Internally leverages resolve_seckey_hex for selection, then converts to binary
+ * and wipes the transient hex string.
+ */
+static int resolve_seckey_secure(const char *current_user, nostr_secure_buf *out_sk){
+  if (!out_sk) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_sk = (nostr_secure_buf){0};
+  char *sk_hex = NULL;
+  int rc = resolve_seckey_hex(current_user, &sk_hex);
+  if (rc != 0 || !sk_hex) return rc ? rc : NOSTR_SIGNER_ERROR_NOT_FOUND;
+  if (!is_hex_64(sk_hex)) { memset(sk_hex, 0, strlen(sk_hex)); free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
+  nostr_secure_buf sb = secure_alloc(32);
+  if (!sb.ptr) { memset(sk_hex, 0, strlen(sk_hex)); free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  if (!nostr_hex2bin((uint8_t*)sb.ptr, sk_hex, 32)) {
+    secure_free(&sb);
+    memset(sk_hex, 0, strlen(sk_hex));
+    free(sk_hex);
+    return NOSTR_SIGNER_ERROR_INVALID_KEY;
+  }
+  memset(sk_hex, 0, strlen(sk_hex));
+  free(sk_hex);
+  *out_sk = sb;
+  return 0;
+}
+
 /* Resolve a secret key for the current user. Accepts:
  * - 64-hex seckey
  * - nsec1... bech32
@@ -68,7 +98,9 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
     const char *nsec = getenv("NOSTR_SIGNER_NSEC");
     if (nsec && strncmp(nsec, "nsec1", 5)==0) {
       uint8_t sk[32]; if (nostr_nip19_decode_nsec(nsec, sk)!=0) return NOSTR_SIGNER_ERROR_INVALID_KEY;
-      *out_sk_hex = bin_to_hex(sk, 32); return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND;
+      *out_sk_hex = bin_to_hex(sk, 32);
+      secure_wipe(sk, sizeof sk);
+      return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND;
     }
     /* Try libsecret fallback by linked owner (current uid) */
 #ifdef NIP55L_HAVE_LIBSECRET
@@ -99,6 +131,7 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
             else if (strncmp(sec, "nsec1", 5)==0) {
               uint8_t sk[32]; rc_l = (nostr_nip19_decode_nsec(sec, sk)==0) ? 0 : NOSTR_SIGNER_ERROR_INVALID_KEY;
               if (rc_l==0) { *out_sk_hex = bin_to_hex(sk, 32); if (!*out_sk_hex) rc_l = NOSTR_SIGNER_ERROR_BACKEND; }
+              secure_wipe(sk, sizeof sk);
             } else {
               rc_l = NOSTR_SIGNER_ERROR_INVALID_KEY;
             }
@@ -145,7 +178,9 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
   if (is_hex_64(cand)) { *out_sk_hex = strdup(cand); return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND; }
   if (strncmp(cand, "nsec1", 5)==0) {
     uint8_t sk[32]; if (nostr_nip19_decode_nsec(cand, sk)!=0) return NOSTR_SIGNER_ERROR_INVALID_KEY;
-    *out_sk_hex = bin_to_hex(sk, 32); return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND;
+    *out_sk_hex = bin_to_hex(sk, 32);
+    secure_wipe(sk, sizeof sk);
+    return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND;
   }
 #ifdef NIP55L_HAVE_LIBSECRET
   /* Treat current_user as identity selector: key_id or npub */
@@ -220,7 +255,9 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
       const char *nsec = getenv("NOSTR_SIGNER_NSEC");
       if (nsec && strncmp(nsec, "nsec1", 5)==0) {
         uint8_t sk[32]; if (nostr_nip19_decode_nsec(nsec, sk)!=0) return NOSTR_SIGNER_ERROR_INVALID_KEY;
-        *out_sk_hex = bin_to_hex(sk, 32); return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND;
+        *out_sk_hex = bin_to_hex(sk, 32);
+        secure_wipe(sk, sizeof sk);
+        return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND;
       }
     }
   }
@@ -276,6 +313,7 @@ int nostr_nip55l_get_public_key(char **out_npub){
   int rc;
   char *sk_hex=NULL; rc = resolve_seckey_hex(NULL, &sk_hex); if(rc!=0) return rc;
   char *pk_hex = nostr_key_get_public(sk_hex);
+  if (sk_hex) { memset(sk_hex, 0, strlen(sk_hex)); }
   free(sk_hex);
   if (!pk_hex) return NOSTR_SIGNER_ERROR_BACKEND;
   uint8_t pk[32]; if (!nostr_hex2bin(pk, pk_hex, sizeof pk)) { free(pk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
@@ -290,12 +328,12 @@ int nostr_nip55l_sign_event(const char *event_json,
                             char **out_signature){
   (void)app_id;
   if(!out_signature || !event_json) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_signature=NULL;
-  int rc; char *sk_hex=NULL; rc = resolve_seckey_hex(current_user, &sk_hex); if(rc!=0) return rc;
-  NostrEvent *ev = nostr_event_new(); if(!ev){ free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
-  if (nostr_event_deserialize(ev, event_json)!=0) { nostr_event_free(ev); free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_JSON; }
+  int rc; nostr_secure_buf sb = {0}; rc = resolve_seckey_secure(current_user, &sb); if(rc!=0) return rc;
+  NostrEvent *ev = nostr_event_new(); if(!ev){ secure_free(&sb); return NOSTR_SIGNER_ERROR_BACKEND; }
+  if (nostr_event_deserialize(ev, event_json)!=0) { nostr_event_free(ev); secure_free(&sb); return NOSTR_SIGNER_ERROR_INVALID_JSON; }
   if (ev->created_at == 0) { ev->created_at = (int64_t)time(NULL); }
-  if (nostr_event_sign(ev, sk_hex)!=0) { nostr_event_free(ev); free(sk_hex); return NOSTR_SIGNER_ERROR_CRYPTO_FAILED; }
-  free(sk_hex);
+  if (nostr_event_sign_secure(ev, &sb)!=0) { nostr_event_free(ev); secure_free(&sb); return NOSTR_SIGNER_ERROR_CRYPTO_FAILED; }
+  secure_free(&sb);
   if (!ev->sig) { nostr_event_free(ev); return NOSTR_SIGNER_ERROR_BACKEND; }
   *out_signature = strdup(ev->sig);
   nostr_event_free(ev);
@@ -305,10 +343,10 @@ int nostr_nip55l_sign_event(const char *event_json,
 int nostr_nip55l_nip04_encrypt(const char *plaintext, const char *peer_pub_hex,
                                const char *current_user, char **out_cipher_b64){
   if(!plaintext || !peer_pub_hex || !out_cipher_b64) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_cipher_b64=NULL;
-  int rc; char *sk_hex=NULL; rc = resolve_seckey_hex(current_user, &sk_hex); if(rc!=0) return rc;
+  int rc; nostr_secure_buf sb = {0}; rc = resolve_seckey_secure(current_user, &sb); if(rc!=0) return rc;
   char *err=NULL; char *ct=NULL;
-  int enc_rc = nostr_nip04_encrypt(plaintext, peer_pub_hex, sk_hex, &ct, &err);
-  free(sk_hex);
+  int enc_rc = nostr_nip04_encrypt_secure(plaintext, peer_pub_hex, &sb, &ct, &err);
+  secure_free(&sb);
   if (enc_rc!=0) { if(err) free(err); return NOSTR_SIGNER_ERROR_CRYPTO_FAILED; }
   *out_cipher_b64 = ct; return 0;
 }
@@ -316,10 +354,10 @@ int nostr_nip55l_nip04_encrypt(const char *plaintext, const char *peer_pub_hex,
 int nostr_nip55l_nip04_decrypt(const char *cipher_b64, const char *peer_pub_hex,
                                const char *current_user, char **out_plaintext){
   if(!cipher_b64 || !peer_pub_hex || !out_plaintext) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_plaintext=NULL;
-  int rc; char *sk_hex=NULL; rc = resolve_seckey_hex(current_user, &sk_hex); if(rc!=0) return rc;
+  int rc; nostr_secure_buf sb = {0}; rc = resolve_seckey_secure(current_user, &sb); if(rc!=0) return rc;
   char *err=NULL; char *pt=NULL;
-  int dec_rc = nostr_nip04_decrypt(cipher_b64, peer_pub_hex, sk_hex, &pt, &err);
-  free(sk_hex);
+  int dec_rc = nostr_nip04_decrypt_secure(cipher_b64, peer_pub_hex, &sb, &pt, &err);
+  secure_free(&sb);
   if (dec_rc!=0) { if(err) free(err); return NOSTR_SIGNER_ERROR_CRYPTO_FAILED; }
   *out_plaintext = pt; return 0;
 }
@@ -327,26 +365,26 @@ int nostr_nip55l_nip04_decrypt(const char *cipher_b64, const char *peer_pub_hex,
 int nostr_nip55l_nip44_encrypt(const char *plaintext, const char *peer_pub_hex,
                                const char *current_user, char **out_cipher_b64){
   if(!plaintext || !peer_pub_hex || !out_cipher_b64) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_cipher_b64=NULL;
-  int rc; char *sk_hex=NULL; rc = resolve_seckey_hex(current_user, &sk_hex); if(rc!=0) return rc;
-  uint8_t sk[32]; if (!nostr_hex2bin(sk, sk_hex, sizeof sk)) { free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
-  free(sk_hex);
+  int rc; nostr_secure_buf sb = {0}; rc = resolve_seckey_secure(current_user, &sb); if(rc!=0) return rc;
+  uint8_t *sk = (uint8_t*)sb.ptr;
   if (!is_hex_64(peer_pub_hex)) return NOSTR_SIGNER_ERROR_INVALID_KEY;
   uint8_t pkx[32]; if (!nostr_hex2bin(pkx, peer_pub_hex, sizeof pkx)) return NOSTR_SIGNER_ERROR_INVALID_KEY;
   char *b64=NULL;
-  if (nostr_nip44_encrypt_v2(sk, pkx, (const uint8_t*)plaintext, strlen(plaintext), &b64)!=0) return NOSTR_SIGNER_ERROR_CRYPTO_FAILED;
+  if (nostr_nip44_encrypt_v2(sk, pkx, (const uint8_t*)plaintext, strlen(plaintext), &b64)!=0) { secure_free(&sb); return NOSTR_SIGNER_ERROR_CRYPTO_FAILED; }
+  secure_free(&sb);
   *out_cipher_b64 = b64; return 0;
 }
 
 int nostr_nip55l_nip44_decrypt(const char *cipher_b64, const char *peer_pub_hex,
                                const char *current_user, char **out_plaintext){
   if(!cipher_b64 || !peer_pub_hex || !out_plaintext) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_plaintext=NULL;
-  int rc; char *sk_hex=NULL; rc = resolve_seckey_hex(current_user, &sk_hex); if(rc!=0) return rc;
-  uint8_t sk[32]; if (!nostr_hex2bin(sk, sk_hex, sizeof sk)) { free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
-  free(sk_hex);
+  int rc; nostr_secure_buf sb = {0}; rc = resolve_seckey_secure(current_user, &sb); if(rc!=0) return rc;
+  uint8_t *sk = (uint8_t*)sb.ptr;
   if (!is_hex_64(peer_pub_hex)) return NOSTR_SIGNER_ERROR_INVALID_KEY;
   uint8_t pkx[32]; if (!nostr_hex2bin(pkx, peer_pub_hex, sizeof pkx)) return NOSTR_SIGNER_ERROR_INVALID_KEY;
   uint8_t *pt=NULL; size_t ptlen=0;
-  if (nostr_nip44_decrypt_v2(sk, pkx, cipher_b64, &pt, &ptlen)!=0) return NOSTR_SIGNER_ERROR_CRYPTO_FAILED;
+  if (nostr_nip44_decrypt_v2(sk, pkx, cipher_b64, &pt, &ptlen)!=0) { secure_free(&sb); return NOSTR_SIGNER_ERROR_CRYPTO_FAILED; }
+  secure_free(&sb);
   char *out = (char*)malloc(ptlen+1); if(!out){ free(pt); return NOSTR_SIGNER_ERROR_BACKEND; }
   memcpy(out, pt, ptlen); out[ptlen]='\0'; free(pt);
   *out_plaintext = out; return 0;
@@ -377,14 +415,17 @@ int nostr_nip55l_decrypt_zap_event(const char *event_json,
   /* Try NIP-44 first */
   int dec_ok = 0; char *pt = NULL;
   do {
-    uint8_t sk[32]; if (!nostr_hex2bin(sk, sk_hex, sizeof sk)) break;
+    nostr_secure_buf sb = secure_alloc(32);
+    if (!sb.ptr) break;
+    if (!nostr_hex2bin((uint8_t*)sb.ptr, sk_hex, 32)) { secure_free(&sb); break; }
     if (!is_hex_64(peer_pub_hex)) break;
     uint8_t pkx[32]; if (!nostr_hex2bin(pkx, peer_pub_hex, sizeof pkx)) break;
     uint8_t *ptbuf=NULL; size_t ptlen=0;
-    if (nostr_nip44_decrypt_v2(sk, pkx, content, &ptbuf, &ptlen)==0) {
+    if (nostr_nip44_decrypt_v2((uint8_t*)sb.ptr, pkx, content, &ptbuf, &ptlen)==0) {
       pt = (char*)malloc(ptlen+1); if(pt){ memcpy(pt, ptbuf, ptlen); pt[ptlen]='\0'; dec_ok=1; }
       free(ptbuf);
     }
+    secure_free(&sb);
   } while(0);
   if (!dec_ok) {
     /* Fallback NIP-04 */
@@ -425,14 +466,15 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
   if (is_hex_64(key)) sk_hex = strdup(key);
   else if (strncmp(key, "nsec1", 5)==0) {
     uint8_t sk[32]; if (nostr_nip19_decode_nsec(key, sk)!=0) return NOSTR_SIGNER_ERROR_INVALID_KEY; sk_hex = bin_to_hex(sk, 32);
+    secure_wipe(sk, sizeof sk);
   } else {
     return NOSTR_SIGNER_ERROR_INVALID_KEY;
   }
   if (!sk_hex) return NOSTR_SIGNER_ERROR_BACKEND;
   char *pk_hex = nostr_key_get_public(sk_hex);
-  if (!pk_hex) { free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  if (!pk_hex) { if (sk_hex) { memset(sk_hex,0,strlen(sk_hex)); } free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
   uint8_t pk[32]; if (!nostr_hex2bin(pk, pk_hex, sizeof pk)) { free(pk_hex); free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
-  char *npub = NULL; if (nostr_nip19_encode_npub(pk, &npub)!=0 || !npub) { free(pk_hex); free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  char *npub = NULL; if (nostr_nip19_encode_npub(pk, &npub)!=0 || !npub) { free(pk_hex); if (sk_hex) { memset(sk_hex,0,strlen(sk_hex)); } free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
   free(pk_hex);
   /* Choose key_id: prefer provided identity, else derived npub */
   const char *key_id_attr = sel_in ? sel_in : npub;
@@ -450,6 +492,7 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
                                             "hardware", "false",
                                             NULL);
   if (gerr) { g_error_free(gerr); }
+  if (sk_hex) { memset(sk_hex, 0, strlen(sk_hex)); }
   free(sk_hex);
   free(npub);
   return ok ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
@@ -461,6 +504,7 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
   if (is_hex_64(key)) sk_hex = strdup(key);
   else if (strncmp(key, "nsec1", 5)==0) {
     uint8_t skb[32]; if (nostr_nip19_decode_nsec(key, skb)!=0) return NOSTR_SIGNER_ERROR_INVALID_KEY; sk_hex = bin_to_hex(skb, 32);
+    secure_wipe(skb, sizeof skb);
   } else {
     return NOSTR_SIGNER_ERROR_INVALID_KEY;
   }
@@ -485,6 +529,7 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
   CFStringRef label = CFStringCreateWithCString(NULL, "Gnostr Identity", kCFStringEncodingUTF8);
   CFStringRef comment = CFStringCreateWithCString(NULL, npub, kCFStringEncodingUTF8);
   CFDataRef secretData = CFDataCreate(NULL, skb, (CFIndex)sizeof(skb));
+  secure_wipe(skb, sizeof skb);
   CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
   CFDictionarySetValue(query, kSecAttrService, service);
   CFDictionarySetValue(query, kSecAttrAccount, account);

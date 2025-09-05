@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <time.h>
 #include "nostr/nip5f/nip5f.h"
+#include <secure_buf.h>
 
 #include <nostr-event.h>
 #include <nostr-json.h>
@@ -17,11 +18,7 @@ static int signer_log_enabled(void) {
   return (e && *e && strcmp(e, "0")!=0) ? 1 : 0;
 }
 
-/* best-effort zeroization */
-static void secure_bzero(void *ptr, size_t len) {
-  volatile unsigned char *p = (volatile unsigned char*)ptr;
-  while (len--) *p++ = 0;
-}
+/* Use shared secure_wipe() for best-effort zeroization */
 
 /* local helpers */
 static int is_hex_64(const char *s) {
@@ -55,7 +52,7 @@ static int resolve_seckey_hex_env(char **out_sk_hex){
     }
     if (strncmp(key, "nsec1", 5)==0) {
       uint8_t sk[32]; if (nostr_nip19_decode_nsec(key, sk)!=0) return -1;
-      *out_sk_hex = bin_to_hex(sk, 32); secure_bzero(sk, sizeof sk);
+      *out_sk_hex = bin_to_hex(sk, 32); secure_wipe(sk, sizeof sk);
       if (*out_sk_hex && signer_log_enabled()) fprintf(stderr, "[nip5f] using seckey from KEY env (nsec) (%.4s...)\n", *out_sk_hex);
       return *out_sk_hex?0:-1;
     }
@@ -72,7 +69,7 @@ static int resolve_seckey_hex_env(char **out_sk_hex){
   if (nsec && strncmp(nsec, "nsec1", 5)==0) {
     uint8_t sk[32]; if (nostr_nip19_decode_nsec(nsec, sk)!=0) return -1;
     *out_sk_hex = bin_to_hex(sk, 32);
-    secure_bzero(sk, sizeof sk);
+    secure_wipe(sk, sizeof sk);
     if (*out_sk_hex && signer_log_enabled()) fprintf(stderr, "[nip5f] using seckey from NSEC env (%.4s...)\n", *out_sk_hex);
     return *out_sk_hex?0:-1;
   }
@@ -150,8 +147,8 @@ int nostr_nip5f_builtin_nip44_encrypt(const char *peer_pub_hex, const char *plai
   if (!is_hex_64(peer_pub_hex)) return -1;
   uint8_t pkx[32]; if (!nostr_hex2bin(pkx, peer_pub_hex, sizeof pkx)) return -1;
   char *b64=NULL;
-  if (nostr_nip44_encrypt_v2(sk, pkx, (const uint8_t*)plaintext, strlen(plaintext), &b64)!=0) { secure_bzero(sk, sizeof sk); return -1; }
-  secure_bzero(sk, sizeof sk);
+  if (nostr_nip44_encrypt_v2(sk, pkx, (const uint8_t*)plaintext, strlen(plaintext), &b64)!=0) { secure_wipe(sk, sizeof sk); return -1; }
+  secure_wipe(sk, sizeof sk);
   *out_cipher_b64 = b64; return 0;
 }
 
@@ -164,8 +161,8 @@ int nostr_nip5f_builtin_nip44_decrypt(const char *peer_pub_hex, const char *ciph
   if (!is_hex_64(peer_pub_hex)) return -1;
   uint8_t pkx[32]; if (!nostr_hex2bin(pkx, peer_pub_hex, sizeof pkx)) return -1;
   uint8_t *pt=NULL; size_t ptlen=0;
-  if (nostr_nip44_decrypt_v2(sk, pkx, cipher_b64, &pt, &ptlen)!=0) { secure_bzero(sk, sizeof sk); return -1; }
-  secure_bzero(sk, sizeof sk);
+  if (nostr_nip44_decrypt_v2(sk, pkx, cipher_b64, &pt, &ptlen)!=0) { secure_wipe(sk, sizeof sk); return -1; }
+  secure_wipe(sk, sizeof sk);
   char *out = (char*)malloc(ptlen+1); if(!out){ free(pt); return -1; }
   memcpy(out, pt, ptlen); out[ptlen]='\0'; free(pt);
   *out_plaintext = out; return 0;

@@ -55,6 +55,46 @@ Location: `libnostr/include/nostr_log.h`, `libnostr/src/nostr_log.c`
 
 Location: `apps/gnostr-signer/daemon/main_daemon.c`
 
+## Signer Key Handling (Secure Memory)
+
+- Key resolution now prefers secure buffers for all sensitive operations:
+  - `resolve_seckey_secure()` in `nips/nip55l/src/core/signer_ops.c` converts resolved hex (env/libsecret/keychain) into a 32-byte `nostr_secure_buf` and wipes transient hex.
+  - Signing uses `nostr_event_sign_secure()` in `libnostr/src/event.c` (declared in `libnostr/include/nostr-event.h`), avoiding hex private keys during signing.
+  - NIP-44 encrypt/decrypt and zap-decrypt (NIP-44 branch) use `nostr_secure_buf` for the private key.
+  - NIP-04 encrypt/decrypt have secure variants in the NIP module and the signer uses them (see below).
+
+- Zeroization and mlock:
+  - `nostr_secure_buf` attempts to allocate locked memory (mlock where available) and guarantees best-effort zeroization via `secure_free()` / `secure_wipe()`.
+  - All stack copies of keys and derived materials are wiped explicitly on all paths.
+
+Locations:
+- `nips/nip55l/src/core/signer_ops.c`
+- `libnostr/src/event.c` and `libnostr/include/nostr-event.h`
+- `libnostr/src/secure_buf.c`
+
+## Secure NIP Implementations (kept within NIPs)
+
+- NIP-44 (v2) secure handling (binary private key):
+  - Used by signer for `nostr_nip55l_nip44_encrypt/decrypt()` and zap-decrypt path.
+  - Location: `nips/nip44` (derivation/HKDF) and `nips/nip55l/src/core/signer_ops.c` (callers).
+
+- NIP-04 secure variants (binary private key):
+  - New APIs declared in `nips/nip04/include/nostr/nip04.h`:
+    - `nostr_nip04_encrypt_secure(const nostr_secure_buf *sender_seckey, ...)`
+    - `nostr_nip04_decrypt_secure(const nostr_secure_buf *receiver_seckey, ...)`
+  - Implemented in `nips/nip04/src/nip04.c` with explicit zeroization of ECDH-derived key and IV handling identical to hex path.
+  - Signer now calls these secure variants in `nips/nip55l/src/core/signer_ops.c`.
+
+Rationale:
+- Keep secure implementations close to their respective NIP modules, while signer orchestrates resolution and lifecycle using secure memory.
+
+## Logging and Secrets Hygiene
+
+- No secret keys are logged. The signer service (`nips/nip55l/src/glib/signer_service_g.c`) only logs:
+  - `app_id`, `identity`, `request_id`, and a short preview fragment of `content` (never private keys).
+- Internal modules use `secure_wipe()` for temporary secret buffers and scrub hex strings before `free()`.
+- Rate-limited logging is available via `nostr_rl_log` to avoid log flooding.
+
 ## Notes and Future Work
 - Add more RL logs to other high-churn paths as needed.
 - Expand counters for queue drops/timeouts and rate-limit closes.

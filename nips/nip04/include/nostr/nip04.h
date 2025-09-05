@@ -2,6 +2,7 @@
 #define NOSTR_NIP04_H
 
 #include <stddef.h>
+#include <secure_buf.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -62,6 +63,28 @@ int nostr_nip04_decrypt(
     const char *content_b64_qiv,
     const char *sender_pubkey_hex,
     const char *receiver_seckey_hex,
+    char **out_plaintext_utf8,
+    char **out_error);
+
+/**
+ * nostr_nip04_encrypt_secure:
+ * Like nostr_nip04_encrypt but takes the sender secret key as a secure buffer.
+ */
+int nostr_nip04_encrypt_secure(
+    const char *plaintext_utf8,
+    const char *receiver_pubkey_hex,
+    const nostr_secure_buf *sender_seckey,
+    char **out_content_b64_qiv,
+    char **out_error);
+
+/**
+ * nostr_nip04_decrypt_secure:
+ * Like nostr_nip04_decrypt but takes the receiver secret key as a secure buffer.
+ */
+int nostr_nip04_decrypt_secure(
+    const char *content_b64_qiv,
+    const char *sender_pubkey_hex,
+    const nostr_secure_buf *receiver_seckey,
     char **out_plaintext_utf8,
     char **out_error);
 

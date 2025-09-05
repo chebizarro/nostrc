@@ -137,7 +137,11 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         // Nothing to do here; higher layers manage lifecycle.
         break;
     case LWS_CALLBACK_OPENSSL_LOAD_EXTRA_CLIENT_VERIFY_CERTS:
-    case LWS_CALLBACK_OPENSSL_CTX_LOAD_EXTRA_CLIENT_VERIFY_CERTS: {
+#if defined(LWS_CALLBACK_OPENSSL_CTX_LOAD_EXTRA_CLIENT_VERIFY_CERTS) && \
+    (LWS_CALLBACK_OPENSSL_CTX_LOAD_EXTRA_CLIENT_VERIFY_CERTS != LWS_CALLBACK_OPENSSL_LOAD_EXTRA_CLIENT_VERIFY_CERTS)
+    case LWS_CALLBACK_OPENSSL_CTX_LOAD_EXTRA_CLIENT_VERIFY_CERTS:
+#endif
+    {
         // Configure OpenSSL SSL_CTX ciphers / versions / groups for client side
         (void)user; (void)len;
         SSL_CTX *ctx = (SSL_CTX *)in;

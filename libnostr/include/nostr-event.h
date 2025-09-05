@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "nostr-tag.h"
+#include "secure_buf.h"
 
 /* Opaque to GI; implemented in src wrappers */
 /**
@@ -84,6 +85,16 @@ bool nostr_event_check_signature(NostrEvent *event);
  * Returns: 0 on success
  */
 int nostr_event_sign(NostrEvent *event, const char *private_key);
+
+/**
+ * nostr_event_sign_secure:
+ * @event: (nullable): event
+ * @sk: (not nullable): pointer to a 32-byte private key stored in nostr_secure_buf
+ *
+ * Signs the event using the provided secret key stored in secure memory.
+ * Returns: 0 on success
+ */
+int nostr_event_sign_secure(NostrEvent *event, const nostr_secure_buf *sk);
 
 /**
  * nostr_event_is_regular:

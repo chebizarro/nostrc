@@ -6,6 +6,7 @@
 #include "nostr/nip44/nip44.h"
 #include "nostr-keys.h"
 #include "nostr-event.h"
+#include "secure_buf.h"
 #include "json.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -189,11 +190,16 @@ int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, 
     if (!peer || !s->secret) { free(req); return -1; }
 
     char *cipher = NULL; char *err = NULL;
-    if (nostr_nip04_encrypt(req, peer, s->secret, &cipher, &err) != 0 || !cipher) {
+    /* secure encrypt using binary secret */
+    nostr_secure_buf sb = secure_alloc(32);
+    if (!sb.ptr || parse_sk32(s->secret, (unsigned char*)sb.ptr) != 0) { if(sb.ptr) secure_free(&sb); free(req); return -1; }
+    if (nostr_nip04_encrypt_secure(req, peer, &sb, &cipher, &err) != 0 || !cipher) {
+        secure_free(&sb);
         if (err) free(err);
         free(req);
         return -1;
     }
+    secure_free(&sb);
     free(req);
     *out_signed_event_json = cipher; /* return ciphertext to be sent over transport */
     return 0;
@@ -207,10 +213,14 @@ int nostr_nip46_client_nip04_encrypt(NostrNip46Session *s, const char *peer_pubk
     if (!s || !peer_pubkey_hex || !plaintext || !out_ciphertext) return -1;
     if (!s->secret) return -1;
     char *cipher = NULL; char *err = NULL;
-    if (nostr_nip04_encrypt(plaintext, peer_pubkey_hex, s->secret, &cipher, &err) != 0 || !cipher) {
+    nostr_secure_buf sb = secure_alloc(32);
+    if (!sb.ptr || parse_sk32(s->secret, (unsigned char*)sb.ptr) != 0) { if (sb.ptr) secure_free(&sb); return -1; }
+    if (nostr_nip04_encrypt_secure(plaintext, peer_pubkey_hex, &sb, &cipher, &err) != 0 || !cipher) {
+        secure_free(&sb);
         if (err) free(err);
         return -1;
     }
+    secure_free(&sb);
     *out_ciphertext = cipher;
     return 0;
 }
@@ -219,10 +229,14 @@ int nostr_nip46_client_nip04_decrypt(NostrNip46Session *s, const char *peer_pubk
     if (!s || !peer_pubkey_hex || !ciphertext || !out_plaintext) return -1;
     if (!s->secret) return -1;
     char *plain = NULL; char *err = NULL;
-    if (nostr_nip04_decrypt(ciphertext, peer_pubkey_hex, s->secret, &plain, &err) != 0 || !plain) {
+    nostr_secure_buf sb = secure_alloc(32);
+    if (!sb.ptr || parse_sk32(s->secret, (unsigned char*)sb.ptr) != 0) { if (sb.ptr) secure_free(&sb); return -1; }
+    if (nostr_nip04_decrypt_secure(ciphertext, peer_pubkey_hex, &sb, &plain, &err) != 0 || !plain) {
+        secure_free(&sb);
         if (err) free(err);
         return -1;
     }
+    secure_free(&sb);
     *out_plaintext = plain;
     return 0;
 }
@@ -234,11 +248,12 @@ int nostr_nip46_client_nip44_encrypt(NostrNip46Session *s, const char *peer_pubk
     unsigned char sk[32];
     if (parse_sk32(s->secret, sk) != 0) return -1;
     unsigned char pkx[32];
-    if (parse_peer_xonly32(peer_pubkey_hex, pkx) != 0) return -1;
+    if (parse_peer_xonly32(peer_pubkey_hex, pkx) != 0) { secure_wipe(sk, sizeof sk); return -1; }
     char *b64 = NULL;
     if (nostr_nip44_encrypt_v2(sk, pkx, (const uint8_t*)plaintext, strlen(plaintext), &b64) != 0 || !b64) {
-        return -1;
+        secure_wipe(sk, sizeof sk); return -1;
     }
+    secure_wipe(sk, sizeof sk);
     *out_ciphertext = b64;
     return 0;
 }
@@ -249,11 +264,12 @@ int nostr_nip46_client_nip44_decrypt(NostrNip46Session *s, const char *peer_pubk
     unsigned char sk[32];
     if (parse_sk32(s->secret, sk) != 0) return -1;
     unsigned char peer_x[32];
-    if (parse_peer_xonly32(peer_pubkey_hex, peer_x) != 0) return -1;
+    if (parse_peer_xonly32(peer_pubkey_hex, peer_x) != 0) { secure_wipe(sk, sizeof sk); return -1; }
     uint8_t *plain = NULL; size_t plain_len = 0;
     if (nostr_nip44_decrypt_v2(sk, peer_x, ciphertext, &plain, &plain_len) != 0 || !plain) {
-        return -1;
+        secure_wipe(sk, sizeof sk); return -1;
     }
+    secure_wipe(sk, sizeof sk);
     /* Ensure NUL-terminated C-string for convenience */
     char *out = (char*)malloc(plain_len + 1);
     if (!out) { free(plain); return -1; }
@@ -334,13 +350,17 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
 
     /* 1) Decrypt NIP-04 */
     char *plain = NULL; char *err = NULL;
-    if (nostr_nip04_decrypt(ciphertext, client_pubkey_hex, s->secret, &plain, &err) != 0 || !plain) {
+    nostr_secure_buf sb = secure_alloc(32);
+    if (!sb.ptr || parse_sk32(s->secret, (unsigned char*)sb.ptr) != 0) { if (sb.ptr) secure_free(&sb); return -1; }
+    if (nostr_nip04_decrypt_secure(ciphertext, client_pubkey_hex, &sb, &plain, &err) != 0 || !plain) {
+        secure_free(&sb);
         if (getenv("NOSTR_DEBUG")) {
             fprintf(stderr, "[nip46] decrypt failed: %s\n", err ? err : "(no error)" );
         }
         if (err) free(err);
         return -1;
     }
+    secure_free(&sb);
     if (getenv("NOSTR_DEBUG")) {
         fprintf(stderr, "[nip46] decrypted request: %s\n", plain);
     }
@@ -404,9 +424,14 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
                 }
                 nostr_event_set_pubkey(ev, bunker_pk_x);
                 free(bunker_pk_x);
-                if (nostr_event_sign(ev, s->secret) != 0) {
+                /* sign with secure key */
+                nostr_secure_buf sb2 = secure_alloc(32);
+                if (!sb2.ptr || parse_sk32(s->secret, (unsigned char*)sb2.ptr) != 0) { if (sb2.ptr) secure_free(&sb2); nostr_event_free(ev); nostr_nip46_request_free(&req); free(plain); return -1; }
+                if (nostr_event_sign_secure(ev, &sb2) != 0) {
+                    secure_free(&sb2);
                     reply_json = nostr_nip46_response_build_err(req.id, "signing_failed");
                 } else {
+                    secure_free(&sb2);
                     char *signed_json = nostr_event_serialize(ev);
                     if (!signed_json) {
                         reply_json = nostr_nip46_response_build_err(req.id, "serialize_failed");
@@ -456,10 +481,16 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
     /* 4) Encrypt reply */
     char *cipher = NULL; char *e2 = NULL;
     int rc = -1;
-    if (reply_json && nostr_nip04_encrypt(reply_json, client_pubkey_hex, s->secret, &cipher, &e2) == 0 && cipher) {
-        *out_cipher_reply = cipher;
-        rc = 0;
+    if (reply_json) {
+        nostr_secure_buf sb3 = secure_alloc(32);
+        if (sb3.ptr && parse_sk32(s->secret, (unsigned char*)sb3.ptr) == 0) {
+            if (nostr_nip04_encrypt_secure(reply_json, client_pubkey_hex, &sb3, &cipher, &e2) == 0 && cipher) {
+                rc = 0;
+            }
+        }
+        secure_free(&sb3);
     }
+    if (rc == 0) { *out_cipher_reply = cipher; }
     if (rc != 0 && getenv("NOSTR_DEBUG")) {
         fprintf(stderr, "[nip46] encrypt failed: %s\n", e2 ? e2 : "(no error)" );
     }

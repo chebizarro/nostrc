@@ -89,6 +89,8 @@ if (GIO_FOUND)
   target_include_directories(nostr_nip55l_glib PUBLIC ${NIP55L_INC})
   target_compile_definitions(nostr_nip55l_glib PRIVATE -DNIP55L_HAVE_GIO)
   target_link_libraries(nostr_nip55l_glib PUBLIC nostr_nip55l_core PkgConfig::GIO)
+  # Ensure NIP-04 secure functions are available to executables linking the GLib target
+  target_link_libraries(nostr_nip55l_glib PUBLIC nip04)
 
   add_executable(nostr-signer-daemon ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/daemon_main.c)
   target_link_libraries(nostr-signer-daemon PRIVATE nostr_nip55l_glib PkgConfig::GIO)
