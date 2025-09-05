@@ -44,6 +44,8 @@ set(LIBNOSTR_SOURCES
   src/relay_store.c
   src/utils.c
   src/simplepool.c
+  src/secure_buf.c
+  src/rate_limiter.c
   # Pluggable storage interface (Phase A: registry + stubs)
   src/store/registry.c
   src/store/store.c
