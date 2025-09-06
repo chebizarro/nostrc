@@ -4,7 +4,7 @@
 /* GLib-friendly public accessors for Envelope and subtypes. */
 
 #include <stdbool.h>
-#include "nostr-envelope.h"
+#include "nostr-event.h"
 #include "nostr-filter.h"
 
 #ifdef __cplusplus

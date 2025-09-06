@@ -84,6 +84,7 @@ add_executable(test_json_int_array test_json_int_array.c)
 add_executable(test_json_raw test_json_raw.c)
 add_executable(test_filters_move_semantics test_filters_move_semantics.c)
 add_executable(microbench_json microbench_json.c)
+add_executable(test_nip86_policy test_nip86_policy.c)
 
 # Link OpenSSL, libsecp256k1, nsync, and project libraries
 target_link_libraries(test_nostr PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
@@ -108,6 +109,8 @@ target_link_libraries(test_json_int_array PRIVATE libnostr ${NSYNC_LIB} nostr_js
 target_link_libraries(test_json_raw PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_link_libraries(test_filters_move_semantics PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_link_libraries(microbench_json PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+target_link_libraries(test_nip86_policy PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES} nip86)
+target_include_directories(test_nip86_policy PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/nips/nip86/include)
 
 # Apply sanitizers to tests if enabled
 apply_sanitizers(test_nostr)
@@ -271,6 +274,7 @@ add_test(NAME test_json_filter_fuzzlite COMMAND test_json_filter_fuzzlite)
 add_test(NAME test_json_int_array COMMAND test_json_int_array)
 add_test(NAME test_json_raw COMMAND test_json_raw)
 add_test(NAME test_filters_move_semantics COMMAND test_filters_move_semantics)
+add_test(NAME test_nip86_policy COMMAND test_nip86_policy)
 
 # Per-test timeouts (seconds) — keep tight to surface stalls early
 set_tests_properties(test_nostr PROPERTIES TIMEOUT 20)

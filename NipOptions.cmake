@@ -110,6 +110,11 @@ if(ENABLE_NIP53)
     add_subdirectory(nips/nip53)
 endif()
 
+option(ENABLE_NIP86 "Enable nip86 (Relay Management API)" ON)
+if(ENABLE_NIP86)
+    add_subdirectory(nips/nip86)
+endif()
+
 option(ENABLE_NIP54 "Enable nip54" OFF)
 if(ENABLE_NIP54)
     add_subdirectory(nips/nip54)

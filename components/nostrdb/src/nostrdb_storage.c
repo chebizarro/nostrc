@@ -81,7 +81,7 @@ static int build_ndb_filters(const NostrFilter *filters, size_t nfilters,
   *out_filters = arr;
   return 0;
 }
-static void* ndb_query(NostrStorage *st, const NostrFilter *filters, size_t nfilters,
+static void* ndb_query_storage(NostrStorage *st, const NostrFilter *filters, size_t nfilters,
                        size_t limit, uint64_t since, uint64_t until, int *err) {
   (void)since; (void)until;
   if (err) *err = 0;
@@ -210,7 +210,7 @@ static NostrStorageVTable g_vt = {
   .close = ndb_close,
   .put_event = ndb_put_event,
   .delete_event = ndb_delete_event,
-  .query = ndb_query,
+  .query = ndb_query_storage,
   .query_next = ndb_query_next,
   .query_free = ndb_query_free,
   .count = ndb_count,

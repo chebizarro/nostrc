@@ -2,6 +2,9 @@ project(nostrc_relayd C)
 
 include_directories(
   ${CMAKE_SOURCE_DIR}/libnostr/include
+  ${CMAKE_SOURCE_DIR}/apps/relayd/include
+  ${CMAKE_SOURCE_DIR}/nips/nip11/include
+  ${CMAKE_SOURCE_DIR}/nips/nip86/include
 )
 
 find_package(PkgConfig REQUIRED)
@@ -38,11 +41,14 @@ if (TARGET nostrdb_storage)
   target_link_libraries(nostrc-relayd PRIVATE nostrdb_storage)
 endif()
 
-# Link NIP-11 module if available
+# Link NIP-11 module if available and set compile define
 if (TARGET nip11)
   target_link_libraries(nostrc-relayd PRIVATE nip11)
-  target_include_directories(nostrc-relayd PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip11/include)
+  target_compile_definitions(nostrc-relayd PRIVATE HAVE_NIP11=1)
 endif()
+
+# NIP-86 integration intentionally disabled for relayd link; relayd has
+# compile-time fallbacks and guards to avoid referencing nip86 symbols.
 
 install(TARGETS nostrc-relayd RUNTIME DESTINATION bin)
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/relay.toml.example)

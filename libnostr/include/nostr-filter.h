@@ -7,16 +7,16 @@
 #include <stdbool.h>
 #include "nostr-timestamp.h"
 #include "nostr-tag.h"
-#include "nostr-filter.h" /* defines Filter, Filters and old function names */
+/* Note: do NOT include this header recursively. */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Provide canonical type names */
+/* Provide canonical type names (forward matches nostr-event.h) */
 typedef struct _NostrEvent NostrEvent; /* forward */
 
-typedef struct _NostrFilter {
+typedef struct NostrFilter {
     StringArray ids;
     IntArray kinds;
     StringArray authors;
@@ -28,7 +28,7 @@ typedef struct _NostrFilter {
     bool limit_zero;
 } NostrFilter;
 
-typedef struct _NostrFilters {
+typedef struct NostrFilters {
     NostrFilter *filters;
     size_t count;
     size_t capacity;

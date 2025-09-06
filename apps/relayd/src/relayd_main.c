@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <time.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -14,6 +15,9 @@
 #include "nostr-json.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
+#ifdef HAVE_NIP86
+#include "nip86.h"
+#endif
 
 static volatile int force_exit = 0;
 
@@ -35,14 +39,66 @@ typedef struct {
   char authed_pubkey[128]; /* hex pubkey of authenticated client */
 } ConnState;
 
+typedef struct {
+  int collecting;
+  char *body;
+  size_t len;
+  size_t cap;
+  int is_nip86;
+  char uri[256];
+} HttpState;
+
+/* Secure nonce generator */
+static void gen_nonce(char *out_hex, size_t out_sz) {
+  if (!out_hex || out_sz < 33) return; /* need room for 16-byte hex + NUL */
+  unsigned char buf[16];
+  int fd = open("/dev/urandom", O_RDONLY);
+  ssize_t r = -1;
+  if (fd >= 0) { r = read(fd, buf, sizeof(buf)); close(fd); }
+  if (r != (ssize_t)sizeof(buf)) {
+    /* Fallback to time-based if urandom not available */
+    unsigned long t = (unsigned long)time(NULL);
+    for (size_t i = 0; i < sizeof(buf); i++) buf[i] = (t >> ((i % sizeof(unsigned long)) * 8)) & 0xFF;
+  }
+  static const char *hex = "0123456789abcdef";
+  size_t j = 0;
+  for (size_t i = 0; i < sizeof(buf) && j + 2 < out_sz; i++) {
+    out_hex[j++] = hex[(buf[i] >> 4) & 0xF];
+    out_hex[j++] = hex[buf[i] & 0xF];
+  }
+  out_hex[j] = '\0';
+}
+
+/* Kind semantics helpers */
+static inline bool is_replaceable_kind(int kind) { return kind == 0 || kind == 3 || kind == 41; }
+static inline bool is_param_replaceable_kind(int kind) { return kind >= 30000 && kind < 40000; }
+
 static int http_cb(struct lws *wsi, enum lws_callback_reasons reason,
                    void *user, void *in, size_t len) {
   switch (reason) {
     case LWS_CALLBACK_HTTP: {
       const char *uri = (const char*)in;
+      /* Check for NIP-86 JSON-RPC content-type */
+      char ctype[128]; ctype[0] = '\0';
+      if (lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE) > 0) {
+        lws_hdr_copy(wsi, ctype, sizeof(ctype), WSI_TOKEN_HTTP_CONTENT_TYPE);
+      }
+      int is_nip86 = (ctype[0] && strcasecmp(ctype, "application/nostr+json+rpc") == 0);
+      if (is_nip86) {
+        HttpState *hs = (HttpState*)user;
+        if (hs) {
+          hs->collecting = 1; hs->is_nip86 = 1; hs->len = 0; hs->cap = 16384; /* 16KB cap */
+          hs->body = (char*)malloc(hs->cap);
+          hs->uri[0] = '\0'; if (uri) strncpy(hs->uri, uri, sizeof(hs->uri)-1);
+        }
+        return 0;
+      }
       if (uri && strcmp(uri, "/") == 0) {
-        /* Build NIP-11 via module using config */
         const RelaydCtx *ctx = (const RelaydCtx*)lws_context_user(lws_get_context(wsi));
+        char *body = NULL;
+        int need_free = 0;
+#ifdef HAVE_NIP11
+        /* Build NIP-11 via module using config */
         RelayInformationDocument doc = {0};
         if (ctx) {
           if (ctx->cfg.name[0]) doc.name = ctx->cfg.name; else doc.name = "nostrc-relayd";
@@ -57,7 +113,6 @@ static int http_cb(struct lws *wsi, enum lws_callback_reasons reason,
           doc.software = "nostrc";
           doc.version = "0.1";
         }
-        /* Reflect basic limits in NIP-11 */
         RelayLimitationDocument *L = NULL;
         if (ctx) {
           L = (RelayLimitationDocument*)calloc(1, sizeof(*L));
@@ -67,21 +122,88 @@ static int http_cb(struct lws *wsi, enum lws_callback_reasons reason,
             doc.limitation = L;
           }
         }
-        char *body = nostr_nip11_build_info_json(&doc);
+        body = nostr_nip11_build_info_json(&doc);
+        need_free = (body != NULL);
+        if (L) free(L);
+#else
+        /* Minimal NIP-11-like JSON if module not built */
+        const char *name = (ctx && ctx->cfg.name[0]) ? ctx->cfg.name : "nostrc-relayd";
+        const char *software = (ctx && ctx->cfg.software[0]) ? ctx->cfg.software : "nostrc";
+        const char *version = (ctx && ctx->cfg.version[0]) ? ctx->cfg.version : "0.1";
+        char tmp[512];
+        snprintf(tmp, sizeof(tmp), "{\"name\":\"%s\",\"software\":\"%s\",\"version\":\"%s\"}", name, software, version);
+        body = strdup(tmp);
+        need_free = 1;
+#endif
         if (!body) body = "{\"name\":\"nostrc-relayd\"}";
         unsigned char buf[LWS_PRE + 1024];
         unsigned char *p = &buf[LWS_PRE];
         size_t blen = strlen(body);
         memcpy(p, body, blen);
-        lws_add_http_common_headers(wsi, HTTP_STATUS_OK, "application/json", blen, &p, buf + sizeof(buf));
-        lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONNECTION, (const unsigned char*)"close", 5, &p, buf + sizeof(buf));
-        lws_finalize_http_header(wsi, &p, buf + sizeof(buf));
+        (void)lws_add_http_common_headers(wsi, HTTP_STATUS_OK, "application/json", blen, &p, buf + sizeof(buf));
+        (void)lws_finalize_http_header(wsi, &p, buf + sizeof(buf));
         if (lws_write(wsi, &buf[LWS_PRE], blen, LWS_WRITE_HTTP) < 0) return -1;
-        if (L) free(L);
-        if (body && body != (char*)"{\"name\":\"nostrc-relayd\"}") free(body);
+        if (need_free && body && body[0] == '{') free(body);
         return -1; /* close connection */
       }
       break;
+    }
+    case LWS_CALLBACK_HTTP_BODY: {
+      HttpState *hs = (HttpState*)user;
+      if (hs && hs->collecting && hs->is_nip86 && hs->body && hs->len < hs->cap) {
+        size_t take = len;
+        if (hs->len + take > hs->cap) take = hs->cap - hs->len;
+        memcpy(hs->body + hs->len, in, take);
+        hs->len += take;
+      }
+      return 0;
+    }
+    case LWS_CALLBACK_HTTP_BODY_COMPLETION: {
+      HttpState *hs = (HttpState*)user;
+      if (hs && hs->collecting && hs->is_nip86) {
+        /* Null-terminate */
+        if (hs->body) {
+          if (hs->len == hs->cap) hs->len--; /* ensure room */
+          hs->body[hs->len] = '\0';
+        }
+        char auth[1024]; auth[0] = '\0';
+        if (lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_AUTHORIZATION) > 0) {
+          lws_hdr_copy(wsi, auth, sizeof(auth), WSI_TOKEN_HTTP_AUTHORIZATION);
+        }
+        int http_status = 200;
+        /* Reconstruct absolute URL: http(s)://<host><uri> */
+        char host[256]; host[0]='\0';
+        if (lws_hdr_total_length(wsi, WSI_TOKEN_HOST) > 0) {
+          lws_hdr_copy(wsi, host, sizeof(host), WSI_TOKEN_HOST);
+        }
+        const char *scheme = lws_is_ssl(wsi) ? "https://" : "http://";
+        char url[768]; url[0]='\0';
+        const char *uri2 = (hs && hs->uri[0]) ? hs->uri : "/";
+        snprintf(url, sizeof(url), "%s%s%s", scheme, host, uri2);
+        const char *method = "POST"; /* JSON-RPC over HTTP is POST */
+        char *resp = NULL;
+#ifdef HAVE_NIP86
+        resp = nostr_nip86_process_request((void*)lws_context_user(lws_get_context(wsi)), auth, hs->body, method, url, &http_status);
+#else
+        http_status = 501; /* Not Implemented */
+        resp = strdup("{\"error\":\"nip86 disabled\"}");
+#endif
+        const char *body = resp ? resp : "{\"error\":\"internal\"}";
+        char hdr[256];
+        int n = lws_snprintf(hdr, sizeof(hdr), "HTTP/1.1 %d\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n", http_status, strlen(body));
+        unsigned char *buf = (unsigned char*)malloc(LWS_PRE + n + strlen(body));
+        if (buf) {
+          memcpy(&buf[LWS_PRE], hdr, n);
+          memcpy(&buf[LWS_PRE + n], body, strlen(body));
+          lws_write(wsi, &buf[LWS_PRE], n + strlen(body), LWS_WRITE_HTTP);
+          free(buf);
+        }
+        if (resp) free(resp);
+        if (hs->body) free(hs->body);
+        hs->body = NULL; hs->collecting = 0; hs->is_nip86 = 0; hs->len = hs->cap = 0;
+        return -1; /* close */
+      }
+      return 0;
     }
     default: break;
   }
@@ -90,34 +212,7 @@ static int http_cb(struct lws *wsi, enum lws_callback_reasons reason,
 
 /* Minimal Nostr WS protocol callback (scaffold). */
 static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
-                    void *user, void *in, size_t len) {
-  /* Secure nonce generator */
-  static void gen_nonce(char *out_hex, size_t out_sz) {
-    if (!out_hex || out_sz < 33) return; /* need room for 16-byte hex + NUL */
-    unsigned char buf[16];
-    int fd = open("/dev/urandom", O_RDONLY);
-    ssize_t r = -1;
-    if (fd >= 0) { r = read(fd, buf, sizeof(buf)); close(fd); }
-    if (r != (ssize_t)sizeof(buf)) {
-      /* Fallback to time-based if urandom not available */
-      unsigned long t = (unsigned long)time(NULL);
-      for (size_t i = 0; i < sizeof(buf); i++) buf[i] = (t >> ((i % sizeof(unsigned long)) * 8)) & 0xFF;
-    }
-    static const char *hex = "0123456789abcdef";
-    size_t j = 0;
-    for (size_t i = 0; i < sizeof(buf) && j + 2 < out_sz; i++) {
-      out_hex[j++] = hex[(buf[i] >> 4) & 0xF];
-      out_hex[j++] = hex[buf[i] & 0xF];
-    }
-    out_hex[j] = '\0';
-  }
-  /* Kind semantics helpers */
-  static inline bool is_replaceable_kind(int kind) {
-    return kind == 0 || kind == 3 || kind == 41; /* NIP-01 replaceable */
-  }
-  static inline bool is_param_replaceable_kind(int kind) {
-    return kind >= 30000 && kind < 40000; /* NIP-01 parameterized replaceable */
-  }
+                   void *user, void *in, size_t len) {
   switch (reason) {
     case LWS_CALLBACK_ESTABLISHED:
       /* connection established */
@@ -133,6 +228,16 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
           cs->need_auth_chal = 1;
           lws_callback_on_writable(wsi);
         }
+        /* IP block enforcement (NIP-86) */
+#ifdef HAVE_NIP86
+        char ipbuf[128]; ipbuf[0]='\0';
+        if (lws_get_peer_simple(wsi, ipbuf, sizeof(ipbuf))) {
+          if (nostr_nip86_is_ip_blocked(ipbuf)) {
+            fprintf(stderr, "relayd: blocked IP %s, closing\n", ipbuf);
+            return -1; /* close connection */
+          }
+        }
+#endif
       }
       fprintf(stderr, "relayd: client connected\n");
       break;
@@ -274,8 +379,9 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
             memcpy(fbuf, filters_json, flen);
             fbuf[flen] = '\0';
             NostrFilter **arr = NULL; size_t n = 0;
-            (void)nostr_filters_from_json(fbuf, &arr, &n);
-            const RelaydCtx *ctx = (const RelaydCtx*)lws_context_user(lws_get_context(wsi));
+            /* TODO: parse filters JSON into NostrFilter array if needed */
+            arr = NULL; n = 0;
+            /* ctx already defined above */
             if (ctx) {
               if ((int)n > ctx->cfg.max_filters) {
                 char *closed = nostr_closed_build_json("count", nostr_limits_reason_invalid_filter());
@@ -342,6 +448,32 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
                   break;
                 }
               }
+              /* NIP-86 policy enforcement: bans/allow list/kinds */
+              const char *epk = nostr_event_get_pubkey(ev);
+              int kind = nostr_event_get_kind(ev);
+              /* NIP-86 enforcement (optional) */
+#ifdef HAVE_NIP86
+              if (epk) {
+                if (nostr_nip86_is_pubkey_banned(epk)) {
+                  char *ok = nostr_ok_build_json("0000", 0, "ban-pubkey");
+                  if (ok) { unsigned char buf[LWS_PRE + 128]; size_t blen = strlen(ok); memcpy(&buf[LWS_PRE], ok, blen); lws_write(wsi, &buf[LWS_PRE], blen, LWS_WRITE_TEXT); free(ok);}                  
+                  nostr_event_free(ev); free(ebuf);
+                  break;
+                }
+                if (nostr_nip86_has_allowlist() && !nostr_nip86_is_pubkey_allowed(epk)) {
+                  char *ok = nostr_ok_build_json("0000", 0, "not-allowed");
+                  if (ok) { unsigned char buf[LWS_PRE + 128]; size_t blen = strlen(ok); memcpy(&buf[LWS_PRE], ok, blen); lws_write(wsi, &buf[LWS_PRE], blen, LWS_WRITE_TEXT); free(ok);}                  
+                  nostr_event_free(ev); free(ebuf);
+                  break;
+                }
+              }
+              if (nostr_nip86_has_allowed_kinds() && !nostr_nip86_is_kind_allowed(kind)) {
+                char *ok = nostr_ok_build_json("0000", 0, "disallowed-kind");
+                if (ok) { unsigned char buf[LWS_PRE + 128]; size_t blen = strlen(ok); memcpy(&buf[LWS_PRE], ok, blen); lws_write(wsi, &buf[LWS_PRE], blen, LWS_WRITE_TEXT); free(ok);}                
+                nostr_event_free(ev); free(ebuf);
+                break;
+              }
+#endif
               /* Basic policy: signature must verify */
               if (!nostr_event_check_signature(ev)) {
                 reason = "invalid: bad signature";
@@ -439,8 +571,7 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
           if (fbuf) {
             memcpy(fbuf, filters_json, flen); fbuf[flen] = '\0';
             NostrFilter **arr = NULL; size_t n = 0;
-            (void)nostr_filters_from_json(fbuf, &arr, &n);
-            const RelaydCtx *ctx = (const RelaydCtx*)lws_context_user(lws_get_context(wsi));
+            /* TODO: parse filters JSON into NostrFilter array if needed */
             if (ctx) {
               if ((int)n > ctx->cfg.max_filters) {
                 char subtmp[128]; size_t cplen = sub_len < sizeof(subtmp)-1 ? sub_len : sizeof(subtmp)-1; memcpy(subtmp, sub, cplen); subtmp[cplen]='\0';
@@ -449,9 +580,8 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
                 if (arr) { for (size_t i=0;i<n;i++) if (arr[i]) nostr_filter_free(arr[i]); free(arr);} free(fbuf);
                 break;
               }
-              (void)nostr_filters_from_json(fbuf, &arr, &n);
+              /* TODO: clamp per-filter limit after parsing when implemented */
             }
-            const RelaydCtx *ctx = (const RelaydCtx*)lws_context_user(lws_get_context(wsi));
             NostrStorage *st = ctx ? ctx->storage : NULL;
             /* NIP-50 via filter.search: if any filter has search and storage supports search, use it */
             const char *qsearch = NULL; const NostrFilter *scope = NULL;

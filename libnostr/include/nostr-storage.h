@@ -9,7 +9,7 @@ extern "C" {
 #include <stdint.h>
 
 /* Forward decls */
-typedef struct NostrEvent NostrEvent;
+typedef struct _NostrEvent NostrEvent;
 typedef struct NostrFilter NostrFilter;
 
 typedef struct NostrStorage NostrStorage;
