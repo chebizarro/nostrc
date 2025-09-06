@@ -25,6 +25,7 @@ if (NOT GTK4_FOUND OR NOT GLIB_FOUND)
 endif()
 
 add_subdirectory(relayctl)
+add_subdirectory(grelay)
 if (GTK4_FOUND AND GLIB_FOUND)
   add_subdirectory(gnostr-signer)
   add_subdirectory(gnostr)

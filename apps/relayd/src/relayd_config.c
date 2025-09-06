@@ -31,6 +31,8 @@ static void apply_defaults(RelaydConfig *cfg){
   cfg->max_filters = 10;
   cfg->max_limit = 500;
   cfg->max_subs = 1;
+  cfg->rate_ops_per_sec = 20;
+  cfg->rate_burst = 40;
   cfg->negentropy_enabled = 0;
   snprintf(cfg->name, sizeof(cfg->name), "%s", "nostrc-relayd");
   snprintf(cfg->software, sizeof(cfg->software), "%s", "nostrc");
@@ -70,6 +72,8 @@ int relayd_config_load(const char *path, RelaydConfig *out){
     else if(strcmp(key, "description")==0){ snprintf(out->description, sizeof(out->description), "%s", val); }
     else if(strcmp(key, "contact")==0){ snprintf(out->contact, sizeof(out->contact), "%s", val); }
     else if(strcmp(key, "auth")==0){ snprintf(out->auth, sizeof(out->auth), "%s", val); }
+    else if(strcmp(key, "rate_ops_per_sec")==0){ out->rate_ops_per_sec = atoi(val); }
+    else if(strcmp(key, "rate_burst")==0){ out->rate_burst = atoi(val); }
     else if(strcmp(key, "negentropy_enabled")==0){ out->negentropy_enabled = atoi(val); }
   }
   fclose(f);

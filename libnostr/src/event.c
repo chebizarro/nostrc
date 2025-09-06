@@ -8,6 +8,7 @@
 #include <openssl/sha.h>
 #include <secp256k1.h>
 #include <secp256k1_schnorrsig.h>
+#include <secp256k1_extrakeys.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,6 +47,18 @@ int nostr_event_sign_secure(NostrEvent *event, const nostr_secure_buf *sk) {
     if (secp256k1_keypair_create(ctx, &keypair, seckey) != 1) {
         goto cleanup;
     }
+    /* Derive x-only pubkey and set event->pubkey if not already set */
+    {
+        secp256k1_xonly_pubkey xpk;
+        if (secp256k1_keypair_xonly_pub(ctx, &xpk, NULL, &keypair) == 1) {
+            unsigned char x32[32];
+            if (secp256k1_xonly_pubkey_serialize(ctx, x32, &xpk) == 1) {
+                if (event->pubkey) { free(event->pubkey); event->pubkey = NULL; }
+                event->pubkey = nostr_bin2hex(x32, 32);
+                if (!event->pubkey) goto cleanup;
+            }
+        }
+    }
     unsigned char auxiliary_rand[32];
     if (RAND_bytes(auxiliary_rand, sizeof(auxiliary_rand)) != 1) {
         goto cleanup;
@@ -56,7 +69,9 @@ int nostr_event_sign_secure(NostrEvent *event, const nostr_secure_buf *sk) {
     }
     event->sig = nostr_bin2hex(sig_bin, 64);
     if (!event->sig) goto cleanup;
-    event->id = nostr_event_get_id(event);
+    /* Set id to the same message hash used for signing */
+    if (event->id) { free(event->id); event->id = NULL; }
+    event->id = nostr_bin2hex(hash, 32);
     return_val = 0;
 cleanup:
     /* Best-effort wipe of local secret material */
@@ -564,6 +579,23 @@ int nostr_event_sign(NostrEvent *event, const char *private_key) {
         return -1;
     }
 
+    /* Derive x-only pubkey and set event->pubkey */
+    {
+        secp256k1_xonly_pubkey xpk;
+        if (secp256k1_keypair_xonly_pub(ctx, &xpk, NULL, &keypair) != 1) {
+            secp256k1_context_destroy(ctx);
+            return -1;
+        }
+        unsigned char x32[32];
+        if (secp256k1_xonly_pubkey_serialize(ctx, x32, &xpk) != 1) {
+            secp256k1_context_destroy(ctx);
+            return -1;
+        }
+        if (event->pubkey) { free(event->pubkey); event->pubkey = NULL; }
+        event->pubkey = nostr_bin2hex(x32, 32);
+        if (!event->pubkey) { secp256k1_context_destroy(ctx); return -1; }
+    }
+
     // Generate 32 bytes of randomness for Schnorr signing
     if (RAND_bytes(auxiliary_rand, sizeof(auxiliary_rand)) != 1) {
         fprintf(stderr, "Failed to generate random bytes\n");
@@ -581,8 +613,9 @@ int nostr_event_sign(NostrEvent *event, const char *private_key) {
     event->sig = nostr_bin2hex(sig_bin, 64);
     if (!event->sig) { secp256k1_context_destroy(ctx); return -1; }
 
-    // Generate and set the event ID
-    event->id = nostr_event_get_id(event);
+    // Set the event ID to the same message hash used for signing
+    if (event->id) { free(event->id); event->id = NULL; }
+    event->id = nostr_bin2hex(hash, 32);
 
     return_val = 0;
 

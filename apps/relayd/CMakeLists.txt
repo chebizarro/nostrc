@@ -19,6 +19,15 @@ include_directories(${NSYNC_INCLUDE_DIR})
 add_executable(nostrc-relayd
   src/relayd_main.c
   src/relayd_config.c
+  src/protocol_nip01.c
+  src/protocol_nip45.c
+  src/protocol_nip11.c
+  src/protocol_nip42.c
+  src/protocol_nip50.c
+  src/protocol_nip77.c
+  src/rate_limit.c
+  src/retention.c
+  src/metrics.c
 )
 
 target_include_directories(nostrc-relayd PRIVATE ${LWS_INCLUDE_DIRS})

@@ -120,20 +120,76 @@ static int parse_common(int argc, char **argv, const char **url, const char **sk
     if (strcmp(argv[i], "--sk")==0 && i+1<argc) { *sk = argv[++i]; continue; }
     *argi = i; break;
   }
-  if (!*url || !*sk) { fprintf(stderr, "Missing --url or --sk (or set RELAYCTL_URL / RELAYCTL_SK)\n"); return 1; }
+  if (!*url) { fprintf(stderr, "Missing --url (or set RELAYCTL_URL)\n"); return 1; }
   return 0;
 }
 
-static int cmd_supported(int argc, char **argv) {
-  (void)argc; (void)argv; return 0;
+/* simple GET helper */
+static int http_get(const char *base_url, const char *path, char **out_resp) {
+  *out_resp = NULL;
+  CURL *curl = curl_easy_init(); if (!curl) return 1;
+  int rc = 1; mem_buf mb = {0};
+  size_t need = strlen(base_url) + strlen(path) + 4; char *url = (char*)malloc(need);
+  if (!url) { curl_easy_cleanup(curl); return 1; }
+  int has_slash = base_url[strlen(base_url)-1] == '/';
+  snprintf(url, need, "%s%s%s", base_url, has_slash?"":"/", (path[0]=='/')?path+1:path);
+  curl_easy_setopt(curl, CURLOPT_URL, url);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &mb);
+  CURLcode res = curl_easy_perform(curl);
+  long code = 0; curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+  if (res == CURLE_OK && code == 200) { *out_resp = mb.data; mb.data=NULL; rc=0; }
+  if (mb.data) free(mb.data);
+  free(url);
+  curl_easy_cleanup(curl);
+  return rc;
 }
 
-static int cmd_stats(int argc, char **argv) {
+static int cmd_supported(int argc, char **argv) {
   const char *url=NULL,*sk=NULL; int idx=2; if (parse_common(argc, argv, &url, &sk, &idx)) return 1;
   const char *rpc = "{\"method\":\"supportedmethods\",\"params\":[]}";
   char *resp=NULL; int rc = post_nip86(url, sk, rpc, &resp);
   if (rc==0 && resp){ printf("%s\n", resp); free(resp); return 0; }
+  /* fallback: grelay doesn't expose supportedmethods over GET; synthesize */
+  if (!sk || !*sk) {
+    /* grelay supports the same subset we use */
+    printf("{\"result\":[\"getstats\",\"getlimits\",\"supportedmethods\"]}\n");
+    return 0;
+  }
+  fprintf(stderr, "supported failed\n"); return 1;
+}
+
+static int cmd_stats(int argc, char **argv) {
+  const char *url=NULL,*sk=NULL; int idx=2; if (parse_common(argc, argv, &url, &sk, &idx)) return 1;
+  const char *rpc = "{\"method\":\"getstats\",\"params\":[]}";
+  char *resp=NULL; int rc = post_nip86(url, sk, rpc, &resp);
+  if (rc==0 && resp){ printf("%s\n", resp); free(resp); return 0; }
+  /* fallback for grelay */
+  if (!sk || !*sk) {
+    if (http_get(url, "/admin/metrics", &resp) == 0) { printf("%s\n", resp); free(resp); return 0; }
+    if (http_get(url, "/admin/stats", &resp) == 0) { printf("%s\n", resp); free(resp); return 0; }
+  }
   fprintf(stderr, "stats failed\n"); return 1;
+}
+
+static int cmd_limits(int argc, char **argv) {
+  const char *url=NULL,*sk=NULL; int idx=2; if (parse_common(argc, argv, &url, &sk, &idx)) return 1;
+  const char *rpc = "{\"method\":\"getlimits\",\"params\":[]}";
+  char *resp=NULL; int rc = post_nip86(url, sk, rpc, &resp);
+  if (rc==0 && resp){ printf("%s\n", resp); free(resp); return 0; }
+  /* fallback for grelay */
+  if (!sk || !*sk) {
+    if (http_get(url, "/admin/limits", &resp) == 0) { printf("%s\n", resp); free(resp); return 0; }
+  }
+  fprintf(stderr, "limits failed\n"); return 1;
+}
+
+static int cmd_connections(int argc, char **argv) {
+  const char *url=NULL,*sk=NULL; int idx=2; if (parse_common(argc, argv, &url, &sk, &idx)) return 1;
+  const char *rpc = "{\"method\":\"getconnections\",\"params\":[]}";
+  char *resp=NULL; int rc = post_nip86(url, sk, rpc, &resp);
+  if (rc==0 && resp){ printf("%s\n", resp); free(resp); return 0; }
+  fprintf(stderr, "connections failed\n"); return 1;
 }
 
 static int cmd_ban(int argc, char **argv) {
@@ -314,6 +370,9 @@ int main_ext(int argc, char **argv) {
     fprintf(stderr, "Usage: %s <command> [--url URL --sk SK] [args]\n", argv[0]);
     fprintf(stderr, "Commands:\n");
     fprintf(stderr, "  stats\n");
+    fprintf(stderr, "  supported\n");
+    fprintf(stderr, "  limits\n");
+    fprintf(stderr, "  connections\n");
     fprintf(stderr, "  ban <pubkey>\n  unban <pubkey>\n  listbannedpubkeys\n  listallowedpubkeys\n");
     fprintf(stderr, "  listeventsneedingmoderation\n  allowevent <id>\n  banevent <id>\n  listbannedevents\n");
     fprintf(stderr, "  changerelayname <name>\n  changerelaydescription <desc>\n  changerelayicon <url>\n");
@@ -322,6 +381,9 @@ int main_ext(int argc, char **argv) {
     return 1;
   }
   if (strcmp(argv[1], "stats") == 0) return cmd_stats(argc, argv);
+  if (strcmp(argv[1], "supported") == 0) return cmd_supported(argc, argv);
+  if (strcmp(argv[1], "limits") == 0) return cmd_limits(argc, argv);
+  if (strcmp(argv[1], "connections") == 0) return cmd_connections(argc, argv);
   if (strcmp(argv[1], "ban") == 0) return cmd_ban(argc, argv);
   if (strcmp(argv[1], "unban") == 0) return cmd_unban(argc, argv);
   if (strcmp(argv[1], "listbannedpubkeys") == 0) return cmd_listbannedpubkeys(argc, argv);

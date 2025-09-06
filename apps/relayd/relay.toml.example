@@ -26,6 +26,11 @@ max_filters = 10
 max_limit = 500
 max_subs = 1
 
+# Rate limiting
+# tokens per second (approximate) and burst size
+rate_ops_per_sec = 20
+rate_burst = 40
+
 # Feature flags
 # Enable NIP-77 Negentropy (experimental)
 negentropy_enabled = 0

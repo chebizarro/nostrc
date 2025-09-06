@@ -167,6 +167,28 @@ static int nip98_verify(const char *auth_header, const char *method, const char 
   if (nostr_event_deserialize_compact(ev, (const char*)out)) ok = 1; else ok = (nostr_event_deserialize(ev, (const char*)out) == 0);
   free(out);
   if (!ok) { nostr_event_free(ev); return 0; }
+  /* If pubkey missing due to compact-path miss, try to extract manually */
+  if (!nostr_event_get_pubkey(ev)) {
+    const char *json = (const char*)out; /* out was freed; re-decode if needed */
+    /* We no longer have 'out' here; reserialize compact to buffer and scan */
+    char *tmpj = nostr_event_serialize_compact(ev);
+    if (!tmpj) tmpj = nostr_event_serialize(ev);
+    if (tmpj) {
+      const char *p = strstr(tmpj, "\"pubkey\"\s*:\s*\"");
+      if (p) {
+        p = strchr(p, '"'); if (p) { p = strchr(p+1, '"'); if (p) { p++; }}
+      }
+      if (p) {
+        const char *q = strchr(p, '"');
+        if (q && q > p && (q - p) <= 128) {
+          size_t L = (size_t)(q - p);
+          char *pk = (char*)malloc(L + 1);
+          if (pk) { memcpy(pk, p, L); pk[L] = '\0'; nostr_event_set_pubkey(ev, pk); free(pk); }
+        }
+      }
+      free(tmpj);
+    }
+  }
   if (nostr_event_get_kind(ev) != 27235) { nostr_event_free(ev); return 0; }
   time_t now = time(NULL);
   long dt = (long)(now - (time_t)nostr_event_get_created_at(ev));

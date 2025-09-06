@@ -24,7 +24,7 @@
 // 5) Cleanly close
 
 static void print_usage(const char *prog) {
-    fprintf(stderr, "Usage: %s [relay_url] [--timeout ms] [--limit n] [--since epoch_secs] [--kinds list] [--authors list] [--raw] [--count] [--multi[=kinds]] [--debug-filter]\n", prog);
+    fprintf(stderr, "Usage: %s [relay_url] [--timeout ms] [--limit n] [--since epoch_secs] [--kinds list] [--authors list] [--raw] [--count] [--multi[=kinds]] [--debug-filter] [--publish text] [--sk hex]\n", prog);
     fprintf(stderr, "  kinds: comma-separated ints (e.g., 1,30023)\n");
     fprintf(stderr, "  authors: comma-separated hex pubkeys\n");
     fprintf(stderr, "  --since: absolute Unix epoch seconds (e.g., 1742062112)\n");
@@ -39,6 +39,8 @@ int main(int argc, char **argv) {
     int do_count = 0;
     int do_multi = 0;
     int debug_filter = 0;
+    const char *publish_text = NULL;
+    const char *sk_hex = NULL;
     IntArray multi_kinds = {0};
     if (argc > 1 && strncmp(argv[1], "--", 2) != 0) {
         url = argv[1];
@@ -142,6 +144,10 @@ int main(int argc, char **argv) {
                 }
                 free(tmp);
             }
+        } else if (strcmp(arg, "--publish") == 0 && i + 1 < argc) {
+            publish_text = argv[++i];
+        } else if (strcmp(arg, "--sk") == 0 && i + 1 < argc) {
+            sk_hex = argv[++i];
         } else if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -192,6 +198,65 @@ int main(int argc, char **argv) {
             fprintf(stderr, "[relay_smoke] Filter JSON: %s\n", fs);
             free(fs);
         }
+    }
+
+    // Optional publish demo: send a note before subscribing
+    if (publish_text) {
+        if (!sk_hex) sk_hex = getenv("RELAY_SMOKE_SK");
+        if (!sk_hex) {
+            // Test key (DO NOT use in production)
+            sk_hex = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        }
+        NostrEvent *pev = nostr_event_new();
+        nostr_event_set_kind(pev, 1);
+        nostr_event_set_created_at(pev, (int64_t)time(NULL));
+        nostr_event_set_content(pev, publish_text);
+        if (nostr_event_sign(pev, sk_hex) != 0) {
+            fprintf(stderr, "[relay_smoke] sign failed; skipping publish\n");
+        } else {
+            Error *perr = NULL;
+            char *eid = nostr_event_get_id(pev);
+            if (eid) fprintf(stderr, "[relay_smoke] event id: %.16s...\n", eid);
+            int was_raw = enable_raw;
+            GoChannel *tmp_raw = NULL;
+            if (!enable_raw) {
+                nostr_relay_enable_debug_raw(relay, 1);
+                tmp_raw = nostr_relay_get_debug_raw_channel(relay);
+            }
+            if (!nostr_relay_publish(relay, ctx, pev, &perr) || perr) {
+                fprintf(stderr, "[relay_smoke] publish failed: %s\n", perr ? perr->message : "unknown");
+                if (perr) free_error(perr);
+            } else {
+                fprintf(stderr, "[relay_smoke] published note: %.48s...\n", publish_text);
+                // Await an OK/CLOSED debug line briefly to confirm server ack
+                GoChannel *ok_raw = was_raw ? raw_msgs : tmp_raw;
+                if (ok_raw) {
+                    Ticker *pt = create_ticker(1500);
+                    for (;;) {
+                        char *raw = NULL; int got = 0;
+                        GoSelectCase cases[] = {
+                            (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ok_raw, .value = NULL, .recv_buf = (void **)&raw },
+                            (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = pt->c, .value = NULL, .recv_buf = NULL },
+                        };
+                        int idx = go_select(cases, 2);
+                        if (idx == 0 && raw) {
+                            // Raw strings are concise; print and check for OK/CLOSED with id prefix if known
+                            printf("DBG: %s\n", raw);
+                            free(raw);
+                            got = 1; // continue to drain within window
+                        } else {
+                            stop_ticker(pt); pt = NULL; break;
+                        }
+                        (void)got;
+                    }
+                }
+            }
+            if (!was_raw) {
+                nostr_relay_enable_debug_raw(relay, 0);
+            }
+            if (eid) free(eid);
+        }
+        nostr_event_free(pev);
     }
 
     // Optional COUNT demo using the first filter

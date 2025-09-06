@@ -21,6 +21,9 @@ typedef struct {
   int max_filters;   /* maximum filters per REQ/COUNT */
   int max_limit;     /* maximum limit per filter */
   int max_subs;      /* maximum concurrent subscriptions per connection */
+  /* Rate limiting */
+  int rate_ops_per_sec; /* tokens per second */
+  int rate_burst;       /* max tokens */
   /* NIP-11 identity/metadata */
   char name[RELAYD_MAX_STR];
   char software[RELAYD_MAX_STR];
