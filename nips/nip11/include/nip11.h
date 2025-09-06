@@ -68,4 +68,7 @@ RelayInformationDocument* nostr_nip11_parse_info(const char *json);
 
 void nostr_nip11_free_info(RelayInformationDocument *info);
 
+/* Build a NIP-11 JSON document from the provided RelayInformationDocument. */
+char *nostr_nip11_build_info_json(const RelayInformationDocument *info);
+
 #endif // NOSTR_NIP11_H

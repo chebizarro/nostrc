@@ -65,6 +65,11 @@ if(ENABLE_NIP42)
     add_subdirectory(nips/nip42)
 endif()
 
+option(ENABLE_NIP45 "Enable nip45" ON)
+if(ENABLE_NIP45)
+    add_subdirectory(nips/nip45)
+endif()
+
 option(ENABLE_NIP44 "Enable nip44" ON)
 if(ENABLE_NIP44)
     add_subdirectory(nips/nip44)
@@ -133,5 +138,11 @@ option(WITH_NIP77_GLIB "Build GLib wrapper for NIP-77" OFF)
 option(WITH_NIP77_NOSTRDB "Enable nostrdb backend for NIP-77" ON)
 if(WITH_NIP77)
     add_subdirectory(nips/nip77)
+endif()
+
+# NIP-50 Search (optional)
+option(ENABLE_NIP50 "Enable nip50 (Search)" ON)
+if(ENABLE_NIP50)
+    add_subdirectory(nips/nip50)
 endif()
 

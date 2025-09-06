@@ -1,3 +1,16 @@
+# Feature toggles
+option(WITH_NOSTRDB "Build nostrdb storage component" ON)
+
+# Subprojects
+if (WITH_NOSTRDB)
+  if (EXISTS ${CMAKE_SOURCE_DIR}/components/nostrdb/CMakeLists.txt)
+    add_subdirectory(components/nostrdb)
+  endif()
+endif()
+
+if (EXISTS ${CMAKE_SOURCE_DIR}/apps/relayd/CMakeLists.txt)
+  add_subdirectory(apps/relayd)
+endif()
 # Global hardening flags (GCC/Clang); keep portable and avoid breaking MSVC
 if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-fstack-protector-strong -D_FORTIFY_SOURCE=2 -fno-strict-aliasing)

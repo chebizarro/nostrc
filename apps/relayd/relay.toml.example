@@ -1,0 +1,27 @@
+# nostrc-relayd example configuration
+# Minimal inline TOML-like format parsed by relayd_config.c
+
+# Listen address (host:port)
+listen = "127.0.0.1:4848"
+
+# Storage driver name (requires component linked at build time)
+storage_driver = "nostrdb"
+
+# Identity (NIP-11)
+name = "nostrc-relayd"
+software = "nostrc"
+version = "0.1"
+# Optional fields
+# description = "Your relay description"
+# contact = "mailto:admin@example.com"
+
+# Auth mode: off|optional|required (NIP-42)
+auth = "off"
+
+# Supported NIPs exposed via NIP-11 (adjust per build flags)
+supported_nips = [1, 11, 42, 45]
+
+# Limits advertised (NIP-11) and enforced at runtime
+max_filters = 10
+max_limit = 500
+max_subs = 1

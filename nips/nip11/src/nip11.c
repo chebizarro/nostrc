@@ -21,6 +21,69 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
     return total;
 }
 
+/* Build a minimal NIP-11 JSON from an in-memory document. Caller must free. */
+char *nostr_nip11_build_info_json(const RelayInformationDocument *info) {
+    if (!info) return NULL;
+    /* Conservative buffer; for production, prefer libjson building. */
+    size_t cap = 2048;
+    char *out = (char*)malloc(cap);
+    if (!out) return NULL;
+    const char *name = info->name ? info->name : "";
+    const char *software = info->software ? info->software : "nostrc";
+    const char *version = info->version ? info->version : "0.1";
+    int nips_n = info->supported_nips_count;
+    /* Build supported_nips array string */
+    char nips[512]; size_t noff = 0; nips[0] = '\0';
+    if (info->supported_nips && nips_n > 0) {
+        noff += (size_t)snprintf(nips+noff, sizeof(nips)-noff, "[");
+        for (int i = 0; i < nips_n; i++) {
+            noff += (size_t)snprintf(nips+noff, sizeof(nips)-noff, "%s%d", (i?",":""), info->supported_nips[i]);
+            if (noff >= sizeof(nips)) break;
+        }
+        (void)snprintf(nips+noff, sizeof(nips)-noff, "]");
+    } else {
+        (void)snprintf(nips, sizeof(nips), "[]");
+    }
+    /* Optionally include a minimal limitation object if present */
+    char lim[512]; lim[0] = '\0';
+    if (info->limitation) {
+        size_t loff = 0;
+        loff += (size_t)snprintf(lim+loff, sizeof(lim)-loff, ",\"limitation\":{");
+        int first = 1;
+        if (info->limitation->max_filters) {
+            loff += (size_t)snprintf(lim+loff, sizeof(lim)-loff, "%s\"max_filters\":%d", first?"":",", info->limitation->max_filters); first = 0;
+        }
+        if (info->limitation->max_limit) {
+            loff += (size_t)snprintf(lim+loff, sizeof(lim)-loff, "%s\"max_limit\":%d", first?"":",", info->limitation->max_limit); first = 0;
+        }
+        if (!first) (void)snprintf(lim+loff, sizeof(lim)-loff, "}"); else lim[0] = '\0';
+    }
+    /* Optional extra fields */
+    const char *desc = info->description ? info->description : NULL;
+    const char *contact = info->contact ? info->contact : NULL;
+    if (desc || contact) {
+        int n = snprintf(out, cap,
+            "{\"name\":\"%s\",\"software\":\"%s\",\"version\":\"%s\",\"supported_nips\":%s%s%s%s%s}",
+            name, software, version, nips, lim,
+            desc?",\"description\":\"":"", desc?desc:"",
+            contact?"\",\"contact\":\"":"");
+        if (n < 0 || (size_t)n >= cap) { free(out); return NULL; }
+        /* append contact if both set */
+        if (contact && desc) {
+            size_t cur = (size_t)n;
+            size_t left = cap - cur;
+            int m = snprintf(out+cur, left, "\"%s\"", contact);
+            if (m < 0 || (size_t)m >= left) { free(out); return NULL; }
+        }
+        return out;
+    }
+    int n = snprintf(out, cap,
+        "{\"name\":\"%s\",\"software\":\"%s\",\"version\":\"%s\",\"supported_nips\":%s%s}",
+        name, software, version, nips, lim);
+    if (n < 0 || (size_t)n >= cap) { free(out); return NULL; }
+    return out;
+}
+
 /* Parsing is implemented using libnostr JSON helpers (backend-agnostic). */
 
 static RelayInformationDocument *parse_json_to_doc(const char *json, const char *url_opt) {
