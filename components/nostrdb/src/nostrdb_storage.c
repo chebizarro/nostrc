@@ -118,19 +118,22 @@ static void* ndb_query_storage(NostrStorage *st, const NostrFilter *filters, siz
   struct ndb_filter *arr = NULL;
   int rc = build_ndb_filters(filters, nfilters, &arr);
   if (rc != 0) { if (err) *err = rc; ndb_end_query(&it->txn); free(it); return NULL; }
-  int count = 0;
-  /* First pass: count */
-  rc = ndb_query(&it->txn, arr, (int)nfilters, NULL, 0, &count);
-  if (!rc) { if (err) *err = -EIO; goto done; }
-  if (limit > 0 && count > (int)limit) count = (int)limit;
-  it->results = (struct ndb_query_result*)calloc(count > 0 ? count : 1, sizeof(struct ndb_query_result));
+  /* Single-pass with an initial capacity to avoid first-pass failures */
+  int capacity = 256;
+  if (limit > 0 && (int)limit < capacity) capacity = (int)limit;
+  it->results = (struct ndb_query_result*)calloc(capacity > 0 ? capacity : 1, sizeof(struct ndb_query_result));
   if (!it->results) { if (err) *err = -ENOMEM; goto done; }
-  it->count = count; it->index = 0;
-  if (count > 0) {
-    rc = ndb_query(&it->txn, arr, (int)nfilters, it->results, count, &count);
-    if (!rc) { if (err) *err = -EIO; goto done; }
-    it->count = count;
+  it->count = 0; it->index = 0;
+  int got = 0;
+  rc = ndb_query(&it->txn, arr, (int)nfilters, it->results, capacity, &got);
+  if (!rc) {
+    if (err) *err = -EIO;
+    /* Debug aid */
+    fprintf(stderr, "[nostrdb_storage] ndb_query failed for %zu filters\n", nfilters);
+    goto done;
   }
+  if (limit > 0 && got > (int)limit) got = (int)limit;
+  it->count = got;
 done:
   if (arr) {
     for (size_t i = 0; i < nfilters; i++) ndb_filter_destroy(&arr[i]);

@@ -9,10 +9,6 @@
 #include "nostr-storage.h"
 #include "nostr-relay-core.h"
 
-/* Minimal GApplication with libsoup WebSocket server scaffold.
- * TODO: bridge to NostrStorage, implement NIP-01/11/42/45/50 handlers.
- */
-
 typedef struct {
   GApplication parent_instance;
   struct lws_context *lws;
@@ -220,6 +216,19 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
         g_snprintf(body, sizeof(body),
           "{\"name\":\"%s\",\"software\":\"%s\",\"version\":\"%s\",\"supported_nips\":%s,\"auth\":\"%s\",\"contact\":null,\"description\":null,\"icon\":null,\"posting_policy\":null,\"limitation\":{\"max_filters\":%d,\"max_limit\":%d,\"max_subscriptions\":%d,\"rate_ops_per_sec\":%d,\"rate_burst\":%d}}",
           name, software, version, nips, app?app->auth:"off", app?app->max_filters:10, app?app->max_limit:500, app?app->max_subs:1, app?app->rate_ops_per_sec:20, app?app->rate_burst:40);
+        (void)lws_return_http_status(wsi, HTTP_STATUS_OK, body);
+        return 0;
+      } else if (strcmp(uri, "/healthz") == 0) {
+        /* Simple health: 200 OK and minimal text indicating storage state */
+        const char *state = (app && app->storage && app->storage->vt) ? "ok" : "degraded";
+        (void)lws_return_http_status(wsi, HTTP_STATUS_OK, state);
+        return 0;
+      } else if (strcmp(uri, "/admin/health") == 0) {
+        char body[256];
+        g_snprintf(body, sizeof(body),
+          "{\"storage\":%s,\"connections_current\":%llu}",
+          (app && app->storage && app->storage->vt) ? "true" : "false",
+          (unsigned long long)Gm.connections_current);
         (void)lws_return_http_status(wsi, HTTP_STATUS_OK, body);
         return 0;
       } else if (strcmp(uri, "/admin/stats") == 0) {
@@ -559,18 +568,21 @@ static void g_relay_app_class_init(GRelayAppClass *klass) {
 
 int main(int argc, char **argv) {
   /* Parse CLI for --port and --storage-driver */
-  guint port = 0; const char *driver = NULL;
+  guint port = 0; const char *driver = NULL; const char *storage_uri = NULL;
   for (int i=1;i<argc;i++) {
     if (g_strcmp0(argv[i], "--port") == 0 && i+1<argc) { port = (guint)atoi(argv[++i]); continue; }
+    if (g_strcmp0(argv[i], "--storage") == 0 && i+1<argc) { storage_uri = argv[++i]; continue; }
     if (g_strcmp0(argv[i], "--storage-driver") == 0 && i+1<argc) { driver = argv[++i]; continue; }
   }
+  /* Export CLI as GRELAY_* env so GApplication init picks them up */
+  if (port > 0) { char buf[16]; g_snprintf(buf, sizeof(buf), "%u", port); g_setenv("GRELAY_PORT", buf, TRUE); }
+  if (driver && *driver) { g_setenv("GRELAY_STORAGE_DRIVER", driver, TRUE); }
+  if (storage_uri && *storage_uri) { g_setenv("GRELAY_STORAGE_URI", storage_uri, TRUE); }
   GRelayApp *app = g_object_new(g_relay_app_get_type(),
                                 "application-id", "org.nostr.grelay",
                                 "flags", G_APPLICATION_HANDLES_COMMAND_LINE | G_APPLICATION_NON_UNIQUE,
                                 NULL);
   int status = g_application_run(G_APPLICATION(app), argc, argv);
-  /* Apply CLI overrides after init but before running server: not trivial with GApplication; recommend using env or GSettings. */
-  (void)port; (void)driver;
   g_object_unref(app);
   return status;
 }
