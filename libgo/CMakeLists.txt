@@ -48,7 +48,8 @@ endfunction()
 # Include the header files
 include_directories(include)
 # Also include libnostr public headers for metrics integration
-include_directories(${CMAKE_SOURCE_DIR}/libnostr/include)
+# Use path relative to this CMakeLists.txt so it works standalone and as a subdir
+include_directories(${CMAKE_CURRENT_LIST_DIR}/../libnostr/include)
 
 # Allow tuning of channel prefetch distance at compile time.
 # Default matches channel.c internal default when not defined.
@@ -77,7 +78,7 @@ enable_testing()
 # Build static library exposing public headers from `include/`.
 add_library(libgo ${LIBGO_SOURCES})
 
-target_include_directories(libgo PUBLIC include ${CMAKE_SOURCE_DIR}/libnostr/include)
+target_include_directories(libgo PUBLIC include ${CMAKE_CURRENT_LIST_DIR}/../libnostr/include)
 target_compile_definitions(libgo PUBLIC NOSTR_PREFETCH_DISTANCE=${NOSTR_PREFETCH_DISTANCE})
 target_compile_definitions(libgo PUBLIC NOSTR_CACHELINE=${NOSTR_CACHELINE})
 

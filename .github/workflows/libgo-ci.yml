@@ -165,7 +165,7 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y build-essential cmake ninja-build clang git libjansson-dev pkg-config libcurl4-openssl-dev
+          sudo apt-get install -y build-essential cmake ninja-build clang git libjansson-dev pkg-config libcurl4-openssl-dev libwebsockets-dev
           # Build nsync from source (fast, small)
           git clone --depth 1 https://github.com/google/nsync.git
           cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release
@@ -179,7 +179,7 @@ jobs:
         run: |
           brew update
           brew upgrade
-          brew install cmake ninja jansson pkg-config websockets curl || true
+          brew install cmake ninja jansson pkg-config libwebsockets curl || true
           if brew info nsync >/dev/null 2>&1; then
             brew install nsync || true
           else
