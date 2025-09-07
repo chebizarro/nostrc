@@ -396,7 +396,8 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json) {
         // otherwise, invalid separator
         return 0;
     }
-
+    (void)have_kind;
+    (void)have_created_at;
     return 1;
 }
 
