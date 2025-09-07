@@ -339,6 +339,7 @@ NostrConnection *nostr_connection_new(const char *url) {
     int test_mode = (test_env && *test_env && strcmp(test_env, "0") != 0) ? 1 : 0;
 
     if (test_mode) {
+        fprintf(stderr, "[nostr] NOSTR_TEST_MODE=1: offline mode enabled (no network I/O)\n");
         conn->priv->test_mode = 1;
         conn->recv_channel = go_channel_create(16);
         conn->send_channel = go_channel_create(16);
@@ -390,7 +391,7 @@ NostrConnection *nostr_connection_new(const char *url) {
     connect_info.host = host;
     connect_info.origin = host;
     connect_info.ssl_connection = use_ssl ? LCCSCF_USE_SSL : 0;
-    connect_info.protocol = NULL; // no subprotocol for nostr by default
+    connect_info.protocol = "nostr"; // request nostr subprotocol explicitly
     connect_info.pwsi = &conn->priv->wsi;
     connect_info.userdata = conn;
 

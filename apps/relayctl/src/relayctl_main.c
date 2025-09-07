@@ -369,6 +369,7 @@ int main_ext(int argc, char **argv) {
   if (argc < 2) {
     fprintf(stderr, "Usage: %s <command> [--url URL --sk SK] [args]\n", argv[0]);
     fprintf(stderr, "Commands:\n");
+    fprintf(stderr, "  info\n");
     fprintf(stderr, "  stats\n");
     fprintf(stderr, "  supported\n");
     fprintf(stderr, "  limits\n");
@@ -379,6 +380,11 @@ int main_ext(int argc, char **argv) {
     fprintf(stderr, "  allowkind <kind>\n  disallowkind <kind>\n  listallowedkinds\n");
     fprintf(stderr, "  blockip <ip>\n  unblockip <ip>\n  listblockedips\n");
     return 1;
+  }
+  if (strcmp(argv[1], "info") == 0) {
+    const char *url=NULL,*sk=NULL; int idx=2; if (parse_common(argc, argv, &url, &sk, &idx)) return 1;
+    char *resp=NULL; if (http_get(url, "/", &resp) == 0) { printf("%s\n", resp); free(resp); return 0; }
+    fprintf(stderr, "info failed\n"); return 1;
   }
   if (strcmp(argv[1], "stats") == 0) return cmd_stats(argc, argv);
   if (strcmp(argv[1], "supported") == 0) return cmd_supported(argc, argv);

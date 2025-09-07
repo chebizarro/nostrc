@@ -21,6 +21,18 @@ target_include_directories(grelay PRIVATE
   ${CMAKE_SOURCE_DIR}/libnostr/include
 )
 
+# Ensure nostrdb storage is linked so its constructor can register the driver
+if (TARGET nostrdb_storage)
+  target_link_libraries(grelay PRIVATE nostrdb_storage)
+  if (APPLE)
+    # On macOS, force load the archive to keep constructor sections
+    target_link_options(grelay PRIVATE -Wl,-force_load,$<TARGET_FILE:nostrdb_storage>)
+  else()
+    # On ELF platforms, whole-archive just for this lib
+    target_link_options(grelay PRIVATE -Wl,--whole-archive $<TARGET_FILE:nostrdb_storage> -Wl,--no-whole-archive)
+  endif()
+endif()
+
 # nsync dependency required via libgo headers used transitively
 find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
 target_include_directories(grelay PRIVATE ${NSYNC_INCLUDE_DIR})

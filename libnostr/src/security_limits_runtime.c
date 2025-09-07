@@ -82,18 +82,18 @@ int64_t nostr_limit_invalidsig_ban_seconds(void) {
 /* WebSocket slowloris/timeouts (no compile-time defaults yet; use literals) */
 int64_t nostr_limit_ws_read_timeout_seconds(void) {
   static long long val = -1;
-  if (val < 0) val = read_ll_env("NOSTR_WS_READ_TIMEOUT_SECONDS", 60); /* default 60s */
+  if (val < 0) val = read_ll_env("NOSTR_WS_READ_TIMEOUT_SECONDS", 120); /* default 120s */
   return val;
 }
 
 int64_t nostr_limit_ws_progress_window_ms(void) {
   static long long val = -1;
-  if (val < 0) val = read_ll_env("NOSTR_WS_PROGRESS_WINDOW_MS", 5000); /* default 5s */
+  if (val < 0) val = read_ll_env("NOSTR_WS_PROGRESS_WINDOW_MS", 30000); /* default 30s window */
   return val;
 }
 
 int64_t nostr_limit_ws_min_bytes_per_window(void) {
   static long long val = -1;
-  if (val < 0) val = read_ll_env("NOSTR_WS_MIN_BYTES_PER_WINDOW", 256); /* default 256B */
+  if (val < 0) val = read_ll_env("NOSTR_WS_MIN_BYTES_PER_WINDOW", 1); /* default 1B: effectively tolerant for light traffic */
   return val;
 }

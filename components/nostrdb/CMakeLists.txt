@@ -32,6 +32,25 @@ target_link_libraries(nostrdb_storage PUBLIC nostr)
 # If the vendored 'nostrdb' static library target exists (built elsewhere), link it too.
 if (TARGET nostrdb)
   target_link_libraries(nostrdb_storage PUBLIC nostrdb)
+else()
+  # Otherwise, if a prebuilt static archive exists in the vendored dir, link it directly
+  set(NDB_VENDOR_LIB "${NDB_VENDOR_PATH}/libnostrdb.a")
+  if (EXISTS ${NDB_VENDOR_LIB})
+    target_link_libraries(nostrdb_storage PUBLIC ${NDB_VENDOR_LIB})
+    # Propagate include dirs so dependents can include <nostrdb.h>
+    target_include_directories(nostrdb_storage PUBLIC ${NDB_VENDOR_PATH}/src ${NDB_VENDOR_PATH}/ccan ${NDB_VENDOR_PATH}/deps/lmdb)
+    # Link vendored LMDB static archive if present
+    set(NDB_VENDOR_LMDB_LIB "${NDB_VENDOR_PATH}/deps/lmdb/liblmdb.a")
+    if (EXISTS ${NDB_VENDOR_LMDB_LIB})
+      target_link_libraries(nostrdb_storage PUBLIC ${NDB_VENDOR_LMDB_LIB})
+    endif()
+    # On macOS, nostrdb uses SecRandomCopyBytes; link the Security framework
+    if (APPLE)
+      target_link_libraries(nostrdb_storage PUBLIC "-framework Security")
+    endif()
+  else()
+    message(WARNING "components/nostrdb: vendored libnostrdb.a not found; symbols may be unresolved")
+  endif()
 endif()
 
 target_include_directories(nostrdb_storage PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

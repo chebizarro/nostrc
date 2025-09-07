@@ -41,6 +41,7 @@ int main(int argc, char **argv) {
     int debug_filter = 0;
     const char *publish_text = NULL;
     const char *sk_hex = NULL;
+    int have_authors = 0;
     IntArray multi_kinds = {0};
     if (argc > 1 && strncmp(argv[1], "--", 2) != 0) {
         url = argv[1];
@@ -125,6 +126,7 @@ int main(int argc, char **argv) {
                 string_array_add(&filter->authors, tok);
             }
             free(tmp);
+            have_authors = 1;
         } else if (strcmp(arg, "--raw") == 0) {
             enable_raw = 1;
         } else if (strcmp(arg, "--count") == 0) {
@@ -214,7 +216,6 @@ int main(int argc, char **argv) {
         if (nostr_event_sign(pev, sk_hex) != 0) {
             fprintf(stderr, "[relay_smoke] sign failed; skipping publish\n");
         } else {
-            Error *perr = NULL;
             char *eid = nostr_event_get_id(pev);
             if (eid) fprintf(stderr, "[relay_smoke] event id: %.16s...\n", eid);
             int was_raw = enable_raw;
@@ -223,10 +224,9 @@ int main(int argc, char **argv) {
                 nostr_relay_enable_debug_raw(relay, 1);
                 tmp_raw = nostr_relay_get_debug_raw_channel(relay);
             }
-            if (!nostr_relay_publish(relay, ctx, pev, &perr) || perr) {
-                fprintf(stderr, "[relay_smoke] publish failed: %s\n", perr ? perr->message : "unknown");
-                if (perr) free_error(perr);
-            } else {
+            /* Fire-and-forget publish: OK/err will be observed via raw channel */
+            nostr_relay_publish(relay, pev);
+            {
                 fprintf(stderr, "[relay_smoke] published note: %.48s...\n", publish_text);
                 // Await an OK/CLOSED debug line briefly to confirm server ack
                 GoChannel *ok_raw = was_raw ? raw_msgs : tmp_raw;
@@ -248,6 +248,20 @@ int main(int argc, char **argv) {
                             stop_ticker(pt); pt = NULL; break;
                         }
                         (void)got;
+                    }
+                }
+                // If user didn't specify authors, auto-aim the subscription at our pubkey
+                if (!have_authors) {
+                    const char *pk = nostr_event_get_pubkey(pev);
+                    if (pk && *pk) {
+                        string_array_add(&filter->authors, pk);
+                        have_authors = 1;
+                        // If since not set, look back a short window to ensure our fresh note is included
+                        if (since_abs < 0) {
+                            long now = (long)time(NULL);
+                            filter->since = (NostrTimestamp)(now - 10);
+                        }
+                        fprintf(stderr, "[relay_smoke] targeting authors filter to our pubkey %.16s...\n", pk);
                     }
                 }
             }

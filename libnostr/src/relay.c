@@ -577,9 +577,25 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
         return;
 
     nostr_metric_counter_add("events_published", 1);
-    nostr_metric_counter_add("ws_tx_bytes", (uint64_t)strlen(event_json));
-    (void)nostr_relay_write(relay, event_json);
+    /* NIP-01 requires client publish envelope: ["EVENT", <event>] */
+    size_t ej_len = strlen(event_json);
+    size_t frame_len = 10 /* ["EVENT",] */ + ej_len + 1;
+    char *frame = (char *)malloc(frame_len);
+    if (!frame) {
+        free(event_json);
+        return;
+    }
+    /* Build the frame without trailing newline */
+    /* snprintf format: ["EVENT",%s] */
+    int nw = snprintf(frame, frame_len, "[\"EVENT\",%s]", event_json);
     free(event_json);
+    if (nw <= 0 || (size_t)nw >= frame_len) {
+        free(frame);
+        return;
+    }
+    nostr_metric_counter_add("ws_tx_bytes", (uint64_t)nw);
+    (void)nostr_relay_write(relay, frame);
+    free(frame);
 }
 
 void nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error **), Error **err) {

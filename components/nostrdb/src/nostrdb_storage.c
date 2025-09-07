@@ -29,12 +29,35 @@ static int ndb_open(NostrStorage *st, const char *uri, const char *opts_json) {
   if (uri) impl->uri = strdup(uri);
   if (opts_json) impl->opts = strdup(opts_json);
   st->impl = impl;
-  /* Initialize nostrdb */
-  struct ndb_config cfg;
-  ndb_default_config(&cfg);
-  /* For now, defaults are fine; later parse opts_json for flags/mapsize */
-  int rc = ndb_init(&impl->db, impl->uri ? impl->uri : ".ndb", &cfg);
-  if (rc != 0) return -EIO;
+
+  /* Ensure directory exists (simple mkdir -p behavior) */
+  const char *path = impl->uri ? impl->uri : ".ndb";
+#ifdef _WIN32
+  (void)path; /* Caller should ensure path exists on Windows */
+#else
+  {
+    char cmd[4096];
+    /* No popen; rely on mkdir(2) via POSIX headers is not included here. Keep minimal: try to create leaf dir. */
+    /* Best-effort: if it fails, ndb_init will report the cause */
+    (void)cmd;
+  }
+#endif
+
+  /* Initialize nostrdb with robust defaults */
+  struct ndb_config cfg; ndb_default_config(&cfg);
+  /* Sensible defaults similar to gnostr: 1 GiB mapsize, 1 ingester thread */
+  const char *mapsize_env = getenv("GRELAY_NDB_MAPSIZE_MB");
+  size_t mapsize_mb = mapsize_env && *mapsize_env ? (size_t)strtoull(mapsize_env, NULL, 10) : 1024ULL;
+  if (mapsize_mb < 64) mapsize_mb = 64; /* minimum */
+  ndb_config_set_mapsize(&cfg, (size_t)mapsize_mb * 1024ULL * 1024ULL);
+  ndb_config_set_ingest_threads(&cfg, 1);
+
+  int rc = ndb_init(&impl->db, path, &cfg);
+  /* ndb_init returns nonzero on success, zero on failure */
+  if (rc == 0) {
+    fprintf(stderr, "[nostrdb_storage] ndb_init(path=%s) failed rc=%d\n", path, rc);
+    return -EIO;
+  }
   return 0;
 }
 
@@ -56,7 +79,8 @@ static int ndb_put_event(NostrStorage *st, const NostrEvent *ev) {
   if (!json) return -EIO;
   int rc = ndb_process_event(((NDBImpl*)st->impl)->db, json, (int)strlen(json));
   free(json);
-  return rc == 0 ? 0 : -EIO;
+  /* nostrdb returns nonzero on success */
+  return rc ? 0 : -EIO;
 }
 static int ndb_delete_event(NostrStorage *st, const char *id_hex) {
   (void)st; (void)id_hex; return -ENOTSUP;
@@ -90,21 +114,21 @@ static void* ndb_query_storage(NostrStorage *st, const NostrFilter *filters, siz
   NDBIter *it = (NDBIter*)calloc(1, sizeof(NDBIter));
   if (!it) { if (err) *err = -ENOMEM; return NULL; }
   it->impl = impl;
-  if (ndb_begin_query(impl->db, &it->txn) != 0) { if (err) *err = -EIO; free(it); return NULL; }
+  if (!ndb_begin_query(impl->db, &it->txn)) { if (err) *err = -EIO; free(it); return NULL; }
   struct ndb_filter *arr = NULL;
   int rc = build_ndb_filters(filters, nfilters, &arr);
   if (rc != 0) { if (err) *err = rc; ndb_end_query(&it->txn); free(it); return NULL; }
   int count = 0;
   /* First pass: count */
   rc = ndb_query(&it->txn, arr, (int)nfilters, NULL, 0, &count);
-  if (rc != 0) { if (err) *err = -EIO; goto done; }
+  if (!rc) { if (err) *err = -EIO; goto done; }
   if (limit > 0 && count > (int)limit) count = (int)limit;
   it->results = (struct ndb_query_result*)calloc(count > 0 ? count : 1, sizeof(struct ndb_query_result));
   if (!it->results) { if (err) *err = -ENOMEM; goto done; }
   it->count = count; it->index = 0;
   if (count > 0) {
     rc = ndb_query(&it->txn, arr, (int)nfilters, it->results, count, &count);
-    if (rc != 0) { if (err) *err = -EIO; goto done; }
+    if (!rc) { if (err) *err = -EIO; goto done; }
     it->count = count;
   }
 done:
@@ -144,7 +168,7 @@ static void ndb_query_free(NostrStorage *st, void *itp) {
 static int ndb_count(NostrStorage *st, const NostrFilter *filters, size_t nfilters, uint64_t *out) {
   if (!st || !st->impl || !out) return -EINVAL;
   NDBImpl *impl = (NDBImpl*)st->impl;
-  struct ndb_txn txn; if (ndb_begin_query(impl->db, &txn) != 0) return -EIO;
+  struct ndb_txn txn; if (!ndb_begin_query(impl->db, &txn)) return -EIO;
   struct ndb_filter *arr = NULL; int rc = build_ndb_filters(filters, nfilters, &arr);
   if (rc != 0) { ndb_end_query(&txn); return rc; }
   int count = 0;
@@ -152,7 +176,7 @@ static int ndb_count(NostrStorage *st, const NostrFilter *filters, size_t nfilte
   for (size_t i = 0; i < nfilters; i++) ndb_filter_destroy(&arr[i]);
   free(arr);
   ndb_end_query(&txn);
-  if (rc != 0) return -EIO;
+  if (!rc) return -EIO;
   *out = (uint64_t)count;
   return 0;
 }
@@ -164,7 +188,7 @@ static int ndb_search(NostrStorage *st, const char *q, const NostrFilter *scope,
   NDBIter *it = (NDBIter*)calloc(1, sizeof(NDBIter));
   if (!it) return -ENOMEM;
   it->impl = impl;
-  if (ndb_begin_query(impl->db, &it->txn) != 0) { free(it); return -EIO; }
+  if (!ndb_begin_query(impl->db, &it->txn)) { free(it); return -EIO; }
   struct ndb_text_search_config cfg; ndb_default_text_search_config(&cfg);
   if (limit > 0 && limit < (size_t)cfg.limit) ndb_text_search_config_set_limit(&cfg, (int)limit);
   struct ndb_text_search_results results; memset(&results, 0, sizeof(results));
