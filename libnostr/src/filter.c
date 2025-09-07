@@ -677,7 +677,8 @@ static const char *skip_array(const char *p) {
     if (*p == ']') return p+1;
     while (*p) {
         const char *q = skip_value(p);
-        if (!q) return NULL; p = skip_ws_f(q);
+        if (!q) return NULL;
+        p = skip_ws_f(q);
         if (*p == ',') { ++p; p = skip_ws_f(p); continue; }
         if (*p == ']') return p+1;
         return NULL;
@@ -685,13 +686,20 @@ static const char *skip_array(const char *p) {
     return NULL;
 }
 static const char *skip_object(const char *p) {
-    if (*p != '{') return NULL; ++p; p = skip_ws_f(p);
+    if (*p != '{') return NULL;
+    ++p;
+    p = skip_ws_f(p);
     if (*p == '}') return p+1;
     while (*p) {
         const char *q = skip_string(p);
-        if (!q) return NULL; p = skip_ws_f(q);
-        if (*p != ':') return NULL; ++p; p = skip_ws_f(p);
-        q = skip_value(p); if (!q) return NULL; p = skip_ws_f(q);
+        if (!q) return NULL;
+        p = skip_ws_f(q);
+        if (*p != ':') return NULL;
+        ++p;
+        p = skip_ws_f(p);
+        q = skip_value(p);
+        if (!q) return NULL;
+        p = skip_ws_f(q);
         if (*p == ',') { ++p; p = skip_ws_f(p); continue; }
         if (*p == '}') return p+1;
         return NULL;
@@ -701,7 +709,8 @@ static const char *skip_object(const char *p) {
 
 static char *parse_string_dup(const char **pp) {
     const char *p = skip_ws_f(*pp);
-    if (*p != '"') return NULL; ++p; const char *start = p;
+    if (*p != '"') return NULL;
+    ++p;
     sb_t sb; sb_init(&sb); if (!sb.buf) return NULL;
     while (*p) {
         if (*p == '\\') {

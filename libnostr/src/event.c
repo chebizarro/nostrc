@@ -75,7 +75,10 @@ int nostr_event_sign_secure(NostrEvent *event, const nostr_secure_buf *sk) {
     return_val = 0;
 cleanup:
     /* Best-effort wipe of local secret material */
-    volatile unsigned char *p = seckey; for (size_t i=0;i<sizeof seckey;i++) p[i]=0;
+    {
+        volatile unsigned char *p = seckey;
+        for (size_t i = 0; i < sizeof seckey; i++) p[i] = 0;
+    }
     secp256k1_context_destroy(ctx);
     return return_val;
 }
@@ -118,9 +121,14 @@ static int match_key_advance(const char **pp, const char *key) {
     if (*p != ':') return 0;
     ++p; /* after ':' */
     *pp = p;
+    /* read once to silence -Wunused-but-set-variable under some toolchains */
+    if (0) { if (have_kind) {}; if (have_created_at) {}; }
     return 1;
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((unused))
+#endif
 static const char *find_key(const char *json, const char *key) {
     size_t klen = strlen(key);
     const char *p = json;

@@ -292,7 +292,8 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
         fprintf(stderr, "[compact] parse envelope: %s\n", json);
     }
     const char *p = skip_ws(json);
-    if (*p != '[') return 0; ++p; // skip [
+    if (*p != '[') return 0;
+    ++p; // skip [
     // first: label
     char *label = parse_json_string(&p);
     if (!label) {
