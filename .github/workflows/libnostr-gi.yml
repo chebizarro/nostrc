@@ -51,6 +51,10 @@ jobs:
             sudo cmake --install nsync/build
           fi
 
+      - name: Override ASAN options (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: echo "ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1" >> $GITHUB_ENV
+
       - name: Configure (with GLib)
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGO_WARNINGS_AS_ERRORS=ON -DNOSTR_WITH_GLIB=ON
 

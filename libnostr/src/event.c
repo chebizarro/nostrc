@@ -121,8 +121,6 @@ static int match_key_advance(const char **pp, const char *key) {
     if (*p != ':') return 0;
     ++p; /* after ':' */
     *pp = p;
-    /* read once to silence -Wunused-but-set-variable under some toolchains */
-    if (0) { if (have_kind) {}; if (have_created_at) {}; }
     return 1;
 }
 

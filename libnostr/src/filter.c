@@ -730,7 +730,9 @@ static char *parse_string_dup(const char **pp) {
 
 static int parse_string_array_values_as_tags(NostrFilter *filter, const char *tag_key, const char **pp) {
     const char *p = skip_ws_f(*pp);
-    if (*p != '[') return 0; ++p; p = skip_ws_f(p);
+    if (*p != '[') return 0;
+    ++p;
+    p = skip_ws_f(p);
     if (*p == ']') { *pp = p+1; return 1; }
     while (*p) {
         // value must be string
@@ -762,7 +764,9 @@ static int parse_string_array_values_as_tags(NostrFilter *filter, const char *ta
 int nostr_filter_deserialize_compact(NostrFilter *filter, const char *json) {
     if (!filter || !json) return 0;
     const char *p = skip_ws_f(json);
-    if (*p != '{') return 0; ++p; p = skip_ws_f(p);
+    if (*p != '{') return 0;
+    ++p;
+    p = skip_ws_f(p);
     int touched = 0;
     if (*p == '}') return 1; // empty object ok
     while (*p) {
