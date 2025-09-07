@@ -2,12 +2,15 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <time.h>
 #include "go.h"
 #include "select.h"
 
+static inline void sleep_ms(int ms){ struct timespec ts={ ms/1000, (long)(ms%1000)*1000000L }; nanosleep(&ts, NULL); }
+
 static void *delayed_send(void *arg){
     GoChannel *c = (GoChannel*)arg;
-    usleep(50*1000);
+    sleep_ms(50);
     int v = 42;
     go_channel_send(c, (void*)(long)v);
     return NULL;

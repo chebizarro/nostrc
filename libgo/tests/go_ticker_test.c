@@ -2,8 +2,11 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <time.h>
 #include "go.h"
 #include "ticker.h"
+
+static inline void sleep_ms(int ms){ struct timespec ts={ ms/1000, (long)(ms%1000)*1000000L }; nanosleep(&ts, NULL); }
 
 typedef struct {
     Ticker *ticker;
@@ -19,7 +22,7 @@ void *consumer_thread(void *arg) {
             tc->count++;
         } else {
             // avoid busy spin
-            usleep(5 * 1000);
+            sleep_ms(5);
         }
     }
     return NULL;
@@ -40,7 +43,7 @@ int main(void) {
     // Wait up to 2 seconds for 5 ticks
     int elapsed_ms = 0;
     while (tc.count < tc.target && elapsed_ms < 2000) {
-        usleep(50 * 1000);
+        sleep_ms(50);
         elapsed_ms += 50;
     }
 

@@ -70,6 +70,7 @@ set(LIBGO_SOURCES
   src/int_array.c
   src/ticker.c
   src/error.c
+  src/metrics_stub.c
 )
 
 # Enable CTest for module-specific tests

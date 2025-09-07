@@ -1,7 +1,9 @@
+static inline void sleep_ms(int ms){ struct timespec ts={ ms/1000, (long)(ms%1000)*1000000L }; nanosleep(&ts, NULL); }
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
+#include <time.h>
 #include "go.h"
 #include "select.h"
 
@@ -43,7 +45,7 @@ int main(void){
         int k = go_select(cases, 3);
         if (k == 0) seen_a = 1; else if (k == 1) seen_b = 1;
         if (seen_a && seen_b) break;
-        usleep(1000);
+        sleep_ms(1);
     }
     if (!(seen_a && seen_b)) { fprintf(stderr, "fairness check failed\n"); return 4; }
 

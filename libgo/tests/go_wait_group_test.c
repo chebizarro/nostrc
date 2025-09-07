@@ -2,13 +2,16 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <time.h>
 #include "wait_group.h"
 
 #define NWORKERS 5
 
+static inline void sleep_ms(int ms){ struct timespec ts={ ms/1000, (long)(ms%1000)*1000000L }; nanosleep(&ts, NULL); }
+
 static void *worker(void *arg) {
     GoWaitGroup *wg = (GoWaitGroup*)arg;
-    usleep(50 * 1000); // simulate work
+    sleep_ms(50); // simulate work
     go_wait_group_done(wg);
     return NULL;
 }

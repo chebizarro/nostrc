@@ -1,6 +1,8 @@
+static inline void sleep_ms(int ms){ struct timespec ts={ ms/1000, (long)(ms%1000)*1000000L }; nanosleep(&ts, NULL); }
 #include <stdio.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <time.h>
 #include "go.h"
 
 static void *recv_block_then_close_result;
@@ -25,7 +27,7 @@ int main(void) {
     GoChannel *c1 = go_channel_create(1);
     pthread_t rth;
     pthread_create(&rth, NULL, recv_blocker, c1);
-    usleep(50 * 1000);
+    sleep_ms(50);
     go_channel_close(c1);
     pthread_join(rth, NULL);
     // Expect receive to fail (rc != 0) when channel is closed and empty
@@ -41,7 +43,7 @@ int main(void) {
     go_channel_send(c2, (void*)1);
     pthread_t sth;
     pthread_create(&sth, NULL, send_blocker, c2);
-    usleep(50 * 1000);
+    sleep_ms(50);
     go_channel_close(c2);
     void *send_rc;
     pthread_join(sth, &send_rc);
