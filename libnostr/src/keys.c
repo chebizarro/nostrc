@@ -75,7 +75,7 @@ char *nostr_key_generate_private(void) {
 
     // Convert private key to hex string
     for (size_t i = 0; i < 32; i++) {
-        sprintf(&privkey_hex[i * 2], "%02x", privkey[i]);
+        snprintf(&privkey_hex[i * 2], 3, "%02x", privkey[i]);
     }
     privkey_hex[64] = '\0'; // Null-terminate the string
 
@@ -141,7 +141,7 @@ char *nostr_key_get_public(const char *sk) {
 
     // Convert the public key to hex string
     for (size_t i = 0; i < 32; i++) {
-        sprintf(&pubkey_hex[i * 2], "%02x", pubkey_bin[i]);
+        snprintf(&pubkey_hex[i * 2], 3, "%02x", pubkey_bin[i]);
     }
     pubkey_hex[64] = '\0'; // Null-terminate the string
 

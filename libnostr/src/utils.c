@@ -209,8 +209,8 @@ char *nostr_escape_string(const char *s) {
             break;
         default:
             if (iscntrl(c)) {
-                // ensure capacity (up to 6 bytes: \uXXXX)
-                int n = sprintf(dst, "\\u%04x", c);
+                // emit up to 6 bytes: \uXXXX
+                int n = snprintf(dst, 7, "\\u%04x", c);
                 dst += n;
             } else {
                 *dst++ = (char)c;

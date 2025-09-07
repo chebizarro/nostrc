@@ -188,7 +188,8 @@ include_directories(${NSYNC_INCLUDE_DIR})
 # When building libgo as a shared library, we must link nsync directly;
 # otherwise undefined symbols (nsync_*) will fail the link step.
 # Expose nsync to consumers as PUBLIC so downstreams inherit it via CMake.
-target_link_libraries(libgo PUBLIC ${NSYNC_LIB} pthread nostr)
+target_link_libraries(libgo PUBLIC ${NSYNC_LIB} pthread)
+set_property(TARGET libgo PROPERTY POSITION_INDEPENDENT_CODE ON)
 target_include_directories(libgo PUBLIC ${NSYNC_INCLUDE_DIR})
 
 # Create the test executables for channels and contexts
@@ -268,6 +269,15 @@ apply_warnings(go_channel_close_test)
 apply_warnings(go_select_closed_test)
 apply_warnings(go_select_cancel_test)
 
+
+# Ensure usleep is declared on Linux/glibc builds for test targets
+if(UNIX AND NOT APPLE)
+  target_compile_definitions(go_wait_group_test PRIVATE _XOPEN_SOURCE=700)
+  target_compile_definitions(go_select_test PRIVATE _XOPEN_SOURCE=700)
+  target_compile_definitions(go_ticker_test PRIVATE _XOPEN_SOURCE=700)
+  target_compile_definitions(go_channel_close_test PRIVATE _XOPEN_SOURCE=700)
+  target_compile_definitions(go_select_multi_test PRIVATE _XOPEN_SOURCE=700)
+endif()
 
 
 # Add tests to CTest
