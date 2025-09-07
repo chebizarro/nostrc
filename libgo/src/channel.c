@@ -722,13 +722,13 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
     }
 
     channel_wait_arg_t wa_recv = { .c = chan, .ctx = NULL };
-    while (
+    while ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
         NOSTR_UNLIKELY(go_channel_occupancy(chan) == 0)
 #else
         NOSTR_UNLIKELY(chan->size == 0)
 #endif
-        && NOSTR_LIKELY(!chan->closed)) {
+        ) && NOSTR_LIKELY(!chan->closed)) {
         if (!blocked) { nostr_metric_counter_add("go_chan_block_recvs", 1); blocked = 1; }
         // Short spin of micro-deadline waits to avoid long parks on short contention
         for (int i = 0; i < g_spin_iters
@@ -743,13 +743,13 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
             nsync_mu_wait_with_deadline(&chan->mutex, channel_recv_pred, &wa_recv, NULL, dl_spin, NULL);
             // woke up
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
-            if (
+            if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
                 NOSTR_UNLIKELY(go_channel_occupancy(chan) == 0)
 #else
                 NOSTR_UNLIKELY(chan->size == 0)
 #endif
-                && NOSTR_LIKELY(!chan->closed)) {
+                ) && NOSTR_LIKELY(!chan->closed)) {
                 nostr_metric_counter_add("go_chan_recv_wait_spurious", 1);
             } else {
                 nostr_metric_counter_add("go_chan_recv_wait_productive", 1);
@@ -757,23 +757,23 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
                 have_tw = 1;
             }
         }
-        if (
+        if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
             NOSTR_UNLIKELY(go_channel_occupancy(chan) == 0)
 #else
             NOSTR_UNLIKELY(chan->size == 0)
 #endif
-            && NOSTR_LIKELY(!chan->closed)) {
+            ) && NOSTR_LIKELY(!chan->closed)) {
             nsync_cv_wait(&chan->cond_empty, &chan->mutex);
             // woke up
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
-            if (
+            if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
                 NOSTR_UNLIKELY(go_channel_occupancy(chan) == 0)
 #else
                 NOSTR_UNLIKELY(chan->size == 0)
 #endif
-                && NOSTR_LIKELY(!chan->closed)) {
+                ) && NOSTR_LIKELY(!chan->closed)) {
                 nostr_metric_counter_add("go_chan_recv_wait_spurious", 1);
             } else {
                 nostr_metric_counter_add("go_chan_recv_wait_productive", 1);
@@ -783,13 +783,14 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
         }
     }
 
-    if (NOSTR_UNLIKELY(chan->closed && (
+    {
+        int closed_empty_cond;
 #if NOSTR_CHANNEL_DERIVE_SIZE
-        go_channel_occupancy(chan) == 0
+        closed_empty_cond = (go_channel_occupancy(chan) == 0);
 #else
-        chan->size == 0
+        closed_empty_cond = (chan->size == 0);
 #endif
-    ))) {
+        if (NOSTR_UNLIKELY(chan->closed && closed_empty_cond)) {
         size_t in_dbg = atomic_load_explicit(&chan->in, memory_order_acquire);
         size_t out_dbg = atomic_load_explicit(&chan->out, memory_order_acquire);
 #if NOSTR_CHANNEL_DERIVE_SIZE
@@ -804,6 +805,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
             fprintf(stderr, "[chan] receive: closed+empty, in=%zu out=%zu occ=%zu\n", in_dbg, out_dbg, occ_dbg);
         }
         return -1; // Channel is closed and empty
+        }
     }
 
     // Get data from the buffer
@@ -884,12 +886,14 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
 
     channel_wait_arg_t wa = { .c = chan, .ctx = ctx };
     while (
+        /* avoid preprocessor inside macro args */
+        (/* full? */ (
 #if NOSTR_CHANNEL_DERIVE_SIZE
-        NOSTR_UNLIKELY(go_channel_is_full(chan))
+            NOSTR_UNLIKELY(go_channel_is_full(chan))
 #else
-        NOSTR_UNLIKELY(chan->size == chan->capacity)
+            NOSTR_UNLIKELY(chan->size == chan->capacity)
 #endif
-        && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx))) {
+        )) && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx))) {
         if (!blocked) { nostr_metric_counter_add("go_chan_block_sends", 1); blocked = 1; }
         // Spin-then-park: a few micro waits first
         for (int i = 0; i < g_spin_iters
@@ -904,13 +908,13 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
             nsync_mu_wait_with_deadline(&chan->mutex, channel_send_pred, &wa, NULL, dl_spin, NULL);
             // woke up (deadline or condition)
             nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
-            if (
+            if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
                 NOSTR_UNLIKELY(go_channel_is_full(chan))
 #else
                 NOSTR_UNLIKELY(chan->size == chan->capacity)
 #endif
-                && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx))) {
+                ) && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx))) {
                 nostr_metric_counter_add("go_chan_send_wait_spurious", 1);
             } else {
                 nostr_metric_counter_add("go_chan_send_wait_productive", 1);
@@ -918,24 +922,24 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
                 have_tw = 1;
             }
         }
-        if (
+        if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
             NOSTR_UNLIKELY(go_channel_is_full(chan))
 #else
             NOSTR_UNLIKELY(chan->size == chan->capacity)
 #endif
-            && !chan->closed && !(ctx && go_context_is_canceled(ctx))) {
+            ) && !chan->closed && !(ctx && go_context_is_canceled(ctx))) {
             // Fallback to a longer park to avoid busy waiting when contention persists
             nsync_time dl = nsync_time_add(nsync_time_now(), nsync_time_ms(50));
             nsync_mu_wait_with_deadline(&chan->mutex, channel_send_pred, &wa, NULL, dl, NULL);
             nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
-            if (
+            if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
                 NOSTR_UNLIKELY(go_channel_is_full(chan))
 #else
                 NOSTR_UNLIKELY(chan->size == chan->capacity)
 #endif
-                && !chan->closed && !(ctx && go_context_is_canceled(ctx))) {
+                ) && !chan->closed && !(ctx && go_context_is_canceled(ctx))) {
                 nostr_metric_counter_add("go_chan_send_wait_spurious", 1);
             } else {
                 nostr_metric_counter_add("go_chan_send_wait_productive", 1);
@@ -944,6 +948,8 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
             }
         }
     }
+    /* silence unused warning on toolchains where timers compile out */
+    (void)have_tw;
 
     if (NOSTR_UNLIKELY(chan->closed || (ctx && go_context_is_canceled(ctx)))) {
         nsync_mu_unlock(&chan->mutex);
@@ -953,13 +959,12 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
     }
 
     // Add data to the buffer
-    int was_empty2 = (
+    int was_empty2;
 #if NOSTR_CHANNEL_DERIVE_SIZE
-        go_channel_occupancy(chan) == 0
+    was_empty2 = (go_channel_occupancy(chan) == 0);
 #else
-        chan->size == 0
+    was_empty2 = (chan->size == 0);
 #endif
-    );
     __builtin_prefetch(&chan->buffer[chan->in], 1, 1);
     chan->buffer[chan->in] = data;
     go_channel_inc_in(chan);
@@ -1011,13 +1016,13 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
     }
 
     channel_wait_arg_t wa = { .c = chan, .ctx = ctx };
-    while (
+    while ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
         NOSTR_UNLIKELY(go_channel_occupancy(chan) == 0)
 #else
         NOSTR_UNLIKELY(chan->size == 0)
 #endif
-        && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx))) {
+        ) && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx))) {
         if (!blocked) { nostr_metric_counter_add("go_chan_block_recvs", 1); blocked = 1; }
         // Spin-then-park: a few micro waits first
         for (int i = 0; i < g_spin_iters
@@ -1032,13 +1037,13 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
             nsync_mu_wait_with_deadline(&chan->mutex, channel_recv_pred, &wa, NULL, dl_spin, NULL);
             // woke up
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
-            if (
+            if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
                 NOSTR_UNLIKELY(go_channel_occupancy(chan) == 0)
 #else
                 NOSTR_UNLIKELY(chan->size == 0)
 #endif
-                && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx))) {
+                ) && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx))) {
                 nostr_metric_counter_add("go_chan_recv_wait_spurious", 1);
             } else {
                 nostr_metric_counter_add("go_chan_recv_wait_productive", 1);
@@ -1046,24 +1051,24 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
                 have_tw = 1;
             }
         }
-        if (
+        if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
             NOSTR_UNLIKELY(go_channel_occupancy(chan) == 0)
 #else
             NOSTR_UNLIKELY(chan->size == 0)
 #endif
-            && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx))) {
+            ) && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx))) {
             // Fallback to a longer park to avoid busy waiting when contention persists
             nsync_time dl = nsync_time_add(nsync_time_now(), nsync_time_ms(50));
             nsync_mu_wait_with_deadline(&chan->mutex, channel_recv_pred, &wa, NULL, dl, NULL);
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
-            if (
+            if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
                 NOSTR_UNLIKELY(go_channel_occupancy(chan) == 0)
 #else
                 NOSTR_UNLIKELY(chan->size == 0)
 #endif
-                && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx))) {
+                ) && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx))) {
                 nostr_metric_counter_add("go_chan_recv_wait_spurious", 1);
             } else {
                 nostr_metric_counter_add("go_chan_recv_wait_productive", 1);
@@ -1073,44 +1078,47 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
         }
     }
 
-    if (NOSTR_UNLIKELY(((chan->closed
+    {
+        int closed_empty;
 #if NOSTR_CHANNEL_DERIVE_SIZE
-        && go_channel_occupancy(chan) == 0
+        closed_empty = (go_channel_occupancy(chan) == 0);
 #else
-        && chan->size == 0
+        closed_empty = (chan->size == 0);
 #endif
-        ) || (ctx && go_context_is_canceled(ctx))))) {
         int canceled = (ctx && go_context_is_canceled(ctx));
-        int closed_empty = (chan->closed
+        if (NOSTR_UNLIKELY(((chan->closed && closed_empty) || canceled))) {
+            int canceled = (ctx && go_context_is_canceled(ctx));
+            int closed_empty = (chan->closed
 #if NOSTR_CHANNEL_DERIVE_SIZE
-            && go_channel_occupancy(chan) == 0
+                && go_channel_occupancy(chan) == 0
 #else
-            && chan->size == 0
+                && chan->size == 0
 #endif
-        );
-        size_t in_dbg = atomic_load_explicit(&chan->in, memory_order_acquire);
-        size_t out_dbg = atomic_load_explicit(&chan->out, memory_order_acquire);
+                );
+            size_t in_dbg = atomic_load_explicit(&chan->in, memory_order_acquire);
+            size_t out_dbg = atomic_load_explicit(&chan->out, memory_order_acquire);
 #if NOSTR_CHANNEL_DERIVE_SIZE
-        size_t occ_dbg = go_channel_occupancy(chan);
+            size_t occ_dbg = go_channel_occupancy(chan);
 #else
-        size_t occ_dbg = chan->size;
+            size_t occ_dbg = chan->size;
 #endif
-        nsync_mu_unlock(&chan->mutex);
-        ensure_histos();
-        nostr_metric_timer_stop(&t, h_recv_wait_ns);
-        if (closed_empty) {
-            nostr_metric_counter_add("go_chan_recv_closed_empty", 1);
-            if (g_chan_debug) {
-                fprintf(stderr, "[chan] receive_ctx: closed+empty, in=%zu out=%zu occ=%zu\n", in_dbg, out_dbg, occ_dbg);
+            nsync_mu_unlock(&chan->mutex);
+            ensure_histos();
+            nostr_metric_timer_stop(&t, h_recv_wait_ns);
+            if (closed_empty) {
+                nostr_metric_counter_add("go_chan_recv_closed_empty", 1);
+                if (g_chan_debug) {
+                    fprintf(stderr, "[chan] receive_ctx: closed+empty, in=%zu out=%zu occ=%zu\n", in_dbg, out_dbg, occ_dbg);
+                }
             }
-        }
-        if (canceled) {
-            nostr_metric_counter_add("go_chan_recv_ctx_canceled", 1);
-            if (g_chan_debug) {
-                fprintf(stderr, "[chan] receive_ctx: canceled, in=%zu out=%zu occ=%zu\n", in_dbg, out_dbg, occ_dbg);
+            if (canceled) {
+                nostr_metric_counter_add("go_chan_recv_ctx_canceled", 1);
+                if (g_chan_debug) {
+                    fprintf(stderr, "[chan] receive_ctx: canceled, in=%zu out=%zu occ=%zu\n", in_dbg, out_dbg, occ_dbg);
+                }
             }
+            return -1; // Channel is closed and empty or canceled
         }
-        return -1; // Channel is closed and empty or canceled
     }
 
     // Get data from the buffer

@@ -1,5 +1,18 @@
 #include <string.h>
+#include <stdlib.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include "string_array.h"
+
+static char *sa_strdup(const char *s) {
+    if (!s) return NULL;
+    size_t n = strlen(s);
+    char *p = (char*)malloc(n + 1);
+    if (!p) return NULL;
+    memcpy(p, s, n);
+    p[n] = '\0';
+    return p;
+}
 
 StringArray *new_string_array(int capacity) {
     StringArray *array = (StringArray *)malloc(sizeof(StringArray));
@@ -27,7 +40,7 @@ void string_array_init_with(StringArray *arr, ...) {
     const char *str;
     while ((str = va_arg(args, const char *)) != NULL) {
         arr->data = realloc(arr->data, (arr->size + 1) * sizeof(char *));
-        arr->data[arr->size] = strdup(str); // Duplicate the string
+        arr->data[arr->size] = sa_strdup(str); // Duplicate the string
         arr->size++;
     }
 
@@ -45,7 +58,7 @@ void string_array_add(StringArray *array, const char *value) {
             exit(EXIT_FAILURE);
         }
     }
-    array->data[array->size++] = strdup(value); // Use strdup to allocate a copy of the string
+    array->data[array->size++] = sa_strdup(value); // Use local strdup to allocate a copy of the string
 }
 
 // Add multiple strings to a StringArray using variadic arguments
@@ -56,7 +69,7 @@ void string_array_add_many(StringArray *arr, ...) {
     const char *str;
     while ((str = va_arg(args, const char *)) != NULL) {
         arr->data = realloc(arr->data, (arr->size + 1) * sizeof(char *));
-        arr->data[arr->size] = strdup(str); // Duplicate the string
+        arr->data[arr->size] = sa_strdup(str); // Duplicate the string
         arr->size++;
     }
 
@@ -125,5 +138,5 @@ void string_array_set(StringArray *array, size_t index, const char *value) {
     }
     // Free the string at the given index
     free(array->data[index]);
-    array->data[index] = strdup(value); // Use strdup to allocate a copy of the string
+    array->data[index] = sa_strdup(value); // Use local strdup to allocate a copy of the string
 }

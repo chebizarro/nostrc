@@ -3,6 +3,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+static char *hm_strdup(const char *s) {
+    if (!s) return NULL;
+    size_t n = strlen(s);
+    char *p = (char*)malloc(n + 1);
+    if (!p) return NULL;
+    memcpy(p, s, n);
+    p[n] = '\0';
+    return p;
+}
+
 typedef enum {
     KEY_TYPE_STRING,
     KEY_TYPE_INT
@@ -56,7 +66,7 @@ unsigned long hash_function(const char *key) {
 HashKey make_key_from_string(const char *str) {
     HashKey key;
     key.type = KEY_TYPE_STRING;
-    key.key.str_key = strdup(str); // Duplicate the string
+    key.key.str_key = hm_strdup(str); // Duplicate the string
     return key;
 }
 
