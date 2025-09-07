@@ -16,7 +16,10 @@ static void secp_init_once(void) {
   g_secp = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
   unsigned char seed[32];
   if (g_secp && RAND_bytes(seed, sizeof(seed)) == 1) {
-    (void)secp256k1_context_randomize(g_secp, seed);
+    /* Randomization is recommended; treat failure as non-fatal but do not ignore result */
+    if (secp256k1_context_randomize(g_secp, seed) != 1) {
+      /* leave context unrandomized; still usable for verification */
+    }
   }
   OPENSSL_cleanse(seed, sizeof(seed));
 }
