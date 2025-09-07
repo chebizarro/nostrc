@@ -1,4 +1,6 @@
-#include <unistd.h>
+#define _XOPEN_SOURCE 700
+#define _POSIX_C_SOURCE 200809L
+#include <time.h>
 #include "select.h"
 #include "channel.h"
 #include <stdlib.h>
@@ -24,6 +26,7 @@ int go_select(GoSelectCase *cases, size_t num_cases) {
         }
 
         // Nothing available; small sleep to avoid busy spin
-        usleep(1000); // 1ms
+        struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 1000 * 1000; // 1ms
+        nanosleep(&ts, NULL);
     }
 }

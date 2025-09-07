@@ -6,6 +6,21 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+// Portable aligned allocation: prefer C11 aligned_alloc, fallback to malloc
+static inline void *go_aligned_alloc(size_t alignment, size_t size) {
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+    // aligned_alloc requires size to be a multiple of alignment
+    size_t mask = alignment - 1;
+    size_t adj = (size + mask) & ~mask;
+    void *p = aligned_alloc(alignment, adj);
+    if (!p) return malloc(size);
+    return p;
+#else
+    // Best-effort fallback
+    (void)alignment;
+    return malloc(size);
+#endif
+}
 // Ensure occupancy is derived from in/out counters in MPMC mode
 #if NOSTR_CHANNEL_MPMC_SLOTS
 #ifndef NOSTR_CHANNEL_DERIVE_SIZE
@@ -500,9 +515,7 @@ GoChannel *go_channel_create(size_t capacity) {
     // Align the ring buffer to cache line size to reduce cross-line traffic
     void **buf = NULL;
     size_t bytes = sizeof(void *) * cap;
-    if (posix_memalign((void **)&buf, 64, bytes) != 0) {
-        buf = malloc(bytes);
-    }
+    buf = (void**)go_aligned_alloc(64, bytes);
     chan->buffer = buf;
     chan->capacity = cap;
     // Capacity is enforced to a power of two; compute mask for fast wrap
@@ -514,9 +527,7 @@ GoChannel *go_channel_create(size_t capacity) {
     // Allocate per-slot sequence numbers (aligned to cacheline)
     _Atomic size_t *seq = NULL;
     size_t sbytes = sizeof(_Atomic size_t) * cap;
-    if (posix_memalign((void **)&seq, 64, sbytes) != 0) {
-        seq = (_Atomic size_t *)malloc(sbytes);
-    }
+    seq = (_Atomic size_t *)go_aligned_alloc(64, sbytes);
     chan->slot_seq = seq;
     for (size_t i = 0; i < cap; ++i) {
         atomic_store_explicit(&chan->slot_seq[i], i, memory_order_relaxed);

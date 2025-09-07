@@ -1,4 +1,6 @@
-#include <unistd.h>
+#define _XOPEN_SOURCE 700
+#define _POSIX_C_SOURCE 200809L
+#include <time.h>
 #include "ticker.h"
 #include <pthread.h>
 
@@ -13,7 +15,10 @@ void *ticker_thread_func(void *arg) {
         }
         nsync_mu_unlock(&ticker->mutex); // Unlock mutex
 
-        usleep(ticker->interval_ms * 1000); // Sleep for the specified interval
+        struct timespec ts;
+        ts.tv_sec = ticker->interval_ms / 1000;
+        ts.tv_nsec = (long)(ticker->interval_ms % 1000) * 1000000L;
+        nanosleep(&ts, NULL); // Sleep for the specified interval
 
         // Non-blocking send; drop tick if channel is full
         (void)go_channel_try_send(ticker->c, NULL);
