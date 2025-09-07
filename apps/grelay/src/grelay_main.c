@@ -35,6 +35,10 @@ typedef struct {
   int rate_burst;
   /* backpressure */
   int backpressure_max_ticks;
+  /* streaming tunables */
+  int req_pending_ticks;        /* how many follow-up ticks after REQ */
+  int req_tick_interval_ms;     /* interval between follow-up ticks */
+  int req_linger_ms;            /* delay before sending EOSE if no iterator */
   /* storage */
   NostrStorage *storage;
 } GRelayApp;
@@ -58,6 +62,9 @@ typedef struct {
   unsigned int no_progress_ticks;
   /* retry window to mitigate publish->subscribe races */
   int pending_ticks;
+  /* REQ linger when no iterator is available */
+  int linger_active;
+  guint64 linger_until_ms;
 } GRelayConnState;
 
 /* simple metrics */
@@ -72,6 +79,15 @@ static struct {
   guint64 rate_limit_drops;
   guint64 backpressure_drops;
   guint64 eose_sent;
+  /* readiness + ops metrics */
+  guint64 events_ingested_ok;
+  guint64 events_ingested_failed;
+  guint64 queries_started;
+  guint64 queries_eose;
+  guint64 queries_failed;
+  guint64 auth_failures;
+  guint64 last_ingest_ms;
+  guint64 last_query_ms;
 } Gm;
 
 static void grelay_on_ws_closed_lws(void) {
@@ -178,6 +194,8 @@ static gboolean grelay_stream_tick(gpointer user_data) {
     st->it = NULL; st->subid[0] = '\0'; st->no_progress_ticks = 0;
     if (Gm.subs_current > 0) Gm.subs_current--; Gm.subs_ended++;
     Gm.eose_sent++;
+    Gm.queries_eose++;
+    Gm.last_query_ms = grelay_now_ms();
     g_message("grelay: EOSE sent");
     return FALSE;
   }
@@ -218,6 +236,53 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
           name, software, version, nips, app?app->auth:"off", app?app->max_filters:10, app?app->max_limit:500, app?app->max_subs:1, app?app->rate_ops_per_sec:20, app?app->rate_burst:40);
         (void)lws_return_http_status(wsi, HTTP_STATUS_OK, body);
         return 0;
+      } else if (strcmp(uri, "/readyz") == 0) {
+        /* Ready if storage is up and we've seen recent activity within window */
+        guint64 now = grelay_now_ms();
+        guint64 window = 60000; /* 60s default */
+        const char *envw = g_getenv("GRELAY_READY_WINDOW_MS");
+        if (envw && *envw) { unsigned long v = strtoul(envw, NULL, 10); if (v > 0) window = (guint64)v; }
+        gboolean storage_ok = (app && app->storage && app->storage->vt);
+        guint64 last_ok = (Gm.last_ingest_ms > Gm.last_query_ms) ? Gm.last_ingest_ms : Gm.last_query_ms;
+        gboolean recent_ok = (last_ok > 0 && (now - last_ok) <= window);
+        gboolean ready = storage_ok && recent_ok;
+        (void)lws_return_http_status(wsi, ready ? HTTP_STATUS_OK : HTTP_STATUS_SERVICE_UNAVAILABLE,
+                                     ready ? "ready" : "not-ready");
+        return 0;
+      } else if (strcmp(uri, "/metrics") == 0) {
+        char body[2048];
+        int n = 0;
+        n += g_snprintf(body + n, sizeof(body) - n, "# HELP grelay_connections_current Current WS connections\n");
+        n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_connections_current gauge\n");
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_connections_current %llu\n", (unsigned long long)Gm.connections_current);
+        n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_connections_total counter\n");
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_connections_total %llu\n", (unsigned long long)Gm.connections_total);
+        n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_connections_closed counter\n");
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_connections_closed %llu\n", (unsigned long long)Gm.connections_closed);
+        n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_subs_current gauge\n");
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_subs_current %llu\n", (unsigned long long)Gm.subs_current);
+        n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_subs_started counter\n");
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_subs_started %llu\n", (unsigned long long)Gm.subs_started);
+        n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_subs_ended counter\n");
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_subs_ended %llu\n", (unsigned long long)Gm.subs_ended);
+        n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_events_streamed counter\n");
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_events_streamed %llu\n", (unsigned long long)Gm.events_streamed);
+        n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_events_ingested_ok counter\n");
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_events_ingested_ok %llu\n", (unsigned long long)Gm.events_ingested_ok);
+        n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_queries_started counter\n");
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_queries_started %llu\n", (unsigned long long)Gm.queries_started);
+        n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_queries_eose counter\n");
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_queries_eose %llu\n", (unsigned long long)Gm.queries_eose);
+        n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_rate_limit_drops counter\n");
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_rate_limit_drops %llu\n", (unsigned long long)Gm.rate_limit_drops);
+        n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_backpressure_drops counter\n");
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_backpressure_drops %llu\n", (unsigned long long)Gm.backpressure_drops);
+        n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_last_ingest_ms gauge\n");
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_last_ingest_ms %llu\n", (unsigned long long)Gm.last_ingest_ms);
+        n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_last_query_ms gauge\n");
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_last_query_ms %llu\n", (unsigned long long)Gm.last_query_ms);
+        (void)lws_return_http_status(wsi, HTTP_STATUS_OK, body);
+        return 0;
       } else if (strcmp(uri, "/healthz") == 0) {
         /* Simple health: 200 OK and minimal text indicating storage state */
         const char *state = (app && app->storage && app->storage->vt) ? "ok" : "degraded";
@@ -244,8 +309,9 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
       } else if (strcmp(uri, "/admin/limits") == 0) {
         char body[512];
         g_snprintf(body, sizeof(body),
-          "{\"port\":%d,\"storage_driver\":\"%s\",\"max_filters\":%d,\"max_limit\":%d,\"max_subscriptions\":%d,\"rate_ops_per_sec\":%d,\"rate_burst\":%d}",
-          app?app->port:4849, app?app->storage_driver:"nostrdb", app?app->max_filters:10, app?app->max_limit:500, app?app->max_subs:1, app?app->rate_ops_per_sec:20, app?app->rate_burst:40);
+          "{\"port\":%d,\"storage_driver\":\"%s\",\"max_filters\":%d,\"max_limit\":%d,\"max_subscriptions\":%d,\"rate_ops_per_sec\":%d,\"rate_burst\":%d,\"req_pending_ticks\":%d,\"req_tick_interval_ms\":%d,\"req_linger_ms\":%d}",
+          app?app->port:4849, app?app->storage_driver:"nostrdb", app?app->max_filters:10, app?app->max_limit:500, app?app->max_subs:1, app?app->rate_ops_per_sec:20, app?app->rate_burst:40,
+          app?app->req_pending_ticks:10, app?app->req_tick_interval_ms:50, app?app->req_linger_ms:300);
         (void)lws_return_http_status(wsi, HTTP_STATUS_OK, body);
         return 0;
       }
@@ -307,7 +373,7 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
               if (app && st && st->authed_pubkey[0]) {
                 const char *epk = nostr_event_get_pubkey(ev);
                 if (!epk || g_strcmp0(epk, st->authed_pubkey) != 0) {
-                  char *okj = nostr_ok_build_json("0000", 0, "auth-pubkey-mismatch");
+                  char *okj = nostr_ok_build_json("0000", 0, "auth-pubkey-mismatch"); Gm.auth_failures++;
                   if (okj) { size_t m=strlen(okj); unsigned char *buf=g_malloc(LWS_PRE+m); if(buf){ memcpy(buf+LWS_PRE, okj, m); lws_write(wsi, buf+LWS_PRE, m, LWS_WRITE_TEXT); g_free(buf);} g_free(okj);} 
                   nostr_event_free(ev); g_free(json); return 0;
                 }
@@ -315,8 +381,8 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
               id = nostr_event_get_id(ev);
               rc_store = app->storage->vt->put_event(app->storage, ev);
               reason = rc_store == 0 ? "" : "error: store failed";
-              if (rc_store == 0) g_message("grelay: store ok id=%.16s kind=%d", id?id:"0000", ev->kind);
-              else g_message("grelay: store failed id=%.16s kind=%d", id?id:"0000", ev->kind);
+              if (rc_store == 0) { g_message("grelay: store ok id=%.16s kind=%d", id?id:"0000", ev->kind); Gm.events_ingested_ok++; Gm.last_ingest_ms = grelay_now_ms(); }
+              else { g_message("grelay: store failed id=%.16s kind=%d", id?id:"0000", ev->kind); Gm.events_ingested_failed++; }
             } else {
               if (ok) {
                 /* Parsing succeeded but storage path is unavailable */
@@ -351,16 +417,30 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
           int err = 0; NostrFilter *arr1[1]; size_t m=0; if (ff) { arr1[0]=ff; m=1; }
           void *it = app->storage->vt->query(app->storage, (const NostrFilter*)(m?arr1:NULL), m, 0, 0, 0, &err);
           if (it) {
-            if (!st) st = (GRelayConnState*)user; st->it = it; g_strlcpy(st->subid, subid, sizeof(st->subid)); st->no_progress_ticks=0; Gm.subs_started++; Gm.subs_current++; g_message("grelay: query iterator started sub=%.32s", st->subid);
+            if (!st) st = (GRelayConnState*)user; st->it = it; g_strlcpy(st->subid, subid, sizeof(st->subid)); st->no_progress_ticks=0; Gm.subs_started++; Gm.subs_current++; Gm.queries_started++; Gm.last_query_ms = grelay_now_ms(); g_message("grelay: query iterator started sub=%.32s", st->subid);
             /* Kick a first tick inline */
             grelay_stream_tick(st);
             /* Schedule a few follow-up ticks to catch near-simultaneous publishes */
-            if (st->it) { st->pending_ticks = 10; lws_set_timer_usecs(wsi, 50 * 1000); }
+            if (st->it) {
+              int ticks = app ? app->req_pending_ticks : 10; if (ticks <= 0) ticks = 0;
+              int ival = app ? app->req_tick_interval_ms : 50; if (ival <= 0) ival = 50;
+              st->pending_ticks = ticks;
+              if (ticks > 0) lws_set_timer_usecs(wsi, (unsigned int)(ival * 1000));
+            }
           } else {
-            g_message("grelay: query returned no iterator err=%d", err);
-            /* immediate EOSE */
-            char *eose = nostr_eose_build_json(subid);
-            if (eose){ size_t m=strlen(eose); unsigned char *buf=g_malloc(LWS_PRE+m); if(buf){ memcpy(buf+LWS_PRE, eose, m); lws_write(wsi, buf+LWS_PRE, m, LWS_WRITE_TEXT); g_free(buf);} g_free(eose);} 
+            g_message("grelay: query returned no iterator err=%d", err); Gm.queries_failed++;
+            /* Linger: delay EOSE to catch in-flight ingests */
+            if (!st) st = (GRelayConnState*)user; g_strlcpy(st->subid, subid, sizeof(st->subid)); st->no_progress_ticks=0;
+            if (app) {
+              int linger = app->req_linger_ms > 0 ? app->req_linger_ms : 300;
+              st->linger_active = 1;
+              st->linger_until_ms = grelay_now_ms() + (guint64)linger;
+              lws_set_timer_usecs(wsi, (unsigned int)(linger * 1000));
+            } else {
+              /* fallback: immediate EOSE */
+              char *eose = nostr_eose_build_json(subid);
+              if (eose){ size_t m=strlen(eose); unsigned char *buf=g_malloc(LWS_PRE+m); if(buf){ memcpy(buf+LWS_PRE, eose, m); lws_write(wsi, buf+LWS_PRE, m, LWS_WRITE_TEXT); g_free(buf);} g_free(eose);} 
+            }
           }
         }
         if (ff) nostr_filter_free(ff);
@@ -407,8 +487,22 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
       if (st->it) {
         grelay_stream_tick(st);
         if (st->it && st->pending_ticks > 0) {
+          int ival = st->app ? st->app->req_tick_interval_ms : 50; if (ival <= 0) ival = 50;
           st->pending_ticks--;
-          lws_set_timer_usecs(wsi, 50 * 1000);
+          lws_set_timer_usecs(wsi, (unsigned int)(ival * 1000));
+        }
+      } else if (st->subid[0] && st->linger_active) {
+        guint64 now = grelay_now_ms();
+        if (now >= st->linger_until_ms) {
+          /* Linger expired: send EOSE */
+          char *eose = nostr_eose_build_json(st->subid);
+          if (eose){ size_t m=strlen(eose); unsigned char *buf=g_malloc(LWS_PRE+m); if(buf){ memcpy(buf+LWS_PRE, eose, m); lws_write(wsi, buf+LWS_PRE, m, LWS_WRITE_TEXT); g_free(buf);} g_free(eose);} 
+          st->linger_active = 0; st->linger_until_ms = 0; st->subid[0] = '\0';
+          Gm.eose_sent++; Gm.queries_eose++; Gm.last_query_ms = now;
+        } else {
+          /* re-arm until expiry */
+          guint64 remain = st->linger_until_ms - now;
+          lws_set_timer_usecs(wsi, (unsigned int)(remain * 1000));
         }
       }
       return 0;
@@ -495,6 +589,9 @@ static void g_relay_app_init(GRelayApp *self) {
   self->rate_ops_per_sec = g_getenv("GRELAY_RATE_OPS_PER_SEC") ? atoi(g_getenv("GRELAY_RATE_OPS_PER_SEC")) : 20;
   self->rate_burst = g_getenv("GRELAY_RATE_BURST") ? atoi(g_getenv("GRELAY_RATE_BURST")) : 40;
   self->backpressure_max_ticks = g_getenv("GRELAY_BACKPRESSURE_MAX_TICKS") ? atoi(g_getenv("GRELAY_BACKPRESSURE_MAX_TICKS")) : 0;
+  self->req_pending_ticks = g_getenv("GRELAY_REQ_PENDING_TICKS") ? atoi(g_getenv("GRELAY_REQ_PENDING_TICKS")) : 10;
+  self->req_tick_interval_ms = g_getenv("GRELAY_REQ_TICK_INTERVAL_MS") ? atoi(g_getenv("GRELAY_REQ_TICK_INTERVAL_MS")) : 50;
+  self->req_linger_ms = g_getenv("GRELAY_REQ_LINGER_MS") ? atoi(g_getenv("GRELAY_REQ_LINGER_MS")) : 300;
   const char *sn = g_getenv("GRELAY_SUPPORTED_NIPS");
   if (sn && *sn) { g_strlcpy(self->supported_nips, sn, sizeof(self->supported_nips)); }
   else { g_strlcpy(self->supported_nips, "[1,11,42,45,50,86]", sizeof(self->supported_nips)); }
