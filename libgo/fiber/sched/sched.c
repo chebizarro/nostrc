@@ -1,3 +1,5 @@
+#define _XOPEN_SOURCE 700
+#define _POSIX_C_SOURCE 200809L
 #include "sched.h"
 #include <stdlib.h>
 #include <string.h>
@@ -178,7 +180,9 @@ void gof_sched_set_steal_params(int enable, int min_live, int min_victim) {
 }
 
 void gof_sched_get_steal_params(int *enable, int *min_live, int *min_victim) {
-  if (enable) *enable = 0; if (min_live) *min_live = 0; if (min_victim) *min_victim = 0;
+  if (enable) *enable = 0;
+  if (min_live) *min_live = 0;
+  if (min_victim) *min_victim = 0;
   if (!S.initialized) gof_sched_init(0);
   pthread_mutex_lock(&S.mu);
   if (enable) *enable = S.enable_steal;
@@ -366,7 +370,8 @@ void gof_sched_init(size_t default_stack_bytes) {
   /* Determine number of workers */
   const char *env = getenv("GOF_NWORKERS");
   int n = env ? atoi(env) : 1;
-  if (n < 1) n = 1; if (n > 64) n = 64;
+  if (n < 1) n = 1;
+  if (n > 64) n = 64;
   S.nworkers = n;
   const char *steal = getenv("GOF_WORKSTEAL");
   S.enable_steal = (steal && atoi(steal) != 0) ? 1 : 0;
@@ -409,7 +414,8 @@ void gof_sched_init(size_t default_stack_bytes) {
     const char *env_np = getenv("GOF_NPOLLERS");
     np = env_np ? atoi(env_np) : 1;
   }
-  if (np < 1) np = 1; if (np > S.nworkers) np = S.nworkers;
+  if (np < 1) np = 1;
+  if (np > S.nworkers) np = S.nworkers;
   S.npollers = np;
   S.poller_threads = (pthread_t*)calloc((size_t)S.npollers, sizeof(pthread_t));
   for (int i = 0; i < S.npollers; ++i) {

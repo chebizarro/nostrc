@@ -885,7 +885,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
 int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx) {
     nostr_metric_timer t; nostr_metric_timer_start(&t);
     int blocked = 0;
-    int have_tw = 0;
+    int have_tw = 0; (void)have_tw;
     nostr_metric_timer tw;
     ensure_histos();
     nsync_mu_lock(&chan->mutex);
@@ -960,7 +960,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
         }
     }
     /* silence unused warning on toolchains where timers compile out */
-    (void)have_tw;
+    if (have_tw) { (void)0; }
 
     if (NOSTR_UNLIKELY(chan->closed || (ctx && go_context_is_canceled(ctx)))) {
         nsync_mu_unlock(&chan->mutex);
@@ -1016,7 +1016,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
 int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx) {
     nostr_metric_timer t; nostr_metric_timer_start(&t);
     int blocked = 0;
-    int have_tw = 0;
+    int have_tw = 0; (void)have_tw;
     nostr_metric_timer tw;
     ensure_histos();
     nsync_mu_lock(&chan->mutex);
@@ -1088,6 +1088,8 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
             }
         }
     }
+    /* silence unused warning on toolchains where timers compile out */
+    (void)have_tw;
 
     {
         int closed_empty;
