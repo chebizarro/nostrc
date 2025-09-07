@@ -5,6 +5,8 @@
 #include <time.h>
 #include "context.h"
 
+static inline void sleep_ms(int ms){ struct timespec ts={ ms/1000, (long)(ms%1000)*1000000L }; nanosleep(&ts, NULL); }
+
 #define WORKERS 16
 #define ROUNDS 100
 
@@ -27,7 +29,7 @@ int main(void){
         for (int i=0;i<WORKERS;i++) pthread_create(&th[i], NULL, ctx_worker, ctx);
 
         // cancel soon
-        usleep(1000);
+        sleep_ms(1);
         res.cancel(ctx);
 
         for (int i=0;i<WORKERS;i++) pthread_join(th[i], NULL);

@@ -1,9 +1,10 @@
-static inline void sleep_ms(int ms){ struct timespec ts={ ms/1000, (long)(ms%1000)*1000000L }; nanosleep(&ts, NULL); }
 #include <stdio.h>
 #include <pthread.h>
 #include <unistd.h>
 #include <time.h>
 #include "go.h"
+
+static inline void sleep_ms(int ms){ struct timespec ts={ ms/1000, (long)(ms%1000)*1000000L }; nanosleep(&ts, NULL); }
 
 static void *recv_block_then_close_result;
 
