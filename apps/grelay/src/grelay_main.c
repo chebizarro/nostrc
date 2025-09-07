@@ -39,6 +39,8 @@ typedef struct {
   int req_pending_ticks;        /* how many follow-up ticks after REQ */
   int req_tick_interval_ms;     /* interval between follow-up ticks */
   int req_linger_ms;            /* delay before sending EOSE if no iterator */
+  /* logging */
+  int log_verbose;              /* enable verbose debug logs */
   /* storage */
   NostrStorage *storage;
 } GRelayApp;
@@ -161,7 +163,7 @@ static gboolean grelay_stream_tick(gpointer user_data) {
     }
   }
   if (sent_count > 0) {
-    g_message("grelay: stream tick sent=%d sub=%.32s", sent_count, st->subid);
+    if (st->app && st->app->log_verbose) g_debug("grelay: stream tick sent=%d sub=%.32s", sent_count, st->subid);
   }
   if (!sent_any) {
     /* backpressure: if we repeatedly cannot make progress, drop */
@@ -178,7 +180,7 @@ static gboolean grelay_stream_tick(gpointer user_data) {
       if (st->it && st->app->storage->vt->query_free) st->app->storage->vt->query_free(st->app->storage, st->it);
       st->it = NULL; st->subid[0] = '\0'; st->no_progress_ticks = 0;
       if (Gm.subs_current > 0) Gm.subs_current--; Gm.subs_ended++; Gm.backpressure_drops++;
-      g_message("grelay: backpressure drop sub closed");
+      if (st->app && st->app->log_verbose) g_debug("grelay: backpressure drop sub closed");
       return FALSE;
     }
     /* send EOSE and cleanup */
@@ -210,16 +212,16 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
   GRelayApp *app = (GRelayApp*)lws_context_user(lws_get_context(wsi));
   switch (reason) {
     case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION: {
-      /* Handshake diagnostics: log current protocol context (no header APIs for max portability) */
-      const struct lws_protocols *proto = lws_get_protocol(wsi);
-      const char *prname = proto && proto->name ? proto->name : "(none)";
-      g_message("grelay: FILTER_PROTOCOL_CONNECTION: proto=%s", prname);
-      fprintf(stderr, "[grelay] filter_proto: proto=%s\n", prname);
+      /* Handshake diagnostics (verbose only) */
+      if (app && app->log_verbose) {
+        const struct lws_protocols *proto = lws_get_protocol(wsi);
+        const char *prname = proto && proto->name ? proto->name : "(none)";
+        g_debug("grelay: FILTER_PROTOCOL_CONNECTION: proto=%s", prname);
+      }
       return 0;
     }
     case LWS_CALLBACK_SERVER_NEW_CLIENT_INSTANTIATED: {
-      g_message("grelay: new client instantiated");
-      fprintf(stderr, "[grelay] new client instantiated\n");
+      if (app && app->log_verbose) g_debug("grelay: new client instantiated");
       return 0;
     }
     case LWS_CALLBACK_HTTP: {
@@ -325,8 +327,7 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
       Gm.connections_current++; Gm.connections_total++;
       const struct lws_protocols *proto = lws_get_protocol(wsi);
       const char *pname = proto && proto->name ? proto->name : "(unknown)";
-      g_message("grelay: WS established (protocol=%s)", pname);
-      fprintf(stderr, "[grelay] WS established (protocol=%s)\n", pname);
+      if (app && app->log_verbose) g_debug("grelay: WS established (protocol=%s)", pname);
       /* Ask to be called back when writeable so we can sanity-check send path */
       lws_callback_on_writable(wsi);
       return 0;
@@ -334,15 +335,11 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
     case LWS_CALLBACK_CLOSED: {
       grelay_on_ws_closed_lws();
       g_message("grelay: WS closed");
-      fprintf(stderr, "[grelay] WS closed\n");
       return 0;
     }
     case LWS_CALLBACK_RECEIVE: {
       if (!st) break; const char *data = (const char*)in; size_t n = len; if (!data || n<2) return 0;
-      {
-        char dbg[257]; size_t cp = n < 256 ? n : 256; memcpy(dbg, data, cp); dbg[cp] = '\0';
-        g_message("grelay: ws frame: %.256s", dbg); fprintf(stderr, "[grelay] ws frame: %.256s\n", dbg);
-      }
+      if (app && app->log_verbose) { char dbg[257]; size_t cp = n < 256 ? n : 256; memcpy(dbg, data, cp); dbg[cp] = '\0'; g_debug("grelay: ws frame: %.256s", dbg); }
       /* Reuse existing parsing logic by adapting minimal pieces inline */
       /* Only handle EVENT/REQ/COUNT/CLOSE here; AUTH challenge can be added similarly */
       if (n >= 7 && g_str_has_prefix(data, "[\"EVENT\"")) {
@@ -466,21 +463,18 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
       return 0;
     }
     case LWS_CALLBACK_SERVER_WRITEABLE: {
-      /* Send a small NOTICE to prove outbound works and nudge any buffering */
-      static const char *notice = "[\"NOTICE\",\"hello\"]";
-      size_t m = strlen(notice);
-      unsigned char *buf = g_malloc(LWS_PRE + m);
-      if (buf) {
-        memcpy(buf + LWS_PRE, notice, m);
-        lws_write(wsi, buf + LWS_PRE, m, LWS_WRITE_TEXT);
-        g_free(buf);
-        g_message("grelay: writeable: sent NOTICE"); fprintf(stderr, "[grelay] writeable: sent NOTICE\n");
+      if (app && app->log_verbose) {
+        /* Optional NOTICE to nudge buffers when verbose */
+        static const char *notice = "[\"NOTICE\",\"hello\"]";
+        size_t m = strlen(notice);
+        unsigned char *buf = g_malloc(LWS_PRE + m);
+        if (buf) { memcpy(buf + LWS_PRE, notice, m); lws_write(wsi, buf + LWS_PRE, m, LWS_WRITE_TEXT); g_free(buf); g_debug("grelay: writeable: sent NOTICE"); }
       }
       return 0;
     }
     default:
       /* Verbose callback trace for debugging */
-      g_message("grelay: LWS reason=%d", (int)reason);
+      if (app && app->log_verbose) g_debug("grelay: LWS reason=%d", (int)reason);
       break;
     case LWS_CALLBACK_TIMER: {
       if (!st) return 0;
@@ -550,12 +544,14 @@ static int g_relay_app_command_line(GApplication *app, GApplicationCommandLine *
       }
     }
   }
-  /* Log storage backend availability */
-  g_message("grelay: storage driver=%s vt=%p put_event=%p query=%p",
+  /* Log storage backend availability (verbose) */
+  if (self->log_verbose) {
+    g_debug("grelay: storage driver=%s vt=%p put_event=%p query=%p",
             self->storage_driver[0]?self->storage_driver:"nostrdb",
             self->storage ? (void*)self->storage->vt : NULL,
             (self->storage && self->storage->vt) ? (void*)self->storage->vt->put_event : NULL,
             (self->storage && self->storage->vt) ? (void*)self->storage->vt->query : NULL);
+  }
   /* Initialize LWS context */
   struct lws_context_creation_info info; memset(&info, 0, sizeof(info));
   info.port = (int)self->port;
@@ -592,6 +588,7 @@ static void g_relay_app_init(GRelayApp *self) {
   self->req_pending_ticks = g_getenv("GRELAY_REQ_PENDING_TICKS") ? atoi(g_getenv("GRELAY_REQ_PENDING_TICKS")) : 10;
   self->req_tick_interval_ms = g_getenv("GRELAY_REQ_TICK_INTERVAL_MS") ? atoi(g_getenv("GRELAY_REQ_TICK_INTERVAL_MS")) : 50;
   self->req_linger_ms = g_getenv("GRELAY_REQ_LINGER_MS") ? atoi(g_getenv("GRELAY_REQ_LINGER_MS")) : 300;
+  self->log_verbose = g_getenv("GRELAY_VERBOSE") ? atoi(g_getenv("GRELAY_VERBOSE")) : 0;
   const char *sn = g_getenv("GRELAY_SUPPORTED_NIPS");
   if (sn && *sn) { g_strlcpy(self->supported_nips, sn, sizeof(self->supported_nips)); }
   else { g_strlcpy(self->supported_nips, "[1,11,42,45,50,86]", sizeof(self->supported_nips)); }
