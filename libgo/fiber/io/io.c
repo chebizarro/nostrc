@@ -1,3 +1,6 @@
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include "../include/libgo/fiber.h"
 #include "netpoll.h"
 #include "../sched/sched.h"
@@ -76,7 +79,9 @@ static gof_fdwait* fdwait_get(int fd, int create){
 
 static void waiter_push(gof_waiter **head, gof_waiter **tail, gof_fiber *f){
   gof_waiter *w = (gof_waiter*)malloc(sizeof(*w));
-  if (!w) return; w->f = f; w->next = NULL;
+  if (!w) return;
+  w->f = f;
+  w->next = NULL;
   if (*tail) { (*tail)->next = w; *tail = w; }
   else { *head = *tail = w; }
 }

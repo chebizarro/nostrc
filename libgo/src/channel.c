@@ -184,11 +184,11 @@ static inline void ensure_spin_env(void) {
 }
 
 // Next index helpers (without mutating channel state)
-static inline size_t go_channel_next_in_idx(const GoChannel *chan) {
+static inline __attribute__((unused)) size_t go_channel_next_in_idx(const GoChannel *chan) {
     size_t i = chan->in + 1;
     return i & chan->mask;
 }
-static inline size_t go_channel_next_out_idx(const GoChannel *chan) {
+static inline __attribute__((unused)) size_t go_channel_next_out_idx(const GoChannel *chan) {
     size_t o = chan->out + 1;
     return o & chan->mask;
 }

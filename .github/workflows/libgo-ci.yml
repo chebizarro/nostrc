@@ -171,7 +171,7 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y build-essential cmake ninja-build clang git libjansson-dev pkg-config \
-                                  libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev
+                                  libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev
           # Build nsync from source (fast, small)
           git clone --depth 1 https://github.com/google/nsync.git
           cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release

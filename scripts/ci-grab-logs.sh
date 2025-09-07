@@ -1,13 +1,13 @@
-# scripts/ci-one.sh
+# scripts/ci-for-sha.sh
 #!/usr/bin/env bash
 set -euo pipefail
 
 # -------- defaults --------
-STATUS="failure"          # when --run not provided
-MODE="failed-only"        # or "all"
-OUTDIR="ci-logs"          # where logs go
-RUN_ID=""                 # pass with --run to override
-TRIM_LIMIT=$((2*1024*1024))  # >2MB logs get head/tail trimmed
+SHA=""                     # commit to inspect; default: git HEAD
+STATUS="any"               # any|queued|in_progress|completed|failure|success|cancelled
+MODE="failed-only"         # or "all"
+OUTDIR="ci-logs"           # output base
+TRIM_LIMIT=$((2*1024*1024))  # >2MB logs get trimmed (head/tail)
 HEAD_LINES=300
 TAIL_LINES=400
 
@@ -16,27 +16,27 @@ usage() {
 Usage: $(basename "$0") [options]
 
 Options:
-  --run <RUN_ID>           Use a specific Actions run ID (default: latest by --status)
-  --status <state>         failure|success|cancelled|in_progress|queued (default: failure)
-  --all                    Download FULL logs per job (default is failed-only steps)
-  --failed-only            Only failed steps per job (default)
-  --outdir <dir>           Output directory (default: ci-logs)
-  --trim-bytes <N>         Trim logs larger than N bytes using head/tail (default: 2097152)
-  --head <N>               Lines from start when trimming (default: 300)
-  --tail <N>               Lines from end when trimming (default: 400)
-  -h, --help               Show help
+  --sha <SHA>             Commit SHA to collect runs for (default: git rev-parse HEAD)
+  --status <state>        any|queued|in_progress|completed|failure|success|cancelled (default: any)
+  --all                   Download FULL logs per job (default shows failed steps only)
+  --failed-only           Only failed steps per job (default)
+  --outdir <dir>          Output directory base (default: ci-logs)
+  --trim-bytes <N>        Trim logs larger than N bytes (default: 2097152)
+  --head <N>              Lines from start when trimming (default: 300)
+  --tail <N>              Lines from end when trimming (default: 400)
+  -h, --help              Show help
 
 Examples:
-  $(basename "$0")                          # latest failed run, failed steps per job
-  $(basename "$0") --all                    # latest failed run, full logs per job
-  $(basename "$0") --run 1234567890         # specific run id
+  $(basename "$0")                        # all runs for HEAD, failed steps per job
+  $(basename "$0") --all                  # all runs for HEAD, full logs per job
+  $(basename "$0") --sha abc123 --status failure
 USAGE
 }
 
-# -------- arg parse (POSIX style) --------
+# -------- arg parse --------
 while [ $# -gt 0 ]; do
   case "$1" in
-    --run) RUN_ID="${2:-}"; shift 2 ;;
+    --sha) SHA="${2:-}"; shift 2 ;;
     --status) STATUS="${2:-}"; shift 2 ;;
     --all) MODE="all"; shift ;;
     --failed-only) MODE="failed-only"; shift ;;
@@ -56,118 +56,150 @@ need jq
 gh auth status >/dev/null 2>&1 || { echo "Error: run 'gh auth login' first"; exit 1; }
 
 REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
-
-# -------- choose run --------
-if [ -z "$RUN_ID" ]; then
-  RUN_ID="$(gh run list -s "$STATUS" -L 1 --json databaseId -q '.[0].databaseId' || true)"
-  [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ] && { echo "No runs found with status '$STATUS'"; exit 1; }
-fi
-
-RUN_DIR="$OUTDIR/run-$RUN_ID"
-PACK_DIR="$RUN_DIR/_pack"
-mkdir -p "$RUN_DIR" "$PACK_DIR/snippets"
+[ -n "${SHA}" ] || SHA="$(git rev-parse HEAD 2>/dev/null || true)"
+[ -n "${SHA}" ] || { echo "Error: could not determine SHA (try --sha)"; exit 1; }
 
 echo "Repo: $REPO"
-echo "Run:  $RUN_ID"
-echo "Out:  $RUN_DIR"
+echo "SHA:  $SHA"
+echo "Mode: $MODE   Status filter: $STATUS"
 echo
 
-# -------- list jobs for the run (REST: /actions/runs/{run_id}/jobs) --------
-JOBS_JSON="$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate)"
-printf '%s\n' "$JOBS_JSON" > "$RUN_DIR/jobs.json"
+BASE_DIR="$OUTDIR/sha-$SHA"
+mkdir -p "$BASE_DIR"
 
-# human summary
-{
-  echo "Run: $RUN_ID  Repo: $REPO"
-  jq -r '.jobs[] | "\(.name) • \(.conclusion) • \(.id)"' "$RUN_DIR/jobs.json"
-} > "$RUN_DIR/summary.txt" || true
-echo "Wrote $RUN_DIR/summary.txt"
-
-# which jobs to fetch
-if [ "$MODE" = "failed-only" ]; then
-  MAPQ='.jobs[] | select(.conclusion=="failure") | [.id, .name] | @tsv'
+# -------- list ALL runs for repo, filter by head_sha (server-side filter isn't universal across gh versions) --------
+# We paginate and then jq-select head_sha == SHA; optionally filter by status if not 'any'
+ALL_RUNS_JSON="$(gh api "repos/$REPO/actions/runs" --paginate)"
+if [ "$STATUS" = "any" ]; then
+  RUNS_TSV="$(printf '%s\n' "$ALL_RUNS_JSON" | jq -r --arg SHA "$SHA" \
+    '.workflow_runs[] | select(.head_sha==$SHA) | [.id, .name, .status, .conclusion] | @tsv')"
 else
-  MAPQ='.jobs[] | [.id, .name] | @tsv'
+  RUNS_TSV="$(printf '%s\n' "$ALL_RUNS_JSON" | jq -r --arg SHA "$SHA" --arg ST "$STATUS" \
+    '.workflow_runs[] | select(.head_sha==$SHA)
+     | select((.status==$ST) or (.conclusion==$ST))
+     | [.id, .name, .status, .conclusion] | @tsv')"
 fi
 
-# -------- fetch per-job logs --------
-echo "Fetching per-job logs ($MODE)..."
-printf '%s\n' "$JOBS_JSON" \
-| jq -r "$MAPQ" \
-| while IFS=$'\t' read -r JOB_ID JOB_NAME; do
-    [ -z "$JOB_ID" ] || [ "$JOB_ID" = "null" ] && continue
-    SAFE="$(printf "%s" "$JOB_NAME" | tr -cd '[:alnum:]_.-')"
-    [ -z "$SAFE" ] && SAFE="job-$JOB_ID"
-    OUTFILE="$RUN_DIR/${SAFE}.log"
-    if [ "$MODE" = "all" ]; then
-      gh run view --job "$JOB_ID" --log > "$OUTFILE"
-    else
-      gh run view --job "$JOB_ID" --log-failed > "$OUTFILE"
-    fi
-    echo "  • $OUTFILE"
-  done
-
-# fallback: if no logs captured (matrix died early), dump whole-run failed steps
-if ! find "$RUN_DIR" -maxdepth 1 -type f -name '*.log' | read -r _; then
-  echo "No per-job logs found; dumping whole-run failed steps as fallback."
-  gh run view "$RUN_ID" --log-failed > "$RUN_DIR/run-$RUN_ID.log" || true
+if [ -z "$RUNS_TSV" ]; then
+  echo "No runs found for SHA=$SHA (status=$STATUS)."
+  exit 1
 fi
 
-# -------- build curated _pack --------
+# Write a summary of runs
+RUNS_SUMMARY="$BASE_DIR/runs-summary.txt"
+echo "Runs for $SHA:" > "$RUNS_SUMMARY"
+printf '%s\n' "$RUNS_TSV" | while IFS=$'\t' read -r RID RNAME RSTATUS RCONC; do
+  echo "  - run:$RID  name:$RNAME  status:$RSTATUS  conclusion:${RCONC:-none}" >> "$RUNS_SUMMARY"
+done
+echo "Wrote $RUNS_SUMMARY"
 echo
-echo "Building curated pack in $PACK_DIR ..."
 
-# copy/trim logs into _pack
-find "$RUN_DIR" -maxdepth 1 -type f -name '*.log' -print0 \
-| while IFS= read -r -d '' f; do
-    bn="$(basename "$f")"
-    out="$PACK_DIR/$bn"
-    sz=$(wc -c < "$f" | tr -d ' ')
-    if [ "$sz" -le "$TRIM_LIMIT" ]; then
-      cp "$f" "$out"
-    else
-      {
-        echo "===== HEAD: $bn (trimmed; original size ${sz}B) ====="
-        head -n "$HEAD_LINES" "$f"
-        echo
-        echo "===== TAIL: $bn ====="
-        tail -n "$TAIL_LINES" "$f"
-      } > "$out"
-    fi
-  done
+# -------- for each run, fetch per-job logs --------
+COMBINED_PACK="$BASE_DIR/_pack"
+mkdir -p "$COMBINED_PACK/snippets"
 
-# error-focused summary
+printf '%s\n' "$RUNS_TSV" | while IFS=$'\t' read -r RUN_ID RUN_NAME RUN_STATUS RUN_CONC; do
+  RUN_DIR="$BASE_DIR/run-$RUN_ID"
+  PACK_DIR="$RUN_DIR/_pack"
+  mkdir -p "$RUN_DIR" "$PACK_DIR/snippets"
+
+  echo "== Run $RUN_ID :: $RUN_NAME =="
+  JOBS_JSON="$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate)"
+  printf '%s\n' "$JOBS_JSON" > "$RUN_DIR/jobs.json"
+
+  { echo "Run: $RUN_ID  Repo: $REPO  Name: $RUN_NAME"
+    jq -r '.jobs[] | "\(.name) • \(.conclusion) • \(.id)"' "$RUN_DIR/jobs.json"
+  } > "$RUN_DIR/summary.txt" || true
+
+  # Which jobs to fetch
+  if [ "$MODE" = "failed-only" ]; then
+    MAPQ='.jobs[] | select(.conclusion=="failure") | [.id, .name] | @tsv'
+  else
+    MAPQ='.jobs[] | [.id, .name] | @tsv'
+  fi
+
+  # Fetch per-job logs
+  GOT_LOGS=0
+  printf '%s\n' "$JOBS_JSON" \
+  | jq -r "$MAPQ" \
+  | while IFS=$'\t' read -r JOB_ID JOB_NAME; do
+      [ -z "$JOB_ID" ] || [ "$JOB_ID" = "null" ] && continue
+      SAFE="$(printf "%s" "$JOB_NAME" | tr -cd '[:alnum:]_.-')"
+      [ -z "$SAFE" ] && SAFE="job-$JOB_ID"
+      OUTFILE="$RUN_DIR/${SAFE}.log"
+      if [ "$MODE" = "all" ]; then
+        gh run view --job "$JOB_ID" --log > "$OUTFILE"
+      else
+        gh run view --job "$JOB_ID" --log-failed > "$OUTFILE"
+      fi
+      echo "  • $OUTFILE"
+      GOT_LOGS=1
+    done
+
+  # Fallback: run-level log (failed steps)
+  if ! find "$RUN_DIR" -maxdepth 1 -type f -name '*.log' | read -r _; then
+    echo "  (no per-job logs; dumping run-level failed steps)"
+    gh run view "$RUN_ID" --log-failed > "$RUN_DIR/run-$RUN_ID.log" || true
+  fi
+
+  # Build per-run pack (copy/trim logs)
+  find "$RUN_DIR" -maxdepth 1 -type f -name '*.log' -print0 \
+  | while IFS= read -r -d '' f; do
+      bn="$(basename "$f")"
+      out="$PACK_DIR/$bn"
+      sz=$(wc -c < "$f" | tr -d ' ')
+      if [ "$sz" -le "$TRIM_LIMIT" ]; then
+        cp "$f" "$out"
+      else
+        {
+          echo "===== HEAD: $bn (trimmed; original size ${sz}B) ====="
+          head -n "$HEAD_LINES" "$f"
+          echo
+          echo "===== TAIL: $bn ====="
+          tail -n "$TAIL_LINES" "$f"
+        } > "$out"
+      fi
+      # also copy into combined pack (name-spaced with run id)
+      cp "$out" "$COMBINED_PACK/${RUN_ID}_$bn"
+    done
+
+  # Per-run error summary & manifest
+  grep -nEi '(^|[^a-z])(error|failed|fatal|undefined|no such file|permission denied|exit [1-9]|segmentation fault|undefined reference|compile|linker|cannot find|missing)([^a-z]|$)' \
+    "$PACK_DIR"/*.log 2>/dev/null \
+    | sed 's|'$PACK_DIR'/||' \
+    > "$PACK_DIR/ERRORS_SUMMARY.txt" || true
+
+  {
+    echo "# CI Log Pack (Run $RUN_ID)"
+    echo
+    echo "- Source run dir: \`$RUN_DIR\`"
+    echo "- Files included:"
+    for f in "$PACK_DIR"/*.log; do [ -e "$f" ] || continue; echo "  - $(basename "$f")  ($(wc -l < "$f") lines)"; done
+    echo
+    echo "## Read order"
+    [ -s "$PACK_DIR/ERRORS_SUMMARY.txt" ] && echo "1) ERRORS_SUMMARY.txt"
+    idx=2; for f in "$PACK_DIR"/*.log; do [ -e "$f" ] || continue; echo "$idx) $(basename "$f")"; idx=$((idx+1)); done
+  } > "$PACK_DIR/MANIFEST.md"
+
+done
+
+# -------- combined pack error summary & manifest --------
 grep -nEi '(^|[^a-z])(error|failed|fatal|undefined|no such file|permission denied|exit [1-9]|segmentation fault|undefined reference|compile|linker|cannot find|missing)([^a-z]|$)' \
-  "$PACK_DIR"/*.log 2>/dev/null \
-  | sed 's|'$PACK_DIR'/||' \
-  > "$PACK_DIR/ERRORS_SUMMARY.txt" || true
+  "$COMBINED_PACK"/*.log 2>/dev/null \
+  | sed 's|'$COMBINED_PACK'/||' \
+  > "$COMBINED_PACK/ERRORS_SUMMARY.txt" || true
 
-# manifest
 {
-  echo "# CI Log Pack"
+  echo "# CI Log Pack (Combined for SHA $SHA)"
   echo
-  echo "- Source run dir: \`$RUN_DIR\`"
+  echo "- Source base: \`$BASE_DIR\`"
   echo "- Files included:"
-  for f in "$PACK_DIR"/*.log; do
-    [ -e "$f" ] || continue
-    echo "  - $(basename "$f")  ($(wc -l < "$f") lines)"
-  done
+  for f in "$COMBINED_PACK"/*.log; do [ -e "$f" ] || continue; echo "  - $(basename "$f")  ($(wc -l < "$f") lines)"; done
   echo
   echo "## Read order"
-  if [ -s "$PACK_DIR/ERRORS_SUMMARY.txt" ]; then
-    echo "1) ERRORS_SUMMARY.txt"
-  fi
-  idx=2
-  for f in "$PACK_DIR"/*.log; do
-    [ -e "$f" ] || continue
-    bn="$(basename "$f")"
-    echo "$idx) $bn"
-    idx=$((idx+1))
-  done
-} > "$PACK_DIR/MANIFEST.md"
-
-echo "Pack files:"
-ls -1 "$PACK_DIR" || true
+  [ -s "$COMBINED_PACK/ERRORS_SUMMARY.txt" ] && echo "1) ERRORS_SUMMARY.txt"
+  idx=2; for f in "$COMBINED_PACK"/*.log; do [ -e "$f" ] || continue; echo "$idx) $(basename "$f")"; idx=$((idx+1)); done
+} > "$COMBINED_PACK/MANIFEST.md"
 
 # -------- keep out of git but visible to Windsurf --------
 EXCLUDE_FILE=".git/info/exclude"
@@ -178,35 +210,35 @@ grep -q "^$OUTDIR/$" "$EXCLUDE_FILE" 2>/dev/null || printf "\n# local only\n%s/\
 cat > .windsurf_ci_prompt.txt <<'EOF'
 You have access to the workspace files. **Read these before answering**:
 
-- ci-logs/run-*/_pack/ERRORS_SUMMARY.txt
-- All *.log files under ci-logs/run-*/_pack/
-- ci-logs/run-*/_pack/MANIFEST.md
+- ci-logs/sha-*/_pack/ERRORS_SUMMARY.txt
+- All *.log files under ci-logs/sha-*/_pack/
+- ci-logs/sha-*/_pack/MANIFEST.md
 
 ### Task
-1) Identify failing job(s) and exact failing step(s). For each failure, include:
+1) For each run in this commit, identify failing job(s) and exact failing step(s). Include:
    - file name and **line numbers**
-   - the **exact error snippet** (quote it)
+   - the **exact error snippet** (quoted)
    - a 1–2 sentence **root cause**
 2) Propose **minimal, concrete fixes**:
    - If workflow issue: show a unified **diff** for the affected `.github/workflows/*.yml`.
    - If code/toolchain: show diffs to the **actual files** referenced by the error.
    - If caching/permissions/env: specify exact keys/permissions/vars to add.
-3) Provide a **local reproduce checklist** with shell commands, env vars, and expected outputs.
-4) If multiple failures exist, **prioritize** fixes that unblock the most jobs first.
+3) Provide a **local reproduce checklist** (commands, env vars, expected outputs).
+4) **Prioritize** fixes that unblock the most jobs first.
 
 ### Strict rules
 - Add a `(file:line-range)` citation and a short quoted snippet for every claim.
 - If a file is huge, **analyze in chunks** and note which chunk.
 - If something is missing, say exactly which file/path you need.
 
-Start by summarizing ERRORS_SUMMARY.txt, then deep-dive the top 1–3 logs by severity.
+Start by summarizing the combined ERRORS_SUMMARY, then deep-dive the top 1–3 failing jobs by severity across runs.
 EOF
 
 echo
-echo "✅ Logs:       $RUN_DIR"
-echo "🧳 Curated:    $PACK_DIR"
-echo "🧠 Prompt:     .windsurf_ci_prompt.txt"
-echo "🛑 Git-ignore: $EXCLUDE_FILE (keeps $OUTDIR/ out of git)"
+echo "✅ All runs for SHA stored under: $BASE_DIR"
+echo "🧳 Combined pack:                 $COMBINED_PACK"
+echo "🧠 Windsurf prompt:               .windsurf_ci_prompt.txt"
+echo "🛑 Kept out of git via:           $EXCLUDE_FILE"
 echo
-echo "Open the prompt in Windsurf and hit Ask:"
+echo "Open the prompt in Windsurf:"
 echo "  open -a Windsurf .windsurf_ci_prompt.txt   # or: code .windsurf_ci_prompt.txt"

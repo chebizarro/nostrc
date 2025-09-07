@@ -1,3 +1,6 @@
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include "timer_bridge.h"
 #include "../sched/sched.h"
 #include <time.h>

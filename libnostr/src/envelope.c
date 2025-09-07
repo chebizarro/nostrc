@@ -215,11 +215,17 @@ char *nostr_envelope_serialize_compact(const NostrEnvelope *base) {
         char *out = (char *)malloc(total);
         if (!out) { for (size_t j=0;j<nparts;++j) free(parts[j]); free(parts); free(sid); return NULL; }
         char *w = out;
-        w += sprintf(w, "[\"REQ\",%s", sid);
+        size_t rem = total;
+        int n = snprintf(w, rem, "[\"REQ\",%s", sid);
+        if (n < 0 || (size_t)n >= rem) { for (size_t j=0;j<nparts;++j) free(parts[j]); free(parts); free(sid); free(out); return NULL; }
+        w += n; rem -= (size_t)n;
         for (size_t i = 0; i < nparts; ++i) {
-            w += sprintf(w, ",%s", parts[i]);
+            n = snprintf(w, rem, ",%s", parts[i]);
+            if (n < 0 || (size_t)n >= rem) { for (size_t j=0;j<nparts;++j) free(parts[j]); free(parts); free(sid); free(out); return NULL; }
+            w += n; rem -= (size_t)n;
         }
-        w += sprintf(w, "]");
+        n = snprintf(w, rem, "]");
+        if (n < 0 || (size_t)n >= rem) { for (size_t j=0;j<nparts;++j) free(parts[j]); free(parts); free(sid); free(out); return NULL; }
         *w = '\0';
         for (size_t i=0;i<nparts;++i) free(parts[i]);
         free(parts);
@@ -258,11 +264,17 @@ char *nostr_envelope_serialize_compact(const NostrEnvelope *base) {
         char *out = (char *)malloc(total);
         if (!out) { for (size_t j=0;j<nparts;++j) free(parts[j]); free(parts); free(sid); return NULL; }
         char *w = out;
-        w += sprintf(w, "[\"COUNT\",%s,%s", sid, countbuf);
+        size_t rem = total;
+        int n = snprintf(w, rem, "[\"COUNT\",%s,%s", sid, countbuf);
+        if (n < 0 || (size_t)n >= rem) { for (size_t j=0;j<nparts;++j) free(parts[j]); free(parts); free(sid); free(out); return NULL; }
+        w += n; rem -= (size_t)n;
         for (size_t i = 0; i < nparts; ++i) {
-            w += sprintf(w, ",%s", parts[i]);
+            n = snprintf(w, rem, ",%s", parts[i]);
+            if (n < 0 || (size_t)n >= rem) { for (size_t j=0;j<nparts;++j) free(parts[j]); free(parts); free(sid); free(out); return NULL; }
+            w += n; rem -= (size_t)n;
         }
-        w += sprintf(w, "]");
+        n = snprintf(w, rem, "]");
+        if (n < 0 || (size_t)n >= rem) { for (size_t j=0;j<nparts;++j) free(parts[j]); free(parts); free(sid); free(out); return NULL; }
         *w = '\0';
         for (size_t i=0;i<nparts;++i) free(parts[i]);
         free(parts);
