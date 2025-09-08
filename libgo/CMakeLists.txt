@@ -332,7 +332,6 @@ set_tests_properties(GoContextStressTest PROPERTIES TIMEOUT 30)
 if (GO_ENABLE_TSAN)
   set_tests_properties(GoTickerTest PROPERTIES TIMEOUT 60)
   set_tests_properties(GoChannelStressTest PROPERTIES TIMEOUT 90)
-  set_tests_properties(GoFiberIoTimeoutTest PROPERTIES TIMEOUT 10)
 endif()
 
 
@@ -502,6 +501,11 @@ set_tests_properties(GoFiberChanTest PROPERTIES TIMEOUT 15)
 set_tests_properties(GoFiberIoTest PROPERTIES TIMEOUT 10)
 set_tests_properties(GoFiberIoTimeoutTest PROPERTIES TIMEOUT 2)
 set_tests_properties(GoFiberStarvationTest PROPERTIES TIMEOUT 20)
+
+# Late TSAN-specific timeout adjustment for fiber tests (after tests are defined)
+if (GO_ENABLE_TSAN)
+  set_tests_properties(GoFiberIoTimeoutTest PROPERTIES TIMEOUT 10)
+endif()
 
 # Benchmarks (not added to CTest by default)
 add_executable(gof_bench_yield fiber/bench/bench_yield.c)

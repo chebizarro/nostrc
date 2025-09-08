@@ -270,7 +270,6 @@ if (NOSTR_ENABLE_GI)
       COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/gir
       COMMAND ${CMAKE_COMMAND} -E env GI_SCANNER_DISABLE_CACHE=1
         ${G_IR_SCANNER}
-        --cc=${CMAKE_C_COMPILER}
         --cflags-begin
         -std=gnu11
         -xc
