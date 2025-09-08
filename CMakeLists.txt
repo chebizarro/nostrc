@@ -81,6 +81,10 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   if (GO_ENABLE_TSAN)
     add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
     add_link_options(-fsanitize=thread)
+    if (UNIX AND NOT APPLE)
+      # Ensure explicit tsan runtime linkage for lld on Linux
+      add_link_options(-ltsan)
+    endif()
   else()
     if (GO_ENABLE_ASAN)
       add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
@@ -280,14 +284,12 @@ if (NOSTR_ENABLE_GI)
         --symbol-prefix=nostr_
         --identifier-prefix=Nostr
         --warn-all
-        --library nostr
-        --extra-library nostr_json
+        --program ${CMAKE_BINARY_DIR}/tests/test_json_raw
         --library-path ${CMAKE_BINARY_DIR}/libnostr
         --library-path ${CMAKE_BINARY_DIR}/libjson
         --pkg glib-2.0 --pkg gobject-2.0
         --pkg jansson --pkg libwebsockets --pkg openssl --pkg libsecp256k1
         -I ${CMAKE_SOURCE_DIR}/libnostr/include
-        -I ${CMAKE_SOURCE_DIR}/libgo/include
         $<$<BOOL:${NSYNC_INCLUDE_DIR}>:-I${NSYNC_INCLUDE_DIR}>
         -I ${CMAKE_BINARY_DIR}/libnostr/generated
         ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-utils.h

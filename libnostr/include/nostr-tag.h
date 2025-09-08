@@ -5,7 +5,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
-#include "go.h"
+#include "string_array.h"
 
 #ifdef __cplusplus
 extern "C" {
