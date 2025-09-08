@@ -67,10 +67,13 @@ jobs:
       - name: Configure (with GLib + nostrdb, no apps)
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGO_WARNINGS_AS_ERRORS=ON -DNOSTR_WITH_GLIB=ON -DWITH_NOSTRDB=ON -DBUILD_APPS=OFF
 
-      - name: Build and Install
+      - name: Build (no system install)
         run: |
           cmake --build build -j
-          sudo cmake --install build --prefix /usr
+      - name: Optional user-local install (no sudo)
+        if: false
+        run: |
+          cmake --install build --prefix "$HOME/.local"
 
       - name: Generate GIR via CMake target
         run: |

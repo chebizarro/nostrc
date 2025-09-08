@@ -6,6 +6,29 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+// TSAN helpers: declare hooks so TSAN recognizes custom mutex (nsync_mu)
+#if defined(__has_feature)
+#  if __has_feature(thread_sanitizer)
+#    define GO_TSAN_ENABLED 1
+#  endif
+#elif defined(__SANITIZE_THREAD__)
+#  define GO_TSAN_ENABLED 1
+#endif
+
+#ifdef GO_TSAN_ENABLED
+extern void __tsan_acquire(void *);
+extern void __tsan_release(void *);
+static inline void tsan_acq(void *p){ __tsan_acquire(p); }
+static inline void tsan_rel(void *p){ __tsan_release(p); }
+#else
+static inline void tsan_acq(void *p){ (void)p; }
+static inline void tsan_rel(void *p){ (void)p; }
+#endif
+
+// TSAN-aware mutex helpers for nsync_mu
+#define NLOCK(mu_ptr) do { nsync_mu_lock((mu_ptr)); tsan_acq((mu_ptr)); } while(0)
+#define NUNLOCK(mu_ptr) do { tsan_rel((mu_ptr)); nsync_mu_unlock((mu_ptr)); } while(0)
+
 // Portable aligned allocation: prefer C11 aligned_alloc, fallback to malloc
 static inline void *go_aligned_alloc(size_t alignment, size_t size) {
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
@@ -220,7 +243,9 @@ int go_channel_is_closed(GoChannel *chan) {
     int closed = 0;
     ensure_spin_env();
     nsync_mu_lock(&chan->mutex);
+    tsan_acq(&chan->mutex);
     closed = chan->closed;
+    tsan_rel(&chan->mutex);
     nsync_mu_unlock(&chan->mutex);
     return closed;
 }
@@ -253,6 +278,10 @@ int go_channel_has_space(const void *chan) {
 
 /* Non-blocking send: returns 0 on success, -1 if full or closed */
 int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
+    if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
+        nostr_metric_counter_add("go_chan_try_send_failures", 1);
+        return -1;
+    }
 #if NOSTR_CHANNEL_MPMC_SLOTS && NOSTR_CHANNEL_ATOMIC_TRY
     // Lock-free MPMC try send using per-slot sequence protocol with bounded retries.
     for (int attempts = 0; attempts < 64; ++attempts) {
@@ -380,6 +409,10 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
 
 /* Non-blocking receive: returns 0 on success, -1 if empty (or closed and empty) */
 int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
+    if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
+        nostr_metric_counter_add("go_chan_try_recv_failures", 1);
+        return -1;
+    }
 #if NOSTR_CHANNEL_MPMC_SLOTS && NOSTR_CHANNEL_ATOMIC_TRY
     // Lock-free MPMC try receive using per-slot sequence protocol with bounded retries.
     for (int attempts = 0; attempts < 64; ++attempts) {
@@ -576,7 +609,11 @@ void go_channel_free(GoChannel *chan) {
         return;
     }
 
-    nsync_mu_lock(&chan->mutex);
+    if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
+        nostr_metric_timer_stop(&t, h_send_wait_ns);
+        return -1;
+    }
+    NLOCK(&chan->mutex);
     if (chan->buffer) {
         free(chan->buffer);
         chan->buffer = NULL;
@@ -585,7 +622,7 @@ void go_channel_free(GoChannel *chan) {
         free(chan->slot_seq);
         chan->slot_seq = NULL;
     }
-    nsync_mu_unlock(&chan->mutex);
+    NUNLOCK(&chan->mutex);
     free(chan);
 }
 
@@ -596,9 +633,9 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
     int have_tw = 0; // whether we started wake->progress timer
     nostr_metric_timer tw; // wake->progress timer
     ensure_histos();
-    nsync_mu_lock(&chan->mutex);
+    NLOCK(&chan->mutex);
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
-        nsync_mu_unlock(&chan->mutex);
+        NUNLOCK(&chan->mutex);
         nostr_metric_timer_stop(&t, h_send_wait_ns);
         return -1;
     }
@@ -666,7 +703,7 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
     }
 
     if (NOSTR_UNLIKELY(chan->closed)) {
-        nsync_mu_unlock(&chan->mutex);
+        NUNLOCK(&chan->mutex);
         nostr_metric_timer_stop(&t, h_send_wait_ns);
         return -1; // Cannot send to a closed channel
     }
@@ -735,7 +772,7 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
         nostr_metric_counter_add("go_chan_signal_empty", 1);
     }
 
-    nsync_mu_unlock(&chan->mutex);
+    NUNLOCK(&chan->mutex);
     nostr_metric_timer_stop(&t, h_send_wait_ns);
     if (have_tw) {
         nostr_metric_timer_stop(&tw, h_send_wakeup_to_progress_ns);
@@ -750,9 +787,9 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
     int have_tw = 0; // whether we started wake->progress timer
     nostr_metric_timer tw; // wake->progress timer
     ensure_histos();
-    nsync_mu_lock(&chan->mutex);
+    NLOCK(&chan->mutex);
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
-        nsync_mu_unlock(&chan->mutex);
+        NUNLOCK(&chan->mutex);
         nostr_metric_timer_stop(&t, h_recv_wait_ns);
         return -1;
     }
@@ -834,7 +871,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
 #else
         size_t occ_dbg = chan->size;
 #endif
-        nsync_mu_unlock(&chan->mutex);
+        NUNLOCK(&chan->mutex);
         nostr_metric_timer_stop(&t, h_recv_wait_ns);
         nostr_metric_counter_add("go_chan_recv_closed_empty", 1);
         if (g_chan_debug) {
@@ -859,7 +896,11 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
     size_t idx = tail & chan->mask;
     __builtin_prefetch(&chan->buffer[idx], 0, 1);
     // Slot must be ready under the lock
-    void *tmp = chan->buffer[idx];
+    void *tmp = NULL;
+    {
+        _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[idx];
+        tmp = atomic_load_explicit(p, memory_order_acquire);
+    }
     if (data) *data = tmp;
     atomic_store_explicit(&chan->slot_seq[idx], tail + chan->capacity, memory_order_release);
     atomic_store_explicit(&chan->out, tail + 1, memory_order_release);
@@ -902,7 +943,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
         nostr_metric_counter_add("go_chan_signal_full", 1);
     }
 
-    nsync_mu_unlock(&chan->mutex);
+    NUNLOCK(&chan->mutex);
     nostr_metric_timer_stop(&t, h_recv_wait_ns);
     if (have_tw) {
         nostr_metric_timer_stop(&tw, h_recv_wakeup_to_progress_ns);
@@ -917,9 +958,13 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
     int have_tw = 0; (void)have_tw;
     nostr_metric_timer tw;
     ensure_histos();
-    nsync_mu_lock(&chan->mutex);
+    if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
+        ensure_histos();
+        return -1;
+    }
+    NLOCK(&chan->mutex);
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
-        nsync_mu_unlock(&chan->mutex);
+        NUNLOCK(&chan->mutex);
         nostr_metric_timer_stop(&t, h_send_wait_ns);
         return -1;
     }
@@ -971,7 +1016,9 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
             ) && !chan->closed && !(ctx && go_context_is_canceled(ctx))) {
             // Fallback to a longer park to avoid busy waiting when contention persists
             nsync_time dl = nsync_time_add(nsync_time_now(), nsync_time_ms(50));
+            NLOCK(&chan->mutex);
             nsync_mu_wait_with_deadline(&chan->mutex, channel_send_pred, &wa, NULL, dl, NULL);
+            NUNLOCK(&chan->mutex);
             nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
             if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
@@ -992,7 +1039,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
     if (have_tw) { (void)0; }
 
     if (NOSTR_UNLIKELY(chan->closed || (ctx && go_context_is_canceled(ctx)))) {
-        nsync_mu_unlock(&chan->mutex);
+        NUNLOCK(&chan->mutex);
         ensure_histos();
         nostr_metric_timer_stop(&t, h_send_wait_ns);
         return -1; // Channel closed or canceled
@@ -1006,7 +1053,10 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
     was_empty2 = (chan->size == 0);
 #endif
     __builtin_prefetch(&chan->buffer[chan->in], 1, 1);
-    chan->buffer[chan->in] = data;
+    {
+        _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[chan->in];
+        atomic_store_explicit(p, data, memory_order_release);
+    }
     go_channel_inc_in(chan);
 #if !NOSTR_CHANNEL_DERIVE_SIZE
     chan->size++;
@@ -1026,9 +1076,13 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
     // Signal receiver(s) that data is available
     if (was_empty2) {
 #if NOSTR_REFINED_SIGNALING
+        NLOCK(&chan->mutex);
         nsync_cv_signal(&chan->cond_empty);
+        NUNLOCK(&chan->mutex);
 #else
+        NLOCK(&chan->mutex);
         nsync_cv_broadcast(&chan->cond_empty);
+        NUNLOCK(&chan->mutex);
 #endif
         // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
@@ -1037,7 +1091,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
         nostr_metric_counter_add("go_chan_signal_empty", 1);
     }
 
-    nsync_mu_unlock(&chan->mutex);
+    NUNLOCK(&chan->mutex);
     return 0;
 }
 
@@ -1048,9 +1102,13 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
     int have_tw = 0; (void)have_tw;
     nostr_metric_timer tw;
     ensure_histos();
-    nsync_mu_lock(&chan->mutex);
+    if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
+        ensure_histos();
+        return -1;
+    }
+    NLOCK(&chan->mutex);
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
-        nsync_mu_unlock(&chan->mutex);
+        NUNLOCK(&chan->mutex);
         nostr_metric_timer_stop(&t, h_recv_wait_ns);
         return -1;
     }
@@ -1074,7 +1132,9 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
              && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx)); ++i) {
             NOSTR_CPU_RELAX();
             nsync_time dl_spin = nsync_time_add(nsync_time_now(), nsync_time_us(g_spin_us));
+            NLOCK(&chan->mutex);
             nsync_mu_wait_with_deadline(&chan->mutex, channel_recv_pred, &wa, NULL, dl_spin, NULL);
+            NUNLOCK(&chan->mutex);
             // woke up
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
             if ((
@@ -1100,7 +1160,9 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
             ) && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx))) {
             // Fallback to a longer park to avoid busy waiting when contention persists
             nsync_time dl = nsync_time_add(nsync_time_now(), nsync_time_ms(50));
+            NLOCK(&chan->mutex);
             nsync_mu_wait_with_deadline(&chan->mutex, channel_recv_pred, &wa, NULL, dl, NULL);
+            NUNLOCK(&chan->mutex);
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
             if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
@@ -1144,7 +1206,7 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
 #else
             size_t occ_dbg = chan->size;
 #endif
-            nsync_mu_unlock(&chan->mutex);
+            NUNLOCK(&chan->mutex);
             ensure_histos();
             nostr_metric_timer_stop(&t, h_recv_wait_ns);
             if (closed_empty) {
@@ -1177,13 +1239,21 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
     size_t tail2 = atomic_load_explicit(&chan->out, memory_order_relaxed);
     size_t idx2 = tail2 & chan->mask;
     __builtin_prefetch(&chan->buffer[idx2], 0, 1);
-    void *tmp2 = chan->buffer[idx2];
+    void *tmp2 = NULL;
+    {
+        _Atomic(void*) *p2 = (_Atomic(void*)*)&chan->buffer[idx2];
+        tmp2 = atomic_load_explicit(p2, memory_order_acquire);
+    }
     if (data) *data = tmp2;
     atomic_store_explicit(&chan->slot_seq[idx2], tail2 + chan->capacity, memory_order_release);
     atomic_store_explicit(&chan->out, tail2 + 1, memory_order_release);
 #else
     __builtin_prefetch(&chan->buffer[chan->out], 0, 1);
-    void *tmp2 = chan->buffer[chan->out];
+    void *tmp2 = NULL;
+    {
+        _Atomic(void*) *p2 = (_Atomic(void*)*)&chan->buffer[chan->out];
+        tmp2 = atomic_load_explicit(p2, memory_order_acquire);
+    }
     if (data) *data = tmp2;
     go_channel_inc_out(chan);
 #if !NOSTR_CHANNEL_DERIVE_SIZE

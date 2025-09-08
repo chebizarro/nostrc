@@ -1,6 +1,13 @@
+static void sleep_us(long usec) {
+    if (usec < 0) usec = 0;
+    struct timespec ts;
+    ts.tv_sec = usec / 1000000L;
+    ts.tv_nsec = (usec % 1000000L) * 1000L;
+    nanosleep(&ts, NULL);
+}
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
-#include <unistd.h>
+#include <time.h>
 #include "go.h"
 #include "channel.h"
 #include "select.h"
@@ -11,7 +18,7 @@ typedef struct { GoChannel *c; GoWaitGroup *wg; int count; int delay_ms; } ProdA
 void *producer(void *arg){
     ProdArgs *a = (ProdArgs*)arg;
     for (int i=0;i<a->count;i++){
-        usleep(a->delay_ms * 1000);
+        sleep_us(a->delay_ms * 1000);
         go_channel_send(a->c, (void*)(long)(i+1));
     }
     go_wait_group_done(a->wg);
@@ -38,7 +45,7 @@ int main(void){
         int idx = go_select(cases, 2);
         if (idx == 0 && out1){ printf("recv c1: %ld\n", (long)out1); received++; out1=NULL; }
         else if (idx == 1 && out2){ printf("recv c2: %ld\n", (long)out2); received++; out2=NULL; }
-        else { usleep(1000); }
+        else { sleep_us(1000); }
     }
 
     go_wait_group_wait(&wg);

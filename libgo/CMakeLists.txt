@@ -144,9 +144,15 @@ if(GO_CHANNEL_ARM_WFE)
 endif()
 
 # Sanitizer options
-option(GO_ENABLE_ASAN "Enable AddressSanitizer" OFF)
-option(GO_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
-option(GO_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+if (NOT DEFINED GO_ENABLE_ASAN)
+  option(GO_ENABLE_ASAN "Enable AddressSanitizer" OFF)
+endif()
+if (NOT DEFINED GO_ENABLE_UBSAN)
+  option(GO_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
+endif()
+if (NOT DEFINED GO_ENABLE_TSAN)
+  option(GO_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+endif()
 
 function(apply_sanitizers target)
   if(CMAKE_BUILD_TYPE STREQUAL "Debug")
