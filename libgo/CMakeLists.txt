@@ -512,6 +512,17 @@ if (GO_ENABLE_TSAN)
   set_tests_properties(GoFiberIoTimeoutTest PROPERTIES TIMEOUT 10)
 endif()
 
+# Scale heavy tests under sanitizers via compile-time definitions (no in-source detection)
+if (GO_ENABLE_TSAN)
+  # Make stress test lighter and allow ticker more time under TSAN
+  target_compile_definitions(go_channel_stress_test PRIVATE PRODUCERS=2 CONSUMERS=2 ITEMS_PER_PROD=200)
+  target_compile_definitions(go_ticker_test PRIVATE MAX_TICK_WAIT_MS=5000)
+elseif (GO_ENABLE_ASAN OR GO_ENABLE_UBSAN)
+  # Be conservative under ASAN/UBSAN as well
+  target_compile_definitions(go_channel_stress_test PRIVATE PRODUCERS=4 CONSUMERS=4 ITEMS_PER_PROD=500)
+  target_compile_definitions(go_ticker_test PRIVATE MAX_TICK_WAIT_MS=5000)
+endif()
+
 # Benchmarks (not added to CTest by default)
 add_executable(gof_bench_yield fiber/bench/bench_yield.c)
 add_executable(gof_bench_pingpong fiber/bench/bench_pingpong.c)

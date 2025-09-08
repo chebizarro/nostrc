@@ -11,23 +11,14 @@
 
 static inline void sleep_us(int us){ struct timespec ts={ 0, (long)us*1000L }; nanosleep(&ts, NULL); }
 
-// Detect sanitizers and scale workload down to avoid timeouts under heavy overhead
-#if defined(__has_feature)
-#  if __has_feature(thread_sanitizer) || __has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)
-#    define SANITIZER_SLOW 1
-#  endif
-#elif defined(__SANITIZE_THREAD__) || defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
-#  define SANITIZER_SLOW 1
+#ifndef PRODUCERS
+#define PRODUCERS 8
 #endif
-
-#if SANITIZER_SLOW
-#  define PRODUCERS 2
-#  define CONSUMERS 2
-#  define ITEMS_PER_PROD 200
-#else
-#  define PRODUCERS 8
-#  define CONSUMERS 8
-#  define ITEMS_PER_PROD 2000
+#ifndef CONSUMERS
+#define CONSUMERS 8
+#endif
+#ifndef ITEMS_PER_PROD
+#define ITEMS_PER_PROD 2000
 #endif
 
 typedef struct {
