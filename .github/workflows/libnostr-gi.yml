@@ -19,8 +19,11 @@ jobs:
       CMAKE_BUILD_TYPE: Debug
 
     steps:
-      - name: Checkout
+      - name: Checkout (with submodules)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
 
       - name: Install dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
@@ -55,8 +58,8 @@ jobs:
         if: startsWith(matrix.os, 'macos')
         run: echo "ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1" >> $GITHUB_ENV
 
-      - name: Configure (with GLib, skip nostrdb)
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGO_WARNINGS_AS_ERRORS=ON -DNOSTR_WITH_GLIB=ON -DWITH_NOSTRDB=OFF
+      - name: Configure (with GLib + nostrdb)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGO_WARNINGS_AS_ERRORS=ON -DNOSTR_WITH_GLIB=ON -DWITH_NOSTRDB=ON
 
       - name: Build and Install
         run: |

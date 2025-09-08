@@ -23,8 +23,11 @@ jobs:
       TSAN_OPTIONS: halt_on_error=1
 
     steps:
-      - name: Checkout
+      - name: Checkout (with submodules)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
 
       - name: Install dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
@@ -65,12 +68,14 @@ jobs:
               cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
                 -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
                 -DENABLE_FUZZING=ON -DENABLE_FUZZING_RUNTIME=ON \
-                -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON
+                -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON \
+                -DWITH_NOSTRDB=ON
               ;;
             tsan)
               cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
                 -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
-                -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON
+                -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON \
+                -DWITH_NOSTRDB=ON
               ;;
           esac
 
