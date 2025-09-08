@@ -47,16 +47,19 @@ int main(void) {
     pthread_create(&th, NULL, consumer_thread, &tc);
 
     // Wait for ticks with a generous deadline under sanitizers
-    int max_ms = 2000;
+    const int max_ms =
 #if defined(__has_feature)
 #  if __has_feature(thread_sanitizer) || __has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)
-#    undef max_ms
-#    define max_ms 5000
+       5000
+#  else
+       2000
 #  endif
 #elif defined(__SANITIZE_THREAD__) || defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
-#  undef max_ms
-#  define max_ms 5000
+       5000
+#else
+       2000
 #endif
+    ;
     int elapsed_ms = 0;
     while (atomic_load_explicit(&tc.count, memory_order_acquire) < tc.target && elapsed_ms < max_ms) {
         sleep_ms(50);

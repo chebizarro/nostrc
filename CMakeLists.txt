@@ -280,7 +280,7 @@ if (NOSTR_ENABLE_GI)
         --symbol-prefix=nostr_
         --identifier-prefix=Nostr
         --warn-all
-        --extra-library nostr
+        --library nostr
         --extra-library nostr_json
         --library-path ${CMAKE_BINARY_DIR}/libnostr
         --library-path ${CMAKE_BINARY_DIR}/libjson
