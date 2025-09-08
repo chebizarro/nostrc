@@ -65,22 +65,22 @@ jobs:
         run: |
           case "${{ matrix.sanitizer }}" in
             asan_ubsan)
-              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_VERBOSE_MAKEFILE=ON \
                 -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
                 -DENABLE_FUZZING=ON -DENABLE_FUZZING_RUNTIME=ON \
                 -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON \
                 -DWITH_NOSTRDB=ON
               ;;
             tsan)
-              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_VERBOSE_MAKEFILE=ON \
                 -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
                 -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON \
                 -DWITH_NOSTRDB=ON
               ;;
           esac
 
-      - name: Build
-        run: cmake --build build -j
+      - name: Build (verbose)
+        run: cmake --build build -j --verbose
 
       - name: Test
         run: ctest --test-dir build --output-on-failure

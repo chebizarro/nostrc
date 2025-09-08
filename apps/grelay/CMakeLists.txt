@@ -15,6 +15,7 @@ target_link_libraries(grelay
     nostr
     nostr_json
     libgo
+    $<$<PLATFORM_ID:Darwin>:-framework Security>
 )
 
 target_include_directories(grelay PRIVATE 
