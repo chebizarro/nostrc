@@ -3,6 +3,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <time.h>
+#include <stdatomic.h>
 #include "go.h"
 #include "ticker.h"
 
@@ -11,15 +12,15 @@ static inline void sleep_ms(int ms){ struct timespec ts={ ms/1000, (long)(ms%100
 typedef struct {
     Ticker *ticker;
     int target;
-    int count;
+    _Atomic int count;
 } TickCounter;
 
 void *consumer_thread(void *arg) {
     TickCounter *tc = (TickCounter *)arg;
     void *data = NULL;
-    while (tc->count < tc->target) {
+    while (atomic_load_explicit(&tc->count, memory_order_acquire) < tc->target) {
         if (go_channel_try_receive(tc->ticker->c, &data) == 0) {
-            tc->count++;
+            atomic_fetch_add_explicit(&tc->count, 1, memory_order_acq_rel);
         } else {
             // avoid busy spin
             sleep_ms(5);
@@ -42,7 +43,7 @@ int main(void) {
 
     // Wait up to 2 seconds for 5 ticks
     int elapsed_ms = 0;
-    while (tc.count < tc.target && elapsed_ms < 2000) {
+    while (atomic_load_explicit(&tc.count, memory_order_acquire) < tc.target && elapsed_ms < 2000) {
         sleep_ms(50);
         elapsed_ms += 50;
     }
@@ -50,11 +51,12 @@ int main(void) {
     stop_ticker(t);
     pthread_join(th, NULL);
 
-    if (tc.count < tc.target) {
-        fprintf(stderr, "ticker produced only %d ticks within deadline\n", tc.count);
+    int final = atomic_load_explicit(&tc.count, memory_order_acquire);
+    if (final < tc.target) {
+        fprintf(stderr, "ticker produced only %d ticks within deadline\n", final);
         return 2;
     }
 
-    printf("received %d ticks\n", tc.count);
+    printf("received %d ticks\n", final);
     return 0;
 }

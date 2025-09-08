@@ -61,3 +61,6 @@ gof_bootstrap_trampoline:
 1:
   jmp 1b
 .size gof_bootstrap_trampoline, .-gof_bootstrap_trampoline
+
+// Mark this object as not requiring an executable stack (ELF/Linux)
+.section .note.GNU-stack,"",@progbits

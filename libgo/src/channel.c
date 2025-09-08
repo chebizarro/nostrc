@@ -258,7 +258,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
     for (int attempts = 0; attempts < 64; ++attempts) {
         size_t head = atomic_load_explicit(&chan->in, memory_order_acquire);
         size_t tail = atomic_load_explicit(&chan->out, memory_order_acquire);
-        if (head - tail >= chan->capacity || chan->closed || NOSTR_UNLIKELY(chan->buffer == NULL)) {
+        if (head - tail >= chan->capacity || atomic_load_explicit(&chan->closed, memory_order_acquire) || NOSTR_UNLIKELY(chan->buffer == NULL)) {
             nostr_metric_counter_add("go_chan_try_send_failures", 1);
             return -1;
         }
@@ -544,7 +544,7 @@ GoChannel *go_channel_create(size_t capacity) {
 #else
     chan->slot_seq = NULL;
 #endif
-    chan->closed = false;
+    atomic_store_explicit(&chan->closed, 0, memory_order_relaxed);
     nsync_mu_init(&chan->mutex);
     nsync_cv_init(&chan->cond_full);
     nsync_cv_init(&chan->cond_empty);
@@ -1204,8 +1204,8 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
 void go_channel_close(GoChannel *chan) {
     nsync_mu_lock(&chan->mutex);
 
-    if (!chan->closed) {
-        chan->closed = true; // Mark the channel as closed
+    if (!atomic_load_explicit(&chan->closed, memory_order_acquire)) {
+        atomic_store_explicit(&chan->closed, 1, memory_order_release); // Mark the channel as closed
         // Wake up all potential waiters so they can observe closed state
         nsync_cv_broadcast(&chan->cond_full);
         nsync_cv_broadcast(&chan->cond_empty);

@@ -6,7 +6,7 @@
 typedef struct {
     nsync_mu mutex; // Mutex to protect the counter
     nsync_cv cond;  // Condition variable for signaling
-    int counter;    // Counter for tracking tasks
+    _Atomic int counter;    // Counter for tracking tasks (atomic to appease TSAN)
 } GoWaitGroup;
 
 // Public API

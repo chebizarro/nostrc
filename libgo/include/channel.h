@@ -30,7 +30,7 @@ typedef struct GoChannel {
     _Alignas(NOSTR_CACHELINE) _Atomic size_t in;   // Producer index (writers: senders)
     _Alignas(NOSTR_CACHELINE) _Atomic size_t out;  // Consumer index (writers: receivers)
     _Alignas(NOSTR_CACHELINE) size_t size;         // Occupancy (if maintained)
-    _Alignas(NOSTR_CACHELINE) int closed;          // Closed flag
+    _Alignas(NOSTR_CACHELINE) _Atomic int closed;  // Closed flag (atomic)
     _Alignas(NOSTR_CACHELINE) nsync_mu mutex;      // Mutex separated from hot counters
     nsync_cv cond_full;
     nsync_cv cond_empty;
