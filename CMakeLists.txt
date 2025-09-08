@@ -281,10 +281,10 @@ if (NOSTR_ENABLE_GI)
       OUTPUT ${CMAKE_BINARY_DIR}/gir/Nostr-1.0.typelib
       COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/gir
       # Ensure scanner can resolve libraries at runtime
-      COMMAND ${CMAKE_COMMAND} -E env \
-        GI_SCANNER_DISABLE_CACHE=1 \
-        DYLD_FALLBACK_LIBRARY_PATH=${CMAKE_BINARY_DIR}/libnostr:${CMAKE_BINARY_DIR}/libjson:$ENV{DYLD_FALLBACK_LIBRARY_PATH} \
-        LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/libnostr:${CMAKE_BINARY_DIR}/libjson:$ENV{LD_LIBRARY_PATH} \
+      COMMAND ${CMAKE_COMMAND} -E env
+        GI_SCANNER_DISABLE_CACHE=1
+        DYLD_FALLBACK_LIBRARY_PATH=${CMAKE_BINARY_DIR}/libnostr:${CMAKE_BINARY_DIR}/libjson:$ENV{DYLD_FALLBACK_LIBRARY_PATH}
+        LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/libnostr:${CMAKE_BINARY_DIR}/libjson:$ENV{LD_LIBRARY_PATH}
         ${G_IR_SCANNER}
         --cflags-begin -std=gnu11 -xc -DNOSTR_WITH_GLIB=1 --cflags-end
         --namespace=Nostr
