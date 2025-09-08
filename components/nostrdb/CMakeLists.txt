@@ -36,21 +36,43 @@ else()
   # Otherwise, if a prebuilt static archive exists in the vendored dir, link it directly
   set(NDB_VENDOR_LIB "${NDB_VENDOR_PATH}/libnostrdb.a")
   if (EXISTS ${NDB_VENDOR_LIB})
-    target_link_libraries(nostrdb_storage PUBLIC ${NDB_VENDOR_LIB})
+    if (APPLE)
+      # Force load the archive so its objects (and constructors) are retained
+      target_link_libraries(nostrdb_storage PUBLIC -Wl,-force_load,${NDB_VENDOR_LIB})
+      # Also propagate to dependents so final link line includes the archive
+      target_link_libraries(nostrdb_storage INTERFACE -Wl,-force_load,${NDB_VENDOR_LIB})
+    else()
+      # Whole-archive on ELF to keep all objects referenced by nostrdb_storage
+      target_link_libraries(nostrdb_storage PUBLIC -Wl,--whole-archive ${NDB_VENDOR_LIB} -Wl,--no-whole-archive)
+      target_link_libraries(nostrdb_storage INTERFACE -Wl,--whole-archive ${NDB_VENDOR_LIB} -Wl,--no-whole-archive)
+    endif()
     # Propagate include dirs so dependents can include <nostrdb.h>
     target_include_directories(nostrdb_storage PUBLIC ${NDB_VENDOR_PATH}/src ${NDB_VENDOR_PATH}/ccan ${NDB_VENDOR_PATH}/deps/lmdb)
     # Link vendored LMDB static archive if present
     set(NDB_VENDOR_LMDB_LIB "${NDB_VENDOR_PATH}/deps/lmdb/liblmdb.a")
     if (EXISTS ${NDB_VENDOR_LMDB_LIB})
-      target_link_libraries(nostrdb_storage PUBLIC ${NDB_VENDOR_LMDB_LIB})
+      if (APPLE)
+        target_link_libraries(nostrdb_storage PUBLIC ${NDB_VENDOR_LMDB_LIB})
+        target_link_libraries(nostrdb_storage INTERFACE ${NDB_VENDOR_LMDB_LIB})
+      else()
+        target_link_libraries(nostrdb_storage PUBLIC -Wl,--whole-archive ${NDB_VENDOR_LMDB_LIB} -Wl,--no-whole-archive)
+        target_link_libraries(nostrdb_storage INTERFACE -Wl,--whole-archive ${NDB_VENDOR_LMDB_LIB} -Wl,--no-whole-archive)
+      endif()
     endif()
     # On macOS, nostrdb uses SecRandomCopyBytes; link the Security framework
     if (APPLE)
       target_link_libraries(nostrdb_storage PUBLIC "-framework Security")
+      target_link_libraries(nostrdb_storage INTERFACE "-framework Security")
     endif()
   else()
     message(WARNING "components/nostrdb: vendored libnostrdb.a not found; symbols may be unresolved")
   endif()
+endif()
+
+# Threads may be required by LMDB or the vendored build
+find_package(Threads)
+if (Threads_FOUND)
+  target_link_libraries(nostrdb_storage PUBLIC Threads::Threads)
 endif()
 
 target_include_directories(nostrdb_storage PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

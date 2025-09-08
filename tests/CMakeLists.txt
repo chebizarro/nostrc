@@ -111,6 +111,7 @@ target_link_libraries(test_filters_move_semantics PRIVATE libnostr ${NSYNC_LIB} 
 target_link_libraries(microbench_json PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_link_libraries(test_nip86_policy PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES} nip86)
 target_include_directories(test_nip86_policy PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/nips/nip86/include)
+target_link_directories(test_nip86_policy PRIVATE ${SECP256K1_LIBRARY_DIRS})
 
 # Apply sanitizers to tests if enabled
 apply_sanitizers(test_nostr)

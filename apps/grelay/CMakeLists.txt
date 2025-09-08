@@ -35,6 +35,8 @@ if (TARGET nostrdb_storage)
   # Also link vendored static archives directly so ndb_* resolve even if not pulled transitively
   set(_NDB_VENDOR_DIR ${CMAKE_SOURCE_DIR}/third_party/nostrdb)
   if (EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
+    # Add the archive to the link line and force-retain objects
+    target_link_libraries(grelay PRIVATE ${_NDB_VENDOR_DIR}/libnostrdb.a)
     # Ensure the linker does not drop required objects from the static archive
     if (APPLE)
       target_link_options(grelay PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
@@ -43,6 +45,7 @@ if (TARGET nostrdb_storage)
     endif()
   endif()
   if (EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+    target_link_libraries(grelay PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
     if (APPLE)
       target_link_libraries(grelay PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
     else()
