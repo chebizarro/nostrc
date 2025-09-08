@@ -89,23 +89,32 @@ static inline void nostr_tpause_short(void) {
 
 // Fast-path index increment helpers with power-of-two wrap
 // Cache histogram handles for hot-path timer stops
-static nostr_metric_histogram *h_send_wait_ns = NULL;
-static nostr_metric_histogram *h_recv_wait_ns = NULL;
-static nostr_metric_histogram *h_send_wakeup_to_progress_ns = NULL;
-static nostr_metric_histogram *h_recv_wakeup_to_progress_ns = NULL;
+static _Atomic(nostr_metric_histogram*) h_send_wait_ns = NULL;
+static _Atomic(nostr_metric_histogram*) h_recv_wait_ns = NULL;
+static _Atomic(nostr_metric_histogram*) h_send_wakeup_to_progress_ns = NULL;
+static _Atomic(nostr_metric_histogram*) h_recv_wakeup_to_progress_ns = NULL;
 
 static inline void ensure_histos(void) {
-    if (!h_send_wait_ns) {
-        h_send_wait_ns = nostr_metric_histogram_get("go_chan_send_wait_ns");
+    nostr_metric_histogram *p;
+    p = atomic_load_explicit(&h_send_wait_ns, memory_order_acquire);
+    if (!p) {
+        p = nostr_metric_histogram_get("go_chan_send_wait_ns");
+        atomic_store_explicit(&h_send_wait_ns, p, memory_order_release);
     }
-    if (!h_recv_wait_ns) {
-        h_recv_wait_ns = nostr_metric_histogram_get("go_chan_recv_wait_ns");
+    p = atomic_load_explicit(&h_recv_wait_ns, memory_order_acquire);
+    if (!p) {
+        p = nostr_metric_histogram_get("go_chan_recv_wait_ns");
+        atomic_store_explicit(&h_recv_wait_ns, p, memory_order_release);
     }
-    if (!h_send_wakeup_to_progress_ns) {
-        h_send_wakeup_to_progress_ns = nostr_metric_histogram_get("go_chan_send_wakeup_to_progress_ns");
+    p = atomic_load_explicit(&h_send_wakeup_to_progress_ns, memory_order_acquire);
+    if (!p) {
+        p = nostr_metric_histogram_get("go_chan_send_wakeup_to_progress_ns");
+        atomic_store_explicit(&h_send_wakeup_to_progress_ns, p, memory_order_release);
     }
-    if (!h_recv_wakeup_to_progress_ns) {
-        h_recv_wakeup_to_progress_ns = nostr_metric_histogram_get("go_chan_recv_wakeup_to_progress_ns");
+    p = atomic_load_explicit(&h_recv_wakeup_to_progress_ns, memory_order_acquire);
+    if (!p) {
+        p = nostr_metric_histogram_get("go_chan_recv_wakeup_to_progress_ns");
+        atomic_store_explicit(&h_recv_wakeup_to_progress_ns, p, memory_order_release);
     }
 }
 

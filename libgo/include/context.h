@@ -4,6 +4,7 @@
 #include <time.h>
 #include <nsync.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include "error.h"
 
 typedef struct GoChannel GoChannel;
@@ -22,8 +23,8 @@ typedef struct GoContext {
     nsync_mu mutex;
     nsync_cv cond;
     GoChannel *done;
-    bool canceled;
-    const char *err_msg;
+    _Atomic int canceled;           // 0/1 flag, atomic to avoid TSAN races
+    _Atomic(const char *) err_msg;  // atomic pointer for racy reads
     struct timespec timeout;
 } GoContext;
 

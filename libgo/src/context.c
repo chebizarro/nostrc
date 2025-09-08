@@ -16,9 +16,9 @@
 void go_context_cancel(GoContext *ctx) {
     nostr_metric_counter_add("go_ctx_cancel_invocations", 1);
     nsync_mu_lock(&ctx->mutex);
-    if (!ctx->canceled) {
-        ctx->canceled = 1;
-        ctx->err_msg = "context canceled";
+    if (atomic_load_explicit(&ctx->canceled, memory_order_acquire) == 0) {
+        atomic_store_explicit(&ctx->canceled, 1, memory_order_release);
+        atomic_store_explicit(&ctx->err_msg, "context canceled", memory_order_release);
         // Wake all waiters; avoid any blocking operations here
         nsync_cv_broadcast(&ctx->cond);
         nostr_metric_counter_add("go_ctx_cancel_broadcasts", 1);
@@ -50,12 +50,12 @@ GoChannel *base_context_done(void *ctx) {
 
 const char *base_context_err(void *ctx) {
     GoContext *base_ctx = (GoContext *)ctx;
-    return base_ctx->err_msg;
+    return atomic_load_explicit(&base_ctx->err_msg, memory_order_acquire);
 }
 
 bool base_context_is_canceled(void *ctx) {
     GoContext *base_ctx = (GoContext *)ctx;
-    return base_ctx->canceled;
+    return atomic_load_explicit(&base_ctx->canceled, memory_order_acquire) != 0;
 }
 
 void base_context_wait(void *ctx) {
@@ -65,6 +65,7 @@ void base_context_wait(void *ctx) {
     nsync_mu_lock(&base_ctx->mutex);
 
     while (!base_ctx->canceled) {
+        if (atomic_load_explicit(&base_ctx->canceled, memory_order_acquire)) break;
         if (!blocked) { nostr_metric_counter_add("go_ctx_block_waits", 1); blocked = 1; }
         nsync_cv_wait(&base_ctx->cond, &base_ctx->mutex);
         nostr_metric_counter_add("go_ctx_wait_wakeups", 1);
@@ -111,8 +112,8 @@ GoContext *go_context_background(void) {
     nsync_mu_init(&ctx->mutex);
     nsync_cv_init(&ctx->cond);
     ctx->done = go_channel_create(1);
-    ctx->canceled = false;
-    ctx->err_msg = NULL;
+    atomic_store_explicit(&ctx->canceled, 0, memory_order_relaxed);
+    atomic_store_explicit(&ctx->err_msg, NULL, memory_order_relaxed);
     return ctx;
 }
 
@@ -122,8 +123,8 @@ void go_context_init(GoContext *ctx, int timeout_seconds) {
     nsync_mu_init(&ctx->mutex);
     nsync_cv_init(&ctx->cond);
     ctx->done = go_channel_create(1);
-    ctx->canceled = false;
-    ctx->err_msg = NULL;
+    atomic_store_explicit(&ctx->canceled, 0, memory_order_relaxed);
+    atomic_store_explicit(&ctx->err_msg, NULL, memory_order_relaxed);
 }
 
 // Deadline context functions
@@ -145,7 +146,7 @@ bool deadline_context_is_canceled(void *ctx) {
         return true;
     }
 
-    return dctx->base.canceled;
+    return atomic_load_explicit(&dctx->base.canceled, memory_order_acquire) != 0;
 }
 
 void deadline_context_wait(void *dctx) {
@@ -154,7 +155,7 @@ void deadline_context_wait(void *dctx) {
     int blocked = 0;
     nsync_mu_lock(&ctx->mutex);
 
-    while (!ctx->canceled) {
+    while (atomic_load_explicit(&ctx->canceled, memory_order_acquire) == 0) {
         // Set an absolute deadline 1 second into the future for each wait cycle
         nsync_time abs_deadline = nsync_time_add(nsync_time_now(), nsync_time_ms(1000));
 
@@ -165,7 +166,7 @@ void deadline_context_wait(void *dctx) {
 
         if (result == 0 || result == ETIMEDOUT) {
             // Check cancel/deadline and mark canceled if needed
-            if (!ctx->canceled) {
+            if (atomic_load_explicit(&ctx->canceled, memory_order_acquire) == 0) {
                 GoDeadlineContext *dctx = (GoDeadlineContext *)ctx;
                 // Check if deadline reached
                 if (/* deadline exceeded */ 1) {
@@ -174,9 +175,11 @@ void deadline_context_wait(void *dctx) {
                     clock_gettime(CLOCK_REALTIME, &now);
                     if (now.tv_sec > dctx->deadline.tv_sec ||
                         (now.tv_sec == dctx->deadline.tv_sec && now.tv_nsec > dctx->deadline.tv_nsec)) {
-                        ctx->canceled = true;
-                        if (!ctx->err_msg)
-                            ctx->err_msg = "context deadline exceeded";
+                        atomic_store_explicit(&ctx->canceled, 1, memory_order_release);
+                        const char *expected = NULL;
+                        (void)expected;
+                        if (atomic_load_explicit(&ctx->err_msg, memory_order_acquire) == NULL)
+                            atomic_store_explicit(&ctx->err_msg, "context deadline exceeded", memory_order_release);
                         nsync_cv_broadcast(&ctx->cond);
                         nostr_metric_counter_add("go_ctx_deadline_broadcasts", 1);
                     }
