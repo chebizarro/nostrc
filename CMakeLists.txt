@@ -280,14 +280,13 @@ if (NOSTR_ENABLE_GI)
         --symbol-prefix=nostr_
         --identifier-prefix=Nostr
         --warn-all
-        --library nostr
-        --library nostr_json
+        --extra-library nostr
+        --extra-library nostr_json
         --library-path ${CMAKE_BINARY_DIR}/libnostr
         --library-path ${CMAKE_BINARY_DIR}/libjson
         --pkg glib-2.0 --pkg gobject-2.0
         --pkg jansson --pkg libwebsockets --pkg openssl --pkg libsecp256k1
         -I ${CMAKE_SOURCE_DIR}/libnostr/include
-        -I ${CMAKE_SOURCE_DIR}/libgo/include
         $<$<BOOL:${NSYNC_INCLUDE_DIR}>:-I${NSYNC_INCLUDE_DIR}>
         -I ${CMAKE_BINARY_DIR}/libnostr/generated
         ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-utils.h

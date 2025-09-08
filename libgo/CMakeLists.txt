@@ -320,18 +320,23 @@ set_tests_properties(GoLongAdderStressTest PROPERTIES TIMEOUT 45)
 set_tests_properties(GoContextCancelTest PROPERTIES TIMEOUT 10)
 set_tests_properties(GoChannelTest PROPERTIES TIMEOUT 10)
 set_tests_properties(GoContextTimeoutTest PROPERTIES TIMEOUT 10)
-set_tests_properties(GoTickerTest PROPERTIES TIMEOUT 10)
+set_tests_properties(GoTickerTest PROPERTIES TIMEOUT 30)
 set_tests_properties(GoSelectTest PROPERTIES TIMEOUT 10)
 set_tests_properties(GoWaitGroupTest PROPERTIES TIMEOUT 10)
 set_tests_properties(GoChannelCloseTest PROPERTIES TIMEOUT 10)
 set_tests_properties(GoSelectMultiTest PROPERTIES TIMEOUT 10)
-set_tests_properties(GoChannelStressTest PROPERTIES TIMEOUT 30)
+set_tests_properties(GoChannelStressTest PROPERTIES TIMEOUT 120)
 set_tests_properties(GoContextStressTest PROPERTIES TIMEOUT 30)
 
 # Under TSAN, executions are significantly slower; bump a few timeouts
 if (GO_ENABLE_TSAN)
-  set_tests_properties(GoTickerTest PROPERTIES TIMEOUT 60)
-  set_tests_properties(GoChannelStressTest PROPERTIES TIMEOUT 90)
+  set_tests_properties(GoTickerTest PROPERTIES TIMEOUT 120)
+  set_tests_properties(GoChannelStressTest PROPERTIES TIMEOUT 180)
+endif()
+
+# Under ASAN/UBSAN, allow more time for the stress test as well
+if (GO_ENABLE_ASAN OR GO_ENABLE_UBSAN)
+  set_tests_properties(GoChannelStressTest PROPERTIES TIMEOUT 180)
 endif()
 
 

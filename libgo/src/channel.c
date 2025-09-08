@@ -343,9 +343,9 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
     }
 #endif
     int rc = -1;
-    nsync_mu_lock(&chan->mutex);
+    NLOCK(&chan->mutex);
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
-        nsync_mu_unlock(&chan->mutex);
+        NUNLOCK(&chan->mutex);
         nostr_metric_counter_add("go_chan_try_send_failures", 1);
         return -1;
     }
@@ -400,7 +400,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
         }
         rc = 0;
     }
-    nsync_mu_unlock(&chan->mutex);
+    NUNLOCK(&chan->mutex);
     if (NOSTR_UNLIKELY(rc != 0)) {
         nostr_metric_counter_add("go_chan_try_send_failures", 1);
     }
@@ -472,9 +472,9 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
     }
 #endif
     int rc = -1;
-    nsync_mu_lock(&chan->mutex);
+    NLOCK(&chan->mutex);
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
-        nsync_mu_unlock(&chan->mutex);
+        NUNLOCK(&chan->mutex);
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
     }
@@ -526,7 +526,7 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         }
         rc = 0;
     }
-    nsync_mu_unlock(&chan->mutex);
+    NUNLOCK(&chan->mutex);
     if (NOSTR_UNLIKELY(rc != 0)) {
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
     }
