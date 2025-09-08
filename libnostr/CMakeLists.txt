@@ -249,6 +249,11 @@ if(LIBNOSTR_WITH_NOSTRDB)
       # Link standard threads and secp256k1; flatcc runtime is pure C and needs no extra libs
       target_link_libraries(nostrdb PUBLIC Threads::Threads ${SECP256K1_LIB})
     endif()
+    # Provide a forced include header to reconcile hex API differences between vendored trees
+    set(NDB_HEX_COMPAT "${NDB_COMPAT_DIR}/hex_compat.h")
+    file(WRITE ${NDB_HEX_COMPAT} "#ifndef NOSTRDB_HEX_COMPAT\n#define NOSTRDB_HEX_COMPAT\n#include \"hex.h\"\n#ifndef hex_str_size\n#define hex_str_size(len) ((size_t)((len) * 2 + 1))\n#endif\n/* Preserve original 3-arg function under a new name, then macro-dispatch. */\nstatic inline int nostrdb_hex_encode3(const void *buf, size_t bufsize, char *dest) { return hex_encode(buf, bufsize, dest); }\n#undef hex_encode\n#define __NDB_HEX_DISPATCH(_1,_2,_3,_4,NAME,...) NAME\n#define nostrdb_hex_encode4(_buf,_len,_dest,_dsize) nostrdb_hex_encode3(_buf,_len,_dest)\n#define hex_encode(...) __NDB_HEX_DISPATCH(__VA_ARGS__, nostrdb_hex_encode4, nostrdb_hex_encode3)(__VA_ARGS__)\n#endif\n")
+    # Force-include the compatibility header for all nostrdb compilation units
+    target_compile_options(nostrdb PRIVATE -include ${NDB_HEX_COMPAT})
     # On Apple SDKs, sprintf is hard-deprecated and triggers warnings in vendored LMDB.
     # Suppress deprecation warnings for this third-party code without altering sources.
     if(APPLE)
