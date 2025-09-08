@@ -339,7 +339,10 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
             size_t idx = (chan->in + (size_t)d) & chan->mask;
             __builtin_prefetch(&chan->buffer[idx], 1, 1);
         }
-        chan->buffer[chan->in] = data;
+        {
+            _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[chan->in];
+            atomic_store_explicit(p, data, memory_order_release);
+        }
         go_channel_inc_in(chan);
         // size derived: no counter update
         // success + depth sample (post-increment size)
@@ -529,9 +532,9 @@ GoChannel *go_channel_create(size_t capacity) {
     }
 #endif
     // Align the ring buffer to cache line size to reduce cross-line traffic
-    void **buf = NULL;
+    _Atomic(void*) *buf = NULL;
     size_t bytes = sizeof(void *) * cap;
-    buf = (void**)go_aligned_alloc(64, bytes);
+    buf = (_Atomic(void*)*)go_aligned_alloc(64, bytes);
     chan->buffer = buf;
     chan->capacity = cap;
     // Capacity is enforced to a power of two; compute mask for fast wrap
@@ -684,7 +687,10 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
     __builtin_prefetch(&chan->buffer[idx], 1, 1);
     // Slot must be free under the lock
     atomic_store_explicit(&chan->slot_seq[idx], head, memory_order_relaxed); // ensure expected value
-    chan->buffer[idx] = data;
+    {
+        _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[idx];
+        atomic_store_explicit(p, data, memory_order_release);
+    }
     atomic_store_explicit(&chan->slot_seq[idx], head + 1, memory_order_release);
     atomic_store_explicit(&chan->in, head + 1, memory_order_release);
 #else
@@ -694,7 +700,10 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
         size_t idx2 = (chan->in + (size_t)d) & chan->mask;
         __builtin_prefetch(&chan->buffer[idx2], 1, 1);
     }
-    chan->buffer[chan->in] = data;
+    {
+        _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[chan->in];
+        atomic_store_explicit(p, data, memory_order_release);
+    }
     go_channel_inc_in(chan);
 #endif
 #if !NOSTR_CHANNEL_DERIVE_SIZE
@@ -856,7 +865,11 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
     atomic_store_explicit(&chan->out, tail + 1, memory_order_release);
 #else
     __builtin_prefetch(&chan->buffer[chan->out], 0, 1);
-    void *tmp = chan->buffer[chan->out];
+    void *tmp = NULL;
+    {
+        _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[chan->out];
+        tmp = atomic_load_explicit(p, memory_order_acquire);
+    }
     if (data) *data = tmp;
     go_channel_inc_out(chan);
 #endif

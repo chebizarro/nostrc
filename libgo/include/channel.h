@@ -18,7 +18,7 @@
 
 typedef struct GoChannel {
     // Immutable after create
-    void **buffer;
+    _Atomic(void*) *buffer;
     size_t capacity;
     // Optional per-slot sequence numbers for MPMC lock-free try paths
     _Atomic size_t *slot_seq;

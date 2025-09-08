@@ -8,6 +8,11 @@ if (WITH_NOSTRDB)
   endif()
 endif()
 
+# Under ThreadSanitizer, prefer lock-based channel try paths to reduce races seen by TSAN
+if (GO_ENABLE_TSAN)
+  add_compile_definitions(NOSTR_CHANNEL_ATOMIC_TRY=0)
+endif()
+
 if (EXISTS ${CMAKE_SOURCE_DIR}/apps/relayd/CMakeLists.txt)
   add_subdirectory(apps/relayd)
 endif()
