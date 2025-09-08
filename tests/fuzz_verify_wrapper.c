@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include "nostr-event.h"
+#include "json.h"
 
 // Fuzz harness for signature verify path
 // Strategy: try to deserialize input as an event JSON, then call verify.

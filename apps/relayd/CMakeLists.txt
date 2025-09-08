@@ -48,6 +48,14 @@ target_link_libraries(nostrc-relayd
 # Link nostrdb storage component if available
 if (TARGET nostrdb_storage)
   target_link_libraries(nostrc-relayd PRIVATE nostrdb_storage)
+  # Also link vendored static archives directly so ndb_* symbols resolve
+  set(_NDB_VENDOR_DIR ${CMAKE_SOURCE_DIR}/third_party/nostrdb)
+  if (EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
+    target_link_libraries(nostrc-relayd PRIVATE ${_NDB_VENDOR_DIR}/libnostrdb.a)
+  endif()
+  if (EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+    target_link_libraries(nostrc-relayd PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+  endif()
 endif()
 
 # Link NIP-11 module if available and set compile define
@@ -62,4 +70,9 @@ endif()
 install(TARGETS nostrc-relayd RUNTIME DESTINATION bin)
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/relay.toml.example)
   install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/relay.toml.example DESTINATION share/nostrc)
+endif()
+
+# Apply global sanitizer flags to ensure TSAN/ASAN/UBSAN DSOs are linked
+if (COMMAND apply_sanitizers)
+  apply_sanitizers(nostrc-relayd)
 endif()

@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "nostr-event.h"
+#include "json.h"
 
 // Simple fuzz harness for the compact event deserializer
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
