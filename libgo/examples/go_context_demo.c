@@ -1,3 +1,10 @@
+#include <stdio.h>
+#include <time.h>
+#include <stddef.h>
+#include "go.h"
+#include "context.h"
+#include "wait_group.h"
+
 static void sleep_us(long usec) {
     if (usec < 0) usec = 0;
     struct timespec ts;
@@ -5,11 +12,6 @@ static void sleep_us(long usec) {
     ts.tv_nsec = (usec % 1000000L) * 1000L;
     nanosleep(&ts, NULL);
 }
-#include <stdio.h>
-#include <time.h>
-#include "go.h"
-#include "context.h"
-#include "wait_group.h"
 
 typedef struct { GoContext *ctx; GoWaitGroup *wg; } Args;
 

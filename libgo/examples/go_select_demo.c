@@ -1,3 +1,11 @@
+#include <stdio.h>
+#include <time.h>
+#include <stddef.h>
+#include "go.h"
+#include "channel.h"
+#include "select.h"
+#include "wait_group.h"
+
 static void sleep_us(long usec) {
     if (usec < 0) usec = 0;
     struct timespec ts;
@@ -5,13 +13,6 @@ static void sleep_us(long usec) {
     ts.tv_nsec = (usec % 1000000L) * 1000L;
     nanosleep(&ts, NULL);
 }
-#define _POSIX_C_SOURCE 200809L
-#include <stdio.h>
-#include <time.h>
-#include "go.h"
-#include "channel.h"
-#include "select.h"
-#include "wait_group.h"
 
 typedef struct { GoChannel *c; GoWaitGroup *wg; int count; int delay_ms; } ProdArgs;
 
