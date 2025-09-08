@@ -3,6 +3,7 @@
 
 #include "channel.h"
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <pthread.h>
 #include <nsync.h>
 
@@ -10,7 +11,7 @@ typedef struct Ticker {
     GoChannel *c;
     size_t interval_ms;
     pthread_t thread;
-    bool stop;
+    _Atomic bool stop;
     nsync_mu mutex;
 } Ticker;
 

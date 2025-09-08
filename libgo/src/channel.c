@@ -276,7 +276,10 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
             continue;
         }
         // We own the slot at idx for sequence 'head'
-        chan->buffer[idx] = data;
+        {
+            _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[idx];
+            atomic_store_explicit(p, data, memory_order_release);
+        }
         atomic_store_explicit(&chan->slot_seq[idx], head + 1, memory_order_release);
         nostr_metric_counter_add("go_chan_send_successes", 1);
         nostr_metric_counter_add("go_chan_send_depth_samples", 1);
@@ -396,7 +399,11 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
             NOSTR_CPU_RELAX();
             continue;
         }
-        void *tmp = chan->buffer[idx];
+        void *tmp = NULL;
+        {
+            _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[idx];
+            tmp = atomic_load_explicit(p, memory_order_acquire);
+        }
         if (data) *data = tmp;
         atomic_store_explicit(&chan->slot_seq[idx], tail + chan->capacity, memory_order_release);
         nostr_metric_counter_add("go_chan_recv_successes", 1);

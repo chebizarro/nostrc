@@ -21,6 +21,9 @@ jobs:
       ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
       UBSAN_OPTIONS: print_stacktrace=1
       TSAN_OPTIONS: halt_on_error=1
+      # Prefer Clang toolchain for sanitizer jobs on Linux
+      CC: ${{ startsWith(matrix.os, 'ubuntu') && 'clang' || env.CC }}
+      CXX: ${{ startsWith(matrix.os, 'ubuntu') && 'clang++' || env.CXX }}
 
     steps:
       - name: Checkout (with submodules)
@@ -36,6 +39,7 @@ jobs:
           sudo apt-get install -y build-essential cmake ninja-build clang git pkg-config \
                                   libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
                                   libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev
+          echo "LDFLAGS='-fuse-ld=lld'" >> $GITHUB_ENV
           # Build nsync from source (fast, small)
           git clone --depth 1 https://github.com/google/nsync.git
           cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release

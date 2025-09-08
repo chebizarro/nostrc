@@ -8,12 +8,9 @@ void *ticker_thread_func(void *arg) {
     Ticker *ticker = (Ticker *)arg;
 
     while (true) {
-        nsync_mu_lock(&ticker->mutex); // Lock mutex
-        if (ticker->stop) {
-            nsync_mu_unlock(&ticker->mutex); // Unlock mutex before exiting
+        if (atomic_load_explicit(&ticker->stop, memory_order_acquire)) {
             break;
         }
-        nsync_mu_unlock(&ticker->mutex); // Unlock mutex
 
         struct timespec ts;
         ts.tv_sec = ticker->interval_ms / 1000;
@@ -31,8 +28,8 @@ Ticker *create_ticker(size_t interval_ms) {
     Ticker *ticker = (Ticker *)malloc(sizeof(Ticker));
     ticker->interval_ms = interval_ms;
     ticker->c = go_channel_create(1); // Channel with capacity 1 for ticks
-    ticker->stop = false;
-    nsync_mu_init(&ticker->mutex); // Initialize mutex
+    atomic_store_explicit(&ticker->stop, false, memory_order_relaxed);
+    nsync_mu_init(&ticker->mutex); // retained for struct compatibility
 
     pthread_create(&ticker->thread, NULL, ticker_thread_func, ticker);
     return ticker;
@@ -43,9 +40,7 @@ void stop_ticker(Ticker *ticker) {
         return; // Ensure ticker is not NULL
     }
 
-    nsync_mu_lock(&ticker->mutex); // Lock mutex to safely update the stop flag
-    ticker->stop = true;
-    nsync_mu_unlock(&ticker->mutex); // Unlock mutex
+    atomic_store_explicit(&ticker->stop, true, memory_order_release);
 
     if (ticker->thread) {
         (void)pthread_join(ticker->thread, NULL);
