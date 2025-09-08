@@ -1,4 +1,7 @@
 #if defined(__linux__)
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #endif
@@ -17,10 +20,6 @@
 #include <sys/sysctl.h>
 #endif
 #if defined(__linux__)
-/* Expose CPU_* macros in <sched.h> */
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE 1
-#endif
 #include <sched.h>
 #endif
 

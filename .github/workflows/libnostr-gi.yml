@@ -29,7 +29,7 @@ jobs:
           sudo apt-get install -y build-essential cmake ninja-build clang git pkg-config \
                                   glib2.0-dev libgirepository1.0-dev gobject-introspection \
                                   libjansson-dev libsecp256k1-dev libwebsockets-dev libcurl4-openssl-dev \
-                                  libsoup-3.0-dev
+                                  libsoup-3.0-dev libsodium-dev
           # Build nsync from source
           git clone --depth 1 https://github.com/google/nsync.git
           cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release
