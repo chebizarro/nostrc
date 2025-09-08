@@ -59,6 +59,10 @@ jobs:
           brew update
           brew upgrade
           brew install ninja pkg-config jansson secp256k1 libwebsockets libsodium openssl@3 libsoup@3 nsync flatcc || true
+          # Ensure Homebrew pkg-config paths are visible for scanner and linkage
+          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/libsoup@3/lib/pkgconfig:/opt/homebrew/opt/libwebsockets/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/flatcc/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
+          echo "CPPFLAGS=-I/opt/homebrew/include ${CPPFLAGS}" >> $GITHUB_ENV
+          echo "LDFLAGS=-L/opt/homebrew/lib ${LDFLAGS}" >> $GITHUB_ENV
 
       - name: Override ASAN options (macOS)
         if: startsWith(matrix.os, 'macos')

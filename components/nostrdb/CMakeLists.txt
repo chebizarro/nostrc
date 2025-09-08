@@ -16,6 +16,13 @@ if (NOT ALLOW_STUB_NOSTRDB)
     include_directories(
       ${NDB_VENDOR_PATH}/src
       ${NDB_VENDOR_PATH}/ccan
+      ${NDB_VENDOR_PATH}/ccan/ccan
+      ${NDB_VENDOR_PATH}/ccan/ccan/array_size
+      ${NDB_VENDOR_PATH}/ccan/ccan/mem
+      ${NDB_VENDOR_PATH}/ccan/ccan/short_types
+      ${NDB_VENDOR_PATH}/ccan/ccan/crypto/sha256
+      ${NDB_VENDOR_PATH}/ccan/ccan/tal
+      ${NDB_VENDOR_PATH}/ccan/ccan/tal/str
       ${NDB_VENDOR_PATH}/deps/lmdb
     )
   endif()
