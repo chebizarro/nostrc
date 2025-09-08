@@ -95,6 +95,12 @@ endif()
 option(GO_CHANNEL_DERIVE_SIZE "Compute channel occupancy from indices instead of maintaining size" OFF)
 option(GO_CHANNEL_ATOMIC_TRY "Use atomic lockless full/empty check in try paths" ON)
 option(GO_CHANNEL_MPMC_SLOTS "Enable MPMC lock-free per-slot sequence protocol for channels" ON)
+
+# Under ThreadSanitizer, prefer fully locked try paths and disable MPMC slot protocol
+if (GO_ENABLE_TSAN)
+  set(GO_CHANNEL_ATOMIC_TRY OFF CACHE BOOL "Use atomic lockless full/empty check in try paths" FORCE)
+  set(GO_CHANNEL_MPMC_SLOTS OFF CACHE BOOL "Enable MPMC lock-free per-slot sequence protocol for channels" FORCE)
+endif()
 if(GO_CHANNEL_DERIVE_SIZE)
   target_compile_definitions(libgo PRIVATE NOSTR_CHANNEL_DERIVE_SIZE=1)
 endif()
