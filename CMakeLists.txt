@@ -277,14 +277,38 @@ if (NOSTR_ENABLE_GI)
   if (G_IR_SCANNER AND G_IR_COMPILER)
     # Includes needed for headers referenced by libnostr public headers
     find_path(NSYNC_INCLUDE_DIR nsync.h)
+
+    # Create temporary shared wrappers around static libs for GIR to link
+    # without changing how main targets are built.
+    set(GIR_WRAPPER_DIR "${CMAKE_BINARY_DIR}/gir_wrappers")
+    file(MAKE_DIRECTORY ${GIR_WRAPPER_DIR})
+    set(GIR_DUMMY_SRC "${GIR_WRAPPER_DIR}/dummy.c")
+    file(WRITE ${GIR_DUMMY_SRC} "/* GIR shared wrapper */\nint _nostr_gir_dummy(void){return 0;}\n")
+
+    add_library(nostr_shared SHARED ${GIR_DUMMY_SRC})
+    target_link_libraries(nostr_shared PRIVATE nostr)
+    if(APPLE)
+      # Force-load static archive into the dylib so symbols are exported
+      target_link_options(nostr_shared PRIVATE "-Wl,-force_load,$<TARGET_FILE:nostr>")
+    else()
+      target_link_options(nostr_shared PRIVATE -Wl,--whole-archive $<TARGET_FILE:nostr> -Wl,--no-whole-archive)
+    endif()
+
+    add_library(nostr_json_shared SHARED ${GIR_DUMMY_SRC})
+    target_link_libraries(nostr_json_shared PRIVATE nostr_json)
+    if(APPLE)
+      target_link_options(nostr_json_shared PRIVATE "-Wl,-force_load,$<TARGET_FILE:nostr_json>")
+    else()
+      target_link_options(nostr_json_shared PRIVATE -Wl,--whole-archive $<TARGET_FILE:nostr_json> -Wl,--no-whole-archive)
+    endif()
     add_custom_command(
       OUTPUT ${CMAKE_BINARY_DIR}/gir/Nostr-1.0.typelib
       COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/gir
       # Ensure scanner can resolve libraries at runtime
       COMMAND ${CMAKE_COMMAND} -E env
         GI_SCANNER_DISABLE_CACHE=1
-        DYLD_FALLBACK_LIBRARY_PATH=${CMAKE_BINARY_DIR}/libnostr:${CMAKE_BINARY_DIR}/libjson:$ENV{DYLD_FALLBACK_LIBRARY_PATH}
-        LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/libnostr:${CMAKE_BINARY_DIR}/libjson:$ENV{LD_LIBRARY_PATH}
+        DYLD_FALLBACK_LIBRARY_PATH=$<TARGET_FILE_DIR:nostr_shared>:$<TARGET_FILE_DIR:nostr_json_shared>:${CMAKE_BINARY_DIR}/libnostr:${CMAKE_BINARY_DIR}/libjson:$ENV{DYLD_FALLBACK_LIBRARY_PATH}
+        LD_LIBRARY_PATH=$<TARGET_FILE_DIR:nostr_shared>:$<TARGET_FILE_DIR:nostr_json_shared>:${CMAKE_BINARY_DIR}/libnostr:${CMAKE_BINARY_DIR}/libjson:$ENV{LD_LIBRARY_PATH}
         ${G_IR_SCANNER}
         --cflags-begin -std=gnu11 -xc -DNOSTR_WITH_GLIB=1 --cflags-end
         --namespace=Nostr
@@ -292,8 +316,10 @@ if (NOSTR_ENABLE_GI)
         --symbol-prefix=nostr_
         --identifier-prefix=Nostr
         --warn-all
-        --library nostr 
-        --extra-library nostr_json 
+        --library nostr_shared
+        --extra-library nostr_json_shared
+        --library-path $<TARGET_FILE_DIR:nostr_shared>
+        --library-path $<TARGET_FILE_DIR:nostr_json_shared>
         --library-path ${CMAKE_BINARY_DIR}/libnostr
         --library-path ${CMAKE_BINARY_DIR}/libjson
         --pkg glib-2.0 --pkg gobject-2.0

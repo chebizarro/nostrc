@@ -208,6 +208,14 @@ if(LIBNOSTR_WITH_NOSTRDB)
       "${LIBNOSTR_NDB_VENDOR_PATH}/deps/lmdb/mdb.c"
       "${LIBNOSTR_NDB_VENDOR_PATH}/deps/lmdb/midl.c"
     )
+    # Create a small compatibility shim for talstr.h if the vendored tree doesn't provide it
+    set(NDB_COMPAT_DIR "${CMAKE_CURRENT_BINARY_DIR}/nostrdb_compat")
+    file(MAKE_DIRECTORY ${NDB_COMPAT_DIR})
+    set(NDB_TALSTR_HEADER "${NDB_COMPAT_DIR}/talstr.h")
+    if(NOT EXISTS "${LIBNOSTR_NDB_VENDOR_PATH}/src/bolt11/talstr.h")
+      file(WRITE ${NDB_TALSTR_HEADER} "#ifndef NOSTRDB_TALSTR_COMPAT_H\n#define NOSTRDB_TALSTR_COMPAT_H\n#include <ccan/tal/str/str.h>\n#endif\n")
+    endif()
+
     add_library(nostrdb STATIC ${NDB_CORE_SOURCES} ${NDB_LMDB_SOURCES} ${NDB_BOLT11_SOURCES} ${NDB_CCAN_SOURCES})
     target_include_directories(nostrdb PUBLIC
       "${LIBNOSTR_NDB_VENDOR_PATH}/src"
@@ -223,6 +231,7 @@ if(LIBNOSTR_WITH_NOSTRDB)
       "${LIBNOSTR_NDB_VENDOR_PATH}/deps/lmdb"
       "${LIBNOSTR_NDB_VENDOR_PATH}/deps/flatcc/include"
       "${LIBNOSTR_NDB_VENDOR_PATH}/deps/secp256k1/include"
+      ${NDB_COMPAT_DIR}
     )
     # Threads, flatcc runtime, secp256k1, and Security framework on macOS
     find_package(Threads REQUIRED)
