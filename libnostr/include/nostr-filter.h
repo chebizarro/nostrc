@@ -7,6 +7,8 @@
 #include <stdbool.h>
 #include "nostr-timestamp.h"
 #include "nostr-tag.h"
+#include "string_array.h"
+#include "int_array.h"
 /* Note: do NOT include this header recursively. */
 
 #ifdef __cplusplus
