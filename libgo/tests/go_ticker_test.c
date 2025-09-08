@@ -20,14 +20,31 @@ void *consumer_thread(void *arg) {
     TickCounter *tc = (TickCounter *)arg;
     void *data = NULL;
     while (atomic_load_explicit(&tc->count, memory_order_acquire) < tc->target) {
+#if defined(__has_feature)
+#  if __has_feature(thread_sanitizer)
+        // Under TSAN, use blocking receive to avoid missing ticks due to scheduling jitter
+        if (go_channel_receive(tc->ch, &data) == 0) {
+            atomic_fetch_add_explicit(&tc->count, 1, memory_order_acq_rel);
+        } else {
+            // Channel closed or shutdown signaled
+            break;
+        }
+#  else
         if (go_channel_try_receive(tc->ch, &data) == 0) {
             atomic_fetch_add_explicit(&tc->count, 1, memory_order_acq_rel);
         } else {
-            // avoid busy spin but poll frequently under sanitizers
             sleep_ms(1);
-            // Exit if shutdown requested by main thread
             if (atomic_load_explicit(&tc->shutdown, memory_order_acquire)) break;
         }
+#  endif
+#else
+        if (go_channel_try_receive(tc->ch, &data) == 0) {
+            atomic_fetch_add_explicit(&tc->count, 1, memory_order_acq_rel);
+        } else {
+            sleep_ms(1);
+            if (atomic_load_explicit(&tc->shutdown, memory_order_acquire)) break;
+        }
+#endif
     }
     return NULL;
 }

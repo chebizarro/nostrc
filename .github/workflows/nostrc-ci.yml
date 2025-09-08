@@ -45,13 +45,20 @@ jobs:
                                   libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev
           echo "LDFLAGS='-fuse-ld=lld'" >> $GITHUB_ENV
           sudo apt-get install -y libnsync-dev
+          # Try to install flatcc runtime from packages; if not available, build from source
+          sudo apt-get install -y flatcc libflatccrt-dev || true
+          if ! ldconfig -p | grep -q libflatccrt; then
+            echo "FlatCC runtime not found in system packages; building from source..."
+            git clone --depth 1 https://github.com/dvidelabs/flatcc.git
+            cd flatcc && make -j && sudo make install && cd ..
+          fi
 
       - name: Install dependencies (macOS)
         if: startsWith(matrix.os, 'macos')
         run: |
           brew update
           brew upgrade
-          brew install ninja pkg-config jansson secp256k1 libwebsockets libsodium openssl@3 libsoup@3 nsync || true
+          brew install ninja pkg-config jansson secp256k1 libwebsockets libsodium openssl@3 libsoup@3 nsync flatcc || true
 
       - name: Override ASAN options (macOS)
         if: startsWith(matrix.os, 'macos')
