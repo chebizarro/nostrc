@@ -38,27 +38,14 @@ jobs:
           sudo apt-get install -y build-essential cmake ninja-build clang git pkg-config \
                                   glib2.0-dev libgirepository1.0-dev gobject-introspection \
                                   libjansson-dev libsecp256k1-dev libwebsockets-dev libcurl4-openssl-dev \
-                                  libsoup-3.0-dev libsodium-dev
-          # Build nsync from source
-          git clone --depth 1 https://github.com/google/nsync.git
-          cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release
-          cmake --build nsync/build -j
-          sudo cmake --install nsync/build
+                                  libsoup-3.0-dev libsodium-dev libnsync-dev
 
       - name: Install dependencies (macOS)
         if: startsWith(matrix.os, 'macos')
         run: |
           brew update
           brew upgrade
-          brew install ninja pkg-config glib gobject-introspection jansson secp256k1 libwebsockets libsodium openssl@3 curl libsoup@3 || true
-          if brew info nsync >/dev/null 2>&1; then
-            brew install nsync || true
-          else
-            git clone --depth 1 https://github.com/google/nsync.git
-            cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release
-            cmake --build nsync/build -j
-            sudo cmake --install nsync/build
-          fi
+          brew install ninja pkg-config glib gobject-introspection jansson secp256k1 libwebsockets libsodium openssl@3 curl libsoup@3 nsync || true
 
       - name: Override ASAN options (macOS)
         if: startsWith(matrix.os, 'macos')

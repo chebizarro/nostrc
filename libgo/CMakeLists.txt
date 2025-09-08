@@ -328,6 +328,13 @@ set_tests_properties(GoSelectMultiTest PROPERTIES TIMEOUT 10)
 set_tests_properties(GoChannelStressTest PROPERTIES TIMEOUT 30)
 set_tests_properties(GoContextStressTest PROPERTIES TIMEOUT 30)
 
+# Under TSAN, executions are significantly slower; bump a few timeouts
+if (GO_ENABLE_TSAN)
+  set_tests_properties(GoTickerTest PROPERTIES TIMEOUT 60)
+  set_tests_properties(GoChannelStressTest PROPERTIES TIMEOUT 90)
+  set_tests_properties(GoFiberIoTimeoutTest PROPERTIES TIMEOUT 10)
+endif()
+
 
 # Optionally, you can specify installation rules
 
