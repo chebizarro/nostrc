@@ -290,6 +290,7 @@ if (NOSTR_ENABLE_GI)
         --pkg glib-2.0 --pkg gobject-2.0
         --pkg jansson --pkg libwebsockets --pkg openssl --pkg libsecp256k1
         -I ${CMAKE_SOURCE_DIR}/libnostr/include
+        -I ${CMAKE_SOURCE_DIR}/libgo/include
         $<$<BOOL:${NSYNC_INCLUDE_DIR}>:-I${NSYNC_INCLUDE_DIR}>
         -I ${CMAKE_BINARY_DIR}/libnostr/generated
         ${CMAKE_SOURCE_DIR}/libnostr/include/nostr-utils.h
