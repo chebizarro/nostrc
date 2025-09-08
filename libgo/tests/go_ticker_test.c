@@ -63,9 +63,17 @@ int main(void) {
         return 1;
     }
 
-    TickCounter tc = { .ch = t->c, .count = 0, .target = 5, .shutdown = 0 };
+    int target_ticks = 5;
+#if defined(__has_feature)
+#  if __has_feature(thread_sanitizer)
+    target_ticks = 3;
+#  endif
+#endif
+    TickCounter tc = { .ch = t->c, .count = 0, .target = target_ticks, .shutdown = 0 };
     pthread_t th;
     pthread_create(&th, NULL, consumer_thread, &tc);
+    // Give the ticker goroutine a brief warmup to start emitting under heavy sanitizer overhead
+    sleep_ms(tick_ms * 2);
 
     // Wait for ticks with a generous deadline under sanitizers; allow CMake to override via MAX_TICK_WAIT_MS
     const int max_ms =

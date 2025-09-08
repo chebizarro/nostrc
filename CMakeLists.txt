@@ -277,21 +277,23 @@ if (NOSTR_ENABLE_GI)
   if (G_IR_SCANNER AND G_IR_COMPILER)
     # Includes needed for headers referenced by libnostr public headers
     find_path(NSYNC_INCLUDE_DIR nsync.h)
-    add_custom_target(nostr-gir
+    add_custom_command(
+      OUTPUT ${CMAKE_BINARY_DIR}/gir/Nostr-1.0.typelib
       COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/gir
-      COMMAND ${CMAKE_COMMAND} -E env GI_SCANNER_DISABLE_CACHE=1
+      # Ensure scanner can resolve libraries at runtime
+      COMMAND ${CMAKE_COMMAND} -E env \
+        GI_SCANNER_DISABLE_CACHE=1 \
+        DYLD_FALLBACK_LIBRARY_PATH=${CMAKE_BINARY_DIR}/libnostr:${CMAKE_BINARY_DIR}/libjson:$ENV{DYLD_FALLBACK_LIBRARY_PATH} \
+        LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/libnostr:${CMAKE_BINARY_DIR}/libjson:$ENV{LD_LIBRARY_PATH} \
         ${G_IR_SCANNER}
-        --cflags-begin
-        -std=gnu11
-        -xc
-        -DNOSTR_WITH_GLIB=1
-        --cflags-end
+        --cflags-begin -std=gnu11 -xc -DNOSTR_WITH_GLIB=1 --cflags-end
         --namespace=Nostr
         --nsversion=1.0
         --symbol-prefix=nostr_
         --identifier-prefix=Nostr
         --warn-all
-        --program ${CMAKE_BINARY_DIR}/tests/test_json_raw
+        --library nostr 
+        --extra-library nostr_json 
         --library-path ${CMAKE_BINARY_DIR}/libnostr
         --library-path ${CMAKE_BINARY_DIR}/libjson
         --pkg glib-2.0 --pkg gobject-2.0
