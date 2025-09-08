@@ -10,39 +10,43 @@
 static inline void sleep_ms(int ms){ struct timespec ts={ ms/1000, (long)(ms%1000)*1000000L }; nanosleep(&ts, NULL); }
 
 typedef struct {
-    Ticker *ticker;
-    int target;
-    _Atomic int count;
+    GoChannel *ch;      // only the channel, never dereference Ticker in consumer
+    _Atomic int count;  // how many ticks consumed
+    int target;         // goal
+    _Atomic int shutdown; // signal to exit without touching freed structures
 } TickCounter;
 
 void *consumer_thread(void *arg) {
     TickCounter *tc = (TickCounter *)arg;
     void *data = NULL;
     while (atomic_load_explicit(&tc->count, memory_order_acquire) < tc->target) {
-        if (go_channel_try_receive(tc->ticker->c, &data) == 0) {
+        if (go_channel_try_receive(tc->ch, &data) == 0) {
             atomic_fetch_add_explicit(&tc->count, 1, memory_order_acq_rel);
         } else {
             // avoid busy spin
             sleep_ms(5);
-            // If ticker has been stopped and channel is closed, exit to allow join
-            if (atomic_load_explicit(&tc->ticker->stop, memory_order_acquire) &&
-                go_channel_is_closed(tc->ticker->c)) {
-                break;
-            }
+            // Exit if shutdown requested by main thread
+            if (atomic_load_explicit(&tc->shutdown, memory_order_acquire)) break;
         }
     }
     return NULL;
 }
 
 int main(void) {
-    // Create a ticker that ticks every 50ms
-    Ticker *t = create_ticker(50);
+    // Create a ticker with configurable interval (default 50ms)
+    const int tick_ms =
+#ifdef TICK_MS
+        TICK_MS;
+#else
+        50;
+#endif
+    Ticker *t = create_ticker(tick_ms);
     if (!t) {
         fprintf(stderr, "failed to create ticker\n");
         return 1;
     }
 
-    TickCounter tc = { .ticker = t, .target = 5, .count = 0 };
+    TickCounter tc = { .ch = t->c, .count = 0, .target = 5, .shutdown = 0 };
     pthread_t th;
     pthread_create(&th, NULL, consumer_thread, &tc);
 
@@ -66,8 +70,10 @@ int main(void) {
         elapsed_ms += 50;
     }
 
-    stop_ticker(t);
+    // Ask consumer to stop and wait for it BEFORE freeing ticker resources
+    atomic_store_explicit(&tc.shutdown, 1, memory_order_release);
     pthread_join(th, NULL);
+    stop_ticker(t);
 
     int final = atomic_load_explicit(&tc.count, memory_order_acquire);
     if (final < tc.target) {
