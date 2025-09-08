@@ -25,6 +25,12 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
+      - name: Select clang toolchain (Ubuntu)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          echo "CC=clang" >> $GITHUB_ENV
+          echo "CXX=clang++" >> $GITHUB_ENV
+
       - name: Install dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
