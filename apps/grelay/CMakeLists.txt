@@ -15,7 +15,6 @@ target_link_libraries(grelay
     nostr
     nostr_json
     libgo
-    $<$<PLATFORM_ID:Darwin>:-framework Security>
 )
 
 target_include_directories(grelay PRIVATE 
@@ -59,6 +58,11 @@ find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
 target_include_directories(grelay PRIVATE ${NSYNC_INCLUDE_DIR})
 find_library(NSYNC_LIB nsync REQUIRED)
 target_link_libraries(grelay PRIVATE ${NSYNC_LIB})
+
+# On macOS, link Security framework properly via link options
+if(APPLE)
+  target_link_options(grelay PRIVATE "SHELL:-framework Security")
+endif()
 
 # Apply sanitizer link flags so TSAN/ASAN DSOs are present when needed
 if (COMMAND apply_sanitizers)
