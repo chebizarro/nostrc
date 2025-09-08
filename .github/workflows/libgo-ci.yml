@@ -33,28 +33,14 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y build-essential cmake ninja-build clang git python3 libsoup-3.0-dev
-          # Build nsync from source (fast, small)
-          git clone --depth 1 https://github.com/google/nsync.git
-          cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release
-          cmake --build nsync/build -j
-          sudo cmake --install nsync/build
+          sudo apt-get install -y build-essential cmake ninja-build clang git python3 libsoup-3.0-dev libnsync-dev
 
       - name: Install dependencies (macOS)
         if: startsWith(matrix.os, 'macos')
         run: |
           brew update
           brew upgrade
-          # Prefer Homebrew package if available; fallback to source build
-          brew install libsoup@3 || true
-          if brew info nsync >/dev/null 2>&1; then
-            brew install nsync || true
-          else
-            git clone --depth 1 https://github.com/google/nsync.git
-            cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release
-            cmake --build nsync/build -j
-            sudo cmake --install nsync/build
-          fi
+          brew install libsoup@3 nsync || true
 
       - name: Override ASAN options (macOS)
         if: startsWith(matrix.os, 'macos')
@@ -104,13 +90,7 @@ jobs:
       - name: Install dependencies (Ubuntu)
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y build-essential cmake ninja-build clang git libjansson-dev pkg-config libcurl4-openssl-dev
-          # Build nsync from source (fast, small)
-          git clone --depth 1 https://github.com/google/nsync.git
-          cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release
-          cmake --build nsync/build -j
-          sudo cmake --install nsync/build
-          # Optional: secp256k1 if not vendored
+          sudo apt-get install -y build-essential cmake ninja-build clang git libjansson-dev pkg-config libcurl4-openssl-dev libnsync-dev
           sudo apt-get install -y libsecp256k1-dev || true
 
       - name: Configure libgo (GOF_PORTABLE_CONTEXT=OFF + sanitizers)
@@ -177,13 +157,7 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y build-essential cmake ninja-build clang git libjansson-dev pkg-config \
-                                  libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev
-          # Build nsync from source (fast, small)
-          git clone --depth 1 https://github.com/google/nsync.git
-          cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release
-          cmake --build nsync/build -j
-          sudo cmake --install nsync/build
-          # Optionally install secp256k1 if not vendored
+                                  libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev
           sudo apt-get install -y libsecp256k1-dev || true
 
       - name: Install dependencies (macOS)
@@ -191,16 +165,7 @@ jobs:
         run: |
           brew update
           brew upgrade
-          brew install jansson libwebsockets libsoup@3 || true
-          if brew info nsync >/dev/null 2>&1; then
-            brew install nsync || true
-          else
-            git clone --depth 1 https://github.com/google/nsync.git
-            cmake -S nsync -B nsync/build -DCMAKE_BUILD_TYPE=Release
-            cmake --build nsync/build -j
-            sudo cmake --install nsync/build
-          fi
-          brew install secp256k1 || true
+          brew install jansson libwebsockets libsoup@3 nsync secp256k1 || true
 
       - name: Override ASAN options (macOS)
         if: startsWith(matrix.os, 'macos')
