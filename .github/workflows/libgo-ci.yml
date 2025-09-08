@@ -79,6 +79,9 @@ jobs:
         working-directory: libgo
         run: |
           export ASAN_OPTIONS=detect_leaks=0
+          if [ "${{ matrix.sanitizer }}" = "tsan" ]; then
+            export TSAN_OPTIONS="${TSAN_OPTIONS}"
+          fi
           ctest --test-dir build --output-on-failure -j2
 
   gofiber-linux-sanitizers:

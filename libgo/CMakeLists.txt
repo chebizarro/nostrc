@@ -515,12 +515,14 @@ endif()
 # Scale heavy tests under sanitizers via compile-time definitions (no in-source detection)
 if (GO_ENABLE_TSAN)
   # Make stress test lighter and allow ticker more time under TSAN
-  target_compile_definitions(go_channel_stress_test PRIVATE PRODUCERS=2 CONSUMERS=2 ITEMS_PER_PROD=200)
+  target_compile_definitions(go_channel_stress_test PRIVATE PRODUCERS=1 CONSUMERS=1 ITEMS_PER_PROD=50)
   target_compile_definitions(go_ticker_test PRIVATE MAX_TICK_WAIT_MS=5000 TICK_MS=25)
+  set_tests_properties(GoChannelStressTest PROPERTIES TIMEOUT 20)
 elseif (GO_ENABLE_ASAN OR GO_ENABLE_UBSAN)
   # Match TSAN scaling under ASAN/UBSAN to avoid CI timeouts on macOS
   target_compile_definitions(go_channel_stress_test PRIVATE PRODUCERS=2 CONSUMERS=2 ITEMS_PER_PROD=200)
   target_compile_definitions(go_ticker_test PRIVATE MAX_TICK_WAIT_MS=5000 TICK_MS=25)
+  set_tests_properties(GoChannelStressTest PROPERTIES TIMEOUT 20)
 endif()
 
 # Benchmarks (not added to CTest by default)

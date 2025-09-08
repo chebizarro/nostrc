@@ -23,8 +23,8 @@ void *consumer_thread(void *arg) {
         if (go_channel_try_receive(tc->ch, &data) == 0) {
             atomic_fetch_add_explicit(&tc->count, 1, memory_order_acq_rel);
         } else {
-            // avoid busy spin
-            sleep_ms(5);
+            // avoid busy spin but poll frequently under sanitizers
+            sleep_ms(1);
             // Exit if shutdown requested by main thread
             if (atomic_load_explicit(&tc->shutdown, memory_order_acquire)) break;
         }
@@ -50,18 +50,22 @@ int main(void) {
     pthread_t th;
     pthread_create(&th, NULL, consumer_thread, &tc);
 
-    // Wait for ticks with a generous deadline under sanitizers
+    // Wait for ticks with a generous deadline under sanitizers; allow CMake to override via MAX_TICK_WAIT_MS
     const int max_ms =
-#if defined(__has_feature)
-#  if __has_feature(thread_sanitizer) || __has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)
-       5000
-#  else
-       2000
-#  endif
-#elif defined(__SANITIZE_THREAD__) || defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
-       5000
+#ifdef MAX_TICK_WAIT_MS
+        MAX_TICK_WAIT_MS
 #else
-       2000
+#  if defined(__has_feature)
+#    if __has_feature(thread_sanitizer) || __has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)
+         5000
+#    else
+         2000
+#    endif
+#  elif defined(__SANITIZE_THREAD__) || defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
+         5000
+#  else
+         2000
+#  endif
 #endif
     ;
     int elapsed_ms = 0;
