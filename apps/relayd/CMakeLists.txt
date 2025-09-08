@@ -37,12 +37,10 @@ target_link_libraries(nostrc-relayd
   PRIVATE
     nostr
     nostr_json
-    libgo
     ${NSYNC_LIB}
     OpenSSL::SSL
     OpenSSL::Crypto
     ${SECP256K1_LIB}
-    ${LWS_LIBRARIES}
 )
 
 # Link nostrdb storage component if available
@@ -83,4 +81,18 @@ endif()
 # Apply global sanitizer flags to ensure TSAN/ASAN/UBSAN DSOs are linked
 if (COMMAND apply_sanitizers)
   apply_sanitizers(nostrc-relayd)
+endif()
+
+# Ensure sanitizer runtimes are linked for the executable as well (AppleClang needs the flag on the final link)
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  if (GO_ENABLE_TSAN)
+    target_link_options(nostrc-relayd PRIVATE -fsanitize=thread)
+  else()
+    if (GO_ENABLE_ASAN)
+      target_link_options(nostrc-relayd PRIVATE -fsanitize=address)
+    endif()
+    if (GO_ENABLE_UBSAN)
+      target_link_options(nostrc-relayd PRIVATE -fsanitize=undefined)
+    endif()
+  endif()
 endif()

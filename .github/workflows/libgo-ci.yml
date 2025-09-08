@@ -34,6 +34,8 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y build-essential cmake ninja-build clang git python3 libsoup-3.0-dev libnsync-dev
+          echo "CC=clang" >> $GITHUB_ENV
+          echo "CXX=clang++" >> $GITHUB_ENV
 
       - name: Install dependencies (macOS)
         if: startsWith(matrix.os, 'macos')
@@ -41,6 +43,10 @@ jobs:
           brew update
           brew upgrade
           brew install libsoup@3 nsync || true
+          # Ensure Homebrew pkg-config paths are visible (not always by default in Actions shells)
+          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/libsoup@3/lib/pkgconfig:/opt/homebrew/opt/libwebsockets/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
+          echo "CPPFLAGS=-I/opt/homebrew/include ${CPPFLAGS}" >> $GITHUB_ENV
+          echo "LDFLAGS=-L/opt/homebrew/lib ${LDFLAGS}" >> $GITHUB_ENV
 
       - name: Override ASAN options (macOS)
         if: startsWith(matrix.os, 'macos')
@@ -51,10 +57,12 @@ jobs:
         run: |
           case "${{ matrix.sanitizer }}" in
             asan_ubsan)
-              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON -DGOF_PORTABLE_CONTEXT=OFF
+              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_C_STANDARD=11 -DCMAKE_C_EXTENSIONS=ON \
+                -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON -DGOF_PORTABLE_CONTEXT=OFF
               ;;
             tsan)
-              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON -DGOF_PORTABLE_CONTEXT=OFF
+              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_C_STANDARD=11 -DCMAKE_C_EXTENSIONS=ON \
+                -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON -DGOF_PORTABLE_CONTEXT=OFF
               ;;
           esac
 
