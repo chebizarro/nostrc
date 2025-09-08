@@ -2,10 +2,11 @@
 #if NOSTR_HAVE_GLIB
 #include <glib-object.h>
 
-/* Provide the GBoxed registration for NostrEvent using GLib-typed wrappers
- * with exact typedef signatures to match GBoxedCopyFunc/GBoxedFreeFunc. */
-static gpointer nostr_event_copy_boxed(gconstpointer e) { return nostr_event_copy((const NostrEvent*)e); }
-static void nostr_event_free_boxed(gpointer e) { nostr_event_free((NostrEvent*)e); }
+/* Provide the GBoxed registration for NostrEvent using exact TN* signatures.
+ * Some compilers warn under -Wpedantic due to macro internals, so we suppress
+ * pedantic diagnostics around the macro usage. */
+static NostrEvent *nostr_event_copy_boxed(const NostrEvent *e) { return nostr_event_copy(e); }
+static void nostr_event_free_boxed(NostrEvent *e) { nostr_event_free(e); }
 
 #if defined(__GNUC__)
 #pragma GCC diagnostic push

@@ -3,8 +3,8 @@
 #include <glib-object.h>
 #include "nostr-filter.h"
 
-/* GLib-typed wrappers matching GBoxedCopyFunc/GBoxedFreeFunc (gpointer). */
-static gpointer nostr_filter_copy_boxed(gpointer f) { return nostr_filter_copy((const NostrFilter*)f); }
+/* GLib-typed wrappers matching GBoxedCopyFunc/GBoxedFreeFunc. */
+static gpointer nostr_filter_copy_boxed(gconstpointer f) { return nostr_filter_copy((const NostrFilter*)f); }
 static void nostr_filter_free_boxed(gpointer f) { nostr_filter_free((NostrFilter*)f); }
 
 #if defined(__GNUC__)
