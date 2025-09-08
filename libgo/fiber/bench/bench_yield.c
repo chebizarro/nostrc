@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include "../include/libgo/fiber.h"
 #include <stdio.h>
 #include <stdlib.h>

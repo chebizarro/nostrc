@@ -8,6 +8,10 @@
 #include <stdatomic.h>
 #include <nsync.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#endif
 #if defined(__linux__)
 #include <sched.h>
 #endif
@@ -134,6 +138,20 @@ static inline int get_env_int(const char *name, int def) {
     return atoi(e);
 }
 
+static inline long get_ncpu_portable(void) {
+#if defined(__APPLE__)
+    int mib[2] = { CTL_HW, HW_NCPU };
+    int ncpu = 1; size_t len = sizeof(ncpu);
+    if (sysctl(mib, 2, &ncpu, &len, NULL, 0) == 0 && ncpu > 0) return ncpu;
+    return 1;
+#elif defined(_SC_NPROCESSORS_ONLN)
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    return (n > 0 ? n : 1);
+#else
+    return 1;
+#endif
+}
+
 static inline void maybe_pin_thread(int enable, int cpu) {
     if (!enable) return;
 #if defined(__linux__)
@@ -227,8 +245,7 @@ static void run_bench(size_t capacity, int prod, int cons, size_t total_msgs) {
 
     int pin = get_env_int("CHAN_BENCH_PIN", 0);
     int base = get_env_int("CHAN_BENCH_BASE_CPU", 0);
-    long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
-    if (ncpu <= 0) ncpu = 1;
+    long ncpu = get_ncpu_portable();
     for (int i = 0; i < prod; ++i) {
         size_t count = base_msgs + ((size_t)i < rem_msgs ? 1 : 0);
         pargs[i].ch = ch; pargs[i].messages = count; pargs[i].pin = pin;
