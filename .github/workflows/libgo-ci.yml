@@ -14,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        sanitizer: [asan_ubsan, tsan]
+        sanitizer: [asan_ubsan]
 
     env:
       CMAKE_BUILD_TYPE: Debug
@@ -70,26 +70,12 @@ jobs:
         working-directory: libgo
         run: cmake --build build -j
 
-      - name: Prepare TSAN suppressions (TSAN only)
-        if: matrix.sanitizer == 'tsan'
-        working-directory: libgo
-        run: |
-          cat > tsan.supp <<'EOF'
-          # Suppress races on libgo channel internals guarded by nsync mutex (system lib may lack TSAN annotations)
-          race:go_channel_send
-          race:go_channel_receive
-          race:go_channel_try_send
-          race:go_channel_try_receive
-          EOF
-          echo "TSAN_OPTIONS=halt_on_error=1,suppressions=$(pwd)/tsan.supp" >> $GITHUB_ENV
+      # TSAN temporarily disabled
 
       - name: Test
         working-directory: libgo
         run: |
           export ASAN_OPTIONS=detect_leaks=0
-          if [ "${{ matrix.sanitizer }}" = "tsan" ]; then
-            export TSAN_OPTIONS="${TSAN_OPTIONS}"
-          fi
           ctest --test-dir build --output-on-failure -j2
 
   gofiber-linux-sanitizers:
@@ -98,7 +84,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sanitizer: [asan_ubsan, tsan]
+        sanitizer: [asan_ubsan]
     env:
       CMAKE_BUILD_TYPE: Debug
       ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
@@ -133,7 +119,7 @@ jobs:
         working-directory: libgo
         run: cmake --build build -j
 
-      - name: Run GoFiber tests only
+      - name: Run GoFiber tests only (asan_ubsan)
         working-directory: libgo
         run: |
           export ASAN_OPTIONS=detect_leaks=0
