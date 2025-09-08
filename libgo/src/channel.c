@@ -609,11 +609,11 @@ void go_channel_free(GoChannel *chan) {
         return;
     }
 
-    if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
-        nostr_metric_timer_stop(&t, h_send_wait_ns);
-        return -1;
-    }
     NLOCK(&chan->mutex);
+    // Mark closed and wake all waiters to prevent further use
+    atomic_store_explicit(&chan->closed, 1, memory_order_release);
+    nsync_cv_broadcast(&chan->cond_full);
+    nsync_cv_broadcast(&chan->cond_empty);
     if (chan->buffer) {
         free(chan->buffer);
         chan->buffer = NULL;

@@ -1,6 +1,12 @@
-#define _POSIX_C_SOURCE 200809L
+static void sleep_us(long usec) {
+    if (usec < 0) usec = 0;
+    struct timespec ts;
+    ts.tv_sec = usec / 1000000L;
+    ts.tv_nsec = (usec % 1000000L) * 1000L;
+    nanosleep(&ts, NULL);
+}
 #include <stdio.h>
-#include <unistd.h>
+#include <time.h>
 #include "go.h"
 #include "context.h"
 #include "wait_group.h"
@@ -31,7 +37,7 @@ int main(void){
     }
 
     // Do some work...
-    usleep(200 * 1000);
+    sleep_us(200 * 1000);
 
     // Cancel the context; all workers should unblock promptly
     r.cancel(r.context);
