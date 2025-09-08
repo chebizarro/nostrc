@@ -14,7 +14,6 @@ target_link_libraries(grelay
     PkgConfig::SOUP
     nostr
     nostr_json
-    libgo
 )
 
 target_include_directories(grelay PRIVATE 
@@ -22,34 +21,21 @@ target_include_directories(grelay PRIVATE
 )
 
 # Ensure nostrdb storage is linked so its constructor can register the driver
-if (TARGET nostrdb_storage)
+set(_NDB_VENDOR_DIR ${CMAKE_SOURCE_DIR}/third_party/nostrdb)
+if (TARGET nostrdb_storage AND EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
   target_link_libraries(grelay PRIVATE nostrdb_storage)
+  # Ensure the vendored archives are retained and symbols resolved
   if (APPLE)
-    # On macOS, force load the archive to keep constructor sections
     target_link_options(grelay PRIVATE -Wl,-force_load,$<TARGET_FILE:nostrdb_storage>)
+    target_link_options(grelay PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
   else()
-    # On ELF platforms, whole-archive just for this lib
-    target_link_options(grelay PRIVATE -Wl,--whole-archive $<TARGET_FILE:nostrdb_storage> -Wl,--no-whole-archive)
-  endif()
-  # Also link vendored static archives directly so ndb_* resolve even if not pulled transitively
-  set(_NDB_VENDOR_DIR ${CMAKE_SOURCE_DIR}/third_party/nostrdb)
-  if (EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
-    # Add the archive to the link line and force-retain objects
-    target_link_libraries(grelay PRIVATE ${_NDB_VENDOR_DIR}/libnostrdb.a)
-    # Ensure the linker does not drop required objects from the static archive
-    if (APPLE)
-      target_link_options(grelay PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
-    else()
-      target_link_options(grelay PRIVATE -Wl,--whole-archive ${_NDB_VENDOR_DIR}/libnostrdb.a -Wl,--no-whole-archive)
-    endif()
-  endif()
-  if (EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
-    target_link_libraries(grelay PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
-    if (APPLE)
+    # Group archives to satisfy lld with potential cyclic refs
+    target_link_options(grelay PRIVATE -Wl,--start-group)
+    target_link_libraries(grelay PRIVATE -Wl,--whole-archive $<TARGET_FILE:nostrdb_storage> ${_NDB_VENDOR_DIR}/libnostrdb.a -Wl,--no-whole-archive)
+    if (EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
       target_link_libraries(grelay PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
-    else()
-      target_link_options(grelay PRIVATE -Wl,--whole-archive ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a -Wl,--no-whole-archive)
     endif()
+    target_link_options(grelay PRIVATE -Wl,--end-group)
   endif()
 endif()
 

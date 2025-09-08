@@ -65,13 +65,13 @@ jobs:
                 -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
                 -DENABLE_FUZZING=ON -DENABLE_FUZZING_RUNTIME=ON \
                 -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON \
-                -DWITH_NOSTRDB=ON
+                -DWITH_NOSTRDB=ON -DLIBNOSTR_WITH_NOSTRDB=ON
               ;;
             tsan)
               cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_VERBOSE_MAKEFILE=ON \
                 -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
                 -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON \
-                -DWITH_NOSTRDB=ON
+                -DWITH_NOSTRDB=ON -DLIBNOSTR_WITH_NOSTRDB=ON
               ;;
           esac
 
