@@ -9,6 +9,8 @@
 #include <time.h>
 #include <unistd.h>
 
+static inline void sleep_us(int us){ struct timespec ts={ 0, (long)us*1000L }; nanosleep(&ts, NULL); }
+
 #define PRODUCERS 8
 #define CONSUMERS 8
 #define ITEMS_PER_PROD 2000
@@ -25,7 +27,7 @@ void *prod(void *arg) {
         // mix blocking and try_send
         if (i % 5 == 0) {
             while (go_channel_try_send(a->c, (void *)(long)(i + 1)) != 0)
-                usleep(100);
+                sleep_us(100);
         } else {
             go_channel_send(a->c, (void *)(long)(i + 1));
         }

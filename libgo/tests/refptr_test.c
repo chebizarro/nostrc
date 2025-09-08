@@ -50,8 +50,10 @@ int main(void){
         return 1;
     }
 
-    // go_autostr should auto free
-    go_autostr s = strdup("auto");
+    // go_autostr should auto free; avoid strdup under -Werror/-std=c11
+    char *tmp = (char*)malloc(5);
+    if (tmp) { strcpy(tmp, "auto"); }
+    go_autostr s = tmp;
     (void)s;
 
     return 0;

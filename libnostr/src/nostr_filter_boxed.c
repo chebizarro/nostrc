@@ -3,9 +3,9 @@
 #include <glib-object.h>
 #include "nostr-filter.h"
 
-/* Exact-signature wrappers to satisfy pedantic compilers */
-static NostrFilter *nostr_filter_copy_boxed(const NostrFilter *f) { return nostr_filter_copy(f); }
-static void nostr_filter_free_boxed(NostrFilter *f) { nostr_filter_free(f); }
+/* GLib-typed wrappers to satisfy pedantic compilers */
+static gpointer nostr_filter_copy_boxed(gconstpointer f) { return nostr_filter_copy((const NostrFilter*)f); }
+static void nostr_filter_free_boxed(gpointer f) { nostr_filter_free((NostrFilter*)f); }
 
 G_DEFINE_BOXED_TYPE(NostrFilter, nostr_filter, nostr_filter_copy_boxed, nostr_filter_free_boxed)
 
