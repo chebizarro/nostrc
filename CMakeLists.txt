@@ -310,6 +310,10 @@ if (NOSTR_ENABLE_GI)
       DEPENDS nostr nostr_json
       VERBATIM
     )
+    # Provide a buildable target that depends on the generated typelib
+    add_custom_target(nostr-gir ALL
+      DEPENDS ${CMAKE_BINARY_DIR}/gir/Nostr-1.0.typelib
+    )
   endif()
 endif()
 

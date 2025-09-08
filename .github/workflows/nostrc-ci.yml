@@ -45,13 +45,8 @@ jobs:
                                   libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev
           echo "LDFLAGS='-fuse-ld=lld'" >> $GITHUB_ENV
           sudo apt-get install -y libnsync-dev
-          # Try to install flatcc runtime from packages; if not available, build from source
-          sudo apt-get install -y flatcc libflatccrt-dev || true
-          if ! ldconfig -p | grep -q libflatccrt; then
-            echo "FlatCC runtime not found in system packages; building from source..."
-            git clone --depth 1 https://github.com/dvidelabs/flatcc.git
-            cd flatcc && make -j && sudo make install && cd ..
-          fi
+          # FlatCC runtime is provided by vendored sources under third_party/nostrdb if
+          # system libflatccrt is unavailable. No top-level install is required.
 
       - name: Install dependencies (macOS)
         if: startsWith(matrix.os, 'macos')

@@ -226,12 +226,25 @@ if(LIBNOSTR_WITH_NOSTRDB)
     )
     # Threads, flatcc runtime, secp256k1, and Security framework on macOS
     find_package(Threads REQUIRED)
-    # Prefer system flatcc runtime to match headers (e.g., Homebrew flatccrt)
+    # Prefer system flatcc runtime to match headers (e.g., Homebrew flatccrt). If not
+    # available, fall back to the vendored runtime sources in third_party/nostrdb.
     find_library(FLATCCRT_LIB flatccrt)
-    if(NOT FLATCCRT_LIB)
-      message(FATAL_ERROR "flatccrt library not found on system; please install flatcc or adjust build to compile vendored runtime.")
+    if(FLATCCRT_LIB)
+      target_link_libraries(nostrdb PUBLIC Threads::Threads ${SECP256K1_LIB} ${FLATCCRT_LIB})
+    else()
+      message(STATUS "flatccrt not found on system, using vendored flatcc runtime sources")
+      file(GLOB NDB_FLATCC_RUNTIME_SOURCES
+        "${LIBNOSTR_NDB_VENDOR_PATH}/deps/flatcc/src/runtime/*.c")
+      target_sources(nostrdb PRIVATE ${NDB_FLATCC_RUNTIME_SOURCES})
+      target_include_directories(nostrdb PUBLIC "${LIBNOSTR_NDB_VENDOR_PATH}/deps/flatcc/include")
+      # Link standard threads and secp256k1; flatcc runtime is pure C and needs no extra libs
+      target_link_libraries(nostrdb PUBLIC Threads::Threads ${SECP256K1_LIB})
     endif()
-    target_link_libraries(nostrdb PUBLIC Threads::Threads ${SECP256K1_LIB} ${FLATCCRT_LIB})
+    # On Apple SDKs, sprintf is hard-deprecated and triggers warnings in vendored LMDB.
+    # Suppress deprecation warnings for this third-party code without altering sources.
+    if(APPLE)
+      target_compile_options(nostrdb PRIVATE -Wno-deprecated-declarations)
+    endif()
     if(APPLE)
       target_link_libraries(nostrdb PUBLIC "-framework Security")
     endif()
