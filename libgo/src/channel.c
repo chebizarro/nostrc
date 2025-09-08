@@ -206,7 +206,7 @@ static int channel_send_pred(const void *arg) {
     const channel_wait_arg_t *wa = (const channel_wait_arg_t *)arg;
     const GoChannel *c = wa->c;
     return (
-        c->closed
+        atomic_load_explicit(&((GoChannel*)c)->closed, memory_order_acquire)
 #if NOSTR_CHANNEL_DERIVE_SIZE
         || !go_channel_is_full(c)
 #else
@@ -229,7 +229,7 @@ static int channel_recv_pred(const void *arg) {
     const channel_wait_arg_t *wa = (const channel_wait_arg_t *)arg;
     const GoChannel *c = wa->c;
     return (
-        c->closed
+        atomic_load_explicit(&((GoChannel*)c)->closed, memory_order_acquire)
 #if NOSTR_CHANNEL_DERIVE_SIZE
         || (go_channel_occupancy(c) > 0)
 #else

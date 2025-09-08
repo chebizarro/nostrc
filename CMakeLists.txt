@@ -136,8 +136,11 @@ include(${CMAKE_SOURCE_DIR}/NipOptions.cmake)
 # Add test targets from `tests/`.
 add_subdirectory(tests)
 
-# GNostr apps (GTK4/GLib/libsecret) — guarded by dependency checks inside apps/CMakeLists.txt
-add_subdirectory(apps)
+# GNostr apps (GTK4/GLib/libsecret) — make building apps optional for CI jobs that only need libraries
+option(BUILD_APPS "Build application binaries under apps/" ON)
+if (BUILD_APPS)
+  add_subdirectory(apps)
+endif()
 
 # Examples
 add_executable(relay_smoke examples/relay_smoke.c)

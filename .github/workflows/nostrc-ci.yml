@@ -21,9 +21,6 @@ jobs:
       ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
       UBSAN_OPTIONS: print_stacktrace=1
       TSAN_OPTIONS: halt_on_error=1
-      # Prefer Clang toolchain for sanitizer jobs on Linux
-      CC: ${{ startsWith(matrix.os, 'ubuntu') && 'clang' || env.CC }}
-      CXX: ${{ startsWith(matrix.os, 'ubuntu') && 'clang++' || env.CXX }}
 
     steps:
       - name: Checkout (with submodules)
@@ -31,6 +28,12 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+
+      - name: Select clang toolchain (Ubuntu)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          echo "CC=clang" >> $GITHUB_ENV
+          echo "CXX=clang++" >> $GITHUB_ENV
 
       - name: Install dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
