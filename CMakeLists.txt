@@ -1,3 +1,12 @@
+cmake_minimum_required(VERSION 3.30)
+project(nostrc C)
+
+# Optional nostr-homed subproject (GNOME roaming home)
+option(ENABLE_NOSTR_HOMED "Build GNOME nostr-homed (NSS/PAM/FUSE/ctl)" OFF)
+if (ENABLE_NOSTR_HOMED)
+  add_subdirectory(gnome/nostr-homed)
+endif()
+
 # Feature toggles
 option(WITH_NOSTRDB "Build nostrdb storage component" ON)
 
@@ -28,8 +37,7 @@ if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     add_link_options(-Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
   endif()
 endif()
-cmake_minimum_required(VERSION 3.30)
-project(nostrc)
+ 
 
 # Enable CTest early so all subdirectories can register tests (including NIPs)
 enable_testing()
