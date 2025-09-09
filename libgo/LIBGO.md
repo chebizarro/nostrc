@@ -41,7 +41,20 @@ int main(){
     go_wait_group_wait(&wg);
     go_wait_group_destroy(&wg);
 }
-```
+
+### Scheduler Internals
+
+The cooperative helpers used by libgo utilities are implemented in the fiber scheduler. You can explore and extend the scheduler in the following locations:
+
+- Core scheduler: `libgo/fiber/sched/sched.c`
+- Public fiber interfaces: `libgo/fiber/include/libgo/fiber.h`
+- Documentation and notes: `docs/fiber/scheduler.md` and `libgo/fiber/README.md`
+
+Key properties:
+- Fairness: ready tasks are polled in a round-robin style to avoid starvation.
+- Parking: idle workers park briefly to reduce CPU usage, waking on condition broadcasts (e.g., channel state changes).
+- Integration: channel send/receive operations and context cancellation signal via condition variables so parked workers wake promptly.
+- Simplicity: the scheduler avoids complex preemption; long-running work should yield occasionally by performing blocking calls (e.g., channel ops) or by splitting work units.
 
 Example: goroutines with channels and close
 ```c
@@ -310,6 +323,46 @@ long_adder_destroy(ad);
 - Closing channels and canceling contexts wake all waiters via condition variable broadcasts.
 - Context-aware channel operations check cancellation in their wait loops and return promptly when canceled.
 
+## Threads and Schedulers
+
+libgo integrates simple thread utilities with a cooperative scheduling model to make building concurrent pipelines in C straightforward:
+
+- `go()` (in `libgo/include/go.h`) launches a detached OS thread running a user function. It is a thin wrapper over `pthread_create` that pairs naturally with `GoWaitGroup` for lifecycle coordination.
+- The fiber scheduler components under `libgo/fiber/` provide lightweight scheduling helpers used by higher-level utilities (e.g., ticker) and examples. These helpers are designed to work cleanly with channels and contexts without forcing a specific runtime.
+- Blocking operations (e.g., channel send/recv) are implemented atop condition variables and release/wake appropriately to avoid deadlocks.
+
+Best practices:
+- Use `GoWaitGroup` to coordinate completion for worker pools created via `go()`.
+- Avoid holding external locks when calling blocking channel or context functions.
+- Use context-aware APIs (e.g., `go_channel_send_with_context`) to ensure timely cancellation across threads.
+- Compose background workers with channels for backpressure rather than ad-hoc sleeps.
+
+Example: fan-out workers with a wait group
+```c
+typedef struct { GoChannel *in; GoWaitGroup *wg; } Args;
+void *worker(void *arg){
+  Args *a = (Args*)arg; void *msg;
+  while (go_channel_receive(a->in, &msg) == 0) {
+    // process msg ...
+  }
+  go_wait_group_done(a->wg);
+  return NULL;
+}
+
+int main(void){
+  GoChannel *in = go_channel_create(128);
+  GoWaitGroup wg; go_wait_group_init(&wg);
+  int n = 4; go_wait_group_add(&wg, n);
+  Args a = { .in = in, .wg = &wg };
+  for (int i=0;i<n;i++) go(worker, &a);
+  // produce ...
+  go_channel_close(in);
+  go_wait_group_wait(&wg);
+  go_wait_group_destroy(&wg);
+  go_channel_free(in);
+}
+```
+
 ## Examples
 
 - See `libgo/examples/` and tests in `libgo/tests/` for usage patterns:
@@ -320,6 +373,48 @@ long_adder_destroy(ad);
   - `go_select_test.c` — select over send/receive
   - `go_wait_group_test.c` — wait group coordination
   - `go_channel_close_test.c` — channel close semantics
+
+### Example: Ticker in a goroutine
+
+```c
+void *ticker_worker(void *arg) {
+  Ticker *t = (Ticker*)arg; void *tick; int n = 0;
+  while (n < 5) {
+    if (go_channel_receive(t->c, &tick) == 0) {
+      printf("tick!\n");
+      n++;
+    }
+  }
+  return NULL;
+}
+
+int main(void) {
+  Ticker *t = create_ticker(100); // 100ms
+  go(ticker_worker, t);
+  // do other work...
+  sleep(1);
+  stop_ticker(t);
+}
+```
+
+### Example: select over two channels
+
+```c
+GoChannel *a = go_channel_create(8);
+GoChannel *b = go_channel_create(8);
+// ... start producers that send to a and b ...
+for (;;) {
+  void *out = NULL;
+  GoSelectCase cases[2] = {
+    { .op = GO_SELECT_RECEIVE, .chan = a, .recv_buf = &out },
+    { .op = GO_SELECT_RECEIVE, .chan = b, .recv_buf = &out },
+  };
+  int idx = go_select(cases, 2);
+  if (idx >= 0) {
+    printf("received from %c\n", idx == 0 ? 'a' : 'b');
+  }
+}
+```
 
 ## Notes
 

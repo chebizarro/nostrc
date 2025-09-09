@@ -7,6 +7,7 @@ This document summarizes the primary public headers and key functions of the `no
 - libnostr (core): `libnostr/include/*.h`
 - libgo (concurrency): `libgo/include/*.h`
 - libjson (JSON helpers): `libjson/include/*.h`
+ - NIP modules (optional): `nips/*/include/nostr/*.h` (e.g., NIP-04)
 
 ## libnostr
 
@@ -50,6 +51,15 @@ Ownership: Functions returning `char*` allocate memory; caller must free.
 ### JSON — `json.h`
 - Abstractions for JSON interface used by the library (implemented by `libjson`).
 
+### NIP-04 — `nips/nip04/include/nostr/nip04.h`
+- Encryption uses AEAD v2 envelopes for all encrypt paths (`v=2:base64(nonce||cipher||tag)`).
+- Decrypt accepts AEAD v2; legacy `?iv=` decrypt fallback remains for interop unless built with `-DNIP04_STRICT_AEAD_ONLY=ON`.
+- Secure variants keep private keys in `nostr_secure_buf`:
+  - `nostr_nip04_encrypt_secure(...)`
+  - `nostr_nip04_decrypt_secure(...)`
+- Deprecated: `nostr_nip04_shared_secret_hex(...)` (avoid exposing raw ECDH shared secrets).
+See `docs/NIP04_MIGRATION.md` for details.
+
 ### Utility & Types — `utils.h`, `timestamp.h`, `pointer.h`, `kinds.h`, `error_codes.h`
 - Helpers for time, pointers, well-known kinds, and common error codes.
 
@@ -68,6 +78,7 @@ Ownership: Functions returning `char*` allocate memory; caller must free.
 - Select: `libgo/include/select.h` (multi-channel select over send/receive)
 - Wait groups: `libgo/include/wait_group.h`
 - Ticker: `libgo/include/ticker.h`
+- Threads: utilities for thread creation/scheduling integrated with the libgo runtime (see `libgo/fiber/` and `libgo/src/` for schedulers and helpers)
 
 Examples:
 - `libgo/examples/helloworld.c` — basic goroutines with `go()` and a wait group

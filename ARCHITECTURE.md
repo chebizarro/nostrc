@@ -11,6 +11,7 @@ Nostrc is a C library that implements the Nostr protocol with modular components
 - Optional serialization: `nson/` (when ENABLE_NSON is used)
 - Examples: `examples/`
 - Tests: `tests/`
+- Relay applications and core policy helpers: `apps/`
 
 ## High-level Component Diagram
 
@@ -33,7 +34,8 @@ Nostrc is a C library that implements the Nostr protocol with modular components
 +---------+---------+                 |
 |       libgo       |-----------------+
 | Go-like channels, |
-| context, waitgrp  |
+| context, waitgrp, |
+| threads           |
 +-------------------+
 
 NIP modules (nips/*) extend libnostr capabilities and are compiled as submodules.
@@ -44,7 +46,23 @@ NIP modules (nips/*) extend libnostr capabilities and are compiled as submodules
 - Event creation and signing flows through `libnostr` APIs (`event.h`, `keys.h`) and uses OpenSSL and libsecp256k1 underneath for cryptography (linked in tests and applications).
 - JSON serialization/deserialization is performed by `libjson` via `jansson` and synchronized using `nsync` primitives when needed.
 - Concurrency and coordination in C are provided by `libgo` (channels, contexts, wait groups), used by higher-level modules for non-blocking operations.
-- Relay connections and subscriptions (`nostr-relay.h`, `nostr-subscription.h`) orchestrate message flow to/from Nostr relays. WebSocket linkage is prepared in `libnostr/CMakeLists.txt` for libwebsockets but may be optional depending on your integration.
+- Relay connections and subscriptions (`nostr-relay.h`, `nostr-subscription.h`) orchestrate message flow to/from Nostr relays. WebSocket linkage is prepared in `libnostr/CMakeLists.txt` for libwebsockets.
+
+## Security Posture (High-level)
+
+- Event integrity: canonical NIP-01 preimage is used for id/signature; verification recomputes hash and never trusts caller-supplied `id`.
+- Encryption: NIP-04 uses AEAD v2 (`v=2:` with AES-256-GCM) for all encryption. Legacy `?iv=` decrypt is supported for interop. Unified decrypt error messages reduce leakage.
+- Optional hardening: a build-time switch `-DNIP04_STRICT_AEAD_ONLY=ON` disables legacy decrypt entirely.
+- Ingress mitigations: replay TTL + timestamp skew checks, with metrics. The policy decider is pure (no websockets) and unit-testable.
+- A reusable, websocket-free ingress decision function is provided for tests and reuse:
+  - `apps/relayd/include/protocol_nip01.h` exports `relayd_nip01_ingress_decide_json(...)`, plus `nostr_relay_set_replay_ttl(...)`, `nostr_relay_set_skew(...)`, and getters.
+- The ingress policy core is implemented in `apps/relayd/src/policy_decider.c` with a fixed-size duplicate cache and skew checks.
+- Relay metrics live in `apps/relayd/src/metrics.c` and include counters such as `duplicate_drops` and `skew_rejects`.
+- On startup, the relay prints a one-line security banner, for example: `nostrc-relayd: security AEAD=v2 replayTTL=900s skew=+600/-86400`.
+
+## Relay Daemon and Policy Core
+
+- The relay daemon lives under `apps/relayd/`. Runtime mitigations (replay TTL and timestamp skew) are configured via environment variables and set at startup.
 
 ## Technology Choices & Rationale
 
@@ -52,15 +70,17 @@ NIP modules (nips/*) extend libnostr capabilities and are compiled as submodules
 - `nsync`: lightweight synchronization primitives compatible with C.
 - `jansson`: mature C JSON parser/serializer with permissive license.
 - OpenSSL + libsecp256k1: widely adopted crypto libraries for hashing/ECDSA.
-- Optional libwebsockets: efficient WebSocket client/server in C.
+- libwebsockets: efficient WebSocket client/server in C.
+- OpenSSL + libsecp256k1 for cryptography; stable, widely used.
 
 ## Build & Link Boundaries
 
 - `libnostr` is a static library by default, built with `-fPIC` to support shared linkage.
 - `libjson` is currently a shared library (`SHARED`) that links against `jansson`, `libnostr`, and `nsync`.
 - `libgo` is a static library providing concurrency utilities with `nsync`.
-  
+
 - Tests link against `libnostr`, `nostr_json`, OpenSSL, libsecp256k1, and `nsync`.
+- Relay helpers for tests are provided by the `relayd_core` static library built from `apps/relayd/src/policy_decider.c` and `apps/relayd/src/metrics.c`.
 
 ## Performance Considerations
 
@@ -86,4 +106,5 @@ NIP modules (nips/*) extend libnostr capabilities and are compiled as submodules
 ├── nson/           # Optional serialization format (if enabled)
 ├── examples/       # Example programs
 └── tests/          # Unit/integration tests
+└── apps/           # Relay daemon and core relay helpers
 ```
