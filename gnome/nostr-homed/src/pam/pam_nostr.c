@@ -1,5 +1,6 @@
 #include "pam_nostr.h"
 #include <string.h>
+#include <gio/gio.h>
 
 static int get_username(pam_handle_t *pamh, const char **user_out){
   const char *user = NULL; int rc = pam_get_user(pamh, &user, NULL);
@@ -12,7 +13,7 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, const char **ar
   const char *user = NULL; int rc = get_username(pamh, &user);
   if (rc != PAM_SUCCESS) return rc;
   pam_info(pamh, "pam_nostr: authenticating %s via signer (stub)", user);
-  /* Stub: accept for now. Real impl will request NIP-46 proof over DBus and verify. */
+  /* In a future step, this will request a NIP-46 proof over DBus and verify using libnostr. */
   return PAM_SUCCESS;
 }
 
@@ -28,10 +29,27 @@ int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc, const char **ar
   (void)flags; (void)argc; (void)argv;
   const char *user = NULL; int rc = get_username(pamh, &user);
   if (rc != PAM_SUCCESS) return rc;
-  pam_info(pamh, "pam_nostr: opening session for %s (stub)", user);
+  pam_info(pamh, "pam_nostr: opening session for %s", user);
+  GError *err=NULL; GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
+  if (!bus){ pam_syslog(pamh, LOG_ERR, "DBus unavailable: %s", err?err->message:"error"); if (err) g_error_free(err); return PAM_SESSION_ERR; }
+  GVariant *ret = g_dbus_connection_call_sync(bus,
+      "org.nostr.Homed1", "/org/nostr/Homed1", "org.nostr.Homed1", "OpenSession",
+      g_variant_new("(s)", user), G_VARIANT_TYPE_TUPLE, G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
+  if (!ret){ pam_syslog(pamh, LOG_ERR, "OpenSession failed: %s", err?err->message:"error"); if (err) g_error_free(err); g_object_unref(bus); return PAM_SESSION_ERR; }
+  gboolean ok = FALSE; g_variant_get(ret, "(b)", &ok); g_variant_unref(ret); g_object_unref(bus);
+  if (!ok){ pam_syslog(pamh, LOG_ERR, "OpenSession returned failure"); return PAM_SESSION_ERR; }
   return PAM_SUCCESS;
 }
 
 int pam_sm_close_session(pam_handle_t *pamh, int flags, int argc, const char **argv){
-  (void)pamh; (void)flags; (void)argc; (void)argv; return PAM_SUCCESS;
+  (void)flags; (void)argc; (void)argv;
+  const char *user = NULL; int rc = get_username(pamh, &user);
+  if (rc != PAM_SUCCESS) return rc;
+  GError *err=NULL; GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
+  if (!bus){ if (err) g_error_free(err); return PAM_SUCCESS; }
+  GVariant *ret = g_dbus_connection_call_sync(bus,
+      "org.nostr.Homed1", "/org/nostr/Homed1", "org.nostr.Homed1", "CloseSession",
+      g_variant_new("(s)", user), G_VARIANT_TYPE_TUPLE, G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
+  if (!ret){ if (err) g_error_free(err); g_object_unref(bus); return PAM_SUCCESS; }
+  g_variant_unref(ret); g_object_unref(bus); return PAM_SUCCESS;
 }
