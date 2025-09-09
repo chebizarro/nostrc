@@ -18,6 +18,12 @@ find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
 add_library(nip04 ${SOURCES})
 target_link_libraries(nip04 PUBLIC nostr OpenSSL::Crypto ${SECP256K1_LIB})
 
+# Option: disable legacy ?iv= decrypt fallback at compile time
+option(NIP04_STRICT_AEAD_ONLY "If ON, disallow legacy NIP-04 ?iv= decrypt (AEAD-only)" OFF)
+if (NIP04_STRICT_AEAD_ONLY)
+  target_compile_definitions(nip04 PRIVATE NIP04_STRICT_AEAD_ONLY=1)
+endif()
+
 # Example
 add_executable(nip04_example examples/examples.c)
 target_link_libraries(nip04_example PRIVATE nip04 nostr OpenSSL::Crypto ${SECP256K1_LIB})

@@ -24,6 +24,9 @@ The Nostr C library provides an implementation of the Nostr protocol, including 
   - Decrypt fallback remains: legacy AES-CBC `?iv=` content is still accepted to preserve interop with older peers.
   - All decryption failures return a unified error string ("decrypt failed") to reduce side-channel leakage.
 
+  Optional hardening:
+  - Build-time switch to disable legacy decrypt entirely: set `-DNIP04_STRICT_AEAD_ONLY=ON` when configuring CMake to reject any non-`v=2:` envelopes at decrypt.
+
   Migration guidance:
   - Prefer `nostr_nip04_encrypt`/`nostr_nip04_encrypt_secure` and `nostr_nip04_decrypt`/`nostr_nip04_decrypt_secure`.
   - The helper `nostr_nip04_shared_secret_hex` is deprecated and should not be used by new code; exposing raw ECDH shared secrets increases attack surface.

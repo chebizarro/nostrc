@@ -333,7 +333,7 @@ int nostr_nip04_decrypt(const char *content_b64_qiv,
     if (!content_b64_qiv || !sender_pubkey_hex || !receiver_seckey_hex || !out_plaintext_utf8) return -1;
     *out_plaintext_utf8 = NULL;
 
-    /* New format: v=2:base64(nonce||cipher||tag). If not present, fall back to legacy. */
+    /* New format: v=2:base64(nonce||cipher||tag). If not present, fall back to legacy unless STRICT is enabled. */
     if (strncmp(content_b64_qiv, "v=2:", 4) == 0) {
         const char *b64 = content_b64_qiv + 4;
         unsigned char *payload = NULL; size_t payload_len = 0;
@@ -369,6 +369,11 @@ int nostr_nip04_decrypt(const char *content_b64_qiv,
         return 0;
     }
 
+#ifdef NIP04_STRICT_AEAD_ONLY
+    /* Strict mode: legacy decrypt disabled */
+    if (out_error) *out_error = strdup("decrypt failed");
+    return -1;
+#else
     /* Legacy fallback: AES-CBC ?iv= */
     const char *q = strstr(content_b64_qiv, "?iv=");
     if (!q) { if (out_error) *out_error = strdup("decrypt failed"); return -1; }
@@ -404,6 +409,7 @@ int nostr_nip04_decrypt(const char *content_b64_qiv,
     pt[total] = '\0';
     *out_plaintext_utf8 = (char *)pt;
     return 0;
+#endif
 }
 
 int nostr_nip04_encrypt_secure(
@@ -500,6 +506,10 @@ int nostr_nip04_decrypt_secure(
         pt[total] = '\0'; *out_plaintext_utf8 = (char*)pt; return 0;
     }
 
+#ifdef NIP04_STRICT_AEAD_ONLY
+    /* Strict mode: legacy decrypt disabled */
+    if (out_error) *out_error = strdup("decrypt failed"); return -1;
+#else
     const char *q = strstr(content_b64_qiv, "?iv=");
     if (!q) { if (out_error) *out_error = strdup("decrypt failed"); return -1; }
     size_t ct_len = (size_t)(q - content_b64_qiv);
@@ -539,4 +549,5 @@ int nostr_nip04_decrypt_secure(
     free(ct); free(iv);
     secure_bzero(key, sizeof(key));
     return 0;
+#endif
 }
