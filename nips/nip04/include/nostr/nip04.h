@@ -89,16 +89,20 @@ int nostr_nip04_decrypt_secure(
     char **out_error);
 
 /**
- * nostr_nip04_shared_secret_hex:
+ * nostr_nip04_shared_secret_hex: DEPRECATED — do not use in new code.
  * @peer_pubkey_hex: (not nullable): Hex-encoded secp256k1 public key of the peer.
  * @self_seckey_hex: (not nullable): Hex-encoded 32-byte secp256k1 secret key of self.
  * @out_shared_hex: (out) (transfer full): On success, newly allocated 64-char hex of shared X coordinate.
  * @out_error: (out) (optional) (transfer full): On error, allocated error message.
  *
- * Computes the raw ECDH shared secret X coordinate (for diagnostics). Not required for normal usage.
+ * Computes the raw ECDH shared secret X coordinate (for diagnostics). Not required for normal usage and insecure to expose.
+ * Deprecated because exposing raw shared secrets increases attack surface. Use the AEAD encrypt/decrypt APIs instead.
  *
  * Returns: 0 on success; non-zero on failure.
  */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((deprecated("nostr_nip04_shared_secret_hex is deprecated; use AEAD encrypt/decrypt instead")))
+#endif
 int nostr_nip04_shared_secret_hex(
     const char *peer_pubkey_hex,
     const char *self_seckey_hex,

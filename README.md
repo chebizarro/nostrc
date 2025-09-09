@@ -12,6 +12,31 @@ The Nostr C library provides an implementation of the Nostr protocol, including 
 - Optional memory management handled by the library
  - NIP-47 (Wallet Connect): canonical helpers for encrypt/decrypt supporting NIP-44 v2 (preferred) and NIP-04 fallback, with automatic key format handling (x-only and SEC1) and full tests/examples.
 
+## Security Hardening and Migration Notes
+
+- Canonical NIP-01 hashing/signing/verification
+  - Event IDs and signatures now use the canonical preimage array `[0, pubkey, created_at, kind, tags, content]` and ignore any caller-provided `id` when verifying. This prevents trusting untrusted `id` fields and aligns with the NIP-01 spec. Existing APIs continue to work; `nostr_event_check_signature()` always recomputes the hash.
+
+- NIP-04 AEAD migration (v2)
+  - New default envelope format: `v=2:base64(nonce(12) || ciphertext || tag(16))` using AES-256-GCM.
+  - Keys are derived via HKDF-SHA256 with `info="NIP04"` for domain separation from the ECDH shared secret.
+  - Encryption now emits AEAD v2 only. Legacy AES-CBC `?iv=` is no longer produced by library APIs.
+  - Decrypt fallback remains: legacy AES-CBC `?iv=` content is still accepted to preserve interop with older peers.
+  - All decryption failures return a unified error string ("decrypt failed") to reduce side-channel leakage.
+
+  Migration guidance:
+  - Prefer `nostr_nip04_encrypt`/`nostr_nip04_encrypt_secure` and `nostr_nip04_decrypt`/`nostr_nip04_decrypt_secure`.
+  - The helper `nostr_nip04_shared_secret_hex` is deprecated and should not be used by new code; exposing raw ECDH shared secrets increases attack surface.
+  - Tests and examples have been updated to expect `v=2:` envelopes and avoid `?iv=` parsing.
+
+- Relay ingress hardening
+  - Adds an in-memory replay cache (TTL 15 minutes) keyed by canonical event `id` to avoid redundant storage/flood.
+  - Enforces timestamp skew limits (+10 minutes future, -24 hours past) on `created_at`.
+  - On startup, the relay prints a concise security posture banner, for example:
+    - `nostrc-relayd: security AEAD=v2 replayTTL=900s skew=+600/-86400`
+
+See `tests/test_event_canonical.c` and `tests/test_nip04_aead.c` for minimal validation of these behaviors.
+
 ## Quick Start
 
 Build the libraries and tests with CMake:
@@ -49,6 +74,7 @@ target_link_libraries(my_app PRIVATE ${NOSTR_LIB} ${NOSTR_JSON_LIB} ${NSYNC_LIB}
 - See `docs/LIBJSON.md` for libjson API, NIP-01 #tag mapping, robustness rules, and tests.
 - See `docs/SHUTDOWN.md` for libnostr/libgo shutdown order, invariants, and troubleshooting.
 - See `docs/NIP47.md` for NIP-47 (Wallet Connect) envelope helpers, negotiation, canonical crypto helpers (NIP-44 v2/NIP-04), accepted key formats (x-only/SEC1), sessions, GLib bindings, and examples.
+- See `docs/NIP04_MIGRATION.md` for migrating to NIP-04 AEAD v2 envelopes and deprecation details.
 
 ## Installation
 

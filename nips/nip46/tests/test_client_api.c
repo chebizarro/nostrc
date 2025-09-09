@@ -31,8 +31,8 @@ static int test_sign_event_encrypt_and_decrypt(void){
     if (nostr_nip46_client_connect(s, uri, NULL) != 0) { nostr_nip46_session_free(s); return 2; }
     const char *event_json = "{\"kind\":1,\"content\":\"hi\"}";
     char *cipher=NULL; if (nostr_nip46_client_sign_event(s, event_json, &cipher) != 0 || !cipher) { nostr_nip46_session_free(s); return 3; }
-    /* With NIP-04 we cannot decrypt without receiver's secret; validate format */
-    int ok = (cipher && strstr(cipher, "?iv=") != NULL && strlen(cipher) > 20);
+    /* With NIP-04 we cannot decrypt without receiver's secret; validate AEAD v2 format */
+    int ok = (cipher && strncmp(cipher, "v=2:", 4) == 0 && strlen(cipher) > 10);
     free(cipher); nostr_nip46_session_free(s);
     return ok ? 0 : 4;
 }

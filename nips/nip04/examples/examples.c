@@ -40,14 +40,7 @@ int main() {
     const char *msg = "Hello, NIP-04!";
     char *content = NULL; char *err = NULL;
 
-    char *xhex = NULL; char *e2 = NULL;
-    if (nostr_nip04_shared_secret_hex(receiver_pk_hex, sender_sk_hex, &xhex, &e2) != 0) {
-        fprintf(stderr, "shared secret error: %s\n", e2 ? e2 : "unknown");
-        free(e2);
-    } else {
-        printf("shared_x: %s\n", xhex);
-        free(xhex);
-    }
+    /* Note: nostr_nip04_shared_secret_hex() is deprecated; avoid exposing raw ECDH secrets. */
     // Encrypt using secure API with sender secret in secure memory
     nostr_secure_buf sb_sender = secure_alloc(32);
     if (!sb_sender.ptr || !nostr_hex2bin((unsigned char*)sb_sender.ptr, sender_sk_hex, 32)) {

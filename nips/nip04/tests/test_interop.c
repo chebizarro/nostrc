@@ -9,9 +9,6 @@ int main(void) {
     const char *sender_pk_hex =   "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
     const char *receiver_pk_hex = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
 
-    /* Deterministic IV: 16 zero bytes */
-    setenv("NIP04_TEST_IV_B64", "AAAAAAAAAAAAAAAAAAAAAA==", 1);
-
     const char *msg = "Hello, NIP-04!";
     char *content = NULL; char *err = NULL;
     if (nostr_nip04_encrypt(msg, receiver_pk_hex, sender_sk_hex, &content, &err) != 0) {
@@ -19,10 +16,8 @@ int main(void) {
         free(err);
         return 1;
     }
-
-    const char *expected = "EIljKsWTF167gLUt9vKleQ==?iv=AAAAAAAAAAAAAAAAAAAAAA==";
-    if (strcmp(content, expected) != 0) {
-        fprintf(stderr, "ciphertext mismatch:\n got: %s\n exp: %s\n", content, expected);
+    if (strncmp(content, "v=2:", 4) != 0) {
+        fprintf(stderr, "expected AEAD v2 envelope, got: %s\n", content);
         free(content);
         return 1;
     }

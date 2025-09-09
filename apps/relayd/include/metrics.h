@@ -18,6 +18,8 @@ void metrics_on_eose(void);
 
 void metrics_on_rate_limit_drop(void);
 void metrics_on_backpressure_drop(void);
+void metrics_on_duplicate_drop(void);
+void metrics_on_skew_reject(void);
 
 /* Returns a newly allocated JSON string with metrics snapshot; caller must free. */
 char *metrics_build_json(void);

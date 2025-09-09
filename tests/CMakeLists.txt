@@ -86,6 +86,11 @@ add_executable(test_filters_move_semantics test_filters_move_semantics.c)
 add_executable(microbench_json microbench_json.c)
 add_executable(test_nip86_policy test_nip86_policy.c)
 
+# New tests for event canonicalization and NIP-04 AEAD
+add_executable(test_event_canonical test_event_canonical.c)
+add_executable(test_nip04_aead test_nip04_aead.c)
+add_executable(test_relay_ingress_policy test_relay_ingress_policy.c)
+
 # Link OpenSSL, libsecp256k1, nsync, and project libraries
 target_link_libraries(test_nostr PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 
@@ -113,6 +118,13 @@ target_link_libraries(test_nip86_policy PRIVATE libnostr ${NSYNC_LIB} nostr_json
 target_include_directories(test_nip86_policy PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/nips/nip86/include)
 target_link_directories(test_nip86_policy PRIVATE ${SECP256K1_LIBRARY_DIRS})
 
+# Link new tests
+target_link_libraries(test_event_canonical PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+target_link_libraries(test_nip04_aead PRIVATE nip04 libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+target_include_directories(test_nip04_aead PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip04/include)
+target_link_libraries(test_relay_ingress_policy PRIVATE relayd_core libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+target_include_directories(test_relay_ingress_policy PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/apps/relayd/include)
+
 # Apply sanitizers to tests if enabled
 apply_sanitizers(test_nostr)
 apply_sanitizers(test_relay)
@@ -135,6 +147,9 @@ apply_sanitizers(test_json_int_array)
 apply_sanitizers(test_json_raw)
 apply_sanitizers(test_filters_move_semantics)
 apply_sanitizers(microbench_json)
+apply_sanitizers(test_event_canonical)
+apply_sanitizers(test_nip04_aead)
+apply_sanitizers(test_relay_ingress_policy)
 
 # Register tests for CTest. Run with: `ctest --output-on-failure`
 add_test(NAME test_nostr COMMAND test_nostr)
@@ -276,6 +291,9 @@ add_test(NAME test_json_int_array COMMAND test_json_int_array)
 add_test(NAME test_json_raw COMMAND test_json_raw)
 add_test(NAME test_filters_move_semantics COMMAND test_filters_move_semantics)
 add_test(NAME test_nip86_policy COMMAND test_nip86_policy)
+add_test(NAME test_event_canonical COMMAND test_event_canonical)
+add_test(NAME test_nip04_aead COMMAND test_nip04_aead)
+add_test(NAME test_relay_ingress_policy COMMAND test_relay_ingress_policy)
 
 # Per-test timeouts (seconds) — keep tight to surface stalls early
 set_tests_properties(test_nostr PROPERTIES TIMEOUT 20)
@@ -298,6 +316,9 @@ set_tests_properties(test_json_filter_fuzzlite PROPERTIES TIMEOUT 45)
 set_tests_properties(test_json_int_array PROPERTIES TIMEOUT 20)
 set_tests_properties(test_json_raw PROPERTIES TIMEOUT 20)
 set_tests_properties(test_filters_move_semantics PROPERTIES TIMEOUT 20)
+set_tests_properties(test_event_canonical PROPERTIES TIMEOUT 20)
+set_tests_properties(test_nip04_aead PROPERTIES TIMEOUT 20)
+set_tests_properties(test_relay_ingress_policy PROPERTIES TIMEOUT 20)
 
 # Include directories for libsecp256k1 headers
 target_include_directories(test_nostr PRIVATE ${SECP256K1_INCLUDE_DIRS})

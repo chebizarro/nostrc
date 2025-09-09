@@ -24,13 +24,54 @@ static inline int hexval_char(char ch) {
     return -1;
 }
 
+/* === NIP-01 canonical preimage serializer ===
+ * Build the exact JSON array: [0, pubkey, created_at, kind, tags, content]
+ * where pubkey and content are JSON strings, tags is a JSON array.
+ * This excludes id and sig by definition.
+ */
+static char *nostr_event_serialize_nip01_array(const NostrEvent *event) {
+    if (!event) return NULL;
+    /* pubkey */
+    const char *pk = event->pubkey ? event->pubkey : "";
+    char *pk_esc = nostr_escape_string(pk);
+    if (!pk_esc) return NULL;
+    /* content */
+    const char *ct = event->content ? event->content : "";
+    char *ct_esc = nostr_escape_string(ct);
+    if (!ct_esc) { free(pk_esc); return NULL; }
+    /* tags */
+    char *tags_json = NULL;
+    if (event->tags) {
+        tags_json = nostr_tags_to_json(event->tags);
+        if (!tags_json) { free(pk_esc); free(ct_esc); return NULL; }
+    } else {
+        tags_json = strdup("[]");
+        if (!tags_json) { free(pk_esc); free(ct_esc); return NULL; }
+    }
+    /* size rough estimate */
+    size_t cap = strlen(pk_esc) + strlen(ct_esc) + strlen(tags_json) + 64;
+    char *out = (char *)malloc(cap);
+    if (!out) { free(pk_esc); free(ct_esc); free(tags_json); return NULL; }
+    int n = snprintf(out, cap, "[0,\"%s\",%lld,%d,%s,\"%s\"]",
+                     pk_esc,
+                     (long long)event->created_at,
+                     event->kind,
+                     tags_json,
+                     ct_esc);
+    free(pk_esc);
+    free(ct_esc);
+    free(tags_json);
+    if (n < 0 || (size_t)n >= cap) { free(out); return NULL; }
+    return out;
+}
+
 /* Secure variant: accepts a 32-byte private key inside nostr_secure_buf. */
 int nostr_event_sign_secure(NostrEvent *event, const nostr_secure_buf *sk) {
     if (!event || !sk || !sk->ptr || sk->len < 32) return -1;
 
     unsigned char hash[32];
-    char *serialized = nostr_event_serialize_compact(event);
-    if (!serialized) serialized = nostr_event_serialize(event);
+    /* Use NIP-01 canonical array as signing preimage */
+    char *serialized = nostr_event_serialize_nip01_array(event);
     if (!serialized) return -1;
     SHA256((unsigned char *)serialized, strlen(serialized), hash);
     free(serialized);
@@ -455,10 +496,8 @@ char *nostr_event_get_id(NostrEvent *event) {
     if (!event)
         return NULL;
 
-    // Serialize the event
-    char *serialized = nostr_event_serialize_compact(event);
-    if (!serialized)
-        serialized = nostr_event_serialize(event); /* public API fallback */
+    // Serialize the canonical NIP-01 array preimage
+    char *serialized = nostr_event_serialize_nip01_array(event);
     if (!serialized)
         return NULL;
 
@@ -507,26 +546,16 @@ bool nostr_event_check_signature(NostrEvent *event) {
         return false;
     }
 
-    // Obtain the 32-byte message hash: prefer the provided event->id (authoritative),
-    // fallback to hashing our serialized representation if id is missing.
+    // Always recompute the 32-byte message hash from NIP-01 canonical array.
     unsigned char hash[32];
-    bool have_hash = false;
-    if (event->id && strlen(event->id) == 64) {
-        if (nostr_hex2bin(hash, event->id, sizeof(hash))) {
-            have_hash = true;
-        }
+    char *serialized = nostr_event_serialize_nip01_array(event);
+    if (!serialized) {
+        fprintf(stderr, "Failed to serialize canonical preimage\n");
+        secp256k1_context_destroy(ctx);
+        return false;
     }
-    if (!have_hash) {
-        char *serialized = nostr_event_serialize_compact(event);
-        if (!serialized) serialized = nostr_event_serialize(event); /* public API fallback */
-        if (!serialized) {
-            fprintf(stderr, "Failed to serialize event\n");
-            secp256k1_context_destroy(ctx);
-            return false;
-        }
-        SHA256((unsigned char *)serialized, strlen(serialized), hash);
-        free(serialized);
-    }
+    SHA256((unsigned char *)serialized, strlen(serialized), hash);
+    free(serialized);
 
     /*** Verification ***/
 
@@ -550,8 +579,8 @@ int nostr_event_sign(NostrEvent *event, const char *private_key) {
         return -1;
 
     unsigned char hash[32]; // Schnorr requires a 32-byte hash
-    char *serialized = nostr_event_serialize_compact(event);
-    if (!serialized) serialized = nostr_event_serialize(event); /* public API fallback */
+    /* Use NIP-01 canonical array as signing preimage */
+    char *serialized = nostr_event_serialize_nip01_array(event);
     if (!serialized)
         return -1;
 

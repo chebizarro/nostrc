@@ -21,6 +21,10 @@ jobs:
       ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
       UBSAN_OPTIONS: print_stacktrace=1
       TSAN_OPTIONS: halt_on_error=1
+      # Keep relay mitigations disabled by default in CI unless tests set them
+      NOSTR_RELAY_REPLAY_TTL: "0"
+      NOSTR_RELAY_SKEW_FUTURE: "0"
+      NOSTR_RELAY_SKEW_PAST: "0"
 
     steps:
       - name: Checkout (with submodules)

@@ -2,6 +2,7 @@
 #include <openssl/aes.h>
 #include <openssl/rand.h>
 #include <openssl/evp.h>
+#include <openssl/hmac.h>
 #include <openssl/bio.h>
 #include <openssl/buffer.h>
 #include <string.h>
@@ -20,8 +21,52 @@ static void secure_bzero(void *p, size_t n) {
     while (n--) *vp++ = 0;
 }
 
+/* (moved AEAD KDF helpers below) */
+
 /* forward declaration for ECDH hash callback defined below */
 static int ecdh_hash_sha256(unsigned char *out, const unsigned char *x32, const unsigned char *y32, void *data);
+
+/* === Minimal HKDF-SHA256 helpers (per NIP-04 key separation) === */
+static int hmac_sha256_once(const unsigned char *key, size_t klen,
+                            const unsigned char *data, size_t dlen,
+                            unsigned char out[32]) {
+    unsigned int mdlen = 0;
+    HMAC(EVP_sha256(), key, (int)klen, data, dlen, out, &mdlen);
+    return mdlen == 32 ? 1 : 0;
+}
+
+static void hkdf_extract(const unsigned char *salt, size_t salt_len,
+                         const unsigned char *ikm, size_t ikm_len,
+                         unsigned char prk_out[32]) {
+    /* PRK = HMAC(salt, IKM); if salt is NULL, use zeros */
+    unsigned char null_salt[32] = {0};
+    const unsigned char *s = salt ? salt : null_salt;
+    size_t sl = salt ? salt_len : sizeof null_salt;
+    (void)hmac_sha256_once(s, sl, ikm, ikm_len, prk_out);
+}
+
+static void hkdf_expand(const unsigned char prk[32], const unsigned char *info, size_t info_len,
+                        unsigned char okm_out[], size_t okm_len) {
+    /* T(0) = empty; T(1) = HMAC(PRK, T(0) | info | 0x01); ... */
+    unsigned char t[32]; size_t pos = 0; unsigned char ctr = 1; size_t n = (okm_len + 31) / 32;
+    size_t tlen = 0;
+    for (size_t i = 0; i < n; i++) {
+        /* build msg = T(prev) | info | counter */
+        size_t mlen = tlen + info_len + 1;
+        unsigned char *msg = (unsigned char*)OPENSSL_malloc(mlen);
+        if (!msg) return;
+        size_t off = 0;
+        if (tlen) { memcpy(msg + off, t, tlen); off += tlen; }
+        if (info && info_len) { memcpy(msg + off, info, info_len); off += info_len; }
+        msg[off] = ctr;
+        (void)hmac_sha256_once(prk, 32, msg, mlen, t);
+        OPENSSL_free(msg);
+        size_t c = (pos + 32 <= okm_len) ? 32 : (okm_len - pos);
+        memcpy(okm_out + pos, t, c);
+        pos += c; tlen = 32; ctr++;
+    }
+    OPENSSL_cleanse(t, sizeof t);
+}
 
 /* Derive using binary secret key (32 bytes) from secure memory */
 static int ecdh_derive_key_bin(const char *peer_pub_hex, const unsigned char sk_bin[32], unsigned char key_out32[32]) {
@@ -106,6 +151,65 @@ static int ecdh_hash_xcopy(unsigned char *out, const unsigned char *x32, const u
     return 1;
 }
 
+/* === AEAD key/nonce derivation (HKDF with info="NIP04") === */
+static int nip04_kdf_aead_from_x(const unsigned char x[32], unsigned char key32[32], unsigned char nonce12[12]) {
+    static const unsigned char info[] = { 'N','I','P','0','4' };
+    unsigned char prk[32]; unsigned char okm[44];
+    hkdf_extract(NULL, 0, x, 32, prk);
+    hkdf_expand(prk, info, sizeof(info), okm, sizeof(okm));
+    memcpy(key32, okm, 32);
+    memcpy(nonce12, okm + 32, 12);
+    OPENSSL_cleanse(prk, sizeof prk);
+    OPENSSL_cleanse(okm, sizeof okm);
+    return 0;
+}
+
+static int nip04_kdf_aead(const char *peer_pub_hex, const char *self_seckey_hex,
+                          unsigned char key32[32], unsigned char nonce12[12]) {
+    unsigned char sk_bin[32]; unsigned char pk_bin[65];
+    if (!peer_pub_hex || !self_seckey_hex) return -1;
+    size_t seclen = strlen(self_seckey_hex);
+    if (seclen != 64) return -1;
+    if (!nostr_hex2bin(sk_bin, self_seckey_hex, sizeof(sk_bin))) return -1;
+    size_t hexlen = strlen(peer_pub_hex);
+    if (hexlen != 66 && hexlen != 130) { secure_bzero(sk_bin, sizeof sk_bin); return -1; }
+    size_t pk_bin_len = hexlen / 2;
+    if (!nostr_hex2bin(pk_bin, peer_pub_hex, pk_bin_len)) { secure_bzero(sk_bin, sizeof sk_bin); return -1; }
+    secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+    if (!ctx) { secure_bzero(sk_bin, sizeof sk_bin); return -1; }
+    if (!secp256k1_ec_seckey_verify(ctx, sk_bin)) { secp256k1_context_destroy(ctx); secure_bzero(sk_bin, sizeof sk_bin); return -1; }
+    secp256k1_pubkey pub;
+    if (!secp256k1_ec_pubkey_parse(ctx, &pub, pk_bin, pk_bin_len)) { secp256k1_context_destroy(ctx); secure_bzero(sk_bin, sizeof sk_bin); return -1; }
+    unsigned char x[32];
+    if (!secp256k1_ecdh(ctx, x, &pub, sk_bin, ecdh_hash_xcopy, NULL)) { secp256k1_context_destroy(ctx); secure_bzero(sk_bin, sizeof sk_bin); return -1; }
+    secp256k1_context_destroy(ctx);
+    secure_bzero(sk_bin, sizeof sk_bin);
+    int rc = nip04_kdf_aead_from_x(x, key32, nonce12);
+    secure_bzero((void*)x, sizeof x);
+    return rc;
+}
+
+static int nip04_kdf_aead_bin(const char *peer_pub_hex, const unsigned char sk_bin[32],
+                              unsigned char key32[32], unsigned char nonce12[12]) {
+    if (!peer_pub_hex || !sk_bin) return -1;
+    unsigned char pk_bin[65];
+    size_t hexlen = strlen(peer_pub_hex);
+    if (hexlen != 66 && hexlen != 130) return -1;
+    size_t pk_bin_len = hexlen / 2;
+    if (!nostr_hex2bin(pk_bin, peer_pub_hex, pk_bin_len)) return -1;
+    secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+    if (!ctx) return -1;
+    if (!secp256k1_ec_seckey_verify(ctx, sk_bin)) { secp256k1_context_destroy(ctx); return -1; }
+    secp256k1_pubkey pub;
+    if (!secp256k1_ec_pubkey_parse(ctx, &pub, pk_bin, pk_bin_len)) { secp256k1_context_destroy(ctx); return -1; }
+    unsigned char x[32];
+    if (!secp256k1_ecdh(ctx, x, &pub, sk_bin, ecdh_hash_xcopy, NULL)) { secp256k1_context_destroy(ctx); return -1; }
+    secp256k1_context_destroy(ctx);
+    int rc = nip04_kdf_aead_from_x(x, key32, nonce12);
+    secure_bzero((void*)x, sizeof x);
+    return rc;
+}
+
 static int ecdh_derive_key(const char *peer_pub_hex, const char *self_sec_hex, unsigned char key_out32[32]) {
     unsigned char sk_bin[32];
     unsigned char pk_bin[65];
@@ -175,59 +279,47 @@ int nostr_nip04_encrypt(const char *plaintext_utf8,
         return -1;
     *out_content_b64_qiv = NULL;
 
-    unsigned char key[32];
-    if (ecdh_derive_key(receiver_pubkey_hex, sender_seckey_hex, key) != 0) {
+    unsigned char key[32], nonce[12];
+    if (nip04_kdf_aead(receiver_pubkey_hex, sender_seckey_hex, key, nonce) != 0) {
         if (out_error) *out_error = strdup("ecdh failed");
         return -1;
     }
 
-    unsigned char iv[16];
-    const char *iv_b64_env = getenv("NIP04_TEST_IV_B64");
-    if (iv_b64_env && *iv_b64_env) {
-        unsigned char *iv_tmp = NULL; size_t iv_len = 0;
-        if (!base64_decode(iv_b64_env, &iv_tmp, &iv_len) || iv_len != sizeof(iv)) {
-            if (out_error) *out_error = strdup("bad test iv");
-            free(iv_tmp); secure_bzero(key, sizeof(key)); return -1;
-        }
-        memcpy(iv, iv_tmp, sizeof(iv));
-        free(iv_tmp);
-    } else if (RAND_bytes(iv, sizeof(iv)) != 1) {
-        secure_bzero(key, sizeof(key));
-        if (out_error) *out_error = strdup("iv rand failed");
-        return -1;
-    }
-
     size_t in_len = strlen(plaintext_utf8);
-    int out_len1 = (int)in_len + AES_BLOCK_SIZE; /* worst case */
-    unsigned char *cipher = (unsigned char *)malloc(out_len1);
-    if (!cipher) { secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("oom"); return -1; }
+    unsigned char *cipher = (unsigned char *)malloc(in_len + 16); /* GCM: ciphertext same len, tag 16 appended later */
+    if (!cipher) { secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("oom"); return -1; }
 
     int len = 0, total = 0;
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-    if (!ctx) { free(cipher); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("evp ctx"); return -1; }
-    if (EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv) != 1) {
-        EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("enc init"); return -1; }
-    if (EVP_EncryptUpdate(ctx, cipher, &len, (const unsigned char *)plaintext_utf8, (int)in_len) != 1) {
-        EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("enc update"); return -1; }
+    if (!ctx) { free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("evp ctx"); return -1; }
+    if (EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
+    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, (int)sizeof(nonce), NULL) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
+    if (EVP_EncryptInit_ex(ctx, NULL, NULL, key, nonce) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
+    if (EVP_EncryptUpdate(ctx, cipher, &len, (const unsigned char *)plaintext_utf8, (int)in_len) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
     total = len;
-    if (EVP_EncryptFinal_ex(ctx, cipher + total, &len) != 1) {
-        EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("enc final"); return -1; }
+    if (EVP_EncryptFinal_ex(ctx, cipher + total, &len) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
     total += len;
+    unsigned char tag[16];
+    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, tag) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
     EVP_CIPHER_CTX_free(ctx);
 
-    char *b64_ct = NULL; char *b64_iv = NULL;
-    if (!base64_encode(cipher, (size_t)total, &b64_ct)) {
-        free(cipher); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("b64 ct"); return -1; }
-    if (!base64_encode(iv, sizeof(iv), &b64_iv)) {
-        free(cipher); secure_bzero(key, sizeof(key)); free(b64_ct); if (out_error) *out_error = strdup("b64 iv"); return -1; }
-    free(cipher);
-    secure_bzero(key, sizeof(key));
-
-    size_t out_sz = strlen(b64_ct) + strlen(b64_iv) + 4 + 1; /* ?iv= */
-    char *out = (char *)malloc(out_sz);
-    if (!out) { free(b64_ct); free(b64_iv); if (out_error) *out_error = strdup("oom"); return -1; }
-    snprintf(out, out_sz, "%s?iv=%s", b64_ct, b64_iv);
-    free(b64_ct); free(b64_iv);
+    /* Assemble: v=2:base64(nonce(12) || ciphertext || tag(16)) */
+    size_t payload_len = sizeof(nonce) + (size_t)total + sizeof(tag);
+    unsigned char *payload = (unsigned char*)malloc(payload_len);
+    if (!payload) { secure_bzero(key, sizeof key); OPENSSL_cleanse(tag, sizeof tag); free(cipher); if (out_error) *out_error = strdup("oom"); return -1; }
+    size_t off = 0; memcpy(payload + off, nonce, sizeof(nonce)); off += sizeof(nonce);
+    memcpy(payload + off, cipher, (size_t)total); off += (size_t)total;
+    memcpy(payload + off, tag, sizeof(tag));
+    char *b64 = NULL;
+    int rc_b64 = base64_encode(payload, payload_len, &b64) ? 0 : -1;
+    OPENSSL_cleanse(tag, sizeof tag);
+    free(cipher); secure_bzero(key, sizeof key); OPENSSL_cleanse(payload, payload_len); free(payload);
+    if (rc_b64 != 0) { if (out_error) *out_error = strdup("encrypt failed"); return -1; }
+    size_t out_sz = 4 + strlen(b64) + 1; /* v=2: + b64 */
+    char *out = (char*)malloc(out_sz);
+    if (!out) { free(b64); if (out_error) *out_error = strdup("oom"); return -1; }
+    snprintf(out, out_sz, "v=2:%s", b64);
+    free(b64);
     *out_content_b64_qiv = out;
     return 0;
 }
@@ -241,44 +333,76 @@ int nostr_nip04_decrypt(const char *content_b64_qiv,
     if (!content_b64_qiv || !sender_pubkey_hex || !receiver_seckey_hex || !out_plaintext_utf8) return -1;
     *out_plaintext_utf8 = NULL;
 
+    /* New format: v=2:base64(nonce||cipher||tag). If not present, fall back to legacy. */
+    if (strncmp(content_b64_qiv, "v=2:", 4) == 0) {
+        const char *b64 = content_b64_qiv + 4;
+        unsigned char *payload = NULL; size_t payload_len = 0;
+        if (!base64_decode(b64, &payload, &payload_len)) { if (out_error) *out_error = strdup("decrypt failed"); return -1; }
+        if (payload_len < 12 + 16) { free(payload); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
+        const unsigned char *nonce = payload;
+        const unsigned char *tag = payload + payload_len - 16;
+        const unsigned char *ct = payload + 12;
+        size_t ct_len = payload_len - 12 - 16;
+        unsigned char key[32]; unsigned char dummy_nonce[12];
+        if (nip04_kdf_aead(sender_pubkey_hex, receiver_seckey_hex, key, dummy_nonce) != 0) { OPENSSL_cleanse(payload, payload_len); free(payload); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
+        /* Note: nonce from payload, not derived */
+        unsigned char *pt = (unsigned char*)malloc(ct_len + 1);
+        if (!pt) { secure_bzero(key, sizeof key); OPENSSL_cleanse(payload, payload_len); free(payload); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
+        EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+        int ok = 0; int len = 0, total = 0;
+        if (ctx && EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL) == 1 &&
+            EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, NULL) == 1 &&
+            EVP_DecryptInit_ex(ctx, NULL, NULL, key, nonce) == 1 &&
+            EVP_DecryptUpdate(ctx, pt, &len, ct, (int)ct_len) == 1) {
+            total = len;
+            if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16, (void*)tag) == 1 &&
+                EVP_DecryptFinal_ex(ctx, pt + total, &len) == 1) {
+                total += len; ok = 1;
+            }
+        }
+        if (ctx) EVP_CIPHER_CTX_free(ctx);
+        OPENSSL_cleanse(payload, payload_len); free(payload);
+        secure_bzero(key, sizeof key);
+        if (!ok) { OPENSSL_cleanse(pt, ct_len + 1); free(pt); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
+        pt[total] = '\0';
+        *out_plaintext_utf8 = (char*)pt;
+        return 0;
+    }
+
+    /* Legacy fallback: AES-CBC ?iv= */
     const char *q = strstr(content_b64_qiv, "?iv=");
-    if (!q) { if (out_error) *out_error = strdup("missing iv"); return -1; }
+    if (!q) { if (out_error) *out_error = strdup("decrypt failed"); return -1; }
     size_t ct_len = (size_t)(q - content_b64_qiv);
     char *ct_b64 = (char *)malloc(ct_len + 1);
-    if (!ct_b64) { if (out_error) *out_error = strdup("oom"); return -1; }
+    if (!ct_b64) { if (out_error) *out_error = strdup("decrypt failed"); return -1; }
     memcpy(ct_b64, content_b64_qiv, ct_len); ct_b64[ct_len] = '\0';
     const char *iv_b64 = q + 4;
 
     unsigned char *ct = NULL; size_t ct_bin_len = 0;
     unsigned char *iv = NULL; size_t iv_len = 0;
-    if (!base64_decode(ct_b64, &ct, &ct_bin_len)) { free(ct_b64); if (out_error) *out_error = strdup("b64 ct"); return -1; }
+    if (!base64_decode(ct_b64, &ct, &ct_bin_len)) { free(ct_b64); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
     free(ct_b64);
-    if (!base64_decode(iv_b64, &iv, &iv_len)) { free(ct); if (out_error) *out_error = strdup("b64 iv"); return -1; }
-    if (iv_len != 16) { free(ct); free(iv); if (out_error) *out_error = strdup("iv len"); return -1; }
+    if (!base64_decode(iv_b64, &iv, &iv_len)) { free(ct); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
+    if (iv_len != 16) { free(ct); free(iv); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
 
     unsigned char key[32];
     if (ecdh_derive_key(sender_pubkey_hex, receiver_seckey_hex, key) != 0) {
-        free(ct); free(iv); if (out_error) *out_error = strdup("ecdh failed"); return -1; }
+        free(ct); free(iv); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
 
     unsigned char *pt = (unsigned char *)malloc(ct_bin_len + 1);
-    if (!pt) { free(ct); free(iv); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("oom"); return -1; }
-    int len = 0, total = 0;
+    if (!pt) { free(ct); free(iv); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
+    int len = 0, total = 0; int ok = 0;
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-    if (!ctx) { free(ct); free(iv); free(pt); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("evp ctx"); return -1; }
-    if (EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv) != 1) {
-        EVP_CIPHER_CTX_free(ctx); free(ct); free(iv); free(pt); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("dec init"); return -1; }
-    if (EVP_DecryptUpdate(ctx, pt, &len, ct, (int)ct_bin_len) != 1) {
-        EVP_CIPHER_CTX_free(ctx); free(ct); free(iv); free(pt); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("dec update"); return -1; }
-    total = len;
-    if (EVP_DecryptFinal_ex(ctx, pt + total, &len) != 1) {
-        EVP_CIPHER_CTX_free(ctx); free(ct); free(iv); free(pt); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("dec final"); return -1; }
-    total += len;
-    EVP_CIPHER_CTX_free(ctx);
-
+    if (ctx && EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv) == 1 &&
+        EVP_DecryptUpdate(ctx, pt, &len, ct, (int)ct_bin_len) == 1) {
+        total = len;
+        if (EVP_DecryptFinal_ex(ctx, pt + total, &len) == 1) { total += len; ok = 1; }
+    }
+    if (ctx) EVP_CIPHER_CTX_free(ctx);
+    free(ct); free(iv); secure_bzero(key, sizeof key);
+    if (!ok) { OPENSSL_cleanse(pt, ct_bin_len + 1); free(pt); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
     pt[total] = '\0';
     *out_plaintext_utf8 = (char *)pt;
-    free(ct); free(iv);
-    secure_bzero(key, sizeof(key));
     return 0;
 }
 
@@ -294,59 +418,44 @@ int nostr_nip04_encrypt_secure(
         return -1;
     *out_content_b64_qiv = NULL;
 
-    unsigned char key[32];
-    if (ecdh_derive_key_bin(receiver_pubkey_hex, (const unsigned char*)sender_seckey->ptr, key) != 0) {
+    unsigned char key[32], nonce[12];
+    if (nip04_kdf_aead_bin(receiver_pubkey_hex, (const unsigned char*)sender_seckey->ptr, key, nonce) != 0) {
         if (out_error) *out_error = strdup("ecdh failed");
         return -1;
     }
 
-    unsigned char iv[16];
-    const char *iv_b64_env = getenv("NIP04_TEST_IV_B64");
-    if (iv_b64_env && *iv_b64_env) {
-        unsigned char *iv_tmp = NULL; size_t iv_len = 0;
-        if (!base64_decode(iv_b64_env, &iv_tmp, &iv_len) || iv_len != sizeof(iv)) {
-            if (out_error) *out_error = strdup("bad test iv");
-            free(iv_tmp); secure_bzero(key, sizeof(key)); return -1;
-        }
-        memcpy(iv, iv_tmp, sizeof(iv));
-        free(iv_tmp);
-    } else if (RAND_bytes(iv, sizeof(iv)) != 1) {
-        secure_bzero(key, sizeof(key));
-        if (out_error) *out_error = strdup("iv rand failed");
-        return -1;
-    }
-
     size_t in_len = strlen(plaintext_utf8);
-    int out_len1 = (int)in_len + AES_BLOCK_SIZE; /* worst case */
-    unsigned char *cipher = (unsigned char *)malloc(out_len1);
-    if (!cipher) { secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("oom"); return -1; }
+    unsigned char *cipher = (unsigned char *)malloc(in_len + 16);
+    if (!cipher) { secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("oom"); return -1; }
 
     int len = 0, total = 0;
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-    if (!ctx) { free(cipher); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("evp ctx"); return -1; }
-    if (EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv) != 1) {
-        EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("enc init"); return -1; }
-    if (EVP_EncryptUpdate(ctx, cipher, &len, (const unsigned char *)plaintext_utf8, (int)in_len) != 1) {
-        EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("enc update"); return -1; }
+    if (!ctx) { free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("evp ctx"); return -1; }
+    if (EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
+    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, (int)sizeof(nonce), NULL) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
+    if (EVP_EncryptInit_ex(ctx, NULL, NULL, key, nonce) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
+    if (EVP_EncryptUpdate(ctx, cipher, &len, (const unsigned char *)plaintext_utf8, (int)in_len) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
     total = len;
-    if (EVP_EncryptFinal_ex(ctx, cipher + total, &len) != 1) {
-        EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("enc final"); return -1; }
+    if (EVP_EncryptFinal_ex(ctx, cipher + total, &len) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
     total += len;
+    unsigned char tag[16];
+    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, tag) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
     EVP_CIPHER_CTX_free(ctx);
 
-    char *b64_ct = NULL; char *b64_iv = NULL;
-    if (!base64_encode(cipher, (size_t)total, &b64_ct)) {
-        free(cipher); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("b64 ct"); return -1; }
-    if (!base64_encode(iv, sizeof(iv), &b64_iv)) {
-        free(cipher); secure_bzero(key, sizeof(key)); free(b64_ct); if (out_error) *out_error = strdup("b64 iv"); return -1; }
-    free(cipher);
-    secure_bzero(key, sizeof(key));
-
-    size_t out_sz = strlen(b64_ct) + strlen(b64_iv) + 4 + 1; /* ?iv= */
-    char *out = (char *)malloc(out_sz);
-    if (!out) { free(b64_ct); free(b64_iv); if (out_error) *out_error = strdup("oom"); return -1; }
-    snprintf(out, out_sz, "%s?iv=%s", b64_ct, b64_iv);
-    free(b64_ct); free(b64_iv);
+    size_t payload_len = sizeof(nonce) + (size_t)total + sizeof(tag);
+    unsigned char *payload = (unsigned char*)malloc(payload_len);
+    if (!payload) { secure_bzero(key, sizeof key); OPENSSL_cleanse(tag, sizeof tag); free(cipher); if (out_error) *out_error = strdup("oom"); return -1; }
+    size_t off = 0; memcpy(payload + off, nonce, sizeof(nonce)); off += sizeof(nonce);
+    memcpy(payload + off, cipher, (size_t)total); off += (size_t)total;
+    memcpy(payload + off, tag, sizeof(tag));
+    char *b64 = NULL; int rc_b64 = base64_encode(payload, payload_len, &b64) ? 0 : -1;
+    OPENSSL_cleanse(tag, sizeof tag); free(cipher); secure_bzero(key, sizeof key); OPENSSL_cleanse(payload, payload_len); free(payload);
+    if (rc_b64 != 0) { if (out_error) *out_error = strdup("encrypt failed"); return -1; }
+    size_t out_sz = 4 + strlen(b64) + 1;
+    char *out = (char*)malloc(out_sz);
+    if (!out) { free(b64); if (out_error) *out_error = strdup("oom"); return -1; }
+    snprintf(out, out_sz, "v=2:%s", b64);
+    free(b64);
     *out_content_b64_qiv = out;
     return 0;
 }
@@ -362,8 +471,37 @@ int nostr_nip04_decrypt_secure(
     if (!content_b64_qiv || !sender_pubkey_hex || !receiver_seckey || !receiver_seckey->ptr || receiver_seckey->len < 32 || !out_plaintext_utf8) return -1;
     *out_plaintext_utf8 = NULL;
 
+    /* AEAD v2 path */
+    if (strncmp(content_b64_qiv, "v=2:", 4) == 0) {
+        const char *b64 = content_b64_qiv + 4;
+        unsigned char *payload = NULL; size_t payload_len = 0;
+        if (!base64_decode(b64, &payload, &payload_len)) { if (out_error) *out_error = strdup("decrypt failed"); return -1; }
+        if (payload_len < 12 + 16) { OPENSSL_cleanse(payload, payload_len); free(payload); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
+        const unsigned char *nonce = payload;
+        const unsigned char *tag = payload + payload_len - 16;
+        const unsigned char *ct = payload + 12; size_t ct_len = payload_len - 12 - 16;
+        unsigned char key[32], dummy_nonce[12];
+        if (nip04_kdf_aead_bin(sender_pubkey_hex, (const unsigned char*)receiver_seckey->ptr, key, dummy_nonce) != 0) { OPENSSL_cleanse(payload, payload_len); free(payload); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
+        unsigned char *pt = (unsigned char*)malloc(ct_len + 1);
+        if (!pt) { secure_bzero(key, sizeof key); OPENSSL_cleanse(payload, payload_len); free(payload); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
+        EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+        int ok = 0, len = 0, total = 0;
+        if (ctx && EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL) == 1 &&
+            EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, NULL) == 1 &&
+            EVP_DecryptInit_ex(ctx, NULL, NULL, key, nonce) == 1 &&
+            EVP_DecryptUpdate(ctx, pt, &len, ct, (int)ct_len) == 1) {
+            total = len;
+            if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16, (void*)tag) == 1 &&
+                EVP_DecryptFinal_ex(ctx, pt + total, &len) == 1) { total += len; ok = 1; }
+        }
+        if (ctx) EVP_CIPHER_CTX_free(ctx);
+        OPENSSL_cleanse(payload, payload_len); free(payload); secure_bzero(key, sizeof key);
+        if (!ok) { OPENSSL_cleanse(pt, ct_len + 1); free(pt); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
+        pt[total] = '\0'; *out_plaintext_utf8 = (char*)pt; return 0;
+    }
+
     const char *q = strstr(content_b64_qiv, "?iv=");
-    if (!q) { if (out_error) *out_error = strdup("missing iv"); return -1; }
+    if (!q) { if (out_error) *out_error = strdup("decrypt failed"); return -1; }
     size_t ct_len = (size_t)(q - content_b64_qiv);
     char *ct_b64 = (char *)malloc(ct_len + 1);
     if (!ct_b64) { if (out_error) *out_error = strdup("oom"); return -1; }
@@ -379,7 +517,7 @@ int nostr_nip04_decrypt_secure(
 
     unsigned char key[32];
     if (ecdh_derive_key_bin(sender_pubkey_hex, (const unsigned char*)receiver_seckey->ptr, key) != 0) {
-        free(ct); free(iv); if (out_error) *out_error = strdup("ecdh failed"); return -1; }
+        free(ct); free(iv); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
 
     unsigned char *pt = (unsigned char *)malloc(ct_bin_len + 1);
     if (!pt) { free(ct); free(iv); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("oom"); return -1; }

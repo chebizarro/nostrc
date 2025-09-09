@@ -34,6 +34,31 @@ static int rand_bytes_portable(unsigned char *out, size_t n) {
 #endif
 }
 
+// Get the compressed SEC1 public key (33 bytes -> 66 hex)
+char *nostr_key_get_public_sec1_compressed(const char *sk) {
+    secp256k1_context *ctx = NULL;
+    nostr_secure_buf sb = secure_alloc(32);
+    unsigned char *privkey = (unsigned char*)sb.ptr;
+    secp256k1_pubkey pubkey;
+    unsigned char pubkey_bin[33];
+    size_t pubkey_len = sizeof(pubkey_bin);
+    char *pubkey_hex = (char*)malloc(2 * pubkey_len + 1);
+    if (!pubkey_hex) { secure_free(&sb); return NULL; }
+    if (!nostr_hex2bin(privkey, sk, 32)) { free(pubkey_hex); secure_free(&sb); return NULL; }
+    ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+    if (!ctx) { free(pubkey_hex); secure_free(&sb); return NULL; }
+    if (!secp256k1_ec_pubkey_create(ctx, &pubkey, privkey)) { secp256k1_context_destroy(ctx); free(pubkey_hex); secure_free(&sb); return NULL; }
+    /* Serialize compressed */
+    if (!secp256k1_ec_pubkey_serialize(ctx, pubkey_bin, &pubkey_len, &pubkey, SECP256K1_EC_COMPRESSED)) {
+        secp256k1_context_destroy(ctx); free(pubkey_hex); secure_free(&sb); return NULL;
+    }
+    for (size_t i = 0; i < pubkey_len; i++) snprintf(&pubkey_hex[i*2], 3, "%02x", pubkey_bin[i]);
+    pubkey_hex[2*pubkey_len] = '\0';
+    secp256k1_context_destroy(ctx);
+    secure_free(&sb);
+    return pubkey_hex;
+}
+
 // Generate a private key using libsecp256k1
 char *nostr_key_generate_private(void) {
     secp256k1_context *ctx;

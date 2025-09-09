@@ -14,6 +14,8 @@ static struct {
   unsigned long eose_sent;
   unsigned long rate_limit_drops;
   unsigned long backpressure_drops;
+  unsigned long duplicate_drops;
+  unsigned long skew_rejects;
 } M;
 
 void metrics_on_connect(void){ M.connections_current++; M.connections_total++; }
@@ -27,6 +29,8 @@ void metrics_on_eose(void){ M.eose_sent++; }
 
 void metrics_on_rate_limit_drop(void){ M.rate_limit_drops++; }
 void metrics_on_backpressure_drop(void){ M.backpressure_drops++; }
+void metrics_on_duplicate_drop(void){ M.duplicate_drops++; }
+void metrics_on_skew_reject(void){ M.skew_rejects++; }
 
 char *metrics_build_json(void){
   char buf[1024];
@@ -34,11 +38,11 @@ char *metrics_build_json(void){
     "{\"connections\":{\"current\":%lu,\"total\":%lu,\"closed\":%lu},"
     "\"subs\":{\"current\":%lu,\"started\":%lu,\"ended\":%lu},"
     "\"stream\":{\"events\":%lu,\"eose\":%lu},"
-    "\"drops\":{\"rate_limit\":%lu,\"backpressure\":%lu}}",
+    "\"drops\":{\"rate_limit\":%lu,\"backpressure\":%lu,\"duplicate\":%lu,\"skew\":%lu}}",
     M.connections_current, M.connections_total, M.connections_closed,
     M.subs_current, M.subs_started, M.subs_ended,
     M.events_streamed, M.eose_sent,
-    M.rate_limit_drops, M.backpressure_drops);
+    M.rate_limit_drops, M.backpressure_drops, M.duplicate_drops, M.skew_rejects);
   if (n <= 0) return NULL;
   char *out = (char*)malloc((size_t)n + 1);
   if (!out) return NULL;

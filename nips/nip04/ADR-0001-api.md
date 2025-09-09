@@ -9,22 +9,23 @@ We need a clean, spec-compliant implementation of NIP-04 (Encrypted Direct Messa
 - Exposes a small C API for encrypt/decrypt and an optional helper to inspect the shared secret.
 - Strictly follows the NIP-04 content format and cryptographic requirements.
 
-## Decision
+## Decision (superseded by AEAD v2 migration)
 - Keep code and headers under `nips/nip04/` and do not export headers via `libnostr/include/`.
 - Public header path: `nips/nip04/include/nostr/nip04.h`.
-- API:
-  - `int nostr_nip04_encrypt(const char *plaintext_utf8, const char *receiver_pubkey_hex, const char *sender_seckey_hex, char **out_content_b64_qiv, char **out_error);`
-  - `int nostr_nip04_decrypt(const char *content_b64_qiv, const char *sender_pubkey_hex, const char *receiver_seckey_hex, char **out_plaintext_utf8, char **out_error);`
-  - `int nostr_nip04_shared_secret_hex(const char *peer_pubkey_hex, const char *self_seckey_hex, char **out_shared_hex, char **out_error);`
-- Cryptography:
-  - ECDH over secp256k1 using OpenSSL EC APIs to derive the shared X coordinate (32 bytes).
-  - Derive AES key as `SHA-256(shared_x)`.
-  - Use AES-256-CBC with PKCS#7 padding.
-  - 16-byte random IV.
-- Content format exactly: `base64(ciphertext)?iv=base64(iv)` as per NIP-04.
-- Inputs for keys are hex strings. Internally, hex is decoded via `nostr_hex2bin()` provided by libnostr utilities.
-- Error strategy: return 0 on success; non-zero on failure. If provided, `out_error` is set to a short dynamically-allocated message.
-- Security: zeroize intermediate key material and ECDH secrets; never leak in error messages.
+- API (stable):
+  - `int nostr_nip04_encrypt(...)`
+  - `int nostr_nip04_decrypt(...)`
+  - `int nostr_nip04_encrypt_secure(...)`
+  - `int nostr_nip04_decrypt_secure(...)`
+- API (deprecated):
+  - `int nostr_nip04_shared_secret_hex(...)` — deprecated; avoid exposing raw ECDH secrets.
+- Cryptography (current):
+  - ECDH over secp256k1 to derive X; HKDF-SHA256 with `info="NIP04"` separates key material.
+  - AES-256-GCM (AEAD) for encryption; envelope: `v=2:base64(nonce(12)||cipher||tag(16))`.
+  - Encryption emits AEAD v2 only. Decrypt supports AEAD v2 and retains a legacy AES-CBC `?iv=` fallback for interop.
+- Inputs for keys are hex strings (SEC1 compressed/uncompressed accepted where applicable). Internally, hex decoded via `nostr_hex2bin()`.
+- Error strategy: return 0 on success; non-zero on failure. Unified decrypt error messages ("decrypt failed").
+- Security: zeroize intermediate materials; avoid detailed error leakage.
 
 ## Alternatives Considered
 - Using libsecp256k1 ECDH directly. Chosen to keep OpenSSL EC initially for simplicity since OpenSSL is already a dependency; CMake links `secp256k1` for future flexibility.

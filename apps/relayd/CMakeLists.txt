@@ -30,6 +30,21 @@ add_executable(nostrc-relayd
   src/metrics.c
 )
 
+# Build a reusable static library for tests needing NIP-01 policy helpers
+add_library(relayd_core STATIC
+  src/policy_decider.c
+  src/metrics.c
+)
+target_link_libraries(relayd_core
+  PRIVATE
+    nostr
+    nostr_json
+    ${NSYNC_LIB}
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    ${SECP256K1_LIB}
+)
+
 target_include_directories(nostrc-relayd PRIVATE ${LWS_INCLUDE_DIRS})
 target_link_directories(nostrc-relayd PRIVATE ${LWS_LIBRARY_DIRS})
 

@@ -258,6 +258,25 @@ int main(int argc, char **argv) {
   /* Load config (simple TOML) */
   RelaydConfig cfg; relayd_config_load("relay.toml", &cfg);
 
+  /* Initialize optional mitigations from environment */
+  const char *env_ttl = getenv("NOSTR_RELAY_REPLAY_TTL");
+  const char *env_skew_f = getenv("NOSTR_RELAY_SKEW_FUTURE");
+  const char *env_skew_p = getenv("NOSTR_RELAY_SKEW_PAST");
+  int ttl = env_ttl ? atoi(env_ttl) : 0;
+  int skew_f = env_skew_f ? atoi(env_skew_f) : 0;
+  int skew_p = env_skew_p ? atoi(env_skew_p) : 0;
+  if (ttl > 0) {
+    nostr_relay_set_replay_ttl(ttl);
+    fprintf(stderr, "nostrc-relayd: replay TTL enabled: %d seconds\n", ttl);
+  }
+  if (skew_f > 0 || skew_p > 0) {
+    nostr_relay_set_skew(skew_f, skew_p);
+    fprintf(stderr, "nostrc-relayd: timestamp skew enforcement: +%ds future, -%ds past\n", skew_f, skew_p);
+  }
+  /* One-line posture banner */
+  int eff_ttl=0, eff_skew_f=0, eff_skew_p=0; eff_ttl = ttl; eff_skew_f = skew_f; eff_skew_p = skew_p;
+  fprintf(stderr, "nostrc-relayd: security AEAD=v2 replayTTL=%ds skew=+%d/-%d\n", eff_ttl, eff_skew_f, eff_skew_p);
+
   /* Instantiate storage (driver from config) */
   const char *driver = cfg.storage_driver[0] ? cfg.storage_driver : "nostrdb";
   NostrStorage *st = nostr_storage_create(driver);
