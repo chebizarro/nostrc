@@ -3,6 +3,11 @@
 #include <string.h>
 #include <stdlib.h>
 #include <gio/gio.h>
+#include "nostr_cache.h"
+#include "relay_fetch.h"
+#include "nostr_manifest.h"
+#include "nostr_secrets.h"
+#include <jansson.h>
 
 static const char *BUS_NAME = "org.nostr.Homed1";
 static const char *OBJ_PATH = "/org/nostr/Homed1";
@@ -15,20 +20,117 @@ static int usage(const char *argv0){
 
 /* Library API (local execution) */
 int nh_open_session(const char *username){
-  printf("nostr-homectl: OpenSession %s (stub)\n", username);
+  if (!username || !*username) return -1;
+  /* Ensure warmcache */
+  nh_cache c0; if (nh_cache_open_configured(&c0, "/etc/nss_nostr.conf")==0){
+    char wc[8]=""; if (nh_cache_get_setting(&c0, "warmcache", wc, sizeof wc) != 0 || strcmp(wc, "1")!=0){ nh_cache_close(&c0); fprintf(stderr, "OpenSession: cache not warm\n"); return -1; } nh_cache_close(&c0);
+  }
+  /* Dev mountpoint; will switch to /home/<user> later */
+  char mnt[256]; snprintf(mnt, sizeof mnt, "/run/nostr-homed/mount/%s", username);
+  g_mkdir_with_parents(mnt, 0700);
+  GError *err=NULL;
+  gchar *argv[] = { "nostrfs", (gchar*)mnt, NULL };
+  GSubprocess *proc = g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, &err, argv[0], argv[1], NULL);
+  if (!proc){ fprintf(stderr, "OpenSession: start nostrfs failed: %s\n", err?err->message:"error"); if (err) g_error_free(err); /* still record status for visibility */ }
+  /* Persist status, pid and mountpoint */
+  nh_cache c; if (nh_cache_open_configured(&c, "/etc/nss_nostr.conf")==0){
+    char key[256];
+    snprintf(key, sizeof key, "status.%s", username); nh_cache_set_setting(&c, key, "mounted");
+    snprintf(key, sizeof key, "mount.%s", username); nh_cache_set_setting(&c, key, mnt);
+    if (proc){
+      gchar *spid = g_strdup_printf("%d", g_subprocess_get_identifier(proc));
+      snprintf(key, sizeof key, "pid.%s", username); nh_cache_set_setting(&c, key, spid);
+      g_free(spid);
+    }
+    nh_cache_close(&c);
+  }
+  if (proc) g_object_unref(proc);
+  printf("nostr-homectl: OpenSession %s (mounted %s)\n", username, mnt);
   return 0;
 }
 int nh_close_session(const char *username){
-  printf("nostr-homectl: CloseSession %s (stub)\n", username);
+  if (!username || !*username) return -1;
+  char mnt[256]=""; char spid[64]="";
+  nh_cache c; if (nh_cache_open_configured(&c, "/etc/nss_nostr.conf")==0){
+    char key[256];
+    snprintf(key, sizeof key, "mount.%s", username); (void)nh_cache_get_setting(&c, key, mnt, sizeof mnt);
+    snprintf(key, sizeof key, "pid.%s", username); (void)nh_cache_get_setting(&c, key, spid, sizeof spid);
+    nh_cache_close(&c);
+  }
+  /* Try to unmount; prefer fusermount3, fallback to umount */
+  if (mnt[0]){
+    GError *err=NULL;
+    gchar *argv1[] = { "fusermount3", "-u", mnt, NULL };
+    GSubprocess *u = g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, &err, argv1[0], argv1[1], argv1[2], NULL);
+    if (!u){ if (err) g_error_free(err); gchar *argv2[] = { "umount", mnt, NULL }; GSubprocess *u2 = g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, NULL, argv2[0], argv2[1], NULL); if (u2) g_object_unref(u2); }
+    else g_object_unref(u);
+  }
+  /* Update status */
+  if (nh_cache_open_configured(&c, "/etc/nss_nostr.conf")==0){
+    char key[256]; snprintf(key, sizeof key, "status.%s", username); nh_cache_set_setting(&c, key, "closed"); nh_cache_close(&c);
+  }
+  printf("nostr-homectl: CloseSession %s\n", username);
   return 0;
 }
 int nh_warm_cache(const char *npub_hex){
-  printf("nostr-homectl: WarmCache %s (stub)\n", npub_hex);
+  (void)npub_hex;
+  const char *relays_default[] = { "wss://relay.damus.io", "wss://nostr.wine" };
+  const char **relays = relays_default; size_t relays_n = 2;
+  int relays_owned = 0;
+  /* Check settings for profile-provided relays */
+  char relays_json[1024]; relays_json[0] = '\0';
+  nh_cache cR; if (nh_cache_open_configured(&cR, "/etc/nss_nostr.conf")==0){
+    if (nh_cache_get_setting(&cR, "relays.personal", relays_json, sizeof relays_json) == 0){
+      json_error_t jerr; json_t *root = json_loads(relays_json, 0, &jerr);
+      if (root && json_is_array(root)){
+        size_t n = json_array_size(root);
+        if (n>0 && n<32){
+          const char **tmp = (const char**)calloc(n, sizeof(char*));
+          size_t outn=0; for (size_t i=0;i<n;i++){ json_t *it = json_array_get(root, i); if (json_is_string(it)) tmp[outn++] = strdup(json_string_value(it)); }
+          if (outn>0){ relays = tmp; relays_n = outn; relays_owned = 1; }
+        }
+      }
+      if (root) json_decref(root);
+    }
+    nh_cache_close(&cR);
+  }
+  /* Try to fetch profile relays from network; if found, persist and prefer them */
+  char **net_relays = NULL; size_t net_count = 0;
+  if (nh_fetch_profile_relays(relays, relays_n, &net_relays, &net_count) == 0 && net_count > 0){
+    /* Build JSON array */
+    json_t *arr = json_array();
+    for (size_t i=0;i<net_count;i++) json_array_append_new(arr, json_string(net_relays[i]));
+    char *dump = json_dumps(arr, JSON_COMPACT);
+    if (dump){ nh_cache cS; if (nh_cache_open_configured(&cS, "/etc/nss_nostr.conf")==0){ nh_cache_set_setting(&cS, "relays.personal", dump); nh_cache_close(&cS);} free(dump); }
+    json_decref(arr);
+    /* Replace current relay list */
+    if (relays_owned){ for (size_t i=0;i<relays_n;i++) free((void*)relays[i]); free((void*)relays); }
+    relays = (const char**)net_relays; relays_n = net_count; relays_owned = 1;
+  }
+  char *json = NULL; if (nh_fetch_latest_manifest_json(relays, relays_n, "personal", &json) != 0){
+    fprintf(stderr, "WarmCache: fetch failed\n"); return -1;
+  }
+  nh_manifest m; if (nh_manifest_parse_json(json, &m) != 0){ free(json); fprintf(stderr, "WarmCache: parse failed\n"); return -1; }
+  /* Persist manifest JSON for later nostrfs consumption */
+  nh_cache c0; if (nh_cache_open_configured(&c0, "/etc/nss_nostr.conf")==0){ nh_cache_set_setting(&c0, "manifest.personal", json); nh_cache_close(&c0); }
+  nh_manifest_free(&m); free(json);
+  if (relays_owned){ for (size_t i=0;i<relays_n;i++) free((void*)relays[i]); free((void*)relays); }
+  /* Mount secrets tmpfs under /run/nostr-homed/secrets (best effort). */
+  (void)nh_secrets_mount_tmpfs("/run/nostr-homed/secrets");
+  /* Mark warmed in cache */
+  nh_cache c; if (nh_cache_open_configured(&c, "/etc/nss_nostr.conf")==0){ nh_cache_set_setting(&c, "warmcache", "1"); nh_cache_close(&c); }
+  printf("nostr-homectl: WarmCache completed\n");
   return 0;
 }
 int nh_get_status(const char *username, char *buf, size_t buflen){
   if (!buf || buflen==0) return -1;
-  snprintf(buf, buflen, "user=%s status=ok", username ? username : "");
+  nh_cache c; char st[128]="unknown";
+  if (nh_cache_open_configured(&c, "/etc/nss_nostr.conf")==0){
+    char key[256]; snprintf(key, sizeof key, "status.%s", username?username:"");
+    if (nh_cache_get_setting(&c, key, st, sizeof st) != 0) strcpy(st, "unknown");
+    nh_cache_close(&c);
+  }
+  snprintf(buf, buflen, "user=%s status=%s", username ? username : "", st);
   return 0;
 }
 
@@ -64,7 +166,12 @@ static void on_method_call(GDBusConnection *conn, const char *sender, const char
   g_dbus_method_invocation_return_dbus_error(invocation, "org.nostr.Homed1.Error.UnknownMethod", method_name);
 }
 
-static const GDBusInterfaceVTable vtable = { on_method_call, NULL, NULL };
+static const GDBusInterfaceVTable vtable = {
+  .method_call = on_method_call,
+  .get_property = NULL,
+  .set_property = NULL,
+  .padding = {0}
+};
 
 static GDBusNodeInfo *introspection = NULL;
 static const gchar introspection_xml[] =

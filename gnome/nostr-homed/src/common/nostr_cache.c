@@ -117,3 +117,30 @@ int nh_cache_upsert_user(nh_cache *c, unsigned int uid, const char *npub, const 
   sqlite3_finalize(st);
   return (rc == SQLITE_DONE) ? 0 : -1;
 }
+
+int nh_cache_set_setting(nh_cache *c, const char *key, const char *value){
+  if (!c || !c->db || !key) return -1;
+  const char *sql = "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value";
+  sqlite3_stmt *st=NULL; if (sqlite3_prepare_v2(c->db, sql, -1, &st, NULL) != SQLITE_OK) return -1;
+  sqlite3_bind_text(st, 1, key, -1, SQLITE_STATIC);
+  sqlite3_bind_text(st, 2, value ? value : "", -1, SQLITE_STATIC);
+  int rc = sqlite3_step(st);
+  sqlite3_finalize(st);
+  return (rc == SQLITE_DONE) ? 0 : -1;
+}
+
+int nh_cache_get_setting(nh_cache *c, const char *key, char *out, size_t outlen){
+  if (!c || !c->db || !key || !out || outlen==0) return -1;
+  out[0] = '\0';
+  const char *sql = "SELECT value FROM settings WHERE key=?";
+  sqlite3_stmt *st=NULL; if (sqlite3_prepare_v2(c->db, sql, -1, &st, NULL) != SQLITE_OK) return -1;
+  sqlite3_bind_text(st, 1, key, -1, SQLITE_STATIC);
+  int rc = sqlite3_step(st);
+  int ret = -1;
+  if (rc == SQLITE_ROW){
+    const unsigned char *v = sqlite3_column_text(st, 0);
+    if (v){ strncpy(out, (const char*)v, outlen); out[outlen-1] = '\0'; ret = 0; }
+  }
+  sqlite3_finalize(st);
+  return ret;
+}
