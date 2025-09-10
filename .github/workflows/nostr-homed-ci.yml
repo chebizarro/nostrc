@@ -1,0 +1,126 @@
+name: nostr-homed CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: ubuntu-24.04
+            image: ubuntu:24.04
+            update: apt-get update
+            install: >-
+              apt-get install -y build-essential cmake pkg-config ninja-build
+              libjansson-dev libglib2.0-dev libgirepository1.0-dev
+              libsqlite3-dev libcurl4-openssl-dev
+              libfuse3-dev fuse3
+              libssl-dev libsecp256k1-dev
+              libwebsockets-dev
+          - distro: debian-bookworm
+            image: debian:bookworm
+            update: apt-get update
+            install: >-
+              apt-get install -y build-essential cmake pkg-config ninja-build
+              libjansson-dev libglib2.0-dev gir1.2-glib-2.0
+              libsqlite3-dev libcurl4-openssl-dev
+              libfuse3-dev fuse3
+              libssl-dev libsecp256k1-dev
+              libwebsockets-dev
+          - distro: fedora-40
+            image: fedora:40
+            update: dnf -y update
+            install: >-
+              dnf -y install @development-tools cmake ninja-build pkgconf-pkg-config
+              jansson-devel glib2-devel gobject-introspection-devel
+              sqlite-devel libcurl-devel
+              fuse3-devel
+              openssl-devel libsecp256k1-devel
+              libwebsockets-devel
+          - distro: archlinux
+            image: archlinux:latest
+            update: pacman -Syu --noconfirm
+            install: >-
+              pacman -S --noconfirm base-devel cmake ninja pkgconf
+              jansson glib2 gobject-introspection sqlite curl
+              fuse3
+              openssl libsecp256k1 libwebsockets
+
+    container:
+      image: ${{ matrix.image }}
+      options: --privileged
+
+    steps:
+      - name: Install git and ca-certificates (minimal)
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y git ca-certificates;
+          elif command -v dnf >/dev/null 2>&1; then dnf -y install git ca-certificates;
+          elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm git ca-certificates;
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          ${{ matrix.update }}
+          ${{ matrix.install }}
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja -DENABLE_NOSTR_HOMED=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Run unit tests (nostr-homed)
+        run: |
+          ctest --test-dir build --output-on-failure -R "(test_manifest|test_cache|test_cache_config)"
+
+      - name: Run FUSE integration test (skips if missing /dev/fuse)
+        run: |
+          ctest --test-dir build --output-on-failure -R "nostrfs_integration" || true
+
+  systemd-opensession:
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || startsWith(github.ref, 'refs/heads/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install host build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config ninja-build \
+            libjansson-dev libglib2.0-dev libgirepository1.0-dev \
+            libsqlite3-dev libcurl4-openssl-dev \
+            libfuse3-dev fuse3 \
+            libssl-dev libsecp256k1-dev \
+            libwebsockets-dev sqlite3
+
+      - name: Build on host
+        run: |
+          cmake -S . -B build -G Ninja -DENABLE_NOSTR_HOMED=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake --build build -j
+
+      - name: Pull systemd image
+        run: |
+          docker pull jrei/systemd-ubuntu:24.04
+
+      - name: Run systemd OpenSession integration (privileged)
+        run: |
+          docker run --rm --privileged \
+            --device /dev/fuse \
+            --security-opt apparmor:unconfined \
+            -v $(pwd):/workspace \
+            -w /workspace \
+            jrei/systemd-ubuntu:24.04 \
+            bash -lc "apt-get update && apt-get install -y fuse3 sqlite3 && bash gnome/nostr-homed/tests/integration/run_systemd_opensession_test.sh"

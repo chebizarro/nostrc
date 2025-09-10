@@ -1,0 +1,31 @@
+[Unit]
+Description=NostrFS FUSE mount for user %i
+After=network-online.target
+Requires=network-online.target
+BindsTo=nostr-homectl.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/nostrfs /home/%i
+Restart=on-failure
+RestartSec=2s
+# Sandboxing
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ProtectHome=read-only
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+UMask=0077
+DeviceAllow=/dev/fuse rwm
+
+[Install]
+WantedBy=multi-user.target

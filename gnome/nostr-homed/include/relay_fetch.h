@@ -18,6 +18,11 @@ int nh_fetch_latest_manifest_json(const char **relays, size_t num_relays,
 int nh_fetch_profile_relays(const char **relays, size_t num_relays,
                             char ***out_relays, size_t *out_count);
 
+/* Fetch the latest secrets envelope JSON (kind 30079). Returns a newly
+ * allocated JSON string in out_json. */
+int nh_fetch_latest_secrets_json(const char **relays, size_t num_relays,
+                                 char **out_json);
+
 #ifdef __cplusplus
 }
 #endif

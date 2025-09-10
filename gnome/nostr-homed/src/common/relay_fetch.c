@@ -33,6 +33,61 @@ static void fetch_event_cb_global(NostrIncomingEvent *in){
     g_ctx->done = 1;
     pthread_cond_broadcast(&g_ctx->cv);
   }
+
+/* Secrets envelope fetch (kind 30079) */
+static FetchCtx *g_secrets_ctx = NULL;
+static void fetch_secrets_cb(NostrIncomingEvent *in){
+  if (!g_secrets_ctx) return;
+  if (!in || !in->event) return;
+  if (nostr_event_get_kind(in->event) != 30079) return;
+  const char *content = nostr_event_get_content(in->event);
+  if (!content) return;
+  pthread_mutex_lock(&g_secrets_ctx->mu);
+  if (!g_secrets_ctx->done){
+    g_secrets_ctx->json = strdup(content);
+    g_secrets_ctx->done = 1;
+    pthread_cond_broadcast(&g_secrets_ctx->cv);
+  }
+  pthread_mutex_unlock(&g_secrets_ctx->mu);
+}
+
+int nh_fetch_latest_secrets_json(const char **relays, size_t num_relays,
+                                 char **out_json){
+  if (!out_json || !relays || num_relays==0) return -1;
+  *out_json = NULL;
+  NostrSimplePool *pool = nostr_simple_pool_new();
+  if (!pool) return -1;
+  for (size_t i=0;i<num_relays;i++) if (relays[i] && *relays[i]) nostr_simple_pool_ensure_relay(pool, relays[i]);
+  nostr_simple_pool_set_auto_unsub_on_eose(pool, true);
+  nostr_simple_pool_set_event_middleware(pool, fetch_secrets_cb);
+
+  NostrFilter *f = nostr_filter_new();
+  nostr_filter_add_kind(f, 30079);
+  nostr_filter_set_limit(f, 1);
+  nostr_simple_pool_query_single(pool, relays, num_relays, *f);
+  nostr_filter_free(f);
+
+  FetchCtx ctx; memset(&ctx, 0, sizeof(ctx));
+  pthread_mutex_init(&ctx.mu, NULL);
+  pthread_cond_init(&ctx.cv, NULL);
+  g_secrets_ctx = &ctx;
+  nostr_simple_pool_start(pool);
+
+  struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_sec += 3;
+  pthread_mutex_lock(&ctx.mu);
+  while (!ctx.done){ if (pthread_cond_timedwait(&ctx.cv, &ctx.mu, &ts) == ETIMEDOUT) break; }
+  pthread_mutex_unlock(&ctx.mu);
+
+  nostr_simple_pool_stop(pool);
+  nostr_simple_pool_free(pool);
+  g_secrets_ctx = NULL;
+
+  int ret = -1;
+  if (ctx.json){ *out_json = ctx.json; ret = 0; }
+  pthread_mutex_destroy(&ctx.mu);
+  pthread_cond_destroy(&ctx.cv);
+  return ret;
+}
   pthread_mutex_unlock(&g_ctx->mu);
 }
 

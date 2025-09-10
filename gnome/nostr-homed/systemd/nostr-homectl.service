@@ -1,0 +1,30 @@
+[Unit]
+Description=Nostr Homed control service (homectl DBus)
+Documentation=man:systemd(1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/nostr-homectl --daemon
+Restart=on-failure
+RestartSec=2s
+# Sandboxing (session-bus variant; will adjust for system-bus if needed)
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ProtectHome=read-only
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

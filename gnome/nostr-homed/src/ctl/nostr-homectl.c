@@ -25,26 +25,29 @@ int nh_open_session(const char *username){
   nh_cache c0; if (nh_cache_open_configured(&c0, "/etc/nss_nostr.conf")==0){
     char wc[8]=""; if (nh_cache_get_setting(&c0, "warmcache", wc, sizeof wc) != 0 || strcmp(wc, "1")!=0){ nh_cache_close(&c0); fprintf(stderr, "OpenSession: cache not warm\n"); return -1; } nh_cache_close(&c0);
   }
-  /* Dev mountpoint; will switch to /home/<user> later */
-  char mnt[256]; snprintf(mnt, sizeof mnt, "/run/nostr-homed/mount/%s", username);
+  /* Mountpoint switched to /home/<user> */
+  char mnt[256]; snprintf(mnt, sizeof mnt, "/home/%s", username);
   g_mkdir_with_parents(mnt, 0700);
+  /* Start nostrfs via systemd template unit */
   GError *err=NULL;
-  gchar *argv[] = { "nostrfs", (gchar*)mnt, NULL };
-  GSubprocess *proc = g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, &err, argv[0], argv[1], NULL);
-  if (!proc){ fprintf(stderr, "OpenSession: start nostrfs failed: %s\n", err?err->message:"error"); if (err) g_error_free(err); /* still record status for visibility */ }
+  gchar *svc = g_strdup_printf("nostrfs@%s.service", username);
+  GSubprocess *proc = g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, &err, "systemctl", "start", svc, NULL);
+  if (!proc){
+    fprintf(stderr, "OpenSession: systemctl start %s failed: %s\n", svc, err?err->message:"error");
+    if (err) g_error_free(err);
+  } else {
+    g_object_unref(proc);
+  }
   /* Persist status, pid and mountpoint */
   nh_cache c; if (nh_cache_open_configured(&c, "/etc/nss_nostr.conf")==0){
     char key[256];
     snprintf(key, sizeof key, "status.%s", username); nh_cache_set_setting(&c, key, "mounted");
     snprintf(key, sizeof key, "mount.%s", username); nh_cache_set_setting(&c, key, mnt);
-    if (proc){
-      gchar *spid = g_strdup_printf("%d", g_subprocess_get_identifier(proc));
-      snprintf(key, sizeof key, "pid.%s", username); nh_cache_set_setting(&c, key, spid);
-      g_free(spid);
-    }
+    /* Store unit name as pid surrogate */
+    snprintf(key, sizeof key, "pid.%s", username); nh_cache_set_setting(&c, key, svc);
     nh_cache_close(&c);
   }
-  if (proc) g_object_unref(proc);
+  g_free(svc);
   printf("nostr-homectl: OpenSession %s (mounted %s)\n", username, mnt);
   return 0;
 }
@@ -57,14 +60,12 @@ int nh_close_session(const char *username){
     snprintf(key, sizeof key, "pid.%s", username); (void)nh_cache_get_setting(&c, key, spid, sizeof spid);
     nh_cache_close(&c);
   }
-  /* Try to unmount; prefer fusermount3, fallback to umount */
-  if (mnt[0]){
-    GError *err=NULL;
-    gchar *argv1[] = { "fusermount3", "-u", mnt, NULL };
-    GSubprocess *u = g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, &err, argv1[0], argv1[1], argv1[2], NULL);
-    if (!u){ if (err) g_error_free(err); gchar *argv2[] = { "umount", mnt, NULL }; GSubprocess *u2 = g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, NULL, argv2[0], argv2[1], NULL); if (u2) g_object_unref(u2); }
-    else g_object_unref(u);
-  }
+  /* Stop systemd template unit; systemd will handle unmount */
+  GError *err=NULL; gchar *svc = g_strdup_printf("nostrfs@%s.service", username);
+  GSubprocess *u = g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, &err, "systemctl", "stop", svc, NULL);
+  if (!u){ if (err) { g_error_free(err); } }
+  else g_object_unref(u);
+  g_free(svc);
   /* Update status */
   if (nh_cache_open_configured(&c, "/etc/nss_nostr.conf")==0){
     char key[256]; snprintf(key, sizeof key, "status.%s", username); nh_cache_set_setting(&c, key, "closed"); nh_cache_close(&c);
@@ -117,6 +118,15 @@ int nh_warm_cache(const char *npub_hex){
   if (relays_owned){ for (size_t i=0;i<relays_n;i++) free((void*)relays[i]); free((void*)relays); }
   /* Mount secrets tmpfs under /run/nostr-homed/secrets (best effort). */
   (void)nh_secrets_mount_tmpfs("/run/nostr-homed/secrets");
+  /* Fetch and decrypt secrets (best effort). */
+  do {
+    char *se_j = NULL; if (nh_fetch_latest_secrets_json(relays_default, 2, &se_j) != 0) break;
+    char *pt = NULL; if (nh_secrets_decrypt_via_signer(se_j, &pt) != 0 || !pt){ free(se_j); break; }
+    free(se_j);
+    FILE *fp = fopen("/run/nostr-homed/secrets/secrets.json", "wb");
+    if (fp){ fwrite(pt, 1, strlen(pt), fp); fclose(fp); (void)chmod("/run/nostr-homed/secrets/secrets.json", 0600); }
+    free(pt);
+  } while (0);
   /* Mark warmed in cache */
   nh_cache c; if (nh_cache_open_configured(&c, "/etc/nss_nostr.conf")==0){ nh_cache_set_setting(&c, "warmcache", "1"); nh_cache_close(&c); }
   printf("nostr-homectl: WarmCache completed\n");

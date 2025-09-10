@@ -47,6 +47,7 @@ set(NH_COMMON
   src/common/relay_fetch.c
   src/common/blossom_client.c
   src/common/secrets_tmpfs.c
+  src/common/secrets_decrypt.c
   src/common/nip46_client_dbus.c
   src/common/util.c
 )
@@ -123,6 +124,24 @@ add_test(NAME test_cache COMMAND test_cache)
 add_executable(test_cache_config tests/unit/test_cache_config.c src/common/nostr_cache.c src/common/util.c)
 target_link_libraries(test_cache_config PRIVATE SQLite::SQLite3 OpenSSL::Crypto)
 add_test(NAME test_cache_config COMMAND test_cache_config)
+
+# Integration test for nostrfs (requires FUSE3 and privileged/container env)
+if (FUSE3_FOUND)
+  add_test(NAME nostrfs_integration
+           COMMAND bash ${CMAKE_SOURCE_DIR}/gnome/nostr-homed/tests/integration/run_nostrfs_basic.sh)
+  set_tests_properties(nostrfs_integration PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+endif()
+
+# Mock signer and secrets decrypt integration test
+add_executable(mock_signer tests/integration/mock_signer.c)
+target_link_libraries(mock_signer PRIVATE ${GLIB2_LIBRARIES} ${GLIB2_GIO_LIBRARIES})
+
+add_executable(test_secrets_decrypt tests/integration/test_secrets_decrypt.c src/common/secrets_decrypt.c src/common/util.c)
+target_link_libraries(test_secrets_decrypt PRIVATE ${GLIB2_LIBRARIES} ${GLIB2_GIO_LIBRARIES})
+
+add_test(NAME secrets_decrypt_integration
+         COMMAND bash ${CMAKE_SOURCE_DIR}/gnome/nostr-homed/tests/integration/run_mock_signer_test.sh)
+set_tests_properties(secrets_decrypt_integration PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # Packaging pkg-config where useful
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/nostr-homed.pc.in ${CMAKE_CURRENT_BINARY_DIR}/nostr-homed.pc @ONLY)

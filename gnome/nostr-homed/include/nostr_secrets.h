@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 int nh_secrets_mount_tmpfs(const char *path);
+int nh_secrets_decrypt_via_signer(const char *ciphertext, char **plaintext_out);
 
 #ifdef __cplusplus
 }

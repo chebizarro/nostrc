@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include "nostr_manifest.h"
 #include "nostr_cache.h"
+#include "nostr_blossom.h"
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -119,6 +120,20 @@ static int nfs_read(const char *path, char *buf, size_t size, off_t off, struct 
             rd = read(fd, buf, size);
             close(fd);
             if (rd < 0) return -EIO; return (int)rd;
+          }
+          /* On-demand fetch from Blossom into CAS, then retry */
+          const char *base = getenv("BLOSSOM_BASE_URL");
+          if (!base || !*base) base = "https://blossom.example.org";
+          if (nh_blossom_head(base, e->cid) == 0){
+            if (nh_blossom_fetch(base, e->cid, caspath) == 0){
+              int fd2 = open(caspath, O_RDONLY);
+              if (fd2 >= 0){
+                if (lseek(fd2, off, SEEK_SET) == (off_t)-1){ close(fd2); return -EIO; }
+                ssize_t rd2 = read(fd2, buf, size);
+                close(fd2);
+                if (rd2 < 0) return -EIO; return (int)rd2;
+              }
+            }
           }
         }
         char tmp[256]; snprintf(tmp, sizeof tmp, "CID:%s\n", e->cid ? e->cid : "");
