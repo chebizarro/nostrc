@@ -33,6 +33,8 @@ static void fetch_event_cb_global(NostrIncomingEvent *in){
     g_ctx->done = 1;
     pthread_cond_broadcast(&g_ctx->cv);
   }
+  pthread_mutex_unlock(&g_ctx->mu);
+}
 
 /* Secrets envelope fetch (kind 30079) */
 static FetchCtx *g_secrets_ctx = NULL;
@@ -87,8 +89,6 @@ int nh_fetch_latest_secrets_json(const char **relays, size_t num_relays,
   pthread_mutex_destroy(&ctx.mu);
   pthread_cond_destroy(&ctx.cv);
   return ret;
-}
-  pthread_mutex_unlock(&g_ctx->mu);
 }
 
 int nh_fetch_latest_manifest_json(const char **relays, size_t num_relays,

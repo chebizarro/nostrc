@@ -6,8 +6,59 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "nostr_blossom.h"
+#include <openssl/evp.h>
 
 static size_t sink(void *ptr, size_t size, size_t nmemb, void *userdata){ (void)ptr; (void)userdata; return size*nmemb; }
+
+static int sha256_file_hex(const char *path, char out_hex[65]){
+  int ret = -1;
+  FILE *fp = fopen(path, "rb"); if (!fp) return -1;
+  unsigned char buf[8192]; unsigned char dig[32];
+  EVP_MD_CTX *mdctx = EVP_MD_CTX_new(); if (!mdctx){ fclose(fp); return -1; }
+  const EVP_MD *md = EVP_sha256();
+  if (EVP_DigestInit_ex(mdctx, md, NULL) != 1) goto done;
+  for(;;){ size_t n = fread(buf,1,sizeof buf,fp); if (n>0){ if (EVP_DigestUpdate(mdctx, buf, n) != 1) goto done; } if (n < sizeof buf){ if (ferror(fp)) goto done; break; } }
+  unsigned int dl = 0; if (EVP_DigestFinal_ex(mdctx, dig, &dl) != 1 || dl != 32) goto done;
+  {
+    static const char *hex = "0123456789abcdef";
+    for (unsigned int i=0;i<dl;i++){ out_hex[i*2]=hex[(dig[i]>>4)&0xF]; out_hex[i*2+1]=hex[dig[i]&0xF]; }
+    out_hex[64]='\0';
+  }
+  ret = 0;
+done:
+  EVP_MD_CTX_free(mdctx);
+  fclose(fp);
+  return ret;
+}
+
+typedef struct { FILE *fp; } upload_src_t;
+static size_t file_read(void *ptr, size_t size, size_t nmemb, void *userdata){
+  upload_src_t *s = (upload_src_t*)userdata; if (!s || !s->fp) return 0; return fread(ptr, size, nmemb, s->fp);
+}
+
+int nh_blossom_upload(const char *base_url, const char *src_path, char **out_cid){
+  if (out_cid) *out_cid = NULL;
+  if (!base_url || !src_path || !out_cid) return -1;
+  char cid[65]; if (sha256_file_hex(src_path, cid) != 0) return -1;
+  CURL *c = curl_easy_init(); if (!c) return -1;
+  char url[1024]; snprintf(url, sizeof url, "%s/%s", base_url, cid);
+  upload_src_t s = {0}; s.fp = fopen(src_path, "rb"); if (!s.fp){ curl_easy_cleanup(c); return -1; }
+  struct stat st; if (stat(src_path, &st) != 0){ fclose(s.fp); curl_easy_cleanup(c); return -1; }
+  curl_easy_setopt(c, CURLOPT_URL, url);
+  curl_easy_setopt(c, CURLOPT_READFUNCTION, file_read);
+  curl_easy_setopt(c, CURLOPT_READDATA, &s);
+  curl_easy_setopt(c, CURLOPT_UPLOAD, 1L);
+  curl_easy_setopt(c, CURLOPT_INFILESIZE_LARGE, (curl_off_t)st.st_size);
+  CURLcode rc = curl_easy_perform(c);
+  long code=0; if (rc==CURLE_OK) curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+  fclose(s.fp);
+  curl_easy_cleanup(c);
+  if (rc==CURLE_OK && (code==200 || code==201 || code==204)){
+    *out_cid = strdup(cid);
+    return *out_cid ? 0 : -1;
+  }
+  return -1;
+}
 
 int nh_blossom_head(const char *base_url, const char *cid){
   if (!base_url || !cid) return -1;

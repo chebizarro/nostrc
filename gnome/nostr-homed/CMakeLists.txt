@@ -136,8 +136,8 @@ endif()
 add_executable(mock_signer tests/integration/mock_signer.c)
 target_link_libraries(mock_signer PRIVATE ${GLIB2_LIBRARIES} ${GLIB2_GIO_LIBRARIES})
 
-add_executable(test_secrets_decrypt tests/integration/test_secrets_decrypt.c src/common/secrets_decrypt.c src/common/util.c)
-target_link_libraries(test_secrets_decrypt PRIVATE ${GLIB2_LIBRARIES} ${GLIB2_GIO_LIBRARIES})
+add_executable(test_secrets_decrypt tests/integration/test_secrets_decrypt.c)
+target_link_libraries(test_secrets_decrypt PRIVATE nostr_homed_common ${GLIB2_LIBRARIES} ${GLIB2_GIO_LIBRARIES})
 
 add_test(NAME secrets_decrypt_integration
          COMMAND bash ${CMAKE_SOURCE_DIR}/gnome/nostr-homed/tests/integration/run_mock_signer_test.sh)

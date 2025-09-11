@@ -4,7 +4,6 @@
 
 static const char *BUS_NAME = "org.nostr.Signer";
 static const char *OBJ_PATH = "/org/nostr/Signer";
-static const char *IFACE = "org.nostr.Signer";
 
 static const gchar introspection_xml[] =
   "<node>"
