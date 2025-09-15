@@ -10,6 +10,7 @@ int main(void){
                    "  \"links\":[{\"path\":\"/docs\",\"manifest_event_ref\":\"%s:30081:personal\"}]\n"
                    "}";
   nh_manifest m; int rc = nh_manifest_parse_json(js, &m);
+  if (rc != 0) { fprintf(stderr, "nh_manifest_parse_json failed: %d\n", rc); return 1; }
   assert(rc == 0);
   assert(m.version == 2);
   assert(m.entries_len == 1);

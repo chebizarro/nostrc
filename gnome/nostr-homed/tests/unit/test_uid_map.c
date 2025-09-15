@@ -13,7 +13,7 @@ int main(void){
   uint32_t u1 = nh_cache_map_npub_to_uid(&c, npub_sample);
   uint32_t u2 = nh_cache_map_npub_to_uid(&c, npub_sample);
   if (u1 < 200000u || u1 >= 201000u){ fprintf(stderr, "uid out of range: %u\n", u1); nh_cache_close(&c); return 1; }
-  assert(u1 == u2);
+  if (u1 != u2) { fprintf(stderr, "uid mismatch: %u != %u\n", u1, u2); nh_cache_close(&c); return 1; }
   /* Different input should likely differ (not guaranteed, but extremely likely) */
   const char *npub_sample2 = "npub1differentkeystringforunittestxxxxxxxxxxxxxxxxxxxx";
   uint32_t u3 = nh_cache_map_npub_to_uid(&c, npub_sample2);

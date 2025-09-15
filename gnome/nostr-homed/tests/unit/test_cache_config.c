@@ -20,6 +20,7 @@ static const char *write_temp_conf(void){
 int main(void){
   const char *conf = write_temp_conf();
   nh_cache c; int rc = nh_cache_open_configured(&c, conf);
+  if (rc != 0) { fprintf(stderr, "nh_cache_open_configured failed: %d\n", rc); remove(conf); return 1; }
   assert(rc == 0);
   /* Policy should be applied */
   assert(c.uid_base == 200000);
@@ -27,6 +28,7 @@ int main(void){
   /* Mapping should fall in configured range */
   const char *npub = "npub1xyz";
   unsigned int uid = nh_cache_map_npub_to_uid(&c, npub);
+  if (!(uid >= 200000 && uid < 205000)) { fprintf(stderr, "uid out of range: %u\n", uid); nh_cache_close(&c); remove(conf); return 1; }
   assert(uid >= 200000 && uid < 205000);
   nh_cache_close(&c);
   remove(conf);

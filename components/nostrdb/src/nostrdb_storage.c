@@ -6,7 +6,19 @@
 #include "nostrdb_storage.h"
 #include "json.h"
 #include "nostr-filter.h"
+#if __has_include("nostrdb.h")
 #include "nostrdb.h"
+#define HAVE_NOSTRDB 1
+#else
+#define HAVE_NOSTRDB 0
+#endif
+
+#if !HAVE_NOSTRDB
+/* Stub implementation when nostrdb is not available; registers backend but returns NULL */
+NostrStorage* nostrdb_storage_new(void) { return NULL; }
+__attribute__((constructor))
+static void _nostrdb_auto_register(void) { nostr_storage_register("nostrdb", nostrdb_storage_new); }
+#else
 
 typedef struct {
   char *uri;
@@ -258,3 +270,5 @@ __attribute__((constructor))
 static void _nostrdb_auto_register(void) {
   nostr_storage_register("nostrdb", nostrdb_storage_new);
 }
+
+#endif /* HAVE_NOSTRDB */

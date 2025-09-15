@@ -28,12 +28,10 @@ endif()
 # Global hardening flags (GCC/Clang); keep portable and avoid breaking MSVC
 if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-fstack-protector-strong -D_FORTIFY_SOURCE=2 -fno-strict-aliasing)
-  # Position independent for shared libs; prefer PIE for executables where supported
+  # Position independent for shared libs
   set(CMAKE_POSITION_INDEPENDENT_CODE ON)
   if (UNIX AND NOT APPLE)
-    add_compile_options(-fPIE)
-    add_link_options(-pie)
-    # ELF linker hardening
+    # ELF linker hardening for all targets
     add_link_options(-Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
   endif()
 endif()
@@ -275,7 +273,7 @@ endif()
 
 
 # Optional GObject Introspection generation
-option(NOSTR_ENABLE_GI "Enable GIR/typelib generation target" ON)
+option(NOSTR_ENABLE_GI "Enable GIR/typelib generation target" OFF)
 if (NOSTR_ENABLE_GI)
   find_package(PkgConfig REQUIRED)
   # Ensure our pkg-config files are available at build time by adding build-time pc dirs if needed

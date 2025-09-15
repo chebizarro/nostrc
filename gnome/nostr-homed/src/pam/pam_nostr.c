@@ -4,6 +4,8 @@
 #include "nostr_dbus.h"
 #include "nostr_cache.h"
 #include <stdio.h>
+#include <syslog.h>
+#include <unistd.h>
 
 static int get_username(pam_handle_t *pamh, const char **user_out){
   const char *user = NULL; int rc = pam_get_user(pamh, &user, NULL);

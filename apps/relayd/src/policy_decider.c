@@ -19,6 +19,7 @@ static inline int ids_equal64_pd(const char *a, const char *b) {
 }
 
 static int seen_ids_check_and_add_pd(const char *id_hex, time_t now) {
+  size_t pos = 0;
   if (!id_hex || id_hex[0] == '\0') return 0;
   size_t scan = SEEN_ID_CAPACITY < 1024 ? SEEN_ID_CAPACITY : 1024;
   if (g_seen_id_ttl_seconds_pd <= 0) goto insert;
@@ -29,7 +30,7 @@ static int seen_ids_check_and_add_pd(const char *id_hex, time_t now) {
     }
   }
 insert:
-  size_t pos = g_seen_cursor_pd % SEEN_ID_CAPACITY;
+  pos = g_seen_cursor_pd % SEEN_ID_CAPACITY;
   for (int i = 0; i < 64; i++) g_seen_ids_pd[pos].id[i] = id_hex[i] ? id_hex[i] : '0';
   g_seen_ids_pd[pos].id[64] = '\0';
   g_seen_ids_pd[pos].seen_at = now;

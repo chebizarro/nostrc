@@ -43,6 +43,7 @@ static inline int ids_equal64(const char *a, const char *b) {
 }
 
 static int seen_ids_check_and_add(const char *id_hex, time_t now) {
+  size_t pos = 0;
   if (!id_hex || id_hex[0] == '\0') return 0;
   /* Fast scan a small window around the ring head for recent entries; full scan is expensive.
      Trade-off: scan 1024 recent entries which should capture burst duplicates. */
@@ -59,7 +60,7 @@ static int seen_ids_check_and_add(const char *id_hex, time_t now) {
   }
 insert:
   /* Insert at cursor position (evict old) */
-  size_t pos = g_seen_cursor % SEEN_ID_CAPACITY;
+  pos = g_seen_cursor % SEEN_ID_CAPACITY;
   for (int i = 0; i < 64; i++) g_seen_ids[pos].id[i] = id_hex[i] ? id_hex[i] : '0';
   g_seen_ids[pos].id[64] = '\0';
   g_seen_ids[pos].seen_at = now;
