@@ -120,25 +120,32 @@ target_link_libraries(test_manifest PRIVATE ${JANSSON_LIBRARIES})
 add_executable(test_cache tests/unit/test_cache.c src/common/nostr_cache.c src/common/util.c)
 target_link_libraries(test_cache PRIVATE SQLite::SQLite3 OpenSSL::Crypto)
 add_test(NAME test_manifest COMMAND test_manifest)
+set_tests_properties(test_manifest PROPERTIES TIMEOUT 30)
 add_test(NAME test_cache COMMAND test_cache)
+set_tests_properties(test_cache PROPERTIES TIMEOUT 30)
 add_executable(test_cache_config tests/unit/test_cache_config.c src/common/nostr_cache.c src/common/util.c)
 target_link_libraries(test_cache_config PRIVATE SQLite::SQLite3 OpenSSL::Crypto)
 add_test(NAME test_cache_config COMMAND test_cache_config)
+set_tests_properties(test_cache_config PROPERTIES TIMEOUT 30)
 add_executable(test_uid_map tests/unit/test_uid_map.c src/common/nostr_cache.c src/common/util.c)
 target_link_libraries(test_uid_map PRIVATE SQLite::SQLite3 OpenSSL::Crypto)
 add_test(NAME test_uid_map COMMAND test_uid_map)
+set_tests_properties(test_uid_map PROPERTIES TIMEOUT 30)
 add_executable(test_groups tests/unit/test_groups.c src/common/nostr_cache.c src/common/util.c)
 target_link_libraries(test_groups PRIVATE SQLite::SQLite3 OpenSSL::Crypto)
 add_test(NAME test_groups COMMAND test_groups)
+set_tests_properties(test_groups PROPERTIES TIMEOUT 30)
 
 # Integration test for nostrfs (requires FUSE3 and privileged/container env)
 if (FUSE3_FOUND)
   add_test(NAME nostrfs_integration
            COMMAND bash ${CMAKE_SOURCE_DIR}/gnome/nostr-homed/tests/integration/run_nostrfs_basic.sh)
   set_tests_properties(nostrfs_integration PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  set_tests_properties(nostrfs_integration PROPERTIES TIMEOUT 120)
   add_test(NAME nostrfs_writeback_integration
            COMMAND bash ${CMAKE_SOURCE_DIR}/gnome/nostr-homed/tests/integration/run_nostrfs_writeback.sh)
   set_tests_properties(nostrfs_writeback_integration PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  set_tests_properties(nostrfs_writeback_integration PROPERTIES TIMEOUT 180)
 endif()
 
 # Mock signer and secrets decrypt integration test
@@ -151,6 +158,7 @@ target_link_libraries(test_secrets_decrypt PRIVATE nostr_homed_common ${GLIB2_LI
 add_test(NAME secrets_decrypt_integration
          COMMAND bash ${CMAKE_SOURCE_DIR}/gnome/nostr-homed/tests/integration/run_mock_signer_test.sh)
 set_tests_properties(secrets_decrypt_integration PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(secrets_decrypt_integration PROPERTIES TIMEOUT 30)
 
 # Packaging pkg-config where useful
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/nostr-homed.pc.in ${CMAKE_CURRENT_BINARY_DIR}/nostr-homed.pc @ONLY)

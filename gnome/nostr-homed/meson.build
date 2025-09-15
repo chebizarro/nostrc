@@ -20,6 +20,7 @@ nh_common_src = files(
   'src/common/relay_fetch.c',
   'src/common/blossom_client.c',
   'src/common/secrets_tmpfs.c',
+  'src/common/secrets_decrypt.c',
   'src/common/nip46_client_dbus.c',
   'src/common/util.c',
 )

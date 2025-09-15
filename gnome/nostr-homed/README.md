@@ -76,3 +76,15 @@ Groups
 
 Security
 - See `docs/SECURITY.md` for threat model, secret handling (tmpfs), and systemd hardening.
+
+DBus service (Homed1)
+
+- `nostr-homectl --daemon` owns `org.nostr.Homed1` on the session bus and exports the object `/org/nostr/Homed1` implementing the `org.nostr.Homed1` interface.
+- Inspect at runtime with:
+
+```
+gdbus introspect --session \
+  --dest org.nostr.Homed1 \
+  --object-path /org/nostr/Homed1
+```
+

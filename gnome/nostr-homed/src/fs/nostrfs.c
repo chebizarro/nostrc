@@ -19,7 +19,7 @@
 #include <openssl/evp.h>
 #include <sys/statvfs.h>
 #include <dirent.h>
-#include "nostr-ev ̰ent.h"
+#include "nostr-event.h"
 #include "nostr-tag.h"
 #include "nostr-relay.h"
 #include "nostr_dbus.h"
