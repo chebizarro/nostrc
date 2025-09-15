@@ -9,6 +9,8 @@ static int exec_schema(sqlite3 *db){
     "PRAGMA journal_mode=WAL;"
     "CREATE TABLE IF NOT EXISTS users("
     " uid INTEGER PRIMARY KEY, npub TEXT UNIQUE, username TEXT UNIQUE, gid INTEGER, home TEXT, updated_at INTEGER);"
+    "CREATE TABLE IF NOT EXISTS groups("
+    " gid INTEGER PRIMARY KEY, name TEXT UNIQUE);"
     "CREATE TABLE IF NOT EXISTS blobs("
     " cid TEXT PRIMARY KEY, size INTEGER, mtime INTEGER, path TEXT, present INTEGER);"
     "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);";
@@ -113,6 +115,43 @@ int nh_cache_upsert_user(nh_cache *c, unsigned int uid, const char *npub, const 
   sqlite3_bind_text(st, 3, username, -1, SQLITE_STATIC);
   sqlite3_bind_int(st, 4, (int)gid);
   sqlite3_bind_text(st, 5, home ? home : "", -1, SQLITE_STATIC);
+  int rc = sqlite3_step(st);
+  sqlite3_finalize(st);
+  return (rc == SQLITE_DONE) ? 0 : -1;
+}
+
+int nh_cache_group_lookup_name(nh_cache *c, const char *name, unsigned int *gid){
+  if (!c || !c->db || !name || !gid) return -1;
+  const char *sql = "SELECT gid FROM groups WHERE name=?";
+  sqlite3_stmt *st = NULL; if (sqlite3_prepare_v2(c->db, sql, -1, &st, NULL) != SQLITE_OK) return -1;
+  sqlite3_bind_text(st, 1, name, -1, SQLITE_STATIC);
+  int rc = sqlite3_step(st);
+  int ret = -1;
+  if (rc == SQLITE_ROW){ *gid = (unsigned int)sqlite3_column_int(st, 0); ret = 0; }
+  sqlite3_finalize(st);
+  return ret;
+}
+
+int nh_cache_group_lookup_gid(nh_cache *c, unsigned int gid, char *name_out, size_t name_len){
+  if (!c || !c->db || !name_out || name_len==0) return -1;
+  name_out[0] = '\0';
+  const char *sql = "SELECT name FROM groups WHERE gid=?";
+  sqlite3_stmt *st = NULL; if (sqlite3_prepare_v2(c->db, sql, -1, &st, NULL) != SQLITE_OK) return -1;
+  sqlite3_bind_int(st, 1, (int)gid);
+  int rc = sqlite3_step(st);
+  int ret = -1;
+  if (rc == SQLITE_ROW){ const unsigned char *n = sqlite3_column_text(st, 0); if (n){ strncpy(name_out, (const char*)n, name_len); name_out[name_len-1]=0; ret=0; } }
+  sqlite3_finalize(st);
+  return ret;
+}
+
+int nh_cache_ensure_primary_group(nh_cache *c, const char *username, unsigned int gid){
+  if (!c || !c->db || !username) return -1;
+  /* group name convention: same as username */
+  const char *sql = "INSERT INTO groups(gid,name) VALUES(?,?) ON CONFLICT(gid) DO UPDATE SET name=excluded.name";
+  sqlite3_stmt *st = NULL; if (sqlite3_prepare_v2(c->db, sql, -1, &st, NULL) != SQLITE_OK) return -1;
+  sqlite3_bind_int(st, 1, (int)gid);
+  sqlite3_bind_text(st, 2, username, -1, SQLITE_STATIC);
   int rc = sqlite3_step(st);
   sqlite3_finalize(st);
   return (rc == SQLITE_DONE) ? 0 : -1;

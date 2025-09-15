@@ -43,5 +43,36 @@ Install
 Quickstart
 - See `docs/QUICKSTART.md` for publishing sample events, running fake relay and blob servers, and mounting a demo home.
 
+NSS/PAM enablement (overview)
+
+Add `nss_nostr` to `nsswitch.conf` after files (cache-only; no network on hot path):
+
+```
+passwd:         files systemd nostr
+group:          files systemd nostr
+```
+
+On Debian/Ubuntu, enable PAM session for `pam_nostr` (example using common-session):
+
+```
+# /etc/pam.d/common-session (append near the end)
+session optional pam_nostr.so
+```
+
+OpenSSH example (append to `/etc/pam.d/sshd` after `@include common-session`):
+
+```
+session optional pam_nostr.so
+```
+
+Notes:
+- `nostr-homectl warm-cache` provisions deterministic UID/GID mapping and persists `settings.manifest.<namespace>` and `settings.relays.<namespace>`.
+- `OpenSession` is called by `pam_nostr` to start `nostrfs@user` via systemd and mount `/home/$USER`.
+
+Groups
+
+- Primary group is created during `WarmCache` provisioning with name equal to the username and `gid == uid`.
+- NSS group lookups are resolved from the local cache only. Supplemental groups are not managed in v1.
+
 Security
 - See `docs/SECURITY.md` for threat model, secret handling (tmpfs), and systemd hardening.

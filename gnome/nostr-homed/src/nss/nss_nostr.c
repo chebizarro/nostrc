@@ -54,15 +54,47 @@ enum nss_status _nss_nostr_getpwuid_r(uid_t uid, struct passwd *pwd,
 
 enum nss_status _nss_nostr_getgrnam_r(const char *name, struct group *grp,
                                       char *buffer, size_t buflen, int *errnop){
-  (void)name; (void)buffer; (void)buflen; (void)errnop;
-  if (!grp) return NSS_STATUS_TRYAGAIN;
-  /* Groups are not managed yet; fall through */
-  return NSS_STATUS_NOTFOUND;
+  (void)buffer; (void)buflen;
+  if (!grp || !name) return NSS_STATUS_TRYAGAIN;
+  ensure_init(); if (!g_inited){ if (errnop) *errnop = EAGAIN; return NSS_STATUS_UNAVAIL; }
+  unsigned int gid=0; if (nh_cache_group_lookup_name(&g_cache, name, &gid) != 0) return NSS_STATUS_NOTFOUND;
+  memset(grp, 0, sizeof(*grp));
+  grp->gr_name = (char*)name;
+  grp->gr_passwd = (char*)"x";
+  grp->gr_gid = (gid_t)gid;
+  /* Minimal membership list: empty (PAM/NSS can fall back to passwd primary gid) */
+  static char *empty_mem[1] = { NULL };
+  grp->gr_mem = empty_mem;
+  return NSS_STATUS_SUCCESS;
 }
 
 enum nss_status _nss_nostr_getgrgid_r(gid_t gid, struct group *grp,
                                       char *buffer, size_t buflen, int *errnop){
-  (void)gid; (void)buffer; (void)buflen; (void)errnop;
+  (void)buffer; (void)buflen;
   if (!grp) return NSS_STATUS_TRYAGAIN;
-  return NSS_STATUS_NOTFOUND;
+  ensure_init(); if (!g_inited){ if (errnop) *errnop = EAGAIN; return NSS_STATUS_UNAVAIL; }
+  char name[128]=""; if (nh_cache_group_lookup_gid(&g_cache, (unsigned int)gid, name, sizeof name) != 0) return NSS_STATUS_NOTFOUND;
+  memset(grp, 0, sizeof(*grp));
+  grp->gr_name = (char*)strdup(name);
+  grp->gr_passwd = (char*)"x";
+  grp->gr_gid = gid;
+  static char *empty_mem[1] = { NULL };
+  grp->gr_mem = empty_mem;
+  return NSS_STATUS_SUCCESS;
+}
+
+/* Provide minimal initgroups: ensure primary group is present */
+enum nss_status _nss_nostr_initgroups_dyn(const char *user, gid_t group,
+    long int *start, long int *size, gid_t **groupsp, long int limit, int *errnop){
+  (void)user; (void)limit; (void)errnop;
+  if (!start || !size || !groupsp) return NSS_STATUS_TRYAGAIN;
+  long n = *start;
+  if (n >= *size){
+    long newsize = (*size) ? (*size) * 2 : 8;
+    gid_t *ng = realloc(*groupsp, (size_t)newsize * sizeof(gid_t));
+    if (!ng) return NSS_STATUS_TRYAGAIN;
+    *groupsp = ng; *size = newsize;
+  }
+  (*groupsp)[n++] = group; *start = n;
+  return NSS_STATUS_SUCCESS;
 }

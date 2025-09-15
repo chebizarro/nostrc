@@ -1,89 +1,3 @@
-    else if (rq->kind == NFS_REQ_MKDIR){
-      /* Ensure manifest loaded */
-      if (!ctx->manifest_loaded){ memset(&ctx->manifest, 0, sizeof(ctx->manifest)); ctx->manifest.version = 2; ctx->manifest_loaded = 1; }
-
-/* Download queue message types */
-typedef struct download_req {
-  char *base_url;
-  char *cid;
-  char *dest_path;
-  GoChannel *reply; /* replies with (void*)(intptr_t)rc */
-} download_req;
-
-static void *download_worker(void *arg){
-  nostrfs_ctx *ctx = (nostrfs_ctx*)arg; if (!ctx || !ctx->download_q) return NULL;
-  for(;;){
-    download_req *dr = NULL;
-    if (go_channel_receive(ctx->download_q, (void**)&dr) != 0) break;
-    if (!dr) continue;
-    int rc = nh_blossom_fetch(dr->base_url ? dr->base_url : "https://blossom.example.org", dr->cid, dr->dest_path);
-    if (dr->reply) (void)go_channel_send(dr->reply, (void*)(intptr_t)rc);
-    free(dr->base_url); free(dr->cid); free(dr->dest_path); free(dr);
-  }
-  return NULL;
-}
-
-/* Background publisher: coalesces updates and publishes the latest manifest once per generation */
-static void *publish_worker(void *arg){
-  nostrfs_ctx *ctx = (nostrfs_ctx*)arg; if (!ctx) return NULL;
-  while (1){
-    struct timespec ts = { .tv_sec = 0, .tv_nsec = 200 * 1000000L }; /* 200ms */
-    nanosleep(&ts, NULL);
-    if (!ctx->last_manifest_json) continue;
-    if (ctx->pub_sent_gen == ctx->pub_gen) continue;
-    publish_best_effort(ctx, ctx->last_manifest_json);
-    ctx->pub_sent_gen = ctx->pub_gen;
-  }
-  return NULL;
-}
-      /* Check if exists */
-      for (size_t i=0;i<ctx->manifest.entries_len;i++) if (ctx->manifest.entries[i].path && strcmp(ctx->manifest.entries[i].path, rq->path)==0){ rc = -EEXIST; goto reply; }
-      /* Append a directory entry: no cid, mode directory */
-      size_t n = ctx->manifest.entries_len + 1;
-      nh_entry *neu = (nh_entry*)realloc(ctx->manifest.entries, n * sizeof(nh_entry));
-      if (!neu){ rc = -ENOMEM; goto reply; }
-      ctx->manifest.entries = neu; nh_entry *e = &ctx->manifest.entries[ctx->manifest.entries_len]; ctx->manifest.entries_len = n;
-      memset(e, 0, sizeof(*e)); e->path = strdup(rq->path); e->mode = S_IFDIR | 0755; e->uid = (uint32_t)rq->uid; e->gid = (uint32_t)getgid(); e->mtime = (uint64_t)time(NULL);
-      /* Persist */
-      json_t *root = json_object(); json_object_set_new(root, "version", json_integer(2)); json_t *arr = json_array();
-      for (size_t i=0;i<ctx->manifest.entries_len;i++){
-        nh_entry *e2 = &ctx->manifest.entries[i]; if (!e2->path) continue; json_t *o=json_object();
-        json_object_set_new(o, "path", json_string(e2->path)); if (e2->cid) json_object_set_new(o, "cid", json_string(e2->cid));
-        json_object_set_new(o, "size", json_integer((json_int_t)e2->size)); json_object_set_new(o, "mode", json_integer((json_int_t)e2->mode));
-        json_object_set_new(o, "uid", json_integer((json_int_t)e2->uid)); json_object_set_new(o, "gid", json_integer((json_int_t)e2->gid));
-        json_object_set_new(o, "mtime", json_integer((json_int_t)e2->mtime)); json_array_append_new(arr, o);
-      }
-      json_object_set_new(root, "entries", arr); json_object_set_new(root, "links", json_array()); char *dump=json_dumps(root, JSON_COMPACT); json_decref(root);
-      if (dump){ nh_cache cset; if (nh_cache_open_configured(&cset, "/etc/nss_nostr.conf")==0){ char keybuf[128]; snprintf(keybuf, sizeof keybuf, "manifest.%s", ctx->opts.namespace_name ? ctx->opts.namespace_name : "personal"); nh_cache_set_setting(&cset, keybuf, dump); nh_cache_close(&cset);} if (ctx->last_manifest_json){ free(ctx->last_manifest_json);} ctx->last_manifest_json=strdup(dump); ctx->pub_gen++; free(dump);} rc=0;
-    }
-    else if (rq->kind == NFS_REQ_RMDIR){
-      if (!ctx->manifest_loaded){ rc = -ENOENT; goto reply; }
-      /* Find directory entry */
-      size_t idx = (size_t)-1; size_t plen = strlen(rq->path);
-      for (size_t i=0;i<ctx->manifest.entries_len;i++){
-        nh_entry *e = &ctx->manifest.entries[i];
-        if (e->path && strcmp(e->path, rq->path)==0){ idx=i; break; }
-      }
-      if (idx==(size_t)-1){ rc = -ENOENT; goto reply; }
-      /* Ensure no children under this dir */
-      for (size_t i=0;i<ctx->manifest.entries_len;i++){
-        nh_entry *e = &ctx->manifest.entries[i]; if (!e->path) continue; if (strncmp(e->path, rq->path, plen)==0 && e->path[plen]=='/'){ rc = -ENOTEMPTY; goto reply; }
-      }
-      nh_entry *ee = &ctx->manifest.entries[idx]; free(ee->path); free(ee->cid);
-      memmove(&ctx->manifest.entries[idx], &ctx->manifest.entries[idx+1], (ctx->manifest.entries_len-idx-1)*sizeof(nh_entry));
-      ctx->manifest.entries_len--; if (ctx->manifest.entries_len==0){ free(ctx->manifest.entries); ctx->manifest.entries=NULL; }
-      /* Persist */
-      json_t *root = json_object(); json_object_set_new(root, "version", json_integer(2)); json_t *arr = json_array();
-      for (size_t i=0;i<ctx->manifest.entries_len;i++){
-        nh_entry *e2 = &ctx->manifest.entries[i]; if (!e2->path) continue; json_t *o=json_object();
-        json_object_set_new(o, "path", json_string(e2->path)); if (e2->cid) json_object_set_new(o, "cid", json_string(e2->cid));
-        json_object_set_new(o, "size", json_integer((json_int_t)e2->size)); json_object_set_new(o, "mode", json_integer((json_int_t)e2->mode));
-        json_object_set_new(o, "uid", json_integer((json_int_t)e2->uid)); json_object_set_new(o, "gid", json_integer((json_int_t)e2->gid));
-        json_object_set_new(o, "mtime", json_integer((json_int_t)e2->mtime)); json_array_append_new(arr, o);
-      }
-      json_object_set_new(root, "entries", arr); json_object_set_new(root, "links", json_array()); char *dump=json_dumps(root, JSON_COMPACT); json_decref(root);
-      if (dump){ nh_cache cset; if (nh_cache_open_configured(&cset, "/etc/nss_nostr.conf")==0){ char keybuf[128]; snprintf(keybuf, sizeof keybuf, "manifest.%s", ctx->opts.namespace_name ? ctx->opts.namespace_name : "personal"); nh_cache_set_setting(&cset, keybuf, dump); nh_cache_close(&cset);} free(dump);} rc=0;
-    }
 /* NOTE: This target is only compiled when FUSE3 is found by CMake. */
 #include "nostrfs.h"
 #include <stdio.h>
@@ -103,7 +17,9 @@ static void *publish_worker(void *arg){
 #include <jansson.h>
 #include <gio/gio.h>
 #include <openssl/evp.h>
-#include "nostr-event.h"
+#include <sys/statvfs.h>
+#include <dirent.h>
+#include "nostr-ev ̰ent.h"
 #include "nostr-tag.h"
 #include "nostr-relay.h"
 #include "nostr_dbus.h"
@@ -154,6 +70,25 @@ static void *upload_worker(void *arg){
       if (ur->reply) (void)go_channel_send(ur->reply, (void*)(intptr_t)-ENOMEM);
       free(ur->base_url); free(ur); continue;
     }
+
+/* Persist manifest JSON under settings.manifest.<namespace> using a simple safe-replace strategy. */
+static void persist_manifest_ns(nostrfs_ctx *ctx, const char *dump){
+  if (!ctx || !dump) return;
+  nh_cache cset;
+  if (nh_cache_open_configured(&cset, "/etc/nss_nostr.conf")==0){
+    char key_final[128];
+    char key_tmp[128];
+    snprintf(key_final, sizeof key_final, "manifest.%s", ctx->opts.namespace_name ? ctx->opts.namespace_name : "personal");
+    snprintf(key_tmp, sizeof key_tmp, "%s.tmp", key_final);
+    /* Write tmp first, then final key to reduce partial read windows */
+    (void)nh_cache_set_setting(&cset, key_tmp, dump);
+    (void)nh_cache_set_setting(&cset, key_final, dump);
+    nh_cache_close(&cset);
+  }
+  if (ctx->last_manifest_json){ free(ctx->last_manifest_json); ctx->last_manifest_json = NULL; }
+  ctx->last_manifest_json = strdup(dump);
+  ctx->pub_gen++;
+}
     char *cid = NULL;
     int rc = nh_blossom_upload(ur->base_url ? ur->base_url : "https://blossom.example.org", ur->tmp_path, &cid);
     res->rc = rc; res->cid = cid;
@@ -187,6 +122,49 @@ done:
 static uint64_t now_millis(void){
   struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
   return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
+}
+
+/* --- CAS quota enforcement (simple LRU by mtime) --- */
+static uint64_t get_cas_max_bytes(void){
+  const char *b = getenv("NOSTRFS_CAS_MAX_BYTES");
+  if (b && *b){ unsigned long long v = strtoull(b, NULL, 10); if (v > 0) return (uint64_t)v; }
+  const char *mb = getenv("NOSTRFS_CAS_MAX_MB");
+  if (mb && *mb){ unsigned long long v = strtoull(mb, NULL, 10); if (v > 0) return (uint64_t)v * 1024ull * 1024ull; }
+  return 512ull * 1024ull * 1024ull; /* default 512MB */
+}
+
+typedef struct cas_file_entry {
+  char path[1024];
+  off_t size;
+  time_t mtime;
+} cas_file_entry;
+
+static void enforce_cas_quota(nostrfs_ctx *ctx, const char *cas_dir){
+  if (!ctx || !cas_dir) return;
+  uint64_t maxb = get_cas_max_bytes();
+  DIR *d = opendir(cas_dir); if (!d) return;
+  cas_file_entry *list = NULL; size_t n=0, cap=0; uint64_t total=0;
+  struct dirent *de;
+  while ((de = readdir(d)) != NULL){
+    if (de->d_name[0]=='.') continue;
+    char p[1024]; snprintf(p, sizeof p, "%s/%s", cas_dir, de->d_name);
+    struct stat st; if (stat(p, &st) != 0) continue;
+    if (!S_ISREG(st.st_mode)) continue;
+    if (n==cap){ cap = cap?cap*2:64; list = (cas_file_entry*)realloc(list, cap*sizeof(*list)); if (!list){ closedir(d); return; } }
+    strncpy(list[n].path, p, sizeof list[n].path - 1); list[n].path[sizeof list[n].path - 1] = '\0';
+    list[n].size = st.st_size; list[n].mtime = st.st_mtime; total += (uint64_t)st.st_size; n++;
+  }
+  closedir(d);
+  if (total <= maxb){ free(list); return; }
+  /* Evict oldest by mtime until under */
+  while (total > maxb && n > 0){
+    size_t oldest = 0; for (size_t i=1;i<n;i++) if (list[i].mtime < list[oldest].mtime) oldest = i;
+    if (unlink(list[oldest].path) == 0){ total -= (uint64_t)list[oldest].size; }
+    /* Remove from array */
+    if (oldest != n-1){ list[oldest] = list[n-1]; }
+    n--;
+  }
+  free(list);
 }
 
 /* Simple throttled stderr logger (one message per key at most every 5 seconds) */
@@ -266,7 +244,7 @@ static void publish_best_effort(nostrfs_ctx *ctx, const char *content_json){
   char *npub=NULL; if (dbus_get_npub(&npub)==0 && npub){ char pkh[65]; if (decode_npub_hex(npub, pkh)==0) nostr_event_set_pubkey(ev, pkh); free(npub);} else { /* no pubkey; skip */ nostr_event_free(ev); return; }
   if (dbus_sign_event_set_sig(ev) != 0){ nostr_event_free(ev); return; }
   /* Build a base bootstrap relay list from RELAYS_DEFAULT or fallback */
-  const char *env = getenv("RELAYS_DEFAULT"); const char *fallback = "wss://relay.damus.io";
+  const char *env = getenv("RELAYS_DEFAULT"); const char *fallback = "wss://relay.damus.io,wss://nostr.wine";
   const char *base_list[16]; size_t base_count = 0;
   char buf[1024]; if (env && *env){ strncpy(buf, env, sizeof buf - 1); buf[sizeof buf - 1] = '\0'; }
   else { strncpy(buf, fallback, sizeof buf - 1); buf[sizeof buf - 1] = '\0'; }
@@ -361,6 +339,8 @@ static void *manifest_manager(void *arg){
       (void)mkdir(ctx->opts.cache_dir ? ctx->opts.cache_dir : "/var/cache/nostrfs", 0700);
       (void)mkdir(casdir, 0700);
       if (rename(rq->tmp_path, caspath) != 0){ rc = -EIO; free(cid); goto reply; }
+      /* Enforce CAS quota after adding new object */
+      enforce_cas_quota(ctx, casdir);
       /* Update manifest: find or append entry for rq->path */
       if (!ctx->manifest_loaded){ memset(&ctx->manifest, 0, sizeof(ctx->manifest)); ctx->manifest.version = 2; ctx->manifest_loaded = 1; }
       nh_entry *e = NULL;
@@ -394,17 +374,7 @@ static void *manifest_manager(void *arg){
       json_object_set_new(root, "links", json_array());
       char *dump = json_dumps(root, JSON_COMPACT);
       json_decref(root);
-      if (dump){
-        nh_cache cset; if (nh_cache_open_configured(&cset, "/etc/nss_nostr.conf")==0){
-          char keybuf[128]; snprintf(keybuf, sizeof keybuf, "manifest.%s", ctx->opts.namespace_name ? ctx->opts.namespace_name : "personal");
-          nh_cache_set_setting(&cset, keybuf, dump);
-          nh_cache_close(&cset);
-        }
-        if (ctx->last_manifest_json){ free(ctx->last_manifest_json); ctx->last_manifest_json = NULL; }
-        ctx->last_manifest_json = strdup(dump);
-        ctx->pub_gen++;
-        free(dump);
-      }
+      if (dump){ persist_manifest_ns(ctx, dump); free(dump); }
       /* Publish latest 30081 can be triggered here (best-effort) */
       rc = 0;
     }
@@ -450,15 +420,9 @@ static void *manifest_manager(void *arg){
         json_object_set_new(o, "cid", json_string(ee->cid));
         json_object_set_new(o, "size", json_integer((json_int_t)ee->size));
         json_object_set_new(o, "mode", json_integer((json_int_t)ee->mode));
-        json_object_set_new(o, "uid", json_integer((json_int_t)ee->uid));
-        json_object_set_new(o, "gid", json_integer((json_int_t)ee->gid));
-        json_object_set_new(o, "mtime", json_integer((json_int_t)ee->mtime));
-        json_array_append_new(arr, o);
       }
-      json_object_set_new(root, "entries", arr);
-      json_object_set_new(root, "links", json_array());
-      char *dump = json_dumps(root, JSON_COMPACT); json_decref(root);
-      if (dump){ nh_cache cset; if (nh_cache_open_configured(&cset, "/etc/nss_nostr.conf")==0){ char keybuf[128]; snprintf(keybuf, sizeof keybuf, "manifest.%s", ctx->opts.namespace_name ? ctx->opts.namespace_name : "personal"); nh_cache_set_setting(&cset, keybuf, dump); nh_cache_close(&cset);} if (ctx->last_manifest_json){ free(ctx->last_manifest_json);} ctx->last_manifest_json=strdup(dump); ctx->pub_gen++; free(dump);} rc = 0;
+      json_object_set_new(root, "entries", arr); json_object_set_new(root, "links", json_array()); char *dump=json_dumps(root, JSON_COMPACT); json_decref(root);
+      if (dump){ persist_manifest_ns(ctx, dump); free(dump);} rc = 0;
     }
     else if (rq->kind == NFS_REQ_UNLINK){
       if (!ctx->manifest_loaded){ rc = -ENOENT; goto reply; }
@@ -478,7 +442,7 @@ static void *manifest_manager(void *arg){
         json_object_set_new(o, "mtime", json_integer((json_int_t)e2->mtime)); json_array_append_new(arr, o);
       }
       json_object_set_new(root, "entries", arr); json_object_set_new(root, "links", json_array()); char *dump=json_dumps(root, JSON_COMPACT); json_decref(root);
-      if (dump){ nh_cache cset; if (nh_cache_open_configured(&cset, "/etc/nss_nostr.conf")==0){ char keybuf[128]; snprintf(keybuf, sizeof keybuf, "manifest.%s", ctx->opts.namespace_name ? ctx->opts.namespace_name : "personal"); nh_cache_set_setting(&cset, keybuf, dump); nh_cache_close(&cset);} free(dump);} rc=0;
+      if (dump){ persist_manifest_ns(ctx, dump); free(dump);} rc=0;
     }
     else if (rq->kind == NFS_REQ_CHMOD){
       if (!ctx->manifest_loaded){ rc = -ENOENT; goto reply; }
@@ -494,7 +458,7 @@ static void *manifest_manager(void *arg){
         json_object_set_new(o, "mtime", json_integer((json_int_t)e2->mtime)); json_array_append_new(arr, o);
       }
       json_object_set_new(root, "entries", arr); json_object_set_new(root, "links", json_array()); char *dump=json_dumps(root, JSON_COMPACT); json_decref(root);
-      if (dump){ nh_cache cset; if (nh_cache_open_configured(&cset, "/etc/nss_nostr.conf")==0){ nh_cache_set_setting(&cset, "manifest.personal", dump); nh_cache_close(&cset);} free(dump);} rc=0;
+      if (dump){ persist_manifest_ns(ctx, dump); free(dump);} rc=0;
     }
     else if (rq->kind == NFS_REQ_CHOWN){
       if (!ctx->manifest_loaded){ rc = -ENOENT; goto reply; }
@@ -523,7 +487,7 @@ static int nfs_getattr(const char *path, struct stat *st, struct fuse_file_info 
   (void)fi; memset(st, 0, sizeof(*st));
   if (!valid_path(path)) return -EINVAL;
   if (strcmp(path, "/")==0){
-    st->st_mode = S_IFDIR | 0755; st->st_nlink = 2; return 0;
+    st->st_mode = S_IFDIR | 0755; st->st_nlink = 2; st->st_uid = getuid(); st->st_gid = getgid(); return 0;
   }
   if (strcmp(path, readme_path)==0){ st->st_mode = S_IFREG | 0444; st->st_nlink = 1; st->st_size = (off_t)strlen(readme_body); return 0; }
   /* Look for a file entry in manifest */
@@ -533,8 +497,14 @@ static int nfs_getattr(const char *path, struct stat *st, struct fuse_file_info 
     for (size_t i=0;i<ctx->manifest.entries_len;i++){
       nh_entry *e = &ctx->manifest.entries[i];
       if (e->path && strcmp(e->path, path)==0){
-        if ((e->mode & S_IFDIR) == S_IFDIR){ st->st_mode = S_IFDIR | (e->mode & 0777); st->st_nlink = 2; return 0; }
-        st->st_mode = S_IFREG | (e->mode ? (e->mode & 0777) : 0444); st->st_nlink = 1; st->st_size = (off_t)e->size; return 0;
+        if ((e->mode & S_IFDIR) == S_IFDIR){
+          st->st_mode = S_IFDIR | (e->mode & 0777);
+          st->st_nlink = 2;
+          st->st_uid = (uid_t)e->uid; st->st_gid = (gid_t)e->gid; st->st_mtime = (time_t)e->mtime; st->st_size = 0;
+          return 0;
+        }
+        st->st_mode = S_IFREG | (e->mode ? (e->mode & 0777) : 0444);
+        st->st_nlink = 1; st->st_size = (off_t)e->size; st->st_uid = (uid_t)e->uid; st->st_gid = (gid_t)e->gid; st->st_mtime = (time_t)e->mtime; return 0;
       }
     }
     /* If any entry has a prefix path matching a directory, treat as dir */
@@ -544,7 +514,7 @@ static int nfs_getattr(const char *path, struct stat *st, struct fuse_file_info 
         nh_entry *e = &ctx->manifest.entries[i];
         if (!e->path) continue;
         if (strncmp(e->path, path, plen)==0 && e->path[plen]=='/'){
-          st->st_mode = S_IFDIR | 0755; st->st_nlink = 2; return 0;
+          st->st_mode = S_IFDIR | 0755; st->st_nlink = 2; st->st_uid = getuid(); st->st_gid = getgid(); st->st_size = 0; return 0;
         }
       }
     }
@@ -611,6 +581,46 @@ static int nfs_release(const char *path, struct fuse_file_info *fi){
   free_write_handle(h); fi->fh = 0; return rc;
 }
 
+static int nfs_fsync(const char *path, int datasync, struct fuse_file_info *fi){
+  (void)datasync; nfs_write_handle *h = (nfs_write_handle*)(uintptr_t)fi->fh; if (!h) return 0;
+  if (h->fd >= 0){ if (datasync) fdatasync(h->fd); else fsync(h->fd); }
+  if (h->dirty) return nfs_flush(path, fi);
+  return 0;
+}
+
+static int nfs_statfs(const char *path, struct statvfs *stbuf){
+  (void)path; memset(stbuf, 0, sizeof(*stbuf));
+  nostrfs_ctx *ctx = get_ctx();
+  const char *dir = "/";
+  char buf[512];
+  if (ctx){
+    uid_t uid = getuid();
+    const char *base = ctx->opts.cache_dir ? ctx->opts.cache_dir : "/var/cache/nostrfs";
+    snprintf(buf, sizeof buf, "%s/%u", base, (unsigned)uid);
+    dir = buf;
+  }
+  struct statvfs sv;
+  if (statvfs(dir, &sv) == 0){ *stbuf = sv; return 0; }
+  return -errno;
+}
+
+static void *nfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg){
+  (void)conn; nostrfs_ctx *ctx = get_ctx();
+  if (cfg){
+    cfg->kernel_cache = 1;
+    cfg->entry_timeout = 0.5;
+    cfg->attr_timeout = 0.5;
+    cfg->negative_timeout = 0.0;
+  }
+  if (ctx){
+    const char *base = ctx->opts.cache_dir ? ctx->opts.cache_dir : "/var/cache/nostrfs";
+    (void)mkdir(base, 0700);
+    char udir[512]; snprintf(udir, sizeof udir, "%s/%u", base, (unsigned)getuid()); (void)mkdir(udir, 0700);
+    char tdir[512]; snprintf(tdir, sizeof tdir, "%s/tmp", udir); (void)mkdir(tdir, 0700);
+  }
+  return ctx;
+}
+
 static int nfs_rename(const char *from, const char *to, unsigned int flags){
   (void)flags; nostrfs_ctx *ctx = get_ctx(); if (!ctx || !ctx->opts.writeback) return -EACCES;
   if (!valid_path(from) || !valid_path(to)) return -EINVAL;
@@ -665,22 +675,36 @@ static int nfs_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_in
 
 static int nfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t off, struct fuse_file_info *fi, enum fuse_readdir_flags flags){
   (void)off; (void)fi; (void)flags;
-  if (strcmp(path, "/")!=0) return -ENOENT;
+  if (!valid_path(path)) return -EINVAL;
   filler(buf, ".", NULL, 0, 0);
   filler(buf, "..", NULL, 0, 0);
-  filler(buf, readme_path+1, NULL, 0, 0);
-  /* List immediate children from manifest */
+  if (strcmp(path, "/")==0) filler(buf, readme_path+1, NULL, 0, 0);
+  /* List immediate children under 'path' from manifest */
   nostrfs_ctx *ctx = get_ctx();
   if (ctx && ctx->manifest_loaded){
-    size_t base_len = 1; /* root '/' */
+    /* seen list to avoid duplicates */
+    const size_t max_seen = 512; /* cap for simplicity */
+    char seen[max_seen][256]; size_t seen_cnt = 0;
+    size_t plen = strlen(path);
+    /* Ensure base ends with slash unless root */
+    char base[512];
+    if (strcmp(path, "/")==0){ strcpy(base, "/"); }
+    else { if (plen >= sizeof base - 2) return 0; strcpy(base, path); if (base[plen-1] != '/') { base[plen] = '/'; base[plen+1] = '\0'; plen++; } }
     for (size_t i=0;i<ctx->manifest.entries_len;i++){
-      nh_entry *e = &ctx->manifest.entries[i];
-      if (!e->path || e->path[0]!='/') continue;
-      const char *p = e->path + base_len; const char *slash = strchr(p, '/');
+      nh_entry *e = &ctx->manifest.entries[i]; if (!e->path) continue;
+      const char *p = NULL;
+      if (strcmp(base, "/")==0){ if (e->path[0]!='/') continue; p = e->path + 1; }
+      else {
+        if (strncmp(e->path, base, plen) != 0) continue; p = e->path + plen;
+      }
+      const char *slash = strchr(p, '/');
       size_t name_len = slash ? (size_t)(slash - p) : strlen(p);
       if (name_len == 0) continue;
-      char name[256]; if (name_len >= sizeof name) continue;
-      memcpy(name, p, name_len); name[name_len] = '\0';
+      if (name_len >= 256) continue;
+      char name[256]; memcpy(name, p, name_len); name[name_len] = '\0';
+      int already = 0; for (size_t j=0;j<seen_cnt;j++){ if (strcmp(seen[j], name)==0){ already = 1; break; } }
+      if (already) continue;
+      if (seen_cnt < max_seen){ strcpy(seen[seen_cnt++], name); }
       filler(buf, name, NULL, 0, 0);
     }
   }
@@ -788,6 +812,7 @@ static int nfs_read(const char *path, char *buf, size_t size, off_t off, struct 
 }
 
 static const struct fuse_operations nfs_ops = {
+  .init    = nfs_init,
   .getattr = nfs_getattr,
   .readdir = nfs_readdir,
   .open    = nfs_open,
@@ -797,6 +822,8 @@ static const struct fuse_operations nfs_ops = {
   .rmdir   = nfs_rmdir,
   .write   = nfs_write,
   .flush   = nfs_flush,
+  .fsync   = nfs_fsync,
+  .statfs  = nfs_statfs,
   .release = nfs_release,
   .rename  = nfs_rename,
   .unlink  = nfs_unlink,

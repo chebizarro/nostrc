@@ -6,7 +6,11 @@ BindsTo=nostr-homectl.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/nostrfs /home/%i
+Environment=HOMED_NAMESPACE=personal
+Environment=SECRETS_NAMESPACE=personal
+Environment=BLOSSOM_BASE_URL=https://blossom.example.org
+Environment=RELAYS_DEFAULT=wss://relay.damus.io,wss://nostr.wine
+ExecStart=/usr/bin/nostrfs --writeback --namespace=${HOMED_NAMESPACE} /home/%i
 Restart=on-failure
 RestartSec=2s
 # Sandboxing
@@ -20,12 +24,17 @@ ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectSystem=strict
 ProtectHome=read-only
+ProtectControlGroups=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
 RestrictSUIDSGID=true
+RestrictNamespaces=true
 SystemCallArchitectures=native
+SystemCallFilter=@system-service
 UMask=0077
 DeviceAllow=/dev/fuse rwm
+CapabilityBoundingSet=CAP_SYS_ADMIN
+AmbientCapabilities=CAP_SYS_ADMIN
 
 [Install]
 WantedBy=multi-user.target

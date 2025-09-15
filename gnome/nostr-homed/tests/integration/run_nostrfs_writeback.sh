@@ -98,6 +98,39 @@ else
   echo "CAS object not present (this may be expected if BLOSSOM_BASE_URL is unreachable): $CAS_DIR/$CID" >&2
 fi
 
+# Verify getattr and size matches written content
+SIZE=$(stat -c %s "$TEST_FILE" 2>/dev/null || stat -f %z "$TEST_FILE")
+if [ "$SIZE" != "15" ]; then
+  echo "unexpected file size: $SIZE" >&2
+  exit 1
+fi
+
+# chmod should persist to manifest
+chmod 600 "$TEST_FILE"
+sync; sleep 1
+MANIFEST_JSON2="$(sqlite3 "$DB_PATH" "select value from settings where key='manifest.personal';")"
+echo "$MANIFEST_JSON2" | grep -q '"path":"/new.txt"' || { echo "/new.txt missing after chmod" >&2; exit 1; }
+# 0600 decimal is 384
+echo "$MANIFEST_JSON2" | grep -q '"mode":384' || { echo "mode 0600 not persisted to manifest" >&2; exit 1; }
+
+# mkdir + subtree rename should update child paths
+mkdir "$MNT/dir"
+echo -n "inner" > "$MNT/dir/child.txt"
+sync; sleep 1
+mv "$MNT/dir" "$MNT/dir2"
+sync; sleep 1
+MANIFEST_JSON3="$(sqlite3 "$DB_PATH" "select value from settings where key='manifest.personal';")"
+echo "$MANIFEST_JSON3" | grep -q '"path":"/dir2/child.txt"' || { echo "subtree rename did not update child path" >&2; exit 1; }
+
+# unlink should remove entry
+rm -f "$MNT/new.txt"
+sync; sleep 1
+MANIFEST_JSON4="$(sqlite3 "$DB_PATH" "select value from settings where key='manifest.personal';")"
+if echo "$MANIFEST_JSON4" | grep -q '"path":"/new.txt"'; then
+  echo "/new.txt still present after unlink" >&2
+  exit 1
+fi
+
 # Unmount
 if command -v fusermount3 >/dev/null 2>&1; then
   fusermount3 -u "$MNT"

@@ -124,12 +124,21 @@ add_test(NAME test_cache COMMAND test_cache)
 add_executable(test_cache_config tests/unit/test_cache_config.c src/common/nostr_cache.c src/common/util.c)
 target_link_libraries(test_cache_config PRIVATE SQLite::SQLite3 OpenSSL::Crypto)
 add_test(NAME test_cache_config COMMAND test_cache_config)
+add_executable(test_uid_map tests/unit/test_uid_map.c src/common/nostr_cache.c src/common/util.c)
+target_link_libraries(test_uid_map PRIVATE SQLite::SQLite3 OpenSSL::Crypto)
+add_test(NAME test_uid_map COMMAND test_uid_map)
+add_executable(test_groups tests/unit/test_groups.c src/common/nostr_cache.c src/common/util.c)
+target_link_libraries(test_groups PRIVATE SQLite::SQLite3 OpenSSL::Crypto)
+add_test(NAME test_groups COMMAND test_groups)
 
 # Integration test for nostrfs (requires FUSE3 and privileged/container env)
 if (FUSE3_FOUND)
   add_test(NAME nostrfs_integration
            COMMAND bash ${CMAKE_SOURCE_DIR}/gnome/nostr-homed/tests/integration/run_nostrfs_basic.sh)
   set_tests_properties(nostrfs_integration PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  add_test(NAME nostrfs_writeback_integration
+           COMMAND bash ${CMAKE_SOURCE_DIR}/gnome/nostr-homed/tests/integration/run_nostrfs_writeback.sh)
+  set_tests_properties(nostrfs_writeback_integration PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()
 
 # Mock signer and secrets decrypt integration test

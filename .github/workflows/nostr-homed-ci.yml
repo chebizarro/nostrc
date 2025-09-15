@@ -82,11 +82,11 @@ jobs:
 
       - name: Run unit tests (nostr-homed)
         run: |
-          ctest --test-dir build --output-on-failure -R "(test_manifest|test_cache|test_cache_config)"
+          ctest --test-dir build --output-on-failure -R "(test_manifest|test_cache|test_cache_config|test_uid_map|test_groups)"
 
-      - name: Run FUSE integration test (skips if missing /dev/fuse)
+      - name: Run FUSE integration tests (skip gracefully if missing /dev/fuse)
         run: |
-          ctest --test-dir build --output-on-failure -R "nostrfs_integration" || true
+          ctest --test-dir build --output-on-failure -R "(nostrfs_integration|nostrfs_writeback_integration)" || true
 
   systemd-opensession:
     runs-on: ubuntu-24.04
@@ -124,3 +124,11 @@ jobs:
             -w /workspace \
             jrei/systemd-ubuntu:24.04 \
             bash -lc "apt-get update && apt-get install -y fuse3 sqlite3 && bash gnome/nostr-homed/tests/integration/run_systemd_opensession_test.sh"
+
+      - name: (Best-effort) WarmCache smoke on host
+        run: |
+          bash gnome/nostr-homed/tests/integration/run_warmcache_smoke.sh || true
+
+      - name: (Best-effort) Run write-back test on host if /dev/fuse present
+        run: |
+          if [ -e /dev/fuse ]; then ctest --test-dir build --output-on-failure -R "nostrfs_writeback_integration" || true; fi
