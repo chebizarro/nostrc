@@ -115,18 +115,37 @@ if [ -d "$SRCDIR/vendor/gnome-online-accounts/.git" ]; then
   popd >/dev/null
 fi
 
+########################################
 # Apply provider patch if not already applied
 if [ -d "$SRCDIR/vendor/gnome-online-accounts/.git" ]; then
   pushd "$SRCDIR/vendor/gnome-online-accounts" >/dev/null
   if ! git log --oneline | grep -q "add Nostr provider (user overlay)"; then
     echo "Applying Nostr provider patch to vendor GOA..." >&2
-    git am "$PATCH_DIR/0001-add-nostr-provider.patch" || {
-      echo "Patch did not apply; trying 'git apply' as a fallback" >&2
-      git apply "$PATCH_DIR/0001-add-nostr-provider.patch" || true
-    }
+    # Clean up any previous failed 'git am'
+    if [ -d .git/rebase-apply ] || [ -d .git/rebase-merge ]; then
+      git am --abort >/dev/null 2>&1 || true
+      rm -rf .git/rebase-apply .git/rebase-merge || true
+    fi
+    # Try mbox import with 3-way merge
+    if ! git am --3way "$PATCH_DIR/0001-add-nostr-provider.patch"; then
+      echo "git am failed; attempting 'git apply -p1' fallback" >&2
+      git am --abort >/dev/null 2>&1 || true
+      rm -rf .git/rebase-apply .git/rebase-merge || true
+      if ! git apply -p1 "$PATCH_DIR/0001-add-nostr-provider.patch"; then
+        echo "ERROR: Could not apply provider patch to GOA.\n" \
+             "Try pinning a specific ref that matches the patch via:\n" \
+             "  ./install-overlay.sh --goa-ref=GNOME_46_2\n" \
+             "or provide your own GOA source with --goa-src. Exiting." >&2
+        exit 2
+      fi
+    fi
   fi
   popd >/dev/null
 fi
+
+echo "Note: If Meson later fails pulling GTK subprojects or due to version constraints,\n" \
+     "you can pass extra meson switches via --meson-args to disable UI bits, e.g.:\n" \
+     "  ./install-overlay.sh --meson-args='-Dgtk=false -Dgtk_doc=false'\n" >&2
 
 # Build vendor GOA (minimal)
 pushd "$SRCDIR/vendor/gnome-online-accounts" >/dev/null
