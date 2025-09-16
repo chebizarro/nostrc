@@ -1,8 +1,10 @@
+#define GOA_API_IS_SUBJECT_TO_CHANGE 1
+#define GOA_BACKEND_API_IS_SUBJECT_TO_CHANGE 1
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gio/gio.h>
-#include <goabackend/goabackend.h>
-#include <goabackend/goabackendprovider.h>
+#include <goa/goa.h>
+#include <goabackend/goaprovider.h>
 
 #include "goanostrprovider.h"
 
