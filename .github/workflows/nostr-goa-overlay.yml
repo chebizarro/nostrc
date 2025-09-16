@@ -16,21 +16,13 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            goa_ref: ''
-            goa_ref_pattern: 'GNOME_46*'
           - os: fedora-40
-            goa_ref: ''
-            goa_ref_pattern: 'GNOME_46*'
           - os: archlinux
-            goa_ref: ''
-            goa_ref_pattern: ''
     runs-on: ubuntu-24.04
     container: ${{ matrix.os == 'ubuntu-24.04' && '' || (matrix.os == 'fedora-40' && 'fedora:40' || 'archlinux:latest') }}
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: true
 
       - name: Install deps (Ubuntu)
         if: matrix.os == 'ubuntu-24.04'
@@ -61,23 +53,13 @@ jobs:
             glib2 gtk4 libsoup \
             python python-gobject dbus-x11 xorg-server-xvfb git
 
-      - name: Cache vendor GOA build
-        uses: actions/cache@v4
-        with:
-          path: gnome/nostr-goa-overlay/vendor/gnome-online-accounts/_build
-          key: ${{ runner.os }}-${{ matrix.os }}-goa46-${{ hashFiles('gnome/nostr-goa-overlay/vendor/patches/0001-add-nostr-provider.patch') }}
-
-      - name: Build vendor GOA and overlay (Meson installer)
+      - name: Install overlay (system GOA)
         working-directory: gnome/nostr-goa-overlay/overlay
         env:
           XDG_DATA_DIRS: "$HOME/.local/share:/usr/local/share:/usr/share"
           PATH: "$HOME/.local/bin:${{ env.PATH }}"
         run: |
-          if [ -n "${{ matrix.goa_ref }}" ]; then \
-            ./install-overlay.sh --goa-ref='${{ matrix.goa_ref }}'; \
-          else \
-            ./install-overlay.sh --goa-ref-pattern='${{ matrix.goa_ref_pattern }}'; \
-          fi
+          ./install-overlay.sh
 
       - name: Build overlay (Meson project)
         working-directory: gnome/nostr-goa-overlay

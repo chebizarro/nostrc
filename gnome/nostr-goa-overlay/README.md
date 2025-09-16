@@ -1,11 +1,10 @@
 # Nostr GOA Overlay
 
-This subproject provides a user-scoped GNOME Online Accounts (GOA) overlay that ships a first-class "Nostr" provider and a per-user goa-daemon overlay. It installs entirely under `~/.local` and does not modify the base OS.
+This subproject provides a first-class "Nostr" provider for GNOME Online Accounts (GOA), installed entirely under `~/.local`. The system GOA provided by your distro remains unchanged and dynamically discovers the provider backend from the user prefix.
 
 Features
 
 - Nostr provider for GOA (Calendar, Contacts, Files; Mail optional/off by default)
-- User-scoped `goa-daemon` via D-Bus activation in `~/.local/share/dbus-1/services/`
 - Provisioning helper to create EDS CalDAV/CardDAV sources pointing to a local DAV bridge
 - Starts/stops user services: `nostr-router`, `nostr-dav`, `nostrfs`, `nostr-notify`
 - Registers a `nostr:` URI handler under `~/.local`
@@ -19,12 +18,11 @@ Build quickstart
   - `meson setup _build --prefix=$HOME/.local`
   - `meson compile -C _build`
 
-Install overlay to user scope
+Install overlay to user scope (system GOA)
 
 - `gnome/nostr-goa-overlay/overlay/install-overlay.sh`
-  - Builds vendor GOA with the Nostr provider and installs into `~/.local`
-  - Generates `~/.local/share/dbus-1/services/org.gnome.OnlineAccounts.service`
-  - Restarts per-user `goa-daemon`
+  - Builds and installs the provider/backend and assets into `~/.local`
+  - Restarts the user `goa-daemon` to reload providers
 
 Uninstall
 

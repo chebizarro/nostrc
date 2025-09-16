@@ -8,7 +8,7 @@ This overlay installs entirely under `~/.local` and D-Bus-activates a user `goa-
 gnome/nostr-goa-overlay/overlay/install-overlay.sh
 ```
 
-## Configuration (matches your local build system)
+## Configuration (system GOA only)
 
 Create `~/.config/nostr-goa-overlay/build.conf` to control the install without long CLI flags. All settings are optional.
 
@@ -17,16 +17,6 @@ Example template:
 ```
 # Where to install
 NOSTR_OVERLAY_PREFIX="$HOME/.local"
-
-# Use an existing local GOA checkout and skip cloning
-# e.g., NOSTR_OVERLAY_GOA_SRC="$HOME/src/gnome-online-accounts"
-NOSTR_OVERLAY_GOA_SRC=""
-
-# Pin an exact GOA tag, or use a ref (branch/SHA), or a tag pattern
-# Only set one of these (tag has priority over pattern if both are set)
-NOSTR_OVERLAY_GOA_TAG=""            # e.g., GNOME_46_2
-NOSTR_OVERLAY_GOA_REF=""            # e.g., origin/gnome-46 or a commit SHA
-NOSTR_OVERLAY_GOA_REF_PATTERN=""    # e.g., GNOME_46*
 
 # Extra Meson switches when building vendor/overlay
 NOSTR_OVERLAY_MESON_ARGS='-Dbuildtype=release'
@@ -41,24 +31,12 @@ CLI flags override config file values:
 ```
 install-overlay.sh \
   --prefix=$HOME/.local \
-  --goa-src=$HOME/src/gnome-online-accounts \
-  --goa-tag=GNOME_46_2 \
-  --goa-ref=origin/gnome-46 \
-  --goa-ref-pattern='GNOME_46*' \
   --meson-args='-Dbuildtype=release' \
   --pkg-config-path=$HOME/.local/lib/pkgconfig \
   --ld-library-path=$HOME/.local/lib
 ```
 
-## Host-aware GOA selection
-
-If you do not set a tag/ref/pattern, the installer derives a sensible default from `/etc/os-release`:
-
-- Ubuntu 24.04 → `GNOME_46*`
-- Fedora 40 → `GNOME_46*`
-- Arch (rolling) → latest tag
-
-You can override this behavior via config or CLI at any time.
+This overlay assumes the system-provided GOA. No vendoring is performed.
 
 # Install / Uninstall (User-Scoped)
 

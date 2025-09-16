@@ -11,17 +11,7 @@ if (NOT DEFINED USER_LOCAL_PREFIX)
     set(USER_LOCAL_PREFIX "${CMAKE_BINARY_DIR}/_local")
   endif()
 endif()
-message(STATUS "Installing overlay to: ${USER_LOCAL_PREFIX}")
-
-# Build vendor GOA with Meson
-set(VENDOR_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/gnome-online-accounts")
-ExternalProject_Add(goa_vendor
-  SOURCE_DIR ${VENDOR_SRC_DIR}
-  CONFIGURE_COMMAND meson setup _build --prefix=${USER_LOCAL_PREFIX}
-  BUILD_COMMAND meson compile -C _build
-  INSTALL_COMMAND meson install -C _build
-  BUILD_IN_SOURCE 1
-)
+message(STATUS "Installing overlay (system GOA) to: ${USER_LOCAL_PREFIX}")
 
 # Build overlay (provider + overlay assets) with Meson
 ExternalProject_Add(nostr_goa_overlay_build
@@ -31,7 +21,6 @@ ExternalProject_Add(nostr_goa_overlay_build
   INSTALL_COMMAND meson install -C _build
   BUILD_IN_SOURCE 1
 )
-add_dependencies(nostr_goa_overlay_build goa_vendor)
 
 # Convenience target
 add_custom_target(install_nostr_goa_overlay ALL DEPENDS nostr_goa_overlay_build)
