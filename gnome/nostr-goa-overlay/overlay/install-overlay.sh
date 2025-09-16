@@ -90,11 +90,8 @@ if [ -z "$SKIP_VENDOR" ]; then
         ubuntu-24.*) GOA_REF_PATTERN="GNOME_46*" ;;
         fedora-40*) GOA_REF_PATTERN="GNOME_46*" ;;
         arch-*)     GOA_REF_PATTERN="" ;; # rolling, leave empty to choose latest
-        *)          GOA_REF_PATTERN="GNOME_46*" ;;
       esac
-      arch-*)     GOA_REF_PATTERN="" ;; # rolling, leave empty to choose latest
-      *)          GOA_REF_PATTERN="GNOME_46*" ;;
-    esac
+    fi
   fi
 
   # Priority: explicit ref > explicit tag > pattern > best-known 46 patterns > latest tag
@@ -146,7 +143,7 @@ if [ -z "$SKIP_VENDOR" ]; then
       if ! git apply -p1 "$PATCH_DIR/0001-add-nostr-provider.patch"; then
         echo "ERROR: Could not apply provider patch to GOA.\n" \
              "Try pinning a specific ref that matches the patch via:\n" \
-             "  ./install-overlay.sh --goa-ref=GNOME_46_2\n" \
+             "  ./install-overlay.sh --goa-tag=3.56.0\n" \
              "or provide your own GOA source with --goa-src. Exiting." >&2
         exit 2
       fi
@@ -155,9 +152,9 @@ if [ -z "$SKIP_VENDOR" ]; then
   popd >/dev/null
 fi
 
-echo "Note: If Meson later fails pulling GTK subprojects or due to version constraints,\n" \
-     "you can pass extra meson switches via --meson-args to disable UI bits, e.g.:\n" \
-     "  ./install-overlay.sh --meson-args='-Dgtk=false -Dgtk_doc=false'\n" >&2
+echo "Note: If Meson later fails due to optional UI/docs tooling,\n" \
+     "you can pass extra meson switches via --meson-args to disable them, e.g.:\n" \
+     "  ./install-overlay.sh --meson-args='-Ddocumentation=false -Dintrospection=false'\n" >&2
 
   # Build vendor GOA (minimal)
   pushd "$SRCDIR/vendor/gnome-online-accounts" >/dev/null
