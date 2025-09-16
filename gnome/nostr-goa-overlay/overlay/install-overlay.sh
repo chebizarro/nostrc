@@ -18,6 +18,7 @@ PKGCONF_SEED=""
 LDLIB_SEED=""
 GOA_REF_OVERRIDE=""
 GOA_REF_PATTERN=""
+SKIP_PATCH=""
 
 # Load user config if present
 CONF_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/nostr-goa-overlay/build.conf"
@@ -32,6 +33,7 @@ if [ -f "$CONF_FILE" ]; then
   if [ -n "${NOSTR_OVERLAY_LD_LIBRARY_PATH:-}" ]; then LDLIB_SEED="${NOSTR_OVERLAY_LD_LIBRARY_PATH}"; fi
   if [ -n "${NOSTR_OVERLAY_GOA_REF:-}" ]; then GOA_REF_OVERRIDE="${NOSTR_OVERLAY_GOA_REF}"; fi
   if [ -n "${NOSTR_OVERLAY_GOA_REF_PATTERN:-}" ]; then GOA_REF_PATTERN="${NOSTR_OVERLAY_GOA_REF_PATTERN}"; fi
+  if [ -n "${NOSTR_OVERLAY_SKIP_PATCH:-}" ]; then SKIP_PATCH="${NOSTR_OVERLAY_SKIP_PATCH}"; fi
 fi
 
 # CLI overrides
@@ -45,6 +47,7 @@ while [ $# -gt 0 ]; do
     --ld-library-path=*) LDLIB_SEED="${1#*=}" ;;
     --goa-ref=*) GOA_REF_OVERRIDE="${1#*=}" ;;
     --goa-ref-pattern=*) GOA_REF_PATTERN="${1#*=}" ;;
+    --skip-patch) SKIP_PATCH=1 ;;
     --) shift; break ;;
     *) echo "Unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -119,7 +122,9 @@ fi
 # Apply provider patch if not already applied
 if [ -d "$SRCDIR/vendor/gnome-online-accounts/.git" ]; then
   pushd "$SRCDIR/vendor/gnome-online-accounts" >/dev/null
-  if ! git log --oneline | grep -q "add Nostr provider (user overlay)"; then
+  if [ -n "$SKIP_PATCH" ]; then
+    echo "Skipping vendor patch per --skip-patch/NOSTR_OVERLAY_SKIP_PATCH. Relying on runtime backend discovery." >&2
+  elif ! git log --oneline | grep -q "add Nostr provider (user overlay)"; then
     echo "Applying Nostr provider patch to vendor GOA..." >&2
     # Clean up any previous failed 'git am'
     if [ -d .git/rebase-apply ] || [ -d .git/rebase-merge ]; then
