@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <glib/gstdio.h>
 
 static void usage(const char *argv0){
   fprintf(stderr, "Usage: %s <provision|teardown> --user <user> --host 127.0.0.1 --port 7680\n", argv0);
@@ -19,7 +20,10 @@ static int write_file(const char *path, const char *content){
 }
 
 static int ensure_dirs(const char *path){
-  GError *err=NULL; if (!g_mkdir_with_parents(path, 0700)==0){ return 0; }
+  /* g_mkdir_with_parents returns 0 on success, -1 on failure */
+  if (g_mkdir_with_parents(path, 0700) != 0) {
+    return -1;
+  }
   return 0;
 }
 
@@ -81,8 +85,15 @@ static int start_user_unit(const char *unit){
     "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
     "org.freedesktop.systemd1.Manager", "StartUnit",
     g_variant_new("(ss)", unit, "replace"), NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
-  if (err){ g_error_free(err); if (reply) g_variant_unref(reply); g_object_unref(bus); return -1; }
-  if (reply) g_variant_unref(reply); g_object_unref(bus); return 0;
+  if (err){
+    g_error_free(err);
+    if (reply) g_variant_unref(reply);
+    g_object_unref(bus);
+    return -1;
+  }
+  if (reply) g_variant_unref(reply);
+  g_object_unref(bus);
+  return 0;
 }
 
 static int stop_user_unit(const char *unit){
@@ -92,8 +103,15 @@ static int stop_user_unit(const char *unit){
     "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
     "org.freedesktop.systemd1.Manager", "StopUnit",
     g_variant_new("(ss)", unit, "replace"), NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
-  if (err){ g_error_free(err); if (reply) g_variant_unref(reply); g_object_unref(bus); return -1; }
-  if (reply) g_variant_unref(reply); g_object_unref(bus); return 0;
+  if (err){
+    g_error_free(err);
+    if (reply) g_variant_unref(reply);
+    g_object_unref(bus);
+    return -1;
+  }
+  if (reply) g_variant_unref(reply);
+  g_object_unref(bus);
+  return 0;
 }
 
 int main(int argc, char **argv){

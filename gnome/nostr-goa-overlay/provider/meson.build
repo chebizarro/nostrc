@@ -18,7 +18,7 @@ install_data('icons/hicolor/scalable/apps/goa-nostr.svg',
   install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor', 'scalable', 'apps'))
 
 # Optionally generate PNGs at install time if rsvg-convert is available
-meson.add_install_script('sh', '-c', '
+meson.add_install_script('sh', '-c', '''
   PFX="${MESON_INSTALL_PREFIX:-}";
   D="${DESTDIR}${PFX}/share";
   SVG="$D/icons/hicolor/scalable/apps/goa-nostr.svg";
@@ -29,4 +29,4 @@ meson.add_install_script('sh', '-c', '
       rsvg-convert -w "$s" -h "$s" -o "$outdir/goa-nostr.png" "$SVG" || true;
     done
   fi
-')
+''')

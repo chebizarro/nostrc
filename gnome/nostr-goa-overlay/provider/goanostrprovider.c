@@ -1,9 +1,8 @@
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gio/gio.h>
-#include <goa/goabackend.h>
-#include <goa/goabackendprovider.h>
-#include <goa/goabackendprovider.h>
+#include <goabackend/goabackend.h>
+#include <goabackend/goabackendprovider.h>
 
 #include "goanostrprovider.h"
 
