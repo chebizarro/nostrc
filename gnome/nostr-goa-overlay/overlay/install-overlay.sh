@@ -154,7 +154,9 @@ echo "Note: If Meson later fails pulling GTK subprojects or due to version const
 
 # Build vendor GOA (minimal)
 pushd "$SRCDIR/vendor/gnome-online-accounts" >/dev/null
-meson setup _build --prefix="$PREFIX" || true
+# Clean previous failed or incompatible build dir
+if [ -d _build ]; then rm -rf _build; fi
+meson setup _build --prefix="$PREFIX" --wrap-mode=nodownload $MESON_ARGS
 meson compile -C _build
 meson install -C _build
 popd >/dev/null

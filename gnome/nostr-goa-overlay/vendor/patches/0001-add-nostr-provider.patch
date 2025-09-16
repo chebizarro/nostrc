@@ -1,6 +1,6 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 1a2b3c4d5e6f7a8b9c0d11121314151617181920 Mon Sep 17 00:00:00 2001
 From: NostrC Overlay <overlay@example.com>
-Date: Mon, 15 Sep 2025 20:55:00 -0400
+Date: Tue, 16 Sep 2025 20:55:00 -0400
 Subject: [PATCH] goabackend: add Nostr provider (user overlay)
 
 This adds a minimal Nostr provider under providers/nostr and wires it into
@@ -11,30 +11,28 @@ The overlay build installs the plugin and icon assets into ~/.local. This
 patch is consumed by the nostr-goa-overlay build wrapper; the base system
 GOA is not modified.
 ---
- src/goabackend/meson.build                     |  1 +
- src/goabackend/providers/nostr/meson.build     | 24 ++++++++++++++++++++++++
- src/goabackend/providers/nostr/goanostr.c      | 31 ++++++++++++++++++++++++++
- src/goabackend/providers/nostr/icons/meson.build | 12 +++++++++++
- 4 files changed, 68 insertions(+)
- create mode 100644 src/goabackend/providers/nostr/meson.build
+ src/goabackend/meson.build                         |  1 +
+ src/goabackend/providers/nostr/goanostr.c          | 40 ++++++++++++++++++++++
+ src/goabackend/providers/nostr/icons/meson.build   | 10 ++++++
+ src/goabackend/providers/nostr/meson.build         | 23 +++++++++++++
+ 4 files changed, 74 insertions(+)
  create mode 100644 src/goabackend/providers/nostr/goanostr.c
  create mode 100644 src/goabackend/providers/nostr/icons/meson.build
+ create mode 100644 src/goabackend/providers/nostr/meson.build
 
 diff --git a/src/goabackend/meson.build b/src/goabackend/meson.build
-index 0000000..1111111 100644
 --- a/src/goabackend/meson.build
 +++ b/src/goabackend/meson.build
 @@ -1,3 +1,4 @@
  subdir('providers/google')
  subdir('providers/microsoft')
-+subdir('providers/nostr')
+ +subdir('providers/nostr')
  
 diff --git a/src/goabackend/providers/nostr/meson.build b/src/goabackend/providers/nostr/meson.build
 new file mode 100644
-index 0000000..2222222
 --- /dev/null
 +++ b/src/goabackend/providers/nostr/meson.build
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,23 @@
 +nostr_provider_sources = [
 +  'goanostr.c',
 +]
@@ -52,15 +50,13 @@ index 0000000..2222222
 +  'icons/hicolor/scalable/apps/goa-nostr.svg',
 +  install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor', 'scalable', 'apps')
 +)
-+
-+meson.add_install_script('sh', '-c', 'true')
+
 +
 diff --git a/src/goabackend/providers/nostr/goanostr.c b/src/goabackend/providers/nostr/goanostr.c
 new file mode 100644
-index 0000000..3333333
 --- /dev/null
 +++ b/src/goabackend/providers/nostr/goanostr.c
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,40 @@
 +#include <glib.h>
 +#include <gio/gio.h>
 +#include <goa/goabackend.h>
@@ -94,18 +90,20 @@ index 0000000..3333333
 +}
 +static void goa_nostr_init(GoaNostr *self){ (void)self; }
 +
-+G_MODULE_EXPORT void goa_provider_get_types(const GType **types, gint *n_types){ static GType t[1]; static gsize i=0; if (g_once_init_enter(&i)){ t[0]=goa_nostr_get_type(); g_once_init_leave(&i,1);} *types=t; *n_types=1; }
++G_MODULE_EXPORT void goa_provider_get_types(const GType **types, gint *n_types){
++  static GType t[1]; static gsize i=0;
++  if (g_once_init_enter(&i)){ t[0]=goa_nostr_get_type(); g_once_init_leave(&i,1);} *types=t; *n_types=1;
++}
 +
 +
 diff --git a/src/goabackend/providers/nostr/icons/meson.build b/src/goabackend/providers/nostr/icons/meson.build
 new file mode 100644
-index 0000000..4444444
 --- /dev/null
 +++ b/src/goabackend/providers/nostr/icons/meson.build
-@@ -0,0 +1,12 @@
-## Install scalable icon; the overlay can complement with more sizes
-install_data(
-  'hicolor/scalable/apps/goa-nostr.svg',
-  install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor', 'scalable', 'apps')
-)
-+
+@@ -0,0 +1,10 @@
++# Install scalable icon; the overlay can complement with more sizes
++install_data(
++  'hicolor/scalable/apps/goa-nostr.svg',
++  install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor', 'scalable', 'apps')
++)
+
