@@ -11,29 +11,66 @@ on:
 
 jobs:
   build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, fedora-40, archlinux]
     runs-on: ubuntu-24.04
+    container: ${{ matrix.os == 'ubuntu-24.04' && '' || (matrix.os == 'fedora-40' && 'fedora:40' || 'archlinux:latest') }}
     steps:
-      - name: Checkout
+      - name: Checkout (with submodules)
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
-      - name: Install deps
+      - name: Install deps (Ubuntu)
+        if: matrix.os == 'ubuntu-24.04'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
             build-essential meson ninja-build pkg-config \
             libglib2.0-dev libgio2.0-dev \
             libgtk-4-dev libsoup-3.0-dev \
             python3 python3-gi python3-gi-cairo \
-            xvfb dbus-x11 \
-            git
+            xvfb dbus-x11 git
+
+      - name: Install deps (Fedora)
+        if: matrix.os == 'fedora-40'
+        run: |
+          dnf -y update || true
+          dnf -y install \
+            @"Development Tools" meson ninja-build pkgconfig \
+            glib2-devel gtk4-devel libsoup3-devel \
+            python3 python3-gobject dbus-daemon xorg-x11-server-Xvfb git
+
+      - name: Install deps (Arch)
+        if: matrix.os == 'archlinux'
+        run: |
+          pacman -Syu --noconfirm || true
+          pacman -S --noconfirm \
+            base-devel meson ninja pkgconf \
+            glib2 gtk4 libsoup \
+            python python-gobject dbus-x11 xorg-server-xvfb git
+
+      - name: Cache vendor GOA build
+        uses: actions/cache@v4
+        with:
+          path: gnome/nostr-goa-overlay/vendor/gnome-online-accounts/_build
+          key: ${{ runner.os }}-${{ matrix.os }}-goa46-${{ hashFiles('gnome/nostr-goa-overlay/vendor/patches/0001-add-nostr-provider.patch') }}
 
       - name: Build vendor GOA 46 and overlay (Meson installer)
         working-directory: gnome/nostr-goa-overlay/overlay
+        env:
+          XDG_DATA_DIRS: "$HOME/.local/share:/usr/local/share:/usr/share"
+          PATH: "$HOME/.local/bin:${{ env.PATH }}"
         run: |
           bash ./install-overlay.sh
 
       - name: Build overlay (Meson project)
         working-directory: gnome/nostr-goa-overlay
+        env:
+          XDG_DATA_DIRS: "$HOME/.local/share:/usr/local/share:/usr/share"
+          PATH: "$HOME/.local/bin:${{ env.PATH }}"
         run: |
           meson setup _build --prefix=$HOME/.local || true
           meson compile -C _build
@@ -45,3 +82,15 @@ jobs:
           PATH: "$HOME/.local/bin:${{ env.PATH }}"
         run: |
           meson test -C _build --suite integ --timeout-multiplier 2 || true
+
+      - name: Optional gnome-control-center smoke (Xvfb)
+        working-directory: gnome/nostr-goa-overlay
+        env:
+          XDG_DATA_DIRS: "$HOME/.local/share:/usr/local/share:/usr/share"
+          PATH: "$HOME/.local/bin:${{ env.PATH }}"
+        run: |
+          if command -v gnome-control-center >/dev/null 2>&1; then \
+            ( command -v xvfb-run >/dev/null 2>&1 && xvfb-run -a gnome-control-center online-accounts & sleep 5; pkill -f gnome-control-center || true ) || true; \
+          else \
+            echo "gnome-control-center not present; skipping UI smoke"; \
+          fi

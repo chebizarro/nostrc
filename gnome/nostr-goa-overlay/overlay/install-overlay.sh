@@ -6,8 +6,14 @@ SRCDIR="$(cd "$(dirname "$0")/.." && pwd)"
 PATCH_DIR="$SRCDIR/vendor/patches"
 
 # Build vendor GOA and provider
-if [ ! -d "$SRCDIR/vendor/gnome-online-accounts" ]; then
-  echo "Vendor GOA dir missing; cloning GOA 46..." >&2
+if [ -d "$SRCDIR/.git" ] && git -C "$SRCDIR" config --file .gitmodules --name-only --get-regexp \
+    '^submodule\.gnome/nostr-goa-overlay/vendor/gnome-online-accounts\.' >/dev/null 2>&1; then
+  echo "Initializing vendor GOA submodule..." >&2
+  git -C "$SRCDIR" submodule update --init --recursive gnome/nostr-goa-overlay/vendor/gnome-online-accounts || true
+fi
+
+if [ ! -d "$SRCDIR/vendor/gnome-online-accounts" ] || [ -z "$(ls -A "$SRCDIR/vendor/gnome-online-accounts" 2>/dev/null)" ]; then
+  echo "Vendor GOA dir missing or empty; cloning GOA 46..." >&2
   mkdir -p "$SRCDIR/vendor"
   git clone --depth 1 --branch 46 https://gitlab.gnome.org/GNOME/gnome-online-accounts.git "$SRCDIR/vendor/gnome-online-accounts"
 fi

@@ -49,8 +49,8 @@ index 0000000..2222222
 +subdir('icons')
 +
 +install_data(
-+  'icons/hicolor/64x64/apps/goa-nostr.png',
-+  install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor', '64x64', 'apps')
++  'icons/hicolor/scalable/apps/goa-nostr.svg',
++  install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor', 'scalable', 'apps')
 +)
 +
 +meson.add_install_script('sh', '-c', 'true')
@@ -103,9 +103,9 @@ index 0000000..4444444
 --- /dev/null
 +++ b/src/goabackend/providers/nostr/icons/meson.build
 @@ -0,0 +1,12 @@
-+# Install placeholder icon; the overlay may replace it with a themed one
-+install_data(
-+  'hicolor/64x64/apps/goa-nostr.png',
-+  install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor', '64x64', 'apps')
-+)
+## Install scalable icon; the overlay can complement with more sizes
+install_data(
+  'hicolor/scalable/apps/goa-nostr.svg',
+  install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor', 'scalable', 'apps')
+)
 +

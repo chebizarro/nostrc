@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=GNOME (Nostr Overlay)
+Comment=GNOME session with user-scoped GOA overlay enabled
+Exec=/usr/bin/env bash -lc 'export XDG_DATA_DIRS="$HOME/.local/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"; exec /usr/bin/gnome-session'
+TryExec=/usr/bin/gnome-session
+Type=Application
+X-GNOME-Provides=gnome-nostr
