@@ -11,6 +11,53 @@ fi
 PREFIX="$HOME/.local"
 SRCDIR="$(cd "$(dirname "$0")/.." && pwd)"
 PATCH_DIR="$SRCDIR/vendor/patches"
+GOA_DIR="$SRCDIR/vendor/gnome-online-accounts"
+GOA_TAG_PREF=""
+MESON_ARGS=""
+PKGCONF_SEED=""
+LDLIB_SEED=""
+GOA_REF_OVERRIDE=""
+GOA_REF_PATTERN=""
+
+# Load user config if present
+CONF_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/nostr-goa-overlay/build.conf"
+if [ -f "$CONF_FILE" ]; then
+  # shellcheck disable=SC1090
+  . "$CONF_FILE"
+  PREFIX="${PREFIX:-${NOSTR_OVERLAY_PREFIX:-$HOME/.local}}"
+  MESON_ARGS="${MESON_ARGS:-${NOSTR_OVERLAY_MESON_ARGS:-}}"
+  if [ -n "${NOSTR_OVERLAY_GOA_SRC:-}" ]; then GOA_DIR="${NOSTR_OVERLAY_GOA_SRC}"; fi
+  if [ -n "${NOSTR_OVERLAY_GOA_TAG:-}" ]; then GOA_TAG_PREF="${NOSTR_OVERLAY_GOA_TAG}"; fi
+  if [ -n "${NOSTR_OVERLAY_PKG_CONFIG_PATH:-}" ]; then PKGCONF_SEED="${NOSTR_OVERLAY_PKG_CONFIG_PATH}"; fi
+  if [ -n "${NOSTR_OVERLAY_LD_LIBRARY_PATH:-}" ]; then LDLIB_SEED="${NOSTR_OVERLAY_LD_LIBRARY_PATH}"; fi
+  if [ -n "${NOSTR_OVERLAY_GOA_REF:-}" ]; then GOA_REF_OVERRIDE="${NOSTR_OVERLAY_GOA_REF}"; fi
+  if [ -n "${NOSTR_OVERLAY_GOA_REF_PATTERN:-}" ]; then GOA_REF_PATTERN="${NOSTR_OVERLAY_GOA_REF_PATTERN}"; fi
+fi
+
+# CLI overrides
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --prefix=*) PREFIX="${1#*=}" ;;
+    --goa-src=*) GOA_DIR="${1#*=}" ;;
+    --goa-tag=*) GOA_TAG_PREF="${1#*=}" ;;
+    --meson-args=*) MESON_ARGS="${1#*=}" ;;
+    --pkg-config-path=*) PKGCONF_SEED="${1#*=}" ;;
+    --ld-library-path=*) LDLIB_SEED="${1#*=}" ;;
+    --goa-ref=*) GOA_REF_OVERRIDE="${1#*=}" ;;
+    --goa-ref-pattern=*) GOA_REF_PATTERN="${1#*=}" ;;
+    --) shift; break ;;
+    *) echo "Unknown arg: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+# Export optional env seeds for pkg-config and runtime libs
+if [ -n "$PKGCONF_SEED" ]; then
+  export PKG_CONFIG_PATH="$PKGCONF_SEED${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+fi
+if [ -n "$LDLIB_SEED" ]; then
+  export LD_LIBRARY_PATH="$LDLIB_SEED${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 
 # Build vendor GOA and provider
 if [ -d "$SRCDIR/.git" ] && git -C "$SRCDIR" config --file .gitmodules --name-only --get-regexp \
@@ -25,19 +72,45 @@ if [ ! -d "$SRCDIR/vendor/gnome-online-accounts" ] || [ -z "$(ls -A "$SRCDIR/ven
   git clone https://gitlab.gnome.org/GNOME/gnome-online-accounts.git "$SRCDIR/vendor/gnome-online-accounts"
 fi
 
-# Checkout a GOA 46.x series tag if possible
+# Select a GOA ref based on overrides, host, or best-available tags
 if [ -d "$SRCDIR/vendor/gnome-online-accounts/.git" ]; then
   pushd "$SRCDIR/vendor/gnome-online-accounts" >/dev/null
   git fetch --tags --quiet || true
-  # Prefer tags like GNOME_46*, otherwise try v46.* or 46.* patterns
-  TAG="$(git tag -l 'GNOME_46*' | sort -V | tail -n1)"
-  if [ -z "$TAG" ]; then TAG="$(git tag -l 'v46*' | sort -V | tail -n1)"; fi
-  if [ -z "$TAG" ]; then TAG="$(git tag -l '46*' | sort -V | tail -n1)"; fi
-  if [ -n "$TAG" ]; then
-    echo "Checking out GOA tag $TAG" >&2
-    git checkout -f "tags/$TAG" --quiet || true
+  # Determine default pattern from host if not provided
+  if [ -z "$GOA_REF_OVERRIDE" ] && [ -z "$GOA_TAG_PREF" ] && [ -z "$GOA_REF_PATTERN" ] && [ -f /etc/os-release ]; then
+    . /etc/os-release || true
+    case "${ID:-}-${VERSION_ID:-}" in
+      ubuntu-24.*) GOA_REF_PATTERN="GNOME_46*" ;;
+      fedora-40*) GOA_REF_PATTERN="GNOME_46*" ;;
+      arch-*)     GOA_REF_PATTERN="" ;; # rolling, leave empty to choose latest
+      *)          GOA_REF_PATTERN="GNOME_46*" ;;
+    esac
+  fi
+
+  # Priority: explicit ref > explicit tag > pattern > best-known 46 patterns > latest tag
+  if [ -n "$GOA_REF_OVERRIDE" ]; then
+    echo "Checking out GOA ref $GOA_REF_OVERRIDE" >&2
+    git checkout -f "$GOA_REF_OVERRIDE" --quiet || true
   else
-    echo "Warning: Could not find a GOA 46.x tag; staying on default branch." >&2
+    TAG="$GOA_TAG_PREF"
+    if [ -z "$TAG" ] && [ -n "$GOA_REF_PATTERN" ]; then
+      TAG="$(git tag -l "$GOA_REF_PATTERN" | sort -V | tail -n1)"
+    fi
+    if [ -z "$TAG" ]; then
+      TAG="$(git tag -l 'GNOME_46*' | sort -V | tail -n1)"
+      [ -z "$TAG" ] && TAG="$(git tag -l 'v46*' | sort -V | tail -n1)"
+      [ -z "$TAG" ] && TAG="$(git tag -l '46*' | sort -V | tail -n1)"
+    fi
+    if [ -z "$TAG" ]; then
+      # Fallback to latest tag overall
+      TAG="$(git tag -l | sort -V | tail -n1)"
+    fi
+    if [ -n "$TAG" ]; then
+      echo "Checking out GOA tag $TAG" >&2
+      git checkout -f "tags/$TAG" --quiet || true
+    else
+      echo "Warning: Could not find any GOA tag; staying on default branch." >&2
+    fi
   fi
   popd >/dev/null
 fi
