@@ -5,7 +5,12 @@ Requires=nostr-router.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/env bash -lc '[ -x %h/.local/bin/nostrfs ] && exec %h/.local/bin/nostrfs %h/Nostr || exec nostrfs %h/Nostr'
+EnvironmentFile=-%h/.config/nostr-goa-overlay/env
+ExecStart=/usr/bin/env bash -lc '
+  BIN="${NOSTR_FS_BIN:-}"
+  if [ -n "$BIN" ]; then exec "$BIN" %h/Nostr; fi
+  if [ -x %h/.local/bin/nostrfs ]; then exec %h/.local/bin/nostrfs %h/Nostr; fi
+  exec nostrfs %h/Nostr'
 Restart=on-failure
 NoNewPrivileges=yes
 ProtectSystem=strict

@@ -4,7 +4,12 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/nostr-notify
+EnvironmentFile=-%h/.config/nostr-goa-overlay/env
+ExecStart=/usr/bin/env bash -lc '
+  BIN="${NOSTR_NOTIFY_BIN:-}"
+  if [ -n "$BIN" ]; then exec "$BIN"; fi
+  if [ -x %h/.local/bin/nostr-notify ]; then exec %h/.local/bin/nostr-notify; fi
+  exec nostr-notify'
 Restart=on-failure
 NoNewPrivileges=yes
 ProtectSystem=strict
