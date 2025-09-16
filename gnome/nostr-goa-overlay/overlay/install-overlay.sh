@@ -19,6 +19,7 @@ LDLIB_SEED=""
 GOA_REF_OVERRIDE=""
 GOA_REF_PATTERN=""
 SKIP_PATCH=""
+SKIP_VENDOR=""
 
 # Load user config if present
 CONF_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/nostr-goa-overlay/build.conf"
@@ -34,6 +35,7 @@ if [ -f "$CONF_FILE" ]; then
   if [ -n "${NOSTR_OVERLAY_GOA_REF:-}" ]; then GOA_REF_OVERRIDE="${NOSTR_OVERLAY_GOA_REF}"; fi
   if [ -n "${NOSTR_OVERLAY_GOA_REF_PATTERN:-}" ]; then GOA_REF_PATTERN="${NOSTR_OVERLAY_GOA_REF_PATTERN}"; fi
   if [ -n "${NOSTR_OVERLAY_SKIP_PATCH:-}" ]; then SKIP_PATCH="${NOSTR_OVERLAY_SKIP_PATCH}"; fi
+  if [ -n "${NOSTR_OVERLAY_SKIP_VENDOR:-}" ]; then SKIP_VENDOR="${NOSTR_OVERLAY_SKIP_VENDOR}"; fi
 fi
 
 # CLI overrides
@@ -48,6 +50,7 @@ while [ $# -gt 0 ]; do
     --goa-ref=*) GOA_REF_OVERRIDE="${1#*=}" ;;
     --goa-ref-pattern=*) GOA_REF_PATTERN="${1#*=}" ;;
     --skip-patch) SKIP_PATCH=1 ;;
+    --skip-vendor) SKIP_VENDOR=1 ;;
     --) shift; break ;;
     *) echo "Unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -62,29 +65,33 @@ if [ -n "$LDLIB_SEED" ]; then
   export LD_LIBRARY_PATH="$LDLIB_SEED${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
-# Build vendor GOA and provider
-if [ -d "$SRCDIR/.git" ] && git -C "$SRCDIR" config --file .gitmodules --name-only --get-regexp \
-    '^submodule\.gnome/nostr-goa-overlay/vendor/gnome-online-accounts\.' >/dev/null 2>&1; then
-  echo "Initializing vendor GOA submodule..." >&2
-  git -C "$SRCDIR" submodule update --init --recursive gnome/nostr-goa-overlay/vendor/gnome-online-accounts || true
-fi
+if [ -z "$SKIP_VENDOR" ]; then
+  # Build vendor GOA and provider
+  if [ -d "$SRCDIR/.git" ] && git -C "$SRCDIR" config --file .gitmodules --name-only --get-regexp \
+      '^submodule\.gnome/nostr-goa-overlay/vendor/gnome-online-accounts\.' >/dev/null 2>&1; then
+    echo "Initializing vendor GOA submodule..." >&2
+    git -C "$SRCDIR" submodule update --init --recursive gnome/nostr-goa-overlay/vendor/gnome-online-accounts || true
+  fi
 
-if [ ! -d "$SRCDIR/vendor/gnome-online-accounts" ] || [ -z "$(ls -A "$SRCDIR/vendor/gnome-online-accounts" 2>/dev/null)" ]; then
-  echo "Vendor GOA dir missing or empty; cloning upstream GOA..." >&2
-  mkdir -p "$SRCDIR/vendor"
-  git clone https://gitlab.gnome.org/GNOME/gnome-online-accounts.git "$SRCDIR/vendor/gnome-online-accounts"
-fi
+  if [ ! -d "$SRCDIR/vendor/gnome-online-accounts" ] || [ -z "$(ls -A "$SRCDIR/vendor/gnome-online-accounts" 2>/dev/null)" ]; then
+    echo "Vendor GOA dir missing or empty; cloning upstream GOA..." >&2
+    mkdir -p "$SRCDIR/vendor"
+    git clone https://gitlab.gnome.org/GNOME/gnome-online-accounts.git "$SRCDIR/vendor/gnome-online-accounts"
+  fi
 
-# Select a GOA ref based on overrides, host, or best-available tags
-if [ -d "$SRCDIR/vendor/gnome-online-accounts/.git" ]; then
-  pushd "$SRCDIR/vendor/gnome-online-accounts" >/dev/null
-  git fetch --tags --quiet || true
-  # Determine default pattern from host if not provided
-  if [ -z "$GOA_REF_OVERRIDE" ] && [ -z "$GOA_TAG_PREF" ] && [ -z "$GOA_REF_PATTERN" ] && [ -f /etc/os-release ]; then
-    . /etc/os-release || true
-    case "${ID:-}-${VERSION_ID:-}" in
-      ubuntu-24.*) GOA_REF_PATTERN="GNOME_46*" ;;
-      fedora-40*) GOA_REF_PATTERN="GNOME_46*" ;;
+  # Select a GOA ref based on overrides, host, or best-available tags
+  if [ -d "$SRCDIR/vendor/gnome-online-accounts/.git" ]; then
+    pushd "$SRCDIR/vendor/gnome-online-accounts" >/dev/null
+    git fetch --tags --quiet || true
+    # Determine default pattern from host if not provided
+    if [ -z "$GOA_REF_OVERRIDE" ] && [ -z "$GOA_TAG_PREF" ] && [ -z "$GOA_REF_PATTERN" ] && [ -f /etc/os-release ]; then
+      . /etc/os-release || true
+      case "${ID:-}-${VERSION_ID:-}" in
+        ubuntu-24.*) GOA_REF_PATTERN="GNOME_46*" ;;
+        fedora-40*) GOA_REF_PATTERN="GNOME_46*" ;;
+        arch-*)     GOA_REF_PATTERN="" ;; # rolling, leave empty to choose latest
+        *)          GOA_REF_PATTERN="GNOME_46*" ;;
+      esac
       arch-*)     GOA_REF_PATTERN="" ;; # rolling, leave empty to choose latest
       *)          GOA_REF_PATTERN="GNOME_46*" ;;
     esac
@@ -115,17 +122,17 @@ if [ -d "$SRCDIR/vendor/gnome-online-accounts/.git" ]; then
       echo "Warning: Could not find any GOA tag; staying on default branch." >&2
     fi
   fi
-  popd >/dev/null
-fi
+    popd >/dev/null
+  fi
 
 ########################################
 # Apply provider patch if not already applied
-if [ -d "$SRCDIR/vendor/gnome-online-accounts/.git" ]; then
-  pushd "$SRCDIR/vendor/gnome-online-accounts" >/dev/null
-  if [ -n "$SKIP_PATCH" ]; then
-    echo "Skipping vendor patch per --skip-patch/NOSTR_OVERLAY_SKIP_PATCH. Relying on runtime backend discovery." >&2
-  elif ! git log --oneline | grep -q "add Nostr provider (user overlay)"; then
-    echo "Applying Nostr provider patch to vendor GOA..." >&2
+  if [ -d "$SRCDIR/vendor/gnome-online-accounts/.git" ]; then
+    pushd "$SRCDIR/vendor/gnome-online-accounts" >/dev/null
+    if [ -n "$SKIP_PATCH" ]; then
+      echo "Skipping vendor patch per --skip-patch/NOSTR_OVERLAY_SKIP_PATCH. Relying on runtime backend discovery." >&2
+    elif ! git log --oneline | grep -q "add Nostr provider (user overlay)"; then
+      echo "Applying Nostr provider patch to vendor GOA..." >&2
     # Clean up any previous failed 'git am'
     if [ -d .git/rebase-apply ] || [ -d .git/rebase-merge ]; then
       git am --abort >/dev/null 2>&1 || true
@@ -152,14 +159,17 @@ echo "Note: If Meson later fails pulling GTK subprojects or due to version const
      "you can pass extra meson switches via --meson-args to disable UI bits, e.g.:\n" \
      "  ./install-overlay.sh --meson-args='-Dgtk=false -Dgtk_doc=false'\n" >&2
 
-# Build vendor GOA (minimal)
-pushd "$SRCDIR/vendor/gnome-online-accounts" >/dev/null
-# Clean previous failed or incompatible build dir
-if [ -d _build ]; then rm -rf _build; fi
-meson setup _build --prefix="$PREFIX" --wrap-mode=nodownload $MESON_ARGS
-meson compile -C _build
-meson install -C _build
-popd >/dev/null
+  # Build vendor GOA (minimal)
+  pushd "$SRCDIR/vendor/gnome-online-accounts" >/dev/null
+  # Clean previous failed or incompatible build dir
+  if [ -d _build ]; then rm -rf _build; fi
+  meson setup _build --prefix="$PREFIX" --wrap-mode=nodownload $MESON_ARGS
+  meson compile -C _build
+  meson install -C _build
+  popd >/dev/null
+else
+  echo "Skipping vendor GOA build per --skip-vendor/NOSTR_OVERLAY_SKIP_VENDOR. Using system GOA." >&2
+fi
 
 # Build overlay (provider + overlay files)
 pushd "$SRCDIR" >/dev/null
