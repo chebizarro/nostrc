@@ -1,0 +1,29 @@
+[Unit]
+Description=Nostr Cal/CardDAV bridge (user)
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/nostr-goa-overlay/env
+ExecStart=/usr/bin/env bash -lc '
+  BIN="${NOSTR_DAV_BIN:-}"
+  if [ -n "$BIN" ]; then exec "$BIN" --listen 127.0.0.1:7680; fi
+  if [ -x %h/.local/bin/nostr-dav ]; then exec %h/.local/bin/nostr-dav --listen 127.0.0.1:7680; fi
+  exec nostr-dav --listen 127.0.0.1:7680'
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=default.target

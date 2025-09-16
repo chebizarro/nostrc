@@ -1,0 +1,25 @@
+[Unit]
+Description=Nostr Filesystem (user)
+After=nostr-router.service
+Requires=nostr-router.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env bash -lc '[ -x %h/.local/bin/nostrfs ] && exec %h/.local/bin/nostrfs %h/Nostr || exec nostrfs %h/Nostr'
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=default.target

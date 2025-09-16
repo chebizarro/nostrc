@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Nostr Handler
+Exec=xdg-open %u
+Type=Application
+NoDisplay=true
+MimeType=x-scheme-handler/nostr;

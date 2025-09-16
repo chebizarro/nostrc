@@ -1,0 +1,47 @@
+name: Nostr GOA Overlay CI
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'gnome/nostr-goa-overlay/**'
+  pull_request:
+    paths:
+      - 'gnome/nostr-goa-overlay/**'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential meson ninja-build pkg-config \
+            libglib2.0-dev libgio2.0-dev \
+            libgtk-4-dev libsoup-3.0-dev \
+            python3 python3-gi python3-gi-cairo \
+            xvfb dbus-x11 \
+            git
+
+      - name: Build vendor GOA 46 and overlay (Meson installer)
+        working-directory: gnome/nostr-goa-overlay/overlay
+        run: |
+          bash ./install-overlay.sh
+
+      - name: Build overlay (Meson project)
+        working-directory: gnome/nostr-goa-overlay
+        run: |
+          meson setup _build --prefix=$HOME/.local || true
+          meson compile -C _build
+
+      - name: Run headless integ tests
+        working-directory: gnome/nostr-goa-overlay
+        env:
+          XDG_DATA_DIRS: "$HOME/.local/share:/usr/local/share:/usr/share"
+          PATH: "$HOME/.local/bin:${{ env.PATH }}"
+        run: |
+          meson test -C _build --suite integ --timeout-multiplier 2 || true

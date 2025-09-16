@@ -1,0 +1,24 @@
+[Unit]
+Description=Nostr Notifications bridge (user)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/nostr-notify
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=default.target

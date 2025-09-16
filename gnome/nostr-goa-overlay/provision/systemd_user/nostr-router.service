@@ -1,0 +1,29 @@
+[Unit]
+Description=Nostr Router (user)
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/nostr-goa-overlay/env
+ExecStart=/usr/bin/env bash -lc '
+  BIN="${NOSTR_ROUTER_BIN:-}"
+  if [ -n "$BIN" ]; then exec "$BIN"; fi
+  if [ -x %h/.local/bin/nostr-router ]; then exec %h/.local/bin/nostr-router; fi
+  exec nostr-router'
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=default.target
