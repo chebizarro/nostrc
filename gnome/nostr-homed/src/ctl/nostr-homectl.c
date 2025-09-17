@@ -114,7 +114,10 @@ int nh_close_session(const char *username){
   /* Wait for unmount (~5s) */
   for (int i=0; i<25; i++){
     char mnt[256]=""; nh_cache c2; if (nh_cache_open_configured(&c2, "/etc/nss_nostr.conf")==0){ char k2[256]; snprintf(k2, sizeof k2, "mount.%s", username); (void)nh_cache_get_setting(&c2, k2, mnt, sizeof mnt); nh_cache_close(&c2);} if (mnt[0]==0) break;
-    if (!is_mountpoint(mnt)) break; g_usleep(200 * 1000);
+    if (!is_mountpoint(mnt)) {
+      break;
+    }
+    g_usleep(200 * 1000);
   }
   printf("nostr-homectl: CloseSession %s\n", username);
   return 0;
