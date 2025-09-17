@@ -11,6 +11,10 @@ struct _GoaNostrProvider {
   GoaProvider parent_instance;
 };
 
+typedef struct _GoaNostrProviderClass {
+  GoaProviderClass parent_class;
+} GoaNostrProviderClass;
+
 G_DEFINE_TYPE(GoaNostrProvider, goa_nostr_provider, GOA_TYPE_PROVIDER)
 
 static void goa_nostr_provider_class_init(GoaNostrProviderClass *klass) {
