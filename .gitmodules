@@ -12,4 +12,4 @@
 	shallow = true
 [submodule "gnome/nostr-goa-overlay/vendor/gnome-online-accounts"]
 	path = gnome/nostr-goa-overlay/vendor/gnome-online-accounts
-	url = https://gitlab.gnome.org/GNOME/gnome-online-accounts.git
+	url = https://github.com/chebizarro/gnome-online-accounts.git
