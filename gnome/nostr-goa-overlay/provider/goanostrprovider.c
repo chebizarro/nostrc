@@ -4,6 +4,7 @@
 #include <glib/gi18n.h>
 #include <gio/gio.h>
 #include <goabackend/goabackend.h>
+#include <goabackend/goapasswordbased.h>
 
 #include "goanostrprovider.h"
 
