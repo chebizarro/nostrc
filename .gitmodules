@@ -13,3 +13,4 @@
 [submodule "gnome/nostr-goa-overlay/vendor/gnome-online-accounts"]
 	path = gnome/nostr-goa-overlay/vendor/gnome-online-accounts
 	url = https://github.com/chebizarro/gnome-online-accounts.git
+	branch = nostr-overlay
