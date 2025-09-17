@@ -8,7 +8,7 @@
 
 G_BEGIN_DECLS
 
-G_DECLARE_FINAL_TYPE(GoaNostrProvider, goa_nostr_provider, GOA, NOSTR_PROVIDER, GoaPasswordProvider)
+G_DECLARE_FINAL_TYPE(GoaNostrProvider, goa_nostr_provider, GOA, NOSTR_PROVIDER, GoaPasswordBased)
 
 G_END_DECLS
 

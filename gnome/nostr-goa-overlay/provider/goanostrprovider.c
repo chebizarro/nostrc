@@ -8,10 +8,10 @@
 #include "goanostrprovider.h"
 
 struct _GoaNostrProvider {
-  GoaPasswordProvider parent_instance;
+  GoaPasswordBased parent_instance;
 };
 
-G_DEFINE_TYPE(GoaNostrProvider, goa_nostr_provider, GOA_TYPE_PASSWORD_PROVIDER)
+G_DEFINE_TYPE(GoaNostrProvider, goa_nostr_provider, GOA_TYPE_PASSWORD_BASED)
 
 static void goa_nostr_provider_class_init(GoaNostrProviderClass *klass) {
   (void)klass; /* Intentionally minimal; rely on PasswordProvider defaults */
