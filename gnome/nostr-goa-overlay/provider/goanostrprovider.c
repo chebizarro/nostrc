@@ -3,8 +3,7 @@
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gio/gio.h>
-#include <goa/goa.h>
-#include <goabackend/goaprovider.h>
+#include <goabackend/goabackend.h>
 
 #include "goanostrprovider.h"
 

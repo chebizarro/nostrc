@@ -2,7 +2,7 @@
 #define GOA_NOSTR_PROVIDER_H
 
 #include <glib-object.h>
-#include <goa/goabackendprovider.h>
+#include <goabackend/goabackend.h>
 
 G_BEGIN_DECLS
 
