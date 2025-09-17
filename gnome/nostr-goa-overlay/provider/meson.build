@@ -9,7 +9,7 @@ shared_library('goa-nostr-provider',
   ['goanostrprovider.c'],
   include_directories: [provider_inc],
   dependencies: [goa_backend, glib, gobject, gio],
-  c_args: ['-Wno-error=pedantic'],
+  c_args: ['-Wno-error=pedantic', '-Wno-pedantic'],
   install: true,
   install_dir: join_paths(get_option('libdir'), 'goa-1.0', 'backends')
 )
