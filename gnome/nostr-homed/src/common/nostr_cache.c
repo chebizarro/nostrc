@@ -41,10 +41,20 @@ uint32_t nh_cache_map_npub_to_uid(const nh_cache *c, const char *npub_hex){
 
 static int parse_kv_line(const char *line, char *key, size_t ksz, char *val, size_t vsz){
   const char *eq = strchr(line, '='); if (!eq) return -1;
-  size_t kl = (size_t)(eq - line); if (kl >= ksz) return -1; memcpy(key, line, kl); key[kl]=0;
+  size_t kl = (size_t)(eq - line);
+  if (kl >= ksz) {
+    return -1;
+  }
+  memcpy(key, line, kl);
+  key[kl] = 0;
   const char *v = eq+1; size_t vl = strlen(v);
   while (vl && (v[vl-1]=='\n' || v[vl-1]=='\r')) vl--;
-  if (vl >= vsz) return -1; memcpy(val, v, vl); val[vl]=0; return 0;
+  if (vl >= vsz) {
+    return -1;
+  }
+  memcpy(val, v, vl);
+  val[vl] = 0;
+  return 0;
 }
 
 int nh_cache_open_configured(nh_cache *c, const char *conf_path){
