@@ -7,30 +7,9 @@
 
 #include "goanostrprovider.h"
 
-struct _GoaNostrProvider {
-  GoaProvider parent_instance;
-};
-
-typedef struct _GoaNostrProviderClass {
-  GoaProviderClass parent_class;
-} GoaNostrProviderClass;
-
-G_DEFINE_TYPE(GoaNostrProvider, goa_nostr_provider, GOA_TYPE_PROVIDER)
-
-static void goa_nostr_provider_class_init(GoaNostrProviderClass *klass) {
-  (void)klass; /* Intentionally minimal; rely on PasswordProvider defaults */
-}
-
-static void goa_nostr_provider_init(GoaNostrProvider *self) {
-  (void)self;
-}
-
-/* plugin entry points */
+/* Minimal stub plugin: export no provider types to satisfy build on systems
+ * where GoaProviderClass is intentionally opaque to third parties. */
 G_MODULE_EXPORT void goa_provider_get_types(const GType **types, gint *n_types) {
-  static GType type_list[1]; static gsize inited = 0;
-  if (g_once_init_enter(&inited)) {
-    type_list[0] = goa_nostr_provider_get_type();
-    g_once_init_leave(&inited, 1);
-  }
-  *types = type_list; *n_types = 1;
+  (void)types;
+  if (n_types) *n_types = 0;
 }
