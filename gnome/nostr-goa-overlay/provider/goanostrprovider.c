@@ -4,15 +4,14 @@
 #include <glib/gi18n.h>
 #include <gio/gio.h>
 #include <goabackend/goabackend.h>
-#include <goabackend/goapasswordbased.h>
 
 #include "goanostrprovider.h"
 
 struct _GoaNostrProvider {
-  GoaPasswordBased parent_instance;
+  GoaProvider parent_instance;
 };
 
-G_DEFINE_TYPE(GoaNostrProvider, goa_nostr_provider, GOA_TYPE_PASSWORD_BASED)
+G_DEFINE_TYPE(GoaNostrProvider, goa_nostr_provider, GOA_TYPE_PROVIDER)
 
 static void goa_nostr_provider_class_init(GoaNostrProviderClass *klass) {
   (void)klass; /* Intentionally minimal; rely on PasswordProvider defaults */
