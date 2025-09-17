@@ -10,11 +10,11 @@ fi
 
 PREFIX="$HOME/.local"
 SRCDIR="$(cd "$(dirname "$0")/.." && pwd)"
+VENDOR_DIR="$SRCDIR/vendor/gnome-online-accounts"
 PATCH_DIR="$SRCDIR/vendor/patches"
 MESON_ARGS=""
 PKGCONF_SEED=""
 LDLIB_SEED=""
-SKIP_VENDOR="1" # deprecated: vendor build removed
 
 # Load user config if present
 CONF_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/nostr-goa-overlay/build.conf"
@@ -48,20 +48,46 @@ if [ -n "$LDLIB_SEED" ]; then
   export LD_LIBRARY_PATH="$LDLIB_SEED${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
-echo "Using system GOA (no vendoring)." >&2
-echo "Tip: If optional UI/docs tools cause build issues, pass extra meson switches via --meson-args, e.g.:" >&2
+echo "Building vendored GOA with in-tree Nostr provider." >&2
+echo "Tip: pass extra meson switches via --meson-args, e.g.:" >&2
 echo "  ./install-overlay.sh --meson-args='-Ddocumentation=false -Dintrospection=false'" >&2
 
-# Build overlay (provider + overlay files)
-pushd "$SRCDIR" >/dev/null
-meson setup _build --prefix="$PREFIX" || true
+# 1) Build vendored GOA into ~/.local
+if [ ! -d "$VENDOR_DIR" ]; then
+  echo "Error: vendor GOA not found at $VENDOR_DIR" >&2
+  exit 2
+fi
+pushd "$VENDOR_DIR" >/dev/null
+# Disable man pages (avoids xsltproc fetching remote docbook XSL). Use system deps only.
+# Purge any previously fetched subprojects/wraps and wipe build dir to avoid
+# cached wrap-mode=forcefallback.
+unset MESON_FORCE_FALLBACK_FOR || true
+rm -rf subprojects _build
+MESON_WRAP_MODE=default meson setup _build --prefix="$PREFIX" $MESON_ARGS -Dman=false --wrap-mode=default
 meson compile -C _build
 meson install -C _build
 popd >/dev/null
 
-# Restart user goa-daemon if running so DBus re-activates our overlay
-if pgrep -u "$USER" -x goa-daemon >/dev/null 2>&1; then
-  pkill -u "$USER" -x goa-daemon || true
-fi
+# 2) Install user-scoped DBus service for org.gnome.OnlineAccounts
+DBUS_USER_SERVICES_DIR="$HOME/.local/share/dbus-1/services"
+mkdir -p "$DBUS_USER_SERVICES_DIR"
+SERVICE_FILE="$DBUS_USER_SERVICES_DIR/org.gnome.OnlineAccounts.service"
+cat >"$SERVICE_FILE" <<EOF
+[D-BUS Service]
+Name=org.gnome.OnlineAccounts
+Exec=$PREFIX/libexec/goa-daemon
+SystemdService=
+EOF
+echo "Wrote $SERVICE_FILE"
 
-echo "Installed GOA overlay to $PREFIX"
+# 3) Build overlay bits (icons, docs) if any
+pushd "$SRCDIR" >/dev/null
+meson setup _build --prefix="$PREFIX" || true
+meson compile -C _build || true
+meson install -C _build || true
+popd >/dev/null
+
+# Restart user goa-daemon if running so DBus re-activates our overlay
+pkill -u "$USER" -x goa-daemon >/dev/null 2>&1 || true
+
+echo "Installed vendored GOA + Nostr provider to $PREFIX"
