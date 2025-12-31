@@ -6,16 +6,20 @@
     <property name="title">GNostr</property>
     <property name="default-width">900</property>
     <property name="default-height">640</property>
-
+    <property name="decorated">true</property>
+    <!-- Titlebar removed to allow server-side decorations; headerbar rendered inside content below -->
+    
     <child>
       <object class="GtkOverlay" id="root_overlay">
         <child>
           <object class="GtkBox">
             <property name="orientation">vertical</property>
-            <property name="spacing">0</property>
+            <property name="spacing">0</property>            
 
+            <!-- In-content header bar (app controls only); WM draws actual window buttons/titlebar -->
             <child>
               <object class="GtkHeaderBar">
+                <property name="show-title-buttons">false</property>
                 <child type="title">
                   <object class="GtkStackSwitcher">
                     <property name="stack">stack</property>
@@ -32,15 +36,14 @@
                     <signal name="clicked" handler="on_relays_clicked" swapped="no"/>
                   </object>
                 </child>
-                <child type="end">
+                <child type="start">
                   <object class="GtkButton" id="btn_settings">
                     <property name="icon-name">emblem-system-symbolic</property>
                     <signal name="clicked" handler="on_settings_clicked" swapped="no"/>
                   </object>
                 </child>
-                <child type="end">
+                <child type="start">
                   <object class="GtkMenuButton" id="btn_avatar">
-                    <!-- Original avatar icon -->
                     <property name="icon-name">avatar-default-symbolic</property>
                     <property name="has-frame">true</property>
                     <property name="sensitive">true</property>
@@ -99,7 +102,7 @@
                     </child>
                   </object>
                 </child>
-                <child type="end">
+                <child type="start">
                   <object class="GtkMenuButton" id="btn_menu">
                     <property name="icon-name">open-menu-symbolic</property>
                   </object>
@@ -166,4 +169,3 @@
     </child>
   </template>
 </interface>
-

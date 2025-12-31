@@ -919,6 +919,7 @@ static void initial_refresh_timeout_cb(gpointer data) {
   /* After items exist, sweep local DB for any cached profiles (debounced) */
   schedule_ndb_profile_sweep(self);
 }
+
 static void user_meta_free(gpointer p) { g_free(p); }
 
 static unsigned int getenv_uint_default(const char *name, unsigned int defval) {
@@ -958,8 +959,9 @@ static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_url
   gnostr_load_relays_into(arr);
   if (arr->len == 0) {
     /* Provide a sensible default if none configured */
-    g_ptr_array_add(arr, g_strdup("wss://relay.damus.io"));
-  }
+    //g_ptr_array_add(arr, g_strdup("wss://relay.damus.io"));
+    g_ptr_array_add(arr, g_strdup("wss://relay.sharegap.net"));
+}
   const char **urls = NULL; size_t n = arr->len;
   if (n > 0) {
     urls = g_new0(const char*, n);
@@ -1077,6 +1079,7 @@ static void profile_dispatch_next(GnostrMainWindow *self) {
 }
 
 static gboolean periodic_backfill_cb(gpointer data) { (void)data; return G_SOURCE_CONTINUE; }
+
 static void start_pool_live(GnostrMainWindow *self) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
   if (!self->pool) self->pool = gnostr_simple_pool_new();
