@@ -878,6 +878,9 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
   object_class->dispose = gnostr_main_window_dispose;
+  /* Ensure custom template child types are registered before parsing template */
+  g_type_ensure(GNOSTR_TYPE_TIMELINE_VIEW);
+  g_type_ensure(GNOSTR_TYPE_COMPOSER);
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
   /* Bind expected template children (IDs must match the UI file) */
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, stack);

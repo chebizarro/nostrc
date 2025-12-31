@@ -194,6 +194,9 @@ if(LIBNOSTR_WITH_NOSTRDB)
     file(GLOB NDB_CORE_SOURCES
       "${LIBNOSTR_NDB_VENDOR_PATH}/src/*.c"
     )
+    # Some optional sources may rely on headers/types not needed for our integration yet.
+    # Exclude giftwrap.c for now to avoid build failures stemming from missing local headers.
+    list(FILTER NDB_CORE_SOURCES EXCLUDE REGEX ".*/giftwrap\\.c$")
     file(GLOB NDB_BOLT11_SOURCES
       "${LIBNOSTR_NDB_VENDOR_PATH}/src/bolt11/*.c"
     )
@@ -233,6 +236,9 @@ if(LIBNOSTR_WITH_NOSTRDB)
       "${LIBNOSTR_NDB_VENDOR_PATH}/deps/secp256k1/include"
       ${NDB_COMPAT_DIR}
     )
+    # Prefer system libsodium for crypto_stream_chacha20_ietf_xor_ic used by NIP-44
+    pkg_check_modules(LIBSODIUM REQUIRED IMPORTED_TARGET libsodium)
+    target_link_libraries(nostrdb PUBLIC PkgConfig::LIBSODIUM)
     # Threads, flatcc runtime, secp256k1, and Security framework on macOS
     find_package(Threads REQUIRED)
     # Prefer system flatcc runtime to match headers (e.g., Homebrew flatccrt). If not

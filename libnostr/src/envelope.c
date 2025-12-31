@@ -9,7 +9,8 @@
 
 // Helper function to create a new Envelope
 NostrEnvelope *create_envelope(NostrEnvelopeType type) {
-    NostrEnvelope *envelope = (NostrEnvelope *)malloc(sizeof(NostrEnvelope));
+    /* Zero-initialize so free paths are always safe on early-parse errors */
+    NostrEnvelope *envelope = (NostrEnvelope *)calloc(1, sizeof(NostrEnvelope));
     if (!envelope)
         return NULL;
     envelope->type = type;
@@ -672,28 +673,28 @@ NostrEnvelope *nostr_envelope_parse(const char *message) {
     if (!label) return NULL;
     NostrEnvelope *env = NULL;
     if (strcmp(label, "EVENT") == 0) {
-        env = (NostrEnvelope *)malloc(sizeof(NostrEventEnvelope));
+        env = (NostrEnvelope *)calloc(1, sizeof(NostrEventEnvelope));
         if (env) env->type = NOSTR_ENVELOPE_EVENT;
     } else if (strcmp(label, "OK") == 0) {
-        env = (NostrEnvelope *)malloc(sizeof(NostrOKEnvelope));
+        env = (NostrEnvelope *)calloc(1, sizeof(NostrOKEnvelope));
         if (env) env->type = NOSTR_ENVELOPE_OK;
     } else if (strcmp(label, "NOTICE") == 0) {
-        env = (NostrEnvelope *)malloc(sizeof(NostrNoticeEnvelope));
+        env = (NostrEnvelope *)calloc(1, sizeof(NostrNoticeEnvelope));
         if (env) env->type = NOSTR_ENVELOPE_NOTICE;
     } else if (strcmp(label, "EOSE") == 0) {
-        env = (NostrEnvelope *)malloc(sizeof(NostrEOSEEnvelope));
+        env = (NostrEnvelope *)calloc(1, sizeof(NostrEOSEEnvelope));
         if (env) env->type = NOSTR_ENVELOPE_EOSE;
     } else if (strcmp(label, "CLOSED") == 0) {
-        env = (NostrEnvelope *)malloc(sizeof(NostrClosedEnvelope));
+        env = (NostrEnvelope *)calloc(1, sizeof(NostrClosedEnvelope));
         if (env) env->type = NOSTR_ENVELOPE_CLOSED;
     } else if (strcmp(label, "AUTH") == 0) {
-        env = (NostrEnvelope *)malloc(sizeof(NostrAuthEnvelope));
+        env = (NostrEnvelope *)calloc(1, sizeof(NostrAuthEnvelope));
         if (env) env->type = NOSTR_ENVELOPE_AUTH;
     } else if (strcmp(label, "REQ") == 0) {
-        env = (NostrEnvelope *)malloc(sizeof(NostrReqEnvelope));
+        env = (NostrEnvelope *)calloc(1, sizeof(NostrReqEnvelope));
         if (env) env->type = NOSTR_ENVELOPE_REQ;
     } else if (strcmp(label, "COUNT") == 0) {
-        env = (NostrEnvelope *)malloc(sizeof(NostrCountEnvelope));
+        env = (NostrEnvelope *)calloc(1, sizeof(NostrCountEnvelope));
         if (env) env->type = NOSTR_ENVELOPE_COUNT;
     }
     free(label);

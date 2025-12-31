@@ -22,20 +22,24 @@ target_include_directories(grelay PRIVATE
 
 # Ensure nostrdb storage is linked so its constructor can register the driver
 set(_NDB_VENDOR_DIR ${CMAKE_SOURCE_DIR}/third_party/nostrdb)
-if (TARGET nostrdb_storage AND EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
+if (TARGET nostrdb_storage)
   target_link_libraries(grelay PRIVATE nostrdb_storage)
-  # Ensure the vendored archives are retained and symbols resolved
-  if (APPLE)
-    target_link_options(grelay PRIVATE -Wl,-force_load,$<TARGET_FILE:nostrdb_storage>)
-    target_link_options(grelay PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
-  else()
-    # Group archives to satisfy lld with potential cyclic refs
-    target_link_options(grelay PRIVATE -Wl,--start-group)
-    target_link_libraries(grelay PRIVATE -Wl,--whole-archive $<TARGET_FILE:nostrdb_storage> ${_NDB_VENDOR_DIR}/libnostrdb.a -Wl,--no-whole-archive)
-    if (EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
-      target_link_libraries(grelay PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+  # Only fall back to vendored static archives if the in-tree 'nostrdb' target is NOT present
+  if (NOT TARGET nostrdb)
+    if (EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
+      if (APPLE)
+        target_link_options(grelay PRIVATE -Wl,-force_load,$<TARGET_FILE:nostrdb_storage>)
+        target_link_options(grelay PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
+      else()
+        # Group archives to satisfy lld with potential cyclic refs
+        target_link_options(grelay PRIVATE -Wl,--start-group)
+        target_link_libraries(grelay PRIVATE -Wl,--whole-archive $<TARGET_FILE:nostrdb_storage> ${_NDB_VENDOR_DIR}/libnostrdb.a -Wl,--no-whole-archive)
+        if (EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+          target_link_libraries(grelay PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+        endif()
+        target_link_options(grelay PRIVATE -Wl,--end-group)
+      endif()
     endif()
-    target_link_options(grelay PRIVATE -Wl,--end-group)
   endif()
 endif()
 

@@ -94,6 +94,7 @@ static int ndb_put_event(NostrStorage *st, const NostrEvent *ev) {
   /* nostrdb returns nonzero on success */
   return rc ? 0 : -EIO;
 }
+
 static int ndb_delete_event(NostrStorage *st, const char *id_hex) {
   (void)st; (void)id_hex; return -ENOTSUP;
 }

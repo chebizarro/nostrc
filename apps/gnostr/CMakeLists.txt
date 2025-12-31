@@ -70,9 +70,9 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${CMAKE_SOURCE_DIR}/nips/nip19/include)
 # Compile the GI wrapper implementation into the app (no separate gobject lib target)
 target_sources(${APP_CLIENT_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c)
-# Link core libs: libnostr + JSON, plus NIP-19 and NIP-46 core used by the app
-if (TARGET nostr)
-  target_link_libraries(${APP_CLIENT_BIN} PRIVATE libnostr nostr_json)
+# Link JSON shim which (privately) links libnostr; avoid linking libnostr twice to prevent ODR/ASan issues
+if (TARGET nostr_json)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_json)
 endif()
 if (TARGET nip19)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nip19)
@@ -129,8 +129,8 @@ target_include_directories(gnostr-live-log PRIVATE
 target_sources(gnostr-live-log PRIVATE
   ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/storage_ndb.c)
-if (TARGET nostr)
-  target_link_libraries(gnostr-live-log PRIVATE libnostr nostr_json)
+if (TARGET nostr_json)
+  target_link_libraries(gnostr-live-log PRIVATE nostr_json)
 endif()
 if (TARGET nip19)
   target_link_libraries(gnostr-live-log PRIVATE nip19)
