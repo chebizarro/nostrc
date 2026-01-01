@@ -74,3 +74,46 @@
   border-radius: 8px;
   background: alpha(@theme_bg_color, 0.5);
 }
+
+/* Open Graph Preview Card Styles */
+.og-preview {
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
+
+.og-preview-card {
+  border-radius: 12px;
+  background: alpha(@theme_bg_color, 0.6);
+  border: 1px solid alpha(@theme_fg_color, 0.1);
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 200ms ease;
+}
+
+.og-preview-card:hover {
+  background: alpha(@theme_bg_color, 0.8);
+  border-color: alpha(@theme_fg_color, 0.15);
+  box-shadow: 0 4px 12px alpha(@theme_fg_color, 0.08);
+}
+
+.og-preview-image {
+  background: alpha(@theme_bg_color, 0.3);
+}
+
+.og-preview-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: @theme_fg_color;
+}
+
+.og-preview-description {
+  font-size: 13px;
+  color: alpha(@theme_fg_color, 0.7);
+  line-height: 1.4;
+}
+
+.og-preview-site {
+  font-size: 12px;
+  color: alpha(@theme_fg_color, 0.5);
+  margin-top: 4px;
+}

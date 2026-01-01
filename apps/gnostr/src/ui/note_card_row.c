@@ -1,4 +1,5 @@
 #include "note_card_row.h"
+#include "og-preview-widget.h"
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
@@ -23,6 +24,7 @@ struct _GnostrNoteCardRow {
   GtkWidget *content_label;
   GtkWidget *media_box;
   GtkWidget *embed_box;
+  GtkWidget *og_preview_container;
   GtkWidget *actions_box;
   // state
   char *avatar_url;
@@ -33,6 +35,7 @@ struct _GnostrNoteCardRow {
   char *id_hex;
   char *root_id;
   char *pubkey_hex;
+  OgPreviewWidget *og_preview;
 };
 
 G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
@@ -51,10 +54,11 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
 #ifdef HAVE_SOUP3
   if (self->avatar_cancellable) { g_cancellable_cancel(self->avatar_cancellable); g_clear_object(&self->avatar_cancellable); }
 #endif
+  g_clear_object(&self->og_preview);
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_CARD_ROW);
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
   self->lbl_display = NULL; self->lbl_handle = NULL; self->lbl_timestamp = NULL; self->content_label = NULL;
-  self->media_box = NULL; self->embed_box = NULL; self->actions_box = NULL;
+  self->media_box = NULL; self->embed_box = NULL; self->og_preview_container = NULL; self->actions_box = NULL;
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->dispose(obj);
 }
 
@@ -120,6 +124,7 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, content_label);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, media_box);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, embed_box);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, og_preview_container);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, actions_box);
 
   signals[SIGNAL_OPEN_NOSTR_TARGET] = g_signal_new("open-nostr-target",
@@ -321,6 +326,46 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
       if (GTK_IS_FRAME(self->embed_box)) gtk_frame_set_child(GTK_FRAME(self->embed_box), sk);
       gtk_widget_set_visible(self->embed_box, TRUE);
       g_signal_emit(self, signals[SIGNAL_REQUEST_EMBED], 0, found);
+    }
+  }
+
+  /* Detect first HTTP(S) URL and create OG preview */
+  if (self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
+    /* Clear any existing preview */
+    if (self->og_preview) {
+      gtk_box_remove(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
+      self->og_preview = NULL;
+    }
+    gtk_widget_set_visible(self->og_preview_container, FALSE);
+    
+    const char *p = content;
+    const char *url_start = NULL;
+    if (p && *p) {
+      /* Find first HTTP(S) URL */
+      gchar **tokens = g_strsplit_set(p, " \n\t", -1);
+      for (guint i = 0; tokens && tokens[i]; i++) {
+        const char *t = tokens[i];
+        if (!t || !*t) continue;
+        if (g_str_has_prefix(t, "http://") || g_str_has_prefix(t, "https://")) {
+          /* Skip media URLs */
+          if (!is_media_url(t)) {
+            url_start = t;
+            break;
+          }
+        }
+      }
+      
+      if (url_start) {
+        /* Create OG preview widget */
+        self->og_preview = og_preview_widget_new();
+        gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
+        gtk_widget_set_visible(self->og_preview_container, TRUE);
+        
+        /* Set URL to fetch metadata */
+        og_preview_widget_set_url(self->og_preview, url_start);
+      }
+      
+      if (tokens) g_strfreev(tokens);
     }
   }
 }

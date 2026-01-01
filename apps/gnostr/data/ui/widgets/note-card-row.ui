@@ -132,6 +132,14 @@
               </object>
             </child>
 
+            <!-- OG Preview container -->
+            <child>
+              <object class="GtkBox" id="og_preview_container">
+                <property name="orientation">vertical</property>
+                <property name="visible">false</property>
+              </object>
+            </child>
+
             <!-- Actions -->
             <child>
               <object class="GtkBox" id="actions_box">

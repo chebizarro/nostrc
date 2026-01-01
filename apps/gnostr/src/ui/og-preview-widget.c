@@ -1,0 +1,549 @@
+#include "og-preview-widget.h"
+#include <libsoup/soup.h>
+#include <string.h>
+#include <ctype.h>
+
+/* Open Graph metadata structure */
+typedef struct {
+  char *title;
+  char *description;
+  char *image_url;
+  char *url;
+  char *site_name;
+} OgMetadata;
+
+struct _OgPreviewWidget {
+  GtkWidget parent_instance;
+  
+  /* UI elements */
+  GtkWidget *card_box;
+  GtkWidget *image_widget;
+  GtkWidget *text_box;
+  GtkWidget *title_label;
+  GtkWidget *description_label;
+  GtkWidget *site_label;
+  GtkWidget *spinner;
+  
+  /* State */
+  char *current_url;
+  SoupSession *session;
+  GCancellable *cancellable;
+  GHashTable *cache; /* URL -> OgMetadata */
+  
+  /* Image loading */
+  GCancellable *image_cancellable;
+};
+
+G_DEFINE_TYPE(OgPreviewWidget, og_preview_widget, GTK_TYPE_WIDGET)
+
+/* Forward declarations */
+static void og_metadata_free(OgMetadata *meta);
+static void fetch_og_metadata_async(OgPreviewWidget *self, const char *url);
+static void load_image_async(OgPreviewWidget *self, const char *url);
+static OgMetadata *parse_og_metadata(const char *html, const char *url);
+static char *extract_meta_tag(const char *html, const char *property);
+static char *extract_title_tag(const char *html);
+static void update_ui_with_metadata(OgPreviewWidget *self, OgMetadata *meta);
+
+/* Utility: Free OgMetadata */
+static void og_metadata_free(OgMetadata *meta) {
+  if (!meta) return;
+  g_free(meta->title);
+  g_free(meta->description);
+  g_free(meta->image_url);
+  g_free(meta->url);
+  g_free(meta->site_name);
+  g_free(meta);
+}
+
+/* Utility: Extract domain from URL */
+static char *extract_domain(const char *url) {
+  if (!url) return NULL;
+  
+  const char *start = strstr(url, "://");
+  if (start) start += 3;
+  else start = url;
+  
+  const char *end = strchr(start, '/');
+  if (!end) end = start + strlen(start);
+  
+  return g_strndup(start, end - start);
+}
+
+/* Utility: Case-insensitive substring search */
+static const char *stristr(const char *haystack, const char *needle) {
+  if (!haystack || !needle) return NULL;
+  
+  size_t needle_len = strlen(needle);
+  for (const char *p = haystack; *p; p++) {
+    if (g_ascii_strncasecmp(p, needle, needle_len) == 0) {
+      return p;
+    }
+  }
+  return NULL;
+}
+
+/* HTML parsing: Extract meta tag content */
+static char *extract_meta_tag(const char *html, const char *property) {
+  if (!html || !property) return NULL;
+  
+  /* Build search patterns */
+  char *pattern1 = g_strdup_printf("<meta property=\"%s\"", property);
+  char *pattern2 = g_strdup_printf("<meta property='%s'", property);
+  
+  const char *meta_start = stristr(html, pattern1);
+  if (!meta_start) meta_start = stristr(html, pattern2);
+  
+  g_free(pattern1);
+  g_free(pattern2);
+  
+  if (!meta_start) return NULL;
+  
+  /* Find content attribute */
+  const char *content_start = stristr(meta_start, "content=");
+  if (!content_start) return NULL;
+  
+  content_start += 8; /* Skip "content=" */
+  
+  /* Determine quote type */
+  char quote = *content_start;
+  if (quote != '"' && quote != '\'') return NULL;
+  
+  content_start++; /* Skip opening quote */
+  
+  /* Find closing quote */
+  const char *content_end = strchr(content_start, quote);
+  if (!content_end) return NULL;
+  
+  return g_strndup(content_start, content_end - content_start);
+}
+
+/* HTML parsing: Extract <title> tag */
+static char *extract_title_tag(const char *html) {
+  if (!html) return NULL;
+  
+  const char *title_start = stristr(html, "<title>");
+  if (!title_start) return NULL;
+  
+  title_start += 7; /* Skip "<title>" */
+  
+  const char *title_end = stristr(title_start, "</title>");
+  if (!title_end) return NULL;
+  
+  /* Trim whitespace */
+  while (title_start < title_end && g_ascii_isspace(*title_start)) title_start++;
+  while (title_end > title_start && g_ascii_isspace(*(title_end - 1))) title_end--;
+  
+  return g_strndup(title_start, title_end - title_start);
+}
+
+/* Parse Open Graph metadata from HTML */
+static OgMetadata *parse_og_metadata(const char *html, const char *url) {
+  if (!html) return NULL;
+  
+  OgMetadata *meta = g_new0(OgMetadata, 1);
+  
+  /* Extract OG tags */
+  meta->title = extract_meta_tag(html, "og:title");
+  meta->description = extract_meta_tag(html, "og:description");
+  meta->image_url = extract_meta_tag(html, "og:image");
+  meta->url = extract_meta_tag(html, "og:url");
+  meta->site_name = extract_meta_tag(html, "og:site_name");
+  
+  /* Fallbacks */
+  if (!meta->title) {
+    meta->title = extract_title_tag(html);
+  }
+  
+  if (!meta->description) {
+    meta->description = extract_meta_tag(html, "description");
+  }
+  
+  if (!meta->url) {
+    meta->url = g_strdup(url);
+  }
+  
+  if (!meta->site_name) {
+    meta->site_name = extract_domain(url);
+  }
+  
+  /* Validate we have at least a title */
+  if (!meta->title || !*meta->title) {
+    og_metadata_free(meta);
+    return NULL;
+  }
+  
+  return meta;
+}
+
+/* Async image loading callback */
+static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
+  SoupSession *session = SOUP_SESSION(source);
+  OgPreviewWidget *self = user_data;
+  GError *error = NULL;
+  
+  GBytes *bytes = soup_session_send_and_read_finish(session, res, &error);
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_debug("OG: Failed to load image: %s", error->message);
+    }
+    g_error_free(error);
+    return;
+  }
+  
+  if (!bytes || g_bytes_get_size(bytes) == 0) {
+    if (bytes) g_bytes_unref(bytes);
+    return;
+  }
+  
+  /* Create texture from bytes */
+  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
+  g_bytes_unref(bytes);
+  
+  if (error) {
+    g_debug("OG: Failed to create texture: %s", error->message);
+    g_error_free(error);
+    return;
+  }
+  
+  /* Update UI */
+  if (OG_IS_PREVIEW_WIDGET(self) && GTK_IS_PICTURE(self->image_widget)) {
+    gtk_picture_set_paintable(GTK_PICTURE(self->image_widget), GDK_PAINTABLE(texture));
+    gtk_widget_set_visible(self->image_widget, TRUE);
+  }
+  
+  g_object_unref(texture);
+}
+
+/* Load image asynchronously */
+static void load_image_async(OgPreviewWidget *self, const char *url) {
+  if (!url || !*url) return;
+  
+  /* Cancel previous load */
+  if (self->image_cancellable) {
+    g_cancellable_cancel(self->image_cancellable);
+    g_clear_object(&self->image_cancellable);
+  }
+  
+  self->image_cancellable = g_cancellable_new();
+  
+  SoupMessage *msg = soup_message_new("GET", url);
+  if (!msg) {
+    g_debug("OG: Invalid image URL: %s", url);
+    return;
+  }
+  
+  soup_session_send_and_read_async(
+    self->session,
+    msg,
+    G_PRIORITY_LOW,
+    self->image_cancellable,
+    on_image_loaded,
+    self
+  );
+  
+  g_object_unref(msg);
+}
+
+/* Update UI with parsed metadata */
+static void update_ui_with_metadata(OgPreviewWidget *self, OgMetadata *meta) {
+  if (!meta) {
+    gtk_widget_set_visible(self->card_box, FALSE);
+    return;
+  }
+  
+  /* Hide spinner, show card */
+  gtk_widget_set_visible(self->spinner, FALSE);
+  gtk_widget_set_visible(self->card_box, TRUE);
+  
+  /* Update labels */
+  if (meta->title) {
+    gtk_label_set_text(GTK_LABEL(self->title_label), meta->title);
+  }
+  
+  if (meta->description) {
+    gtk_label_set_text(GTK_LABEL(self->description_label), meta->description);
+    gtk_widget_set_visible(self->description_label, TRUE);
+  } else {
+    gtk_widget_set_visible(self->description_label, FALSE);
+  }
+  
+  if (meta->site_name) {
+    gtk_label_set_text(GTK_LABEL(self->site_label), meta->site_name);
+  }
+  
+  /* Load image if available */
+  if (meta->image_url && *meta->image_url) {
+    load_image_async(self, meta->image_url);
+  } else {
+    gtk_widget_set_visible(self->image_widget, FALSE);
+  }
+}
+
+/* Async HTML fetch callback */
+static void on_html_fetched(GObject *source, GAsyncResult *res, gpointer user_data) {
+  SoupSession *session = SOUP_SESSION(source);
+  OgPreviewWidget *self = user_data;
+  GError *error = NULL;
+  
+  GBytes *bytes = soup_session_send_and_read_finish(session, res, &error);
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_debug("OG: Failed to fetch URL: %s", error->message);
+    }
+    g_error_free(error);
+    gtk_widget_set_visible(self->spinner, FALSE);
+    return;
+  }
+  
+  if (!bytes || g_bytes_get_size(bytes) == 0) {
+    if (bytes) g_bytes_unref(bytes);
+    gtk_widget_set_visible(self->spinner, FALSE);
+    return;
+  }
+  
+  /* Parse HTML */
+  gsize size;
+  const char *html = g_bytes_get_data(bytes, &size);
+  
+  OgMetadata *meta = parse_og_metadata(html, self->current_url);
+  
+  /* Cache result */
+  if (meta && self->current_url) {
+    g_hash_table_insert(self->cache, g_strdup(self->current_url), meta);
+  }
+  
+  /* Update UI */
+  update_ui_with_metadata(self, meta);
+  
+  g_bytes_unref(bytes);
+}
+
+/* Fetch Open Graph metadata asynchronously */
+static void fetch_og_metadata_async(OgPreviewWidget *self, const char *url) {
+  if (!url || !*url) return;
+  
+  /* Check cache first */
+  OgMetadata *cached = g_hash_table_lookup(self->cache, url);
+  if (cached) {
+    update_ui_with_metadata(self, cached);
+    return;
+  }
+  
+  /* Cancel previous fetch */
+  if (self->cancellable) {
+    g_cancellable_cancel(self->cancellable);
+    g_clear_object(&self->cancellable);
+  }
+  
+  self->cancellable = g_cancellable_new();
+  
+  /* Show loading state */
+  gtk_widget_set_visible(self->card_box, FALSE);
+  gtk_widget_set_visible(self->spinner, TRUE);
+  
+  /* Create request */
+  SoupMessage *msg = soup_message_new("GET", url);
+  if (!msg) {
+    g_debug("OG: Invalid URL: %s", url);
+    gtk_widget_set_visible(self->spinner, FALSE);
+    return;
+  }
+  
+  /* Set timeout and size limits */
+  soup_message_set_priority(msg, SOUP_MESSAGE_PRIORITY_LOW);
+  
+  /* Start async fetch */
+  soup_session_send_and_read_async(
+    self->session,
+    msg,
+    G_PRIORITY_LOW,
+    self->cancellable,
+    on_html_fetched,
+    self
+  );
+  
+  g_object_unref(msg);
+}
+
+/* Widget lifecycle */
+static void og_preview_widget_dispose(GObject *object) {
+  OgPreviewWidget *self = OG_PREVIEW_WIDGET(object);
+  
+  /* Cancel any in-flight requests */
+  if (self->cancellable) {
+    g_cancellable_cancel(self->cancellable);
+    g_clear_object(&self->cancellable);
+  }
+  
+  if (self->image_cancellable) {
+    g_cancellable_cancel(self->image_cancellable);
+    g_clear_object(&self->image_cancellable);
+  }
+  
+  g_clear_object(&self->session);
+  g_clear_pointer(&self->cache, g_hash_table_unref);
+  
+  /* Unparent children */
+  if (self->card_box) {
+    gtk_widget_unparent(self->card_box);
+    self->card_box = NULL;
+  }
+  
+  if (self->spinner) {
+    gtk_widget_unparent(self->spinner);
+    self->spinner = NULL;
+  }
+  
+  G_OBJECT_CLASS(og_preview_widget_parent_class)->dispose(object);
+}
+
+static void og_preview_widget_finalize(GObject *object) {
+  OgPreviewWidget *self = OG_PREVIEW_WIDGET(object);
+  
+  g_free(self->current_url);
+  
+  G_OBJECT_CLASS(og_preview_widget_parent_class)->finalize(object);
+}
+
+static void og_preview_widget_class_init(OgPreviewWidgetClass *klass) {
+  GObjectClass *object_class = G_OBJECT_CLASS(klass);
+  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
+  
+  object_class->dispose = og_preview_widget_dispose;
+  object_class->finalize = og_preview_widget_finalize;
+  
+  gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BOX_LAYOUT);
+  gtk_widget_class_set_css_name(widget_class, "og-preview");
+}
+
+static void on_card_clicked(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data) {
+  (void)gesture;
+  (void)n_press;
+  (void)x;
+  (void)y;
+  
+  OgPreviewWidget *self = user_data;
+  
+  if (self->current_url && *self->current_url) {
+    GtkUriLauncher *launcher = gtk_uri_launcher_new(self->current_url);
+    gtk_uri_launcher_launch(launcher, NULL, NULL, NULL, NULL);
+    g_object_unref(launcher);
+  }
+}
+
+static void og_preview_widget_init(OgPreviewWidget *self) {
+  /* Initialize session and cache */
+  self->session = soup_session_new();
+  soup_session_set_timeout(self->session, 10); /* 10 second timeout */
+  
+  self->cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)og_metadata_free);
+  
+  /* Create spinner */
+  self->spinner = gtk_spinner_new();
+  gtk_spinner_start(GTK_SPINNER(self->spinner));
+  gtk_widget_set_visible(self->spinner, FALSE);
+  gtk_widget_set_parent(self->spinner, GTK_WIDGET(self));
+  
+  /* Create card container */
+  self->card_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+  gtk_widget_add_css_class(self->card_box, "og-preview-card");
+  gtk_widget_set_visible(self->card_box, FALSE);
+  gtk_widget_set_parent(self->card_box, GTK_WIDGET(self));
+  
+  /* Create image */
+  self->image_widget = gtk_picture_new();
+  gtk_widget_add_css_class(self->image_widget, "og-preview-image");
+  gtk_widget_set_size_request(self->image_widget, -1, 200);
+  gtk_picture_set_content_fit(GTK_PICTURE(self->image_widget), GTK_CONTENT_FIT_COVER);
+  gtk_widget_set_visible(self->image_widget, FALSE);
+  gtk_box_append(GTK_BOX(self->card_box), self->image_widget);
+  
+  /* Create text container */
+  self->text_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+  gtk_widget_set_margin_start(self->text_box, 12);
+  gtk_widget_set_margin_end(self->text_box, 12);
+  gtk_widget_set_margin_top(self->text_box, 8);
+  gtk_widget_set_margin_bottom(self->text_box, 8);
+  gtk_box_append(GTK_BOX(self->card_box), self->text_box);
+  
+  /* Create title */
+  self->title_label = gtk_label_new("");
+  gtk_label_set_xalign(GTK_LABEL(self->title_label), 0.0);
+  gtk_label_set_wrap(GTK_LABEL(self->title_label), TRUE);
+  gtk_label_set_wrap_mode(GTK_LABEL(self->title_label), PANGO_WRAP_WORD_CHAR);
+  gtk_label_set_max_width_chars(GTK_LABEL(self->title_label), 50);
+  gtk_widget_add_css_class(self->title_label, "og-preview-title");
+  gtk_box_append(GTK_BOX(self->text_box), self->title_label);
+  
+  /* Create description */
+  self->description_label = gtk_label_new("");
+  gtk_label_set_xalign(GTK_LABEL(self->description_label), 0.0);
+  gtk_label_set_wrap(GTK_LABEL(self->description_label), TRUE);
+  gtk_label_set_wrap_mode(GTK_LABEL(self->description_label), PANGO_WRAP_WORD_CHAR);
+  gtk_label_set_max_width_chars(GTK_LABEL(self->description_label), 50);
+  gtk_label_set_lines(GTK_LABEL(self->description_label), 2);
+  gtk_label_set_ellipsize(GTK_LABEL(self->description_label), PANGO_ELLIPSIZE_END);
+  gtk_widget_add_css_class(self->description_label, "og-preview-description");
+  gtk_box_append(GTK_BOX(self->text_box), self->description_label);
+  
+  /* Create site name */
+  self->site_label = gtk_label_new("");
+  gtk_label_set_xalign(GTK_LABEL(self->site_label), 0.0);
+  gtk_widget_add_css_class(self->site_label, "og-preview-site");
+  gtk_box_append(GTK_BOX(self->text_box), self->site_label);
+  
+  /* Make card clickable */
+  GtkGesture *click = gtk_gesture_click_new();
+  g_signal_connect(click, "pressed", G_CALLBACK(on_card_clicked), self);
+  gtk_widget_add_controller(self->card_box, GTK_EVENT_CONTROLLER(click));
+}
+
+/* Public API */
+OgPreviewWidget *og_preview_widget_new(void) {
+  return g_object_new(OG_TYPE_PREVIEW_WIDGET, NULL);
+}
+
+void og_preview_widget_set_url(OgPreviewWidget *self, const char *url) {
+  g_return_if_fail(OG_IS_PREVIEW_WIDGET(self));
+  
+  if (!url || !*url) {
+    og_preview_widget_clear(self);
+    return;
+  }
+  
+  /* Check if same URL */
+  if (self->current_url && strcmp(self->current_url, url) == 0) {
+    return;
+  }
+  
+  /* Update current URL */
+  g_free(self->current_url);
+  self->current_url = g_strdup(url);
+  
+  /* Fetch metadata */
+  fetch_og_metadata_async(self, url);
+}
+
+void og_preview_widget_clear(OgPreviewWidget *self) {
+  g_return_if_fail(OG_IS_PREVIEW_WIDGET(self));
+  
+  /* Cancel requests */
+  if (self->cancellable) {
+    g_cancellable_cancel(self->cancellable);
+    g_clear_object(&self->cancellable);
+  }
+  
+  if (self->image_cancellable) {
+    g_cancellable_cancel(self->image_cancellable);
+    g_clear_object(&self->image_cancellable);
+  }
+  
+  /* Clear URL */
+  g_free(self->current_url);
+  self->current_url = NULL;
+  
+  /* Hide UI */
+  gtk_widget_set_visible(self->spinner, FALSE);
+  gtk_widget_set_visible(self->card_box, FALSE);
+}
