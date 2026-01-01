@@ -229,9 +229,9 @@ if (GNOSTR_ENABLE_GOA)
   # Install DBus service activation + desktop/appdata if present
   install(FILES gnome/dbus/com.nostr.Signer.service
           DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/services)
-  install(FILES data/org.nostr.Signer.desktop
+  install(FILES apps/gnostr-signer/data/org.nostr.Signer.desktop
           DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-  install(FILES data/org.nostr.Signer.appdata.xml
+  install(FILES apps/gnostr-signer/data/org.nostr.Signer.appdata.xml
           DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
 endif()
 

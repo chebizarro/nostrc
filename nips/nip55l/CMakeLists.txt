@@ -56,7 +56,7 @@ if (GIO_FOUND)
     message(FATAL_ERROR "gdbus-codegen not found; required to build NIP-55L GLib service/client")
   endif()
 
-  set(DBUS_XML ${CMAKE_CURRENT_SOURCE_DIR}/dbus/com.nostr.Signer.xml)
+  set(DBUS_XML ${CMAKE_CURRENT_SOURCE_DIR}/dbus/org.nostr.Signer.xml)
   set(GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
   file(MAKE_DIRECTORY ${GENERATED_DIR})
 
