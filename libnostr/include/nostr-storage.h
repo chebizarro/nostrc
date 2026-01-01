@@ -20,6 +20,7 @@ typedef struct {
 
   /* Write path */
   int  (*put_event)(NostrStorage*, const NostrEvent *ev);
+  int  (*ingest_ldjson)(NostrStorage*, const char *ldjson, size_t len);
   int  (*delete_event)(NostrStorage*, const char *id_hex);
 
   /* Read path (iterator-based) */

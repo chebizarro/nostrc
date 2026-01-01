@@ -1,5 +1,13 @@
 #include "gnostr-timeline-view.h"
 #include "gnostr-main-window.h"
+#include "note_card_row.h"
+#include "../storage_ndb.h"
+#include "nostr-event.h"
+#include "nostr-json.h"
+#include "nostr/nip19/nip19.h"
+#include "nostr_simple_pool.h"
+#include "../util/relays.h"
+#include "nostr-filter.h"
 #include <string.h>
 #include <time.h>
 #include <errno.h>
@@ -10,12 +18,443 @@
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-timeline-view.ui"
 
+/* Forward decl: NoteCardRow embed handler */
+static void on_row_request_embed(GnostrNoteCardRow *row, const char *target, gpointer user_data);
+
+/* Weak ref wrapper used by async completions */
+typedef struct { GWeakRef ref; } RowRef;
+
+/* Inflight dedup entry: shared cancellable and attached rows waiting for result */
+typedef struct {
+  GCancellable *canc;   /* owned */
+  GPtrArray    *rows;   /* RowRef* with free func */
+} Inflight;
+
+static void rowref_free(gpointer p) { RowRef *rr = (RowRef*)p; if (!rr) return; g_weak_ref_clear(&rr->ref); g_free(rr); }
+static void inflight_free(gpointer p) {
+  Inflight *in = (Inflight*)p; if (!in) return;
+  if (in->canc) g_object_unref(in->canc);
+  if (in->rows) g_ptr_array_free(in->rows, TRUE);
+  g_free(in);
+}
+
+/* Global inflight map: key -> Inflight* */
+static GHashTable *s_inflight = NULL;
+static void ensure_inflight(void) {
+  if (!s_inflight) s_inflight = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, inflight_free);
+}
+
+static void free_rowref(RowRef *rr) {
+  if (!rr) return;
+  g_weak_ref_clear(&rr->ref);
+  g_free(rr);
+}
+
+/* Build URL array preferring pointer-provided relay hints, followed by config relays; removes duplicates. */
+static void build_urls_with_hints(const char *const *hints, size_t hints_count, const char ***out_urls, size_t *out_count) {
+  if (out_urls) *out_urls = NULL; if (out_count) *out_count = 0;
+  GHashTable *set = g_hash_table_new(g_str_hash, g_str_equal);
+  GPtrArray *arr = g_ptr_array_new_with_free_func(g_free);
+  /* Add hints first */
+  for (size_t i = 0; hints && i < hints_count; i++) {
+    const char *u = hints[i]; if (!u || !*u) continue;
+    if (g_hash_table_add(set, (gpointer)u)) g_ptr_array_add(arr, g_strdup(u));
+  }
+  /* Add config relays */
+  GPtrArray *cfg = g_ptr_array_new_with_free_func(g_free);
+  gnostr_load_relays_into(cfg);
+  for (guint i = 0; i < cfg->len; i++) {
+    const char *u = (const char*)g_ptr_array_index(cfg, i);
+    if (!u || !*u) continue;
+    if (g_hash_table_contains(set, u)) continue;
+    g_hash_table_add(set, (gpointer)u);
+    g_ptr_array_add(arr, g_strdup(u));
+  }
+  g_ptr_array_free(cfg, TRUE);
+  g_hash_table_destroy(set);
+  if (out_urls && out_count) {
+    size_t n = arr->len;
+    const char **v = g_new0(const char*, n);
+    for (size_t i=0;i<n;i++) v[i] = (const char*)g_ptr_array_index(arr, i);
+    *out_urls = v; *out_count = n;
+  }
+  /* Keep arr strings alive by not freeing them; caller frees out_urls vector only */
+  g_ptr_array_free(arr, FALSE);
+}
+
+/* Owned variant: duplicates strings and provides a free helper */
+static void build_urls_with_hints_owned(const char *const *hints, size_t hints_count, char ***out_urls, size_t *out_count) {
+  if (out_urls) *out_urls = NULL; if (out_count) *out_count = 0;
+  const char **tmp = NULL; size_t n = 0;
+  build_urls_with_hints(hints, hints_count, &tmp, &n);
+  if (!tmp || n == 0) { if (tmp) g_free((gpointer)tmp); return; }
+  char **owned = g_new0(char*, n);
+  for (size_t i = 0; i < n; i++) owned[i] = g_strdup(tmp[i]);
+  if (out_urls) *out_urls = owned; if (out_count) *out_count = n;
+  g_free((gpointer)tmp);
+}
+
+static void free_urls_owned(char **urls, size_t count) {
+  if (!urls) return;
+  for (size_t i = 0; i < count; i++) g_free(urls[i]);
+  g_free(urls);
+}
+
+/* Small TTL cache for embed results */
+typedef struct { char *json; time_t when; gboolean negative; } EmbedCacheEntry;
+static GHashTable *s_embed_cache = NULL;
+static void embed_cache_free(gpointer p) { EmbedCacheEntry *e = (EmbedCacheEntry*)p; if (!e) return; g_free(e->json); g_free(e); }
+static void ensure_embed_cache(void) { if (!s_embed_cache) s_embed_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, embed_cache_free); }
+static EmbedCacheEntry *embed_cache_get(const char *key, int ttl_sec) {
+  ensure_embed_cache(); if (!key) return NULL; EmbedCacheEntry *e = (EmbedCacheEntry*)g_hash_table_lookup(s_embed_cache, key); if (!e) return NULL; time_t now = time(NULL); if (ttl_sec > 0 && (now - e->when) > ttl_sec) return NULL; return e; }
+static void embed_cache_put_json(const char *key, const char *json) { ensure_embed_cache(); if (!key) return; EmbedCacheEntry *e = g_new0(EmbedCacheEntry,1); e->json = json ? g_strdup(json) : NULL; e->when = time(NULL); e->negative = json ? FALSE : TRUE; g_hash_table_replace(s_embed_cache, g_strdup(key), e); }
+static void embed_cache_put_negative(const char *key) { embed_cache_put_json(key, NULL); }
+
+/* Shared async completion (multi): look up inflight by key, update all attached rows, then remove entry */
+typedef struct { char *key; } InflightCtx;
+
+static void on_query_single_done_multi(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  InflightCtx *ctx = (InflightCtx*)user_data;
+  GError *err = NULL;
+  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+  ensure_inflight();
+  Inflight *in = ctx && ctx->key ? (Inflight*)g_hash_table_lookup(s_inflight, ctx->key) : NULL;
+  /* Prepare parsed view if we got a result */
+  char meta[128] = {0}; char snipbuf[281] = {0}; const char *title = "Note"; gboolean have = FALSE;
+  if (results && results->len > 0) {
+    const char *json = (const char*)g_ptr_array_index(results, 0);
+    if (json) {
+      /* cache positive */
+      if (ctx && ctx->key) embed_cache_put_json(ctx->key, json);
+      storage_ndb_ingest_event_json(json, NULL);
+      NostrEvent *evt = nostr_event_new();
+      if (evt && nostr_event_deserialize(evt, json) == 0) {
+        const char *content = nostr_event_get_content(evt);
+        const char *author_hex = nostr_event_get_pubkey(evt);
+        gint64 created_at = (gint64)nostr_event_get_created_at(evt);
+        char author_short[17] = {0};
+        if (author_hex && strlen(author_hex) >= 8) snprintf(author_short, sizeof(author_short), "%.*s…", 8, author_hex);
+        char timebuf[64] = {0};
+        if (created_at > 0) { time_t t = (time_t)created_at; struct tm tmv; localtime_r(&t, &tmv); strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M", &tmv); }
+        if (author_short[0] && timebuf[0]) snprintf(meta, sizeof(meta), "%s · %s", author_short, timebuf);
+        else if (author_short[0]) g_strlcpy(meta, author_short, sizeof(meta));
+        else if (timebuf[0]) g_strlcpy(meta, timebuf, sizeof(meta));
+        if (content && *content) {
+          size_t n = 0; char prev_space = 0; for (const char *p = content; *p && n < sizeof(snipbuf)-1; p++) { char c = *p; if (c=='\n'||c=='\r'||c=='\t') c=' '; if (g_ascii_isspace(c)) { c=' '; if (prev_space) continue; prev_space=1; } else prev_space=0; snipbuf[n++]=c; } snipbuf[n]='\0';
+        } else { g_strlcpy(snipbuf, "(empty)", sizeof(snipbuf)); }
+        have = TRUE;
+      }
+      if (evt) nostr_event_free(evt);
+    }
+  }
+  /* Update all rows attached to this inflight */
+  if (in && in->rows) {
+    for (guint i = 0; i < in->rows->len; i++) {
+      RowRef *rr = (RowRef*)g_ptr_array_index(in->rows, i);
+      GnostrNoteCardRow *r = rr ? GNOSTR_NOTE_CARD_ROW(g_weak_ref_get(&rr->ref)) : NULL;
+      if (!GNOSTR_IS_NOTE_CARD_ROW(r)) { if (r) g_object_unref(r); continue; }
+      if (have) gnostr_note_card_row_set_embed_rich(r, title, meta, snipbuf);
+      else gnostr_note_card_row_set_embed(r, "Note", "Not found on selected relays");
+      g_object_unref(r);
+    }
+  }
+  if (results) g_ptr_array_unref(results);
+  if (err) g_clear_error(&err);
+  if (!have && ctx && ctx->key) {
+    /* cache negative if nothing found */
+    embed_cache_put_negative(ctx->key);
+  }
+  /* Remove and free inflight entry */
+  if (ctx && ctx->key) g_hash_table_remove(s_inflight, ctx->key);
+  if (ctx) { g_free(ctx->key); g_free(ctx); }
+}
+
 /* ---- Avatar metrics ----------------------------------------------------- */
 static GnostrAvatarMetrics s_avatar_metrics = {0};
 
 void gnostr_avatar_metrics_get(GnostrAvatarMetrics *out) {
   if (!out) return;
   *out = s_avatar_metrics;
+}
+
+/* ---- Embed helpers ------------------------------------------------------- */
+static gboolean hex32_from_string(const char *hex, unsigned char out[32]) {
+  if (!hex) return FALSE;
+  size_t len = strlen(hex);
+  if (len != 64) return FALSE;
+  for (size_t i = 0; i < 32; i++) {
+    char byte_str[3] = { hex[2*i], hex[2*i+1], 0 };
+    char *end = NULL; long v = strtol(byte_str, &end, 16);
+    if (!end || *end) return FALSE;
+    out[i] = (unsigned char)v;
+  }
+  return TRUE;
+}
+
+/* Remove a row from all inflight waits; cancel any request that becomes unused */
+static void inflight_detach_row(GtkWidget *row) {
+  ensure_inflight();
+  if (!s_inflight) return;
+  GHashTableIter it; gpointer k, v; g_hash_table_iter_init(&it, s_inflight);
+  while (g_hash_table_iter_next(&it, &k, &v)) {
+    Inflight *in = (Inflight*)v; if (!in || !in->rows) continue;
+    guint write = 0; for (guint i = 0; i < in->rows->len; i++) {
+      RowRef *rr = (RowRef*)g_ptr_array_index(in->rows, i);
+      GnostrNoteCardRow *r = rr ? GNOSTR_NOTE_CARD_ROW(g_weak_ref_get(&rr->ref)) : NULL;
+      gboolean keep = TRUE;
+      if (!GNOSTR_IS_NOTE_CARD_ROW(r) || GTK_WIDGET(r) == row) keep = FALSE;
+      if (r) g_object_unref(r);
+      if (keep) {
+        g_ptr_array_index(in->rows, write++) = rr;
+      } else {
+        rowref_free(rr);
+      }
+    }
+    in->rows->len = write;
+    if (write == 0 && in->canc) g_cancellable_cancel(in->canc);
+  }
+}
+
+static char *build_key_for_note_hex(const char *idhex) { return g_strdup_printf("id:%s", idhex ? idhex : ""); }
+static char *build_key_for_naddr(const NostrEntityPointer *a) { return g_strdup_printf("a:%d:%s:%s", a ? a->kind : 0, a && a->public_key ? a->public_key : "", a && a->identifier ? a->identifier : ""); }
+
+/* Start or attach to an inflight request */
+static void start_or_attach_request(const char *key, const char **urls, size_t url_count, NostrFilter *f, GnostrNoteCardRow *row) {
+  ensure_inflight();
+  Inflight *in = (Inflight*)g_hash_table_lookup(s_inflight, key);
+  if (!in) {
+    in = g_new0(Inflight, 1);
+    in->canc = g_cancellable_new();
+    in->rows = g_ptr_array_new_with_free_func(rowref_free);
+    g_hash_table_insert(s_inflight, g_strdup(key), in);
+    /* Start the network request */
+    static GnostrSimplePool *s_pool = NULL; if (!s_pool) s_pool = gnostr_simple_pool_new();
+    InflightCtx *ctx = g_new0(InflightCtx, 1); ctx->key = g_strdup(key);
+    gnostr_simple_pool_query_single_async(s_pool, urls, url_count, f, in->canc, on_query_single_done_multi, ctx);
+  }
+  /* Attach row */
+  RowRef *rr = g_new0(RowRef, 1); g_weak_ref_init(&rr->ref, row);
+  g_ptr_array_add(in->rows, rr);
+}
+
+static void on_row_request_embed(GnostrNoteCardRow *row, const char *target, gpointer user_data) {
+  (void)user_data;
+  if (!GNOSTR_IS_NOTE_CARD_ROW(row) || !target || !*target) return;
+  /* Normalize nostr: URIs */
+  const char *ref = target;
+  if (g_str_has_prefix(ref, "nostr:")) ref = target + 6;
+
+  /* Parse bech32 pointer */
+  NostrPointer *ptr = NULL;
+  if (nostr_pointer_parse(ref, &ptr) != 0 || !ptr) {
+    /* Maybe it's a bare note1 (bech32) without tlv pointer */
+    unsigned char id32[32];
+    if (nostr_nip19_decode_note(ref, id32) == 0) {
+      /* Query local store */
+      void *txn = NULL; if (storage_ndb_begin_query(&txn) == 0 && txn) {
+        char *json = NULL; int jlen = 0;
+        if (storage_ndb_get_note_by_id(txn, id32, &json, &jlen) == 0 && json) {
+          NostrEvent *evt = nostr_event_new();
+          if (evt && nostr_event_deserialize(evt, json) == 0) {
+            const char *content = nostr_event_get_content(evt);
+            if (content && *content) {
+              /* Simple title/snippet */
+              char title[64]; g_strlcpy(title, content, sizeof(title));
+              gnostr_note_card_row_set_embed(row, title, content);
+            } else {
+              gnostr_note_card_row_set_embed(row, "Note", "(empty)");
+            }
+          }
+          if (evt) nostr_event_free(evt);
+          g_free(json);
+        } else {
+          gnostr_note_card_row_set_embed(row, "Note", "Not found in local cache (fetching…)");
+        }
+        storage_ndb_end_query(txn);
+      }
+      /* Kick off relay fetch for this note id (dedup + cancellable) */
+      {
+        /* Build filter by id */
+        NostrFilter *f = nostr_filter_new();
+        char idhex[65];
+        for (int i=0;i<32;i++) sprintf(&idhex[i*2], "%02x", id32[i]);
+        idhex[64] = '\0';
+        const char *ids[1] = { idhex };
+        nostr_filter_set_ids(f, ids, 1);
+        /* Cache pre-check */
+        g_autofree char *key = build_key_for_note_hex(idhex);
+        EmbedCacheEntry *ce = embed_cache_get(key, 60);
+        if (ce) {
+          if (!ce->negative && ce->json) {
+            NostrEvent *evt = nostr_event_new();
+            if (evt && nostr_event_deserialize(evt, ce->json) == 0) {
+              const char *content = nostr_event_get_content(evt);
+              const char *author_hex = nostr_event_get_pubkey(evt);
+              gint64 created_at = (gint64)nostr_event_get_created_at(evt);
+              char meta[128] = {0}; char author_short[17] = {0}; char timebuf[64] = {0};
+              if (author_hex && strlen(author_hex) >= 8) snprintf(author_short, sizeof(author_short), "%.*s…", 8, author_hex);
+              if (created_at > 0) { time_t t=(time_t)created_at; struct tm tmv; localtime_r(&t,&tmv); strftime(timebuf,sizeof(timebuf), "%Y-%m-%d %H:%M", &tmv); }
+              if (author_short[0] && timebuf[0]) snprintf(meta, sizeof(meta), "%s · %s", author_short, timebuf);
+              else if (author_short[0]) g_strlcpy(meta, author_short, sizeof(meta));
+              else if (timebuf[0]) g_strlcpy(meta, timebuf, sizeof(meta));
+              char snipbuf[281]; if (content && *content) { size_t n=0; char ps=0; for (const char *p=content; *p && n<280; p++){ char c=*p; if (c=='\n'||c=='\r'||c=='\t') c=' '; if (g_ascii_isspace(c)){ c=' '; if (ps) continue; ps=1; } else ps=0; snipbuf[n++]=c; } snipbuf[n]='\0'; } else { g_strlcpy(snipbuf, "(empty)", sizeof(snipbuf)); }
+              gnostr_note_card_row_set_embed_rich(row, "Note", meta, snipbuf);
+            }
+            if (evt) nostr_event_free(evt);
+            nostr_filter_free(f);
+            goto done_note_fetch;
+          } else {
+            gnostr_note_card_row_set_embed(row, "Note", "Not found on selected relays");
+            nostr_filter_free(f);
+            goto done_note_fetch;
+          }
+        }
+        /* Load relay URLs (owned) */
+        char **urls = NULL; size_t url_count = 0;
+        build_urls_with_hints_owned(NULL, 0, &urls, &url_count);
+        if (url_count > 0 && urls) {
+          start_or_attach_request(key, (const char**)urls, url_count, f, row);
+        }
+        free_urls_owned(urls, url_count);
+        nostr_filter_free(f);
+done_note_fetch:
+        ;
+      }
+    } else {
+      gnostr_note_card_row_set_embed(row, "Reference", ref);
+    }
+    return;
+  }
+
+  /* Pointer OK: handle nevent/naddr */
+  if (ptr->kind == NOSTR_PTR_NEVENT && ptr->u.nevent && ptr->u.nevent->id) {
+    unsigned char id32[32];
+    if (hex32_from_string(ptr->u.nevent->id, id32)) {
+      void *txn = NULL; if (storage_ndb_begin_query(&txn) == 0 && txn) {
+        char *json = NULL; int jlen = 0;
+        if (storage_ndb_get_note_by_id(txn, id32, &json, &jlen) == 0 && json) {
+          NostrEvent *evt = nostr_event_new();
+          if (evt && nostr_event_deserialize(evt, json) == 0) {
+            const char *content = nostr_event_get_content(evt);
+            if (content && *content) {
+              char title[64]; g_strlcpy(title, content, sizeof(title));
+              gnostr_note_card_row_set_embed(row, title, content);
+            } else {
+              gnostr_note_card_row_set_embed(row, "Note", "(empty)");
+            }
+          }
+          if (evt) nostr_event_free(evt);
+          g_free(json);
+        } else {
+          gnostr_note_card_row_set_embed(row, "Note", "Not found in local cache (fetching…)");
+        }
+        storage_ndb_end_query(txn);
+      }
+      /* Kick off relay fetch using id hex from pointer (dedup + cancellable) */
+      {
+        NostrFilter *f = nostr_filter_new();
+        const char *ids[1] = { ptr->u.nevent->id };
+        nostr_filter_set_ids(f, ids, 1);
+        /* Cache pre-check */
+        g_autofree char *key = build_key_for_note_hex(ptr->u.nevent->id);
+        EmbedCacheEntry *ce = embed_cache_get(key, 60);
+        if (ce) {
+          if (!ce->negative && ce->json) {
+            NostrEvent *evt = nostr_event_new();
+            if (evt && nostr_event_deserialize(evt, ce->json) == 0) {
+              const char *content = nostr_event_get_content(evt);
+              const char *author_hex = nostr_event_get_pubkey(evt);
+              gint64 created_at = (gint64)nostr_event_get_created_at(evt);
+              char meta[128] = {0}; char author_short[17] = {0}; char timebuf[64] = {0};
+              if (author_hex && strlen(author_hex) >= 8) snprintf(author_short, sizeof(author_short), "%.*s…", 8, author_hex);
+              if (created_at > 0) { time_t t=(time_t)created_at; struct tm tmv; localtime_r(&t,&tmv); strftime(timebuf,sizeof(timebuf), "%Y-%m-%d %H:%M", &tmv); }
+              if (author_short[0] && timebuf[0]) snprintf(meta, sizeof(meta), "%s · %s", author_short, timebuf);
+              else if (author_short[0]) g_strlcpy(meta, author_short, sizeof(meta));
+              else if (timebuf[0]) g_strlcpy(meta, timebuf, sizeof(meta));
+              char snipbuf[281]; if (content && *content) { size_t n=0; char ps=0; for (const char *p=content; *p && n<280; p++){ char c=*p; if (c=='\n'||c=='\r'||c=='\t') c=' '; if (g_ascii_isspace(c)){ c=' '; if (ps) continue; ps=1; } else ps=0; snipbuf[n++]=c; } snipbuf[n]='\0'; } else { g_strlcpy(snipbuf, "(empty)", sizeof(snipbuf)); }
+              gnostr_note_card_row_set_embed_rich(row, "Note", meta, snipbuf);
+            }
+            if (evt) nostr_event_free(evt);
+            nostr_filter_free(f);
+            goto done_nevent_fetch;
+          } else {
+            gnostr_note_card_row_set_embed(row, "Note", "Not found on selected relays");
+            nostr_filter_free(f);
+            goto done_nevent_fetch;
+          }
+        }
+        char **urls = NULL; size_t url_count = 0;
+        /* Prefer relay hints from pointer */
+        build_urls_with_hints_owned((const char* const*)ptr->u.nevent->relays, ptr->u.nevent->relays_count, &urls, &url_count);
+        if (url_count > 0 && urls) {
+          start_or_attach_request(key, (const char**)urls, url_count, f, row);
+        }
+        free_urls_owned(urls, url_count);
+        nostr_filter_free(f);
+done_nevent_fetch:
+        ;
+      }
+    } else {
+      gnostr_note_card_row_set_embed(row, "Reference", ptr->u.nevent->id);
+    }
+  } else if (ptr->kind == NOSTR_PTR_NADDR) {
+    /* Addressable entity: build filter (kind+author+tag d) and fetch */
+    gnostr_note_card_row_set_embed(row, "Addressable entity", ref);
+    NostrEntityPointer *a = ptr->u.naddr;
+    if (a && a->identifier && a->public_key && a->kind > 0) {
+      NostrFilter *f = nostr_filter_new();
+      int kinds[1] = { a->kind }; nostr_filter_set_kinds(f, kinds, 1);
+      const char *authors[1] = { a->public_key }; nostr_filter_set_authors(f, authors, 1);
+      /* tag d */
+      nostr_filter_tags_append(f, "d", a->identifier, NULL);
+      /* Cache pre-check */
+      {
+        g_autofree char *cache_key = build_key_for_naddr(a);
+        EmbedCacheEntry *ce = embed_cache_get(cache_key, 60);
+        if (ce) {
+          if (!ce->negative && ce->json) {
+            NostrEvent *evt = nostr_event_new();
+            if (evt && nostr_event_deserialize(evt, ce->json) == 0) {
+              const char *content = nostr_event_get_content(evt);
+              const char *author_hex = nostr_event_get_pubkey(evt);
+              gint64 created_at = (gint64)nostr_event_get_created_at(evt);
+              char meta[128] = {0}; char author_short[17] = {0}; char timebuf[64] = {0};
+              if (author_hex && strlen(author_hex) >= 8) snprintf(author_short, sizeof(author_short), "%.*s…", 8, author_hex);
+              if (created_at > 0) { time_t t=(time_t)created_at; struct tm tmv; localtime_r(&t,&tmv); strftime(timebuf,sizeof(timebuf), "%Y-%m-%d %H:%M", &tmv); }
+              if (author_short[0] && timebuf[0]) snprintf(meta, sizeof(meta), "%s · %s", author_short, timebuf);
+              else if (author_short[0]) g_strlcpy(meta, author_short, sizeof(meta));
+              else if (timebuf[0]) g_strlcpy(meta, timebuf, sizeof(meta));
+              char snipbuf[281]; const char *title = "Note"; if (content && *content) { size_t n=0; char ps=0; for (const char *p=content; *p && n<280; p++){ char c=*p; if (c=='\n'||c=='\r'||c=='\t') c=' '; if (g_ascii_isspace(c)){ c=' '; if (ps) continue; ps=1; } else ps=0; snipbuf[n++]=c; } snipbuf[n]='\0'; } else { g_strlcpy(snipbuf, "(empty)", sizeof(snipbuf)); }
+              gnostr_note_card_row_set_embed_rich(row, title, meta, snipbuf);
+            }
+            if (evt) nostr_event_free(evt);
+            nostr_filter_free(f);
+            goto done_naddr_fetch;
+          } else {
+            gnostr_note_card_row_set_embed(row, "Note", "Not found on selected relays");
+            nostr_filter_free(f);
+            goto done_naddr_fetch;
+          }
+        }
+      }
+      char **urls = NULL; size_t url_count = 0;
+      build_urls_with_hints_owned((const char* const*)a->relays, a->relays_count, &urls, &url_count);
+      if (url_count > 0 && urls) {
+        g_autofree char *key = build_key_for_naddr(a);
+        start_or_attach_request(key, (const char**)urls, url_count, f, row);
+      }
+      free_urls_owned(urls, url_count);
+      nostr_filter_free(f);
+done_naddr_fetch:
+      ;
+    }
+  } else if (ptr->kind == NOSTR_PTR_NPROFILE) {
+    gnostr_note_card_row_set_embed(row, "Profile", ref);
+  } else {
+    gnostr_note_card_row_set_embed(row, "Reference", ref);
+  }
+  nostr_pointer_free(ptr);
 }
 
 void gnostr_avatar_metrics_log(void) {
@@ -237,35 +676,30 @@ static void gnostr_timeline_view_finalize(GObject *obj) {
 }
 
 /* Setup: load row UI from resource and set as child. Cache subwidgets on the row. */
+static void on_note_card_open_profile_relay(GnostrNoteCardRow *row, const char *pubkey_hex, gpointer user_data) {
+  /* Relay the signal up to the main window */
+  GtkWidget *widget = GTK_WIDGET(row);
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
+      /* Found the main window, emit signal or call method */
+      extern void gnostr_main_window_open_profile(GtkWidget *window, const char *pubkey_hex);
+      gnostr_main_window_open_profile(widget, pubkey_hex);
+      break;
+    }
+  }
+  (void)user_data;
+}
+
 static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
-  GtkBuilder *b = gtk_builder_new_from_resource("/org/gnostr/ui/ui/widgets/gnostr-timeline-row.ui");
-  GtkWidget *row = GTK_WIDGET(gtk_builder_get_object(b, "row"));
-  if (!row) {
-    g_warning("timeline row builder missing 'row'");
-    g_object_unref(b);
-    return;
-  }
-  g_message("factory_setup_cb: created row=%p for item=%p", (void*)row, (void*)item);
-  /* Cache pointers to frequently-updated subwidgets on the row for fast lookup in bind */
-  GtkWidget *w_display_name = GTK_WIDGET(gtk_builder_get_object(b, "display_name"));
-  GtkWidget *w_handle       = GTK_WIDGET(gtk_builder_get_object(b, "handle"));
-  GtkWidget *w_timestamp    = GTK_WIDGET(gtk_builder_get_object(b, "timestamp"));
-  GtkWidget *w_content      = GTK_WIDGET(gtk_builder_get_object(b, "content"));
-  GtkWidget *w_avatar_init  = GTK_WIDGET(gtk_builder_get_object(b, "avatar_initials"));
-  GtkWidget *w_avatar_img   = GTK_WIDGET(gtk_builder_get_object(b, "avatar_image"));
-  GtkWidget *w_indicator    = GTK_WIDGET(gtk_builder_get_object(b, "thread_indicator"));
-  g_object_set_data(G_OBJECT(row), "display_name", w_display_name);
-  g_object_set_data(G_OBJECT(row), "handle", w_handle);
-  g_object_set_data(G_OBJECT(row), "timestamp", w_timestamp);
-  g_object_set_data(G_OBJECT(row), "content", w_content);
-  g_object_set_data(G_OBJECT(row), "avatar_initials", w_avatar_init);
-  g_object_set_data(G_OBJECT(row), "avatar_image", w_avatar_img);
-  g_object_set_data(G_OBJECT(row), "thread_indicator", w_indicator);
-  /* ListItem takes ownership of the child */
-  g_message("factory_setup_cb: setting list item child row=%p", (void*)row);
+  GtkWidget *row = GTK_WIDGET(gnostr_note_card_row_new());
+  g_message("factory_setup_cb: created note-card row=%p for item=%p", (void*)row, (void*)item);
+  
+  /* Connect the open-profile signal */
+  g_signal_connect(row, "open-profile", G_CALLBACK(on_note_card_open_profile_relay), NULL);
+  
   gtk_list_item_set_child(item, row);
-  g_object_unref(b);
 }
 
 /* Simple shared cache for downloaded avatar textures by URL */
@@ -476,51 +910,47 @@ static void on_item_notify_display_name(GObject *obj, GParamSpec *pspec, gpointe
   (void)pspec;
   GtkWidget *row = GTK_WIDGET(user_data);
   if (!GTK_IS_WIDGET(row)) return;
-  gchar *display = NULL;
-  gchar *handle = NULL;
-  g_object_get(obj, "display-name", &display, "handle", &handle, NULL);
-  GtkWidget *w_display_name = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "display_name"));
-  const char *eff = (display && *display) ? display : ((handle && *handle) ? handle : "Anonymous");
-  if (GTK_IS_LABEL(w_display_name)) gtk_label_set_text(GTK_LABEL(w_display_name), eff);
-  /* Also refresh initials fallback */
-  gchar *avatar_url = NULL;
-  g_object_get(obj, "avatar-url", &avatar_url, NULL);
-  try_set_avatar(row, avatar_url, display, handle);
-  g_free(display);
-  g_free(handle);
-  g_free(avatar_url);
+  gchar *display = NULL, *handle = NULL, *avatar_url = NULL, *pubkey = NULL;
+  g_object_get(obj, "display-name", &display, "handle", &handle, "avatar-url", &avatar_url, "pubkey", &pubkey, NULL);
+  g_debug("🔔 on_item_notify_display_name: pubkey=%.*s display='%s' handle='%s' avatar='%s'", 
+            pubkey ? 8 : 0, pubkey ? pubkey : "", 
+            display ? display : "(null)", 
+            handle ? handle : "(null)", 
+            avatar_url ? avatar_url : "(null)");
+  if (GNOSTR_IS_NOTE_CARD_ROW(row))
+    gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row), display, handle, avatar_url);
+  g_free(display); g_free(handle); g_free(avatar_url); g_free(pubkey);
 }
 
 static void on_item_notify_handle(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
   GtkWidget *row = GTK_WIDGET(user_data);
   if (!GTK_IS_WIDGET(row)) return;
-  gchar *handle = NULL;
-  g_object_get(obj, "handle", &handle, NULL);
-  GtkWidget *w_handle = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "handle"));
-  if (GTK_IS_LABEL(w_handle)) gtk_label_set_text(GTK_LABEL(w_handle), handle ? handle : "@anon");
-  /* Also refresh initials fallback */
-  gchar *display = NULL, *avatar_url = NULL;
-  g_object_get(obj, "display-name", &display, "avatar-url", &avatar_url, NULL);
-  try_set_avatar(row, avatar_url, display, handle);
-  /* Recompute effective display label if display-name is empty */
-  GtkWidget *w_display_name = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "display_name"));
-  if (GTK_IS_LABEL(w_display_name)) {
-    const char *eff = (display && *display) ? display : (handle && *handle ? handle : "Anonymous");
-    gtk_label_set_text(GTK_LABEL(w_display_name), eff);
-  }
-  g_free(display);
-  g_free(handle);
-  g_free(avatar_url);
+  gchar *display = NULL, *handle = NULL, *avatar_url = NULL, *pubkey = NULL;
+  g_object_get(obj, "display-name", &display, "handle", &handle, "avatar-url", &avatar_url, "pubkey", &pubkey, NULL);
+  g_debug("🔔 on_item_notify_handle: pubkey=%.*s display='%s' handle='%s' avatar='%s'", 
+            pubkey ? 8 : 0, pubkey ? pubkey : "", 
+            display ? display : "(null)", 
+            handle ? handle : "(null)", 
+            avatar_url ? avatar_url : "(null)");
+  if (GNOSTR_IS_NOTE_CARD_ROW(row))
+    gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row), display, handle, avatar_url);
+  g_free(display); g_free(handle); g_free(avatar_url); g_free(pubkey);
 }
 
 static void on_item_notify_avatar_url(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
   GtkWidget *row = GTK_WIDGET(user_data);
   if (!GTK_IS_WIDGET(row)) return;
-  gchar *url = NULL, *display = NULL, *handle = NULL;
-  g_object_get(obj, "avatar-url", &url, "display-name", &display, "handle", &handle, NULL);
-  try_set_avatar(row, url, display, handle);
+  gchar *url = NULL, *display = NULL, *handle = NULL, *pubkey = NULL;
+  g_object_get(obj, "avatar-url", &url, "display-name", &display, "handle", &handle, "pubkey", &pubkey, NULL);
+  g_debug("🔔 on_item_notify_avatar_url: pubkey=%.*s display='%s' handle='%s' avatar='%s'", 
+            pubkey ? 8 : 0, pubkey ? pubkey : "", 
+            display ? display : "(null)", 
+            handle ? handle : "(null)", 
+            url ? url : "(null)");
+  if (GNOSTR_IS_NOTE_CARD_ROW(row))
+    gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row), display, handle, url);
   g_free(url); g_free(display); g_free(handle);
 }
 
@@ -532,6 +962,10 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
   if (!obj || !GTK_IS_WIDGET(row)) return;
   /* We connected notify signals with user_data=row; disconnect by data */
   g_signal_handlers_disconnect_by_data(obj, row);
+  /* Disconnect row embed handler */
+  g_signal_handlers_disconnect_by_func(row, G_CALLBACK(on_row_request_embed), NULL);
+  /* Detach this row from any inflight embed fetches */
+  inflight_detach_row(row);
 }
 
 static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
@@ -556,87 +990,16 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   }
   GtkWidget *row = gtk_list_item_get_child(item);
   if (!GTK_IS_WIDGET(row)) return;
-  GtkWidget *w_display_name = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "display_name"));
-  GtkWidget *w_handle       = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "handle"));
-  GtkWidget *w_timestamp    = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "timestamp"));
-  GtkWidget *w_content      = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "content"));
-  GtkWidget *w_avatar_init  = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "avatar_initials"));
-  GtkWidget *w_avatar_img   = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "avatar_image"));
-  GtkWidget *w_indicator    = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "thread_indicator"));
-
-  /* Populate */
-  if (GTK_IS_LABEL(w_display_name)) {
-    const char *eff = (display && *display) ? display : ((handle && *handle) ? handle : "Anonymous");
-    gtk_label_set_text(GTK_LABEL(w_display_name), eff);
+  if (GNOSTR_IS_NOTE_CARD_ROW(row)) {
+    gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row), display, handle, avatar_url);
+    gnostr_note_card_row_set_timestamp(GNOSTR_NOTE_CARD_ROW(row), created_at, ts);
+    gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
+    gnostr_note_card_row_set_depth(GNOSTR_NOTE_CARD_ROW(row), depth);
+    gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), NULL, root_id, pubkey);
+    /* Connect embed request signal (ensure we don't duplicate) */
+    g_signal_handlers_disconnect_by_func(row, G_CALLBACK(on_row_request_embed), NULL);
+    g_signal_connect(row, "request-embed", G_CALLBACK(on_row_request_embed), NULL);
   }
-  if (GTK_IS_LABEL(w_handle))       gtk_label_set_text(GTK_LABEL(w_handle), handle ? handle : "@anon");
-  if (GTK_IS_LABEL(w_timestamp)) {
-    /* Pretty relative time from created_at if available */
-    if (created_at > 0) {
-      time_t now = time(NULL);
-      long diff = (long)(now - (time_t)created_at);
-      const char *unit = "s"; long val = diff;
-      if (diff < 0) diff = 0;
-      if (diff >= 60) { val = diff/60; unit = "m"; }
-      if (diff >= 3600) { val = diff/3600; unit = "h"; }
-      if (diff >= 86400) { val = diff/86400; unit = "d"; }
-      char buf[32];
-      if (diff < 5) g_strlcpy(buf, "now", sizeof(buf));
-      else g_snprintf(buf, sizeof(buf), "%ld%s", val, unit);
-      gtk_label_set_text(GTK_LABEL(w_timestamp), buf);
-    } else {
-      gtk_label_set_text(GTK_LABEL(w_timestamp), ts ? ts : "now");
-    }
-  }
-  if (GTK_IS_LABEL(w_avatar_init)) {
-    /* Derive monogram initials from display or handle */
-    const char *src = (display && *display) ? display : (handle && *handle ? handle : "AN");
-    gunichar c1 = g_utf8_get_char_validated(src, -1);
-    const char *p = g_utf8_next_char(src);
-    /* find next letter start */
-    gunichar c2 = 0;
-    while (p && *p) {
-      gunichar c = g_utf8_get_char_validated(p, -1);
-      if (g_unichar_isalpha(c)) { c2 = c; break; }
-      p = g_utf8_next_char(p);
-    }
-    char out[8] = {0};
-    gchar *s1 = g_ucs4_to_utf8(&c1, 1, NULL, NULL, NULL);
-    if (!s1) s1 = g_strdup("A");
-    if (c2) {
-      gchar *s2 = g_ucs4_to_utf8(&c2, 1, NULL, NULL, NULL);
-      g_snprintf(out, sizeof(out), "%.1s%.1s", s1, s2 ? s2 : "");
-      g_free(s2);
-    } else {
-      g_snprintf(out, sizeof(out), "%.1s", s1);
-    }
-    for (char *q = out; *q; ++q) *q = g_ascii_toupper(*q);
-    gtk_label_set_text(GTK_LABEL(w_avatar_init), out);
-    g_free(s1);
-  }
-  if (GTK_IS_LABEL(w_content))      gtk_label_set_text(GTK_LABEL(w_content), content ? content : "");
-
-  /* Indent by depth */
-  gtk_widget_set_margin_start(row, depth * 16);
-
-   /* Thread classes and indicator */
-  if (w_indicator) {
-    gtk_widget_set_visible(w_indicator, TRUE);
-    /* apply root-id based class nibble if available */
-    if (root_id && strlen(root_id) > 0) {
-      char cls[16];
-      char c = g_ascii_tolower(root_id[0]);
-      if (!g_ascii_isxdigit(c)) c = '0';
-      g_snprintf(cls, sizeof(cls), "root-%c", c);
-      /* remove any previous root-* class to avoid accumulation */
-      const char *roots[] = {"root-0","root-1","root-2","root-3","root-4","root-5","root-6","root-7","root-8","root-9","root-a","root-b","root-c","root-d","root-e","root-f"};
-      for (guint i = 0; i < G_N_ELEMENTS(roots); i++) gtk_widget_remove_css_class(w_indicator, roots[i]);
-      gtk_widget_add_css_class(w_indicator, cls);
-    }
-  }
-  gtk_widget_remove_css_class(row, "thread-root");
-  gtk_widget_remove_css_class(row, "thread-reply");
-  gtk_widget_add_css_class(row, is_reply ? "thread-reply" : "thread-root");
 
   g_debug("factory bind: item=%p content=%.60s depth=%u", (void*)item, content ? content : "", depth);
   g_free(display); g_free(handle); g_free(ts); g_free(content); g_free(root_id);
@@ -715,6 +1078,11 @@ static void gnostr_timeline_view_init(GnostrTimelineView *self) {
   GtkCssProvider *prov = gtk_css_provider_new();
   gtk_css_provider_load_from_string(prov, css);
   gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(prov), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+  /* Load app stylesheet for note cards */
+  GtkCssProvider *prov2 = gtk_css_provider_new();
+  gtk_css_provider_load_from_resource(prov2, "/org/gnostr/ui/ui/styles/gnostr.css");
+  gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(prov2), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+  g_object_unref(prov2);
   g_object_unref(prov);
 }
 

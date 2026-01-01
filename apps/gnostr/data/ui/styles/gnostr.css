@@ -1,0 +1,76 @@
+/* GNostr UI stylesheet */
+
+.note-card {
+  border-radius: 12px;
+  padding: 10px;
+  background: alpha(@theme_bg_color, 0.6);
+  border: 1px solid alpha(@theme_fg_color, 0.08);
+}
+
+.note-author {
+  font-weight: 700;
+}
+
+.note-meta {
+  opacity: 0.7;
+}
+
+.note-content {
+  line-height: 1.3;
+}
+
+.note-embed {
+  border-radius: 8px;
+  background: alpha(@theme_bg_color, 0.5);
+  border: 1px solid alpha(@theme_fg_color, 0.06);
+}
+
+.avatar {
+  border-radius: 9999px;
+  background: alpha(@theme_bg_color, 0.4);
+  overflow: hidden;
+}
+
+/* Profile Pane Styles */
+.profile-pane {
+  background: @theme_bg_color;
+  border-left: 1px solid alpha(@theme_fg_color, 0.1);
+}
+
+.profile-banner {
+  background: linear-gradient(135deg, alpha(@accent_bg_color, 0.3), alpha(@accent_bg_color, 0.5));
+  overflow: hidden;
+}
+
+.profile-avatar {
+  border-radius: 9999px;
+  background: @theme_bg_color;
+  border: 4px solid @theme_bg_color;
+  overflow: hidden;
+}
+
+.profile-avatar-initials {
+  font-size: 28px;
+  font-weight: 700;
+  color: alpha(@theme_fg_color, 0.7);
+}
+
+.profile-name {
+  font-weight: 700;
+  font-size: 18px;
+}
+
+.profile-handle {
+  font-size: 14px;
+}
+
+.profile-bio {
+  line-height: 1.4;
+  font-size: 14px;
+}
+
+.profile-metadata {
+  padding: 8px;
+  border-radius: 8px;
+  background: alpha(@theme_bg_color, 0.5);
+}

@@ -45,6 +45,11 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         }
         conn->priv->rx_window_bytes += (uint64_t)len;
         // Normal path: deliver to recv_channel as before
+        // Check if channel is still valid (it may have been freed during shutdown)
+        if (!conn->recv_channel) {
+            /* Connection is being closed, discard message */
+            return 0;
+        }
         // Allocate a copy buffer and queue as a WebSocketMessage
         WebSocketMessage *msg = (WebSocketMessage*)malloc(sizeof(WebSocketMessage));
         if (!msg) return -1;
@@ -88,9 +93,22 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         lws_callback_on_writable(wsi); // Ensure the socket becomes writable
         break;
     
+    case LWS_CALLBACK_EVENT_WAIT_CANCELLED:
+        if (conn && conn->priv) {
+            nsync_mu_lock(&conn->priv->mutex);
+            if (conn->priv->wsi == wsi && conn->priv->writable_pending) {
+                conn->priv->writable_pending = 0;
+                nsync_mu_unlock(&conn->priv->mutex);
+                lws_callback_on_writable(wsi);
+            } else {
+                nsync_mu_unlock(&conn->priv->mutex);
+            }
+        }
+        break;
+
     case LWS_CALLBACK_CLIENT_WRITEABLE: {
         // Pop a message from the send_channel and send it over the WebSocket (non-blocking)
-        if (!conn) break;
+        if (!conn || !conn->priv || !conn->priv->wsi || !conn->send_channel) break;
         WebSocketMessage *msg = NULL;
         if (go_channel_try_receive(conn->send_channel, (void **)&msg) == 0 && msg) {
             size_t total = LWS_PRE + msg->length;
@@ -134,7 +152,13 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
     }
     case LWS_CALLBACK_CLIENT_CLOSED:
     case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
-        // Nothing to do here; higher layers manage lifecycle.
+        if (conn && conn->priv) {
+            lws_set_timer_usecs(wsi, 0);
+            nsync_mu_lock(&conn->priv->mutex);
+            conn->priv->wsi = NULL;
+            conn->priv->writable_pending = 0;
+            nsync_mu_unlock(&conn->priv->mutex);
+        }
         break;
     case LWS_CALLBACK_OPENSSL_LOAD_EXTRA_CLIENT_VERIFY_CERTS:
 #if defined(LWS_CALLBACK_OPENSSL_CTX_LOAD_EXTRA_CLIENT_VERIFY_CERTS) && \
@@ -173,6 +197,11 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
     }
     case LWS_CALLBACK_TIMER: {
         if (!conn || !conn->priv) break;
+        int should_process = 0;
+        nsync_mu_lock(&conn->priv->mutex);
+        if (conn->priv->wsi == wsi) should_process = 1;
+        nsync_mu_unlock(&conn->priv->mutex);
+        if (!should_process) break;
         uint64_t now_us = (uint64_t)lws_now_usecs();
         int64_t read_to_s = nostr_limit_ws_read_timeout_seconds();
         if (read_to_s > 0) {
@@ -254,9 +283,17 @@ static void *lws_service_loop(void *arg) {
         pthread_mutex_lock(&g_lws_mutex);
         int running = g_lws_running;
         struct lws_context *ctx = g_lws_context;
-        pthread_mutex_unlock(&g_lws_mutex);
-        if (!running || !ctx) break;
+        if (!running || !ctx) {
+            pthread_mutex_unlock(&g_lws_mutex);
+            break;
+        }
+        // Keep mutex locked during lws_service to prevent concurrent context operations
         lws_service(ctx, 50);
+        if (!g_lws_running || ctx != g_lws_context) {
+            pthread_mutex_unlock(&g_lws_mutex);
+            break;
+        }
+        pthread_mutex_unlock(&g_lws_mutex);
     }
     return NULL;
 }
@@ -315,7 +352,7 @@ NostrConnection *nostr_connection_new(const char *url) {
     struct lws_context_creation_info context_info;
     struct lws_client_connect_info connect_info;
 
-    lws_set_log_level(LLL_USER | LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_DEBUG | LLL_HEADER | LLL_CLIENT , NULL);
+    lws_set_log_level(LLL_USER | LLL_ERR | LLL_HEADER | LLL_CLIENT , NULL);
 
     lws_retry_bo_t retry_bo = {
         .retry_ms_table = retry_table,
@@ -375,11 +412,13 @@ NostrConnection *nostr_connection_new(const char *url) {
         pthread_create(&g_lws_service_thread, NULL, lws_service_loop, NULL);
     }
     g_lws_refcount++;
-    pthread_mutex_unlock(&g_lws_mutex);
+    struct lws_context *ctx_local = g_lws_context;
+    // Keep mutex locked during connect to prevent context destruction and ensure thread-safety
+    // libwebsockets contexts are not thread-safe for concurrent operations
 
     // Initialize client connect info
     memset(&connect_info, 0, sizeof(connect_info));
-    connect_info.context = g_lws_context;
+    connect_info.context = ctx_local;
     char host[256];
     char path[512];
     int port = 0;
@@ -395,22 +434,24 @@ NostrConnection *nostr_connection_new(const char *url) {
     connect_info.pwsi = &conn->priv->wsi;
     connect_info.userdata = conn;
 
-    conn->priv->wsi = lws_client_connect_via_info(&connect_info);
+    conn->priv->wsi = ctx_local ? lws_client_connect_via_info(&connect_info) : NULL;
+
+    struct lws_context *ctx_to_destroy = NULL;
     if (!conn->priv->wsi) {
-        /* Release shared context ref and possibly shut it down */
-        pthread_mutex_lock(&g_lws_mutex);
         if (g_lws_refcount > 0) g_lws_refcount--;
-        int should_stop = (g_lws_refcount == 0);
-        pthread_mutex_unlock(&g_lws_mutex);
-        if (should_stop) {
-            pthread_mutex_lock(&g_lws_mutex);
+        if (g_lws_refcount == 0 && g_lws_context) {
+            ctx_to_destroy = g_lws_context;
+            g_lws_context = NULL;
             g_lws_running = 0;
-            if (g_lws_context) lws_cancel_service(g_lws_context);
-            pthread_mutex_unlock(&g_lws_mutex);
+        }
+    }
+    pthread_mutex_unlock(&g_lws_mutex);
+
+    if (!conn->priv->wsi) {
+        if (ctx_to_destroy) {
+            lws_cancel_service(ctx_to_destroy);
             pthread_join(g_lws_service_thread, NULL);
-            pthread_mutex_lock(&g_lws_mutex);
-            if (g_lws_context) { lws_context_destroy(g_lws_context); g_lws_context = NULL; }
-            pthread_mutex_unlock(&g_lws_mutex);
+            lws_context_destroy(ctx_to_destroy);
         }
         free(priv);
         free(conn);
@@ -464,22 +505,44 @@ void nostr_connection_close(NostrConnection *conn) {
         // No libwebsockets context or thread in test mode
         free(conn->priv);
     } else if (conn->priv) {
+        /* Detach the connection from WSI to prevent callbacks from accessing freed memory.
+         * We cannot safely call lws_close_reason() from this thread - that must be done
+         * from the service thread. Instead, we just detach and let the WSI close naturally. */
+        pthread_mutex_lock(&g_lws_mutex);
+        if (conn->priv->wsi) {
+            lws_set_opaque_user_data(conn->priv->wsi, NULL);
+            /* Wake up service thread to process the detachment */
+            if (g_lws_context) {
+                lws_cancel_service(g_lws_context);
+            }
+            conn->priv->wsi = NULL;
+        }
+        pthread_mutex_unlock(&g_lws_mutex);
+        
         /* Drop our ref to the shared context; stop/destroy if last */
+        struct lws_context *ctx_to_destroy = NULL;
+        int should_free_priv = 0;
         pthread_mutex_lock(&g_lws_mutex);
         if (g_lws_refcount > 0) g_lws_refcount--;
-        int should_stop = (g_lws_refcount == 0);
-        pthread_mutex_unlock(&g_lws_mutex);
-        if (should_stop) {
-            pthread_mutex_lock(&g_lws_mutex);
+        if (g_lws_refcount == 0 && g_lws_context) {
+            ctx_to_destroy = g_lws_context;
+            g_lws_context = NULL;
             g_lws_running = 0;
-            if (g_lws_context) lws_cancel_service(g_lws_context);
-            pthread_mutex_unlock(&g_lws_mutex);
-            pthread_join(g_lws_service_thread, NULL);
-            pthread_mutex_lock(&g_lws_mutex);
-            if (g_lws_context) { lws_context_destroy(g_lws_context); g_lws_context = NULL; }
-            pthread_mutex_unlock(&g_lws_mutex);
+            should_free_priv = 1; /* Safe to free after service thread exits */
         }
-        free(conn->priv);
+        pthread_mutex_unlock(&g_lws_mutex);
+        if (ctx_to_destroy) {
+            lws_cancel_service(ctx_to_destroy);
+            pthread_join(g_lws_service_thread, NULL);
+            lws_context_destroy(ctx_to_destroy);
+        }
+        /* Only free conn->priv if we stopped the service thread, otherwise it's unsafe */
+        if (should_free_priv) {
+            free(conn->priv);
+        }
+        /* Note: If we don't free conn->priv here, it will leak. This is a known limitation
+         * of the current architecture where we can't safely free while service thread is running.
+         * A proper fix would require refcounting or deferred cleanup. */
     }
 
     // Do not free channels here; the owner (relay) will free them after worker threads exit.
@@ -497,6 +560,30 @@ void nostr_connection_write_message(NostrConnection *conn, GoContext *ctx, char 
 
     // In test mode, pretend the write succeeded without touching websockets
     if (conn->priv && conn->priv->test_mode) {
+        return;
+    }
+
+    if (!conn->priv) {
+        if (err) {
+            *err = new_error(1, "connection state unavailable");
+        }
+        return;
+    }
+
+    if (!conn->send_channel) {
+        if (err) {
+            *err = new_error(1, "send channel unavailable");
+        }
+        return;
+    }
+
+    nsync_mu_lock(&conn->priv->mutex);
+    struct lws *wsi = conn->priv->wsi;
+    nsync_mu_unlock(&conn->priv->mutex);
+    if (!wsi) {
+        if (err) {
+            *err = new_error(1, "connection not established or already closed");
+        }
         return;
     }
 
@@ -523,13 +610,35 @@ void nostr_connection_write_message(NostrConnection *conn, GoContext *ctx, char 
     msg->length = message_length;
 
     // Add the message to the send channel
-    go_channel_send(conn->send_channel, msg);
+    if (go_channel_send(conn->send_channel, msg) != 0) {
+        free(msg->data);
+        free(msg);
+        if (err) {
+            *err = new_error(1, "failed to enqueue message (channel closed)");
+        }
+        return;
+    }
     // Metrics: count enqueued bytes/messages for TX
     nostr_metric_counter_add("ws_tx_enqueued_bytes", (uint64_t)message_length);
     nostr_metric_counter_add("ws_tx_enqueued", 1);
 
-    // Ensure that the socket becomes writable
-    lws_callback_on_writable(conn->priv->wsi);
+    nsync_mu_lock(&conn->priv->mutex);
+    struct lws *wsi_again = conn->priv->wsi;
+    if (wsi_again) {
+        conn->priv->writable_pending = 1;
+    }
+    nsync_mu_unlock(&conn->priv->mutex);
+    if (!wsi_again) {
+        *err = new_error(1, "connection closed before write could schedule");
+        return;
+    }
+
+    pthread_mutex_lock(&g_lws_mutex);
+    struct lws_context *lws_ctx = g_lws_context;
+    if (lws_ctx) lws_cancel_service(lws_ctx);
+    pthread_mutex_unlock(&g_lws_mutex);
+
+    if (err) *err = NULL;
 }
 
 void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *buffer, size_t buffer_size, Error **err) {

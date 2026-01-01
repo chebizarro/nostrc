@@ -568,7 +568,9 @@ bool nostr_event_check_signature(NostrEvent *event) {
     if (verified) {
         return true;
     } else {
-        fprintf(stderr, "Signature verification failed\n");
+        fprintf(stderr, "Signature verification failed for event id=%s pubkey=%s\n", 
+                event->id ? event->id : "(null)", 
+                event->pubkey ? event->pubkey : "(null)");
         return false;
     }
 }
