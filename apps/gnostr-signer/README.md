@@ -64,10 +64,35 @@ gnostr-signer
 - All signing operations require explicit user approval
 - Communication between components is secured using D-Bus authentication
 
+## Documentation
+
+- **[README.md](README.md)** - This file, overview and basic usage
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture and design
+- **[DEVELOPMENT.md](DEVELOPMENT.md)** - Developer guide and coding standards
+- **[TODO.md](TODO.md)** - Outstanding tasks and feature roadmap
+- **[DAEMON_QUICKSTART.md](DAEMON_QUICKSTART.md)** - Quick start guide for the daemon
+- **[DAEMON_DEPLOYMENT.md](DAEMON_DEPLOYMENT.md)** - Comprehensive deployment guide
+- **[DAEMON_IMPROVEMENTS.md](DAEMON_IMPROVEMENTS.md)** - Summary of production improvements
+
+## Daemon
+
+The gnostr-signer-daemon is production-ready with:
+
+- ✅ **D-Bus Interface** - System integration for desktop applications
+- ✅ **Unix Domain Sockets** - High-performance local IPC
+- ✅ **TCP Support** (optional) - Network-based access with authentication
+- ✅ **Comprehensive Security** - Multiple layers of protection
+- ✅ **Systemd Integration** - Automatic start and monitoring
+- ✅ **Graceful Shutdown** - Proper cleanup and resource management
+- ✅ **Statistics & Monitoring** - Track connections, requests, and errors
+- ✅ **Production Hardening** - Ready for deployment
+
+See [DAEMON_QUICKSTART.md](DAEMON_QUICKSTART.md) for quick start instructions or [DAEMON_DEPLOYMENT.md](DAEMON_DEPLOYMENT.md) for comprehensive deployment information.
+
 ## Contributing
 
-Contributions are welcome! Please read our [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
+Contributions are welcome! Please read our [DEVELOPMENT.md](DEVELOPMENT.md) for details on our code of conduct and the process for submitting pull requests.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](../../LICENSE) file for details.

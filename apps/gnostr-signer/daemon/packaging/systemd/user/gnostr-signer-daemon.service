@@ -1,35 +1,78 @@
 [Unit]
-Description=GNostr Signer Daemon (user)
-After=default.target
+Description=GNostr Signer Daemon - Secure Nostr Key Management Service
+Documentation=https://github.com/chebizarro/nostrc
+After=default.target dbus.service
+Wants=dbus.service
 
 [Service]
-Type=simple
-ExecStart=%h/.local/bin/gnostr-signer-daemon
+Type=dbus
+BusName=org.nostr.Signer
+ExecStart=/usr/bin/gnostr-signer-daemon
+ExecReload=/bin/kill -HUP $MAINPID
+
 # Set endpoint with unix socket by default under XDG_RUNTIME_DIR
 Environment=NOSTR_SIGNER_ENDPOINT=unix:%t/gnostr/signer.sock
+Environment=G_MESSAGES_DEBUG=
+
+# Restart policy
 Restart=on-failure
+RestartSec=5s
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# Resource limits
+LimitNOFILE=4096
+LimitCORE=0
+LimitNPROC=64
+TasksMax=32
 
 # Security hardening (user service)
+# Basic hardening
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
-ProtectHome=yes
+ProtectHome=read-only
 PrivateDevices=yes
+
+# Kernel protection
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
+ProtectControlGroups=yes
+
+# Memory protection
 MemoryDenyWriteExecute=yes
 LockPersonality=yes
+
+# Namespace restrictions
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
 RemoveIPC=yes
+
+# Capability restrictions
 CapabilityBoundingSet=
+AmbientCapabilities=
+
+# System call filtering
 SystemCallArchitectures=native
-SystemCallFilter=@system-service @basic-io ~@privileged
+SystemCallFilter=@system-service @basic-io @network-io @signal @ipc
+SystemCallFilter=~@privileged @resources @obsolete @debug @mount @swap @reboot @module @raw-io
+
+# File system restrictions
+ReadWritePaths=%t/gnostr %h/.config/gnostr %h/.local/share/gnostr
+ProtectProc=invisible
+ProcSubset=pid
+
+# Network restrictions (allow only local IPC)
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressAllow=localhost
+IPAddressDeny=any
+
+# Misc hardening
 UMask=0077
-LimitNOFILE=4096
-LimitCORE=0
+ProtectClock=yes
+ProtectHostname=yes
 
 [Install]
 WantedBy=default.target
