@@ -117,3 +117,18 @@
   color: alpha(@theme_fg_color, 0.5);
   margin-top: 4px;
 }
+
+/* Media Embed Styles */
+.note-media-image {
+  border-radius: 8px;
+  background: alpha(@theme_bg_color, 0.3);
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
+
+.note-media-video {
+  border-radius: 8px;
+  background: alpha(@theme_bg_color, 0.3);
+  margin-top: 8px;
+  margin-bottom: 8px;
+}

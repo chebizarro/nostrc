@@ -30,6 +30,8 @@ struct _GnostrNoteCardRow {
   char *avatar_url;
 #ifdef HAVE_SOUP3
   GCancellable *avatar_cancellable;
+  SoupSession *media_session;
+  GHashTable *media_cancellables; /* URL -> GCancellable */
 #endif
   guint depth;
   char *id_hex;
@@ -53,6 +55,18 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   GnostrNoteCardRow *self = (GnostrNoteCardRow*)obj;
 #ifdef HAVE_SOUP3
   if (self->avatar_cancellable) { g_cancellable_cancel(self->avatar_cancellable); g_clear_object(&self->avatar_cancellable); }
+  /* Cancel all media fetches */
+  if (self->media_cancellables) {
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, self->media_cancellables);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+      GCancellable *cancellable = G_CANCELLABLE(value);
+      if (cancellable) g_cancellable_cancel(cancellable);
+    }
+    g_clear_pointer(&self->media_cancellables, g_hash_table_unref);
+  }
+  g_clear_object(&self->media_session);
 #endif
   g_clear_object(&self->og_preview);
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_CARD_ROW);
@@ -159,6 +173,9 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
   }
 #ifdef HAVE_SOUP3
   self->avatar_cancellable = g_cancellable_new();
+  self->media_session = soup_session_new();
+  soup_session_set_timeout(self->media_session, 30); /* 30 second timeout for media */
+  self->media_cancellables = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
 #endif
 }
 
@@ -193,6 +210,82 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
   }
   if (GTK_IS_WIDGET(self->avatar_initials)) gtk_widget_set_visible(self->avatar_initials, FALSE);
   g_object_unref(tex);
+}
+
+/* Callback for media image loading */
+static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GtkPicture *picture = GTK_PICTURE(user_data);
+  GError *error = NULL;
+  
+  GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_debug("Media: Failed to load image: %s", error->message);
+    }
+    g_error_free(error);
+    /* Release the reference we took in load_media_image */
+    g_object_unref(picture);
+    return;
+  }
+  
+  if (!bytes || g_bytes_get_size(bytes) == 0) {
+    if (bytes) g_bytes_unref(bytes);
+    /* Release the reference we took in load_media_image */
+    g_object_unref(picture);
+    return;
+  }
+  
+  /* Create texture from bytes */
+  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
+  g_bytes_unref(bytes);
+  
+  if (error) {
+    g_debug("Media: Failed to create texture: %s", error->message);
+    g_error_free(error);
+    /* Release the reference we took in load_media_image */
+    g_object_unref(picture);
+    return;
+  }
+  
+  /* Update picture widget - check if still valid */
+  if (GTK_IS_PICTURE(picture)) {
+    gtk_picture_set_paintable(picture, GDK_PAINTABLE(texture));
+  }
+  
+  g_object_unref(texture);
+  /* Release the reference we took in load_media_image */
+  g_object_unref(picture);
+}
+
+/* Load media image asynchronously */
+static void load_media_image(GnostrNoteCardRow *self, const char *url, GtkPicture *picture) {
+  if (!url || !*url || !GTK_IS_PICTURE(picture)) return;
+  
+  /* Create cancellable for this request */
+  GCancellable *cancellable = g_cancellable_new();
+  g_hash_table_insert(self->media_cancellables, g_strdup(url), cancellable);
+  
+  /* Create HTTP request */
+  SoupMessage *msg = soup_message_new("GET", url);
+  if (!msg) {
+    g_debug("Media: Invalid image URL: %s", url);
+    return;
+  }
+  
+  /* Take a reference to the picture to keep it alive during async operation */
+  g_object_ref(picture);
+  
+  /* Start async fetch */
+  soup_session_send_and_read_async(
+    self->media_session,
+    msg,
+    G_PRIORITY_LOW,
+    cancellable,
+    on_media_image_loaded,
+    picture
+  );
+  
+  g_object_unref(msg);
 }
 #endif
 
@@ -236,11 +329,38 @@ static gchar *escape_markup(const char *s) {
   return g_markup_escape_text(s, -1);
 }
 
-static gboolean is_media_url(const char *u) {
+static gboolean is_image_url(const char *u) {
   if (!u) return FALSE;
-  const char *exts[] = {".jpg",".jpeg",".png",".gif",".webp",".mp4",".webm"};
-  for (guint i=0;i<G_N_ELEMENTS(exts);i++) if (g_str_has_suffix(g_ascii_strdown(u,-1), exts[i])) return TRUE;
-  return FALSE;
+  gchar *lower = g_ascii_strdown(u, -1);
+  const char *exts[] = {".jpg",".jpeg",".png",".gif",".webp",".bmp",".svg"};
+  gboolean result = FALSE;
+  for (guint i=0; i<G_N_ELEMENTS(exts); i++) {
+    if (g_str_has_suffix(lower, exts[i])) {
+      result = TRUE;
+      break;
+    }
+  }
+  g_free(lower);
+  return result;
+}
+
+static gboolean is_video_url(const char *u) {
+  if (!u) return FALSE;
+  gchar *lower = g_ascii_strdown(u, -1);
+  const char *exts[] = {".mp4",".webm",".mov",".avi",".mkv",".m4v"};
+  gboolean result = FALSE;
+  for (guint i=0; i<G_N_ELEMENTS(exts); i++) {
+    if (g_str_has_suffix(lower, exts[i])) {
+      result = TRUE;
+      break;
+    }
+  }
+  g_free(lower);
+  return result;
+}
+
+static gboolean is_media_url(const char *u) {
+  return is_image_url(u) || is_video_url(u);
 }
 
 void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *content) {
@@ -276,26 +396,63 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
   g_free(markup);
   g_free(empty);
 
-  /* Very simple media detection: if any line looks like media URL, create a GtkPicture under media_box */
+  /* Media detection: detect images and videos in content and display them */
   if (self->media_box && GTK_IS_BOX(self->media_box)) {
+    /* Clear existing media widgets */
+    GtkWidget *child = gtk_widget_get_first_child(self->media_box);
+    while (child) {
+      GtkWidget *next = gtk_widget_get_next_sibling(child);
+      gtk_box_remove(GTK_BOX(self->media_box), child);
+      child = next;
+    }
     gtk_widget_set_visible(self->media_box, FALSE);
+    
     if (content) {
-      gchar **lines = g_strsplit(content, "\n", -1);
-      for (guint i=0; lines && lines[i]; i++) {
-        const char *u = lines[i];
-        if (g_str_has_prefix(u, "http://") || g_str_has_prefix(u, "https://")) {
-          if (is_media_url(u)) {
-            GtkWidget *pic = gtk_picture_new(); /* TODO: fetch via libsoup and set paintable async */
+      gchar **tokens = g_strsplit_set(content, " \n\t", -1);
+      for (guint i=0; tokens && tokens[i]; i++) {
+        const char *url = tokens[i];
+        if (!url || !*url) continue;
+        
+        /* Check if it's an HTTP(S) URL */
+        if (g_str_has_prefix(url, "http://") || g_str_has_prefix(url, "https://")) {
+          /* Handle images */
+          if (is_image_url(url)) {
+            GtkWidget *pic = gtk_picture_new();
+            gtk_widget_add_css_class(pic, "note-media-image");
             gtk_picture_set_can_shrink(GTK_PICTURE(pic), TRUE);
+            gtk_picture_set_content_fit(GTK_PICTURE(pic), GTK_CONTENT_FIT_CONTAIN);
+            gtk_widget_set_size_request(pic, -1, 300);
             gtk_widget_set_hexpand(pic, TRUE);
             gtk_widget_set_vexpand(pic, FALSE);
             gtk_box_append(GTK_BOX(self->media_box), pic);
             gtk_widget_set_visible(self->media_box, TRUE);
-            break;
+            
+#ifdef HAVE_SOUP3
+            /* Load image asynchronously */
+            load_media_image(self, url, GTK_PICTURE(pic));
+#endif
+          }
+          /* Handle videos */
+          else if (is_video_url(url)) {
+            GtkWidget *video = gtk_video_new();
+            gtk_widget_add_css_class(video, "note-media-video");
+            gtk_video_set_autoplay(GTK_VIDEO(video), FALSE);
+            gtk_video_set_loop(GTK_VIDEO(video), TRUE);
+            gtk_widget_set_size_request(video, -1, 300);
+            gtk_widget_set_hexpand(video, TRUE);
+            gtk_widget_set_vexpand(video, FALSE);
+            
+            /* Set video file */
+            GFile *file = g_file_new_for_uri(url);
+            gtk_video_set_file(GTK_VIDEO(video), file);
+            g_object_unref(file);
+            
+            gtk_box_append(GTK_BOX(self->media_box), video);
+            gtk_widget_set_visible(self->media_box, TRUE);
           }
         }
       }
-      g_strfreev(lines);
+      g_strfreev(tokens);
     }
   }
 

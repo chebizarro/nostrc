@@ -1,4 +1,5 @@
-#pragma once
+#ifndef OG_PREVIEW_WIDGET_H
+#define OG_PREVIEW_WIDGET_H
 
 #include <gtk/gtk.h>
 
@@ -35,3 +36,5 @@ void og_preview_widget_set_url(OgPreviewWidget *self, const char *url);
 void og_preview_widget_clear(OgPreviewWidget *self);
 
 G_END_DECLS
+
+#endif /* OG_PREVIEW_WIDGET_H */
