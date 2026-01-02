@@ -68,7 +68,7 @@ int gnostr_uds_sockd_start(const char *socket_path) {
   // Remove stale socket file if it exists
   if (g_file_test(socket_path, G_FILE_TEST_EXISTS)) {
     g_message("uds_sockd: removing stale socket at %s", socket_path);
-    if (g_unlink(socket_path) != 0) {
+    if (unlink(socket_path) != 0) {
       g_warning("uds_sockd: failed to remove stale socket: %s", g_strerror(errno));
     }
   }
@@ -123,7 +123,7 @@ void gnostr_uds_sockd_stop(void) {
     if (g_socket_path) {
       if (g_file_test(g_socket_path, G_FILE_TEST_EXISTS)) {
         g_message("uds_sockd: removing socket file %s", g_socket_path);
-        g_unlink(g_socket_path);
+        unlink(g_socket_path);
       }
       g_free(g_socket_path);
       g_socket_path = NULL;
