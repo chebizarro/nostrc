@@ -284,42 +284,47 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
   g_object_unref(task);
 }
 
+/* Forward declare global cache functions from timeline-view.c */
+extern GdkTexture *gnostr_avatar_try_load_cached(const char *url);
+extern void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *initials);
+
 static void load_image_async(GnostrProfilePane *self, const char *url, GtkPicture *picture, GCancellable **cancellable_slot) {
   if (!url || !*url) return;
   
-  /* Check cache first */
-  GdkTexture *cached = g_hash_table_lookup(self->image_cache, url);
+  /* OPTIMIZATION: Use global cache system (memory + disk) instead of local cache */
+  GdkTexture *cached = gnostr_avatar_try_load_cached(url);
   if (cached) {
+    /* Cache hit! Apply immediately without HTTP request */
     gtk_picture_set_paintable(picture, GDK_PAINTABLE(cached));
     gtk_widget_set_visible(GTK_WIDGET(picture), TRUE);
+    
     /* Hide initials if this is the avatar */
     if (picture == GTK_PICTURE(self->avatar_image)) {
       gtk_widget_set_visible(self->avatar_initials, FALSE);
     }
-    gtk_widget_set_visible(GTK_WIDGET(picture), TRUE);
+    
+    /* Also cache in local hash table for faster subsequent lookups */
+    if (self->image_cache) {
+      g_hash_table_insert(self->image_cache, g_strdup(url), g_object_ref(cached));
+    }
+    
+    g_object_unref(cached);
+    g_debug("profile_pane: avatar cache HIT for url=%s", url);
     return;
   }
   
-  /* Cancel previous load */
+  /* Cache miss - use global download system which handles caching automatically */
+  g_debug("profile_pane: avatar cache MISS, downloading url=%s", url);
+  
+  /* Cancel previous load if any */
   if (*cancellable_slot) {
     g_cancellable_cancel(*cancellable_slot);
     g_clear_object(cancellable_slot);
   }
   
-  *cancellable_slot = g_cancellable_new();
-  
-  SoupMessage *msg = soup_message_new("GET", url);
-  if (!msg) {
-    g_debug("Invalid image URL: %s", url);
-    return;
-  }
-  
-  GTask *task = g_task_new(self, *cancellable_slot, NULL, NULL);
-  g_task_set_task_data(task, g_strdup(url), g_free);
-  g_task_set_task_data(task, picture, NULL); /* Store picture reference */
-  
-  soup_session_send_and_read_async(self->soup_session, msg, G_PRIORITY_DEFAULT, *cancellable_slot, on_image_loaded, task);
-  g_object_unref(msg);
+  /* Use global download function which validates and caches properly */
+  GtkWidget *initials_widget = (picture == GTK_PICTURE(self->avatar_image)) ? self->avatar_initials : NULL;
+  gnostr_avatar_download_async(url, GTK_WIDGET(picture), initials_widget);
 }
 #endif
 

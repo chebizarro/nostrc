@@ -745,8 +745,17 @@ static GdkTexture *try_load_avatar_from_disk(const char *url) {
   GError *err = NULL;
   GdkTexture *tex = gdk_texture_new_from_filename(path, &err);
   if (!tex) {
-    g_debug("avatar disk: failed to load texture from %s (url=%s): %s", path, url, err ? err->message : "unknown");
+    g_warning("avatar disk: INVALID cached file %s (url=%s): %s - deleting corrupt cache", 
+              path, url, err ? err->message : "unknown");
     g_clear_error(&err);
+    
+    /* Delete the corrupt cache file so it can be re-downloaded */
+    if (unlink(path) != 0) {
+      g_warning("avatar disk: failed to delete corrupt cache file %s: %s", path, g_strerror(errno));
+    } else {
+      g_message("avatar disk: deleted corrupt cache file %s", path);
+    }
+    
     return NULL;
   }
   g_debug("avatar disk: hit for url=%s path=%s", url, path);
@@ -778,30 +787,33 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
   gsize blen = 0; (void)g_bytes_get_data(bytes, &blen);
   s_avatar_metrics.http_ok++;
   g_message("avatar http: fetched url=%s bytes=%zu", ctx && ctx->url ? ctx->url : "(null)", (size_t)blen);
-  /* Persist to disk cache */
-  g_autofree char *path = avatar_path_for_url(ctx->url);
-  if (path) {
-    gsize len = 0; const guint8 *data = g_bytes_get_data(bytes, &len);
-    GError *werr = NULL; (void)g_file_set_contents(path, (const char*)data, (gssize)len, &werr);
-    if (werr) {
-      s_avatar_metrics.cache_write_error++;
-      g_debug("avatar http: failed to write cache file %s: %s", path, werr->message);
-      g_clear_error(&werr);
-    } else {
-      g_debug("avatar http: wrote cache file %s len=%zu", path, (size_t)len);
-    }
-  }
-  /* Load texture from memory as fallback; prefer disk read if available */
-  GdkTexture *tex = NULL;
-  if (path) tex = gdk_texture_new_from_filename(path, NULL);
-  if (!tex) tex = gdk_texture_new_from_bytes(bytes, &error);
-  g_bytes_unref(bytes);
+  
+  /* CRITICAL: Validate it's actually an image BEFORE caching */
+  GdkTexture *tex = gdk_texture_new_from_bytes(bytes, &error);
   if (!tex) {
-    g_debug("avatar http: failed to create texture for url=%s: %s", ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
+    g_warning("avatar http: INVALID IMAGE DATA for url=%s: %s (likely HTML error page)", 
+              ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
     g_clear_error(&error);
+    g_bytes_unref(bytes);
     avatar_ctx_free(ctx);
     return;
   }
+  
+  /* Only persist to disk cache if it's a valid image */
+  g_autofree char *path = avatar_path_for_url(ctx->url);
+  if (path) {
+    gsize len = 0; const guint8 *data = g_bytes_get_data(bytes, &len);
+    GError *werr = NULL; 
+    if (g_file_set_contents(path, (const char*)data, (gssize)len, &werr)) {
+      g_debug("avatar http: wrote cache file %s len=%zu", path, (size_t)len);
+    } else {
+      s_avatar_metrics.cache_write_error++;
+      g_warning("avatar http: failed to write cache file %s: %s", path, werr ? werr->message : "unknown");
+      g_clear_error(&werr);
+    }
+  }
+  
+  g_bytes_unref(bytes);
   ensure_avatar_cache();
   g_hash_table_replace(avatar_texture_cache, g_strdup(ctx->url), g_object_ref(tex));
   g_debug("avatar http: cached texture for url=%s", ctx && ctx->url ? ctx->url : "(null)");
