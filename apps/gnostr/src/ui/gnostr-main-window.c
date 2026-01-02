@@ -474,11 +474,50 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
   /* Snapshot and clear queue */
   GPtrArray *authors = self->profile_fetch_queue;
   self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
+  
+  /* OPTIMIZATION: Check DB first and apply cached profiles immediately */
+  void *txn = NULL;
+  guint cached_applied = 0;
+  if (storage_ndb_begin_query(&txn) == 0) {
+    for (guint i = 0; i < authors->len; i++) {
+      const char *pkhex = (const char*)g_ptr_array_index(authors, i);
+      if (!pkhex || strlen(pkhex) != 64) continue;
+      
+      uint8_t pk32[32];
+      if (!hex_to_bytes32(pkhex, pk32)) continue;
+      
+      char *pjson = NULL;
+      int plen = 0;
+      if (storage_ndb_get_profile_by_pubkey(txn, pk32, &pjson, &plen) == 0 && pjson && plen > 0) {
+        /* Found in DB - apply immediately for fast UI update */
+        json_error_t jerr;
+        json_t *root = json_loadb(pjson, strnlen(pjson, plen), 0, &jerr);
+        if (root) {
+          json_t *content_json = json_object_get(root, "content");
+          if (content_json && json_is_string(content_json)) {
+            update_meta_from_profile_json(self, pkhex, json_string_value(content_json));
+            cached_applied++;
+          }
+          json_decref(root);
+        }
+        free(pjson);
+      }
+    }
+    storage_ndb_end_query(txn);
+  }
+  
+  if (cached_applied > 0) {
+    g_message("profile_fetch: applied %u cached profiles from DB", cached_applied);
+  }
+  
+  /* NOTE: We still fetch ALL profiles from relays to check for updates.
+   * Cached profiles give instant UI feedback, relay fetch keeps them fresh. */
+  
   /* Build relay URLs */
   const char **urls = NULL; size_t url_count = 0; NostrFilters *dummy = NULL;
   build_urls_and_filters(self, &urls, &url_count, &dummy, 0 /* unused for profiles */);
   if (!urls || url_count == 0) {
-    g_message("profile_fetch: no relays configured; dropping %u author(s)", authors->len);
+    g_message("profile_fetch: no relays configured; %u cached applied, dropping relay fetch", cached_applied);
     g_ptr_array_free(authors, TRUE);
     if (dummy) nostr_filters_free(dummy);
     return G_SOURCE_REMOVE;
@@ -548,6 +587,7 @@ typedef struct ProfileBatchCtx {
 } ProfileBatchCtx;
 
 static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  g_message("on_profiles_batch_done: CALLBACK INVOKED!");
   GnostrSimplePool *pool = GNOSTR_SIMPLE_POOL(source); (void)pool;
   ProfileBatchCtx *ctx = (ProfileBatchCtx*)user_data;
   GError *error = NULL;
@@ -556,6 +596,7 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
     g_warning("profile_fetch: finish error: %s", error->message);
     g_clear_error(&error);
   }
+  g_message("on_profiles_batch_done: jsons=%p jsons->len=%u", (void*)jsons, jsons ? jsons->len : 0);
   /* Update cache/UI from returned events */
   if (jsons) {
     guint deserialized = 0, dispatched = 0;
@@ -580,6 +621,7 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
     }
     guint unique_count = g_hash_table_size(unique_pks);
     g_hash_table_unref(unique_pks);
+    g_message("profile_fetch: batch has %u events for %u unique pubkeys", jsons->len, unique_count);
     
     /* Ingest events ONE AT A TIME - batch ingestion fails if ANY event is invalid */
     guint ingested = 0, failed = 0;
@@ -587,11 +629,31 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
       const char *evt_json = (const char*)g_ptr_array_index(jsons, i);
       if (!evt_json) continue;
       
-      /* Add newline for LDJSON format */
-      GString *single = g_string_new(evt_json);
-      g_string_append_c(single, '\n');
+      /* CRITICAL FIX: nostrdb requires "tags" field even if empty.
+       * Many relays omit it. Add it if missing. */
+      GString *fixed_json = g_string_new("");
+      if (!strstr(evt_json, "\"tags\"")) {
+        // Find insertion point after "kind" field
+        const char *kind_pos = strstr(evt_json, "\"kind\"");
+        if (kind_pos) {
+          const char *comma_after_kind = strchr(kind_pos, ',');
+          if (comma_after_kind) {
+            // Copy prefix, insert tags, copy suffix
+            g_string_append_len(fixed_json, evt_json, comma_after_kind - evt_json + 1);
+            g_string_append(fixed_json, "\"tags\":[],");
+            g_string_append(fixed_json, comma_after_kind + 1);
+          } else {
+            g_string_append(fixed_json, evt_json);
+          }
+        } else {
+          g_string_append(fixed_json, evt_json);
+        }
+      } else {
+        g_string_append(fixed_json, evt_json);
+      }
       
-      int ingest_rc = storage_ndb_ingest_ldjson(single->str, single->len);
+      /* Use storage_ndb_ingest_event_json (same as live notes) instead of LDJSON */
+      int ingest_rc = storage_ndb_ingest_event_json(fixed_json->str, NULL);
       if (ingest_rc != 0) {
         failed++;
         if (failed <= 3) {
@@ -600,7 +662,7 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
       } else {
         ingested++;
       }
-      g_string_free(single, TRUE);
+      g_string_free(fixed_json, TRUE);
     }
     g_message("profile_fetch: ingested %u/%u events (%u failed)", ingested, jsons->len, failed);
     g_string_free(ldjson, TRUE);    
@@ -796,6 +858,7 @@ static void prepopulate_text_notes_from_cache(GnostrMainWindow *self, guint limi
   g_autofree char *filters = g_strdup_printf("[{\"kinds\":[1],\"limit\":%u}]", limit > 0 ? limit : 30);
   int rc = storage_ndb_query(txn, filters, &arr, &n);
   g_message("prepopulate_text_notes_from_cache: query rc=%d count=%d", rc, n);
+  guint enqueued_profiles = 0;
   if (rc == 0 && arr && n > 0) {
     /* Insert in reverse so newest ends up at top if model shows append order */
     for (int i = 0; i < n; i++) {
@@ -805,6 +868,12 @@ static void prepopulate_text_notes_from_cache(GnostrMainWindow *self, guint limi
       if (evt && nostr_event_deserialize(evt, evt_json) == 0) {
         if (nostr_event_get_kind(evt) == 1) {
           append_note_from_event(self, evt);
+          /* Enqueue author for profile fetch (will check DB first, then relay) */
+          const char *pk = nostr_event_get_pubkey(evt);
+          if (pk && strlen(pk) == 64) {
+            enqueue_profile_author(self, pk);
+            enqueued_profiles++;
+          }
         }
       } else {
         if (evt_json) {
@@ -818,6 +887,9 @@ static void prepopulate_text_notes_from_cache(GnostrMainWindow *self, guint limi
   }
   storage_ndb_free_results(arr, n);
   storage_ndb_end_query(txn);
+  if (enqueued_profiles > 0) {
+    g_message("prepopulate_text_notes_from_cache: enqueued %u profile(s) for fetch", enqueued_profiles);
+  }
 }
 
 static void gnostr_main_window_init(GnostrMainWindow *self) {

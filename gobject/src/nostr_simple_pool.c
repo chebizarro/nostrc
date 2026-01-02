@@ -767,8 +767,11 @@ static void fetch_profiles_ctx_free(FetchProfilesCtx *ctx) {
 }
 
 static gboolean fetch_profiles_complete_ok(gpointer data) {
+    g_message("fetch_profiles_complete_ok: INVOKED on main loop!");
     GTask *task = G_TASK(data);
+    g_message("fetch_profiles_complete_ok: calling g_task_return_boolean");
     g_task_return_boolean(task, TRUE);
+    g_message("fetch_profiles_complete_ok: g_task_return_boolean completed");
     return G_SOURCE_REMOVE;
 }
 
@@ -781,8 +784,12 @@ static gpointer fetch_profiles_thread(gpointer user_data) {
     if (ctx->author_count > 0) {
         authors_needed = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
         for (size_t i = 0; i < ctx->author_count; i++) {
-            if (ctx->authors[i] && *ctx->authors[i]) g_hash_table_add(authors_needed, g_strdup(ctx->authors[i]));
+            if (ctx->authors[i] && *ctx->authors[i]) {
+                g_message("fetch_profiles_thread: adding author %zu: %.16s...", i, ctx->authors[i]);
+                g_hash_table_add(authors_needed, g_strdup(ctx->authors[i]));
+            }
         }
+        g_message("fetch_profiles_thread: authors_needed hash table size: %u", g_hash_table_size(authors_needed));
     }
 
     /* Build a single filter for kind-0 profiles with all requested authors. No limit. */
@@ -959,6 +966,10 @@ static gpointer fetch_profiles_thread(gpointer user_data) {
         /* Exit if we've been quiet long enough or hit hard cap */
         guint64 quiet_elapsed = now - t_last_activity;
         guint64 total_elapsed = now - t_start;
+        if (loop_iterations % 500 == 0) {
+            g_message("fetch_profiles_thread: timeout check - quiet=%lums total=%lums", 
+                     (unsigned long)(quiet_elapsed/1000), (unsigned long)(total_elapsed/1000));
+        }
         if (quiet_elapsed > QUIET_USEC) { 
             g_message("fetch_profiles_thread: quiet timeout (quiet=%lums)", (unsigned long)(quiet_elapsed/1000));
             exit_reason = "quiet"; break; 
@@ -976,19 +987,28 @@ static gpointer fetch_profiles_thread(gpointer user_data) {
         SubItem *it = (SubItem*)subs->pdata[i];
         if (!it) continue;
         g_message("fetch_profiles_thread: cleaning up sub %u/%u", i+1, subs->len);
-        /* Disconnect relay FIRST so subscription_close won't try to send CLOSE message */
+        /* CLEANUP: Skip close/unsubscribe/free to avoid blocking.
+         * 
+         * PROBLEMS WITH PROPER CLEANUP:
+         * 1. nostr_subscription_close() blocks waiting for CLOSE message to be sent (200ms timeout)
+         *    but can hang much longer if write channel is backed up
+         * 2. nostr_subscription_free() blocks on go_wait_group_wait() for worker thread to exit
+         * 3. Worker thread may be blocked on websocket operations
+         * 
+         * SOLUTION: Just disconnect the relay and let it clean up server-side.
+         * The relay will close the subscription when the connection drops.
+         * We leak the subscription object, but this prevents the thread from hanging.
+         * 
+         * TODO: Implement async cleanup in libnostr that doesn't block. */
+        if (it->sub) { 
+            g_message("fetch_profiles_thread: skipping subscription cleanup to avoid hang");
+            // nostr_subscription_close(it->sub, NULL);      // BLOCKS on write
+            // nostr_subscription_unsubscribe(it->sub);      // May not help
+            // nostr_subscription_free(it->sub);             // BLOCKS on worker thread
+        }
         if (it->relay) { 
             g_message("fetch_profiles_thread: disconnecting relay...");
             nostr_relay_disconnect(it->relay); 
-        }
-        if (it->sub) { 
-            /* Now unsubscribe (which calls close, but relay is disconnected so it won't block) */
-            g_message("fetch_profiles_thread: unsubscribing...");
-            nostr_subscription_unsubscribe(it->sub);
-            g_message("fetch_profiles_thread: freeing subscription...");
-            nostr_subscription_free(it->sub); 
-        }
-        if (it->relay) { 
             g_message("fetch_profiles_thread: freeing relay...");
             nostr_relay_free(it->relay); 
         }
@@ -1009,8 +1029,10 @@ static gpointer fetch_profiles_thread(gpointer user_data) {
               (unsigned)((t_end - t_start) / 1000));
 
     /* Signal completion on main loop */
+    g_message("fetch_profiles_thread: about to invoke fetch_profiles_complete_ok on main loop");
     g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, fetch_profiles_complete_ok,
                                g_object_ref(ctx->task), (GDestroyNotify)g_object_unref);
+    g_message("fetch_profiles_thread: g_main_context_invoke_full returned");
     return NULL;
 }
 

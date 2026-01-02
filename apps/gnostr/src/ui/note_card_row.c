@@ -289,6 +289,10 @@ static void load_media_image(GnostrNoteCardRow *self, const char *url, GtkPictur
 }
 #endif
 
+/* Forward declare cache functions from timeline-view.c */
+extern GdkTexture *gnostr_avatar_try_load_cached(const char *url);
+extern void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *initials);
+
 void gnostr_note_card_row_set_author(GnostrNoteCardRow *self, const char *display_name, const char *handle, const char *avatar_url) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
   if (GTK_IS_LABEL(self->lbl_display)) gtk_label_set_text(GTK_LABEL(self->lbl_display), (display_name && *display_name) ? display_name : (handle ? handle : _("Anonymous")));
@@ -296,13 +300,26 @@ void gnostr_note_card_row_set_author(GnostrNoteCardRow *self, const char *displa
   g_clear_pointer(&self->avatar_url, g_free);
   self->avatar_url = g_strdup(avatar_url);
   set_avatar_initials(self, display_name, handle);
+  
 #ifdef HAVE_SOUP3
-  if (avatar_url && *avatar_url) {
-    SoupSession *sess = soup_session_new();
-    SoupMessage *msg = soup_message_new("GET", avatar_url);
-    soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, self->avatar_cancellable, on_avatar_http_done, self);
-    g_object_unref(msg);
-    g_object_unref(sess);
+  /* OPTIMIZATION: Check cache before downloading */
+  if (avatar_url && *avatar_url && GTK_IS_PICTURE(self->avatar_image)) {
+    /* First, try to load from cache (memory or disk) */
+    GdkTexture *cached = gnostr_avatar_try_load_cached(avatar_url);
+    if (cached) {
+      /* Cache hit! Apply immediately without HTTP request */
+      gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), GDK_PAINTABLE(cached));
+      gtk_widget_set_visible(self->avatar_image, TRUE);
+      if (GTK_IS_WIDGET(self->avatar_initials)) {
+        gtk_widget_set_visible(self->avatar_initials, FALSE);
+      }
+      g_object_unref(cached);
+      g_debug("note_card: avatar cache HIT for url=%s", avatar_url);
+    } else {
+      /* Cache miss - download asynchronously */
+      g_debug("note_card: avatar cache MISS, downloading url=%s", avatar_url);
+      gnostr_avatar_download_async(avatar_url, self->avatar_image, self->avatar_initials);
+    }
   }
 #endif
 }

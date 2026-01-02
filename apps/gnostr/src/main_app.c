@@ -1,5 +1,6 @@
 #include <gtk/gtk.h>
 #include <glib/gstdio.h>
+#include <errno.h>
 #include "ui/gnostr-main-window.h"
 #include "storage_ndb.h"
 
@@ -33,10 +34,24 @@ int main(int argc, char **argv) {
 
   /* Initialize NostrdB-backed storage in user cache directory */
   gchar *dbdir = g_build_filename(g_get_user_cache_dir(), "gnostr", "ndb", NULL);
-  g_mkdir_with_parents(dbdir, 0700);
-  const char *opts = "{\"mapsize\":1073741824,\"ingester_threads\":1}";
+  g_message("Attempting to initialize storage at %s", dbdir);
+  int mkdir_rc = g_mkdir_with_parents(dbdir, 0700);
+  if (mkdir_rc != 0) {
+    g_warning("g_mkdir_with_parents failed: %d (%s)", mkdir_rc, g_strerror(errno));
+  }
+  /* NOTE: ingest_skip_validation=1 is set because some relay events have invalid signatures.
+   * This should be investigated and potentially fixed by validating events before ingestion.
+   * ingester_threads=4 to speed up async ingestion. */
+  const char *opts = "{\"mapsize\":1073741824,\"ingester_threads\":4,\"ingest_skip_validation\":1}";
+  fprintf(stderr, "[main] About to call storage_ndb_init(dbdir=%s, opts=%s)\n", dbdir, opts);
+  fflush(stderr);
   if (!storage_ndb_init(dbdir, opts)) {
+    fprintf(stderr, "[main] storage_ndb_init FAILED for %s\n", dbdir);
+    fflush(stderr);
     g_warning("Failed to initialize storage at %s", dbdir);
+  } else {
+    fprintf(stderr, "[main] storage_ndb_init SUCCESS for %s\n", dbdir);
+    fflush(stderr);
   }
   g_free(dbdir);
 

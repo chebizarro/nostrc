@@ -35,8 +35,10 @@ void gnostr_timeline_view_set_tree_roots(GnostrTimelineView *self, GListModel *r
 void gnostr_timeline_item_add_child(TimelineItem *parent, TimelineItem *child);
 GListModel *gnostr_timeline_item_get_children(TimelineItem *item);
 
-/* Prefetch and cache an avatar image by URL (no UI required). */
+/* Avatar cache and download functions */
 void gnostr_avatar_prefetch(const char *url);
+GdkTexture *gnostr_avatar_try_load_cached(const char *url);
+void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *initials);
 
 /* Avatar metrics for pipeline health. */
 typedef struct {

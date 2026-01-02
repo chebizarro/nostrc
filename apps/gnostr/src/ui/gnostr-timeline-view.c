@@ -847,6 +847,54 @@ void gnostr_avatar_prefetch(const char *url) {
 #endif
 }
 
+/* Public: Try to load avatar from cache (memory or disk). Returns new ref or NULL. */
+GdkTexture *gnostr_avatar_try_load_cached(const char *url) {
+  if (!url || !*url) return NULL;
+  if (!str_has_prefix_http(url)) return NULL;
+  
+  ensure_avatar_cache();
+  
+  /* Check memory cache first */
+  GdkTexture *mem_tex = g_hash_table_lookup(avatar_texture_cache, url);
+  if (mem_tex) {
+    s_avatar_metrics.mem_cache_hits++;
+    return g_object_ref(mem_tex); /* return new ref */
+  }
+  
+  /* Check disk cache */
+  GdkTexture *disk_tex = try_load_avatar_from_disk(url);
+  if (disk_tex) {
+    /* Promote to memory cache */
+    g_hash_table_replace(avatar_texture_cache, g_strdup(url), g_object_ref(disk_tex));
+    return disk_tex; /* transfer ownership */
+  }
+  
+  return NULL;
+}
+
+/* Public: Download avatar asynchronously and update widgets when done. */
+void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *initials) {
+#ifdef HAVE_SOUP3
+  if (!url || !*url || !str_has_prefix_http(url)) return;
+  
+  s_avatar_metrics.requests_total++;
+  s_avatar_metrics.http_start++;
+  
+  SoupSession *sess = soup_session_new();
+  SoupMessage *msg = soup_message_new("GET", url);
+  AvatarCtx *ctx = g_new0(AvatarCtx, 1);
+  ctx->image = image ? g_object_ref(image) : NULL;
+  ctx->initials = initials ? g_object_ref(initials) : NULL;
+  ctx->url = g_strdup(url);
+  
+  soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
+  g_object_unref(msg);
+  g_object_unref(sess);
+#else
+  (void)url; (void)image; (void)initials;
+#endif
+}
+
 static void try_set_avatar(GtkWidget *row, const char *avatar_url, const char *display, const char *handle) {
   GtkWidget *w_init = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "avatar_initials"));
   GtkWidget *w_img  = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "avatar_image"));
