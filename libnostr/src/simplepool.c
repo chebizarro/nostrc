@@ -3,11 +3,236 @@
 #include "nostr-subscription.h"
 #include "channel.h"
 #include "context.h"
+#include "select.h"
+#include "nostr/metrics.h"
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
+#include <sys/time.h>
+
+/* ========================================================================
+ * PHASE 2: SUBSCRIPTION REGISTRY - Pool-level lifecycle management
+ * ======================================================================== */
+
+typedef struct PoolSubscriptionEntry {
+    NostrSubscription *sub;
+    NostrRelay *relay;
+    GoContext *ctx;
+    CancelFunc cancel;
+    uint64_t created_at_ms;
+    bool cleanup_requested;
+    bool cleanup_in_progress;
+    AsyncCleanupHandle *cleanup_handle;
+    struct PoolSubscriptionEntry *next;
+} PoolSubscriptionEntry;
+
+typedef struct SubscriptionRegistry {
+    PoolSubscriptionEntry *head;
+    size_t count;
+    pthread_mutex_t mutex;
+    GoChannel *cleanup_queue;  // Queue of entries to cleanup
+    bool shutdown_requested;
+} SubscriptionRegistry;
+
+static SubscriptionRegistry *subscription_registry_new(void) {
+    SubscriptionRegistry *reg = (SubscriptionRegistry *)malloc(sizeof(SubscriptionRegistry));
+    if (!reg) return NULL;
+    
+    reg->head = NULL;
+    reg->count = 0;
+    pthread_mutex_init(&reg->mutex, NULL);
+    reg->cleanup_queue = go_channel_create(256);  // Buffered queue
+    reg->shutdown_requested = false;
+    
+    return reg;
+}
+
+static void subscription_registry_free(SubscriptionRegistry *reg) {
+    if (!reg) return;
+    
+    pthread_mutex_lock(&reg->mutex);
+    
+    // Free all entries
+    PoolSubscriptionEntry *entry = reg->head;
+    while (entry) {
+        PoolSubscriptionEntry *next = entry->next;
+        
+        // Cancel context if not already done
+        if (entry->cancel && entry->ctx) {
+            entry->cancel(entry->ctx);
+        }
+        
+        // Abandon any in-progress cleanup
+        if (entry->cleanup_handle) {
+            nostr_subscription_cleanup_abandon(entry->cleanup_handle);
+        }
+        
+        free(entry);
+        entry = next;
+    }
+    
+    pthread_mutex_unlock(&reg->mutex);
+    
+    go_channel_free(reg->cleanup_queue);
+    pthread_mutex_destroy(&reg->mutex);
+    free(reg);
+}
+
+static PoolSubscriptionEntry *subscription_registry_add(SubscriptionRegistry *reg,
+                                                         NostrSubscription *sub,
+                                                         NostrRelay *relay,
+                                                         GoContext *ctx,
+                                                         CancelFunc cancel) {
+    if (!reg || !sub) return NULL;
+    
+    PoolSubscriptionEntry *entry = (PoolSubscriptionEntry *)malloc(sizeof(PoolSubscriptionEntry));
+    if (!entry) return NULL;
+    
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    
+    entry->sub = sub;
+    entry->relay = relay;
+    entry->ctx = ctx;
+    entry->cancel = cancel;
+    entry->created_at_ms = (uint64_t)tv.tv_sec * 1000 + (uint64_t)tv.tv_usec / 1000;
+    entry->cleanup_requested = false;
+    entry->cleanup_in_progress = false;
+    entry->cleanup_handle = NULL;
+    entry->next = NULL;
+    
+    pthread_mutex_lock(&reg->mutex);
+    
+    // Add to head of list
+    entry->next = reg->head;
+    reg->head = entry;
+    reg->count++;
+    
+    pthread_mutex_unlock(&reg->mutex);
+    
+    nostr_metric_counter_add("pool_sub_registered", 1);
+    
+    return entry;
+}
+
+static void subscription_registry_request_cleanup(SubscriptionRegistry *reg, PoolSubscriptionEntry *entry) {
+    if (!reg || !entry) return;
+    
+    pthread_mutex_lock(&reg->mutex);
+    
+    if (!entry->cleanup_requested) {
+        entry->cleanup_requested = true;
+        // Queue for cleanup
+        go_channel_send(reg->cleanup_queue, entry);
+    }
+    
+    pthread_mutex_unlock(&reg->mutex);
+}
+
+static void subscription_registry_remove(SubscriptionRegistry *reg, PoolSubscriptionEntry *entry) {
+    if (!reg || !entry) return;
+    
+    pthread_mutex_lock(&reg->mutex);
+    
+    // Find and remove from list
+    PoolSubscriptionEntry **ptr = &reg->head;
+    while (*ptr) {
+        if (*ptr == entry) {
+            *ptr = entry->next;
+            reg->count--;
+            
+            // Abandon cleanup if in progress
+            if (entry->cleanup_handle) {
+                nostr_subscription_cleanup_abandon(entry->cleanup_handle);
+            }
+            
+            free(entry);
+            pthread_mutex_unlock(&reg->mutex);
+            nostr_metric_counter_add("pool_sub_removed", 1);
+            return;
+        }
+        ptr = &(*ptr)->next;
+    }
+    
+    pthread_mutex_unlock(&reg->mutex);
+}
+
+/* Background cleanup worker thread */
+static void *cleanup_worker_thread(void *arg) {
+    NostrSimplePool *pool = (NostrSimplePool *)arg;
+    SubscriptionRegistry *reg = pool->sub_registry;
+    
+    fprintf(stderr, "[pool] cleanup_worker: STARTED\n");
+    
+    const uint64_t CLEANUP_TIMEOUT_MS = 500;
+    
+    while (!reg->shutdown_requested) {
+        // Wait for cleanup requests with timeout
+        PoolSubscriptionEntry *entry = NULL;
+        GoSelectCase cases[] = {
+            { .op = GO_SELECT_RECEIVE, .chan = reg->cleanup_queue, .recv_buf = (void**)&entry }
+        };
+        GoSelectResult result = go_select_timeout(cases, 1, 1000); // 1s timeout for periodic checks
+        
+        if (result.selected_case == -1) {
+            // Timeout - check for shutdown
+            continue;
+        }
+        
+        if (!result.ok || !entry) {
+            // Channel closed or empty
+            continue;
+        }
+        
+        // Process cleanup request
+        pthread_mutex_lock(&reg->mutex);
+        
+        if (entry->cleanup_in_progress) {
+            // Already being cleaned up
+            pthread_mutex_unlock(&reg->mutex);
+            continue;
+        }
+        
+        entry->cleanup_in_progress = true;
+        NostrSubscription *sub = entry->sub;
+        
+        pthread_mutex_unlock(&reg->mutex);
+        
+        // Start async cleanup
+        fprintf(stderr, "[pool] cleanup_worker: starting async cleanup for subscription\n");
+        AsyncCleanupHandle *handle = nostr_subscription_free_async(sub, CLEANUP_TIMEOUT_MS);
+        
+        if (handle) {
+            entry->cleanup_handle = handle;
+            
+            // Wait for completion
+            bool success = nostr_subscription_cleanup_wait(handle, CLEANUP_TIMEOUT_MS + 500);
+            
+            if (success) {
+                fprintf(stderr, "[pool] cleanup_worker: cleanup SUCCESS\n");
+                nostr_metric_counter_add("pool_cleanup_success", 1);
+            } else {
+                fprintf(stderr, "[pool] cleanup_worker: cleanup TIMEOUT (leaked)\n");
+                nostr_metric_counter_add("pool_cleanup_timeout", 1);
+            }
+            
+            nostr_subscription_cleanup_abandon(handle);
+            entry->cleanup_handle = NULL;
+        } else {
+            fprintf(stderr, "[pool] cleanup_worker: failed to start async cleanup\n");
+            nostr_metric_counter_add("pool_cleanup_failed", 1);
+        }
+        
+        // Remove entry from registry
+        subscription_registry_remove(reg, entry);
+    }
+    
+    fprintf(stderr, "[pool] cleanup_worker: EXITING\n");
+    return NULL;
+}
 
 // Function to create a SimplePool
 NostrSimplePool *nostr_simple_pool_new(void) {
@@ -35,6 +260,21 @@ NostrSimplePool *nostr_simple_pool_new(void) {
     const char *auto_env = getenv("NOSTR_SIMPLE_POOL_AUTO_UNSUB_EOSE");
     if (auto_env && *auto_env && strcmp(auto_env, "0") != 0) {
         pool->auto_unsub_on_eose = true;
+    }
+    
+    /* Phase 2: Initialize subscription registry and cleanup worker */
+    pool->sub_registry = subscription_registry_new();
+    pool->cleanup_worker_running = false;
+    
+    if (pool->sub_registry) {
+        // Start cleanup worker thread
+        if (pthread_create(&pool->cleanup_worker_thread, NULL, cleanup_worker_thread, pool) == 0) {
+            pool->cleanup_worker_running = true;
+            pthread_detach(pool->cleanup_worker_thread);
+            fprintf(stderr, "[pool] cleanup worker thread started\n");
+        } else {
+            fprintf(stderr, "[pool] WARNING: failed to start cleanup worker thread\n");
+        }
     }
 
     return pool;
@@ -67,11 +307,59 @@ void nostr_simple_pool_set_auto_unsub_on_eose(NostrSimplePool *pool, bool enable
 // Function to free a SimplePool
 void nostr_simple_pool_free(NostrSimplePool *pool) {
     if (pool) {
+        /* Phase 2: Shutdown cleanup worker first */
+        if (pool->sub_registry) {
+            fprintf(stderr, "[pool] shutting down cleanup worker...\n");
+            pool->sub_registry->shutdown_requested = true;
+            
+            // Close cleanup queue to wake up worker
+            go_channel_close(pool->sub_registry->cleanup_queue);
+            
+            // Give worker time to exit gracefully (max 2s)
+            if (pool->cleanup_worker_running) {
+                struct timespec ts;
+                ts.tv_sec = 0;
+                ts.tv_nsec = 100000000; // 100ms
+                for (int i = 0; i < 20; i++) {
+                    nanosleep(&ts, NULL);
+                    // Worker should exit on its own
+                }
+            }
+            
+            fprintf(stderr, "[pool] cleanup worker shutdown complete\n");
+        }
+        
         /* Ensure stopped */
         if (pool->running) {
             pool->running = false;
             pthread_join(pool->thread, NULL);
         }
+        
+        /* Phase 2: Cancel all registered subscriptions */
+        if (pool->sub_registry) {
+            fprintf(stderr, "[pool] cancelling %zu registered subscriptions...\n", 
+                    pool->sub_registry->count);
+            
+            pthread_mutex_lock(&pool->sub_registry->mutex);
+            PoolSubscriptionEntry *entry = pool->sub_registry->head;
+            while (entry) {
+                if (entry->cancel && entry->ctx) {
+                    entry->cancel(entry->ctx);
+                }
+                entry = entry->next;
+            }
+            pthread_mutex_unlock(&pool->sub_registry->mutex);
+            
+            // Give subscriptions brief time to cleanup (500ms)
+            struct timespec ts;
+            ts.tv_sec = 0;
+            ts.tv_nsec = 500000000;
+            nanosleep(&ts, NULL);
+            
+            subscription_registry_free(pool->sub_registry);
+            fprintf(stderr, "[pool] subscription registry freed\n");
+        }
+        
         /* Close subscriptions */
         if (pool->subs) {
             for (size_t i = 0; i < pool->subs_count; i++) {

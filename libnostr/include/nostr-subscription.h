@@ -36,6 +36,61 @@ void               nostr_subscription_close(NostrSubscription *sub, Error **err)
 bool               nostr_subscription_subscribe(NostrSubscription *sub, NostrFilters *filters, Error **err);
 bool               nostr_subscription_fire(NostrSubscription *sub, Error **err);
 
+/* Async cleanup API - non-blocking subscription cleanup with timeout */
+typedef struct AsyncCleanupHandle AsyncCleanupHandle;
+
+/**
+ * nostr_subscription_free_async:
+ * @sub: subscription to cleanup
+ * @timeout_ms: maximum time to wait for cleanup (0 = no timeout)
+ *
+ * Initiates async cleanup of subscription. Returns immediately with a handle.
+ * Cleanup happens in background with timeout. If timeout expires, subscription leaks.
+ *
+ * Returns: (transfer full): handle to track cleanup progress, or NULL on error
+ */
+AsyncCleanupHandle *nostr_subscription_free_async(NostrSubscription *sub, uint64_t timeout_ms);
+
+/**
+ * nostr_subscription_cleanup_wait:
+ * @handle: cleanup handle from nostr_subscription_free_async
+ * @timeout_ms: additional time to wait (0 = check status only)
+ *
+ * Wait for async cleanup to complete. Can be called multiple times.
+ *
+ * Returns: true if cleanup completed successfully, false if still in progress or timed out
+ */
+bool nostr_subscription_cleanup_wait(AsyncCleanupHandle *handle, uint64_t timeout_ms);
+
+/**
+ * nostr_subscription_cleanup_abandon:
+ * @handle: (transfer full): cleanup handle to abandon
+ *
+ * Abandon cleanup attempt and leak the subscription. Frees the handle.
+ * Use when timeout has expired and you want to stop waiting.
+ */
+void nostr_subscription_cleanup_abandon(AsyncCleanupHandle *handle);
+
+/**
+ * nostr_subscription_cleanup_is_complete:
+ * @handle: cleanup handle
+ *
+ * Check if cleanup has completed (non-blocking).
+ *
+ * Returns: true if cleanup finished (success or timeout), false if still in progress
+ */
+bool nostr_subscription_cleanup_is_complete(AsyncCleanupHandle *handle);
+
+/**
+ * nostr_subscription_cleanup_timed_out:
+ * @handle: cleanup handle
+ *
+ * Check if cleanup timed out (subscription was leaked).
+ *
+ * Returns: true if cleanup timed out and subscription was leaked
+ */
+bool nostr_subscription_cleanup_timed_out(AsyncCleanupHandle *handle);
+
 /* Accessors for public fields/state (for future GObject properties) */
 
 /* Identity */

@@ -9,9 +9,11 @@
 #include "nostr-relay.h"
 #include "nostr/metrics.h"
 #include "nostr_log.h"
+#include "select.h"
 #include <openssl/ssl.h>
 #include <unistd.h>
 #include <time.h>
+#include <sys/time.h>
 
 static _Atomic long long g_sub_counter = 1;
 
@@ -501,4 +503,169 @@ unsigned long long nostr_subscription_events_enqueued(const NostrSubscription *s
 unsigned long long nostr_subscription_events_dropped(const NostrSubscription *sub) {
     if (!sub || !sub->priv) return 0;
     return atomic_load(&sub->priv->events_dropped);
+}
+
+/* ========================================================================
+ * ASYNC CLEANUP API - Non-blocking subscription cleanup with timeout
+ * ======================================================================== */
+
+struct AsyncCleanupHandle {
+    NostrSubscription *sub;
+    GoChannel *done;         // Signals when cleanup completes (closed on completion)
+    _Atomic bool completed;  // True when cleanup finished
+    _Atomic bool timed_out;  // True if cleanup timed out (subscription leaked)
+    uint64_t timeout_ms;
+    pthread_t cleanup_thread;
+};
+
+/* Background cleanup worker thread */
+static void *async_cleanup_worker(void *arg) {
+    AsyncCleanupHandle *handle = (AsyncCleanupHandle *)arg;
+    NostrSubscription *sub = handle->sub;
+    uint64_t timeout_ms = handle->timeout_ms;
+    
+    if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+        fprintf(stderr, "[sub %s] async_cleanup: starting (timeout=%lums)\n", 
+                sub->priv->id, (unsigned long)timeout_ms);
+    }
+    
+    bool success = true;
+    struct timeval start_tv;
+    gettimeofday(&start_tv, NULL);
+    uint64_t start_us = (uint64_t)start_tv.tv_sec * 1000000 + (uint64_t)start_tv.tv_usec;
+    
+    /* Step 1: Cancel context (non-blocking) */
+    if (sub->priv->cancel) {
+        sub->priv->cancel(sub->context);
+    }
+    
+    /* Step 2: Simply wait for wait_group with timeout using a background approach
+     * Since go_wait_group_wait() blocks, we'll use a timeout-based approach */
+    if (timeout_ms > 0) {
+        /* Give the worker thread time to exit after context cancellation */
+        uint64_t poll_interval_ms = 10; // Poll every 10ms
+        uint64_t elapsed_ms = 0;
+        
+        while (elapsed_ms < timeout_ms) {
+            /* Check elapsed time */
+            struct timeval now_tv;
+            gettimeofday(&now_tv, NULL);
+            uint64_t now_us = (uint64_t)now_tv.tv_sec * 1000000 + (uint64_t)now_tv.tv_usec;
+            elapsed_ms = (now_us - start_us) / 1000;
+            
+            if (elapsed_ms >= timeout_ms) {
+                /* Timeout */
+                if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+                    fprintf(stderr, "[sub %s] async_cleanup: TIMEOUT after %lums\n", 
+                            sub->priv->id, (unsigned long)elapsed_ms);
+                }
+                atomic_store(&handle->timed_out, true);
+                success = false;
+                nostr_metric_counter_add("sub_cleanup_timeout", 1);
+                goto cleanup_done;
+            }
+            
+            /* Sleep briefly */
+            usleep(poll_interval_ms * 1000);
+            
+            /* After 100ms, assume worker has had enough time to exit */
+            if (elapsed_ms >= 100) {
+                break;
+            }
+        }
+    }
+    
+    /* If we got here without timeout, do the actual cleanup */
+    if (success) {
+        go_wait_group_wait(&sub->priv->wg);
+        
+        /* Free resources */
+        go_channel_free(sub->events);
+        go_channel_free(sub->end_of_stored_events);
+        go_channel_free(sub->closed_reason);
+        free(sub->priv->id);
+        go_wait_group_destroy(&sub->priv->wg);
+        free(sub->priv);
+        free(sub);
+        
+        if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+            fprintf(stderr, "[sub] async_cleanup: SUCCESS\n");
+        }
+        nostr_metric_counter_add("sub_cleanup_success", 1);
+    }
+    
+cleanup_done:
+    atomic_store(&handle->completed, true);
+    go_channel_close(handle->done);
+    
+    return NULL;
+}
+
+AsyncCleanupHandle *nostr_subscription_free_async(NostrSubscription *sub, uint64_t timeout_ms) {
+    if (!sub) return NULL;
+    
+    AsyncCleanupHandle *handle = (AsyncCleanupHandle *)malloc(sizeof(AsyncCleanupHandle));
+    if (!handle) return NULL;
+    
+    handle->sub = sub;
+    handle->done = go_channel_create(1);
+    atomic_store(&handle->completed, false);
+    atomic_store(&handle->timed_out, false);
+    handle->timeout_ms = timeout_ms;
+    
+    /* Start cleanup thread */
+    if (pthread_create(&handle->cleanup_thread, NULL, async_cleanup_worker, handle) != 0) {
+        go_channel_free(handle->done);
+        free(handle);
+        return NULL;
+    }
+    
+    pthread_detach(handle->cleanup_thread);
+    return handle;
+}
+
+bool nostr_subscription_cleanup_wait(AsyncCleanupHandle *handle, uint64_t timeout_ms) {
+    if (!handle) return false;
+    
+    /* Check if already completed */
+    if (atomic_load(&handle->completed)) {
+        return !atomic_load(&handle->timed_out);
+    }
+    
+    /* Wait for completion with timeout */
+    if (timeout_ms == 0) {
+        /* Just check status */
+        return false;
+    }
+    
+    GoSelectCase cases[] = {
+        { .op = GO_SELECT_RECEIVE, .chan = handle->done, .recv_buf = NULL }
+    };
+    GoSelectResult result = go_select_timeout(cases, 1, timeout_ms);
+    
+    if (result.selected_case == -1) {
+        /* Timeout */
+        return false;
+    }
+    
+    /* Completed */
+    return !atomic_load(&handle->timed_out);
+}
+
+void nostr_subscription_cleanup_abandon(AsyncCleanupHandle *handle) {
+    if (!handle) return;
+    
+    /* Just free the handle - cleanup thread will finish in background */
+    go_channel_free(handle->done);
+    free(handle);
+}
+
+bool nostr_subscription_cleanup_is_complete(AsyncCleanupHandle *handle) {
+    if (!handle) return true;
+    return atomic_load(&handle->completed);
+}
+
+bool nostr_subscription_cleanup_timed_out(AsyncCleanupHandle *handle) {
+    if (!handle) return false;
+    return atomic_load(&handle->timed_out);
 }

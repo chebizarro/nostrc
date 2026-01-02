@@ -29,6 +29,10 @@ typedef struct _NostrIncomingEvent {
     NostrRelay *relay;
 } NostrIncomingEvent;
 
+/* Forward declarations for subscription registry */
+typedef struct PoolSubscriptionEntry PoolSubscriptionEntry;
+typedef struct SubscriptionRegistry SubscriptionRegistry;
+
 typedef struct _NostrSimplePool {
     NostrRelay **relays;
     size_t relay_count;
@@ -52,6 +56,11 @@ typedef struct _NostrSimplePool {
     size_t dedup_head;
     /* Behavior flags */
     bool auto_unsub_on_eose; /* if true, unsubscribe subs upon EOSE (default: false) */
+    
+    /* Phase 2: Subscription registry for lifecycle management */
+    SubscriptionRegistry *sub_registry;
+    pthread_t cleanup_worker_thread;
+    bool cleanup_worker_running;
 } NostrSimplePool;
 
 typedef struct _NostrDirectedFilters {
