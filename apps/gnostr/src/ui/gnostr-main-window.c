@@ -834,6 +834,9 @@ static void append_note_from_event(GnostrMainWindow *self, NostrEvent *evt) {
   /* Friendly timestamp string for initial bind (view recomputes from created_at too) */
   g_autofree char *ts = format_timestamp_approx(created_at);
 
+  /* Convert event to JSON for the JSON viewer */
+  g_autofree char *event_json = nostr_event_serialize(evt);
+
   /* Build TimelineItem */
   GObject *item = g_object_new(timeline_item_get_type(),
                                "display-name", display ? display : "",
@@ -849,6 +852,7 @@ static void append_note_from_event(GnostrMainWindow *self, NostrEvent *evt) {
                "pubkey",      pubkey,
                "created-at",  created_at,
                "avatar-url",  avatar_url ? avatar_url : "",
+               "event-json",  event_json ? event_json : "",
                NULL);
 
   /* Append to roots model */

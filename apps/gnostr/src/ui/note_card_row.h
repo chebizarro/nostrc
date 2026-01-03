@@ -24,6 +24,7 @@ void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_
 void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *content);
 void gnostr_note_card_row_set_depth(GnostrNoteCardRow *self, guint depth);
 void gnostr_note_card_row_set_ids(GnostrNoteCardRow *self, const char *id_hex, const char *root_id, const char *pubkey_hex);
+void gnostr_note_card_row_set_event_json(GnostrNoteCardRow *self, const char *json);
 void gnostr_note_card_row_set_embed(GnostrNoteCardRow *self, const char *title, const char *snippet);
 /* Rich embed variant: title (e.g., Note), meta (e.g., author · time), snippet (content excerpt) */
 void gnostr_note_card_row_set_embed_rich(GnostrNoteCardRow *self, const char *title, const char *meta, const char *snippet);

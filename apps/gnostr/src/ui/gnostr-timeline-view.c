@@ -498,6 +498,8 @@ typedef struct _TimelineItem {
   gint64 created_at;
   /* avatar */
   gchar *avatar_url;
+  /* event JSON */
+  gchar *event_json;
   /* children list when acting as a parent in a thread */
   GListStore *children; /* element-type: TimelineItem */
 } TimelineItem;
@@ -520,6 +522,7 @@ enum {
   PROP_PUBKEY,
   PROP_CREATED_AT,
   PROP_AVATAR_URL,
+  PROP_EVENT_JSON,
   N_PROPS
 };
 
@@ -538,6 +541,7 @@ static void timeline_item_set_property(GObject *obj, guint prop_id, const GValue
     case PROP_PUBKEY:       g_free(self->pubkey);       self->pubkey       = g_value_dup_string(value); break;
     case PROP_CREATED_AT:   self->created_at            = g_value_get_int64(value); break;
     case PROP_AVATAR_URL:   g_free(self->avatar_url);   self->avatar_url   = g_value_dup_string(value); break;
+    case PROP_EVENT_JSON:   g_free(self->event_json);   self->event_json   = g_value_dup_string(value); break;
     default: G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop_id, pspec);
   }
 
@@ -559,6 +563,7 @@ static void timeline_item_get_property(GObject *obj, guint prop_id, GValue *valu
     case PROP_PUBKEY:       g_value_set_string(value, self->pubkey); break;
     case PROP_CREATED_AT:   g_value_set_int64 (value, self->created_at); break;
     case PROP_AVATAR_URL:   g_value_set_string(value, self->avatar_url); break;
+    case PROP_EVENT_JSON:   g_value_set_string(value, self->event_json); break;
     default: G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop_id, pspec);
   }
 }
@@ -573,6 +578,7 @@ static void timeline_item_dispose(GObject *obj) {
   g_clear_pointer(&self->root_id, g_free);
   g_clear_pointer(&self->pubkey, g_free);
   g_clear_pointer(&self->avatar_url, g_free);
+  g_clear_pointer(&self->event_json, g_free);
   if (self->children) g_clear_object(&self->children);
   G_OBJECT_CLASS(timeline_item_parent_class)->dispose(obj);
 }
@@ -592,6 +598,7 @@ static void timeline_item_class_init(TimelineItemClass *klass) {
   ti_props[PROP_PUBKEY]       = g_param_spec_string ("pubkey",       "pubkey",       "Pubkey",       NULL, G_PARAM_READWRITE);
   ti_props[PROP_CREATED_AT]   = g_param_spec_int64  ("created-at",   "created-at",   "Created At",   0, G_MAXINT64, 0, G_PARAM_READWRITE);
   ti_props[PROP_AVATAR_URL]   = g_param_spec_string("avatar-url",   "avatar-url",   "Avatar URL",    NULL, G_PARAM_READWRITE);
+  ti_props[PROP_EVENT_JSON]   = g_param_spec_string("event-json",   "event-json",   "Event JSON",    NULL, G_PARAM_READWRITE);
   g_object_class_install_properties(oc, N_PROPS, ti_props);
 }
 
@@ -1032,7 +1039,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   (void)f; (void)data;
   GObject *obj = gtk_list_item_get_item(item);
   gchar *display = NULL, *handle = NULL, *ts = NULL, *content = NULL, *root_id = NULL, *avatar_url = NULL;
-  gchar *pubkey = NULL;
+  gchar *pubkey = NULL, *event_json = NULL;
   guint depth = 0; gboolean is_reply = FALSE; gint64 created_at = 0;
   if (G_IS_OBJECT(obj) && G_TYPE_CHECK_INSTANCE_TYPE(obj, timeline_item_get_type())) {
     g_object_get(obj,
@@ -1045,6 +1052,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                  "created-at",   &created_at,
                  "avatar-url",   &avatar_url,
                  "pubkey",       &pubkey,
+                 "event-json",   &event_json,
                  NULL);
     is_reply = depth > 0;
   }
@@ -1056,13 +1064,14 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
     gnostr_note_card_row_set_depth(GNOSTR_NOTE_CARD_ROW(row), depth);
     gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), NULL, root_id, pubkey);
+    gnostr_note_card_row_set_event_json(GNOSTR_NOTE_CARD_ROW(row), event_json);
     /* Connect embed request signal (ensure we don't duplicate) */
     g_signal_handlers_disconnect_by_func(row, G_CALLBACK(on_row_request_embed), NULL);
     g_signal_connect(row, "request-embed", G_CALLBACK(on_row_request_embed), NULL);
   }
 
   g_debug("factory bind: item=%p content=%.60s depth=%u", (void*)item, content ? content : "", depth);
-  g_free(display); g_free(handle); g_free(ts); g_free(content); g_free(root_id);
+  g_free(display); g_free(handle); g_free(ts); g_free(content); g_free(root_id); g_free(event_json);
 
   /* Demand-driven profile prefetch: enqueue author for visible row */
   if (pubkey && strlen(pubkey) == 64) {

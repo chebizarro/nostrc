@@ -179,8 +179,14 @@ static OgMetadata *parse_og_metadata(const char *html, const char *url) {
 /* Async image loading callback */
 static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
   SoupSession *session = SOUP_SESSION(source);
-  OgPreviewWidget *self = user_data;
+  OgPreviewWidget *self = OG_PREVIEW_WIDGET(user_data);
   GError *error = NULL;
+  
+  /* Check if widget is still valid */
+  if (!OG_IS_PREVIEW_WIDGET(self)) {
+    g_object_unref(self);
+    return;
+  }
   
   GBytes *bytes = soup_session_send_and_read_finish(session, res, &error);
   if (error) {
@@ -188,11 +194,13 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
       g_debug("OG: Failed to load image: %s", error->message);
     }
     g_error_free(error);
+    g_object_unref(self);
     return;
   }
   
   if (!bytes || g_bytes_get_size(bytes) == 0) {
     if (bytes) g_bytes_unref(bytes);
+    g_object_unref(self);
     return;
   }
   
@@ -203,16 +211,18 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
   if (error) {
     g_debug("OG: Failed to create texture: %s", error->message);
     g_error_free(error);
+    g_object_unref(self);
     return;
   }
   
   /* Update UI */
-  if (OG_IS_PREVIEW_WIDGET(self) && GTK_IS_PICTURE(self->image_widget)) {
+  if (self->image_widget && GTK_IS_PICTURE(self->image_widget)) {
     gtk_picture_set_paintable(GTK_PICTURE(self->image_widget), GDK_PAINTABLE(texture));
     gtk_widget_set_visible(self->image_widget, TRUE);
   }
   
   g_object_unref(texture);
+  g_object_unref(self);
 }
 
 /* Load image asynchronously */
@@ -233,13 +243,14 @@ static void load_image_async(OgPreviewWidget *self, const char *url) {
     return;
   }
   
+  /* Start async fetch - take a reference to keep self alive until callback */
   soup_session_send_and_read_async(
     self->session,
     msg,
     G_PRIORITY_LOW,
     self->image_cancellable,
     on_image_loaded,
-    self
+    g_object_ref(self)
   );
   
   g_object_unref(msg);
@@ -283,8 +294,14 @@ static void update_ui_with_metadata(OgPreviewWidget *self, OgMetadata *meta) {
 /* Async HTML fetch callback */
 static void on_html_fetched(GObject *source, GAsyncResult *res, gpointer user_data) {
   SoupSession *session = SOUP_SESSION(source);
-  OgPreviewWidget *self = user_data;
+  OgPreviewWidget *self = OG_PREVIEW_WIDGET(user_data);
   GError *error = NULL;
+  
+  /* Check if widget is still valid */
+  if (!OG_IS_PREVIEW_WIDGET(self)) {
+    g_object_unref(self);
+    return;
+  }
   
   GBytes *bytes = soup_session_send_and_read_finish(session, res, &error);
   if (error) {
@@ -292,13 +309,15 @@ static void on_html_fetched(GObject *source, GAsyncResult *res, gpointer user_da
       g_debug("OG: Failed to fetch URL: %s", error->message);
     }
     g_error_free(error);
-    gtk_widget_set_visible(self->spinner, FALSE);
+    if (self->spinner) gtk_widget_set_visible(self->spinner, FALSE);
+    g_object_unref(self);
     return;
   }
   
   if (!bytes || g_bytes_get_size(bytes) == 0) {
     if (bytes) g_bytes_unref(bytes);
-    gtk_widget_set_visible(self->spinner, FALSE);
+    if (self->spinner) gtk_widget_set_visible(self->spinner, FALSE);
+    g_object_unref(self);
     return;
   }
   
@@ -317,6 +336,7 @@ static void on_html_fetched(GObject *source, GAsyncResult *res, gpointer user_da
   update_ui_with_metadata(self, meta);
   
   g_bytes_unref(bytes);
+  g_object_unref(self);
 }
 
 /* Fetch Open Graph metadata asynchronously */
@@ -353,14 +373,14 @@ static void fetch_og_metadata_async(OgPreviewWidget *self, const char *url) {
   /* Set timeout and size limits */
   soup_message_set_priority(msg, SOUP_MESSAGE_PRIORITY_LOW);
   
-  /* Start async fetch */
+  /* Start async fetch - take a reference to keep self alive until callback */
   soup_session_send_and_read_async(
     self->session,
     msg,
     G_PRIORITY_LOW,
     self->cancellable,
     on_html_fetched,
-    self
+    g_object_ref(self)
   );
   
   g_object_unref(msg);

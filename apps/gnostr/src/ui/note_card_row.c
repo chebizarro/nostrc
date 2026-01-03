@@ -15,6 +15,7 @@ struct _GnostrNoteCardRow {
   GtkWidget *root;
   GtkWidget *btn_avatar;
   GtkWidget *btn_display_name;
+  GtkWidget *btn_menu;
   GtkWidget *avatar_box;
   GtkWidget *avatar_initials;
   GtkWidget *avatar_image;
@@ -37,6 +38,7 @@ struct _GnostrNoteCardRow {
   char *id_hex;
   char *root_id;
   char *pubkey_hex;
+  char *event_json;  /* Store the original event JSON */
   OgPreviewWidget *og_preview;
 };
 
@@ -68,7 +70,9 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   }
   g_clear_object(&self->media_session);
 #endif
-  g_clear_object(&self->og_preview);
+  /* Don't manually clear og_preview - it's a child widget that will be
+   * automatically disposed when the template is disposed */
+  self->og_preview = NULL;
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_CARD_ROW);
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
   self->lbl_display = NULL; self->lbl_handle = NULL; self->lbl_timestamp = NULL; self->content_label = NULL;
@@ -82,6 +86,7 @@ static void gnostr_note_card_row_finalize(GObject *obj) {
   g_clear_pointer(&self->id_hex, g_free);
   g_clear_pointer(&self->root_id, g_free);
   g_clear_pointer(&self->pubkey_hex, g_free);
+  g_clear_pointer(&self->event_json, g_free);
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->finalize(obj);
 }
 
@@ -118,6 +123,55 @@ static gboolean on_content_activate_link(GtkLabel *label, const char *uri, gpoin
   return FALSE;
 }
 
+static void show_json_viewer(GnostrNoteCardRow *self) {
+  if (!self || !self->event_json) {
+    g_warning("No event JSON available to display");
+    return;
+  }
+
+  /* Get the toplevel window */
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
+
+  /* Create dialog */
+  GtkWidget *dialog = gtk_window_new();
+  gtk_window_set_title(GTK_WINDOW(dialog), "Event JSON");
+  gtk_window_set_default_size(GTK_WINDOW(dialog), 700, 500);
+  gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+  if (parent) gtk_window_set_transient_for(GTK_WINDOW(dialog), parent);
+
+  /* Create scrolled window */
+  GtkWidget *scrolled = gtk_scrolled_window_new();
+  gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled), 
+                                 GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+
+  /* Create text view */
+  GtkWidget *text_view = gtk_text_view_new();
+  gtk_text_view_set_editable(GTK_TEXT_VIEW(text_view), FALSE);
+  gtk_text_view_set_monospace(GTK_TEXT_VIEW(text_view), TRUE);
+  gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_view), GTK_WRAP_NONE);
+  gtk_widget_set_margin_start(text_view, 12);
+  gtk_widget_set_margin_end(text_view, 12);
+  gtk_widget_set_margin_top(text_view, 12);
+  gtk_widget_set_margin_bottom(text_view, 12);
+
+  /* Set the JSON content */
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
+  gtk_text_buffer_set_text(buffer, self->event_json, -1);
+
+  /* Assemble the dialog */
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), text_view);
+  gtk_window_set_child(GTK_WINDOW(dialog), scrolled);
+
+  gtk_window_present(GTK_WINDOW(dialog));
+}
+
+static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  show_json_viewer(self);
+}
+
 static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   GtkWidgetClass *wclass = GTK_WIDGET_CLASS(klass);
   GObjectClass *gclass = G_OBJECT_CLASS(klass);
@@ -129,6 +183,7 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, root);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_avatar);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_display_name);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_menu);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_box);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_initials);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_image);
@@ -170,6 +225,10 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
   }
   if (GTK_IS_BUTTON(self->btn_display_name)) {
     g_signal_connect(self->btn_display_name, "clicked", G_CALLBACK(on_display_name_clicked), self);
+  }
+  /* Connect menu button to show JSON viewer */
+  if (GTK_IS_BUTTON(self->btn_menu)) {
+    g_signal_connect(self->btn_menu, "clicked", G_CALLBACK(on_menu_clicked), self);
   }
 #ifdef HAVE_SOUP3
   self->avatar_cancellable = g_cancellable_new();
@@ -555,6 +614,12 @@ void gnostr_note_card_row_set_ids(GnostrNoteCardRow *self, const char *id_hex, c
   g_free(self->id_hex); self->id_hex = g_strdup(id_hex);
   g_free(self->root_id); self->root_id = g_strdup(root_id);
   g_free(self->pubkey_hex); self->pubkey_hex = g_strdup(pubkey_hex);
+}
+
+void gnostr_note_card_row_set_event_json(GnostrNoteCardRow *self, const char *json) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  g_free(self->event_json);
+  self->event_json = g_strdup(json);
 }
 
 /* Public helper to set the embed mini-card content */
