@@ -400,31 +400,36 @@ void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url) {
                 return;
             } else {
                 // reconnect if not connected
-                nostr_relay_disconnect(pool->relays[i]);
+                NostrRelay *relay = pool->relays[i];
+                pthread_mutex_unlock(&pool->pool_mutex);  // CRITICAL: Unlock BEFORE blocking operation
+                
+                nostr_relay_disconnect(relay);
                 Error *err = NULL;
-                (void)nostr_relay_connect(pool->relays[i], &err);
+                (void)nostr_relay_connect(relay, &err);
                 if (err) free_error(err);
-                pthread_mutex_unlock(&pool->pool_mutex);
                 return;
             }
         }
     }
 
     // If relay not found, create and connect a new one
+    // CRITICAL: Unlock mutex before blocking operations (relay_new, relay_connect)
+    pthread_mutex_unlock(&pool->pool_mutex);
+    
     GoContext *ctx = go_context_background();
     Error *err = NULL;
     NostrRelay *relay = nostr_relay_new(ctx, url, &err);
     if (!relay) {
         if (err) free_error(err);
-        pthread_mutex_unlock(&pool->pool_mutex);
         return;
     }
     (void)nostr_relay_connect(relay, &err);
     if (err) free_error(err);
 
+    // Re-lock to add relay to pool
+    pthread_mutex_lock(&pool->pool_mutex);
     pool->relays = (NostrRelay **)realloc(pool->relays, (pool->relay_count + 1) * sizeof(NostrRelay *));
     pool->relays[pool->relay_count++] = relay;
-
     pthread_mutex_unlock(&pool->pool_mutex);
 }
 

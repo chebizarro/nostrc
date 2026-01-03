@@ -92,7 +92,7 @@ static void on_bg_prefetch_events(GnostrSimplePool *pool, GPtrArray *batch, gpoi
 static void enqueue_profile_author(GnostrMainWindow *self, const char *pubkey_hex);
 static gboolean profile_fetch_fire_idle(gpointer data);
 static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer user_data);
-static void profile_dispatch_next(GnostrMainWindow *self);
+static gboolean profile_dispatch_next(gpointer data);
 
 /* Forward decl: relay URL builder used by profile fetch */
 static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_urls, size_t *out_count, NostrFilters **out_filters, int limit);
@@ -524,15 +524,16 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
   }
   /* Build batch list but dispatch sequentially (EOSE-gated) */
   const guint total = authors->len;
-  const guint batch_sz = 16; /* start conservative */
+  const guint batch_sz = 100; /* Increased from 16 to reduce inter-batch issues */
   const guint n_batches = (total + batch_sz - 1) / batch_sz;
-  g_message("profile_fetch: queueing %u author(s) across %zu relay(s) into %u batch(es)", total, url_count, n_batches);
+  g_message("profile_fetch: dispatching %u authors across %zu relays (%u batches)", total, url_count, n_batches);
   
-  /* Check if a batch sequence is already in progress */
-  if (self->profile_batches && self->profile_batch_pos < self->profile_batches->len) {
-    g_message("profile_fetch: batch sequence already in progress (%u/%u), re-queuing %u authors for later",
-              self->profile_batch_pos, self->profile_batches->len, total);
-    /* Put authors back in queue for next dispatch */
+  /* Check if a batch sequence is already in progress
+   * NOTE: profile_batches is non-NULL from when first batch starts until sequence completes */
+  if (self->profile_batches) {
+    g_debug("profile_fetch: batch sequence active, re-queuing %u authors (batch %u/%u)",
+            total, self->profile_batch_pos, self->profile_batches->len);
+    /* Put authors back in queue for next dispatch - they'll be picked up after current sequence completes */
     for (guint i = 0; i < authors->len; i++) {
       char *author = (char*)g_ptr_array_index(authors, i);
       if (author) g_ptr_array_add(self->profile_fetch_queue, author);
@@ -541,10 +542,12 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
     g_ptr_array_free(authors, TRUE);
     if (dummy) nostr_filters_free(dummy);
     g_free((gpointer)urls);
+    
+    /* CRITICAL: Do NOT schedule another fetch - the current sequence will trigger one when it completes */
     return G_SOURCE_REMOVE;
   }
   
-  /* Clear completed sequence if any */
+  /* Clear completed sequence if any (only reached if no batch in progress) */
   if (self->profile_batches) {
     for (guint i = 0; i < self->profile_batches->len; i++) {
       GPtrArray *b = g_ptr_array_index(self->profile_batches, i);
@@ -577,7 +580,7 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
   /* Free filters from build_urls_and_filters */
   if (dummy) nostr_filters_free(dummy);
   /* Kick off the first batch */
-  profile_dispatch_next(self);
+  profile_dispatch_next(g_object_ref(self));
   return G_SOURCE_REMOVE;
 }
 
@@ -587,16 +590,20 @@ typedef struct ProfileBatchCtx {
 } ProfileBatchCtx;
 
 static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  g_message("on_profiles_batch_done: CALLBACK INVOKED!");
   GnostrSimplePool *pool = GNOSTR_SIMPLE_POOL(source); (void)pool;
   ProfileBatchCtx *ctx = (ProfileBatchCtx*)user_data;
+  
+  if (!ctx) {
+    g_critical("profile_fetch: callback ctx is NULL!");
+    return;
+  }
+  
   GError *error = NULL;
   GPtrArray *jsons = gnostr_simple_pool_fetch_profiles_by_authors_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
   if (error) {
-    g_warning("profile_fetch: finish error: %s", error->message);
+    g_warning("profile_fetch: error - %s", error->message);
     g_clear_error(&error);
   }
-  g_message("on_profiles_batch_done: jsons=%p jsons->len=%u", (void*)jsons, jsons ? jsons->len : 0);
   /* Update cache/UI from returned events */
   if (jsons) {
     guint deserialized = 0, dispatched = 0;
@@ -697,8 +704,8 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
         nostr_event_free(evt);
       }
     }
-    g_message("profile_fetch: batch summary; json=%u deserialized=%u dispatched=%u",
-              jsons->len, deserialized, dispatched);
+    g_message("profile_fetch: batch complete - %u events, %u applied",
+              jsons->len, dispatched);
     if (items->len > 0 && GNOSTR_IS_MAIN_WINDOW(ctx->self)) {
       schedule_apply_profiles(ctx->self, items); /* transfers ownership */
       items = NULL;
@@ -710,15 +717,21 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
     g_ptr_array_free(jsons, TRUE);
   }
   else {
-    g_message("profile_fetch: batch returned NULL results");
+    g_debug("profile_fetch: batch returned no results");
   }
   /* Done with this batch's author list */
   if (ctx && ctx->batch) g_ptr_array_free(ctx->batch, TRUE);
-  /* Advance to next batch */
+  /* Advance to next batch - add delay to allow cleanup to complete */
   if (ctx && GNOSTR_IS_MAIN_WINDOW(ctx->self)) {
     GnostrMainWindow *self = ctx->self;
-    profile_dispatch_next(self);
+    g_message("profile_fetch: batch callback complete, dispatching next batch immediately (pos=%u len=%u)",
+              self->profile_batch_pos, self->profile_batches ? self->profile_batches->len : 0);
+    /* Dispatch next batch immediately - no need to wait for cleanup
+     * Relays support 1:N connection:subscription model */
+    profile_dispatch_next(g_object_ref(self));
     g_object_unref(self);
+  } else {
+    g_warning("profile_fetch: cannot dispatch next batch - invalid context");
   }
   g_free(ctx);
 }
@@ -1186,7 +1199,7 @@ static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_url
     g_ptr_array_add(arr, g_strdup("wss://relay.damus.io"));
     g_ptr_array_add(arr, g_strdup("wss://relay.sharegap.net"));
     g_ptr_array_add(arr, g_strdup("wss://nos.lol"));
-    g_ptr_array_add(arr, g_strdup("wss://purplepag.es"));
+    g_ptr_array_add(arr, g_strdup("wss://relay.primal.net"));
 }
   const char **urls = NULL; size_t n = arr->len;
   if (n > 0) {
@@ -1219,8 +1232,12 @@ static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_url
   if (arr) g_ptr_array_free(arr, FALSE); /* do not free contained strings */
 }
 
-static void profile_dispatch_next(GnostrMainWindow *self) {
-  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+static gboolean profile_dispatch_next(gpointer data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) {
+    g_object_unref(self);
+    return G_SOURCE_REMOVE;
+  }
   /* Nothing to do? Clean up sequence if finished */
   if (!self->profile_batches || self->profile_batch_pos >= self->profile_batches->len) {
     if (self->profile_batches) {
@@ -1244,7 +1261,23 @@ static void profile_dispatch_next(GnostrMainWindow *self) {
       self->profile_batch_url_count = 0;
     }
     self->profile_batch_pos = 0;
-    return;
+    
+    /* CRITICAL: Check if there are queued authors waiting and trigger a new fetch */
+    if (self->profile_fetch_queue && self->profile_fetch_queue->len > 0) {
+      g_message("profile_fetch: ✅ SEQUENCE COMPLETE - %u authors queued, scheduling new fetch in 150ms",
+                self->profile_fetch_queue->len);
+      /* Schedule a new fetch for the queued authors */
+      if (!self->profile_fetch_source_id) {
+        guint delay = self->profile_fetch_debounce_ms ? self->profile_fetch_debounce_ms : 150;
+        self->profile_fetch_source_id = g_timeout_add(delay, profile_fetch_fire_idle, g_object_ref(self));
+      } else {
+        g_warning("profile_fetch: fetch already scheduled (source_id=%u), not scheduling again", self->profile_fetch_source_id);
+      }
+    } else {
+      g_message("profile_fetch: ✅ SEQUENCE COMPLETE - no authors queued");
+    }
+    g_object_unref(self);
+    return G_SOURCE_REMOVE;
   }
 
   if (!self->pool) self->pool = gnostr_simple_pool_new();
@@ -1265,7 +1298,8 @@ static void profile_dispatch_next(GnostrMainWindow *self) {
       self->profile_batch_url_count = 0;
     }
     self->profile_batch_pos = 0;
-    return;
+    g_object_unref(self);
+    return G_SOURCE_REMOVE;
   }
 
   /* Take next batch and remove it from the array (transfer ownership) */
@@ -1276,8 +1310,9 @@ static void profile_dispatch_next(GnostrMainWindow *self) {
   if (!batch || batch->len == 0) {
     if (batch) g_ptr_array_free(batch, TRUE);
     /* Continue to next */
-    profile_dispatch_next(self);
-    return;
+    profile_dispatch_next(g_object_ref(self));
+    g_object_unref(self);
+    return G_SOURCE_REMOVE;
   }
 
   /* Prepare authors array (borrow strings) */
@@ -1304,6 +1339,8 @@ static void profile_dispatch_next(GnostrMainWindow *self) {
       ctx);
 
   g_free((gpointer)authors);
+  g_object_unref(self);
+  return G_SOURCE_REMOVE;
 }
 
 static gboolean periodic_backfill_cb(gpointer data) { (void)data; return G_SOURCE_CONTINUE; }
@@ -1526,20 +1563,8 @@ static void apply_profiles_for_current_items_from_ndb(GnostrMainWindow *self) {
     int prc = storage_ndb_get_profile_by_pubkey(txn, pk32, &pjson, &plen);
     if (prc == 0 && pjson && plen > 0) {
       present++;
-      /* Debug: verify length vs strnlen and NUL termination */
-      size_t slen = strnlen(pjson, (size_t)plen + 1);
-      char lastc = '\0';
-      if ((size_t)plen < slen) {
-        /* unexpected: strnlen found longer than reported plen; clamp */
-        slen = (size_t)plen;
-      }
-      if ((size_t)plen <= slen) {
-        lastc = pjson[plen];
-      }
-      g_message("ndb_profile_sweep: json buf len=%d strnlen=%zu nul_at_plen=%s last_byte=0x%02x", plen, slen,
-                (lastc == '\0' ? "yes" : "no"), (unsigned char)lastc);
       /* Jansson expects exact JSON length; exclude trailing NUL if present */
-      size_t eff_len = slen; /* strnlen(pjson, plen) computed above */
+      size_t eff_len = strnlen(pjson, (size_t)plen);
       json_error_t jerr;
       json_t *root = json_loadb(pjson, eff_len, 0, &jerr);
       if (root) {
@@ -1569,8 +1594,10 @@ static void apply_profiles_for_current_items_from_ndb(GnostrMainWindow *self) {
   }
   storage_ndb_end_query(txn);
   g_hash_table_unref(uniq);
-  g_message("ndb_profile_sweep: items=%u unique_pubkeys=%u profiles_found=%u applied_calls=%u", 
-            n, count, present, applied);
+  if (applied > 0) {
+    g_message("ndb_profile_sweep: applied %u profiles (%u items, %u unique pubkeys)", 
+              applied, n, count);
+  }
 }
 
 /* Debounced schedule: coalesce multiple triggers into one sweep */
@@ -1588,10 +1615,7 @@ static void schedule_ndb_profile_sweep(GnostrMainWindow *self) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
   if (self->ndb_sweep_source_id) return; /* already scheduled */
   guint delay = self->ndb_sweep_debounce_ms ? self->ndb_sweep_debounce_ms : 150;
-  /* take a strong ref; timeout will unref */
-  GnostrMainWindow *ref = g_object_ref(self);
-  self->ndb_sweep_source_id = g_timeout_add_full(G_PRIORITY_DEFAULT, delay, ndb_sweep_timeout_cb, ref, NULL);
-  g_message("ndb_profile_sweep: scheduled in %ums", delay);
+  self->ndb_sweep_source_id = g_timeout_add(delay, ndb_sweep_timeout_cb, g_object_ref(self));
 }
 
 /* Parses content_json minimally and stores by pubkey in meta cache */
@@ -1630,8 +1654,8 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
   if (self->thread_roots) {
     GListModel *model = G_LIST_MODEL(self->thread_roots);
     guint n = g_list_model_get_n_items(model);
-    g_message("update_meta_from_profile_json: SCANNING %u timeline items for pubkey %.*s… (display=%s handle=%s)", 
-              n, 8, pubkey_hex, display ? display : "(null)", handle ? handle : "(null)");
+    g_debug("update_meta_from_profile_json: scanning %u items for %.8s… (%s)", 
+           n, pubkey_hex, display ? display : "(no name)");
     for (guint i = 0; i < n; i++) {
       GObject *item = g_list_model_get_item(model, i);
       if (!item) {
@@ -1641,7 +1665,6 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
       gchar *pk = NULL;
       g_object_get(item, "pubkey", &pk, NULL);
       if (pk && g_ascii_strcasecmp(pk, pubkey_hex) == 0) {
-        g_message("update_meta_from_profile_json: ✓ MATCH at item[%u] pubkey=%.*s", i, 8, pubkey_hex);
         /* Apply properties; prefix handle with @ if missing */
         const char *eff_handle = handle;
         g_autofree char *prefixed = NULL;
@@ -1656,27 +1679,27 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
         /* Get current values to see if they're actually changing */
         gchar *old_display = NULL, *old_handle = NULL, *old_avatar = NULL;
         g_object_get(item, "display-name", &old_display, "handle", &old_handle, "avatar-url", &old_avatar, NULL);
-        g_message("  BEFORE: display='%s' handle='%s' avatar='%s'", 
-                  old_display ? old_display : "(null)", 
-                  old_handle ? old_handle : "(null)", 
-                  old_avatar ? old_avatar : "(null)");
         
         /* Only call g_object_set if the value is actually different */
         gboolean changed = FALSE;
         if (display && *display && g_strcmp0(old_display, display) != 0) {
           g_object_set(item, "display-name", display, NULL);
-          g_message("  SET display-name='%s'", display);
           changed = TRUE;
         }
         if (prefixed && g_strcmp0(old_handle, prefixed) != 0) {
           g_object_set(item, "handle", prefixed, NULL);
-          g_message("  SET handle='%s'", prefixed);
           changed = TRUE;
         }
         if (picture && *picture && g_strcmp0(old_avatar, picture) != 0) {
           g_object_set(item, "avatar-url", picture, NULL);
-          g_message("  SET avatar-url='%s'", picture);
           changed = TRUE;
+          
+          /* CRITICAL: Prefetch avatar when profile updates */
+          gnostr_avatar_prefetch(picture);
+        }
+        
+        if (changed) {
+          g_debug("profile_apply: updated %.8s… → %s", pubkey_hex, display ? display : handle ? handle : "(no name)");
         }
         
         g_free(old_display);
@@ -1688,17 +1711,11 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
       g_object_unref(item);
     }
     if (updated == 0) {
-      g_warning("update_meta_from_profile_json: NO MATCHES FOUND for pubkey %.*s in %u items!", 8, pubkey_hex, n);
+      g_debug("profile_apply: no timeline items found for %.8s…", pubkey_hex);
     }
   }
   else {
-    g_warning("profile_apply: thread_roots is NULL; cannot scan timeline items");
+    g_debug("profile_apply: thread_roots is NULL");
   }
-  g_message("profile_apply: pubkey=%.*s… updated_items=%u display=%s handle=%s avatar=%s",
-            8, pubkey_hex,
-            updated,
-            display && *display ? display : "",
-            handle && *handle ? handle : "",
-            picture && *picture ? picture : "");
   if (root) json_decref(root);
 }
