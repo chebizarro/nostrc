@@ -183,6 +183,9 @@ if (BUILD_APPS)
   add_subdirectory(apps)
 endif()
 
+# Testing and debugging tools
+add_subdirectory(tools)
+
 # Examples
 add_executable(relay_smoke examples/relay_smoke.c)
 target_link_libraries(relay_smoke PRIVATE libnostr nostr_json)

@@ -59,7 +59,6 @@ static void gnostr_simple_pool_init(GnostrSimplePool *self) {
     /* Force robust JSON backend to avoid inline compact parser issues */
     nostr_json_force_fallback(true);
     self->pool = nostr_simple_pool_new();
-    self->profile_fetch_in_progress = FALSE;
 }
 
 GnostrSimplePool *gnostr_simple_pool_new(void) {
@@ -756,6 +755,12 @@ typedef struct {
     GCancellable *cancellable; /* optional */
     GTask *task;            /* async completion */
     GPtrArray *results;     /* char* JSON strings */
+    
+    /* Goroutine-specific fields (only used by goroutine implementation) */
+    void *wg;               /* GoWaitGroup* - opaque pointer */
+    GPtrArray *subs;        /* SubItem* array */
+    void *dedup;            /* DedupSet* - opaque pointer */
+    void *results_mutex;    /* GMutex* - opaque pointer */
 } FetchProfilesCtx;
 
 static void fetch_profiles_ctx_free(FetchProfilesCtx *ctx) {
@@ -799,8 +804,8 @@ typedef struct {
     gboolean cleanup_started;
 } FetchProfilesState;
 
-/* Forward declaration for async implementation */
-extern void fetch_profiles_async_start(FetchProfilesCtx *ctx);
+/* Forward declaration for goroutine implementation */
+extern void fetch_profiles_goroutine_start(FetchProfilesCtx *ctx);
 
 static void fetch_profiles_state_free(FetchProfilesState *state) {
     if (!state) return;
@@ -856,12 +861,7 @@ static void fetch_profiles_state_free(FetchProfilesState *state) {
     if (state->authors_needed) g_hash_table_unref(state->authors_needed);
     if (state->filters) nostr_filters_free(state->filters);
     
-    /* Clear the in-progress flag */
-    if (state->ctx && state->ctx->self_obj && GNOSTR_IS_SIMPLE_POOL(state->ctx->self_obj)) {
-        GnostrSimplePool *pool = GNOSTR_SIMPLE_POOL(state->ctx->self_obj);
-        pool->profile_fetch_in_progress = FALSE;
-        g_message("PROFILE_FETCH: Cleared in-progress flag");
-    }
+    /* No cleanup needed - goroutines are lightweight */
     
     g_free(state);
 }
@@ -878,19 +878,8 @@ void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
                                                         gpointer user_data) {
     g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
     
-    /* CRITICAL: Prevent concurrent profile fetches to avoid thread explosion
-     * Only allow one profile fetch thread at a time */
-    if (self->profile_fetch_in_progress) {
-        g_warning("PROFILE_FETCH: Rejected - fetch already in progress (preventing thread explosion)");
-        GTask *task = g_task_new(G_OBJECT(self), cancellable, cb, user_data);
-        g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_BUSY, 
-                                "Profile fetch already in progress");
-        g_object_unref(task);
-        return;
-    }
-    
-    self->profile_fetch_in_progress = TRUE;
-    g_message("PROFILE_FETCH_ASYNC: Starting (authors=%zu relays=%zu)", author_count, url_count);
+    /* Goroutines are lightweight - no need to serialize fetches */
+    g_message("PROFILE_FETCH_GOROUTINE: Starting (authors=%zu relays=%zu)", author_count, url_count);
     
     FetchProfilesCtx *ctx = g_new0(FetchProfilesCtx, 1);
     ctx->self_obj = g_object_ref(G_OBJECT(self));
@@ -907,8 +896,8 @@ void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
     ctx->task = g_task_new(G_OBJECT(self), cancellable, cb, user_data);
     g_task_set_task_data(ctx->task, ctx, (GDestroyNotify)fetch_profiles_ctx_free);
 
-    /* NEW: Use async implementation instead of creating a thread */
-    fetch_profiles_async_start(ctx);
+    /* NEW: Use goroutine implementation - lightweight, non-blocking */
+    fetch_profiles_goroutine_start(ctx);
 }
 
 GPtrArray *gnostr_simple_pool_fetch_profiles_by_authors_finish(GnostrSimplePool *self,

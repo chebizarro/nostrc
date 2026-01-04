@@ -417,9 +417,19 @@ static void *message_loop(void *arg) {
             break; }
         case NOSTR_ENVELOPE_EOSE: {
             NostrEOSEEnvelope *env = (NostrEOSEEnvelope *)envelope;
+            fprintf(stderr, "[EOSE_RECV] relay=%s sid=%s\n",
+                    r->url ? r->url : "unknown", env->message ? env->message : "null");
             if (env->message) {
-                NostrSubscription *subscription = go_hash_map_get_int(r->subscriptions, nostr_sub_id_to_serial(env->message));
-                if (subscription) nostr_subscription_dispatch_eose(subscription);
+                int serial = nostr_sub_id_to_serial(env->message);
+                NostrSubscription *subscription = go_hash_map_get_int(r->subscriptions, serial);
+                if (subscription) {
+                    fprintf(stderr, "[EOSE_DISPATCH] relay=%s sid=%s serial=%d - dispatching to subscription\n",
+                            r->url ? r->url : "unknown", env->message, serial);
+                    nostr_subscription_dispatch_eose(subscription);
+                } else {
+                    fprintf(stderr, "[EOSE_DROP] relay=%s sid=%s serial=%d - subscription not found in hash map!\n",
+                            r->url ? r->url : "unknown", env->message, serial);
+                }
             }
             char tmp[128]; snprintf(tmp, sizeof(tmp), "EOSE sid=%s", env->message ? env->message : "");
             relay_debug_emit(r, tmp);

@@ -1146,6 +1146,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 
   g_debug("factory bind: item=%p content=%.60s depth=%u", (void*)item, content ? content : "", depth);
   g_free(display); g_free(handle); g_free(ts); g_free(content); g_free(root_id); g_free(event_json);
+  g_free(avatar_url); /* Fix memory leak */
 
   /* Demand-driven profile prefetch: enqueue author for visible row */
   if (pubkey && strlen(pubkey) == 64) {

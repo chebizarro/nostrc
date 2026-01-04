@@ -1404,12 +1404,17 @@ static void start_pool_live(GnostrMainWindow *self) {
     return;
   }
 
-  /* NOTE: We DON'T call ensure_relay() here because it can block for 100-300ms per relay,
-   * which would freeze the GTK main thread and cause "Not Responding" dialogs.
-   * Instead, relays will be created on-demand when subscriptions are fired.
-   * The first subscription to each relay may be slightly slower, but the UI stays responsive. */
-  /* Removed noisy debug */
-
+  /* CRITICAL: Initialize relays in the pool so profile fetches can find them.
+   * Profile fetch code skips relays not in pool (to avoid blocking main thread).
+   * We call ensure_relay() here BEFORE starting subscriptions to populate the pool.
+   * This is acceptable because start_pool_live() runs early at startup, not on main loop yet. */
+  g_message("[RELAY] Initializing %zu relays in pool", url_count);
+  for (size_t i = 0; i < url_count; i++) {
+    if (urls[i] && *urls[i]) {
+      nostr_simple_pool_ensure_relay(GNOSTR_SIMPLE_POOL(self->pool)->pool, urls[i]);
+    }
+  }
+  g_message("[RELAY] ✓ All relays initialized");
   /* Hook up events signal exactly once */
   if (self->pool_events_handler == 0) {
     self->pool_events_handler = g_signal_connect(self->pool, "events", G_CALLBACK(on_pool_events), self);

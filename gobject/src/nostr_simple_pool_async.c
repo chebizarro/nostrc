@@ -101,7 +101,7 @@ static void fetch_profiles_complete(FetchProfilesState *state, const char *reaso
 static void fetch_profiles_state_free(FetchProfilesState *state) {
     if (!state) return;
     
-    g_debug("[PROFILE_ASYNC] Freeing state");
+    g_message("[PROFILE_ASYNC] Cleanup starting (subs=%u)", state->subs ? state->subs->len : 0);
     
     if (state->idle_source_id) {
         g_source_remove(state->idle_source_id);
@@ -133,11 +133,25 @@ static void fetch_profiles_state_free(FetchProfilesState *state) {
              * - Waits for goroutine to exit (with timeout)
              * - Frees resources
              * This is non-blocking from the main thread's perspective. */
-            AsyncCleanupHandle *handle = nostr_subscription_free_async(it->sub, CLEANUP_TIMEOUT_MS);
-            if (handle) {
-                /* We don't wait for it - just let it run in background.
-                 * The handle will be cleaned up when the background thread completes. */
-                nostr_subscription_cleanup_abandon(handle);
+            g_message("[PROFILE_ASYNC] Closing subscription %u/%u (eosed=%d)", 
+                      i+1, (guint)state->subs->len, it->eosed);
+            
+            /* CRITICAL: Only clean up subscriptions that received EOSE.
+             * Subscriptions without EOSE may have stuck goroutines that will block cleanup.
+             * Better to leak the subscription than freeze the app. */
+            if (it->eosed) {
+                AsyncCleanupHandle *handle = nostr_subscription_free_async(it->sub, CLEANUP_TIMEOUT_MS);
+                if (handle) {
+                    nostr_subscription_cleanup_abandon(handle);
+                    g_debug("[PROFILE_ASYNC] Async cleanup started for subscription %u", i+1);
+                } else {
+                    g_warning("[PROFILE_ASYNC] Failed to start async cleanup for subscription %u", i+1);
+                }
+            } else {
+                /* Subscription never received EOSE - likely stuck.
+                 * LEAK it rather than risk blocking the main thread.
+                 * The goroutine will eventually timeout and exit on its own. */
+                g_warning("[PROFILE_ASYNC] Leaking subscription %u (no EOSE received, cleanup would block)", i+1);
             }
             
             g_free(it);
@@ -168,8 +182,9 @@ static void fetch_profiles_complete(FetchProfilesState *state, const char *reaso
     guint64 t_end = g_get_monotonic_time();
     guint results_count = state->ctx->results ? state->ctx->results->len : 0;
     
-    g_debug("[PROFILE_ASYNC] Complete (profiles=%u time=%ldms reason=%s)",
-              results_count, (long)((t_end - state->t_start) / 1000), reason);
+    g_message("[PROFILE_ASYNC] Complete (profiles=%u time=%ldms reason=%s subs=%u)",
+              results_count, (long)((t_end - state->t_start) / 1000), reason, 
+              state->subs ? state->subs->len : 0);
     
     /* Return success */
     g_task_return_boolean(state->ctx->task, TRUE);
@@ -212,20 +227,27 @@ static gboolean fetch_profiles_poll(gpointer user_data) {
             if (msg) {
                 NostrEvent *ev = (NostrEvent*)msg;
                 const char *eid = nostr_event_get_id(ev);
+                const char *pk = nostr_event_get_pubkey(ev);
+                
+                g_message("[PROFILE_ASYNC] Received event id=%.16s... pubkey=%.16s...", 
+                          eid ? eid : "(null)", pk ? pk : "(null)");
                 
                 if (eid && *eid && dedup_set_seen(state->dedup, eid)) {
+                    g_debug("[PROFILE_ASYNC] Duplicate event, skipping");
                     nostr_event_free(ev);
                 } else {
                     char *json = nostr_event_serialize(ev);
                     if (json) {
                         g_ptr_array_add(state->ctx->results, json);
+                        g_message("[PROFILE_ASYNC] Added profile (total=%u)", state->ctx->results->len);
                         
                         /* Mark author as satisfied */
                         if (state->authors_needed) {
-                            const char *pk = nostr_event_get_pubkey(ev);
                             if (pk && *pk) {
                                 g_hash_table_remove(state->authors_needed, pk);
-                                if (g_hash_table_size(state->authors_needed) == 0) {
+                                guint remaining = g_hash_table_size(state->authors_needed);
+                                g_message("[PROFILE_ASYNC] Author satisfied, %u remaining", remaining);
+                                if (remaining == 0) {
                                     state->done_all_authors = TRUE;
                                 }
                             }
@@ -246,6 +268,7 @@ static gboolean fetch_profiles_poll(gpointer user_data) {
         GoChannel *ch_eose = nostr_subscription_get_eose_channel(it->sub);
         if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
             it->eosed = TRUE;
+            g_message("[PROFILE_ASYNC] EOSE received from subscription %u", i+1);
         }
         
         /* Drain CLOSED messages */
@@ -281,7 +304,8 @@ static gboolean fetch_profiles_poll(gpointer user_data) {
         }
     }
     
-    if (all_eosed) {
+    if (all_eosed && state->subs->len > 0) {
+        g_message("[PROFILE_ASYNC] All %u subscriptions received EOSE, completing", (guint)state->subs->len);
         fetch_profiles_complete(state, "all_eose");
         return G_SOURCE_REMOVE;
     }
@@ -291,12 +315,14 @@ static gboolean fetch_profiles_poll(gpointer user_data) {
     guint64 total_elapsed = (now - state->t_start) / 1000;
     
     if (quiet_elapsed > QUIET_TIMEOUT_MS) {
+        g_message("[PROFILE_ASYNC] Quiet timeout after %lums, completing", (unsigned long)quiet_elapsed);
         fetch_profiles_complete(state, "quiet_timeout");
         return G_SOURCE_REMOVE;
     }
     
     if (total_elapsed > HARD_TIMEOUT_MS) {
-        fetch_profiles_complete(state, "hard_timeout");
+        g_message("[PROFILE_ASYNC] Total timeout after %lums, completing", (unsigned long)total_elapsed);
+        fetch_profiles_complete(state, "total_timeout");
         return G_SOURCE_REMOVE;
     }
     
@@ -304,11 +330,15 @@ static gboolean fetch_profiles_poll(gpointer user_data) {
     return G_SOURCE_CONTINUE;
 }
 
-/* Start subscriptions (called once at beginning) */
-static void fetch_profiles_start_subscriptions(FetchProfilesState *state) {
-    if (!state || !state->ctx || !state->ctx->pool) return;
+/* Start subscriptions in background thread (called once at beginning) */
+static void fetch_profiles_start_subscriptions_thread(GTask *task, gpointer source_object, gpointer task_data, GCancellable *cancellable) {
+    FetchProfilesState *state = (FetchProfilesState*)task_data;
+    if (!state || !state->ctx || !state->ctx->pool) {
+        g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Invalid state");
+        return;
+    }
     
-    g_debug("[PROFILE_ASYNC] Creating subscriptions (relays=%zu)", state->ctx->url_count);
+    g_message("[PROFILE_ASYNC] Creating subscriptions in background thread (relays=%zu)", state->ctx->url_count);
     
     for (size_t i = 0; i < state->ctx->url_count; i++) {
         const char *url = state->ctx->urls[i];
@@ -349,6 +379,14 @@ static void fetch_profiles_start_subscriptions(FetchProfilesState *state) {
             continue;
         }
         
+        g_message("[PROFILE_ASYNC] Created subscription for relay %s", url);
+        
+        /* CRITICAL: nostr_subscription_fire() can block!
+         * It sends the REQ message over websocket, which may wait for write buffer.
+         * TODO: Make this truly async or move to background thread.
+         * For now, we just log and hope it doesn't block too long. */
+        g_debug("[PROFILE_ASYNC] Firing subscription for relay %s...", url);
+        
         Error *err = NULL;
         if (!nostr_subscription_fire(sub, &err)) {
             g_warning("PROFILE_FETCH_ASYNC: subscription_fire failed: %s", url);
@@ -360,7 +398,7 @@ static void fetch_profiles_start_subscriptions(FetchProfilesState *state) {
             continue;
         }
         
-        g_message("PROFILE_FETCH_ASYNC: Subscription fired: %s", url);
+        g_message("[PROFILE_ASYNC] Subscription fired successfully: %s", url);
         
         SubItem item = { .relay = relay, .sub = sub, .raw = NULL, .eosed = FALSE };
         g_ptr_array_add(state->subs, g_memdup2(&item, sizeof(SubItem)));
@@ -425,6 +463,15 @@ void fetch_profiles_async_start(FetchProfilesCtx *ctx) {
     if (ctx->author_count > 0) {
         const char **authv = (const char **)ctx->authors;
         nostr_filter_set_authors(f, authv, ctx->author_count);
+        
+        /* Log first few authors for debugging */
+        g_message("[PROFILE_ASYNC] Requesting kind-0 for %zu authors:", ctx->author_count);
+        for (size_t i = 0; i < ctx->author_count && i < 3; i++) {
+            g_message("[PROFILE_ASYNC]   author[%zu]: %.16s...", i, ctx->authors[i] ? ctx->authors[i] : "(null)");
+        }
+        if (ctx->author_count > 3) {
+            g_message("[PROFILE_ASYNC]   ... and %zu more", ctx->author_count - 3);
+        }
     }
     nostr_filters_add(state->filters, f);
     

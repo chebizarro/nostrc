@@ -195,11 +195,15 @@ void nostr_subscription_dispatch_eose(NostrSubscription *sub) {
         sub->priv->match = nostr_filters_match_ignoring_timestamp;
 
         // Wait for any "stored" events to finish processing, then signal EOSE
+        fprintf(stderr, "[EOSE_SIGNAL] sid=%s sending to channel\n", sub->priv->id ? sub->priv->id : "null");
         go_channel_send(sub->end_of_stored_events, NULL);
         nostr_metric_counter_add("sub_eose_signal", 1);
+        fprintf(stderr, "[EOSE_SIGNAL] sid=%s sent successfully\n", sub->priv->id ? sub->priv->id : "null");
         if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
             fprintf(stderr, "[sub %s] dispatch_eose: signaled EOSE\n", sub->priv->id);
         }
+    } else {
+        fprintf(stderr, "[EOSE_DUP] sid=%s already eosed, ignoring\n", sub->priv->id ? sub->priv->id : "null");
     }
 }
 

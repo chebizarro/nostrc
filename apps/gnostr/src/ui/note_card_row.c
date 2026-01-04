@@ -465,12 +465,12 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
     }
     g_strfreev(tokens);
   }
-  gchar *markup = out->len ? g_string_free(out, FALSE) : g_string_free(out, TRUE), *empty = NULL;
-  if (!markup) markup = empty = escape_markup(content);
+  gchar *markup = out->len ? g_string_free(out, FALSE) : g_string_free(out, TRUE);
+  gboolean markup_allocated = (markup != NULL);
+  if (!markup) markup = escape_markup(content);
   gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
   gtk_label_set_markup(GTK_LABEL(self->content_label), markup ? markup : "");
-  g_free(markup);
-  g_free(empty);
+  if (markup_allocated || markup) g_free(markup); /* Only free once */
 
   /* Media detection: detect images and videos in content and display them */
   if (self->media_box && GTK_IS_BOX(self->media_box)) {

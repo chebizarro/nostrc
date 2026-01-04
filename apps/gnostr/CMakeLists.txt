@@ -73,7 +73,7 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
 # Compile the GI wrapper implementation into the app (no separate gobject lib target)
 target_sources(${APP_CLIENT_BIN} PRIVATE 
   ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool_async.c)
+  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool_goroutine.c)
 # Link JSON shim which (privately) links libnostr; avoid linking libnostr twice to prevent ODR/ASan issues
 if (TARGET nostr_json)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_json)
