@@ -101,7 +101,7 @@ static void fetch_profiles_complete(FetchProfilesState *state, const char *reaso
 static void fetch_profiles_state_free(FetchProfilesState *state) {
     if (!state) return;
     
-    g_message("PROFILE_FETCH_ASYNC: Freeing state");
+    g_debug("[PROFILE_ASYNC] Freeing state");
     
     if (state->idle_source_id) {
         g_source_remove(state->idle_source_id);
@@ -123,6 +123,7 @@ static void fetch_profiles_state_free(FetchProfilesState *state) {
             SubItem *it = (SubItem*)state->subs->pdata[i];
             if (!it || !it->sub) {
                 if (it) g_free(it);
+                state->subs->pdata[i] = NULL; /* Clear pointer after free */
                 continue;
             }
             
@@ -140,10 +141,12 @@ static void fetch_profiles_state_free(FetchProfilesState *state) {
             }
             
             g_free(it);
+            state->subs->pdata[i] = NULL; /* Clear pointer after free */
         }
     }
     
-    if (state->subs) g_ptr_array_free(state->subs, TRUE);
+    /* Free the array itself (elements already freed above) */
+    if (state->subs) g_ptr_array_free(state->subs, FALSE); /* FALSE = don't free elements */
     if (state->dedup) dedup_set_free(state->dedup);
     if (state->authors_needed) g_hash_table_unref(state->authors_needed);
     if (state->filters) nostr_filters_free(state->filters);
@@ -152,7 +155,7 @@ static void fetch_profiles_state_free(FetchProfilesState *state) {
     if (state->ctx && state->ctx->self_obj && GNOSTR_IS_SIMPLE_POOL(state->ctx->self_obj)) {
         GnostrSimplePool *pool = GNOSTR_SIMPLE_POOL(state->ctx->self_obj);
         pool->profile_fetch_in_progress = FALSE;
-        g_message("PROFILE_FETCH_ASYNC: Cleared in-progress flag");
+        g_debug("[PROFILE_ASYNC] Cleared in-progress flag");
     }
     
     g_free(state);
@@ -165,8 +168,8 @@ static void fetch_profiles_complete(FetchProfilesState *state, const char *reaso
     guint64 t_end = g_get_monotonic_time();
     guint results_count = state->ctx->results ? state->ctx->results->len : 0;
     
-    g_message("PROFILE_FETCH_ASYNC: Complete (profiles=%u time=%ums reason=%s)",
-              results_count, (unsigned)((t_end - state->t_start) / 1000), reason);
+    g_debug("[PROFILE_ASYNC] Complete (profiles=%u time=%ldms reason=%s)",
+              results_count, (long)((t_end - state->t_start) / 1000), reason);
     
     /* Return success */
     g_task_return_boolean(state->ctx->task, TRUE);
@@ -305,7 +308,7 @@ static gboolean fetch_profiles_poll(gpointer user_data) {
 static void fetch_profiles_start_subscriptions(FetchProfilesState *state) {
     if (!state || !state->ctx || !state->ctx->pool) return;
     
-    g_message("PROFILE_FETCH_ASYNC: Starting subscriptions (relays=%zu)", state->ctx->url_count);
+    g_debug("[PROFILE_ASYNC] Creating subscriptions (relays=%zu)", state->ctx->url_count);
     
     for (size_t i = 0; i < state->ctx->url_count; i++) {
         const char *url = state->ctx->urls[i];
@@ -385,8 +388,8 @@ void fetch_profiles_async_start(FetchProfilesCtx *ctx) {
         return;
     }
     
-    g_message("PROFILE_FETCH_ASYNC: Starting (authors=%zu relays=%zu)", 
-              ctx->author_count, ctx->url_count);
+    g_debug("[PROFILE_ASYNC] Starting fetch (authors=%zu relays=%zu)", 
+            ctx->author_count, ctx->url_count);
     
     /* Initialize results */
     ctx->results = g_ptr_array_new_with_free_func(g_free);
