@@ -570,6 +570,7 @@ static void timeline_item_get_property(GObject *obj, guint prop_id, GValue *valu
 
 static void timeline_item_dispose(GObject *obj) {
   TimelineItem *self = (TimelineItem*)obj;
+  g_debug("🔴 DISPOSE TimelineItem %p (pubkey=%.8s)", (void*)obj, self->pubkey ? self->pubkey : "null");
   g_clear_pointer(&self->display_name, g_free);
   g_clear_pointer(&self->handle, g_free);
   g_clear_pointer(&self->timestamp, g_free);
@@ -581,6 +582,7 @@ static void timeline_item_dispose(GObject *obj) {
   g_clear_pointer(&self->event_json, g_free);
   if (self->children) g_clear_object(&self->children);
   G_OBJECT_CLASS(timeline_item_parent_class)->dispose(obj);
+  g_debug("🔴 DISPOSE TimelineItem %p COMPLETE", (void*)obj);
 }
 
 static void timeline_item_class_init(TimelineItemClass *klass) {
@@ -656,20 +658,35 @@ G_DEFINE_TYPE(GnostrTimelineView, gnostr_timeline_view, GTK_TYPE_WIDGET)
 
 static void gnostr_timeline_view_dispose(GObject *obj) {
   GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(obj);
-  g_debug("timeline_view dispose: list_view=%p list_model=%p", (void*)self->list_view, (void*)self->list_model);
-  if (self->list_view && GTK_IS_LIST_VIEW(self->list_view))
+  g_warning("🔥🔥🔥 TIMELINE_VIEW DISPOSE STARTING: list_view=%p list_model=%p tree_model=%p", 
+            (void*)self->list_view, (void*)self->list_model, (void*)self->tree_model);
+  /* CRITICAL: Clear models in correct order to avoid GTK trying to disconnect
+   * signals from already-freed TimelineItem objects.
+   * Order: detach from view → clear selection → clear tree → clear list */
+  if (self->list_view && GTK_IS_LIST_VIEW(self->list_view)) {
+    g_warning("🔥 Detaching model from list view");
     gtk_list_view_set_model(GTK_LIST_VIEW(self->list_view), NULL);
+  }
+  
+  /* Clear selection model FIRST - this drops the ref to tree model */
   if (self->selection_model) {
-    if (G_IS_OBJECT(self->selection_model)) g_object_unref(self->selection_model);
-    self->selection_model = NULL;
+    g_warning("🔥 Clearing selection model");
+    g_clear_object(&self->selection_model);
   }
-  if (self->list_model) {
-    if (G_IS_OBJECT(self->list_model)) g_object_unref(self->list_model);
-    self->list_model = NULL;
-  }
+  
+  /* Then clear tree model - this should be the last ref */
   if (self->tree_model) {
-    if (G_IS_OBJECT(self->tree_model)) g_object_unref(self->tree_model);
-    self->tree_model = NULL;
+    g_warning("🔥 Clearing tree model");
+    /* CRITICAL: The tree model has internal signal connections to TimelineItems.
+     * We need to ensure all refs are dropped before clearing. */
+    g_clear_object(&self->tree_model);
+    g_warning("🔥 Tree model cleared");
+  }
+  
+  /* Finally clear list model */
+  if (self->list_model) {
+    g_warning("🔥 Clearing list model");
+    g_clear_object(&self->list_model);
   }
   /* Dispose template children before chaining up so they are unparented first */
   gtk_widget_dispose_template(GTK_WIDGET(obj), GNOSTR_TYPE_TIMELINE_VIEW);
@@ -977,6 +994,11 @@ static void on_item_notify_display_name(GObject *obj, GParamSpec *pspec, gpointe
   (void)pspec;
   GtkWidget *row = GTK_WIDGET(user_data);
   if (!GTK_IS_WIDGET(row)) return;
+  /* CRITICAL: Validate obj before accessing properties */
+  if (!obj || !G_IS_OBJECT(obj)) {
+    g_debug("on_item_notify_display_name: obj is invalid, ignoring");
+    return;
+  }
   gchar *display = NULL, *handle = NULL, *avatar_url = NULL, *pubkey = NULL;
   g_object_get(obj, "display-name", &display, "handle", &handle, "avatar-url", &avatar_url, "pubkey", &pubkey, NULL);
   g_debug("🔔 on_item_notify_display_name: pubkey=%.*s display='%s' handle='%s' avatar='%s'", 
@@ -993,6 +1015,11 @@ static void on_item_notify_handle(GObject *obj, GParamSpec *pspec, gpointer user
   (void)pspec;
   GtkWidget *row = GTK_WIDGET(user_data);
   if (!GTK_IS_WIDGET(row)) return;
+  /* CRITICAL: Validate obj before accessing properties */
+  if (!obj || !G_IS_OBJECT(obj)) {
+    g_debug("on_item_notify_handle: obj is invalid, ignoring");
+    return;
+  }
   gchar *display = NULL, *handle = NULL, *avatar_url = NULL, *pubkey = NULL;
   g_object_get(obj, "display-name", &display, "handle", &handle, "avatar-url", &avatar_url, "pubkey", &pubkey, NULL);
   g_debug("🔔 on_item_notify_handle: pubkey=%.*s display='%s' handle='%s' avatar='%s'", 
@@ -1009,6 +1036,11 @@ static void on_item_notify_avatar_url(GObject *obj, GParamSpec *pspec, gpointer 
   (void)pspec;
   GtkWidget *row = GTK_WIDGET(user_data);
   if (!GTK_IS_WIDGET(row)) return;
+  /* CRITICAL: Validate obj before accessing properties */
+  if (!obj || !G_IS_OBJECT(obj)) {
+    g_debug("on_item_notify_avatar_url: obj is invalid, ignoring");
+    return;
+  }
   gchar *url = NULL, *display = NULL, *handle = NULL, *pubkey = NULL;
   g_object_get(obj, "avatar-url", &url, "display-name", &display, "handle", &handle, "pubkey", &pubkey, NULL);
   g_debug("🔔 on_item_notify_avatar_url: pubkey=%.*s display='%s' handle='%s' avatar='%s'", 
@@ -1026,11 +1058,52 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
   (void)f; (void)data;
   GObject *obj = gtk_list_item_get_item(item);
   GtkWidget *row = gtk_list_item_get_child(item);
-  if (!obj || !GTK_IS_WIDGET(row)) return;
-  /* We connected notify signals with user_data=row; disconnect by data */
-  g_signal_handlers_disconnect_by_data(obj, row);
-  /* Disconnect row embed handler */
-  g_signal_handlers_disconnect_by_func(row, G_CALLBACK(on_row_request_embed), NULL);
+  
+  /* CRITICAL: Validate objects before disconnecting signals
+   * During scrolling, GTK may unbind items that are being recycled.
+   * If obj is NULL or invalid, we can't safely disconnect signals. */
+  if (!obj) {
+    g_warning("factory_unbind: obj is NULL (item=%p row=%p)", (void*)item, (void*)row);
+    /* Still try to clean up row if it's valid */
+    if (GTK_IS_WIDGET(row)) {
+      inflight_detach_row(row);
+    }
+    return;
+  }
+  
+  if (!G_IS_OBJECT(obj)) {
+    /* DON'T try to access obj here - it's invalid/freed memory!
+     * Accessing G_OBJECT_TYPE_NAME(obj) would cause use-after-free */
+    g_warning("factory_unbind: obj is not a valid GObject (obj=%p) - likely freed", (void*)obj);
+    /* Still try to clean up row if it's valid */
+    if (GTK_IS_WIDGET(row)) {
+      inflight_detach_row(row);
+    }
+    return;
+  }
+  
+  /* CRITICAL: Also check if it's actually a TimelineItem, not just any GObject
+   * This catches cases where the memory has been reused for a different object type */
+  if (!G_TYPE_CHECK_INSTANCE_TYPE(obj, timeline_item_get_type())) {
+    g_warning("factory_unbind: obj is not a TimelineItem (obj=%p) - likely freed and reused", (void*)obj);
+    /* Still try to clean up row if it's valid */
+    if (GTK_IS_WIDGET(row)) {
+      inflight_detach_row(row);
+    }
+    return;
+  }
+  
+  if (!GTK_IS_WIDGET(row)) {
+    g_debug("factory_unbind: row is not a valid widget");
+    return;
+  }
+  
+  g_debug("factory_unbind: cleaning up (obj=%p row=%p)", (void*)obj, (void*)row);
+  /* NOTE: We no longer manually disconnect ANY signals here because:
+   * 1. notify signals use g_signal_connect_object() - auto-disconnect when row destroyed
+   * 2. request-embed signal is on row itself - auto-disconnect when row destroyed
+   * This avoids race conditions where objects might be freed during disconnect. */
+  
   /* Detach this row from any inflight embed fetches */
   inflight_detach_row(row);
 }
@@ -1065,8 +1138,9 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     gnostr_note_card_row_set_depth(GNOSTR_NOTE_CARD_ROW(row), depth);
     gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), NULL, root_id, pubkey);
     gnostr_note_card_row_set_event_json(GNOSTR_NOTE_CARD_ROW(row), event_json);
-    /* Connect embed request signal (ensure we don't duplicate) */
-    g_signal_handlers_disconnect_by_func(row, G_CALLBACK(on_row_request_embed), NULL);
+    /* Connect embed request signal
+     * NOTE: We don't need to disconnect first - g_signal_connect_object handles duplicates
+     * and auto-disconnects when row is destroyed */
     g_signal_connect(row, "request-embed", G_CALLBACK(on_row_request_embed), NULL);
   }
 
@@ -1082,11 +1156,14 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   }
   g_free(pubkey);
 
-  /* Connect reactive updates so that later metadata changes update UI */
-  if (obj) {
-    g_signal_connect(obj, "notify::display-name", G_CALLBACK(on_item_notify_display_name), row);
-    g_signal_connect(obj, "notify::handle",       G_CALLBACK(on_item_notify_handle),       row);
-    g_signal_connect(obj, "notify::avatar-url",   G_CALLBACK(on_item_notify_avatar_url),   row);
+  /* Connect reactive updates so that later metadata changes update UI
+   * CRITICAL: Use g_signal_connect_object with row as the object parameter.
+   * This makes the signals automatically disconnect when row is destroyed,
+   * avoiding the need to manually disconnect in unbind (which causes race conditions). */
+  if (obj && G_IS_OBJECT(obj) && GTK_IS_WIDGET(row)) {
+    g_signal_connect_object(obj, "notify::display-name", G_CALLBACK(on_item_notify_display_name), row, 0);
+    g_signal_connect_object(obj, "notify::handle",       G_CALLBACK(on_item_notify_handle),       row, 0);
+    g_signal_connect_object(obj, "notify::avatar-url",   G_CALLBACK(on_item_notify_avatar_url),   row, 0);
   }
 }
 

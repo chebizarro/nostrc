@@ -11,6 +11,7 @@
 #include <gio/gio.h>
 #include <string.h>
 #include <stdbool.h>
+#include <pthread.h>
 
 /* GnostrSimplePool GObject implementation */
 G_DEFINE_TYPE(GnostrSimplePool, gnostr_simple_pool, G_TYPE_OBJECT)
@@ -58,6 +59,7 @@ static void gnostr_simple_pool_init(GnostrSimplePool *self) {
     /* Force robust JSON backend to avoid inline compact parser issues */
     nostr_json_force_fallback(true);
     self->pool = nostr_simple_pool_new();
+    self->profile_fetch_in_progress = FALSE;
 }
 
 GnostrSimplePool *gnostr_simple_pool_new(void) {
@@ -773,324 +775,97 @@ static gboolean fetch_profiles_complete_ok(gpointer data) {
     return G_SOURCE_REMOVE;
 }
 
-static gpointer fetch_profiles_thread(gpointer user_data) {
-    FetchProfilesCtx *ctx = (FetchProfilesCtx *)user_data;
-    g_message("fetch_profiles_thread: ========== THREAD START ========== (%zu authors, %zu relays)", 
-              ctx->author_count, ctx->url_count);
-    
-    if (!ctx->pool) {
-        g_critical("fetch_profiles_thread: ctx->pool is NULL! Cannot proceed.");
-        g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, fetch_profiles_complete_ok,
-                                   g_object_ref(ctx->task), (GDestroyNotify)g_object_unref);
-        return NULL;
-    }
-    
-    g_message("fetch_profiles_thread: pool=%p, checking pool state...", (void*)ctx->pool);
-    
-    ctx->results = g_ptr_array_new_with_free_func(g_free);
-    /* Track which authors we have collected a profile for */
-    GHashTable *authors_needed = NULL;
-    if (ctx->author_count > 0) {
-        authors_needed = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-        for (size_t i = 0; i < ctx->author_count; i++) {
-            if (ctx->authors[i] && *ctx->authors[i]) {
-                g_hash_table_add(authors_needed, g_strdup(ctx->authors[i]));
-            }
-        }
-    }
+/* NEW ASYNC ARCHITECTURE: No blocking threads, use goroutines + GLib idle callbacks */
 
-    /* Build a single filter for kind-0 profiles with all requested authors. No limit. */
-    NostrFilters *filters = nostr_filters_new();
-    int kind0 = 0;
-    NostrFilter *f = nostr_filter_new();
-    nostr_filter_set_kinds(f, &kind0, 1);
-    if (ctx->author_count > 0) {
-        const char **authv = (const char **)ctx->authors;
-        nostr_filter_set_authors(f, authv, ctx->author_count);
-        g_message("fetch_profiles_thread: filter has %zu authors (first: %.16s...)", 
-                  ctx->author_count, ctx->authors[0] ? ctx->authors[0] : "NULL");
-    } else {
-        g_warning("fetch_profiles_thread: NO AUTHORS in filter!");
-    }
-    /* Serialize filter BEFORE adding to filters to debug */
-    char *filter_json_before = nostr_filter_serialize(f);
-    g_message("fetch_profiles_thread: filter BEFORE adding to filters: %s", 
-              filter_json_before ? filter_json_before : "NULL");
-    if (filter_json_before) free(filter_json_before);
-    
-    /* Intentionally do not set any limit here. */
-    nostr_filters_add(filters, f);
-    
-    /* Serialize filter again AFTER adding to filters */
-    char *filter_json_after = nostr_filter_serialize(f);
-    g_message("fetch_profiles_thread: filter AFTER adding to filters: %s", 
-              filter_json_after ? filter_json_after : "NULL");
-    if (filter_json_after) free(filter_json_after);
+typedef struct {
+    NostrRelay *relay;
+    NostrSubscription *sub;
+    GoChannel *raw;
+    gboolean eosed;
+} SubItem;
 
-    /* USE POOL CONNECTIONS - proper 1:n relay:subscription model */
-    typedef struct { NostrRelay *relay; NostrSubscription *sub; GoChannel *raw; gboolean eosed; } SubItem;
-    GPtrArray *subs = g_ptr_array_new_with_free_func(NULL);
-    DedupSet *dedup = dedup_set_new(65536);
-    GoContext *bg = go_context_background();
-    const char *exit_reason = "";
-    
-    /* Ensure relays exist in pool and create subscriptions on them */
-    g_message("fetch_profiles_thread: using pool relays for %zu URLs...", ctx->url_count);
-    
-    for (size_t i = 0; i < ctx->url_count; i++) {
-        if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) break;
-        const char *url = ctx->urls[i];
-        if (!url || !*url) continue;
-        
-        g_message("fetch_profiles_thread: processing relay %zu/%zu: %s", i+1, ctx->url_count, url);
-        
-        /* Ensure relay exists in pool */
-        if (ctx->pool) {
-            g_message("fetch_profiles_thread: calling ensure_relay for %s", url);
-            nostr_simple_pool_ensure_relay(ctx->pool, url);
-            g_message("fetch_profiles_thread: ensure_relay returned for %s", url);
-        }
-        
-        /* Get relay from pool */
-        g_message("fetch_profiles_thread: getting relay from pool for %s", url);
-        NostrRelay *relay = NULL;
-        if (ctx->pool) {
-            g_message("fetch_profiles_thread: locking pool mutex for %s", url);
-            pthread_mutex_lock(&ctx->pool->pool_mutex);
-            g_message("fetch_profiles_thread: pool mutex locked, searching for %s", url);
-            for (size_t j = 0; j < ctx->pool->relay_count; j++) {
-                if (ctx->pool->relays[j] && strcmp(ctx->pool->relays[j]->url, url) == 0) {
-                    relay = ctx->pool->relays[j];
-                    g_message("fetch_profiles_thread: found relay at index %zu", j);
-                    break;
-                }
-            }
-            pthread_mutex_unlock(&ctx->pool->pool_mutex);
-            g_message("fetch_profiles_thread: pool mutex unlocked");
-        }
-        
-        if (!relay) {
-            g_warning("fetch_profiles_thread: relay not in pool: %s", url);
-            continue;
-        }
-        
-        if (!nostr_relay_is_connected(relay)) {
-            g_warning("fetch_profiles_thread: relay not connected: %s", url);
-            continue;
-        }
-        
-        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, bg, filters);
-        if (!sub) {
-            g_warning("fetch_profiles_thread: prepare_subscription failed for %s", url);
-            continue;
-        }
-        
-        Error *err = NULL;
-        if (!nostr_subscription_fire(sub, &err)) {
-            g_warning("fetch_profiles_thread: subscription_fire failed for %s: %s", 
-                      url, err ? err->message : "unknown error");
-            if (err) free_error(err);
-            nostr_subscription_free(sub);
-            continue;
-        }
-        g_message("fetch_profiles_thread: subscription FIRED successfully for %s (sub_id=%s)", 
-                  url, nostr_subscription_get_id_const(sub));
-        
-        SubItem item = { .relay = relay, .sub = sub, .raw = nostr_relay_get_debug_raw_channel(relay), .eosed = FALSE };
-        g_ptr_array_add(subs, g_memdup2(&item, sizeof(SubItem)));
-    }
-    
-    if (subs->len == 0) {
-        g_warning("fetch_profiles_thread: NO subscriptions created (no connected relays)");
-        exit_reason = "no_relays";
-        goto cleanup;
-    }
-    
-    g_message("fetch_profiles_thread: created %u subscriptions for %zu authors", subs->len, ctx->author_count);
-    
-    /* Drain until all EOSE or cancelled, with quiet and hard timeouts */
-    guint64 t_start = g_get_monotonic_time();
-    guint64 t_last_activity = t_start;
-    const guint64 QUIET_USEC = 5000000;  /* 5s without any activity (increased from 2.5s) */
-    const guint64 HARD_USEC  = 20000000; /* 20s hard cap (increased from 10s) */
-    gboolean done_all_authors = FALSE;
-    guint loop_iterations = 0;
-    while (!(ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable))) {
-        loop_iterations++;
-        gboolean any = FALSE;
-        for (guint i = 0; i < subs->len; i++) {
-            SubItem *it = (SubItem *)subs->pdata[i];
-            if (!it || !it->sub) continue;
-            GoChannel *ch_events = nostr_subscription_get_events_channel(it->sub);
-            void *msg = NULL;
-            int events_drained = 0;
-            while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
-                any = TRUE;
-                events_drained++;
-                if (msg) {
-                    NostrEvent *ev = (NostrEvent*)msg;
-                    const char *eid = nostr_event_get_id(ev);
-                    if (eid && *eid && dedup_set_seen(dedup, eid)) {
-                        nostr_event_free(ev);
-                    } else {
-                        char *json = nostr_event_serialize(ev);
-                        if (json) {
-                            g_ptr_array_add(ctx->results, json);
-                            /* Mark author as satisfied if requested */
-                            if (authors_needed) {
-                                const char *pk = nostr_event_get_pubkey(ev);
-                                if (pk && *pk) {
-                                    g_hash_table_remove(authors_needed, pk);
-                                    if (g_hash_table_size(authors_needed) == 0) {
-                                        done_all_authors = TRUE;
-                                    }
-                                }
-                            }
-                        }
-                        nostr_event_free(ev);
-                    }
-                }
-                msg = NULL;
-                if (done_all_authors) break;
-                /* Limit events per iteration to avoid starving timeout checks */
-                if (events_drained >= 100) break;
-            }
-            if (done_all_authors) break;
-            GoChannel *ch_eose = nostr_subscription_get_eose_channel(it->sub);
-            if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
-                it->eosed = TRUE;
-            }
-            /* Drain CLOSED reason(s) and log */
-            GoChannel *ch_closed = nostr_subscription_get_closed_channel(it->sub);
-            void *closed_msg = NULL;
-            int closed_drained = 0;
-            while (ch_closed && go_channel_try_receive(ch_closed, &closed_msg) == 0) {
-                any = TRUE;
-                closed_drained++;
-                const char *reason = (const char *)closed_msg;
-                const char *url = nostr_relay_get_url_const(it->relay);
-                const char *sid = nostr_subscription_get_id_const(it->sub);
-                g_warning("simple_pool: CLOSED from %s sub=%s reason=%s", url ? url : "(null)", sid ? sid : "(null)", reason ? reason : "(null)");
-                closed_msg = NULL;
-                if (closed_drained >= 10) break;
-            }
-            /* Drain RAW relay messages and surface NOTICE / OK diagnostics */
-            if (it->raw) {
-                void *raw_msg = NULL;
-                int raw_drains = 0;
-                while (go_channel_try_receive(it->raw, &raw_msg) == 0) {
-                    any = TRUE;
-                    raw_drains++;
-                    const char *raw = (const char *)raw_msg;
-                    if (raw) {
-                        /* Prefer prefix checks to avoid scanning untrusted memory. */
-                        if (g_str_has_prefix(raw, "NOTICE") || g_str_has_prefix(raw, "[\"NOTICE\"")) {
-                            g_warning("simple_pool: NOTICE from %s: %s", nostr_relay_get_url_const(it->relay), raw);
-                        } else if (g_str_has_prefix(raw, "OK") || g_str_has_prefix(raw, "[\"OK\"")) {
-                            g_message("simple_pool: OK from %s: %s", nostr_relay_get_url_const(it->relay), raw);
-                        }
-                    }
-                    /* Free message copy allocated by relay_debug_emit (strdup). */
-                    g_free(raw_msg);
-                    raw_msg = NULL;
-                    /* avoid starving other channels */
-                    if (raw_drains >= 16) break;
-                }
-            }
-        }
-        guint64 now = g_get_monotonic_time();
-        if (any) t_last_activity = now;
-        if (loop_iterations <= 5 || loop_iterations % 100 == 0) {
-            g_message("fetch_profiles_thread: loop iteration %u END (any=%d)", loop_iterations, any);
-        }
-        gboolean all_eosed = TRUE;
-        for (guint i = 0; i < subs->len; i++) {
-            SubItem *it = (SubItem *)subs->pdata[i];
-            if (it && !it->eosed) { all_eosed = FALSE; break; }
-        }
-        if (done_all_authors) { 
-            exit_reason = "all_authors"; break; 
-        }
-        if (all_eosed) { 
-            exit_reason = "all_eose"; break; 
-        }
-        /* Exit if we've been quiet long enough or hit hard cap */
-        guint64 quiet_elapsed = now - t_last_activity;
-        guint64 total_elapsed = now - t_start;
-        if (quiet_elapsed > QUIET_USEC) { 
-            exit_reason = "quiet"; break; 
-        }
-        if (total_elapsed > HARD_USEC) { 
-            exit_reason = "hard_cap"; break; 
-        }
-        if (!any) g_usleep(1000); /* 1ms */
-    }
-    
-cleanup:
-    /* Cleanup subs using async API with timeout
-     * The async cleanup handles: close → unsubscribe → free in the correct order */
-    const uint64_t CLEANUP_TIMEOUT_MS = 500;
-    GPtrArray *cleanup_handles = g_ptr_array_new();
-    
-    for (guint i = 0; i < subs->len; i++) {
-        SubItem *it = (SubItem*)subs->pdata[i];
-        if (!it || !it->sub) {
-            if (it) g_free(it);
-            continue;
-        }
-        
-        /* Start async cleanup */
-        AsyncCleanupHandle *handle = nostr_subscription_free_async(it->sub, CLEANUP_TIMEOUT_MS);
-        if (handle) {
-            g_ptr_array_add(cleanup_handles, handle);
-        } else {
-            g_warning("fetch_profiles_thread: failed to start async cleanup for subscription %u/%u", i+1, subs->len);
-        }
-        
-        g_free(it);
-    }
-    
-    /* Wait for all cleanups to complete or timeout (with overall timeout) */
-    
-    guint success_count = 0;
-    guint timeout_count = 0;
-    
-    for (guint i = 0; i < cleanup_handles->len; i++) {
-        AsyncCleanupHandle *handle = (AsyncCleanupHandle*)cleanup_handles->pdata[i];
-        if (!handle) continue;
-        
-        /* Wait for this cleanup to complete */
-        bool success = nostr_subscription_cleanup_wait(handle, CLEANUP_TIMEOUT_MS + 500);
-        
-        if (success) {
-            success_count++;
-        } else {
-            timeout_count++;
-        }
-        nostr_subscription_cleanup_abandon(handle);
-    }
-    
-    g_ptr_array_free(cleanup_handles, TRUE);
-    
-    if (timeout_count > 0) {
-        g_warning("fetch_profiles_thread: cleanup leaked %u subscription(s)", timeout_count);
-    }
-    
-    g_ptr_array_unref(subs);
-    dedup_set_free(dedup);
-    nostr_filters_free(filters);
-    if (authors_needed) g_hash_table_unref(authors_needed);
+typedef struct {
+    FetchProfilesCtx *ctx;
+    GPtrArray *subs;  /* SubItem* */
+    DedupSet *dedup;
+    GHashTable *authors_needed;
+    GoContext *bg;
+    NostrFilters *filters;
+    guint64 t_start;
+    guint64 t_last_activity;
+    guint loop_iterations;
+    gboolean done_all_authors;
+    guint idle_source_id;
+    gboolean cleanup_started;
+} FetchProfilesState;
 
-    /* Signal completion on main loop */
-    guint results_count = ctx->results ? ctx->results->len : 0;
-    guint64 t_end = g_get_monotonic_time();
-    g_message("profile_fetch: thread complete - %u profiles, %ums (%s)",
-              results_count, (unsigned)((t_end - t_start) / 1000),
-              exit_reason && *exit_reason ? exit_reason : "unknown");
-    g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, fetch_profiles_complete_ok,
-                               g_object_ref(ctx->task), (GDestroyNotify)g_object_unref);
-    return NULL;
+/* Forward declaration for async implementation */
+extern void fetch_profiles_async_start(FetchProfilesCtx *ctx);
+
+static void fetch_profiles_state_free(FetchProfilesState *state) {
+    if (!state) return;
+    
+    g_message("PROFILE_FETCH: Freeing state (subs=%u)", state->subs ? state->subs->len : 0);
+    
+    if (state->idle_source_id) {
+        g_source_remove(state->idle_source_id);
+        state->idle_source_id = 0;
+    }
+    
+    /* Cleanup subscriptions asynchronously */
+    if (state->subs && !state->cleanup_started) {
+        state->cleanup_started = TRUE;
+        const uint64_t CLEANUP_TIMEOUT_MS = 500;
+        GPtrArray *cleanup_handles = g_ptr_array_new();
+        
+        for (guint i = 0; i < state->subs->len; i++) {
+            SubItem *it = (SubItem*)state->subs->pdata[i];
+            if (!it || !it->sub) {
+                if (it) g_free(it);
+                continue;
+            }
+            
+            AsyncCleanupHandle *handle = nostr_subscription_free_async(it->sub, CLEANUP_TIMEOUT_MS);
+            if (handle) {
+                g_ptr_array_add(cleanup_handles, handle);
+            }
+            g_free(it);
+        }
+        
+        /* Wait for cleanups - this is OK because we're in cleanup phase */
+        guint timeout_count = 0;
+        for (guint i = 0; i < cleanup_handles->len; i++) {
+            AsyncCleanupHandle *handle = (AsyncCleanupHandle*)cleanup_handles->pdata[i];
+            if (!handle) continue;
+            
+            if (!nostr_subscription_cleanup_wait(handle, CLEANUP_TIMEOUT_MS + 500)) {
+                timeout_count++;
+            }
+            nostr_subscription_cleanup_abandon(handle);
+        }
+        
+        if (timeout_count > 0) {
+            g_warning("PROFILE_FETCH: cleanup leaked %u subscription(s)", timeout_count);
+        }
+        
+        g_ptr_array_free(cleanup_handles, TRUE);
+    }
+    
+    if (state->subs) g_ptr_array_free(state->subs, TRUE);
+    if (state->dedup) dedup_set_free(state->dedup);
+    if (state->authors_needed) g_hash_table_unref(state->authors_needed);
+    if (state->filters) nostr_filters_free(state->filters);
+    
+    /* Clear the in-progress flag */
+    if (state->ctx && state->ctx->self_obj && GNOSTR_IS_SIMPLE_POOL(state->ctx->self_obj)) {
+        GnostrSimplePool *pool = GNOSTR_SIMPLE_POOL(state->ctx->self_obj);
+        pool->profile_fetch_in_progress = FALSE;
+        g_message("PROFILE_FETCH: Cleared in-progress flag");
+    }
+    
+    g_free(state);
 }
+
 
 void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
                                                         const char **urls,
@@ -1102,6 +877,20 @@ void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
                                                         GAsyncReadyCallback cb,
                                                         gpointer user_data) {
     g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
+    
+    /* CRITICAL: Prevent concurrent profile fetches to avoid thread explosion
+     * Only allow one profile fetch thread at a time */
+    if (self->profile_fetch_in_progress) {
+        g_warning("PROFILE_FETCH: Rejected - fetch already in progress (preventing thread explosion)");
+        GTask *task = g_task_new(G_OBJECT(self), cancellable, cb, user_data);
+        g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_BUSY, 
+                                "Profile fetch already in progress");
+        g_object_unref(task);
+        return;
+    }
+    
+    self->profile_fetch_in_progress = TRUE;
+    g_message("PROFILE_FETCH_ASYNC: Starting (authors=%zu relays=%zu)", author_count, url_count);
     
     FetchProfilesCtx *ctx = g_new0(FetchProfilesCtx, 1);
     ctx->self_obj = g_object_ref(G_OBJECT(self));
@@ -1118,8 +907,8 @@ void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
     ctx->task = g_task_new(G_OBJECT(self), cancellable, cb, user_data);
     g_task_set_task_data(ctx->task, ctx, (GDestroyNotify)fetch_profiles_ctx_free);
 
-    GThread *thr = g_thread_new("nostr-fetch-profiles", fetch_profiles_thread, ctx);
-    g_thread_unref(thr);
+    /* NEW: Use async implementation instead of creating a thread */
+    fetch_profiles_async_start(ctx);
 }
 
 GPtrArray *gnostr_simple_pool_fetch_profiles_by_authors_finish(GnostrSimplePool *self,
@@ -1134,4 +923,52 @@ GPtrArray *gnostr_simple_pool_fetch_profiles_by_authors_finish(GnostrSimplePool 
     }
     if (!g_task_propagate_boolean(G_TASK(res), error)) return NULL;
     return g_steal_pointer(&ctx->results);
+}
+
+/* Check if a relay is connected */
+gboolean gnostr_simple_pool_is_relay_connected(GnostrSimplePool *self, const char *url) {
+    g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), FALSE);
+    g_return_val_if_fail(url != NULL, FALSE);
+    
+    if (!self->pool) return FALSE;
+    
+    /* Check if relay exists in pool by iterating through relays */
+    NostrSimplePool *pool = self->pool;
+    pthread_mutex_lock(&pool->pool_mutex);
+    
+    gboolean is_connected = FALSE;
+    for (size_t i = 0; i < pool->relay_count; i++) {
+        if (pool->relays[i] && pool->relays[i]->url && 
+            strcmp(pool->relays[i]->url, url) == 0) {
+            /* Found the relay, check if it's connected */
+            is_connected = nostr_relay_is_connected(pool->relays[i]);
+            break;
+        }
+    }
+    
+    pthread_mutex_unlock(&pool->pool_mutex);
+    return is_connected;
+}
+
+/* Get list of relay URLs currently in the pool */
+GPtrArray *gnostr_simple_pool_get_relay_urls(GnostrSimplePool *self) {
+    g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), NULL);
+    
+    GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
+    
+    if (!self->pool) return urls;
+    
+    /* Access the pool's relay list */
+    NostrSimplePool *pool = self->pool;
+    pthread_mutex_lock(&pool->pool_mutex);
+    
+    for (size_t i = 0; i < pool->relay_count; i++) {
+        if (pool->relays[i] && pool->relays[i]->url) {
+            g_ptr_array_add(urls, g_strdup(pool->relays[i]->url));
+        }
+    }
+    
+    pthread_mutex_unlock(&pool->pool_mutex);
+    
+    return urls;
 }

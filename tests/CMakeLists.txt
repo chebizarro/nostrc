@@ -365,3 +365,121 @@ target_link_directories(test_subscription_blocking_depth PRIVATE ${SECP256K1_LIB
 target_link_directories(test_relay_unsubscribe PRIVATE ${SECP256K1_LIBRARY_DIRS})
 target_link_directories(test_connection_shutdown_order PRIVATE ${SECP256K1_LIBRARY_DIRS})
 target_link_directories(test_relay_shutdown PRIVATE ${SECP256K1_LIBRARY_DIRS})
+
+# GTK Application Integration Tests
+# These tests require the gnostr binary to be built
+
+# Find gnostr binary
+set(GNOSTR_BINARY "${CMAKE_BINARY_DIR}/apps/gnostr/gnostr")
+
+# Test: Run gnostr with ASan/UBSan (if enabled)
+if(SANITIZE MATCHES "address" OR SANITIZE MATCHES "undefined")
+  add_test(NAME gnostr_asan_test
+    COMMAND ${CMAKE_COMMAND} -E env
+      ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
+      GNOSTR_LIVE=FALSE
+      ${GNOSTR_BINARY}
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/apps/gnostr
+  )
+  set_tests_properties(gnostr_asan_test PROPERTIES
+    TIMEOUT 60
+    LABELS "sanitizer;gtk"
+  )
+endif()
+
+# Test: Run gnostr with ThreadSanitizer (if enabled)
+if(SANITIZE MATCHES "thread")
+  add_test(NAME gnostr_tsan_test
+    COMMAND ${CMAKE_COMMAND} -E env
+      TSAN_OPTIONS=halt_on_error=1:history_size=7:second_deadlock_stack=1
+      GNOSTR_LIVE=FALSE
+      ${GNOSTR_BINARY}
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/apps/gnostr
+  )
+  set_tests_properties(gnostr_tsan_test PROPERTIES
+    TIMEOUT 90
+    LABELS "sanitizer;gtk;concurrency"
+  )
+endif()
+
+# Test: Valgrind crash detection (no leak checking - too noisy)
+find_program(VALGRIND_EXECUTABLE valgrind)
+if(VALGRIND_EXECUTABLE AND NOT SANITIZE)
+  add_test(NAME gnostr_valgrind_crash_test
+    COMMAND ${VALGRIND_EXECUTABLE}
+      --tool=memcheck
+      --track-origins=yes
+      --leak-check=no
+      --error-limit=no
+      --errors-for-leak-kinds=none
+      --suppressions=${CMAKE_SOURCE_DIR}/valgrind.supp
+      --error-exitcode=1
+      ${GNOSTR_BINARY}
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/apps/gnostr
+  )
+  set_tests_properties(gnostr_valgrind_crash_test PROPERTIES
+    TIMEOUT 180
+    LABELS "valgrind;gtk"
+  )
+endif()
+
+# ==============================================================================
+# Concurrency Test Suite (No GTK required)
+# ==============================================================================
+
+# Test: Channel operations
+add_executable(test_concurrency_channels test_concurrency_channels.c)
+target_link_libraries(test_concurrency_channels PRIVATE libgo nostr pthread)
+apply_sanitizers(test_concurrency_channels)
+add_test(NAME concurrency_channels COMMAND test_concurrency_channels)
+set_tests_properties(concurrency_channels PROPERTIES
+  TIMEOUT 30
+  LABELS "concurrency;unit"
+)
+
+# Test: Subscription shutdown invariants
+add_executable(test_concurrency_subscription_shutdown test_concurrency_subscription_shutdown.c)
+target_link_libraries(test_concurrency_subscription_shutdown PRIVATE libgo nostr pthread)
+apply_sanitizers(test_concurrency_subscription_shutdown)
+add_test(NAME concurrency_subscription_shutdown COMMAND test_concurrency_subscription_shutdown)
+set_tests_properties(concurrency_subscription_shutdown PROPERTIES
+  TIMEOUT 60
+  LABELS "concurrency;shutdown"
+  ENVIRONMENT "NOSTR_TEST_MODE=1"
+)
+
+# Test: Subscription shutdown with ASan (detects use-after-free)
+if(GO_ENABLE_ASAN AND NOT GO_ENABLE_TSAN)
+  add_test(NAME concurrency_subscription_shutdown_asan
+    COMMAND test_concurrency_subscription_shutdown)
+  set_tests_properties(concurrency_subscription_shutdown_asan PROPERTIES
+    TIMEOUT 90
+    LABELS "concurrency;shutdown;asan"
+    ENVIRONMENT "NOSTR_TEST_MODE=1;ASAN_OPTIONS=detect_leaks=1:halt_on_error=1"
+  )
+endif()
+
+# Test: Subscription shutdown with TSAN (detects races)
+if(GO_ENABLE_TSAN)
+  add_test(NAME concurrency_subscription_shutdown_tsan
+    COMMAND test_concurrency_subscription_shutdown)
+  set_tests_properties(concurrency_subscription_shutdown_tsan PROPERTIES
+    TIMEOUT 120
+    LABELS "concurrency;shutdown;tsan"
+    ENVIRONMENT "NOSTR_TEST_MODE=1;TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1"
+  )
+endif()
+
+# Test: GLib main loop async integration
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GLIB REQUIRED glib-2.0)
+add_executable(test_glib_async_integration test_glib_async_integration.c)
+target_include_directories(test_glib_async_integration PRIVATE ${GLIB_INCLUDE_DIRS})
+target_link_libraries(test_glib_async_integration PRIVATE libgo nostr pthread ${GLIB_LIBRARIES})
+apply_sanitizers(test_glib_async_integration)
+add_test(NAME glib_async_integration COMMAND test_glib_async_integration)
+set_tests_properties(glib_async_integration PROPERTIES
+  TIMEOUT 5
+  LABELS "concurrency;glib;integration"
+)

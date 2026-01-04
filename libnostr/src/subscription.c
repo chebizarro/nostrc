@@ -514,6 +514,7 @@ struct AsyncCleanupHandle {
     GoChannel *done;         // Signals when cleanup completes (closed on completion)
     _Atomic bool completed;  // True when cleanup finished
     _Atomic bool timed_out;  // True if cleanup timed out (subscription leaked)
+    _Atomic bool abandoned;  // True if caller abandoned this handle (thread should free it)
     uint64_t timeout_ms;
     pthread_t cleanup_thread;
 };
@@ -598,6 +599,15 @@ cleanup_done:
     atomic_store(&handle->completed, true);
     go_channel_close(handle->done);
     
+    /* If the handle was abandoned, free it now that we're done with it */
+    if (atomic_load(&handle->abandoned)) {
+        if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+            fprintf(stderr, "[sub] async_cleanup: abandoned handle, freeing\n");
+        }
+        go_channel_free(handle->done);
+        free(handle);
+    }
+    
     return NULL;
 }
 
@@ -611,6 +621,7 @@ AsyncCleanupHandle *nostr_subscription_free_async(NostrSubscription *sub, uint64
     handle->done = go_channel_create(1);
     atomic_store(&handle->completed, false);
     atomic_store(&handle->timed_out, false);
+    atomic_store(&handle->abandoned, false);
     handle->timeout_ms = timeout_ms;
     
     /* Start cleanup thread */
@@ -655,9 +666,10 @@ bool nostr_subscription_cleanup_wait(AsyncCleanupHandle *handle, uint64_t timeou
 void nostr_subscription_cleanup_abandon(AsyncCleanupHandle *handle) {
     if (!handle) return;
     
-    /* Just free the handle - cleanup thread will finish in background */
-    go_channel_free(handle->done);
-    free(handle);
+    /* DON'T free the handle here! The background thread is still using it.
+     * The background thread will free it when it completes.
+     * We just mark it as abandoned so the thread knows to free everything. */
+    atomic_store(&handle->abandoned, true);
 }
 
 bool nostr_subscription_cleanup_is_complete(AsyncCleanupHandle *handle) {

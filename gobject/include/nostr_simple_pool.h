@@ -13,6 +13,7 @@ G_DECLARE_FINAL_TYPE(GnostrSimplePool, gnostr_simple_pool, GNOSTR, SIMPLE_POOL, 
 struct _GnostrSimplePool {
     GObject parent_instance;
     NostrSimplePool *pool; /* core handle */
+    gboolean profile_fetch_in_progress; /* Prevent concurrent profile fetches */
 };
 
 /* GObject convenience API (prefixed with gnostr_ to avoid clashes with core
@@ -86,5 +87,11 @@ void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
 GPtrArray *gnostr_simple_pool_fetch_profiles_by_authors_finish(GnostrSimplePool *self,
                                                                GAsyncResult *res,
                                                                GError **error);
+
+/* Relay connection status check */
+gboolean gnostr_simple_pool_is_relay_connected(GnostrSimplePool *self, const char *url);
+
+/* Get list of relay URLs currently in the pool */
+GPtrArray *gnostr_simple_pool_get_relay_urls(GnostrSimplePool *self);
 
 #endif // NOSTR_SIMPLE_POOL_H

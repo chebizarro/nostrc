@@ -271,6 +271,7 @@ struct _GnostrMainWindow {
   GCancellable    *pool_cancellable; /* owned */
   NostrFilters    *live_filters; /* owned; current live filter set */
   gulong           pool_events_handler; /* signal handler id */
+  gboolean         reconnection_in_progress; /* prevent concurrent reconnection attempts */
  
   /* Sequential profile batch dispatch state */
   GPtrArray      *profile_batches;       /* owned; elements: GPtrArray* of char* authors */
@@ -464,12 +465,29 @@ void gnostr_main_window_enqueue_profile_authors(GnostrMainWindow *self, const ch
 static gboolean profile_fetch_fire_idle(gpointer data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return G_SOURCE_REMOVE;
+  g_message("STARTUP_DEBUG: profile_fetch_fire_idle ENTER");
   self->profile_fetch_source_id = 0;
-  if (!self->pool) self->pool = gnostr_simple_pool_new();
-  if (!self->profile_fetch_queue || self->profile_fetch_queue->len == 0) {
-    g_debug("profile_fetch_fire_idle: queue empty");
+  
+  /* CRITICAL FIX: Don't fetch profiles if pool isn't initialized with relays
+   * Without GNOSTR_LIVE=TRUE, the pool and relays aren't set up, and profile
+   * fetching will fail anyway. Skip it to avoid hanging on relay config loading. */
+  if (!self->pool) {
+    g_message("profile_fetch: pool not initialized (GNOSTR_LIVE not set?), skipping profile fetch");
+    g_message("STARTUP_DEBUG: profile_fetch_fire_idle EXIT (no pool)");
+    /* Clear the queue since we can't process it */
+    if (self->profile_fetch_queue) {
+      g_ptr_array_free(self->profile_fetch_queue, TRUE);
+      self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
+    }
     return G_SOURCE_REMOVE;
   }
+  
+  if (!self->profile_fetch_queue || self->profile_fetch_queue->len == 0) {
+    g_debug("profile_fetch_fire_idle: queue empty");
+    g_message("STARTUP_DEBUG: profile_fetch_fire_idle EXIT (queue empty)");
+    return G_SOURCE_REMOVE;
+  }
+  g_message("STARTUP_DEBUG: profile_fetch_fire_idle dispatching %u authors", self->profile_fetch_queue->len);
   g_message("profile_fetch_fire_idle: dispatching %u author(s)", self->profile_fetch_queue->len);
   /* Snapshot and clear queue */
   GPtrArray *authors = self->profile_fetch_queue;
@@ -514,14 +532,20 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
    * Cached profiles give instant UI feedback, relay fetch keeps them fresh. */
   
   /* Build relay URLs */
+  g_message("STARTUP_DEBUG: Building relay URLs...");
   const char **urls = NULL; size_t url_count = 0; NostrFilters *dummy = NULL;
   build_urls_and_filters(self, &urls, &url_count, &dummy, 0 /* unused for profiles */);
+  g_message("STARTUP_DEBUG: Built %zu relay URLs", url_count);
   if (!urls || url_count == 0) {
     g_message("profile_fetch: no relays configured; %u cached applied, dropping relay fetch", cached_applied);
     g_ptr_array_free(authors, TRUE);
     if (dummy) nostr_filters_free(dummy);
+    g_message("STARTUP_DEBUG: profile_fetch_fire_idle EXIT (no relays)");
     return G_SOURCE_REMOVE;
   }
+  
+  /* NOTE: Relays should already be in the pool from start_pool_live().
+   * If not, the async fetch will skip unavailable relays. */
   /* Build batch list but dispatch sequentially (EOSE-gated) */
   const guint total = authors->len;
   const guint batch_sz = 100; /* Increased from 16 to reduce inter-batch issues */
@@ -580,7 +604,9 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
   /* Free filters from build_urls_and_filters */
   if (dummy) nostr_filters_free(dummy);
   /* Kick off the first batch */
+  g_message("STARTUP_DEBUG: Calling profile_dispatch_next...");
   profile_dispatch_next(g_object_ref(self));
+  g_message("STARTUP_DEBUG: profile_fetch_fire_idle EXIT (dispatched)");
   return G_SOURCE_REMOVE;
 }
 
@@ -724,15 +750,25 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
   /* Advance to next batch - add delay to allow cleanup to complete */
   if (ctx && GNOSTR_IS_MAIN_WINDOW(ctx->self)) {
     GnostrMainWindow *self = ctx->self;
-    g_message("profile_fetch: batch callback complete, dispatching next batch immediately (pos=%u len=%u)",
-              self->profile_batch_pos, self->profile_batches ? self->profile_batches->len : 0);
-    /* Dispatch next batch immediately - no need to wait for cleanup
-     * Relays support 1:N connection:subscription model */
-    profile_dispatch_next(g_object_ref(self));
-    g_object_unref(self);
+    /* CRITICAL: Calculate delay based on number of relays
+     * Each subscription takes ~1 second to cleanup (500ms timeout + 500ms wait)
+     * With N relays, we need N seconds + buffer for all subscriptions to cleanup
+     * Without sufficient delay, threads accumulate and cause resource exhaustion (180+ threads) */
+    guint relay_count = self->profile_batch_url_count > 0 ? self->profile_batch_url_count : 1;
+    guint cleanup_delay_ms = (relay_count * 1000) + 1000; /* 1 sec per relay + 1 sec buffer */
+    g_message("PROFILE_BATCH: Complete batch %u/%u, next in %ums (relays=%u)",
+              self->profile_batch_pos, 
+              self->profile_batches ? self->profile_batches->len : 0,
+              cleanup_delay_ms, relay_count);
+    g_timeout_add_full(G_PRIORITY_DEFAULT, cleanup_delay_ms,
+                       (GSourceFunc)profile_dispatch_next, g_object_ref(self), 
+                       (GDestroyNotify)g_object_unref);
+    /* NOTE: Don't unref self here - ctx->self holds the reference and will be freed below */
   } else {
     g_warning("profile_fetch: cannot dispatch next batch - invalid context");
   }
+  /* Free ctx - this will unref ctx->self */
+  if (ctx && ctx->self) g_object_unref(ctx->self);
   g_free(ctx);
 }
 
@@ -869,11 +905,15 @@ static void append_note_from_event(GnostrMainWindow *self, NostrEvent *evt) {
 
 static void prepopulate_text_notes_from_cache(GnostrMainWindow *self, guint limit) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  g_message("STARTUP_DEBUG: prepopulate_text_notes_from_cache ENTER");
   void *txn = NULL; char **arr = NULL; int n = 0;
   if (storage_ndb_begin_query(&txn) != 0) { g_warning("prepopulate_text_notes_from_cache: begin_query failed"); return; }
+  g_message("STARTUP_DEBUG: DB transaction started");
   /* Build filters: kind 1 with limit */
   g_autofree char *filters = g_strdup_printf("[{\"kinds\":[1],\"limit\":%u}]", limit > 0 ? limit : 30);
+  g_message("STARTUP_DEBUG: Starting DB query...");
   int rc = storage_ndb_query(txn, filters, &arr, &n);
+  g_message("STARTUP_DEBUG: DB query complete rc=%d count=%d", rc, n);
   g_message("prepopulate_text_notes_from_cache: query rc=%d count=%d", rc, n);
   guint enqueued_profiles = 0;
   if (rc == 0 && arr && n > 0) {
@@ -904,6 +944,7 @@ static void prepopulate_text_notes_from_cache(GnostrMainWindow *self, guint limi
   }
   storage_ndb_free_results(arr, n);
   storage_ndb_end_query(txn);
+  g_message("STARTUP_DEBUG: prepopulate_text_notes_from_cache EXIT (enqueued %u profiles)", enqueued_profiles);
   if (enqueued_profiles > 0) {
     g_message("prepopulate_text_notes_from_cache: enqueued %u profile(s) for fetch", enqueued_profiles);
   }
@@ -950,6 +991,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   self->meta_by_pubkey = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, user_meta_free);
   /* Initialize avatar texture cache */
   self->avatar_tex_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_object_unref);
+  /* Initialize reconnection flag */
+  self->reconnection_in_progress = FALSE;
   /* Do NOT pre-populate/apply cached profiles here; we defer to a debounced
    * sweep after timeline items are appended (see initial_refresh_timeout_cb and on_pool_events).
    */
@@ -1084,6 +1127,7 @@ G_DEFINE_FINAL_TYPE(GnostrMainWindow, gnostr_main_window, GTK_TYPE_APPLICATION_W
 
 static void gnostr_main_window_dispose(GObject *object) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(object);
+  g_critical("💀💀💀 MAIN WINDOW DISPOSE CALLED - APP IS SHUTTING DOWN!");
   if (self->profile_fetch_cancellable) { g_object_unref(self->profile_fetch_cancellable); self->profile_fetch_cancellable = NULL; }
   if (self->bg_prefetch_cancellable) { g_object_unref(self->bg_prefetch_cancellable); self->bg_prefetch_cancellable = NULL; }
   if (self->pool_cancellable) { g_object_unref(self->pool_cancellable); self->pool_cancellable = NULL; }
@@ -1148,17 +1192,18 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_callback(widget_class, on_avatar_sign_out_clicked);
 }
 
-static void gnostr_main_window_init(GnostrMainWindow *self);
-
 /* ---- Minimal stub implementations to satisfy build and support cached profiles path ---- */
 static void initial_refresh_timeout_cb(gpointer data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  g_message("STARTUP_DEBUG: initial_refresh_timeout_cb ENTER");
   /* Populate recent text notes from local cache so the timeline is not empty */
   guint limit = self->default_limit ? self->default_limit : 30;
   prepopulate_text_notes_from_cache(self, limit);
+  g_message("STARTUP_DEBUG: prepopulate complete, scheduling profile sweep");
   /* After items exist, sweep local DB for any cached profiles (debounced) */
   schedule_ndb_profile_sweep(self);
+  g_message("STARTUP_DEBUG: initial_refresh_timeout_cb EXIT");
 }
 
 static void user_meta_free(gpointer p) { g_free(p); }
@@ -1238,8 +1283,9 @@ static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_url
 
 static gboolean profile_dispatch_next(gpointer data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
+  g_message("STARTUP_DEBUG: profile_dispatch_next ENTER");
   if (!GNOSTR_IS_MAIN_WINDOW(self)) {
-    g_object_unref(self);
+    /* NOTE: Don't unref - GLib handles it via g_timeout_add_full's GDestroyNotify */
     return G_SOURCE_REMOVE;
   }
   /* Nothing to do? Clean up sequence if finished */
@@ -1280,7 +1326,7 @@ static gboolean profile_dispatch_next(gpointer data) {
     } else {
       g_message("profile_fetch: ✅ SEQUENCE COMPLETE - no authors queued");
     }
-    g_object_unref(self);
+    /* NOTE: Don't unref - GLib handles it via g_timeout_add_full's GDestroyNotify */
     return G_SOURCE_REMOVE;
   }
 
@@ -1302,7 +1348,7 @@ static gboolean profile_dispatch_next(gpointer data) {
       self->profile_batch_url_count = 0;
     }
     self->profile_batch_pos = 0;
-    g_object_unref(self);
+    /* NOTE: Don't unref - GLib handles it via g_timeout_add_full's GDestroyNotify */
     return G_SOURCE_REMOVE;
   }
 
@@ -1313,9 +1359,9 @@ static gboolean profile_dispatch_next(gpointer data) {
   self->profile_batch_pos++;
   if (!batch || batch->len == 0) {
     if (batch) g_ptr_array_free(batch, TRUE);
-    /* Continue to next */
-    profile_dispatch_next(g_object_ref(self));
-    g_object_unref(self);
+    /* Continue to next - NOTE: We're already in a timeout callback, so we need to schedule another one */
+    g_timeout_add_full(G_PRIORITY_DEFAULT, 0, profile_dispatch_next, g_object_ref(self), (GDestroyNotify)g_object_unref);
+    /* NOTE: Don't unref - GLib handles it via g_timeout_add_full's GDestroyNotify */
     return G_SOURCE_REMOVE;
   }
 
@@ -1331,6 +1377,7 @@ static gboolean profile_dispatch_next(gpointer data) {
   int limit_per_author = 0; /* no limit; filter limit is total, not per author */
   g_message("profile_fetch: dispatching batch %u/%u (authors=%zu)",
             self->profile_batch_pos, self->profile_batches ? self->profile_batches->len : 0, n);
+  g_message("STARTUP_DEBUG: Calling gnostr_simple_pool_fetch_profiles_by_authors_async...");
   gnostr_simple_pool_fetch_profiles_by_authors_async(
       self->pool,
       self->profile_batch_urls,
@@ -1343,26 +1390,45 @@ static gboolean profile_dispatch_next(gpointer data) {
       ctx);
 
   g_free((gpointer)authors);
-  g_object_unref(self);
+  /* NOTE: Don't unref - GLib handles it via g_timeout_add_full's GDestroyNotify */
   return G_SOURCE_REMOVE;
 }
 
 static gboolean periodic_backfill_cb(gpointer data) { (void)data; return G_SOURCE_CONTINUE; }
 
 static void start_pool_live(GnostrMainWindow *self) {
+  g_message("start_pool_live: ENTRY");
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  
+  /* Prevent concurrent reconnection attempts */
+  if (self->reconnection_in_progress) {
+    g_message("start_pool_live: reconnection already in progress, skipping");
+    return;
+  }
+  self->reconnection_in_progress = TRUE;
+  
+  g_message("start_pool_live: creating pool");
   if (!self->pool) self->pool = gnostr_simple_pool_new();
+  g_message("start_pool_live: creating cancellable");
   if (!self->pool_cancellable) self->pool_cancellable = g_cancellable_new();
 
+  g_message("start_pool_live: building URLs and filters");
   /* Build live URLs and filters: text notes (kind 1), optional limit/since */
   const char **urls = NULL; size_t url_count = 0; NostrFilters *filters = NULL;
   build_urls_and_filters(self, &urls, &url_count, &filters, (int)self->default_limit);
+  g_message("start_pool_live: built %zu URLs", url_count);
   if (!urls || url_count == 0 || !filters) {
     g_message("start_pool_live: no relay URLs or filters; skipping live start");
     if (filters) nostr_filters_free(filters);
     if (urls) { g_free((gpointer)urls); }
     return;
   }
+
+  /* NOTE: We DON'T call ensure_relay() here because it can block for 100-300ms per relay,
+   * which would freeze the GTK main thread and cause "Not Responding" dialogs.
+   * Instead, relays will be created on-demand when subscriptions are fired.
+   * The first subscription to each relay may be slightly slower, but the UI stays responsive. */
+  g_message("start_pool_live: relays will be created on-demand (non-blocking)");
 
   /* Hook up events signal exactly once */
   if (self->pool_events_handler == 0) {
@@ -1417,15 +1483,87 @@ static void start_bg_profile_prefetch(GnostrMainWindow *self) {
   g_free((gpointer)urls);
 }
 
+/* Periodic health check to detect and reconnect dead relay connections */
+static gboolean check_relay_health(gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->pool) {
+    g_warning("relay_health: invalid window or pool, stopping health checks");
+    return G_SOURCE_REMOVE;
+  }
+  
+  /* Get list of relay URLs from the pool */
+  GPtrArray *relay_urls = gnostr_simple_pool_get_relay_urls(self->pool);
+  if (!relay_urls || relay_urls->len == 0) {
+    g_debug("relay_health: no relays in pool");
+    if (relay_urls) g_ptr_array_unref(relay_urls);
+    return G_SOURCE_CONTINUE;
+  }
+  
+  /* Check connection status of each relay */
+  guint disconnected_count = 0;
+  guint connected_count = 0;
+  
+  for (guint i = 0; i < relay_urls->len; i++) {
+    const char *url = g_ptr_array_index(relay_urls, i);
+    if (!url) continue;
+    
+    gboolean is_connected = gnostr_simple_pool_is_relay_connected(self->pool, url);
+    if (is_connected) {
+      connected_count++;
+      g_debug("relay_health: %s is CONNECTED", url);
+    } else {
+      disconnected_count++;
+      g_warning("relay_health: %s is DISCONNECTED", url);
+    }
+  }
+  
+  g_message("relay_health: status - %u connected, %u disconnected (total %u)",
+            connected_count, disconnected_count, relay_urls->len);
+  
+  /* If ANY relays are disconnected, trigger reconnection */
+  if (disconnected_count > 0) {
+    g_warning("relay_health: %u relay(s) disconnected - triggering reconnection", 
+              disconnected_count);
+    
+    /* Restart the live subscription to reconnect */
+    start_pool_live(self);
+  }
+  
+  g_ptr_array_unref(relay_urls);
+  return G_SOURCE_CONTINUE; /* Keep checking every interval */
+}
+
+/* Retry live subscription after failure */
+static gboolean retry_pool_live(gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) {
+    return G_SOURCE_REMOVE;
+  }
+  g_message("live: retrying subscription after failure");
+  start_pool_live(self);
+  return G_SOURCE_REMOVE;
+}
+
 /* Live stream setup completion */
 static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   GError *error = NULL;
   gboolean ok = gnostr_simple_pool_subscribe_many_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  
+  /* Clear reconnection flag */
+  if (GNOSTR_IS_MAIN_WINDOW(self)) {
+    self->reconnection_in_progress = FALSE;
+  }
+  
   if (!ok) {
-    g_warning("live: subscribe_many finish error: %s", error ? error->message : "(unknown)");
+    g_warning("live: subscribe_many failed: %s - retrying in 5 seconds", 
+              error ? error->message : "(unknown)");
+    /* Retry after 5 seconds */
+    g_timeout_add_seconds(5, retry_pool_live, g_object_ref(self));
   } else {
-    g_message("live: subscribe_many started");
+    g_message("live: subscribe_many started successfully");
+    /* Start periodic health check (every 30 seconds) */
+    g_timeout_add_seconds(30, check_relay_health, self);
   }
   if (error) g_clear_error(&error);
   if (self) g_object_unref(self);
