@@ -194,8 +194,11 @@ void nostr_subscription_dispatch_eose(NostrSubscription *sub) {
     if (atomic_exchange(&sub->priv->eosed, true) == false) {
         sub->priv->match = nostr_filters_match_ignoring_timestamp;
 
-        // Wait for any "stored" events to finish processing, then signal EOSE
-        fprintf(stderr, "[EOSE_SIGNAL] sid=%s sending to channel\n", sub->priv->id ? sub->priv->id : "null");
+        // CRITICAL: Must use blocking send for EOSE to ensure delivery!
+        // The goroutine polling loop DEPENDS on receiving EOSE to complete.
+        // Non-blocking try_send can drop the signal if timing is off.
+        // The channel has buffer=8, so this won't deadlock in normal operation.
+        fprintf(stderr, "[EOSE_SIGNAL] sid=%s sending to channel (BLOCKING)\n", sub->priv->id ? sub->priv->id : "null");
         go_channel_send(sub->end_of_stored_events, NULL);
         nostr_metric_counter_add("sub_eose_signal", 1);
         fprintf(stderr, "[EOSE_SIGNAL] sid=%s sent successfully\n", sub->priv->id ? sub->priv->id : "null");
@@ -213,8 +216,15 @@ void nostr_subscription_dispatch_closed(NostrSubscription *sub, const char *reas
 
     // Set the closed flag and dispatch the reason
     if (atomic_exchange(&sub->priv->closed, true) == false) {
-        go_channel_send(sub->closed_reason, (void *)reason);
-        nostr_metric_counter_add("sub_closed_signal", 1);
+        // Non-blocking send to avoid deadlock (SHUTDOWN.md line 35)
+        if (go_channel_try_send(sub->closed_reason, (void *)reason) != 0) {
+            // Channel full or closed - log but don't block
+            if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+                fprintf(stderr, "[sub %s] dispatch_closed: channel full/closed, dropping reason\n", sub->priv->id);
+            }
+        } else {
+            nostr_metric_counter_add("sub_closed_signal", 1);
+        }
         if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
             fprintf(stderr, "[sub %s] dispatch_closed: reason='%s'\n", sub->priv->id, reason ? reason : "");
         }
@@ -230,17 +240,14 @@ void nostr_subscription_unsubscribe(NostrSubscription *sub) {
         return;
     }
 
-    // Cancel the subscription's context
-    sub->priv->cancel(sub->context);
+    // Cancel the subscription's context (idempotent)
+    if (sub->priv->cancel) {
+        sub->priv->cancel(sub->context);
+    }
     nostr_metric_counter_add("sub_unsubscribe", 1);
 
-    // If the subscription is still live, mark it as inactive and close it
-    if (atomic_exchange(&sub->priv->live, false)) {
-        if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
-            fprintf(stderr, "[sub %s] unsub: closing (send CLOSED)\n", sub->priv->id);
-        }
-        nostr_subscription_close(sub, NULL);
-    }
+    // Mark as no longer live; CLOSE will be handled separately if needed
+    atomic_exchange(&sub->priv->live, false);
 
     // Remove the subscription from the relay's map (keys are ints/counters) if relay present
     if (sub->relay && sub->relay->subscriptions) {

@@ -1,0 +1,59 @@
+# Valgrind suppression file for GNOSTR
+# Only suppress known GTK/GLib/libsoup false positives
+# NEVER suppress application code!
+
+{
+   glib_type_register_static
+   Memcheck:Leak
+   ...
+   fun:g_type_register_static
+}
+
+{
+   glib_quark_from_static_string
+   Memcheck:Leak
+   ...
+   fun:g_quark_from_static_string
+}
+
+{
+   glib_signal_connect
+   Memcheck:Leak
+   ...
+   fun:g_signal_connect*
+}
+
+{
+   gtk_init
+   Memcheck:Leak
+   ...
+   fun:gtk_init
+}
+
+{
+   pango_font_map
+   Memcheck:Leak
+   ...
+   fun:pango_*font_map*
+}
+
+{
+   libsoup_ssl_context
+   Memcheck:Leak
+   ...
+   obj:*/libsoup*.so*
+}
+
+{
+   gdk_display_open
+   Memcheck:Leak
+   ...
+   fun:gdk_display_open
+}
+
+{
+   g_module_open
+   Memcheck:Leak
+   ...
+   fun:g_module_open
+}

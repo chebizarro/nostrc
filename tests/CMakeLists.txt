@@ -483,3 +483,27 @@ set_tests_properties(glib_async_integration PROPERTIES
   TIMEOUT 5
   LABELS "concurrency;glib;integration"
 )
+
+# Test: Profile fetch simulation (simulates real profile fetch scenario)
+add_executable(test_profile_fetch_simulation test_profile_fetch_simulation.c)
+target_include_directories(test_profile_fetch_simulation PRIVATE ${GLIB_INCLUDE_DIRS})
+target_link_libraries(test_profile_fetch_simulation PRIVATE libgo nostr pthread ${GLIB_LIBRARIES})
+apply_sanitizers(test_profile_fetch_simulation)
+add_test(NAME profile_fetch_simulation COMMAND test_profile_fetch_simulation)
+set_tests_properties(profile_fetch_simulation PROPERTIES
+  TIMEOUT 60
+  LABELS "concurrency;profile;simulation"
+  ENVIRONMENT "NOSTR_TEST_MODE=1"
+)
+
+# Test: Profile fetch stress test (monitors thread leaks)
+add_executable(test_profile_fetch_stress test_profile_fetch_stress.c)
+target_include_directories(test_profile_fetch_stress PRIVATE ${GLIB_INCLUDE_DIRS})
+target_link_libraries(test_profile_fetch_stress PRIVATE libgo nostr pthread ${GLIB_LIBRARIES})
+apply_sanitizers(test_profile_fetch_stress)
+add_test(NAME profile_fetch_stress COMMAND test_profile_fetch_stress)
+set_tests_properties(profile_fetch_stress PROPERTIES
+  TIMEOUT 120
+  LABELS "concurrency;profile;stress"
+  ENVIRONMENT "NOSTR_TEST_MODE=1"
+)

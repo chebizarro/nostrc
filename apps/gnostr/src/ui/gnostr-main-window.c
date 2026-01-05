@@ -290,6 +290,14 @@ static void avatar_http_ctx_free(AvatarHttpCtx *c){ if(!c) return; if (c->self) 
 /* ---- Demand-driven profile fetch (debounced) ---- */
 static void enqueue_profile_author(GnostrMainWindow *self, const char *pubkey_hex) {
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex || strlen(pubkey_hex) != 64) return;
+  
+  /* CRITICAL FIX: Don't re-fetch profiles we already have in memory cache!
+   * This prevents fetching the same 1411 authors repeatedly on every scroll. */
+  if (self->meta_by_pubkey && g_hash_table_contains(self->meta_by_pubkey, pubkey_hex)) {
+    /* Already have this profile in memory - skip */
+    return;
+  }
+  
   if (!self->profile_fetch_queue)
     self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
   /* Dedup linear scan (queue is expected to stay small) */
@@ -733,22 +741,20 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
   }
   /* Done with this batch's author list */
   if (ctx && ctx->batch) g_ptr_array_free(ctx->batch, TRUE);
-  /* Advance to next batch - add delay to allow cleanup to complete */
+  /* Advance to next batch immediately - goroutines handle cleanup internally */
   if (ctx && GNOSTR_IS_MAIN_WINDOW(ctx->self)) {
     GnostrMainWindow *self = ctx->self;
-    /* CRITICAL: Calculate delay based on number of relays
-     * Each subscription takes ~1 second to cleanup (500ms timeout + 500ms wait)
-     * With N relays, we need N seconds + buffer for all subscriptions to cleanup
-     * Without sufficient delay, threads accumulate and cause resource exhaustion (180+ threads) */
-    guint relay_count = self->profile_batch_url_count > 0 ? self->profile_batch_url_count : 1;
-    guint cleanup_delay_ms = (relay_count * 1000) + 1000; /* 1 sec per relay + 1 sec buffer */
-    g_debug("[PROFILE] Batch %u/%u complete, next in %ums",
+    
+    /* NOTE: With goroutine-based fetching, we don't need artificial delays!
+     * Goroutines complete in ~3-5 seconds and clean up properly.
+     * The old delay system (5+ seconds per batch) was for the broken GLib thread implementation.
+     * Dispatch next batch immediately for faster profile loading. */
+    g_debug("[PROFILE] Batch %u/%u complete, dispatching next immediately",
             self->profile_batch_pos, 
-            self->profile_batches ? self->profile_batches->len : 0,
-            cleanup_delay_ms);
-    g_timeout_add_full(G_PRIORITY_DEFAULT, cleanup_delay_ms,
-                       (GSourceFunc)profile_dispatch_next, g_object_ref(self), 
-                       (GDestroyNotify)g_object_unref);
+            self->profile_batches ? self->profile_batches->len : 0);
+    g_idle_add_full(G_PRIORITY_DEFAULT,
+                    (GSourceFunc)profile_dispatch_next, g_object_ref(self), 
+                    (GDestroyNotify)g_object_unref);
     /* NOTE: Don't unref self here - ctx->self holds the reference and will be freed below */
   } else {
     g_warning("profile_fetch: cannot dispatch next batch - invalid context");
@@ -978,9 +984,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   self->avatar_tex_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_object_unref);
   /* Initialize reconnection flag */
   self->reconnection_in_progress = FALSE;
-  /* Do NOT pre-populate/apply cached profiles here; we defer to a debounced
-   * sweep after timeline items are appended (see initial_refresh_timeout_cb and on_pool_events).
-   */
+  /* Pre-populate/apply cached profiles here */
+  prepopulate_all_profiles_from_cache(self);
   /* Initialize tuning knobs from env with sensible defaults */
   self->batch_max = getenv_uint_default("GNOSTR_BATCH_MAX", 5);
   self->post_interval_ms = getenv_uint_default("GNOSTR_POST_INTERVAL_MS", 150);
@@ -1022,10 +1027,10 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   if (self->stack && self->timeline && GTK_IS_STACK(self->stack)) {
     gtk_stack_set_visible_child(GTK_STACK(self->stack), self->timeline);
   }
-  /* Seed initial items so Timeline page isn't empty */
-  g_timeout_add_once(150, (GSourceOnceFunc)initial_refresh_timeout_cb, self);
-
-  /* Optional: enable live subscriptions at startup when GNOSTR_LIVE is set */
+  
+  /* CRITICAL: Initialize pool and relays BEFORE timeline prepopulation!
+   * Timeline prepopulation triggers profile fetches, which need relays in the pool.
+   * If we prepopulate first, profile fetches will skip all relays (not in pool yet). */
   {
     const char *live = g_getenv("GNOSTR_LIVE");
     if (live && *live && g_strcmp0(live, "0") != 0) {
@@ -1035,6 +1040,9 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
       start_profile_subscription(self);
     }
   }
+  
+  /* Seed initial items so Timeline page isn't empty */
+  g_timeout_add_once(150, (GSourceOnceFunc)initial_refresh_timeout_cb, self);
 
   /* Init demand-driven profile fetch state */
   self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
@@ -1270,9 +1278,14 @@ static gboolean profile_dispatch_next(gpointer data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
   /* Removed noisy debug */
   if (!GNOSTR_IS_MAIN_WINDOW(self)) {
-    /* NOTE: Don't unref - GLib handles it via g_timeout_add_full's GDestroyNotify */
+    g_warning("profile_fetch: dispatch_next called with invalid self");
     return G_SOURCE_REMOVE;
   }
+  
+  /* NOTE: With goroutine-based fetching, we can allow concurrent batches!
+   * Goroutines are lightweight (not OS threads), so multiple batches can run safely.
+   * The old serialization flag was needed for the broken GLib thread implementation,
+   * but is no longer necessary with goroutines. */
   /* Nothing to do? Clean up sequence if finished */
   if (!self->profile_batches || self->profile_batch_pos >= self->profile_batches->len) {
     if (self->profile_batches) {
@@ -1362,6 +1375,7 @@ static gboolean profile_dispatch_next(gpointer data) {
   int limit_per_author = 0; /* no limit; filter limit is total, not per author */
   g_debug("[PROFILE] Dispatching batch %u/%u (%zu authors)",
           self->profile_batch_pos, self->profile_batches ? self->profile_batches->len : 0, n);
+  
   gnostr_simple_pool_fetch_profiles_by_authors_async(
       self->pool,
       self->profile_batch_urls,
@@ -1408,13 +1422,15 @@ static void start_pool_live(GnostrMainWindow *self) {
    * Profile fetch code skips relays not in pool (to avoid blocking main thread).
    * We call ensure_relay() here BEFORE starting subscriptions to populate the pool.
    * This is acceptable because start_pool_live() runs early at startup, not on main loop yet. */
-  g_message("[RELAY] Initializing %zu relays in pool", url_count);
+  NostrSimplePool *c_pool = GNOSTR_SIMPLE_POOL(self->pool)->pool;
+  g_message("[RELAY] Initializing %zu relays in pool (pool=%p)", url_count, (void*)c_pool);
   for (size_t i = 0; i < url_count; i++) {
     if (urls[i] && *urls[i]) {
-      nostr_simple_pool_ensure_relay(GNOSTR_SIMPLE_POOL(self->pool)->pool, urls[i]);
+      nostr_simple_pool_ensure_relay(c_pool, urls[i]);
+      g_message("[RELAY] Added relay %s to pool", urls[i]);
     }
   }
-  g_message("[RELAY] ✓ All relays initialized");
+  g_message("[RELAY] ✓ All relays initialized (pool now has %zu relays)", c_pool->relay_count);
   /* Hook up events signal exactly once */
   if (self->pool_events_handler == 0) {
     self->pool_events_handler = g_signal_connect(self->pool, "events", G_CALLBACK(on_pool_events), self);

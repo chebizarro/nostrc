@@ -33,6 +33,7 @@ void               nostr_subscription_free(NostrSubscription *sub);
 char              *nostr_subscription_get_id(NostrSubscription *sub);
 void               nostr_subscription_unsubscribe(NostrSubscription *sub);
 void               nostr_subscription_close(NostrSubscription *sub, Error **err);
+void               nostr_subscription_wait(NostrSubscription *sub);
 bool               nostr_subscription_subscribe(NostrSubscription *sub, NostrFilters *filters, Error **err);
 bool               nostr_subscription_fire(NostrSubscription *sub, Error **err);
 

@@ -89,6 +89,14 @@ void nostr_simple_pool_free(NostrSimplePool *pool);
  */
 void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url);
 /**
+ * nostr_simple_pool_add_relay:
+ * @pool: (transfer none): pool
+ * @relay: (transfer none): relay to add
+ *
+ * Adds an existing relay to the pool. The pool does not take ownership.
+ */
+void nostr_simple_pool_add_relay(NostrSimplePool *pool, NostrRelay *relay);
+/**
  * nostr_simple_pool_start:
  * @pool: (transfer none): pool
  *

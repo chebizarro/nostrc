@@ -71,9 +71,9 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${CMAKE_SOURCE_DIR}/nips/nip46/include
   ${CMAKE_SOURCE_DIR}/nips/nip19/include)
 # Compile the GI wrapper implementation into the app (no separate gobject lib target)
+# NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
 target_sources(${APP_CLIENT_BIN} PRIVATE 
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool_goroutine.c)
+  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c)
 # Link JSON shim which (privately) links libnostr; avoid linking libnostr twice to prevent ODR/ASan issues
 if (TARGET nostr_json)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_json)
@@ -130,9 +130,9 @@ target_include_directories(gnostr-live-log PRIVATE
   ${CMAKE_SOURCE_DIR}/libgo/include
   ${CMAKE_SOURCE_DIR}/nips/nip46/include)
 # Compile GI wrapper into the CLI as well
+# NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
 target_sources(gnostr-live-log PRIVATE
   ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool_async.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/storage_ndb.c)
 if (TARGET nostr_json)
   target_link_libraries(gnostr-live-log PRIVATE nostr_json)

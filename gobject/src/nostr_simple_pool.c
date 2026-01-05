@@ -7,6 +7,8 @@
 #include "channel.h"
 #include "context.h"
 #include "error.h"
+#include "go.h"
+#include "wait_group.h"
 #include <glib.h>
 #include <gio/gio.h>
 #include <string.h>
@@ -746,7 +748,6 @@ GPtrArray *gnostr_simple_pool_query_single_finish(GnostrSimplePool *self,
 /* ================= Batch fetch profiles by authors (kind 0) ================= */
 typedef struct {
     GObject *self_obj;      /* GnostrSimplePool* as GObject */
-    NostrSimplePool *pool;  /* pointer to the underlying pool for relay access */
     char **urls;            /* deep copy */
     size_t url_count;
     char **authors;         /* deep copy */
@@ -763,7 +764,8 @@ typedef struct {
     void *results_mutex;    /* GMutex* - opaque pointer */
 } FetchProfilesCtx;
 
-static void fetch_profiles_ctx_free(FetchProfilesCtx *ctx) {
+/* Made non-static so goroutine implementation can call it */
+void fetch_profiles_ctx_free_full(FetchProfilesCtx *ctx) {
     if (!ctx) return;
     if (ctx->urls) { for (size_t i = 0; i < ctx->url_count; i++) g_free(ctx->urls[i]); g_free(ctx->urls); }
     if (ctx->authors) { for (size_t i = 0; i < ctx->author_count; i++) g_free(ctx->authors[i]); g_free(ctx->authors); }
@@ -785,7 +787,8 @@ static gboolean fetch_profiles_complete_ok(gpointer data) {
 typedef struct {
     NostrRelay *relay;
     NostrSubscription *sub;
-    GoChannel *raw;
+    GoChannel *raw;        /* Used by async implementation */
+    char *relay_url;       /* Used by goroutine implementation for logging */
     gboolean eosed;
 } SubItem;
 
@@ -866,6 +869,387 @@ static void fetch_profiles_state_free(FetchProfilesState *state) {
     g_free(state);
 }
 
+/* ========================================================================
+ * GOROUTINE-BASED PROFILE FETCHING
+ * Consolidated from nostr_simple_pool_goroutine.c
+ * Note: DedupSet helpers already defined above, reusing them here
+ * ======================================================================== */
+
+/* Cleanup timeout */
+#define CLEANUP_TIMEOUT_MS 500
+
+/* Note: SubItem and FetchProfilesCtx are already defined above at file scope */
+
+/* Context for subscription goroutine */
+typedef struct {
+    SubItem *item;
+    GoWaitGroup *wg;
+} SubGoroutineCtx;
+
+/* Forward declarations */
+static gboolean fetch_profiles_complete_ok(gpointer data);
+
+/* Goroutine function to fire a single subscription */
+static void *subscription_goroutine(void *arg) {
+    SubGoroutineCtx *ctx = (SubGoroutineCtx*)arg;
+    if (!ctx || !ctx->item || !ctx->item->sub) {
+        if (ctx && ctx->wg) go_wait_group_done(ctx->wg);
+        g_free(ctx);
+        return NULL;
+    }
+    
+    SubItem *item = ctx->item;
+    g_message("[GOROUTINE] Starting subscription for relay %s (sub=%p)", item->relay_url, (void*)item->sub);
+    
+    /* Verify subscription has channels */
+    GoChannel *ch_events = nostr_subscription_get_events_channel(item->sub);
+    GoChannel *ch_eose = nostr_subscription_get_eose_channel(item->sub);
+    g_message("[GOROUTINE] Subscription channels: events=%p eose=%p", (void*)ch_events, (void*)ch_eose);
+    
+    /* Fire subscription - this may block, but we're in a goroutine so it's OK */
+    Error *err = NULL;
+    bool fire_result = nostr_subscription_fire(item->sub, &err);
+    if (!fire_result) {
+        g_critical("[GOROUTINE] subscription_fire FAILED for %s: %s", 
+                  item->relay_url, err ? err->message : "unknown");
+        if (err) free_error(err);
+    } else {
+        g_message("[GOROUTINE] Subscription fired successfully for %s", item->relay_url);
+    }
+    
+    /* Signal completion */
+    go_wait_group_done(ctx->wg);
+    g_free(ctx);
+    return NULL;
+}
+
+/* Main goroutine that creates subscriptions and polls for events */
+static void *fetch_profiles_goroutine(void *arg) {
+    FetchProfilesCtx *ctx = (FetchProfilesCtx*)arg;
+    if (!ctx) {
+        g_critical("[GOROUTINE] ctx is NULL!");
+        return NULL;
+    }
+    if (!ctx->self_obj) {
+        g_critical("[GOROUTINE] ctx->self_obj is NULL!");
+        return NULL;
+    }
+    
+    g_message("[GOROUTINE] Profile fetch starting (authors=%zu relays=%zu)", 
+              ctx->author_count, ctx->url_count);
+    
+    /* Create background context with cancel */
+    CancelContextResult cancel_ctx = go_context_with_cancel(go_context_background());
+    GoContext *bg = cancel_ctx.context;
+    CancelFunc cancel = cancel_ctx.cancel;
+    
+    /* Build filter */
+    NostrFilters *filters = nostr_filters_new();
+    NostrFilter *f = nostr_filter_new();
+    int kinds[] = {0};
+    nostr_filter_set_kinds(f, kinds, 1);
+    
+    if (ctx->author_count > 0) {
+        const char **authv = (const char **)ctx->authors;
+        nostr_filter_set_authors(f, authv, ctx->author_count);
+        
+        g_message("[GOROUTINE] Requesting kind-0 for %zu authors", ctx->author_count);
+        for (size_t i = 0; i < ctx->author_count && i < 3; i++) {
+            g_message("[GOROUTINE]   author[%zu]: %.16s...", i, ctx->authors[i] ? ctx->authors[i] : "(null)");
+        }
+        if (ctx->author_count > 3) {
+            g_message("[GOROUTINE]   ... and %zu more", ctx->author_count - 3);
+        }
+    }
+    nostr_filters_add(filters, f);
+    
+    /* Create subscriptions for each relay */
+    for (size_t i = 0; i < ctx->url_count; i++) {
+        const char *url = ctx->urls[i];
+        if (!url || !*url) continue;
+        
+        /* Get relay from pool - CRITICAL: Access pool through GObject to ensure it's still valid */
+        GnostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
+        if (!gobj_pool || !gobj_pool->pool) {
+            g_critical("[GOROUTINE] Pool GObject or underlying pool is NULL!");
+            continue;
+        }
+        NostrSimplePool *pool = gobj_pool->pool;
+        g_message("[GOROUTINE] Accessing pool=%p (has %zu relays)", (void*)pool, pool->relay_count);
+        
+        NostrRelay *relay = NULL;
+        pthread_mutex_lock(&pool->pool_mutex);
+        for (size_t j = 0; j < pool->relay_count; j++) {
+            if (pool->relays[j] && strcmp(pool->relays[j]->url, url) == 0) {
+                relay = pool->relays[j];
+                break;
+            }
+        }
+        pthread_mutex_unlock(&pool->pool_mutex);
+        
+        if (!relay) {
+            g_warning("[GOROUTINE] CRITICAL: Relay not in pool (skipping): %s", url);
+            g_warning("[GOROUTINE] Pool has %zu relays, but '%s' not found!", pool->relay_count, url);
+            continue;
+        }
+        
+        if (!nostr_relay_is_connected(relay)) {
+            g_warning("[GOROUTINE] CRITICAL: Relay not connected (skipping): %s", url);
+            continue;
+        }
+        
+        /* Create subscription */
+        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, bg, filters);
+        if (!sub) {
+            g_warning("[GOROUTINE] prepare_subscription failed: %s", url);
+            continue;
+        }
+        
+        /* Create SubItem */
+        SubItem *item = g_new0(SubItem, 1);
+        item->relay = relay;
+        item->sub = sub;
+        item->relay_url = g_strdup(url);
+        item->eosed = FALSE;
+        g_ptr_array_add(ctx->subs, item);
+        
+        /* Debug: log subscription ID */
+        const char *sid = nostr_subscription_get_id(sub);
+        g_message("[GOROUTINE] Created subscription sid=%s for relay %s", sid ? sid : "null", url);
+        
+        /* Launch goroutine to fire subscription */
+        SubGoroutineCtx *sub_ctx = g_new0(SubGoroutineCtx, 1);
+        sub_ctx->item = item;
+        sub_ctx->wg = (GoWaitGroup*)ctx->wg;
+        
+        go_wait_group_add((GoWaitGroup*)ctx->wg, 1);
+        go(subscription_goroutine, sub_ctx);
+    }
+    
+    if (ctx->subs->len == 0) {
+        g_critical("[GOROUTINE] CRITICAL: Created ZERO subscriptions! No profiles will be fetched from relays!");
+        g_critical("[GOROUTINE] Requested %zu relays, but none were available", ctx->url_count);
+    } else {
+        g_message("[GOROUTINE] Created %u subscriptions (requested %zu relays), waiting for fire completion", 
+                  ctx->subs->len, ctx->url_count);
+    }
+    
+    /* Wait for all subscriptions to fire */
+    go_wait_group_wait((GoWaitGroup*)ctx->wg);
+    
+    g_message("[GOROUTINE] All subscriptions fired, polling for events");
+    
+    /* Poll for events with timeout */
+    guint64 t_start = g_get_monotonic_time();
+    guint64 t_last_activity = t_start;
+    /* Timeout configuration:
+     * - QUIET: 1 second of no activity (events or EOSE)
+     * - HARD: 3 seconds absolute maximum
+     * Relays typically send events in 100-500ms, EOSE within 500ms-1s after that. */
+    const guint64 QUIET_TIMEOUT_US = 1000000;  // 1 second of no activity (currently unused)
+    const guint64 HARD_TIMEOUT_US = 0;          // 0 disables hard timeout
+    
+    while (TRUE) {
+        guint64 now = g_get_monotonic_time();
+        gboolean any_activity = FALSE;
+        
+        /* Check cancellation */
+        if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) {
+            g_message("[GOROUTINE] Cancelled");
+            break;
+        }
+        
+        /* Poll all subscriptions */
+        for (guint i = 0; i < ctx->subs->len; i++) {
+            SubItem *item = (SubItem*)ctx->subs->pdata[i];
+            if (!item || !item->sub) continue;
+            
+            /* Drain events */
+            GoChannel *ch_events = nostr_subscription_get_events_channel(item->sub);
+            void *msg = NULL;
+            
+            while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
+                any_activity = TRUE;
+                
+                if (msg) {
+                    NostrEvent *ev = (NostrEvent*)msg;
+                    const char *eid = nostr_event_get_id(ev);
+                    const char *pk = nostr_event_get_pubkey(ev);
+                    
+                    g_message("[GOROUTINE] Received event id=%.16s... pubkey=%.16s...", 
+                              eid ? eid : "(null)", pk ? pk : "(null)");
+                    
+                    if (eid && *eid && !dedup_set_seen((DedupSet*)ctx->dedup, eid)) {
+                        char *json = nostr_event_serialize(ev);
+                        if (json) {
+                            g_mutex_lock((GMutex*)ctx->results_mutex);
+                            g_ptr_array_add(ctx->results, json);
+                            guint total = ctx->results->len;
+                            g_mutex_unlock((GMutex*)ctx->results_mutex);
+                            
+                            g_message("[GOROUTINE] Added profile (total=%u)", total);
+                        }
+                    }
+                    nostr_event_free(ev);
+                    any_activity = TRUE;
+                }
+                msg = NULL;
+            }
+            
+            /* Check EOSE */
+            if (!item->eosed) {
+                GoChannel *ch_eose = nostr_subscription_get_eose_channel(item->sub);
+                if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+                    g_message("[GOROUTINE] EOSE received from %s", item->relay_url);
+                    item->eosed = TRUE;
+                    any_activity = TRUE;
+                }
+            }
+        }
+        
+        /* Check if all relays have sent EOSE */
+        guint eosed_count = 0;
+        for (guint i = 0; i < ctx->subs->len; i++) {
+            SubItem *item = (SubItem*)ctx->subs->pdata[i];
+            if (item && item->eosed) eosed_count++;
+        }
+        
+        if (eosed_count == ctx->subs->len) {
+            g_message("[GOROUTINE] All %u relays sent EOSE, exiting", eosed_count);
+            break;
+        }
+        
+        if (any_activity) {
+            t_last_activity = now;
+        }
+        
+        /* Check timeouts - SIMPLIFIED LOGIC */
+        guint64 total_elapsed = now - t_start;
+
+        /* Exit condition: hard timeout of 3 seconds (absolute max).
+         * Note: All subscriptions hitting EOSE exit earlier.
+         */
+
+        if (HARD_TIMEOUT_US > 0 && total_elapsed > HARD_TIMEOUT_US) {
+            /* Hard timeout (3s) - give up */
+            g_message("[GOROUTINE] Hard timeout after %lums (eosed=%u/%u)", 
+                      (unsigned long)(total_elapsed / 1000), eosed_count, ctx->subs->len);
+            break;
+        }
+        
+        /* Sleep briefly to avoid tight loop */
+        g_usleep(10000); // 10ms (reduced from 50ms for faster EOSE detection)
+    }
+    
+    /* Cleanup filters */
+    if (filters) {
+        nostr_filters_free(filters);
+    }
+    
+    /* CRITICAL: Async subscription cleanup to prevent goroutine blocking
+     * Use nostr_subscription_free_async() with timeout to avoid deadlocks.
+     * If cleanup times out, abandon the handle - memory will leak but app won't hang.
+     */
+    
+    /* Step 1: Cancel the background context - signals all subscription workers to exit */
+    if (cancel) {
+        cancel(bg);
+    }
+    
+    /* Step 2: Free each subscription asynchronously with timeout
+     * CRITICAL: Must WAIT for cleanup to complete, not abandon!
+     * Abandoning causes thread accumulation as worker threads never get joined.
+     */
+    for (guint i = 0; i < ctx->subs->len; i++) {
+        SubItem *item = (SubItem*)ctx->subs->pdata[i];
+        if (item && item->sub) {
+            /* Async cleanup with 1000ms timeout */
+            const char *sid = nostr_subscription_get_id(item->sub);
+            g_message("[GOROUTINE] Cleanup begin sid=%s relay=%s", sid ? sid : "null", item->relay_url ? item->relay_url : "(null)");
+
+            /* Synchronous shutdown to ensure worker exits */
+            g_message("[GOROUTINE] Cleanup step: close sid=%s", sid ? sid : "null");
+            nostr_subscription_close(item->sub, NULL);
+            g_message("[GOROUTINE] Cleanup step: close complete sid=%s", sid ? sid : "null");
+
+            g_message("[GOROUTINE] Cleanup step: unsubscribe sid=%s", sid ? sid : "null");
+            nostr_subscription_unsubscribe(item->sub);
+            g_message("[GOROUTINE] Cleanup step: unsubscribe complete sid=%s", sid ? sid : "null");
+
+            g_message("[GOROUTINE] Cleanup step: wait sid=%s", sid ? sid : "null");
+            nostr_subscription_wait(item->sub);
+            g_message("[GOROUTINE] Cleanup step: wait complete sid=%s", sid ? sid : "null");
+
+            g_message("[GOROUTINE] Cleanup step: free sid=%s", sid ? sid : "null");
+            nostr_subscription_free(item->sub);
+            g_message("[GOROUTINE] Cleanup step: free complete sid=%s", sid ? sid : "null");
+
+            g_message("[GOROUTINE] Cleanup success sid=%s", sid ? sid : "null");
+            g_message("[GOROUTINE] Cleanup end sid=%s", sid ? sid : "null");
+            item->sub = NULL;
+        }
+        if (item) {
+            g_free(item->relay_url);
+            g_free(item);
+        }
+    }
+    
+    /* Complete the task immediately - cleanup continues in background */
+    g_task_return_boolean(ctx->task, TRUE);
+    return NULL;
+}
+
+/* Cleanup context */
+static void fetch_profiles_ctx_free(FetchProfilesCtx *ctx) {
+    if (!ctx) return;
+    
+    /* FALSE because elements were already freed in goroutine cleanup */
+    if (ctx->subs) g_ptr_array_free(ctx->subs, FALSE);
+    if (ctx->dedup) dedup_set_free((DedupSet*)ctx->dedup);
+    if (ctx->results_mutex) {
+        g_mutex_clear((GMutex*)ctx->results_mutex);
+        g_free(ctx->results_mutex);
+    }
+    if (ctx->wg) {
+        go_wait_group_destroy((GoWaitGroup*)ctx->wg);
+        g_free(ctx->wg);
+    }
+    
+    /* Note: results, urls, authors, task are owned by caller */
+}
+
+/* Entry point - called from GObject wrapper */
+void fetch_profiles_goroutine_start(FetchProfilesCtx *ctx) {
+    if (!ctx || !ctx->self_obj) {
+        g_critical("PROFILE_FETCH_GOROUTINE: Invalid context!");
+        if (ctx && ctx->task) {
+            g_task_return_new_error(ctx->task, G_IO_ERROR, G_IO_ERROR_FAILED, "Invalid context");
+        }
+        return;
+    }
+    
+    g_message("PROFILE_FETCH_GOROUTINE: Starting (authors=%zu relays=%zu)", 
+              ctx->author_count, ctx->url_count);
+    
+    /* Initialize goroutine-specific fields */
+    ctx->results = g_ptr_array_new_with_free_func(g_free);
+    ctx->subs = g_ptr_array_new();
+    ctx->dedup = (void*)dedup_set_new(65536);
+    ctx->results_mutex = g_new0(GMutex, 1);
+    g_mutex_init((GMutex*)ctx->results_mutex);
+    ctx->wg = g_new0(GoWaitGroup, 1);
+    go_wait_group_init((GoWaitGroup*)ctx->wg);
+    
+    /* Launch main goroutine */
+    if (go(fetch_profiles_goroutine, ctx) != 0) {
+        g_critical("PROFILE_FETCH_GOROUTINE: Failed to launch goroutine!");
+        g_task_return_new_error(ctx->task, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to launch goroutine");
+        return;
+    }
+    
+    g_message("PROFILE_FETCH_GOROUTINE: Goroutine launched");
+}
+
 
 void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
                                                         const char **urls,
@@ -876,14 +1260,21 @@ void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
                                                         GCancellable *cancellable,
                                                         GAsyncReadyCallback cb,
                                                         gpointer user_data) {
-    g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
+    /* DEBUG: Check if self is valid BEFORE g_return_if_fail */
+    if (!self) {
+        g_critical("PROFILE_FETCH_GOROUTINE: self is NULL!");
+        return;
+    }
+    if (!GNOSTR_IS_SIMPLE_POOL(self)) {
+        g_critical("PROFILE_FETCH_GOROUTINE: self is NOT a valid GnostrSimplePool! (type check failed)");
+        return;
+    }
     
     /* Goroutines are lightweight - no need to serialize fetches */
     g_message("PROFILE_FETCH_GOROUTINE: Starting (authors=%zu relays=%zu)", author_count, url_count);
     
     FetchProfilesCtx *ctx = g_new0(FetchProfilesCtx, 1);
     ctx->self_obj = g_object_ref(G_OBJECT(self));
-    ctx->pool = self->pool;  /* Store pointer to underlying pool for relay access */
     
     ctx->urls = g_new0(char*, url_count);
     ctx->url_count = url_count;
@@ -894,7 +1285,12 @@ void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
     ctx->limit = limit;
     ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
     ctx->task = g_task_new(G_OBJECT(self), cancellable, cb, user_data);
-    g_task_set_task_data(ctx->task, ctx, (GDestroyNotify)fetch_profiles_ctx_free);
+    
+    /* Set task data WITHOUT destroy notify!
+     * The callback must manually free the context after extracting results.
+     * If we set a destroy notify, it runs immediately when task completes,
+     * freeing the context before the callback can access ctx->results! */
+    g_task_set_task_data(ctx->task, ctx, NULL);
 
     /* NEW: Use goroutine implementation - lightweight, non-blocking */
     fetch_profiles_goroutine_start(ctx);
@@ -910,8 +1306,19 @@ GPtrArray *gnostr_simple_pool_fetch_profiles_by_authors_finish(GnostrSimplePool 
         g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Invalid task data for fetch_profiles_finish");
         return NULL;
     }
-    if (!g_task_propagate_boolean(G_TASK(res), error)) return NULL;
-    return g_steal_pointer(&ctx->results);
+    if (!g_task_propagate_boolean(G_TASK(res), error)) {
+        /* Task failed - free context and return NULL */
+        fetch_profiles_ctx_free_full(ctx);
+        return NULL;
+    }
+    
+    /* Extract results before freeing context */
+    GPtrArray *results = g_steal_pointer(&ctx->results);
+    
+    /* Now free the context - we're done with it */
+    fetch_profiles_ctx_free_full(ctx);
+    
+    return results;
 }
 
 /* Check if a relay is connected */

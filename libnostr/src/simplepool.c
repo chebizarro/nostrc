@@ -433,6 +433,28 @@ void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url) {
     pthread_mutex_unlock(&pool->pool_mutex);
 }
 
+// Function to add an existing relay to the pool
+void nostr_simple_pool_add_relay(NostrSimplePool *pool, NostrRelay *relay) {
+    if (!pool || !relay) return;
+    
+    pthread_mutex_lock(&pool->pool_mutex);
+    
+    // Check if relay already exists (by URL)
+    for (size_t i = 0; i < pool->relay_count; i++) {
+        if (pool->relays[i] == relay || 
+            (pool->relays[i]->url && relay->url && strcmp(pool->relays[i]->url, relay->url) == 0)) {
+            pthread_mutex_unlock(&pool->pool_mutex);
+            return; // Already in pool
+        }
+    }
+    
+    // Add relay to pool
+    pool->relays = (NostrRelay **)realloc(pool->relays, (pool->relay_count + 1) * sizeof(NostrRelay *));
+    pool->relays[pool->relay_count++] = relay;
+    
+    pthread_mutex_unlock(&pool->pool_mutex);
+}
+
 // Thread function for SimplePool
 static int pool_seen(NostrSimplePool *pool, const char *id) {
     if (!pool->dedup_unique || !id || !*id) return 0;
