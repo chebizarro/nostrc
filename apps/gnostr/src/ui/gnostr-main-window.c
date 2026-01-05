@@ -1134,6 +1134,9 @@ static void gnostr_main_window_dispose(GObject *object) {
     self->profile_batches = NULL;
   }
   if (self->profile_batch_urls) {
+    for (size_t i = 0; i < self->profile_batch_url_count; i++) {
+        g_free((gpointer)self->profile_batch_urls[i]);
+    }
     g_free((gpointer)self->profile_batch_urls);
     self->profile_batch_urls = NULL;
     self->profile_batch_url_count = 0;
@@ -1238,9 +1241,6 @@ static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_url
   gnostr_load_relays_into(arr);
   if (arr->len == 0) {
     /* Provide a sensible default if none configured */
-    g_ptr_array_add(arr, g_strdup("wss://relay.damus.io"));
-    g_ptr_array_add(arr, g_strdup("wss://relay.sharegap.net"));
-    g_ptr_array_add(arr, g_strdup("wss://nos.lol"));
     g_ptr_array_add(arr, g_strdup("wss://relay.primal.net"));
 }
   const char **urls = NULL; size_t n = arr->len;
@@ -1304,6 +1304,9 @@ static gboolean profile_dispatch_next(gpointer data) {
     }
     /* Free captured URLs array pointer */
     if (self->profile_batch_urls) {
+      for (size_t i = 0; i < self->profile_batch_url_count; i++) {
+        g_free((gpointer)self->profile_batch_urls[i]);
+      }
       g_free((gpointer)self->profile_batch_urls);
       self->profile_batch_urls = NULL;
       self->profile_batch_url_count = 0;
@@ -1341,9 +1344,12 @@ static gboolean profile_dispatch_next(gpointer data) {
       self->profile_batches = NULL;
     }
     if (self->profile_batch_urls) {
-      g_free((gpointer)self->profile_batch_urls);
-      self->profile_batch_urls = NULL;
-      self->profile_batch_url_count = 0;
+        for (size_t i = 0; i < self->profile_batch_url_count; i++) {
+            g_free((gpointer)self->profile_batch_urls[i]);
+        }
+        g_free((gpointer)self->profile_batch_urls);
+        self->profile_batch_urls = NULL;
+        self->profile_batch_url_count = 0;
     }
     self->profile_batch_pos = 0;
     /* NOTE: Don't unref - GLib handles it via g_timeout_add_full's GDestroyNotify */

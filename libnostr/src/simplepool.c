@@ -1,3 +1,9 @@
+/* Helper macro for marking intentionally unused static functions */
+#if defined(__GNUC__)
+#define UNUSED_FUNC __attribute__((unused))
+#else
+#define UNUSED_FUNC
+#endif
 #include "nostr-simple-pool.h"
 #include "nostr-relay.h"
 #include "nostr-subscription.h"
@@ -81,7 +87,7 @@ static void subscription_registry_free(SubscriptionRegistry *reg) {
     free(reg);
 }
 
-static PoolSubscriptionEntry *subscription_registry_add(SubscriptionRegistry *reg,
+static UNUSED_FUNC PoolSubscriptionEntry *subscription_registry_add(SubscriptionRegistry *reg,
                                                          NostrSubscription *sub,
                                                          NostrRelay *relay,
                                                          GoContext *ctx,
@@ -118,7 +124,7 @@ static PoolSubscriptionEntry *subscription_registry_add(SubscriptionRegistry *re
     return entry;
 }
 
-static void subscription_registry_request_cleanup(SubscriptionRegistry *reg, PoolSubscriptionEntry *entry) {
+static UNUSED_FUNC void subscription_registry_request_cleanup(SubscriptionRegistry *reg, PoolSubscriptionEntry *entry) {
     if (!reg || !entry) return;
     
     pthread_mutex_lock(&reg->mutex);

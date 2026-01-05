@@ -319,6 +319,19 @@ void nostr_subscription_close(NostrSubscription *sub, Error **err) {
     }
 }
 
+void nostr_subscription_wait(NostrSubscription *sub) {
+    if (!sub || !sub->priv) {
+        return;
+    }
+
+    if (sub->priv->cancel) {
+        sub->priv->cancel(sub->context);
+        sub->priv->cancel = NULL;
+    }
+
+    go_wait_group_wait(&sub->priv->wg);
+}
+
 bool nostr_subscription_subscribe(NostrSubscription *sub, NostrFilters *filters, Error **err) {
     if (!sub) {
         if (err) *err = new_error(1, "subscription is NULL");

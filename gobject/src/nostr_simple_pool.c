@@ -1168,10 +1168,6 @@ static void *fetch_profiles_goroutine(void *arg) {
             g_message("[GOROUTINE] Cleanup begin sid=%s relay=%s", sid ? sid : "null", item->relay_url ? item->relay_url : "(null)");
 
             /* Synchronous shutdown to ensure worker exits */
-            g_message("[GOROUTINE] Cleanup step: close sid=%s", sid ? sid : "null");
-            nostr_subscription_close(item->sub, NULL);
-            g_message("[GOROUTINE] Cleanup step: close complete sid=%s", sid ? sid : "null");
-
             g_message("[GOROUTINE] Cleanup step: unsubscribe sid=%s", sid ? sid : "null");
             nostr_subscription_unsubscribe(item->sub);
             g_message("[GOROUTINE] Cleanup step: unsubscribe complete sid=%s", sid ? sid : "null");
