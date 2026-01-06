@@ -24,6 +24,8 @@ if (NOT ALLOW_STUB_NOSTRDB)
       ${NDB_VENDOR_PATH}/ccan/ccan/tal
       ${NDB_VENDOR_PATH}/ccan/ccan/tal/str
       ${NDB_VENDOR_PATH}/deps/lmdb
+      ${NDB_VENDOR_PATH}/deps/flatcc/include
+      ${NDB_VENDOR_PATH}/deps/flatcc/src
     )
   endif()
 else()

@@ -1,8 +1,48 @@
 cmake_minimum_required(VERSION 3.30)
 project(nostrc C)
 
-# Sanitizer support (use -DSANITIZE=address,undefined or -DSANITIZE=thread)
+# Global toggles to make instrumentation builds reproducible from the root
+option(GNOSTR_ENABLE_ASAN "Enable AddressSanitizer (with leak detection) for the entire workspace" OFF)
+option(GNOSTR_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer for the entire workspace" OFF)
+option(GNOSTR_ENABLE_TSAN "Enable ThreadSanitizer for the entire workspace" OFF)
+option(GNOSTR_ENABLE_PROFILING_FLAGS "Force -g and -fno-omit-frame-pointer across all targets" OFF)
+
+# Propagate sanitizer requests to subprojects and normalize SANITIZE cache entry
 set(SANITIZE "" CACHE STRING "Comma-separated list of sanitizers (address,undefined,thread)")
+set(_gnostr_requested_sanitizers "")
+
+if(GNOSTR_ENABLE_TSAN)
+  list(APPEND _gnostr_requested_sanitizers thread)
+  set(GO_ENABLE_TSAN ON CACHE BOOL "Enable ThreadSanitizer runtime in libgo/libnostr" FORCE)
+endif()
+
+if(GNOSTR_ENABLE_ASAN)
+  list(APPEND _gnostr_requested_sanitizers address)
+  set(GO_ENABLE_ASAN ON CACHE BOOL "Enable AddressSanitizer runtime in libgo/libnostr" FORCE)
+endif()
+
+if(GNOSTR_ENABLE_UBSAN)
+  list(APPEND _gnostr_requested_sanitizers undefined)
+  set(GO_ENABLE_UBSAN ON CACHE BOOL "Enable UndefinedBehaviorSanitizer runtime in libgo/libnostr" FORCE)
+endif()
+
+if(_gnostr_requested_sanitizers)
+  list(REMOVE_DUPLICATES _gnostr_requested_sanitizers)
+  string(JOIN "," _gnostr_sanitizer_csv ${_gnostr_requested_sanitizers})
+  if(SANITIZE)
+    set(SANITIZE "${SANITIZE},${_gnostr_sanitizer_csv}" CACHE STRING "Comma-separated list of sanitizers (address,undefined,thread)" FORCE)
+  else()
+    set(SANITIZE "${_gnostr_sanitizer_csv}" CACHE STRING "Comma-separated list of sanitizers (address,undefined,thread)" FORCE)
+  endif()
+endif()
+
+unset(_gnostr_requested_sanitizers)
+unset(_gnostr_sanitizer_csv)
+
+if(GNOSTR_ENABLE_PROFILING_FLAGS)
+  add_compile_options(-g -fno-omit-frame-pointer)
+endif()
+
 if(SANITIZE)
   string(REPLACE "," ";" SANITIZE_LIST "${SANITIZE}")
   foreach(sanitizer ${SANITIZE_LIST})

@@ -14,7 +14,7 @@
 #elif defined(__GNUC__)
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wpedantic"
-#  pragma GCC diagnostic ignored "-Wno-unused-function"
+#  pragma GCC diagnostic ignored "-Wunused-function"
 #endif
 #include "nostrdb.h"
 #include "bindings/c/profile_reader.h"

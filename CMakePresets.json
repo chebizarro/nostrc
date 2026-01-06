@@ -43,12 +43,54 @@
         "GO_WARNINGS_AS_ERRORS": "ON",
         "GOF_PORTABLE_CONTEXT": "OFF"
       }
+    },
+    {
+      "name": "gnostr-relwithdebinfo-prof",
+      "displayName": "GNostr RelWithDebInfo + profiling flags",
+      "description": "RelWithDebInfo build with -g and frame pointers for sampling profilers",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/relwithdebinfo-prof",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "GNOSTR_ENABLE_PROFILING_FLAGS": "ON",
+        "BUILD_APPS": "ON"
+      }
+    },
+    {
+      "name": "gnostr-debug-asan",
+      "displayName": "GNostr Debug + ASan/UBSan",
+      "description": "Debug build of full workspace with AddressSanitizer and UBSan",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/debug-asan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "GNOSTR_ENABLE_ASAN": "ON",
+        "GNOSTR_ENABLE_UBSAN": "ON",
+        "GNOSTR_ENABLE_PROFILING_FLAGS": "ON",
+        "BUILD_APPS": "ON"
+      }
+    },
+    {
+      "name": "gnostr-debug-tsan",
+      "displayName": "GNostr Debug + TSan",
+      "description": "ThreadSanitizer instrumentation for the full workspace",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/debug-tsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "GNOSTR_ENABLE_TSAN": "ON",
+        "GNOSTR_ENABLE_PROFILING_FLAGS": "ON",
+        "BUILD_APPS": "ON"
+      }
     }
   ],
   "buildPresets": [
     { "name": "libgo-default", "configurePreset": "libgo-default" },
     { "name": "libgo-asan", "configurePreset": "libgo-asan" },
-    { "name": "libgo-tsan", "configurePreset": "libgo-tsan" }
+    { "name": "libgo-tsan", "configurePreset": "libgo-tsan" },
+    { "name": "gnostr-relwithdebinfo-prof", "configurePreset": "gnostr-relwithdebinfo-prof" },
+    { "name": "gnostr-debug-asan", "configurePreset": "gnostr-debug-asan" },
+    { "name": "gnostr-debug-tsan", "configurePreset": "gnostr-debug-tsan" }
   ],
   "vendor": {
     "notes": "Use: cmake --preset <name>; cmake --build --preset <name> -j."

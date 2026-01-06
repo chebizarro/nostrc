@@ -230,6 +230,10 @@ struct _GnostrMainWindow {
   GHashTable *meta_by_pubkey;   /* owned; maps pubkey to UserMeta */
   /* In-memory avatar texture cache: key=url (string), value=GdkTexture* */
   GHashTable *avatar_tex_cache;
+  /* LRU structures for meta_by_pubkey (profiles) */
+  guint       meta_cache_cap;   /* maximum profiles in memory */
+  GQueue     *meta_lru;         /* queue of char* pubkey_hex (head=oldest) */
+  GHashTable *meta_lru_nodes;   /* key: pubkey -> GList* node in meta_lru */
   
   /* Profile subscription */
   gulong profile_sub_id;        /* signal handler ID for profile events */
@@ -278,6 +282,52 @@ struct _GnostrMainWindow {
   guint           ndb_sweep_debounce_ms; /* default ~150ms */
 };
 
+/* ---- Profiles LRU helpers (cap enforced) ---- */
+static void meta_lru_touch(GnostrMainWindow *self, const char *pubkey_hex) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->meta_lru || !self->meta_lru_nodes || !pubkey_hex) return;
+  GList *node = g_hash_table_lookup(self->meta_lru_nodes, pubkey_hex);
+  if (!node) return;
+  g_queue_unlink(self->meta_lru, node);
+  g_queue_push_tail_link(self->meta_lru, node);
+}
+
+static void meta_lru_insert(GnostrMainWindow *self, const char *pubkey_hex) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
+  if (!self->meta_lru || !self->meta_lru_nodes) return;
+  if (g_hash_table_contains(self->meta_lru_nodes, pubkey_hex)) { meta_lru_touch(self, pubkey_hex); return; }
+  char *kstore = g_strdup(pubkey_hex);
+  GList *node = g_list_alloc();
+  node->data = kstore;
+  g_queue_push_tail_link(self->meta_lru, node);
+  g_hash_table_insert(self->meta_lru_nodes, g_strdup(pubkey_hex), node);
+}
+
+static void meta_lru_evict_if_needed(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->meta_lru || !self->meta_lru_nodes || !self->meta_by_pubkey) return;
+  guint cap = self->meta_cache_cap ? self->meta_cache_cap : 10000;
+  while (g_hash_table_size(self->meta_lru_nodes) > cap) {
+    GList *old = self->meta_lru->head;
+    if (!old) break;
+    char *old_pk = (char*)old->data;
+    g_queue_unlink(self->meta_lru, old);
+    g_list_free_1(old);
+    g_hash_table_remove(self->meta_lru_nodes, old_pk);
+    g_hash_table_remove(self->meta_by_pubkey, old_pk);
+    g_free(old_pk);
+  }
+}
+
+/* Periodic logger for profile metadata cache sizes */
+static gboolean meta_cache_log_cb(gpointer data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return G_SOURCE_CONTINUE;
+  guint msz = self->meta_by_pubkey ? g_hash_table_size(self->meta_by_pubkey) : 0;
+  guint lsz = self->meta_lru_nodes ? g_hash_table_size(self->meta_lru_nodes) : 0;
+  guint qsz = self->profile_fetch_queue ? self->profile_fetch_queue->len : 0;
+  g_message("[PROFILE_CACHE] meta=%u lru=%u queue=%u cap=%u", msz, lsz, qsz, self->meta_cache_cap);
+  return G_SOURCE_CONTINUE;
+}
+
 /* ---- Avatar HTTP downloader (libsoup) ---- */
 #ifdef HAVE_SOUP3
 typedef struct {
@@ -295,6 +345,8 @@ static void enqueue_profile_author(GnostrMainWindow *self, const char *pubkey_he
    * This prevents fetching the same 1411 authors repeatedly on every scroll. */
   if (self->meta_by_pubkey && g_hash_table_contains(self->meta_by_pubkey, pubkey_hex)) {
     /* Already have this profile in memory - skip */
+    /* Touch LRU so hot profiles remain resident */
+    meta_lru_touch(self, pubkey_hex);
     return;
   }
   
@@ -427,6 +479,8 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
         /* Update the profile pane with the cached JSON */
         extern void gnostr_profile_pane_update_from_json(GnostrProfilePane *pane, const char *json);
         gnostr_profile_pane_update_from_json(GNOSTR_PROFILE_PANE(self->profile_pane), profile_json);
+        /* Touch LRU on access */
+        meta_lru_touch(self, pubkey_hex);
       } else {
         /* Profile not in cache, enqueue for fetching */
         enqueue_profile_author(self, pubkey_hex);
@@ -827,6 +881,8 @@ static void derive_identity_from_meta(GnostrMainWindow *self, const char *pubkey
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex || !self->meta_by_pubkey) return;
   const char *content_json = (const char*)g_hash_table_lookup(self->meta_by_pubkey, pubkey_hex);
   if (!content_json || !*content_json) return;
+  /* Touch LRU on access */
+  meta_lru_touch(self, pubkey_hex);
   json_error_t jerr;
   json_t *root = json_loads(content_json, 0, &jerr);
   if (!root || !json_is_object(root)) { if (root) json_decref(root); return; }
@@ -980,6 +1036,12 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   }
   /* Initialize metadata cache */
   self->meta_by_pubkey = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, user_meta_free);
+  /* Initialize LRU for profiles */
+  self->meta_cache_cap = 10000;
+  self->meta_lru = g_queue_new();
+  self->meta_lru_nodes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  /* Periodic cache metrics logging */
+  g_timeout_add_seconds(60, meta_cache_log_cb, self);
   /* Initialize avatar texture cache */
   self->avatar_tex_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_object_unref);
   /* Initialize reconnection flag */
@@ -1146,6 +1208,15 @@ static void gnostr_main_window_dispose(GObject *object) {
   if (self->seen_ids) { g_hash_table_unref(self->seen_ids); self->seen_ids = NULL; }
   if (self->nodes_by_id) { g_hash_table_unref(self->nodes_by_id); self->nodes_by_id = NULL; }
   if (self->meta_by_pubkey) { g_hash_table_unref(self->meta_by_pubkey); self->meta_by_pubkey = NULL; }
+  if (self->meta_lru_nodes) { g_hash_table_unref(self->meta_lru_nodes); self->meta_lru_nodes = NULL; }
+  if (self->meta_lru) {
+    /* free stored keys */
+    for (GList *l = self->meta_lru->head; l; l = l->next) {
+      g_free(l->data);
+    }
+    g_queue_free(self->meta_lru);
+    self->meta_lru = NULL;
+  }
   if (self->avatar_tex_cache) { g_hash_table_unref(self->avatar_tex_cache); self->avatar_tex_cache = NULL; }
   if (self->thread_roots) { g_object_unref(self->thread_roots); self->thread_roots = NULL; }
   G_OBJECT_CLASS(gnostr_main_window_parent_class)->dispose(object);
@@ -1242,6 +1313,9 @@ static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_url
   if (arr->len == 0) {
     /* Provide a sensible default if none configured */
     g_ptr_array_add(arr, g_strdup("wss://relay.primal.net"));
+    g_ptr_array_add(arr, g_strdup("wss://relay.damus.io"));
+    g_ptr_array_add(arr, g_strdup("wss://relay.sharegap.net"));
+    g_ptr_array_add(arr, g_strdup("wss://nos.lol"));
 }
   const char **urls = NULL; size_t n = arr->len;
   if (n > 0) {
@@ -1783,6 +1857,11 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
     g_hash_table_replace(self->meta_by_pubkey, g_strdup(pubkey_hex), g_strdup(content_json));
   } else {
     g_hash_table_insert(self->meta_by_pubkey, g_strdup(pubkey_hex), g_strdup(content_json));
+  }
+  /* Update LRU and enforce cap */
+  if (self->meta_lru && self->meta_lru_nodes) {
+    meta_lru_insert(self, pubkey_hex);
+    meta_lru_evict_if_needed(self);
   }
   /* Parse profile JSON and update any existing timeline items with this pubkey */
   const char *display = NULL, *handle = NULL, *picture = NULL;

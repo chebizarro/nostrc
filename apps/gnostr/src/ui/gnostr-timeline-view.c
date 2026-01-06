@@ -729,9 +729,62 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
 /* Simple shared cache for downloaded avatar textures by URL */
 static GHashTable *avatar_texture_cache = NULL; /* key: char* url, value: GdkTexture* */
 static char *avatar_cache_dir = NULL; /* disk cache dir */
+static GQueue *s_avatar_lru = NULL;               /* queue of char* url (head=oldest) */
+static GHashTable *s_avatar_lru_nodes = NULL;     /* key=url -> GList* node */
+static guint s_avatar_cap = 2000;                 /* max resident textures */
+static gboolean s_avatar_log_started = FALSE;     /* periodic logging started */
+
+/* Periodic logger for avatar cache */
+static gboolean avatar_cache_log_cb(gpointer data) {
+  (void)data;
+  guint msz = avatar_texture_cache ? g_hash_table_size(avatar_texture_cache) : 0;
+  guint lsz = s_avatar_lru_nodes ? g_hash_table_size(s_avatar_lru_nodes) : 0;
+  g_message("[AVATAR_CACHE] mem=%u lru=%u cap=%u", msz, lsz, s_avatar_cap);
+  gnostr_avatar_metrics_log();
+  return TRUE;
+}
 
 static void ensure_avatar_cache(void) {
   if (!avatar_texture_cache) avatar_texture_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
+  if (!s_avatar_lru) s_avatar_lru = g_queue_new();
+  if (!s_avatar_lru_nodes) s_avatar_lru_nodes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  if (!s_avatar_log_started) {
+    s_avatar_log_started = TRUE;
+    /* Log every 60s */
+    g_timeout_add_seconds(60, avatar_cache_log_cb, NULL);
+  }
+}
+
+/* LRU helpers for avatar memory cache */
+static void avatar_lru_touch(const char *url) {
+  if (!url || !s_avatar_lru || !s_avatar_lru_nodes) return;
+  GList *node = g_hash_table_lookup(s_avatar_lru_nodes, url);
+  if (!node) return;
+  g_queue_unlink(s_avatar_lru, node);
+  g_queue_push_tail_link(s_avatar_lru, node);
+}
+
+static void avatar_lru_insert(const char *url) {
+  if (!url || !s_avatar_lru || !s_avatar_lru_nodes) return;
+  if (g_hash_table_contains(s_avatar_lru_nodes, url)) { avatar_lru_touch(url); return; }
+  char *k = g_strdup(url);
+  GList *node = g_list_alloc(); node->data = k;
+  g_queue_push_tail_link(s_avatar_lru, node);
+  g_hash_table_insert(s_avatar_lru_nodes, g_strdup(url), node);
+}
+
+static void avatar_lru_evict_if_needed(void) {
+  if (!s_avatar_lru || !s_avatar_lru_nodes || !avatar_texture_cache) return;
+  while (g_hash_table_size(s_avatar_lru_nodes) > s_avatar_cap) {
+    GList *old = s_avatar_lru->head; if (!old) break;
+    char *old_url = (char*)old->data;
+    g_queue_unlink(s_avatar_lru, old);
+    g_list_free_1(old);
+    g_hash_table_remove(s_avatar_lru_nodes, old_url);
+    /* Remove from texture cache (unrefs texture) */
+    g_hash_table_remove(avatar_texture_cache, old_url);
+    g_free(old_url);
+  }
 }
 
 /* Ensure disk cache directory exists: $XDG_CACHE_HOME/gnostr/avatars */
@@ -840,6 +893,9 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
   g_bytes_unref(bytes);
   ensure_avatar_cache();
   g_hash_table_replace(avatar_texture_cache, g_strdup(ctx->url), g_object_ref(tex));
+  /* LRU update */
+  avatar_lru_insert(ctx->url);
+  avatar_lru_evict_if_needed();
   g_debug("avatar http: cached texture for url=%s", ctx && ctx->url ? ctx->url : "(null)");
   if (GTK_IS_PICTURE(ctx->image)) { gtk_picture_set_paintable(GTK_PICTURE(ctx->image), GDK_PAINTABLE(tex)); gtk_widget_set_visible(ctx->image, TRUE); }
   if (GTK_IS_WIDGET(ctx->initials)) gtk_widget_set_visible(ctx->initials, FALSE);
@@ -856,11 +912,17 @@ void gnostr_avatar_prefetch(const char *url) {
   s_avatar_metrics.requests_total++;
   ensure_avatar_cache();
   /* Already in-memory cached? */
-  if (g_hash_table_lookup(avatar_texture_cache, url)) { g_debug("avatar prefetch: memory cache hit url=%s", url); return; }
+  if (g_hash_table_lookup(avatar_texture_cache, url)) { 
+    g_debug("avatar prefetch: memory cache hit url=%s", url);
+    avatar_lru_touch(url);
+    return; 
+  }
   /* Disk cached? If so, promote into memory cache and return */
   GdkTexture *disk_tex = try_load_avatar_from_disk(url);
   if (disk_tex) {
     g_hash_table_replace(avatar_texture_cache, g_strdup(url), g_object_ref(disk_tex));
+    avatar_lru_insert(url);
+    avatar_lru_evict_if_needed();
     g_object_unref(disk_tex);
     g_debug("avatar prefetch: promoted disk->mem url=%s", url);
     return;
@@ -894,6 +956,7 @@ GdkTexture *gnostr_avatar_try_load_cached(const char *url) {
   GdkTexture *mem_tex = g_hash_table_lookup(avatar_texture_cache, url);
   if (mem_tex) {
     s_avatar_metrics.mem_cache_hits++;
+    avatar_lru_touch(url);
     return g_object_ref(mem_tex); /* return new ref */
   }
   
@@ -902,6 +965,8 @@ GdkTexture *gnostr_avatar_try_load_cached(const char *url) {
   if (disk_tex) {
     /* Promote to memory cache */
     g_hash_table_replace(avatar_texture_cache, g_strdup(url), g_object_ref(disk_tex));
+    avatar_lru_insert(url);
+    avatar_lru_evict_if_needed();
     return disk_tex; /* transfer ownership */
   }
   
@@ -957,6 +1022,7 @@ static void try_set_avatar(GtkWidget *row, const char *avatar_url, const char *d
     if (GTK_IS_WIDGET(w_init)) gtk_widget_set_visible(w_init, FALSE);
     g_debug("avatar set: memory cache hit url=%s", avatar_url);
     s_avatar_metrics.mem_cache_hits++;
+    avatar_lru_touch(avatar_url);
     return;
   }
   /* Disk cache check */
@@ -964,6 +1030,8 @@ static void try_set_avatar(GtkWidget *row, const char *avatar_url, const char *d
   if (disk_tex) {
     ensure_avatar_cache();
     g_hash_table_replace(avatar_texture_cache, g_strdup(avatar_url), g_object_ref(disk_tex));
+    avatar_lru_insert(avatar_url);
+    avatar_lru_evict_if_needed();
     gtk_picture_set_paintable(GTK_PICTURE(w_img), GDK_PAINTABLE(disk_tex));
     gtk_widget_set_visible(w_img, TRUE);
     if (GTK_IS_WIDGET(w_init)) gtk_widget_set_visible(w_init, FALSE);
