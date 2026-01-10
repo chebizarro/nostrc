@@ -7,6 +7,7 @@
 #include "json.h"
 #include "nostr-kinds.h"
 #include "relay-private.h"
+#include "connection-private.h"
 #include "subscription-private.h"
 #include "nostr-subscription.h"
 #include "nostr-utils.h"
@@ -130,7 +131,13 @@ GoChannel *nostr_relay_get_debug_raw_channel(NostrRelay *relay) {
 bool nostr_relay_is_connected(NostrRelay *relay) {
     if (!relay) return false;
     nsync_mu_lock(&relay->priv->mutex);
-    bool connected = (relay->connection != NULL);
+    bool connected = false;
+    if (relay->connection && relay->connection->priv) {
+        nsync_mu_lock(&relay->connection->priv->mutex);
+        /* Check if websocket is actually alive, not just if connection object exists */
+        connected = (relay->connection->priv->wsi != NULL);
+        nsync_mu_unlock(&relay->connection->priv->mutex);
+    }
     nsync_mu_unlock(&relay->priv->mutex);
     return connected;
 }
@@ -427,8 +434,18 @@ static void *message_loop(void *arg) {
                             r->url ? r->url : "unknown", env->message, serial);
                     nostr_subscription_dispatch_eose(subscription);
                 } else {
-                    fprintf(stderr, "[EOSE_DROP] relay=%s sid=%s serial=%d - subscription not found in hash map!\n",
-                            r->url ? r->url : "unknown", env->message, serial);
+                    /* Downgrade noisy late-EOS warnings: subs may have been logically
+                     * canceled on client side but kept alive until final free. Relays
+                     * can legitimately deliver EOSE slightly late. Log at info level
+                     * to avoid alarming users; enable NOSTR_DEBUG_EOSE=1 to restore
+                     * the old explicit warning. */
+                    if (getenv("NOSTR_DEBUG_EOSE")) {
+                        fprintf(stderr, "[EOSE_DROP] relay=%s sid=%s serial=%d - subscription not found in hash map!\n",
+                                r->url ? r->url : "unknown", env->message, serial);
+                    } else {
+                        fprintf(stderr, "[EOSE_LATE] relay=%s sid=%s serial=%d - late EOSE for unknown subscription (suppressed)\n",
+                                r->url ? r->url : "unknown", env->message, serial);
+                    }
                 }
             }
             char tmp[128]; snprintf(tmp, sizeof(tmp), "EOSE sid=%s", env->message ? env->message : "");

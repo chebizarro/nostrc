@@ -94,6 +94,11 @@ void nostr_subscription_free(NostrSubscription *sub) {
     // Ensure lifecycle worker has exited (caller should have unsubscribed)
     go_wait_group_wait(&sub->priv->wg);
 
+    // Remove from relay map at final free to allow late EOSE/CLOSED routing during teardown
+    if (sub->relay && sub->relay->subscriptions) {
+        go_hash_map_remove_int(sub->relay->subscriptions, sub->priv->counter);
+    }
+
     go_channel_free(sub->events);
     go_channel_free(sub->end_of_stored_events);
     go_channel_free(sub->closed_reason);
@@ -248,13 +253,10 @@ void nostr_subscription_unsubscribe(NostrSubscription *sub) {
 
     // Mark as no longer live; CLOSE will be handled separately if needed
     atomic_exchange(&sub->priv->live, false);
-
-    // Remove the subscription from the relay's map (keys are ints/counters) if relay present
-    if (sub->relay && sub->relay->subscriptions) {
-        go_hash_map_remove_int(sub->relay->subscriptions, sub->priv->counter);
-    }
+    // Do NOT remove from relay map here. Keep it until final free so late EOSE/CLOSED
+    // from the relay can still be routed to this subscription without noisy drops.
     if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
-        fprintf(stderr, "[sub %s] unsub: removed from relay map\n", sub->priv->id);
+        fprintf(stderr, "[sub %s] unsub: context canceled; keeping in relay map until free\n", sub->priv->id);
     }
 }
 
@@ -307,9 +309,7 @@ void nostr_subscription_close(NostrSubscription *sub, Error **err) {
         GoContext *wctx = go_with_deadline(go_context_background(), deadline);
         (void)go_channel_receive_with_context(write_channel, (void **)&write_err, wctx);
         go_context_free(wctx);
-        // Channel no longer needed: close then free
-        go_channel_close(write_channel);
-        go_channel_free(write_channel);
+        // Writer owns lifecycle of the answer channel; do not close/free here
         if (write_err) {
             if (err) *err = write_err;
         }
@@ -446,12 +446,21 @@ bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
     free(filter_strs);
     free(sub_msg);
 
-    // Wait for a response
+    // Wait for a response with timeout (3 seconds)
     Error *write_err = NULL;
-    go_channel_receive(write_channel, (void **)&write_err);
-    // Channel no longer needed: close then free
-    go_channel_close(write_channel);
-    go_channel_free(write_channel);
+    GoSelectCase cases[1];
+    cases[0].op = GO_SELECT_RECEIVE;
+    cases[0].chan = write_channel;
+    cases[0].recv_buf = (void **)&write_err;
+    
+    GoSelectResult result = go_select_timeout(cases, 1, 3000); // 3 second timeout
+    
+    if (result.selected_case == -1) {
+        // Timeout - writer will deliver result or error later and free the channel
+        fprintf(stderr, "[nostr_subscription_fire] TIMEOUT waiting for write confirmation (relay may be dead)\n");
+        if (err) *err = new_error(1, "write timeout - relay connection may be dead");
+        return false;
+    }
     if (write_err) {
         if (err) *err = write_err;
         return false;

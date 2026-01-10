@@ -3,11 +3,16 @@
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
+#include "gnostr-avatar-cache.h"
+#include "../storage_ndb.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/note-card-row.ui"
+
+/* Serialize ad-hoc UI queries to reduce reader-slot contention */
+static GMutex s_ndb_query_mutex;
 
 struct _GnostrNoteCardRow {
   GtkWidget parent_instance;
@@ -38,7 +43,6 @@ struct _GnostrNoteCardRow {
   char *id_hex;
   char *root_id;
   char *pubkey_hex;
-  char *event_json;  /* Store the original event JSON */
   OgPreviewWidget *og_preview;
 };
 
@@ -86,7 +90,6 @@ static void gnostr_note_card_row_finalize(GObject *obj) {
   g_clear_pointer(&self->id_hex, g_free);
   g_clear_pointer(&self->root_id, g_free);
   g_clear_pointer(&self->pubkey_hex, g_free);
-  g_clear_pointer(&self->event_json, g_free);
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->finalize(obj);
 }
 
@@ -123,9 +126,48 @@ static gboolean on_content_activate_link(GtkLabel *label, const char *uri, gpoin
   return FALSE;
 }
 
+/* Helper: convert 64-char hex string to 32 bytes */
+static gboolean hex_to_bytes_32(const char *hex, unsigned char out[32]) {
+  if (!hex || strlen(hex) != 64) return FALSE;
+  for (int i = 0; i < 32; i++) {
+    unsigned int byte;
+    if (sscanf(hex + i*2, "%2x", &byte) != 1) return FALSE;
+    out[i] = (unsigned char)byte;
+  }
+  return TRUE;
+}
+
+/* Ensure NostrDB is initialized (idempotent). Mirrors logic in main_app.c */
+static void ensure_ndb_initialized(void) {
+  /* storage_ndb_init is idempotent; if already initialized it returns 1 */
+  gchar *dbdir = g_build_filename(g_get_user_cache_dir(), "gnostr", "ndb", NULL);
+  (void)g_mkdir_with_parents(dbdir, 0700);
+  const char *opts = "{\"mapsize\":1073741824,\"ingester_threads\":4,\"ingest_skip_validation\":1}";
+  storage_ndb_init(dbdir, opts);
+  g_free(dbdir);
+}
+
 static void show_json_viewer(GnostrNoteCardRow *self) {
-  if (!self || !self->event_json) {
-    g_warning("No event JSON available to display");
+  if (!self || !self->id_hex) {
+    g_warning("No event ID available to fetch JSON");
+    return;
+  }
+  
+  /* Ensure DB is initialized (safe if already initialized) */
+  ensure_ndb_initialized();
+  
+  /* Fetch event JSON from NostrDB using nontxn helper with built-in retries */
+  char *event_json = NULL;
+  int json_len = 0;
+  
+  /* Use mutex to serialize UI queries */
+  g_mutex_lock(&s_ndb_query_mutex);
+  int rc = storage_ndb_get_note_by_id_nontxn(self->id_hex, &event_json, &json_len);
+  g_mutex_unlock(&s_ndb_query_mutex);
+
+  if (rc != 0 || !event_json) {
+    g_warning("Failed to fetch event JSON from NostrDB (id=%s, rc=%d)", 
+              self->id_hex, rc);
     return;
   }
 
@@ -157,7 +199,10 @@ static void show_json_viewer(GnostrNoteCardRow *self) {
 
   /* Set the JSON content */
   GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
-  gtk_text_buffer_set_text(buffer, self->event_json, -1);
+  gtk_text_buffer_set_text(buffer, event_json, -1);
+  
+  /* Free the fetched JSON (allocated with malloc in storage_ndb_get_note_by_id_nontxn) */
+  free(event_json);
 
   /* Assemble the dialog */
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), text_view);
@@ -348,9 +393,7 @@ static void load_media_image(GnostrNoteCardRow *self, const char *url, GtkPictur
 }
 #endif
 
-/* Forward declare cache functions from timeline-view.c */
-extern GdkTexture *gnostr_avatar_try_load_cached(const char *url);
-extern void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *initials);
+/* Use centralized avatar cache API (avatar_cache.h) */
 
 void gnostr_note_card_row_set_author(GnostrNoteCardRow *self, const char *display_name, const char *handle, const char *avatar_url) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
@@ -621,12 +664,6 @@ void gnostr_note_card_row_set_ids(GnostrNoteCardRow *self, const char *id_hex, c
   g_free(self->id_hex); self->id_hex = g_strdup(id_hex);
   g_free(self->root_id); self->root_id = g_strdup(root_id);
   g_free(self->pubkey_hex); self->pubkey_hex = g_strdup(pubkey_hex);
-}
-
-void gnostr_note_card_row_set_event_json(GnostrNoteCardRow *self, const char *json) {
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
-  g_free(self->event_json);
-  self->event_json = g_strdup(json);
 }
 
 /* Public helper to set the embed mini-card content */

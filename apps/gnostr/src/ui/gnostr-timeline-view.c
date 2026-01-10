@@ -7,11 +7,14 @@
 #include "nostr/nip19/nip19.h"
 #include "nostr_simple_pool.h"
 #include "../util/relays.h"
+#include "../util/utils.h"
 #include "nostr-filter.h"
 #include <string.h>
 #include <time.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <gio/gio.h>
+#include <gdk-pixbuf/gdk-pixbuf.h>
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -170,13 +173,7 @@ static void on_query_single_done_multi(GObject *source, GAsyncResult *res, gpoin
   if (ctx) { g_free(ctx->key); g_free(ctx); }
 }
 
-/* ---- Avatar metrics ----------------------------------------------------- */
-static GnostrAvatarMetrics s_avatar_metrics = {0};
-
-void gnostr_avatar_metrics_get(GnostrAvatarMetrics *out) {
-  if (!out) return;
-  *out = s_avatar_metrics;
-}
+/* Avatar metrics are provided by the centralized avatar_cache module. */
 
 /* ---- Embed helpers ------------------------------------------------------- */
 static gboolean hex32_from_string(const char *hex, unsigned char out[32]) {
@@ -457,31 +454,9 @@ done_naddr_fetch:
   nostr_pointer_free(ptr);
 }
 
-void gnostr_avatar_metrics_log(void) {
-  g_message("avatar_metrics: requests=%" G_GUINT64_FORMAT " mem_hits=%" G_GUINT64_FORMAT
-            " disk_hits=%" G_GUINT64_FORMAT " http_start=%" G_GUINT64_FORMAT
-            " http_ok=%" G_GUINT64_FORMAT " http_err=%" G_GUINT64_FORMAT
-            " initials=%" G_GUINT64_FORMAT " cache_write_err=%" G_GUINT64_FORMAT,
-            s_avatar_metrics.requests_total,
-            s_avatar_metrics.mem_cache_hits,
-            s_avatar_metrics.disk_cache_hits,
-            s_avatar_metrics.http_start,
-            s_avatar_metrics.http_ok,
-            s_avatar_metrics.http_error,
-            s_avatar_metrics.initials_shown,
-            s_avatar_metrics.cache_write_error);
-}
+/* gnostr_avatar_metrics_log() now comes from avatar_cache. */
 
-/* Forward declarations for helpers used by prefetch */
-typedef struct _AvatarCtx AvatarCtx;
-static void ensure_avatar_cache(void);
-static const char *ensure_avatar_cache_dir(void);
-static char *avatar_path_for_url(const char *url);
-static GdkTexture *try_load_avatar_from_disk(const char *url);
-static gboolean str_has_prefix_http(const char *s);
-#ifdef HAVE_SOUP3
-static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer user_data);
-#endif
+/* Avatar cache helpers are implemented in avatar_cache.c */
 
 /* Item representing a post row, optionally with children for threading. */
 typedef struct _TimelineItem {
@@ -498,8 +473,6 @@ typedef struct _TimelineItem {
   gint64 created_at;
   /* avatar */
   gchar *avatar_url;
-  /* event JSON */
-  gchar *event_json;
   /* children list when acting as a parent in a thread */
   GListStore *children; /* element-type: TimelineItem */
 } TimelineItem;
@@ -522,7 +495,6 @@ enum {
   PROP_PUBKEY,
   PROP_CREATED_AT,
   PROP_AVATAR_URL,
-  PROP_EVENT_JSON,
   N_PROPS
 };
 
@@ -541,7 +513,6 @@ static void timeline_item_set_property(GObject *obj, guint prop_id, const GValue
     case PROP_PUBKEY:       g_free(self->pubkey);       self->pubkey       = g_value_dup_string(value); break;
     case PROP_CREATED_AT:   self->created_at            = g_value_get_int64(value); break;
     case PROP_AVATAR_URL:   g_free(self->avatar_url);   self->avatar_url   = g_value_dup_string(value); break;
-    case PROP_EVENT_JSON:   g_free(self->event_json);   self->event_json   = g_value_dup_string(value); break;
     default: G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop_id, pspec);
   }
 
@@ -563,7 +534,6 @@ static void timeline_item_get_property(GObject *obj, guint prop_id, GValue *valu
     case PROP_PUBKEY:       g_value_set_string(value, self->pubkey); break;
     case PROP_CREATED_AT:   g_value_set_int64 (value, self->created_at); break;
     case PROP_AVATAR_URL:   g_value_set_string(value, self->avatar_url); break;
-    case PROP_EVENT_JSON:   g_value_set_string(value, self->event_json); break;
     default: G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop_id, pspec);
   }
 }
@@ -579,7 +549,6 @@ static void timeline_item_dispose(GObject *obj) {
   g_clear_pointer(&self->root_id, g_free);
   g_clear_pointer(&self->pubkey, g_free);
   g_clear_pointer(&self->avatar_url, g_free);
-  g_clear_pointer(&self->event_json, g_free);
   if (self->children) g_clear_object(&self->children);
   G_OBJECT_CLASS(timeline_item_parent_class)->dispose(obj);
   g_debug("🔴 DISPOSE TimelineItem %p COMPLETE", (void*)obj);
@@ -600,7 +569,6 @@ static void timeline_item_class_init(TimelineItemClass *klass) {
   ti_props[PROP_PUBKEY]       = g_param_spec_string ("pubkey",       "pubkey",       "Pubkey",       NULL, G_PARAM_READWRITE);
   ti_props[PROP_CREATED_AT]   = g_param_spec_int64  ("created-at",   "created-at",   "Created At",   0, G_MAXINT64, 0, G_PARAM_READWRITE);
   ti_props[PROP_AVATAR_URL]   = g_param_spec_string("avatar-url",   "avatar-url",   "Avatar URL",    NULL, G_PARAM_READWRITE);
-  ti_props[PROP_EVENT_JSON]   = g_param_spec_string("event-json",   "event-json",   "Event JSON",    NULL, G_PARAM_READWRITE);
   g_object_class_install_properties(oc, N_PROPS, ti_props);
 }
 
@@ -726,335 +694,46 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
   gtk_list_item_set_child(item, row);
 }
 
-/* Simple shared cache for downloaded avatar textures by URL */
-static GHashTable *avatar_texture_cache = NULL; /* key: char* url, value: GdkTexture* */
-static char *avatar_cache_dir = NULL; /* disk cache dir */
-static GQueue *s_avatar_lru = NULL;               /* queue of char* url (head=oldest) */
-static GHashTable *s_avatar_lru_nodes = NULL;     /* key=url -> GList* node */
-static guint s_avatar_cap = 2000;                 /* max resident textures */
-static gboolean s_avatar_log_started = FALSE;     /* periodic logging started */
-
-/* Periodic logger for avatar cache */
-static gboolean avatar_cache_log_cb(gpointer data) {
-  (void)data;
-  guint msz = avatar_texture_cache ? g_hash_table_size(avatar_texture_cache) : 0;
-  guint lsz = s_avatar_lru_nodes ? g_hash_table_size(s_avatar_lru_nodes) : 0;
-  g_message("[AVATAR_CACHE] mem=%u lru=%u cap=%u", msz, lsz, s_avatar_cap);
-  gnostr_avatar_metrics_log();
-  return TRUE;
-}
-
-static void ensure_avatar_cache(void) {
-  if (!avatar_texture_cache) avatar_texture_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
-  if (!s_avatar_lru) s_avatar_lru = g_queue_new();
-  if (!s_avatar_lru_nodes) s_avatar_lru_nodes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  if (!s_avatar_log_started) {
-    s_avatar_log_started = TRUE;
-    /* Log every 60s */
-    g_timeout_add_seconds(60, avatar_cache_log_cb, NULL);
-  }
-}
-
-/* LRU helpers for avatar memory cache */
-static void avatar_lru_touch(const char *url) {
-  if (!url || !s_avatar_lru || !s_avatar_lru_nodes) return;
-  GList *node = g_hash_table_lookup(s_avatar_lru_nodes, url);
-  if (!node) return;
-  g_queue_unlink(s_avatar_lru, node);
-  g_queue_push_tail_link(s_avatar_lru, node);
-}
-
-static void avatar_lru_insert(const char *url) {
-  if (!url || !s_avatar_lru || !s_avatar_lru_nodes) return;
-  if (g_hash_table_contains(s_avatar_lru_nodes, url)) { avatar_lru_touch(url); return; }
-  char *k = g_strdup(url);
-  GList *node = g_list_alloc(); node->data = k;
-  g_queue_push_tail_link(s_avatar_lru, node);
-  g_hash_table_insert(s_avatar_lru_nodes, g_strdup(url), node);
-}
-
-static void avatar_lru_evict_if_needed(void) {
-  if (!s_avatar_lru || !s_avatar_lru_nodes || !avatar_texture_cache) return;
-  while (g_hash_table_size(s_avatar_lru_nodes) > s_avatar_cap) {
-    GList *old = s_avatar_lru->head; if (!old) break;
-    char *old_url = (char*)old->data;
-    g_queue_unlink(s_avatar_lru, old);
-    g_list_free_1(old);
-    g_hash_table_remove(s_avatar_lru_nodes, old_url);
-    /* Remove from texture cache (unrefs texture) */
-    g_hash_table_remove(avatar_texture_cache, old_url);
-    g_free(old_url);
-  }
-}
-
-/* Ensure disk cache directory exists: $XDG_CACHE_HOME/gnostr/avatars */
-static const char *ensure_avatar_cache_dir(void) {
-  if (avatar_cache_dir) return avatar_cache_dir;
-  const char *base = g_get_user_cache_dir();
-  if (!base || !*base) base = ".";
-  char *dir = g_build_filename(base, "gnostr", "avatars", NULL);
-  GError *err = NULL;
-  if (g_mkdir_with_parents(dir, 0700) != 0) {
-    g_warning("avatar cache: mkdir failed (%s): %s", dir, g_strerror(errno));
-  }
-  avatar_cache_dir = dir; /* keep */
-  g_message("avatar cache: using dir %s", avatar_cache_dir);
-  return avatar_cache_dir;
-}
-
-/* Build a safe cache path from URL using SHA256 */
-static char *avatar_path_for_url(const char *url) {
-  if (!url || !*url) return NULL;
-  const char *dir = ensure_avatar_cache_dir();
-  g_autofree char *hex = g_compute_checksum_for_string(G_CHECKSUM_SHA256, url, -1);
-  return g_build_filename(dir, hex, NULL);
-}
-
-/* Try to load texture from disk cache; returns new ref or NULL */
-static GdkTexture *try_load_avatar_from_disk(const char *url) {
-  if (!url || !*url) return NULL;
-  g_autofree char *path = avatar_path_for_url(url);
-  if (!path) return NULL;
-  if (!g_file_test(path, G_FILE_TEST_IS_REGULAR)) {
-    g_debug("avatar disk: miss for url=%s path=%s", url, path);
-    return NULL;
-  }
-  GError *err = NULL;
-  GdkTexture *tex = gdk_texture_new_from_filename(path, &err);
-  if (!tex) {
-    g_warning("avatar disk: INVALID cached file %s (url=%s): %s - deleting corrupt cache", 
-              path, url, err ? err->message : "unknown");
-    g_clear_error(&err);
-    
-    /* Delete the corrupt cache file so it can be re-downloaded */
-    if (unlink(path) != 0) {
-      g_warning("avatar disk: failed to delete corrupt cache file %s: %s", path, g_strerror(errno));
-    } else {
-      g_message("avatar disk: deleted corrupt cache file %s", path);
-    }
-    
-    return NULL;
-  }
-  g_debug("avatar disk: hit for url=%s path=%s", url, path);
-  s_avatar_metrics.disk_cache_hits++;
-  return tex; /* transfer */
-}
-
-static gboolean str_has_prefix_http(const char *s) {
-  return s && (g_str_has_prefix(s, "http://") || g_str_has_prefix(s, "https://"));
-}
-
-struct _AvatarCtx { GtkWidget *image; GtkWidget *initials; char *url; };
-static void avatar_ctx_free(AvatarCtx *c){ if(!c) return; g_free(c->url); g_free(c); }
-
-#ifdef HAVE_SOUP3
-static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  (void)source;
-  AvatarCtx *ctx = (AvatarCtx*)user_data;
-  GError *error = NULL;
-  GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
-  if (!bytes) {
-    s_avatar_metrics.http_error++;
-    g_debug("avatar http: error fetching url=%s: %s", ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
-    g_message("avatar http: fetch failed; profile metadata/UI remain applied (url=%s)", ctx && ctx->url ? ctx->url : "(null)");
-    g_clear_error(&error);
-    avatar_ctx_free(ctx);
-    return;
-  }
-  gsize blen = 0; (void)g_bytes_get_data(bytes, &blen);
-  s_avatar_metrics.http_ok++;
-  g_message("avatar http: fetched url=%s bytes=%zu", ctx && ctx->url ? ctx->url : "(null)", (size_t)blen);
-  
-  /* CRITICAL: Validate it's actually an image BEFORE caching */
-  GdkTexture *tex = gdk_texture_new_from_bytes(bytes, &error);
-  if (!tex) {
-    g_warning("avatar http: INVALID IMAGE DATA for url=%s: %s (likely HTML error page)", 
-              ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
-    g_clear_error(&error);
-    g_bytes_unref(bytes);
-    avatar_ctx_free(ctx);
-    return;
-  }
-  
-  /* Only persist to disk cache if it's a valid image */
-  g_autofree char *path = avatar_path_for_url(ctx->url);
-  if (path) {
-    gsize len = 0; const guint8 *data = g_bytes_get_data(bytes, &len);
-    GError *werr = NULL; 
-    if (g_file_set_contents(path, (const char*)data, (gssize)len, &werr)) {
-      g_debug("avatar http: wrote cache file %s len=%zu", path, (size_t)len);
-    } else {
-      s_avatar_metrics.cache_write_error++;
-      g_warning("avatar http: failed to write cache file %s: %s", path, werr ? werr->message : "unknown");
-      g_clear_error(&werr);
-    }
-  }
-  
-  g_bytes_unref(bytes);
-  ensure_avatar_cache();
-  g_hash_table_replace(avatar_texture_cache, g_strdup(ctx->url), g_object_ref(tex));
-  /* LRU update */
-  avatar_lru_insert(ctx->url);
-  avatar_lru_evict_if_needed();
-  g_debug("avatar http: cached texture for url=%s", ctx && ctx->url ? ctx->url : "(null)");
-  if (GTK_IS_PICTURE(ctx->image)) { gtk_picture_set_paintable(GTK_PICTURE(ctx->image), GDK_PAINTABLE(tex)); gtk_widget_set_visible(ctx->image, TRUE); }
-  if (GTK_IS_WIDGET(ctx->initials)) gtk_widget_set_visible(ctx->initials, FALSE);
-  g_object_unref(tex);
-  avatar_ctx_free(ctx);
-}
-#endif
-
-/* Public: prefetch and cache avatar by URL without any UI. No-op if cached or invalid. */
-void gnostr_avatar_prefetch(const char *url) {
-  if (!url || !*url) return;
-  if (!str_has_prefix_http(url)) { g_debug("avatar prefetch: invalid url=%s", url ? url : "(null)"); return; }
-  g_message("avatar prefetch: entry url=%s", url);
-  s_avatar_metrics.requests_total++;
-  ensure_avatar_cache();
-  /* Already in-memory cached? */
-  if (g_hash_table_lookup(avatar_texture_cache, url)) { 
-    g_debug("avatar prefetch: memory cache hit url=%s", url);
-    avatar_lru_touch(url);
-    return; 
-  }
-  /* Disk cached? If so, promote into memory cache and return */
-  GdkTexture *disk_tex = try_load_avatar_from_disk(url);
-  if (disk_tex) {
-    g_hash_table_replace(avatar_texture_cache, g_strdup(url), g_object_ref(disk_tex));
-    avatar_lru_insert(url);
-    avatar_lru_evict_if_needed();
-    g_object_unref(disk_tex);
-    g_debug("avatar prefetch: promoted disk->mem url=%s", url);
-    return;
-  }
-#ifdef HAVE_SOUP3
-  /* Fetch asynchronously and store in cache */
-  SoupSession *sess = soup_session_new();
-  SoupMessage *msg = soup_message_new("GET", url);
-  AvatarCtx *ctx = g_new0(AvatarCtx, 1);
-  ctx->image = NULL;    /* no UI to update */
-  ctx->initials = NULL; /* no UI to update */
-  ctx->url = g_strdup(url);
-  g_message("avatar prefetch: fetching via HTTP url=%s", url);
-  s_avatar_metrics.http_start++;
-  soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
-  g_object_unref(msg);
-  g_object_unref(sess);
-#else
-  (void)url; /* libsoup not available; skip */
-#endif
-}
-
-/* Public: Try to load avatar from cache (memory or disk). Returns new ref or NULL. */
-GdkTexture *gnostr_avatar_try_load_cached(const char *url) {
-  if (!url || !*url) return NULL;
-  if (!str_has_prefix_http(url)) return NULL;
-  
-  ensure_avatar_cache();
-  
-  /* Check memory cache first */
-  GdkTexture *mem_tex = g_hash_table_lookup(avatar_texture_cache, url);
-  if (mem_tex) {
-    s_avatar_metrics.mem_cache_hits++;
-    avatar_lru_touch(url);
-    return g_object_ref(mem_tex); /* return new ref */
-  }
-  
-  /* Check disk cache */
-  GdkTexture *disk_tex = try_load_avatar_from_disk(url);
-  if (disk_tex) {
-    /* Promote to memory cache */
-    g_hash_table_replace(avatar_texture_cache, g_strdup(url), g_object_ref(disk_tex));
-    avatar_lru_insert(url);
-    avatar_lru_evict_if_needed();
-    return disk_tex; /* transfer ownership */
-  }
-  
-  return NULL;
-}
-
-/* Public: Download avatar asynchronously and update widgets when done. */
-void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *initials) {
-#ifdef HAVE_SOUP3
-  if (!url || !*url || !str_has_prefix_http(url)) return;
-  
-  s_avatar_metrics.requests_total++;
-  s_avatar_metrics.http_start++;
-  
-  SoupSession *sess = soup_session_new();
-  SoupMessage *msg = soup_message_new("GET", url);
-  AvatarCtx *ctx = g_new0(AvatarCtx, 1);
-  ctx->image = image ? g_object_ref(image) : NULL;
-  ctx->initials = initials ? g_object_ref(initials) : NULL;
-  ctx->url = g_strdup(url);
-  
-  soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
-  g_object_unref(msg);
-  g_object_unref(sess);
-#else
-  (void)url; (void)image; (void)initials;
-#endif
-}
-
+/* Avatar loading now handled by centralized gnostr-avatar-cache module */
 static void try_set_avatar(GtkWidget *row, const char *avatar_url, const char *display, const char *handle) {
   GtkWidget *w_init = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "avatar_initials"));
   GtkWidget *w_img  = GTK_WIDGET(g_object_get_data(G_OBJECT(row), "avatar_image"));
+  
   /* Derive initials fallback */
   const char *src = (display && *display) ? display : (handle && *handle ? handle : "AN");
   char initials[3] = {0};
-  int i = 0; for (const char *p = src; *p && i < 2; p++) { if (g_ascii_isalnum(*p)) initials[i++] = g_ascii_toupper(*p); }
+  int i = 0; 
+  for (const char *p = src; *p && i < 2; p++) { 
+    if (g_ascii_isalnum(*p)) initials[i++] = g_ascii_toupper(*p); 
+  }
   if (i == 0) { initials[0] = 'A'; initials[1] = 'N'; }
   if (GTK_IS_LABEL(w_init)) gtk_label_set_text(GTK_LABEL(w_init), initials);
 
-  g_debug("avatar set: row=%p url=%s display=%.30s handle=%.30s", (void*)row, avatar_url ? avatar_url : "(null)", display ? display : "", handle ? handle : "");
+  g_debug("avatar set: row=%p url=%s display=%.30s handle=%.30s", 
+          (void*)row, avatar_url ? avatar_url : "(null)", 
+          display ? display : "", handle ? handle : "");
+  
   if (!avatar_url || !*avatar_url || !str_has_prefix_http(avatar_url) || !GTK_IS_PICTURE(w_img)) {
-    g_debug("avatar set: invalid or no image widget, showing initials (url=%s, is_picture=%d)", avatar_url ? avatar_url : "(null)", GTK_IS_PICTURE(w_img));
+    g_debug("avatar set: invalid or no image widget, showing initials (url=%s, is_picture=%d)", 
+            avatar_url ? avatar_url : "(null)", GTK_IS_PICTURE(w_img));
     if (GTK_IS_WIDGET(w_img)) gtk_widget_set_visible(w_img, FALSE);
     if (GTK_IS_WIDGET(w_init)) gtk_widget_set_visible(w_init, TRUE);
-    s_avatar_metrics.initials_shown++;
     return;
   }
-  ensure_avatar_cache();
-  GdkTexture *cached = (GdkTexture*)g_hash_table_lookup(avatar_texture_cache, avatar_url);
+  
+  /* Try loading from cache first */
+  GdkTexture *cached = gnostr_avatar_try_load_cached(avatar_url);
   if (cached) {
     gtk_picture_set_paintable(GTK_PICTURE(w_img), GDK_PAINTABLE(cached));
     gtk_widget_set_visible(w_img, TRUE);
     if (GTK_IS_WIDGET(w_init)) gtk_widget_set_visible(w_init, FALSE);
-    g_debug("avatar set: memory cache hit url=%s", avatar_url);
-    s_avatar_metrics.mem_cache_hits++;
-    avatar_lru_touch(avatar_url);
+    g_object_unref(cached);
+    g_debug("avatar set: cache hit url=%s", avatar_url);
     return;
   }
-  /* Disk cache check */
-  GdkTexture *disk_tex = try_load_avatar_from_disk(avatar_url);
-  if (disk_tex) {
-    ensure_avatar_cache();
-    g_hash_table_replace(avatar_texture_cache, g_strdup(avatar_url), g_object_ref(disk_tex));
-    avatar_lru_insert(avatar_url);
-    avatar_lru_evict_if_needed();
-    gtk_picture_set_paintable(GTK_PICTURE(w_img), GDK_PAINTABLE(disk_tex));
-    gtk_widget_set_visible(w_img, TRUE);
-    if (GTK_IS_WIDGET(w_init)) gtk_widget_set_visible(w_init, FALSE);
-    g_object_unref(disk_tex);
-    g_debug("avatar set: disk cache hit url=%s", avatar_url);
-    return;
-  }
-#ifdef HAVE_SOUP3
-  /* Download via libsoup if available */
-  SoupSession *sess = soup_session_new();
-  SoupMessage *msg = soup_message_new("GET", avatar_url);
-  AvatarCtx *ctx = g_new0(AvatarCtx, 1); ctx->image = w_img; ctx->initials = w_init; ctx->url = g_strdup(avatar_url);
-  g_message("avatar set: fetching via HTTP url=%s", avatar_url);
-  s_avatar_metrics.http_start++;
-  soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
-  g_object_unref(msg);
-  g_object_unref(sess);
-#else
-  /* libsoup not available: stick to initials */
-  if (GTK_IS_WIDGET(w_img)) gtk_widget_set_visible(w_img, FALSE);
-  if (GTK_IS_WIDGET(w_init)) gtk_widget_set_visible(w_init, TRUE);
-  s_avatar_metrics.initials_shown++;
-#endif
+  
+  /* Cache miss - download asynchronously */
+  gnostr_avatar_download_async(avatar_url, w_img, w_init);
 }
 
 /* Notify handlers to react to TimelineItem property changes after initial bind */
@@ -1180,7 +859,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   (void)f; (void)data;
   GObject *obj = gtk_list_item_get_item(item);
   gchar *display = NULL, *handle = NULL, *ts = NULL, *content = NULL, *root_id = NULL, *avatar_url = NULL;
-  gchar *pubkey = NULL, *event_json = NULL;
+  gchar *pubkey = NULL, *id_hex = NULL;
   guint depth = 0; gboolean is_reply = FALSE; gint64 created_at = 0;
   if (G_IS_OBJECT(obj) && G_TYPE_CHECK_INSTANCE_TYPE(obj, timeline_item_get_type())) {
     g_object_get(obj,
@@ -1189,11 +868,11 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                  "timestamp",    &ts,
                  "content",      &content,
                  "depth",        &depth,
+                 "id",           &id_hex,
                  "root-id",      &root_id,
                  "created-at",   &created_at,
                  "avatar-url",   &avatar_url,
                  "pubkey",       &pubkey,
-                 "event-json",   &event_json,
                  NULL);
     is_reply = depth > 0;
   }
@@ -1204,8 +883,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     gnostr_note_card_row_set_timestamp(GNOSTR_NOTE_CARD_ROW(row), created_at, ts);
     gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
     gnostr_note_card_row_set_depth(GNOSTR_NOTE_CARD_ROW(row), depth);
-    gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), NULL, root_id, pubkey);
-    gnostr_note_card_row_set_event_json(GNOSTR_NOTE_CARD_ROW(row), event_json);
+    gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), id_hex, root_id, pubkey);
     /* Connect embed request signal
      * NOTE: We don't need to disconnect first - g_signal_connect_object handles duplicates
      * and auto-disconnects when row is destroyed */
@@ -1213,7 +891,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   }
 
   g_debug("factory bind: item=%p content=%.60s depth=%u", (void*)item, content ? content : "", depth);
-  g_free(display); g_free(handle); g_free(ts); g_free(content); g_free(root_id); g_free(event_json);
+  g_free(display); g_free(handle); g_free(ts); g_free(content); g_free(root_id); g_free(id_hex);
   g_free(avatar_url); /* Fix memory leak */
 
   /* Demand-driven profile prefetch: enqueue author for visible row */

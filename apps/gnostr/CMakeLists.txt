@@ -11,6 +11,7 @@ set(APP_CLIENT_GSETTINGS "org.gnostr.Client")
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)
 pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
+pkg_check_modules(JSON_GLIB REQUIRED IMPORTED_TARGET json-glib-1.0)
 pkg_check_modules(SQLITE3 QUIET IMPORTED_TARGET sqlite3)
 pkg_check_modules(SOUP3 QUIET IMPORTED_TARGET libsoup-3.0)
 
@@ -25,7 +26,7 @@ add_custom_command(
           ${GRESOURCE_XML}
   DEPENDS ${GRESOURCE_XML}
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-main-window.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-composer.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/note-card-row.ui
@@ -65,6 +66,7 @@ target_compile_definitions(${APP_CLIENT_BIN} PRIVATE APP_ID="${APP_CLIENT_FLATPA
 target_compile_definitions(${APP_CLIENT_BIN} PRIVATE GNOSTR_ENABLE_REAL_SIMPLEPOOL)
 # Include GI wrapper and core headers for SimplePool and nostr models
 target_include_directories(${APP_CLIENT_BIN} PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/util
   ${CMAKE_SOURCE_DIR}/gobject/include
   ${CMAKE_SOURCE_DIR}/libnostr/include
   ${CMAKE_SOURCE_DIR}/libgo/include
@@ -84,7 +86,7 @@ endif()
 if (TARGET nostr_nip46_core)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip46_core)
 endif()
-target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB)
+target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::JSON_GLIB)
 if (SOUP3_FOUND)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::SOUP3)
   target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_SOUP3=1)

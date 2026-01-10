@@ -98,6 +98,8 @@ option(GO_CHANNEL_MPMC_SLOTS "Enable MPMC lock-free per-slot sequence protocol f
 
 # Under ThreadSanitizer, prefer fully locked try paths and disable MPMC slot protocol
 if (GO_ENABLE_TSAN)
+  # Avoid non-atomic shared size field under TSAN by deriving occupancy from indices
+  set(GO_CHANNEL_DERIVE_SIZE ON CACHE BOOL "Compute channel occupancy from indices instead of maintaining size" FORCE)
   set(GO_CHANNEL_ATOMIC_TRY OFF CACHE BOOL "Use atomic lockless full/empty check in try paths" FORCE)
   set(GO_CHANNEL_MPMC_SLOTS OFF CACHE BOOL "Enable MPMC lock-free per-slot sequence protocol for channels" FORCE)
 endif()

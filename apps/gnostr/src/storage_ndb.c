@@ -1,6 +1,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
+#include <glib.h>
 #include "libnostr_store.h"
 #include "storage_ndb.h"
 
@@ -129,6 +131,25 @@ int storage_ndb_end_query(void *txn)
   return ln_store_end_query(g_store, txn);
 }
 
+int storage_ndb_begin_query_retry(void **txn_out, int attempts, int sleep_ms)
+{
+  if (!txn_out) return LN_ERR_DB_TXN;
+  int rc = 0;
+  void *txn = NULL;
+  if (attempts <= 0) attempts = 1;
+  if (sleep_ms <= 0) sleep_ms = 1;
+  for (int i = 0; i < attempts; i++) {
+    rc = storage_ndb_begin_query(&txn);
+    if (rc == 0 && txn) { *txn_out = txn; return 0; }
+    /* Exponential backoff capped at ~512ms between attempts */
+    int backoff_ms = sleep_ms << (i / 50); /* increase every 50 attempts */
+    if (backoff_ms > 512) backoff_ms = 512;
+    usleep((useconds_t)backoff_ms * 1000);
+  }
+  *txn_out = NULL;
+  return rc != 0 ? rc : LN_ERR_DB_TXN;
+}
+
 int storage_ndb_query(void *txn, const char *filters_json, char ***out_arr, int *out_count)
 {
   if (!g_store || !txn || !filters_json || !out_arr || !out_count) return LN_ERR_QUERY;
@@ -178,4 +199,58 @@ int storage_ndb_stat_json(char **json_out)
 void storage_ndb_free_results(char **arr, int n)
 {
   if (!arr) return; for (int i = 0; i < n; i++) free(arr[i]); free(arr);
+}
+
+/* Convenience: fetch a note by hex id with internal transaction and retries. */
+int storage_ndb_get_note_by_id_nontxn(const char *id_hex, char **json_out, int *json_len)
+{
+  if (!id_hex || !json_out) return LN_ERR_QUERY;
+  
+  /* Convert hex to binary */
+  unsigned char id32[32];
+  for (int i = 0; i < 32; i++) {
+    unsigned int byte;
+    if (sscanf(id_hex + i*2, "%2x", &byte) != 1) return LN_ERR_QUERY;
+    id32[i] = (unsigned char)byte;
+  }
+  
+  /* Try to get note with internal transaction management and aggressive retries for rc=1003 */
+  void *txn = NULL;
+  int rc = 0;
+  int max_attempts = 50;  /* More attempts for reader slot contention */
+  
+  for (int attempt = 0; attempt < max_attempts; attempt++) {
+    rc = storage_ndb_begin_query(&txn);
+    
+    if (rc == 0 && txn) {
+      /* Success - fetch the note */
+      char *json_ptr = NULL;
+      rc = storage_ndb_get_note_by_id(txn, id32, &json_ptr, json_len);
+      
+      if (rc == 0 && json_ptr && json_len && *json_len > 0) {
+        /* Copy the JSON before ending transaction */
+        *json_out = malloc(*json_len + 1);
+        if (*json_out) {
+          memcpy(*json_out, json_ptr, *json_len);
+          (*json_out)[*json_len] = '\0';
+        }
+      }
+      
+      storage_ndb_end_query(txn);
+      return rc;
+    }
+    
+    /* If rc=1003 (reader slot exhaustion), retry with backoff */
+    if (rc == 1003) {
+      /* Exponential backoff: 10ms, 20ms, 40ms, 80ms, 160ms, then cap at 200ms */
+      int backoff_ms = 10 * (1 << (attempt < 5 ? attempt : 5));
+      if (backoff_ms > 200) backoff_ms = 200;
+      usleep((useconds_t)backoff_ms * 1000);
+    } else {
+      /* Other error - fail immediately */
+      break;
+    }
+  }
+  
+  return rc != 0 ? rc : LN_ERR_DB_TXN;
 }

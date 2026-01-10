@@ -375,37 +375,77 @@ static gpointer subscribe_many_thread(gpointer user_data) {
     GPtrArray *subs = g_ptr_array_new_with_free_func(NULL);
 
     GoContext *bg = go_context_background();
+    GnostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
+    
     for (size_t i = 0; i < ctx->url_count; i++) {
         if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) break;
         const char *url = ctx->urls[i];
         if (!url || !*url) continue; /* skip empty */
-        Error *err = NULL;
-        NostrRelay *relay = nostr_relay_new(NULL, url, &err);
+        
+        /* CRITICAL: Check if relay already exists in pool - reuse it instead of creating duplicate! */
+        NostrRelay *relay = NULL;
+        gboolean relay_is_from_pool = FALSE;
+        
+        if (gobj_pool && gobj_pool->pool) {
+            pthread_mutex_lock(&gobj_pool->pool->pool_mutex);
+            for (size_t j = 0; j < gobj_pool->pool->relay_count; j++) {
+                if (gobj_pool->pool->relays[j] && 
+                    gobj_pool->pool->relays[j]->url && 
+                    strcmp(gobj_pool->pool->relays[j]->url, url) == 0) {
+                    relay = gobj_pool->pool->relays[j];
+                    relay_is_from_pool = TRUE;
+                    g_message("simple_pool: Reusing existing relay %s from pool", url);
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&gobj_pool->pool->pool_mutex);
+        }
+        
+        /* Only create new relay if not found in pool */
         if (!relay) {
-            g_warning("simple_pool: failed to create relay for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
-            if (err) free_error(err);
-            continue;
+            Error *err = NULL;
+            relay = nostr_relay_new(NULL, url, &err);
+            if (!relay) {
+                g_warning("simple_pool: failed to create relay for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
+                if (err) free_error(err);
+                continue;
+            }
+            if (!nostr_relay_connect(relay, &err)) {
+                g_warning("simple_pool: connect failed for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
+                if (err) free_error(err);
+                nostr_relay_free(relay);
+                continue;
+            }
+            
+            /* Add new relay to pool */
+            if (gobj_pool && gobj_pool->pool) {
+                nostr_simple_pool_add_relay(gobj_pool->pool, relay);
+                relay_is_from_pool = TRUE; /* Now it's in the pool */
+                g_message("simple_pool: Added NEW relay %s to pool (now has %zu relays)", url, gobj_pool->pool->relay_count);
+            }
         }
-        if (!nostr_relay_connect(relay, &err)) {
-            g_warning("simple_pool: connect failed for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
-            if (err) free_error(err);
-            nostr_relay_free(relay);
-            continue;
-        }
+        
         NostrSubscription *sub = nostr_relay_prepare_subscription(relay, bg, ctx->filters);
         if (!sub) {
             g_warning("simple_pool: prepare_subscription failed for %s", url);
-            nostr_relay_disconnect(relay);
-            nostr_relay_free(relay);
+            /* DON'T free relay if it's in the pool! */
+            if (!relay_is_from_pool) {
+                nostr_relay_disconnect(relay);
+                nostr_relay_free(relay);
+            }
             continue;
         }
+        Error *err = NULL;
         if (!nostr_subscription_fire(sub, &err)) {
             g_warning("simple_pool: subscription_fire failed for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
             if (err) free_error(err);
             nostr_subscription_close(sub, NULL);
             nostr_subscription_free(sub);
-            nostr_relay_disconnect(relay);
-            nostr_relay_free(relay);
+            /* DON'T free relay if it's in the pool! */
+            if (!relay_is_from_pool) {
+                nostr_relay_disconnect(relay);
+                nostr_relay_free(relay);
+            }
             continue;
         }
         SubItem item = { .relay = relay, .sub = sub, .eosed = FALSE, .emitted = 0, .start_us = g_get_monotonic_time(), .eose_us = -1 };
@@ -1023,7 +1063,13 @@ static void *fetch_profiles_goroutine(void *arg) {
         sub_ctx->wg = (GoWaitGroup*)ctx->wg;
         
         go_wait_group_add((GoWaitGroup*)ctx->wg, 1);
-        go(subscription_goroutine, sub_ctx);
+        if (go(subscription_goroutine, sub_ctx) != 0) {
+            g_critical("[GOROUTINE] Failed to launch subscription goroutine for %s", url);
+            go_wait_group_done((GoWaitGroup*)ctx->wg);  /* Decrement since goroutine didn't start */
+            g_free(sub_ctx);
+            /* Mark subscription as failed so we don't wait for it */
+            item->sub = NULL;
+        }
     }
     
     if (ctx->subs->len == 0) {
@@ -1034,20 +1080,43 @@ static void *fetch_profiles_goroutine(void *arg) {
                   ctx->subs->len, ctx->url_count);
     }
     
-    /* Wait for all subscriptions to fire */
-    go_wait_group_wait((GoWaitGroup*)ctx->wg);
+    /* Wait for all subscriptions to fire (with timeout to prevent infinite hang) */
+    g_message("[GOROUTINE] Waiting for subscriptions to fire...");
     
-    g_message("[GOROUTINE] All subscriptions fired, polling for events");
+    /* Poll WaitGroup with timeout instead of blocking forever */
+    guint64 wait_start = g_get_monotonic_time();
+    const guint64 FIRE_TIMEOUT_US = 3000000; // 3 seconds max wait for subscriptions to fire
+    
+    while (TRUE) {
+        /* Check if WaitGroup counter is zero (all done) */
+        GoWaitGroup *wg = (GoWaitGroup*)ctx->wg;
+        int count = atomic_load(&wg->counter);
+        
+        if (count == 0) {
+            g_message("[GOROUTINE] All subscriptions fired, polling for events");
+            break;
+        }
+        
+        /* Check timeout */
+        guint64 now = g_get_monotonic_time();
+        if ((now - wait_start) > FIRE_TIMEOUT_US) {
+            g_warning("[GOROUTINE] Timeout waiting for subscriptions to fire (counter=%d), proceeding anyway", count);
+            break;
+        }
+        
+        /* Sleep briefly */
+        g_usleep(10000); // 10ms
+    }
     
     /* Poll for events with timeout */
     guint64 t_start = g_get_monotonic_time();
     guint64 t_last_activity = t_start;
     /* Timeout configuration:
      * - QUIET: 1 second of no activity (events or EOSE)
-     * - HARD: 3 seconds absolute maximum
+     * - HARD: 5 seconds absolute maximum (MUST be enabled to prevent infinite hang)
      * Relays typically send events in 100-500ms, EOSE within 500ms-1s after that. */
     const guint64 QUIET_TIMEOUT_US = 1000000;  // 1 second of no activity (currently unused)
-    const guint64 HARD_TIMEOUT_US = 0;          // 0 disables hard timeout
+    const guint64 HARD_TIMEOUT_US = 5000000;   // 5 seconds absolute maximum
     
     while (TRUE) {
         guint64 now = g_get_monotonic_time();
@@ -1096,6 +1165,20 @@ static void *fetch_profiles_goroutine(void *arg) {
                 msg = NULL;
             }
             
+            /* Check CLOSED (relay rejected/killed subscription) */
+            if (!item->eosed) {
+                GoChannel *ch_closed = nostr_subscription_get_closed_channel(item->sub);
+                char *closed_msg = NULL;
+                if (ch_closed && go_channel_try_receive(ch_closed, (void**)&closed_msg) == 0) {
+                    g_warning("[GOROUTINE] CLOSED received from %s: %s", 
+                              item->relay_url, closed_msg ? closed_msg : "(no reason)");
+                    /* Mark as EOSED so we don't wait for it */
+                    item->eosed = TRUE;
+                    any_activity = TRUE;
+                    if (closed_msg) g_free(closed_msg);
+                }
+            }
+            
             /* Check EOSE */
             if (!item->eosed) {
                 GoChannel *ch_eose = nostr_subscription_get_eose_channel(item->sub);
@@ -1107,15 +1190,28 @@ static void *fetch_profiles_goroutine(void *arg) {
             }
         }
         
-        /* Check if all relays have sent EOSE */
+        /* Check if all SUCCESSFULLY FIRED relays have sent EOSE
+         * Note: Failed subscriptions will have NULL sub pointer */
         guint eosed_count = 0;
+        guint fired_count = 0;
         for (guint i = 0; i < ctx->subs->len; i++) {
             SubItem *item = (SubItem*)ctx->subs->pdata[i];
-            if (item && item->eosed) eosed_count++;
+            if (item && item->sub) {  /* Only count subscriptions that fired successfully */
+                fired_count++;
+                if (item->eosed) eosed_count++;
+            }
         }
         
-        if (eosed_count == ctx->subs->len) {
-            g_message("[GOROUTINE] All %u relays sent EOSE, exiting", eosed_count);
+        /* Exit if all FIRED subscriptions have sent EOSE (ignore failed ones) */
+        if (fired_count > 0 && eosed_count == fired_count) {
+            g_message("[GOROUTINE] All %u fired relays sent EOSE (out of %u total), exiting", 
+                      eosed_count, ctx->subs->len);
+            break;
+        }
+        
+        /* Safety: If no subscriptions fired at all, exit after 1 second */
+        if (fired_count == 0 && (now - t_start) > 1000000) {
+            g_warning("[GOROUTINE] No subscriptions fired successfully, giving up");
             break;
         }
         
@@ -1163,11 +1259,19 @@ static void *fetch_profiles_goroutine(void *arg) {
     for (guint i = 0; i < ctx->subs->len; i++) {
         SubItem *item = (SubItem*)ctx->subs->pdata[i];
         if (item && item->sub) {
-            /* Async cleanup with 1000ms timeout */
             const char *sid = nostr_subscription_get_id(item->sub);
             g_message("[GOROUTINE] Cleanup begin sid=%s relay=%s", sid ? sid : "null", item->relay_url ? item->relay_url : "(null)");
 
-            /* Synchronous shutdown to ensure worker exits */
+            /* CORRECT ORDER (per MEMORY[5d97ad44]):
+             * 1. Close (sends CLOSE message to relay)
+             * 2. Unsubscribe (cancels context, signals worker to exit)
+             * 3. Wait (ensures worker thread exits)
+             * 4. Free (releases resources) */
+            
+            g_message("[GOROUTINE] Cleanup step: close sid=%s", sid ? sid : "null");
+            nostr_subscription_close(item->sub, NULL);
+            g_message("[GOROUTINE] Cleanup step: close complete sid=%s", sid ? sid : "null");
+
             g_message("[GOROUTINE] Cleanup step: unsubscribe sid=%s", sid ? sid : "null");
             nostr_subscription_unsubscribe(item->sub);
             g_message("[GOROUTINE] Cleanup step: unsubscribe complete sid=%s", sid ? sid : "null");
@@ -1181,7 +1285,6 @@ static void *fetch_profiles_goroutine(void *arg) {
             g_message("[GOROUTINE] Cleanup step: free complete sid=%s", sid ? sid : "null");
 
             g_message("[GOROUTINE] Cleanup success sid=%s", sid ? sid : "null");
-            g_message("[GOROUTINE] Cleanup end sid=%s", sid ? sid : "null");
             item->sub = NULL;
         }
         if (item) {
@@ -1256,6 +1359,8 @@ void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
                                                         GCancellable *cancellable,
                                                         GAsyncReadyCallback cb,
                                                         gpointer user_data) {
+    g_message("PROFILE_FETCH_GOROUTINE: ENTRY (authors=%zu relays=%zu)", author_count, url_count);
+    
     /* DEBUG: Check if self is valid BEFORE g_return_if_fail */
     if (!self) {
         g_critical("PROFILE_FETCH_GOROUTINE: self is NULL!");

@@ -8,6 +8,7 @@
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "go.h"
+#include "error.h"
 
 /*
  * Test tool to verify relay EOSE behavior per NIP-01 spec.
@@ -61,16 +62,19 @@ static void test_relay_eose(const char *relay_url, const char *test_name, NostrF
     
     // Create relay and subscription
     GoContext *ctx = go_context_background();
-    NostrRelay *relay = nostr_relay_new(relay_url, ctx);
+    Error *err = NULL;
+    NostrRelay *relay = nostr_relay_new(ctx, relay_url, &err);
     if (!relay) {
-        fprintf(stderr, "❌ Failed to create relay\n");
+        fprintf(stderr, "❌ Failed to create relay: %s\n", err ? err->message : "unknown");
+        if (err) free_error(err);
         return;
     }
     
     // Connect
     printf("   Connecting to relay...\n");
-    if (nostr_relay_connect(relay) != 0) {
-        fprintf(stderr, "❌ Failed to connect to relay\n");
+    if (!nostr_relay_connect(relay, &err)) {
+        fprintf(stderr, "❌ Failed to connect to relay: %s\n", err ? err->message : "unknown");
+        if (err) free_error(err);
         nostr_relay_free(relay);
         return;
     }
@@ -89,8 +93,9 @@ static void test_relay_eose(const char *relay_url, const char *test_name, NostrF
     
     // Fire subscription
     printf("   Subscription sent, waiting for response...\n");
-    if (nostr_subscription_fire(sub) != 0) {
-        fprintf(stderr, "❌ Failed to fire subscription\n");
+    if (!nostr_subscription_fire(sub, &err)) {
+        fprintf(stderr, "❌ Failed to fire subscription: %s\n", err ? err->message : "unknown");
+        if (err) free_error(err);
         nostr_subscription_free(sub);
         nostr_relay_disconnect(relay);
         nostr_relay_free(relay);

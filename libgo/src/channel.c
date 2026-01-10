@@ -6,28 +6,39 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-// TSAN helpers: declare hooks so TSAN recognizes custom mutex (nsync_mu)
+// TSAN-aware mutex/condvar helpers for nsync_mu/nsync_cv
 #if defined(__has_feature)
 #  if __has_feature(thread_sanitizer)
 #    define GO_TSAN_ENABLED 1
 #  endif
-#elif defined(__SANITIZE_THREAD__)
+#endif
+#if defined(__SANITIZE_THREAD__)
 #  define GO_TSAN_ENABLED 1
+#endif
+#ifdef GO_ENABLE_TSAN
+#  if GO_ENABLE_TSAN
+#    ifndef GO_TSAN_ENABLED
+#      define GO_TSAN_ENABLED 1
+#    endif
+#  endif
 #endif
 
 #ifdef GO_TSAN_ENABLED
-extern void __tsan_acquire(void *);
-extern void __tsan_release(void *);
-static inline void tsan_acq(void *p){ __tsan_acquire(p); }
-static inline void tsan_rel(void *p){ __tsan_release(p); }
+extern void __tsan_mutex_pre_lock(void *addr, unsigned flags);
+extern void __tsan_mutex_post_lock(void *addr, unsigned flags, int recursion);
+extern void __tsan_mutex_pre_unlock(void *addr, unsigned flags);
+extern void __tsan_mutex_post_unlock(void *addr, unsigned flags);
+static inline void tsan_mu_lock(nsync_mu *m){ __tsan_mutex_pre_lock(m, 0); nsync_mu_lock(m); __tsan_mutex_post_lock(m, 0, 0); }
+static inline void tsan_mu_unlock(nsync_mu *m){ __tsan_mutex_pre_unlock(m, 0); nsync_mu_unlock(m); __tsan_mutex_post_unlock(m, 0); }
+static inline void tsan_cv_wait(nsync_cv *cv, nsync_mu *m){ __tsan_mutex_pre_unlock(m, 0); nsync_cv_wait(cv, m); __tsan_mutex_post_lock(m, 0, 0); }
+#  define NLOCK(mu_ptr)   tsan_mu_lock((mu_ptr))
+#  define NUNLOCK(mu_ptr) tsan_mu_unlock((mu_ptr))
+#  define CV_WAIT(cv_ptr, mu_ptr) tsan_cv_wait((cv_ptr), (mu_ptr))
 #else
-static inline void tsan_acq(void *p){ (void)p; }
-static inline void tsan_rel(void *p){ (void)p; }
+#  define NLOCK(mu_ptr)   nsync_mu_lock((mu_ptr))
+#  define NUNLOCK(mu_ptr) nsync_mu_unlock((mu_ptr))
+#  define CV_WAIT(cv_ptr, mu_ptr) nsync_cv_wait((cv_ptr), (mu_ptr))
 #endif
-
-// TSAN-aware mutex helpers for nsync_mu
-#define NLOCK(mu_ptr) do { nsync_mu_lock((mu_ptr)); tsan_acq((mu_ptr)); } while(0)
-#define NUNLOCK(mu_ptr) do { tsan_rel((mu_ptr)); nsync_mu_unlock((mu_ptr)); } while(0)
 
 // Portable aligned allocation: prefer C11 aligned_alloc, fallback to malloc
 static inline void *go_aligned_alloc(size_t alignment, size_t size) {
@@ -225,44 +236,18 @@ static inline __attribute__((unused)) size_t go_channel_next_out_idx(const GoCha
     return o & chan->mask;
 }
 
-static int channel_send_pred(const void *arg) {
-    const channel_wait_arg_t *wa = (const channel_wait_arg_t *)arg;
-    const GoChannel *c = wa->c;
-    return (
-        atomic_load_explicit(&((GoChannel*)c)->closed, memory_order_acquire)
-#if NOSTR_CHANNEL_DERIVE_SIZE
-        || !go_channel_is_full(c)
-#else
-        || (c->size < c->capacity)
-#endif
-        || (wa->ctx && go_context_is_canceled(wa->ctx))
-    );
-}
+/* channel_send_pred removed: predicates must not read atomic state. */
 
 int go_channel_is_closed(GoChannel *chan) {
     int closed = 0;
     ensure_spin_env();
-    nsync_mu_lock(&chan->mutex);
-    tsan_acq(&chan->mutex);
-    closed = chan->closed;
-    tsan_rel(&chan->mutex);
-    nsync_mu_unlock(&chan->mutex);
+    NLOCK(&chan->mutex);
+    closed = atomic_load_explicit(&chan->closed, memory_order_acquire);
+    NUNLOCK(&chan->mutex);
     return closed;
 }
 
-static int channel_recv_pred(const void *arg) {
-    const channel_wait_arg_t *wa = (const channel_wait_arg_t *)arg;
-    const GoChannel *c = wa->c;
-    return (
-        atomic_load_explicit(&((GoChannel*)c)->closed, memory_order_acquire)
-#if NOSTR_CHANNEL_DERIVE_SIZE
-        || (go_channel_occupancy(c) > 0)
-#else
-        || (c->size > 0)
-#endif
-        || (wa->ctx && go_context_is_canceled(wa->ctx))
-    );
-}
+/* channel_recv_pred removed: predicates must not read atomic state. */
 
 /* Condition function to check if the channel has space */
 int go_channel_has_space(const void *chan) {
@@ -318,11 +303,13 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
         }
         // Wake a receiver if transition from empty (head==tail before increment)
         if (head == tail) {
+            NLOCK(&chan->mutex);
 #if NOSTR_REFINED_SIGNALING
             nsync_cv_signal(&chan->cond_empty);
 #else
             nsync_cv_broadcast(&chan->cond_empty);
 #endif
+            NUNLOCK(&chan->mutex);
 #ifdef NOSTR_ARM_WFE
             NOSTR_EVENT_SEND();
 #endif
@@ -450,11 +437,14 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         }
         // Wake a sender if transition from full (head - tail == capacity before dec)
         if ((head - tail) == chan->capacity) {
+            // Signal under mutex to avoid lost wakeups
+            NLOCK(&chan->mutex);
 #if NOSTR_REFINED_SIGNALING
             nsync_cv_signal(&chan->cond_full);
 #else
             nsync_cv_broadcast(&chan->cond_full);
 #endif
+            NUNLOCK(&chan->mutex);
 #ifdef NOSTR_ARM_WFE
             NOSTR_EVENT_SEND();
 #endif
@@ -640,7 +630,7 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
         return -1;
     }
 
-    channel_wait_arg_t wa_send = { .c = chan, .ctx = NULL };
+    /* removed wa_send: no predicate waits */
     while (
 #if NOSTR_CHANNEL_DERIVE_SIZE
         NOSTR_UNLIKELY(go_channel_is_full(chan))
@@ -658,8 +648,7 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
 #endif
              && NOSTR_LIKELY(!chan->closed); ++i) {
             NOSTR_CPU_RELAX();
-            nsync_time dl_spin = nsync_time_add(nsync_time_now(), nsync_time_us(g_spin_us));
-            nsync_mu_wait_with_deadline(&chan->mutex, channel_send_pred, &wa_send, NULL, dl_spin, NULL);
+            CV_WAIT(&chan->cond_full, &chan->mutex);
             // woke up
             nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
             if (
@@ -683,7 +672,7 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
             NOSTR_UNLIKELY(chan->size == chan->capacity)
 #endif
             && NOSTR_LIKELY(!chan->closed)) {
-            nsync_cv_wait(&chan->cond_full, &chan->mutex);
+            CV_WAIT(&chan->cond_full, &chan->mutex);
             // woke up
             nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
             if (
@@ -702,6 +691,12 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
         }
     }
 
+    // Guard: channel may have been freed while we were waiting
+    if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
+        NUNLOCK(&chan->mutex);
+        nostr_metric_timer_stop(&t, h_send_wait_ns);
+        return -1;
+    }
     if (NOSTR_UNLIKELY(chan->closed)) {
         NUNLOCK(&chan->mutex);
         nostr_metric_timer_stop(&t, h_send_wait_ns);
@@ -794,7 +789,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
         return -1;
     }
 
-    channel_wait_arg_t wa_recv = { .c = chan, .ctx = NULL };
+    /* removed wa_recv: no predicate waits */
     while ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
         NOSTR_UNLIKELY(go_channel_occupancy(chan) == 0)
@@ -812,8 +807,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
 #endif
              && NOSTR_LIKELY(!chan->closed); ++i) {
             NOSTR_CPU_RELAX();
-            nsync_time dl_spin = nsync_time_add(nsync_time_now(), nsync_time_us(g_spin_us));
-            nsync_mu_wait_with_deadline(&chan->mutex, channel_recv_pred, &wa_recv, NULL, dl_spin, NULL);
+            CV_WAIT(&chan->cond_empty, &chan->mutex);
             // woke up
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
             if ((
@@ -837,7 +831,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
             NOSTR_UNLIKELY(chan->size == 0)
 #endif
             ) && NOSTR_LIKELY(!chan->closed)) {
-            nsync_cv_wait(&chan->cond_empty, &chan->mutex);
+            CV_WAIT(&chan->cond_empty, &chan->mutex);
             // woke up
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
             if ((
@@ -879,6 +873,13 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
         }
         return -1; // Channel is closed and empty
         }
+    }
+
+    // Guard: channel may have been freed while we were waiting
+    if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
+        NUNLOCK(&chan->mutex);
+        nostr_metric_timer_stop(&t, h_recv_wait_ns);
+        return -1;
     }
 
     // Get data from the buffer
@@ -969,7 +970,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
         return -1;
     }
 
-    channel_wait_arg_t wa = { .c = chan, .ctx = ctx };
+    /* no predicate waits: correctness-first */
     while (
         /* avoid preprocessor inside macro args */
         (/* full? */ (
@@ -989,8 +990,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
 #endif
              && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx)); ++i) {
             NOSTR_CPU_RELAX();
-            nsync_time dl_spin = nsync_time_add(nsync_time_now(), nsync_time_us(g_spin_us));
-            nsync_mu_wait_with_deadline(&chan->mutex, channel_send_pred, &wa, NULL, dl_spin, NULL);
+            CV_WAIT(&chan->cond_full, &chan->mutex);
             // woke up (deadline or condition)
             nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
             if ((
@@ -1014,11 +1014,8 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
             NOSTR_UNLIKELY(chan->size == chan->capacity)
 #endif
             ) && !chan->closed && !(ctx && go_context_is_canceled(ctx))) {
-            // Fallback to a longer park to avoid busy waiting when contention persists
-            nsync_time dl = nsync_time_add(nsync_time_now(), nsync_time_ms(50));
-            NLOCK(&chan->mutex);
-            nsync_mu_wait_with_deadline(&chan->mutex, channel_send_pred, &wa, NULL, dl, NULL);
-            NUNLOCK(&chan->mutex);
+            // Correctness-first: wait under mutex until space is available
+            CV_WAIT(&chan->cond_full, &chan->mutex);
             nostr_metric_counter_add("go_chan_send_wait_wakeups", 1);
             if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
@@ -1076,13 +1073,9 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
     // Signal receiver(s) that data is available
     if (was_empty2) {
 #if NOSTR_REFINED_SIGNALING
-        NLOCK(&chan->mutex);
         nsync_cv_signal(&chan->cond_empty);
-        NUNLOCK(&chan->mutex);
 #else
-        NLOCK(&chan->mutex);
         nsync_cv_broadcast(&chan->cond_empty);
-        NUNLOCK(&chan->mutex);
 #endif
         // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
@@ -1113,7 +1106,7 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
         return -1;
     }
 
-    channel_wait_arg_t wa = { .c = chan, .ctx = ctx };
+    /* no predicate waits: correctness-first */
     while ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
         NOSTR_UNLIKELY(go_channel_occupancy(chan) == 0)
@@ -1131,10 +1124,7 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
 #endif
              && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx)); ++i) {
             NOSTR_CPU_RELAX();
-            nsync_time dl_spin = nsync_time_add(nsync_time_now(), nsync_time_us(g_spin_us));
-            NLOCK(&chan->mutex);
-            nsync_mu_wait_with_deadline(&chan->mutex, channel_recv_pred, &wa, NULL, dl_spin, NULL);
-            NUNLOCK(&chan->mutex);
+            CV_WAIT(&chan->cond_empty, &chan->mutex);
             // woke up
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
             if ((
@@ -1158,11 +1148,8 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
             NOSTR_UNLIKELY(chan->size == 0)
 #endif
             ) && NOSTR_LIKELY(!chan->closed) && !(ctx && go_context_is_canceled(ctx))) {
-            // Fallback to a longer park to avoid busy waiting when contention persists
-            nsync_time dl = nsync_time_add(nsync_time_now(), nsync_time_ms(50));
-            NLOCK(&chan->mutex);
-            nsync_mu_wait_with_deadline(&chan->mutex, channel_recv_pred, &wa, NULL, dl, NULL);
-            NUNLOCK(&chan->mutex);
+            // Correctness-first: wait under mutex until data is available
+            CV_WAIT(&chan->cond_empty, &chan->mutex);
             nostr_metric_counter_add("go_chan_recv_wait_wakeups", 1);
             if ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
@@ -1223,6 +1210,12 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
             }
             return -1; // Channel is closed and empty or canceled
         }
+    }
+
+    // Guard: channel may have been freed while we were waiting
+    if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
+        NUNLOCK(&chan->mutex);
+        return -1;
     }
 
     // Get data from the buffer
@@ -1286,13 +1279,13 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
         nostr_metric_counter_add("go_chan_signal_full", 1);
     }
 
-    nsync_mu_unlock(&chan->mutex);
+    NUNLOCK(&chan->mutex);
     return 0;
 }
 
 /* Close the channel (non-destructive): mark closed and wake waiters. */
 void go_channel_close(GoChannel *chan) {
-    nsync_mu_lock(&chan->mutex);
+    NLOCK(&chan->mutex);
 
     if (!atomic_load_explicit(&chan->closed, memory_order_acquire)) {
         atomic_store_explicit(&chan->closed, 1, memory_order_release); // Mark the channel as closed
@@ -1306,5 +1299,5 @@ void go_channel_close(GoChannel *chan) {
         nostr_metric_counter_add("go_chan_close_broadcasts", 1);
     }
 
-    nsync_mu_unlock(&chan->mutex);
+    NUNLOCK(&chan->mutex);
 }

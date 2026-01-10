@@ -2,9 +2,11 @@
 #include "gnostr-composer.h"
 #include "gnostr-timeline-view.h"
 #include "gnostr-profile-pane.h"
+#include "gnostr-profile-provider.h"
 #include "note_card_row.h"
 #include "../ipc/signer_ipc.h"
 #include <gio/gio.h>
+#include <glib.h>
 #include <gtk/gtk.h>
 #include <gdk/gdkkeysyms.h>
 #include <time.h>
@@ -18,6 +20,7 @@
 #include "nostr-json.h"
 /* NostrdB storage */
 #include "../storage_ndb.h"
+#include "libnostr_errors.h"
 /* JSON interface */
 #include "json.h"
 /* Relays helpers */
@@ -282,49 +285,21 @@ struct _GnostrMainWindow {
   guint           ndb_sweep_debounce_ms; /* default ~150ms */
 };
 
-/* ---- Profiles LRU helpers (cap enforced) ---- */
-static void meta_lru_touch(GnostrMainWindow *self, const char *pubkey_hex) {
-  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->meta_lru || !self->meta_lru_nodes || !pubkey_hex) return;
-  GList *node = g_hash_table_lookup(self->meta_lru_nodes, pubkey_hex);
-  if (!node) return;
-  g_queue_unlink(self->meta_lru, node);
-  g_queue_push_tail_link(self->meta_lru, node);
-}
+/* Old LRU functions removed - now using profile provider */
 
-static void meta_lru_insert(GnostrMainWindow *self, const char *pubkey_hex) {
-  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
-  if (!self->meta_lru || !self->meta_lru_nodes) return;
-  if (g_hash_table_contains(self->meta_lru_nodes, pubkey_hex)) { meta_lru_touch(self, pubkey_hex); return; }
-  char *kstore = g_strdup(pubkey_hex);
-  GList *node = g_list_alloc();
-  node->data = kstore;
-  g_queue_push_tail_link(self->meta_lru, node);
-  g_hash_table_insert(self->meta_lru_nodes, g_strdup(pubkey_hex), node);
-}
-
-static void meta_lru_evict_if_needed(GnostrMainWindow *self) {
-  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->meta_lru || !self->meta_lru_nodes || !self->meta_by_pubkey) return;
-  guint cap = self->meta_cache_cap ? self->meta_cache_cap : 10000;
-  while (g_hash_table_size(self->meta_lru_nodes) > cap) {
-    GList *old = self->meta_lru->head;
-    if (!old) break;
-    char *old_pk = (char*)old->data;
-    g_queue_unlink(self->meta_lru, old);
-    g_list_free_1(old);
-    g_hash_table_remove(self->meta_lru_nodes, old_pk);
-    g_hash_table_remove(self->meta_by_pubkey, old_pk);
-    g_free(old_pk);
-  }
-}
-
-/* Periodic logger for profile metadata cache sizes */
-static gboolean meta_cache_log_cb(gpointer data) {
+/* ---- Memory stats logging ---- */
+static gboolean memory_stats_cb(gpointer data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return G_SOURCE_CONTINUE;
-  guint msz = self->meta_by_pubkey ? g_hash_table_size(self->meta_by_pubkey) : 0;
-  guint lsz = self->meta_lru_nodes ? g_hash_table_size(self->meta_lru_nodes) : 0;
-  guint qsz = self->profile_fetch_queue ? self->profile_fetch_queue->len : 0;
-  g_message("[PROFILE_CACHE] meta=%u lru=%u queue=%u cap=%u", msz, lsz, qsz, self->meta_cache_cap);
+  
+  guint timeline_items = self->thread_roots ? g_list_model_get_n_items(G_LIST_MODEL(self->thread_roots)) : 0;
+  guint seen_texts = self->seen_texts ? g_hash_table_size(self->seen_texts) : 0;
+  guint seen_ids = self->seen_ids ? g_hash_table_size(self->seen_ids) : 0;
+  guint nodes_by_id = self->nodes_by_id ? g_hash_table_size(self->nodes_by_id) : 0;
+  guint profile_queue = self->profile_fetch_queue ? self->profile_fetch_queue->len : 0;
+  
+  g_message("[MEMORY] timeline=%u dedup_texts=%u dedup_ids=%u nodes=%u profile_queue=%u", 
+            timeline_items, seen_texts, seen_ids, nodes_by_id, profile_queue);
   return G_SOURCE_CONTINUE;
 }
 
@@ -341,12 +316,12 @@ static void avatar_http_ctx_free(AvatarHttpCtx *c){ if(!c) return; if (c->self) 
 static void enqueue_profile_author(GnostrMainWindow *self, const char *pubkey_hex) {
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex || strlen(pubkey_hex) != 64) return;
   
-  /* CRITICAL FIX: Don't re-fetch profiles we already have in memory cache!
+  /* CRITICAL FIX: Don't re-fetch profiles we already have in provider cache!
    * This prevents fetching the same 1411 authors repeatedly on every scroll. */
-  if (self->meta_by_pubkey && g_hash_table_contains(self->meta_by_pubkey, pubkey_hex)) {
-    /* Already have this profile in memory - skip */
-    /* Touch LRU so hot profiles remain resident */
-    meta_lru_touch(self, pubkey_hex);
+  GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey_hex);
+  if (meta) {
+    /* Already have this profile in provider - skip */
+    gnostr_profile_meta_free(meta);
     return;
   }
   
@@ -471,20 +446,30 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
   if (GNOSTR_IS_PROFILE_PANE(self->profile_pane)) {
     gnostr_profile_pane_set_pubkey(GNOSTR_PROFILE_PANE(self->profile_pane), pubkey_hex);
     
-    /* Look up profile from cache and update the pane */
-    if (self->meta_by_pubkey) {
-      gpointer cached = g_hash_table_lookup(self->meta_by_pubkey, pubkey_hex);
-      if (cached) {
-        const char *profile_json = (const char*)cached;
-        /* Update the profile pane with the cached JSON */
-        extern void gnostr_profile_pane_update_from_json(GnostrProfilePane *pane, const char *json);
-        gnostr_profile_pane_update_from_json(GNOSTR_PROFILE_PANE(self->profile_pane), profile_json);
-        /* Touch LRU on access */
-        meta_lru_touch(self, pubkey_hex);
-      } else {
-        /* Profile not in cache, enqueue for fetching */
-        enqueue_profile_author(self, pubkey_hex);
+    /* Look up profile from provider and update the pane */
+    GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey_hex);
+    if (meta) {
+      /* Build minimal JSON for profile pane from provider data */
+      g_autoptr(GString) json = g_string_new("{");
+      if (meta->display_name) {
+        g_string_append_printf(json, "\"display_name\":\"%s\"", meta->display_name);
       }
+      if (meta->name) {
+        if (json->len > 1) g_string_append(json, ",");
+        g_string_append_printf(json, "\"name\":\"%s\"", meta->name);
+      }
+      if (meta->picture) {
+        if (json->len > 1) g_string_append(json, ",");
+        g_string_append_printf(json, "\"picture\":\"%s\"", meta->picture);
+      }
+      g_string_append(json, "}");
+      
+      extern void gnostr_profile_pane_update_from_json(GnostrProfilePane *pane, const char *json);
+      gnostr_profile_pane_update_from_json(GNOSTR_PROFILE_PANE(self->profile_pane), json->str);
+      gnostr_profile_meta_free(meta);
+    } else {
+      /* Profile not in cache, enqueue for fetching */
+      enqueue_profile_author(self, pubkey_hex);
     }
   }
 }
@@ -602,32 +587,31 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
   const guint n_batches = (total + batch_sz - 1) / batch_sz;
   g_message("[PROFILE] Fetching %u authors from %zu relays (%u batches)", total, url_count, n_batches);
   
-  /* Check if a batch sequence is already in progress
-   * NOTE: profile_batches is non-NULL from when first batch starts until sequence completes */
+  /* Check for stale batch state (shouldn't happen, but be defensive) */
   if (self->profile_batches) {
-    g_debug("[PROFILE] Batch in progress, re-queuing %u authors", total);
-    /* Put authors back in queue for next dispatch - they'll be picked up after current sequence completes */
-    for (guint i = 0; i < authors->len; i++) {
-      char *author = (char*)g_ptr_array_index(authors, i);
-      if (author) g_ptr_array_add(self->profile_fetch_queue, author);
-      g_ptr_array_index(authors, i) = NULL; /* transfer ownership */
-    }
-    g_ptr_array_free(authors, TRUE);
-    if (dummy) nostr_filters_free(dummy);
-    g_free((gpointer)urls);
+    g_warning("[PROFILE] ⚠️ STALE BATCH DETECTED - profile_batches is non-NULL but no fetch running!");
+    g_warning("[PROFILE] This indicates a previous fetch never completed. Clearing stale state.");
     
-    /* CRITICAL: Do NOT schedule another fetch - the current sequence will trigger one when it completes */
-    return G_SOURCE_REMOVE;
-  }
-  
-  /* Clear completed sequence if any (only reached if no batch in progress) */
-  if (self->profile_batches) {
+    /* Clean up stale batch state */
     for (guint i = 0; i < self->profile_batches->len; i++) {
       GPtrArray *b = g_ptr_array_index(self->profile_batches, i);
       if (b) g_ptr_array_free(b, TRUE);
     }
     g_ptr_array_free(self->profile_batches, TRUE);
     self->profile_batches = NULL;
+    
+    if (self->profile_batch_urls) {
+      for (size_t i = 0; i < self->profile_batch_url_count; i++) {
+        g_free((gpointer)self->profile_batch_urls[i]);
+      }
+      g_free((gpointer)self->profile_batch_urls);
+      self->profile_batch_urls = NULL;
+      self->profile_batch_url_count = 0;
+    }
+    self->profile_batch_pos = 0;
+    
+    g_message("[PROFILE] Stale state cleared, proceeding with new fetch");
+    /* Fall through to create new batch sequence */
   }
   /* Do not set a free-func: we'll free each batch when its callback completes,
      and clean up any remaining (if canceled) at sequence end. */
@@ -682,14 +666,13 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
     guint deserialized = 0, dispatched = 0;
     GPtrArray *items = g_ptr_array_new_with_free_func(profile_apply_item_free);
     
-    /* Build LDJSON string for batch ingestion (much faster than individual calls) */
-    GString *ldjson = g_string_new(NULL);
+    /* NOTE: We used to accumulate an LDJSON buffer for batch ingestion here, but that
+     * duplicates memory for all events and can spike process RSS by hundreds of MB.
+     * Since we ingest one-by-one below, remove the LDJSON accumulation to reduce peak memory. */
     GHashTable *unique_pks = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     for (guint i = 0; i < jsons->len; i++) {
       const char *evt_json = (const char*)g_ptr_array_index(jsons, i);
       if (evt_json) {
-        g_string_append(ldjson, evt_json);
-        g_string_append_c(ldjson, '\n');
         /* Track unique pubkeys */
         NostrEvent *evt = nostr_event_new();
         if (evt && nostr_event_deserialize(evt, evt_json) == 0) {
@@ -747,7 +730,7 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
     if (failed > 0) {
       g_warning("[PROFILE] Ingested %u/%u events (%u failed validation)", ingested, jsons->len, failed);
     }
-    g_string_free(ldjson, TRUE);    
+    /* No LDJSON buffer to free: removed to avoid memory spikes */
     /* Now parse events for UI application */
     for (guint i = 0; i < jsons->len; i++) {
       const char *evt_json = (const char*)g_ptr_array_index(jsons, i);
@@ -878,28 +861,25 @@ static void derive_identity_from_meta(GnostrMainWindow *self, const char *pubkey
   if (out_display) *out_display = NULL;
   if (out_handle) *out_handle = NULL;
   if (out_avatar_url) *out_avatar_url = NULL;
-  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex || !self->meta_by_pubkey) return;
-  const char *content_json = (const char*)g_hash_table_lookup(self->meta_by_pubkey, pubkey_hex);
-  if (!content_json || !*content_json) return;
-  /* Touch LRU on access */
-  meta_lru_touch(self, pubkey_hex);
-  json_error_t jerr;
-  json_t *root = json_loads(content_json, 0, &jerr);
-  if (!root || !json_is_object(root)) { if (root) json_decref(root); return; }
-  const char *display = NULL, *handle = NULL, *picture = NULL;
-  json_t *jdisplay = json_object_get(root, "display_name");
-  json_t *jhandle  = json_object_get(root, "name");
-  json_t *jpic     = json_object_get(root, "picture");
-  if (json_is_string(jdisplay)) display = json_string_value(jdisplay);
-  if (json_is_string(jhandle))  handle  = json_string_value(jhandle);
-  if (json_is_string(jpic))     picture = json_string_value(jpic);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
+  
+  /* Use profile provider instead of old cache */
+  GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey_hex);
+  if (!meta) return;
+  
+  /* Extract fields from minimal struct */
+  const char *display = meta->display_name;
+  const char *handle = meta->name;
+  const char *picture = meta->picture;
+  
   if (out_display && display) *out_display = g_strdup(display);
   if (out_handle && handle) {
     if (handle[0] == '@') *out_handle = g_strdup(handle);
     else *out_handle = g_strdup_printf("@%s", handle);
   }
   if (out_avatar_url && picture) *out_avatar_url = g_strdup(picture);
-  json_decref(root);
+  
+  gnostr_profile_meta_free(meta);
 }
 
 static void append_note_from_event(GnostrMainWindow *self, NostrEvent *evt) {
@@ -911,15 +891,30 @@ static void append_note_from_event(GnostrMainWindow *self, NostrEvent *evt) {
   if (!content) content = "";
   if (!pubkey || !id_hex) return;
 
+  /* Enforce timeline item cap to prevent unbounded memory growth */
+  static guint timeline_cap = 0;
+  if (timeline_cap == 0) {
+    /* Initialize from env or use default of 2000 items */
+    const char *env_cap = g_getenv("GNOSTR_TIMELINE_CAP");
+    timeline_cap = env_cap ? (guint)atoi(env_cap) : 2000;
+    if (timeline_cap < 100) timeline_cap = 100; /* minimum 100 */
+    if (timeline_cap > 10000) timeline_cap = 10000; /* maximum 10000 */
+    g_message("[TIMELINE] Item cap set to %u (env: GNOSTR_TIMELINE_CAP)", timeline_cap);
+  }
+  
+  guint current_count = g_list_model_get_n_items(G_LIST_MODEL(self->thread_roots));
+  if (current_count >= timeline_cap) {
+    /* Remove oldest item (index 0) to make room */
+    g_list_store_remove(self->thread_roots, 0);
+    g_debug("[TIMELINE] Cap reached (%u), removed oldest item", timeline_cap);
+  }
+
   /* Identity from cached profile, if available */
   char *display = NULL, *handle = NULL, *avatar_url = NULL;
   derive_identity_from_meta(self, pubkey, &display, &handle, &avatar_url);
 
   /* Friendly timestamp string for initial bind (view recomputes from created_at too) */
   g_autofree char *ts = format_timestamp_approx(created_at);
-
-  /* Convert event to JSON for the JSON viewer */
-  g_autofree char *event_json = nostr_event_serialize(evt);
 
   /* Build TimelineItem */
   GObject *item = g_object_new(timeline_item_get_type(),
@@ -936,7 +931,6 @@ static void append_note_from_event(GnostrMainWindow *self, NostrEvent *evt) {
                "pubkey",      pubkey,
                "created-at",  created_at,
                "avatar-url",  avatar_url ? avatar_url : "",
-               "event-json",  event_json ? event_json : "",
                NULL);
 
   /* Append to roots model */
@@ -1034,14 +1028,12 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   if (!self->nodes_by_id) {
     self->nodes_by_id = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   }
-  /* Initialize metadata cache */
-  self->meta_by_pubkey = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, user_meta_free);
-  /* Initialize LRU for profiles */
-  self->meta_cache_cap = 10000;
-  self->meta_lru = g_queue_new();
-  self->meta_lru_nodes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  /* Periodic cache metrics logging */
-  g_timeout_add_seconds(60, meta_cache_log_cb, self);
+  /* Initialize profile provider (replaces old meta_by_pubkey cache) */
+  gnostr_profile_provider_init(0); /* Use env/default cap */
+  /* Profile provider stats logging */
+  g_timeout_add_seconds(60, (GSourceFunc)gnostr_profile_provider_log_stats, NULL);
+  /* Memory stats logging */
+  g_timeout_add_seconds(60, memory_stats_cb, self);
   /* Initialize avatar texture cache */
   self->avatar_tex_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_object_unref);
   /* Initialize reconnection flag */
@@ -1114,7 +1106,7 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
 
   /* Init debounced NostrDB profile sweep */
   self->ndb_sweep_source_id = 0;
-  self->ndb_sweep_debounce_ms = 150;
+  self->ndb_sweep_debounce_ms = 1000; /* 1 second - prevents transaction contention */
   if (!self->pool) self->pool = gnostr_simple_pool_new();
 
   /* Init background prefetch defaults and kick it off */
@@ -1207,18 +1199,12 @@ static void gnostr_main_window_dispose(GObject *object) {
   if (self->seen_texts) { g_hash_table_unref(self->seen_texts); self->seen_texts = NULL; }
   if (self->seen_ids) { g_hash_table_unref(self->seen_ids); self->seen_ids = NULL; }
   if (self->nodes_by_id) { g_hash_table_unref(self->nodes_by_id); self->nodes_by_id = NULL; }
-  if (self->meta_by_pubkey) { g_hash_table_unref(self->meta_by_pubkey); self->meta_by_pubkey = NULL; }
-  if (self->meta_lru_nodes) { g_hash_table_unref(self->meta_lru_nodes); self->meta_lru_nodes = NULL; }
-  if (self->meta_lru) {
-    /* free stored keys */
-    for (GList *l = self->meta_lru->head; l; l = l->next) {
-      g_free(l->data);
-    }
-    g_queue_free(self->meta_lru);
-    self->meta_lru = NULL;
-  }
   if (self->avatar_tex_cache) { g_hash_table_unref(self->avatar_tex_cache); self->avatar_tex_cache = NULL; }
   if (self->thread_roots) { g_object_unref(self->thread_roots); self->thread_roots = NULL; }
+  
+  /* Shutdown profile provider */
+  gnostr_profile_provider_shutdown();
+  
   G_OBJECT_CLASS(gnostr_main_window_parent_class)->dispose(object);
 }
 
@@ -1312,11 +1298,14 @@ static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_url
   gnostr_load_relays_into(arr);
   if (arr->len == 0) {
     /* Provide a sensible default if none configured */
-    g_ptr_array_add(arr, g_strdup("wss://relay.primal.net"));
-    g_ptr_array_add(arr, g_strdup("wss://relay.damus.io"));
-    g_ptr_array_add(arr, g_strdup("wss://relay.sharegap.net"));
-    g_ptr_array_add(arr, g_strdup("wss://nos.lol"));
-}
+    g_ptr_array_add(arr, g_strdup("wss://relay.primal.net/"));
+    g_ptr_array_add(arr, g_strdup("wss://relay.damus.io/"));
+    g_ptr_array_add(arr, g_strdup("wss://relay.sharegap.net/"));
+    g_ptr_array_add(arr, g_strdup("wss://nos.lol/"));
+    g_ptr_array_add(arr, g_strdup("wss://purplepag.es/"));
+    g_ptr_array_add(arr, g_strdup("wss://relay.nostr.band/"));
+    g_ptr_array_add(arr, g_strdup("wss://indexer.coracle.social/"));
+  }
   const char **urls = NULL; size_t n = arr->len;
   if (n > 0) {
     urls = g_new0(const char*, n);
@@ -1758,24 +1747,34 @@ static void apply_profiles_for_current_items_from_ndb(GnostrMainWindow *self) {
   guint count = g_hash_table_size(uniq);
   if (count == 0) { g_hash_table_unref(uniq); g_debug("ndb_profile_sweep: no pubkeys"); return; }
   
-  /* Check DB size to monitor ingestion progress */
-  static int last_db_count = 0;
-  static int last_unique_count = 0;
-  void *check_txn = NULL;
-  if (storage_ndb_begin_query(&check_txn) == 0) {
-    char **all = NULL; int all_count = 0;
-    storage_ndb_query(check_txn, "[{\"kinds\":[0],\"limit\":10000}]", &all, &all_count);
-    if (all_count != last_db_count || count != last_unique_count) {
-      g_debug("[PROFILE] DB sweep: %u unique authors, %d profiles in DB", count, all_count);
-      last_db_count = all_count;
-      last_unique_count = count;
+  /* Open single transaction for both DB check and profile queries */
+  /* LMDB allows multiple read txns, but write txns block reads. Retry a few times. */
+  void *txn = NULL;
+  int brc = LN_ERR_DB_TXN;
+  for (int retry = 0; retry < 5 && brc != 0; retry++) {
+    if (retry > 0) {
+      g_usleep(10000); /* 10ms delay between retries */
     }
-    if (all) storage_ndb_free_results(all, all_count);
-    storage_ndb_end_query(check_txn);
+    brc = storage_ndb_begin_query(&txn);
   }
   
-  void *txn = NULL; int brc = storage_ndb_begin_query(&txn);
-  if (brc != 0) { g_warning("ndb_profile_sweep: begin_query rc=%d", brc); g_hash_table_unref(uniq); return; }
+  if (brc != 0) {
+    g_debug("ndb_profile_sweep: begin_query failed after 5 retries rc=%d (write txn in progress, will retry next sweep)", brc);
+    g_hash_table_unref(uniq);
+    return;
+  }
+  
+  /* Check DB size to monitor ingestion progress (reuse same transaction) */
+  static int last_db_count = 0;
+  static int last_unique_count = 0;
+  char **all = NULL; int all_count = 0;
+  storage_ndb_query(txn, "[{\"kinds\":[0],\"limit\":10000}]", &all, &all_count);
+  if (all_count != last_db_count || count != last_unique_count) {
+    g_debug("[PROFILE] DB sweep: %u unique authors, %d profiles in DB", count, all_count);
+    last_db_count = all_count;
+    last_unique_count = count;
+  }
+  if (all) storage_ndb_free_results(all, all_count);
   GHashTableIter it; gpointer key, val; guint applied = 0, present = 0, not_found = 0;
   g_hash_table_iter_init(&it, uniq);
   while (g_hash_table_iter_next(&it, &key, &val)) {
@@ -1835,34 +1834,16 @@ static gboolean ndb_sweep_timeout_cb(gpointer data) {
 static void schedule_ndb_profile_sweep(GnostrMainWindow *self) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
   if (self->ndb_sweep_source_id) return; /* already scheduled */
-  guint delay = self->ndb_sweep_debounce_ms ? self->ndb_sweep_debounce_ms : 150;
+  guint delay = self->ndb_sweep_debounce_ms ? self->ndb_sweep_debounce_ms : 1000;
   self->ndb_sweep_source_id = g_timeout_add(delay, ndb_sweep_timeout_cb, g_object_ref(self));
 }
 
-/* Parses content_json minimally and stores by pubkey in meta cache */
+/* Parses content_json and stores in profile provider */
 static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pubkey_hex, const char *content_json) {
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex || !content_json) return;
-  if (!self->meta_by_pubkey) return;
   
-  /* Check if we already have this exact profile data - if so, skip update */
-  gpointer old = g_hash_table_lookup(self->meta_by_pubkey, pubkey_hex);
-  if (old && g_strcmp0((const char*)old, content_json) == 0) {
-    /* Identical data - no need to update anything */
-    return;
-  }
-  
-  /* Store a copy of the JSON as the value. Replace if existing */
-  if (old) {
-    /* replace */
-    g_hash_table_replace(self->meta_by_pubkey, g_strdup(pubkey_hex), g_strdup(content_json));
-  } else {
-    g_hash_table_insert(self->meta_by_pubkey, g_strdup(pubkey_hex), g_strdup(content_json));
-  }
-  /* Update LRU and enforce cap */
-  if (self->meta_lru && self->meta_lru_nodes) {
-    meta_lru_insert(self, pubkey_hex);
-    meta_lru_evict_if_needed(self);
-  }
+  /* Update profile provider cache (replaces old meta_by_pubkey) */
+  gnostr_profile_provider_update(pubkey_hex, content_json);
   /* Parse profile JSON and update any existing timeline items with this pubkey */
   const char *display = NULL, *handle = NULL, *picture = NULL;
   json_error_t jerr;

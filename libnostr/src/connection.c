@@ -32,9 +32,10 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         }
         // Token-bucket admission: frames/sec and bytes/sec
         if (!tb_allow(&conn->priv->tb_frames, 1.0) || !tb_allow(&conn->priv->tb_bytes, (double)len)) {
+            // Drop the frame silently to avoid closing during receive callback.
+            // Closing here can race with libwebsockets' internal state and cause heap issues.
             nostr_rl_log(NLOG_WARN, "ws", "drop: rate limit exceeded (len=%zu)", len);
-            lws_close_reason(wsi, LWS_CLOSE_STATUS_POLICY_VIOLATION, NULL, 0);
-            return -1;
+            return 0;
         }
         // Update RX timing/progress
         uint64_t now_us = (uint64_t)lws_now_usecs();
@@ -209,8 +210,9 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
             if (now_us - last_us > (uint64_t)read_to_s * 1000000ULL) {
                 nostr_rl_log(NLOG_WARN, "ws", "read timeout: no data for %llds", (long long)read_to_s);
                 nostr_metric_counter_add("ws_timeout_read", 1);
-                lws_close_reason(wsi, LWS_CLOSE_STATUS_POLICY_VIOLATION, NULL, 0);
-                return -1;
+                // Avoid closing from timer callback; just log and continue.
+                // The upper layers can decide to reconnect.
+                return 0;
             }
         }
         int64_t win_ms = nostr_limit_ws_progress_window_ms();
@@ -222,8 +224,9 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                 if (bytes < (uint64_t)min_bytes) {
                     nostr_rl_log(NLOG_WARN, "ws", "progress violation: %lluB < %lldB in %lldms", (unsigned long long)bytes, (long long)min_bytes, (long long)win_ms);
                     nostr_metric_counter_add("ws_progress_violation", 1);
-                    lws_close_reason(wsi, LWS_CLOSE_STATUS_POLICY_VIOLATION, NULL, 0);
-                    return -1;
+                    // Avoid closing from timer callback; just log and continue.
+                    // The upper layers can decide to reconnect.
+                    return 0;
                 }
                 // reset window
                 conn->priv->rx_window_start_ns = now_us;
@@ -280,20 +283,20 @@ static pthread_mutex_t g_lws_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void *lws_service_loop(void *arg) {
     (void)arg;
     for (;;) {
+        // Read context and running flag under mutex, but DO NOT hold the mutex
+        // while calling into libwebsockets service loop.
         pthread_mutex_lock(&g_lws_mutex);
         int running = g_lws_running;
         struct lws_context *ctx = g_lws_context;
-        if (!running || !ctx) {
-            pthread_mutex_unlock(&g_lws_mutex);
-            break;
-        }
-        // Keep mutex locked during lws_service to prevent concurrent context operations
-        lws_service(ctx, 50);
-        if (!g_lws_running || ctx != g_lws_context) {
-            pthread_mutex_unlock(&g_lws_mutex);
-            break;
-        }
         pthread_mutex_unlock(&g_lws_mutex);
+
+        if (!running || !ctx) {
+            break;
+        }
+
+        // Service events without holding our mutex to avoid deadlocks with
+        // threads calling lws_cancel_service() or other lws APIs.
+        lws_service(ctx, 50);
     }
     return NULL;
 }
@@ -430,7 +433,9 @@ NostrConnection *nostr_connection_new(const char *url) {
     connect_info.host = host;
     connect_info.origin = host;
     connect_info.ssl_connection = use_ssl ? LCCSCF_USE_SSL : 0;
-    connect_info.protocol = "nostr"; // request nostr subprotocol explicitly
+    // Protocol must match our protocols[] entry name. The nostr subprotocol is
+    // negotiated at the WS layer; here we select our callback protocol.
+    connect_info.protocol = "wss";
     connect_info.pwsi = &conn->priv->wsi;
     connect_info.userdata = conn;
 

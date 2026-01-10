@@ -2,6 +2,7 @@
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
+#include "gnostr-avatar-cache.h"
 #include <jansson.h>
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
@@ -284,9 +285,7 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
   g_object_unref(task);
 }
 
-/* Forward declare global cache functions from timeline-view.c */
-extern GdkTexture *gnostr_avatar_try_load_cached(const char *url);
-extern void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *initials);
+/* Use centralized avatar cache API (avatar_cache.h) */
 
 static void load_image_async(GnostrProfilePane *self, const char *url, GtkPicture *picture, GCancellable **cancellable_slot) {
   if (!url || !*url) return;

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.30)
 project(nostrc C)
-
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Global toggles to make instrumentation builds reproducible from the root
 option(GNOSTR_ENABLE_ASAN "Enable AddressSanitizer (with leak detection) for the entire workspace" OFF)
 option(GNOSTR_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer for the entire workspace" OFF)

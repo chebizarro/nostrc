@@ -22,6 +22,10 @@ int storage_ndb_ingest_event_json(const char *json, const char *relay_opt);
 int storage_ndb_begin_query(void **txn_out);
 int storage_ndb_end_query(void *txn);
 
+/* Convenience: begin a read query with bounded retries to tolerate transient contention.
+ * Returns 0 on success and sets *txn_out, nonzero on failure. Attempts times with sleep_ms between. */
+int storage_ndb_begin_query_retry(void **txn_out, int attempts, int sleep_ms);
+
 /* Queries */
 int storage_ndb_query(void *txn, const char *filters_json, char ***out_arr, int *out_count);
 int storage_ndb_text_search(void *txn, const char *q, const char *config_json, char ***out_arr, int *out_count);
@@ -29,6 +33,10 @@ int storage_ndb_text_search(void *txn, const char *q, const char *config_json, c
 /* Getters */
 int storage_ndb_get_note_by_id(void *txn, const unsigned char id32[32], char **json_out, int *json_len);
 int storage_ndb_get_profile_by_pubkey(void *txn, const unsigned char pk32[32], char **json_out, int *json_len);
+
+/* Convenience: fetch a note by hex id with internal begin/end and retries.
+ * Returns 0 on success, nonzero on failure. Allocates *json_out owned by store (do not free). */
+int storage_ndb_get_note_by_id_nontxn(const char *id_hex, char **json_out, int *json_len);
 
 /* Stats */
 int storage_ndb_stat_json(char **json_out);

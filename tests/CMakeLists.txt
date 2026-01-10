@@ -85,6 +85,11 @@ add_executable(test_json_raw test_json_raw.c)
 add_executable(test_filters_move_semantics test_filters_move_semantics.c)
 add_executable(microbench_json microbench_json.c)
 add_executable(test_nip86_policy test_nip86_policy.c)
+add_executable(test_channel_incremental test_channel_incremental.c)
+target_include_directories(test_channel_incremental PRIVATE ${CMAKE_SOURCE_DIR}/libgo/include)
+target_link_libraries(test_channel_incremental PRIVATE libgo nostr pthread ${NSYNC_LIB})
+apply_sanitizers(test_channel_incremental)
+add_test(NAME GoChannelIncremental COMMAND test_channel_incremental)
 
 # New tests for event canonicalization and NIP-04 AEAD
 add_executable(test_event_canonical test_event_canonical.c)
