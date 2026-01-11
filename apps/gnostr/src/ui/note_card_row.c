@@ -11,8 +11,7 @@
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/note-card-row.ui"
 
-/* Serialize ad-hoc UI queries to reduce reader-slot contention */
-static GMutex s_ndb_query_mutex;
+/* No longer using mutex - proper fix is at backend level */
 
 struct _GnostrNoteCardRow {
   GtkWidget parent_instance;
@@ -160,10 +159,7 @@ static void show_json_viewer(GnostrNoteCardRow *self) {
   char *event_json = NULL;
   int json_len = 0;
   
-  /* Use mutex to serialize UI queries */
-  g_mutex_lock(&s_ndb_query_mutex);
   int rc = storage_ndb_get_note_by_id_nontxn(self->id_hex, &event_json, &json_len);
-  g_mutex_unlock(&s_ndb_query_mutex);
 
   if (rc != 0 || !event_json) {
     g_warning("Failed to fetch event JSON from NostrDB (id=%s, rc=%d)", 

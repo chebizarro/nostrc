@@ -203,15 +203,21 @@ void nostr_subscription_dispatch_eose(NostrSubscription *sub) {
         // The goroutine polling loop DEPENDS on receiving EOSE to complete.
         // Non-blocking try_send can drop the signal if timing is off.
         // The channel has buffer=8, so this won't deadlock in normal operation.
-        fprintf(stderr, "[EOSE_SIGNAL] sid=%s sending to channel (BLOCKING)\n", sub->priv->id ? sub->priv->id : "null");
+        if (getenv("NOSTR_DEBUG_EOSE")) {
+            fprintf(stderr, "[EOSE_SIGNAL] sid=%s sending to channel (BLOCKING)\n", sub->priv->id ? sub->priv->id : "null");
+        }
         go_channel_send(sub->end_of_stored_events, NULL);
         nostr_metric_counter_add("sub_eose_signal", 1);
-        fprintf(stderr, "[EOSE_SIGNAL] sid=%s sent successfully\n", sub->priv->id ? sub->priv->id : "null");
+        if (getenv("NOSTR_DEBUG_EOSE")) {
+            fprintf(stderr, "[EOSE_SIGNAL] sid=%s sent successfully\n", sub->priv->id ? sub->priv->id : "null");
+        }
         if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
             fprintf(stderr, "[sub %s] dispatch_eose: signaled EOSE\n", sub->priv->id);
         }
     } else {
-        fprintf(stderr, "[EOSE_DUP] sid=%s already eosed, ignoring\n", sub->priv->id ? sub->priv->id : "null");
+        if (getenv("NOSTR_DEBUG_EOSE")) {
+            fprintf(stderr, "[EOSE_DUP] sid=%s already eosed, ignoring\n", sub->priv->id ? sub->priv->id : "null");
+        }
     }
 }
 

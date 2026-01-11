@@ -1,6 +1,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <pthread.h>
+#include <time.h>
+#include <unistd.h>
 #include "libnostr_store.h"
 #include "libnostr_errors.h"
 #include "store_int.h"
@@ -23,6 +26,35 @@
 #elif defined(__GNUC__)
 #  pragma GCC diagnostic pop
 #endif
+
+/* Thread-local storage for managing LMDB read transactions */
+typedef struct {
+    struct ndb_txn *txn;
+    time_t last_used;
+    pthread_t thread_id;
+} tls_txn_t;
+
+static pthread_key_t tls_txn_key;
+static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
+
+/* Cleanup function for thread-local transactions */
+static void tls_txn_destructor(void *data)
+{
+    tls_txn_t *tls = (tls_txn_t*)data;
+    if (tls) {
+        if (tls->txn) {
+            ndb_end_query(tls->txn);
+            free(tls->txn);
+        }
+        free(tls);
+    }
+}
+
+/* Initialize thread-local storage */
+static void tls_init(void)
+{
+    pthread_key_create(&tls_txn_key, tls_txn_destructor);
+}
 
 /* very small helpers to parse minimal JSON-like key/values without deps */
 static int parse_kv_int(const char *json, const char *key, long long *out)
@@ -155,19 +187,74 @@ static int ln_ndb_begin_query(ln_store *s, void **txn_out)
   if (!s || !s->impl || !txn_out) return LN_ERR_DB_TXN;
   struct ndb *db = (struct ndb *)((struct ln_ndb_impl *)s->impl)->db;
   if (!db) return LN_ERR_DB_TXN;
-  struct ndb_txn *txn = (struct ndb_txn *)calloc(1, sizeof(*txn));
-  if (!txn) return LN_ERR_OOM;
-  if (!ndb_begin_query(db, txn)) {
-    free(txn);
-    return LN_ERR_DB_TXN;
+  
+  /* Initialize thread-local storage once */
+  pthread_once(&tls_init_once, tls_init);
+  
+  /* Get or create thread-local transaction */
+  tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
+  time_t now = time(NULL);
+  
+  /* Reuse existing transaction if recent (within 60 seconds) */
+  if (tls && tls->txn && (now - tls->last_used) < 60) {
+    tls->last_used = now;
+    *txn_out = tls->txn;
+    return LN_OK;
   }
-  *txn_out = txn;
-  return LN_OK;
+  
+  /* Clean up old transaction if exists */
+  if (tls && tls->txn) {
+    ndb_end_query(tls->txn);
+    free(tls->txn);
+    tls->txn = NULL;
+  }
+  
+  /* Create new thread-local storage if needed */
+  if (!tls) {
+    tls = calloc(1, sizeof(tls_txn_t));
+    if (!tls) return LN_ERR_OOM;
+    tls->thread_id = pthread_self();
+    pthread_setspecific(tls_txn_key, tls);
+  }
+  
+  /* Create new transaction with retries for rc=1003 */
+  int attempts = 0;
+  while (attempts < 50) {
+    struct ndb_txn *txn = (struct ndb_txn *)calloc(1, sizeof(*txn));
+    if (!txn) return LN_ERR_OOM;
+    
+    if (ndb_begin_query(db, txn)) {
+      tls->txn = txn;
+      tls->last_used = now;
+      *txn_out = txn;
+      return LN_OK;
+    }
+    
+    free(txn);
+    
+    /* Exponential backoff for retries */
+    int backoff_ms = 10 * (1 << (attempts < 5 ? attempts : 5));
+    if (backoff_ms > 200) backoff_ms = 200;
+    usleep(backoff_ms * 1000);
+    attempts++;
+  }
+  
+  return LN_ERR_DB_TXN;
 }
 
 static int ln_ndb_end_query(ln_store *s, void *txn)
 {
   if (!s || !txn) return LN_ERR_DB_TXN;
+  
+  /* Check if this is a thread-local transaction */
+  tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
+  if (tls && tls->txn == txn) {
+    /* Thread-local transaction - don't actually end it, just update timestamp */
+    tls->last_used = time(NULL);
+    return LN_OK;
+  }
+  
+  /* Non-thread-local transaction - end normally */
   int ok = ndb_end_query((struct ndb_txn *)txn);
   free(txn);
   return ok ? LN_OK : LN_ERR_DB_TXN;

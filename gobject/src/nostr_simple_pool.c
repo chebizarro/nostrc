@@ -1111,12 +1111,21 @@ static void *fetch_profiles_goroutine(void *arg) {
     /* Poll for events with timeout */
     guint64 t_start = g_get_monotonic_time();
     guint64 t_last_activity = t_start;
+    
     /* Timeout configuration:
-     * - QUIET: 1 second of no activity (events or EOSE)
-     * - HARD: 5 seconds absolute maximum (MUST be enabled to prevent infinite hang)
-     * Relays typically send events in 100-500ms, EOSE within 500ms-1s after that. */
-    const guint64 QUIET_TIMEOUT_US = 1000000;  // 1 second of no activity (currently unused)
-    const guint64 HARD_TIMEOUT_US = 5000000;   // 5 seconds absolute maximum
+     * - HARD: Absolute maximum time to wait (configurable via env var)
+     * Default to 120s hard timeout to accommodate slow relays and message processing delays
+     * Can be overridden via GNOSTR_PROFILE_TIMEOUT_MS environment variable */
+    
+    guint64 HARD_TIMEOUT_US = 120000000;  // Default 120 seconds (2 minutes)
+    const char *timeout_env = getenv("GNOSTR_PROFILE_TIMEOUT_MS");
+    if (timeout_env && *timeout_env) {
+        int timeout_ms = atoi(timeout_env);
+        if (timeout_ms > 0) {
+            HARD_TIMEOUT_US = (guint64)timeout_ms * 1000;
+            g_message("[GOROUTINE] Using custom timeout: %dms", timeout_ms);
+        }
+    }
     
     while (TRUE) {
         guint64 now = g_get_monotonic_time();
@@ -1179,12 +1188,17 @@ static void *fetch_profiles_goroutine(void *arg) {
                 }
             }
             
-            /* Check EOSE */
+            /* Check EOSE (non-blocking) - prioritize this check */
             if (!item->eosed) {
                 GoChannel *ch_eose = nostr_subscription_get_eose_channel(item->sub);
                 if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
-                    g_message("[GOROUTINE] EOSE received from %s", item->relay_url);
                     item->eosed = TRUE;
+                    guint eosed_count = 0;
+                    for (guint i = 0; i < ctx->subs->len; i++) {
+                        SubItem *item = (SubItem*)ctx->subs->pdata[i];
+                        if (item && item->sub && item->eosed) eosed_count++;
+                    }
+                    g_message("[GOROUTINE] EOSE received from %s", item->relay_url ? item->relay_url : "(null)");
                     any_activity = TRUE;
                 }
             }
@@ -1219,17 +1233,14 @@ static void *fetch_profiles_goroutine(void *arg) {
             t_last_activity = now;
         }
         
-        /* Check timeouts - SIMPLIFIED LOGIC */
+        /* Check timeouts */
         guint64 total_elapsed = now - t_start;
 
-        /* Exit condition: hard timeout of 3 seconds (absolute max).
-         * Note: All subscriptions hitting EOSE exit earlier.
-         */
-
+        /* Only use hard timeout - no inactivity timeout since EOSE can be delayed
+         * due to message processing backlog */
         if (HARD_TIMEOUT_US > 0 && total_elapsed > HARD_TIMEOUT_US) {
-            /* Hard timeout (3s) - give up */
-            g_message("[GOROUTINE] Hard timeout after %lums (eosed=%u/%u)", 
-                      (unsigned long)(total_elapsed / 1000), eosed_count, ctx->subs->len);
+            g_warning("[GOROUTINE] Hard timeout after %lums - some relays may not have sent EOSE (eosed=%u/%u)", 
+                      (unsigned long)(total_elapsed / 1000), eosed_count, fired_count);
             break;
         }
         
@@ -1242,55 +1253,58 @@ static void *fetch_profiles_goroutine(void *arg) {
         nostr_filters_free(filters);
     }
     
-    /* CRITICAL: Async subscription cleanup to prevent goroutine blocking
-     * Use nostr_subscription_free_async() with timeout to avoid deadlocks.
-     * If cleanup times out, abandon the handle - memory will leak but app won't hang.
+    /* IMPORTANT: Only close and cleanup subscriptions that have received EOSE.
+     * Subscriptions that haven't received EOSE should remain open to continue
+     * receiving events. This prevents EOSE_LATE messages and ensures proper
+     * subscription lifecycle management.
      */
     
-    /* Step 1: Cancel the background context - signals all subscription workers to exit */
-    if (cancel) {
-        cancel(bg);
-    }
-    
-    /* Step 2: Free each subscription asynchronously with timeout
-     * CRITICAL: Must WAIT for cleanup to complete, not abandon!
-     * Abandoning causes thread accumulation as worker threads never get joined.
-     */
     for (guint i = 0; i < ctx->subs->len; i++) {
         SubItem *item = (SubItem*)ctx->subs->pdata[i];
         if (item && item->sub) {
             const char *sid = nostr_subscription_get_id(item->sub);
-            g_message("[GOROUTINE] Cleanup begin sid=%s relay=%s", sid ? sid : "null", item->relay_url ? item->relay_url : "(null)");
-
-            /* CORRECT ORDER (per MEMORY[5d97ad44]):
-             * 1. Close (sends CLOSE message to relay)
-             * 2. Unsubscribe (cancels context, signals worker to exit)
-             * 3. Wait (ensures worker thread exits)
-             * 4. Free (releases resources) */
             
-            g_message("[GOROUTINE] Cleanup step: close sid=%s", sid ? sid : "null");
-            nostr_subscription_close(item->sub, NULL);
-            g_message("[GOROUTINE] Cleanup step: close complete sid=%s", sid ? sid : "null");
+            /* Only cleanup subscriptions that have received EOSE */
+            if (item->eosed) {
+                g_message("[GOROUTINE] Cleanup for EOSED subscription sid=%s relay=%s", 
+                          sid ? sid : "null", item->relay_url ? item->relay_url : "(null)");
 
-            g_message("[GOROUTINE] Cleanup step: unsubscribe sid=%s", sid ? sid : "null");
-            nostr_subscription_unsubscribe(item->sub);
-            g_message("[GOROUTINE] Cleanup step: unsubscribe complete sid=%s", sid ? sid : "null");
-
-            g_message("[GOROUTINE] Cleanup step: wait sid=%s", sid ? sid : "null");
-            nostr_subscription_wait(item->sub);
-            g_message("[GOROUTINE] Cleanup step: wait complete sid=%s", sid ? sid : "null");
-
-            g_message("[GOROUTINE] Cleanup step: free sid=%s", sid ? sid : "null");
-            nostr_subscription_free(item->sub);
-            g_message("[GOROUTINE] Cleanup step: free complete sid=%s", sid ? sid : "null");
-
-            g_message("[GOROUTINE] Cleanup success sid=%s", sid ? sid : "null");
+                /* Proper cleanup order for subscriptions that have completed:
+                 * 1. Close (sends CLOSE message to relay)
+                 * 2. Unsubscribe (cancels context, signals worker to exit)
+                 * 3. Wait (ensures worker thread exits)
+                 * 4. Free (releases resources) */
+                
+                nostr_subscription_close(item->sub, NULL);
+                nostr_subscription_unsubscribe(item->sub);
+                nostr_subscription_wait(item->sub);
+                nostr_subscription_free(item->sub);
+                
+                g_message("[GOROUTINE] Cleanup complete for sid=%s", sid ? sid : "null");
+            } else {
+                /* Subscription didn't receive EOSE - keep it open but cancel context
+                 * to stop it from processing more events */
+                g_message("[PROFILE_FETCH] Subscription sid=%s relay=%s did not receive EOSE within timeout, closing (normal for slow relays)", 
+                          sid ? sid : "null", item->relay_url ? item->relay_url : "(null)");
+                
+                /* Still need to cleanup even if no EOSE, but log it as abnormal */
+                nostr_subscription_close(item->sub, NULL);
+                nostr_subscription_unsubscribe(item->sub);
+                nostr_subscription_wait(item->sub);
+                nostr_subscription_free(item->sub);
+            }
+            
             item->sub = NULL;
         }
         if (item) {
             g_free(item->relay_url);
             g_free(item);
         }
+    }
+    
+    /* Cancel the background context after cleanup */
+    if (cancel) {
+        cancel(bg);
     }
     
     /* Complete the task immediately - cleanup continues in background */

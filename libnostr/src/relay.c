@@ -424,28 +424,20 @@ static void *message_loop(void *arg) {
             break; }
         case NOSTR_ENVELOPE_EOSE: {
             NostrEOSEEnvelope *env = (NostrEOSEEnvelope *)envelope;
-            fprintf(stderr, "[EOSE_RECV] relay=%s sid=%s\n",
-                    r->url ? r->url : "unknown", env->message ? env->message : "null");
             if (env->message) {
                 int serial = nostr_sub_id_to_serial(env->message);
                 NostrSubscription *subscription = go_hash_map_get_int(r->subscriptions, serial);
                 if (subscription) {
-                    fprintf(stderr, "[EOSE_DISPATCH] relay=%s sid=%s serial=%d - dispatching to subscription\n",
-                            r->url ? r->url : "unknown", env->message, serial);
-                    nostr_subscription_dispatch_eose(subscription);
-                } else {
-                    /* Downgrade noisy late-EOS warnings: subs may have been logically
-                     * canceled on client side but kept alive until final free. Relays
-                     * can legitimately deliver EOSE slightly late. Log at info level
-                     * to avoid alarming users; enable NOSTR_DEBUG_EOSE=1 to restore
-                     * the old explicit warning. */
                     if (getenv("NOSTR_DEBUG_EOSE")) {
-                        fprintf(stderr, "[EOSE_DROP] relay=%s sid=%s serial=%d - subscription not found in hash map!\n",
-                                r->url ? r->url : "unknown", env->message, serial);
-                    } else {
-                        fprintf(stderr, "[EOSE_LATE] relay=%s sid=%s serial=%d - late EOSE for unknown subscription (suppressed)\n",
+                        fprintf(stderr, "[EOSE_DISPATCH] relay=%s sid=%s serial=%d - dispatching to subscription\n",
                                 r->url ? r->url : "unknown", env->message, serial);
                     }
+                    nostr_subscription_dispatch_eose(subscription);
+                } else {
+                    /* This should not happen if subscriptions are properly managed.
+                     * Subscriptions should only be closed AFTER receiving EOSE. */
+                    fprintf(stderr, "[EOSE_LATE] relay=%s sid=%s serial=%d - ERROR: EOSE for unknown subscription (subscription closed prematurely?)\n",
+                            r->url ? r->url : "unknown", env->message, serial);
                 }
             }
             char tmp[128]; snprintf(tmp, sizeof(tmp), "EOSE sid=%s", env->message ? env->message : "");
