@@ -1262,12 +1262,17 @@ static void *fetch_profiles_goroutine(void *arg) {
     for (guint i = 0; i < ctx->subs->len; i++) {
         SubItem *item = (SubItem*)ctx->subs->pdata[i];
         if (item && item->sub) {
-            const char *sid = nostr_subscription_get_id(item->sub);
+            /* Copy subscription ID before freeing to avoid use-after-free */
+            const char *sid_ptr = nostr_subscription_get_id(item->sub);
+            char sid_copy[64] = {0};
+            if (sid_ptr) {
+                strncpy(sid_copy, sid_ptr, sizeof(sid_copy) - 1);
+            }
             
             /* Only cleanup subscriptions that have received EOSE */
             if (item->eosed) {
                 g_message("[GOROUTINE] Cleanup for EOSED subscription sid=%s relay=%s", 
-                          sid ? sid : "null", item->relay_url ? item->relay_url : "(null)");
+                          sid_copy[0] ? sid_copy : "null", item->relay_url ? item->relay_url : "(null)");
 
                 /* Proper cleanup order for subscriptions that have completed:
                  * 1. Close (sends CLOSE message to relay)
@@ -1280,12 +1285,12 @@ static void *fetch_profiles_goroutine(void *arg) {
                 nostr_subscription_wait(item->sub);
                 nostr_subscription_free(item->sub);
                 
-                g_message("[GOROUTINE] Cleanup complete for sid=%s", sid ? sid : "null");
+                g_message("[GOROUTINE] Cleanup complete for sid=%s", sid_copy[0] ? sid_copy : "null");
             } else {
                 /* Subscription didn't receive EOSE - keep it open but cancel context
                  * to stop it from processing more events */
                 g_message("[PROFILE_FETCH] Subscription sid=%s relay=%s did not receive EOSE within timeout, closing (normal for slow relays)", 
-                          sid ? sid : "null", item->relay_url ? item->relay_url : "(null)");
+                          sid_copy[0] ? sid_copy : "null", item->relay_url ? item->relay_url : "(null)");
                 
                 /* Still need to cleanup even if no EOSE, but log it as abnormal */
                 nostr_subscription_close(item->sub, NULL);

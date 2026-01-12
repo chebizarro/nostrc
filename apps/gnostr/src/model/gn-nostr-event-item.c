@@ -1,0 +1,326 @@
+#include "gn-nostr-event-item.h"
+#include <string.h>
+
+struct _GnNostrEventItem {
+  GObject parent_instance;
+  
+  char *event_id;
+  char *pubkey;
+  gint64 created_at;
+  char *content;
+  gint kind;
+  
+  GnNostrProfile *profile;
+  
+  char *thread_root_id;
+  char *parent_id;
+  guint reply_depth;
+  
+  gboolean is_root;
+  gboolean is_reply;
+  gboolean is_repost;
+  gboolean is_muted;
+};
+
+G_DEFINE_TYPE(GnNostrEventItem, gn_nostr_event_item, G_TYPE_OBJECT)
+
+enum {
+  PROP_0,
+  PROP_EVENT_ID,
+  PROP_PUBKEY,
+  PROP_CREATED_AT,
+  PROP_CONTENT,
+  PROP_KIND,
+  PROP_PROFILE,
+  PROP_THREAD_ROOT_ID,
+  PROP_PARENT_ID,
+  PROP_REPLY_DEPTH,
+  PROP_IS_ROOT,
+  PROP_IS_REPLY,
+  PROP_IS_REPOST,
+  PROP_IS_MUTED,
+  N_PROPS
+};
+
+static GParamSpec *properties[N_PROPS];
+
+static void gn_nostr_event_item_finalize(GObject *object) {
+  GnNostrEventItem *self = GN_NOSTR_EVENT_ITEM(object);
+  
+  g_free(self->event_id);
+  g_free(self->pubkey);
+  g_free(self->content);
+  g_free(self->thread_root_id);
+  g_free(self->parent_id);
+  
+  g_clear_object(&self->profile);
+  
+  G_OBJECT_CLASS(gn_nostr_event_item_parent_class)->finalize(object);
+}
+
+static void gn_nostr_event_item_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {
+  GnNostrEventItem *self = GN_NOSTR_EVENT_ITEM(object);
+  
+  switch (prop_id) {
+    case PROP_EVENT_ID:
+      g_value_set_string(value, self->event_id);
+      break;
+    case PROP_PUBKEY:
+      g_value_set_string(value, self->pubkey);
+      break;
+    case PROP_CREATED_AT:
+      g_value_set_int64(value, self->created_at);
+      break;
+    case PROP_CONTENT:
+      g_value_set_string(value, self->content);
+      break;
+    case PROP_KIND:
+      g_value_set_int(value, self->kind);
+      break;
+    case PROP_PROFILE:
+      g_value_set_object(value, self->profile);
+      break;
+    case PROP_THREAD_ROOT_ID:
+      g_value_set_string(value, self->thread_root_id);
+      break;
+    case PROP_PARENT_ID:
+      g_value_set_string(value, self->parent_id);
+      break;
+    case PROP_REPLY_DEPTH:
+      g_value_set_uint(value, self->reply_depth);
+      break;
+    case PROP_IS_ROOT:
+      g_value_set_boolean(value, self->is_root);
+      break;
+    case PROP_IS_REPLY:
+      g_value_set_boolean(value, self->is_reply);
+      break;
+    case PROP_IS_REPOST:
+      g_value_set_boolean(value, self->is_repost);
+      break;
+    case PROP_IS_MUTED:
+      g_value_set_boolean(value, self->is_muted);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+  }
+}
+
+static void gn_nostr_event_item_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) {
+  GnNostrEventItem *self = GN_NOSTR_EVENT_ITEM(object);
+  
+  switch (prop_id) {
+    case PROP_EVENT_ID:
+      g_free(self->event_id);
+      self->event_id = g_value_dup_string(value);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+  }
+}
+
+static void gn_nostr_event_item_class_init(GnNostrEventItemClass *klass) {
+  GObjectClass *object_class = G_OBJECT_CLASS(klass);
+  
+  object_class->finalize = gn_nostr_event_item_finalize;
+  object_class->get_property = gn_nostr_event_item_get_property;
+  object_class->set_property = gn_nostr_event_item_set_property;
+  
+  properties[PROP_EVENT_ID] = g_param_spec_string("event-id", "Event ID", "Event ID hex", NULL,
+                                                   G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
+  properties[PROP_PUBKEY] = g_param_spec_string("pubkey", "Pubkey", "Author pubkey", NULL,
+                                                 G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_CREATED_AT] = g_param_spec_int64("created-at", "Created At", "Unix timestamp", 0, G_MAXINT64, 0,
+                                                    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_CONTENT] = g_param_spec_string("content", "Content", "Event content", NULL,
+                                                  G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_KIND] = g_param_spec_int("kind", "Kind", "Event kind", 0, G_MAXINT, 1,
+                                            G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_PROFILE] = g_param_spec_object("profile", "Profile", "Author profile", GN_TYPE_NOSTR_PROFILE,
+                                                  G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_THREAD_ROOT_ID] = g_param_spec_string("thread-root-id", "Thread Root ID", "Root event ID", NULL,
+                                                         G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_PARENT_ID] = g_param_spec_string("parent-id", "Parent ID", "Parent event ID", NULL,
+                                                    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_REPLY_DEPTH] = g_param_spec_uint("reply-depth", "Reply Depth", "Thread depth", 0, G_MAXUINT, 0,
+                                                    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_IS_ROOT] = g_param_spec_boolean("is-root", "Is Root", "Is thread root", FALSE,
+                                                   G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_IS_REPLY] = g_param_spec_boolean("is-reply", "Is Reply", "Is reply", FALSE,
+                                                    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_IS_REPOST] = g_param_spec_boolean("is-repost", "Is Repost", "Is repost", FALSE,
+                                                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_IS_MUTED] = g_param_spec_boolean("is-muted", "Is Muted", "Is muted", FALSE,
+                                                    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  
+  g_object_class_install_properties(object_class, N_PROPS, properties);
+}
+
+static void gn_nostr_event_item_init(GnNostrEventItem *self) {
+  self->kind = 1;
+}
+
+GnNostrEventItem *gn_nostr_event_item_new(const char *event_id) {
+  return g_object_new(GN_TYPE_NOSTR_EVENT_ITEM, "event-id", event_id, NULL);
+}
+
+const char *gn_nostr_event_item_get_event_id(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
+  return self->event_id;
+}
+
+const char *gn_nostr_event_item_get_pubkey(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
+  return self->pubkey;
+}
+
+gint64 gn_nostr_event_item_get_created_at(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), 0);
+  return self->created_at;
+}
+
+const char *gn_nostr_event_item_get_content(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
+  return self->content;
+}
+
+gint gn_nostr_event_item_get_kind(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), 0);
+  return self->kind;
+}
+
+GnNostrProfile *gn_nostr_event_item_get_profile(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
+  return self->profile;
+}
+
+const char *gn_nostr_event_item_get_thread_root_id(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
+  return self->thread_root_id;
+}
+
+const char *gn_nostr_event_item_get_parent_id(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
+  return self->parent_id;
+}
+
+guint gn_nostr_event_item_get_reply_depth(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), 0);
+  return self->reply_depth;
+}
+
+gboolean gn_nostr_event_item_get_is_root(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), FALSE);
+  return self->is_root;
+}
+
+gboolean gn_nostr_event_item_get_is_reply(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), FALSE);
+  return self->is_reply;
+}
+
+gboolean gn_nostr_event_item_get_is_repost(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), FALSE);
+  return self->is_repost;
+}
+
+gboolean gn_nostr_event_item_get_is_muted(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), FALSE);
+  return self->is_muted;
+}
+
+void gn_nostr_event_item_set_profile(GnNostrEventItem *self, GnNostrProfile *profile) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
+  
+  if (g_set_object(&self->profile, profile)) {
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_PROFILE]);
+  }
+}
+
+void gn_nostr_event_item_set_thread_info(GnNostrEventItem *self,
+                                          const char *root_id,
+                                          const char *parent_id,
+                                          guint depth) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
+  
+  gboolean changed = FALSE;
+  
+  if (g_strcmp0(self->thread_root_id, root_id) != 0) {
+    g_free(self->thread_root_id);
+    self->thread_root_id = g_strdup(root_id);
+    changed = TRUE;
+  }
+  
+  if (g_strcmp0(self->parent_id, parent_id) != 0) {
+    g_free(self->parent_id);
+    self->parent_id = g_strdup(parent_id);
+    changed = TRUE;
+  }
+  
+  if (self->reply_depth != depth) {
+    self->reply_depth = depth;
+    changed = TRUE;
+  }
+  
+  gboolean new_is_root = (root_id == NULL || g_strcmp0(self->event_id, root_id) == 0);
+  gboolean new_is_reply = (parent_id != NULL);
+  
+  if (self->is_root != new_is_root) {
+    self->is_root = new_is_root;
+    changed = TRUE;
+  }
+  
+  if (self->is_reply != new_is_reply) {
+    self->is_reply = new_is_reply;
+    changed = TRUE;
+  }
+  
+  if (changed) {
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_THREAD_ROOT_ID]);
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_PARENT_ID]);
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_REPLY_DEPTH]);
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_IS_ROOT]);
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_IS_REPLY]);
+  }
+}
+
+void gn_nostr_event_item_update_from_event(GnNostrEventItem *self,
+                                            const char *pubkey,
+                                            gint64 created_at,
+                                            const char *content,
+                                            gint kind) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
+  
+  gboolean changed = FALSE;
+  
+  if (g_strcmp0(self->pubkey, pubkey) != 0) {
+    g_free(self->pubkey);
+    self->pubkey = g_strdup(pubkey);
+    changed = TRUE;
+  }
+  
+  if (self->created_at != created_at) {
+    self->created_at = created_at;
+    changed = TRUE;
+  }
+  
+  if (g_strcmp0(self->content, content) != 0) {
+    g_free(self->content);
+    self->content = g_strdup(content);
+    changed = TRUE;
+  }
+  
+  if (self->kind != kind) {
+    self->kind = kind;
+    self->is_repost = (kind == 6);
+    changed = TRUE;
+  }
+  
+  if (changed) {
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_PUBKEY]);
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_CREATED_AT]);
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_CONTENT]);
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_KIND]);
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_IS_REPOST]);
+  }
+}

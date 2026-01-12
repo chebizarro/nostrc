@@ -473,6 +473,8 @@ typedef struct _TimelineItem {
   gint64 created_at;
   /* avatar */
   gchar *avatar_url;
+  /* visibility control */
+  gboolean visible;
   /* children list when acting as a parent in a thread */
   GListStore *children; /* element-type: TimelineItem */
 } TimelineItem;
@@ -495,6 +497,7 @@ enum {
   PROP_PUBKEY,
   PROP_CREATED_AT,
   PROP_AVATAR_URL,
+  PROP_VISIBLE,
   N_PROPS
 };
 
@@ -513,6 +516,7 @@ static void timeline_item_set_property(GObject *obj, guint prop_id, const GValue
     case PROP_PUBKEY:       g_free(self->pubkey);       self->pubkey       = g_value_dup_string(value); break;
     case PROP_CREATED_AT:   self->created_at            = g_value_get_int64(value); break;
     case PROP_AVATAR_URL:   g_free(self->avatar_url);   self->avatar_url   = g_value_dup_string(value); break;
+    case PROP_VISIBLE:     self->visible = g_value_get_boolean(value); break;
     default: G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop_id, pspec);
   }
 
@@ -534,6 +538,7 @@ static void timeline_item_get_property(GObject *obj, guint prop_id, GValue *valu
     case PROP_PUBKEY:       g_value_set_string(value, self->pubkey); break;
     case PROP_CREATED_AT:   g_value_set_int64 (value, self->created_at); break;
     case PROP_AVATAR_URL:   g_value_set_string(value, self->avatar_url); break;
+    case PROP_VISIBLE:     g_value_set_boolean(value, self->visible); break;
     default: G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop_id, pspec);
   }
 }
@@ -569,6 +574,7 @@ static void timeline_item_class_init(TimelineItemClass *klass) {
   ti_props[PROP_PUBKEY]       = g_param_spec_string ("pubkey",       "pubkey",       "Pubkey",       NULL, G_PARAM_READWRITE);
   ti_props[PROP_CREATED_AT]   = g_param_spec_int64  ("created-at",   "created-at",   "Created At",   0, G_MAXINT64, 0, G_PARAM_READWRITE);
   ti_props[PROP_AVATAR_URL]   = g_param_spec_string("avatar-url",   "avatar-url",   "Avatar URL",    NULL, G_PARAM_READWRITE);
+  ti_props[PROP_VISIBLE]     = g_param_spec_boolean("visible",     "visible",     "Visible",      TRUE, G_PARAM_READWRITE);
   g_object_class_install_properties(oc, N_PROPS, ti_props);
 }
 
@@ -620,6 +626,7 @@ struct _GnostrTimelineView {
   GtkSelectionModel *selection_model; /* owned */
   GListStore *list_model;             /* owned: TimelineItem (flat) or tree roots when tree is active */
   GtkTreeListModel *tree_model;       /* owned when tree roots set */
+  GListStore *flattened_model;        /* owned: flattened timeline with threading */
 };
 
 G_DEFINE_TYPE(GnostrTimelineView, gnostr_timeline_view, GTK_TYPE_WIDGET)
@@ -645,13 +652,15 @@ static void gnostr_timeline_view_dispose(GObject *obj) {
   /* Then clear tree model - this should be the last ref */
   if (self->tree_model) {
     g_warning("🔥 Clearing tree model");
-    /* CRITICAL: The tree model has internal signal connections to TimelineItems.
-     * We need to ensure all refs are dropped before clearing. */
     g_clear_object(&self->tree_model);
-    g_warning("🔥 Tree model cleared");
   }
   
-  /* Finally clear list model */
+  /* Clear flattened model */
+  if (self->flattened_model) {
+    g_warning("🔥 Clearing flattened model");
+    g_clear_object(&self->flattened_model);
+  }
+  
   if (self->list_model) {
     g_warning("🔥 Clearing list model");
     g_clear_object(&self->list_model);
@@ -858,10 +867,56 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
 static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
   GObject *obj = gtk_list_item_get_item(item);
+  
+  if (!obj) {
+    return;
+  }
+  
   gchar *display = NULL, *handle = NULL, *ts = NULL, *content = NULL, *root_id = NULL, *avatar_url = NULL;
-  gchar *pubkey = NULL, *id_hex = NULL;
+  gchar *pubkey = NULL, *id_hex = NULL, *parent_id = NULL;
   guint depth = 0; gboolean is_reply = FALSE; gint64 created_at = 0;
-  if (G_IS_OBJECT(obj) && G_TYPE_CHECK_INSTANCE_TYPE(obj, timeline_item_get_type())) {
+  
+  /* Check if this is a GnNostrEventItem (new model) */
+  extern GType gn_nostr_event_item_get_type(void);
+  if (G_IS_OBJECT(obj) && G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
+    /* NEW: GnNostrEventItem binding */
+    g_object_get(obj,
+                 "event-id",      &id_hex,
+                 "pubkey",        &pubkey,
+                 "created-at",    &created_at,
+                 "content",       &content,
+                 "thread-root-id", &root_id,
+                 "parent-id",     &parent_id,
+                 "reply-depth",   &depth,
+                 NULL);
+    
+    /* Get profile information */
+    GObject *profile = NULL;
+    g_object_get(obj, "profile", &profile, NULL);
+    if (profile) {
+      g_object_get(profile,
+                   "display-name", &display,
+                   "name",         &handle,
+                   "picture-url",  &avatar_url,
+                   NULL);
+      g_object_unref(profile);
+    }
+    
+    /* Format timestamp */
+    if (created_at > 0) {
+      time_t t = (time_t)created_at;
+      struct tm *tm_info = localtime(&t);
+      char buf[64];
+      strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", tm_info);
+      ts = g_strdup(buf);
+    }
+    
+    is_reply = depth > 0;
+    g_debug("[BIND] GnNostrEventItem: id=%s depth=%u profile=%s", 
+            id_hex ? id_hex : "(null)", depth, display ? display : "(none)");
+  }
+  /* OLD: TimelineItem binding (fallback for compatibility) */
+  else if (G_IS_OBJECT(obj) && G_TYPE_CHECK_INSTANCE_TYPE(obj, timeline_item_get_type())) {
     g_object_get(obj,
                  "display-name", &display,
                  "handle",       &handle,
@@ -890,7 +945,11 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     g_signal_connect(row, "request-embed", G_CALLBACK(on_row_request_embed), NULL);
   }
 
-  g_debug("factory bind: item=%p content=%.60s depth=%u", (void*)item, content ? content : "", depth);
+  g_debug("factory bind: item=%p content=%.60s depth=%u is_reply=%s id=%s root_id=%s", 
+           (void*)item, content ? content : "", depth, 
+           is_reply ? "TRUE" : "FALSE", 
+           id_hex ? id_hex : "(null)",
+           root_id ? root_id : "(null)");
   g_free(display); g_free(handle); g_free(ts); g_free(content); g_free(root_id); g_free(id_hex);
   g_free(avatar_url); /* Fix memory leak */
 
@@ -927,8 +986,19 @@ static void setup_default_factory(GnostrTimelineView *self) {
 /* Child model function for GtkTreeListModel (passthrough) */
 static GListModel *timeline_child_model_func(gpointer item, gpointer user_data) {
   (void)user_data;
-  if (!item || !G_TYPE_CHECK_INSTANCE_TYPE(item, timeline_item_get_type())) return NULL;
-  return timeline_item_get_children_model((TimelineItem*)item);
+  g_debug("[TREE] Child model func called for item %p", item);
+  
+  if (!item || !G_TYPE_CHECK_INSTANCE_TYPE(item, timeline_item_get_type())) {
+    g_debug("[TREE] Child model func: invalid item type");
+    return NULL;
+  }
+  
+  TimelineItem *timeline_item = (TimelineItem*)item;
+  GListModel *children = timeline_item_get_children_model(timeline_item);
+  guint child_count = children ? g_list_model_get_n_items(children) : 0;
+  g_debug("[TREE] Child model func: returning %u children", child_count);
+  
+  return children;
 }
 
 static void ensure_list_model(GnostrTimelineView *self) {
@@ -961,9 +1031,14 @@ static void gnostr_timeline_view_init(GnostrTimelineView *self) {
   static const char *css =
     ".avatar { border-radius: 18px; background: @theme_bg_color; padding: 2px; }\n"
     ".dim-label { opacity: 0.7; }\n"
-    ".thread-reply { }\n"
+    ".thread-reply { background: alpha(@theme_bg_color, 0.5); border-left: 3px solid @theme_selected_bg_color; }\n"
     ".thread-root { }\n"
     ".thread-indicator { min-width: 4px; min-height: 4px; background: @theme_selected_bg_color; }\n"
+    "note-card { border-radius: 8px; margin: 2px; }\n"
+    "note-card.thread-depth-1 { margin-left: 20px; background: alpha(@theme_bg_color, 0.3); }\n"
+    "note-card.thread-depth-2 { margin-left: 40px; background: alpha(@theme_bg_color, 0.4); }\n"
+    "note-card.thread-depth-3 { margin-left: 60px; background: alpha(@theme_bg_color, 0.5); }\n"
+    "note-card.thread-depth-4 { margin-left: 80px; background: alpha(@theme_bg_color, 0.6); }\n"
     ".root-0 { background: #6b7280; } .root-1 { background: #ef4444; } .root-2 { background: #f59e0b; } .root-3 { background: #10b981; }\n"
     ".root-4 { background: #3b82f6; } .root-5 { background: #8b5cf6; } .root-6 { background: #ec4899; } .root-7 { background: #22c55e; }\n"
     ".root-8 { background: #06b6d4; } .root-9 { background: #f97316; } .root-a { background: #0ea5e9; } .root-b { background: #84cc16; }\n"
@@ -993,10 +1068,85 @@ void gnostr_timeline_view_set_model(GnostrTimelineView *self, GtkSelectionModel 
   gtk_list_view_set_model(GTK_LIST_VIEW(self->list_view), self->selection_model);
 }
 
-/* New: set tree roots model (GListModel of TimelineItem), creating a GtkTreeListModel passthrough */
+/* Visibility filter function - only show items where visible=TRUE */
+static gboolean visibility_filter_func(gpointer item, gpointer user_data) {
+  (void)user_data;
+  if (!item || !G_TYPE_CHECK_INSTANCE_TYPE(item, timeline_item_get_type())) {
+    g_debug("[FILTER] Rejecting non-TimelineItem item");
+    return FALSE;
+  }
+  
+  TimelineItem *timeline_item = (TimelineItem*)item;
+  gboolean visible = timeline_item->visible;
+  g_debug("[FILTER] TimelineItem visible=%s", visible ? "TRUE" : "FALSE");
+  return visible;
+}
+
+/* Forward declaration for populate_flattened_model */
+static void populate_flattened_model(GnostrTimelineView *self, GListModel *roots);
+
+/* Debug callback for root model changes */
+static void on_root_items_changed(GListModel *list, guint position, guint removed, guint added, gpointer user_data) {
+  GnostrTimelineView *self = (GnostrTimelineView *)user_data;
+  g_message("[TREE] Root items changed: position=%u removed=%u added=%u total=%u", 
+           position, removed, added, g_list_model_get_n_items(list));
+  
+  /* Repopulate flattened model when items change */
+  if (self && self->flattened_model && self->tree_model) {
+    g_message("[TREE] Repopulating flattened model due to items changed");
+    populate_flattened_model(self, G_LIST_MODEL(self->tree_model));
+  }
+}
+
+/* Populate flattened model with roots and their children */
+static void populate_flattened_model(GnostrTimelineView *self, GListModel *roots) {
+  if (!self || !self->flattened_model || !roots) return;
+  
+  g_message("[TREE] Populating flattened model with %u roots", g_list_model_get_n_items(roots));
+  
+  /* Clear existing items */
+  g_list_store_remove_all(self->flattened_model);
+  
+  /* Add each root and its children */
+  for (guint i = 0; i < g_list_model_get_n_items(roots); i++) {
+    TimelineItem *root = (TimelineItem*)g_list_model_get_item(roots, i);
+    if (!root) continue;
+    
+    /* Add the root */
+    g_list_store_append(self->flattened_model, root);
+    g_debug("[TREE] Added root item %p to flattened model", root);
+    
+    /* Add children recursively */
+    GListModel *children = timeline_item_get_children_model(root);
+    if (children) {
+      guint child_count = g_list_model_get_n_items(children);
+      g_debug("[TREE] Root has %u children", child_count);
+      
+      for (guint j = 0; j < child_count; j++) {
+        TimelineItem *child = (TimelineItem*)g_list_model_get_item(children, j);
+        if (child) {
+          g_list_store_append(self->flattened_model, child);
+          g_debug("[TREE] Added child item %p (depth=%u) to flattened model", child, child->depth);
+        }
+      }
+    }
+    
+    g_object_unref(root);
+  }
+  
+  g_message("[TREE] Flattened model now has %u items", g_list_model_get_n_items(G_LIST_MODEL(self->flattened_model)));
+}
+
+/* New: set tree roots model (GListModel of TimelineItem), creating a flattened model */
 void gnostr_timeline_view_set_tree_roots(GnostrTimelineView *self, GListModel *roots) {
   g_return_if_fail(GNOSTR_IS_TIMELINE_VIEW(self));
   g_message("timeline_view_set_tree_roots: self=%p roots=%p list_view=%p", (void*)self, (void*)roots, (void*)self->list_view);
+  
+  /* Add debug signal to monitor changes to the roots model */
+  if (roots) {
+    g_signal_connect(roots, "items-changed", G_CALLBACK(on_root_items_changed), self);
+    g_message("[TREE] Connected to roots items-changed signal");
+  }
   /* Detach any existing model from the list view FIRST to drop its ref safely */
   if (self->list_view) {
     gtk_list_view_set_model(GTK_LIST_VIEW(self->list_view), NULL);
@@ -1004,16 +1154,27 @@ void gnostr_timeline_view_set_tree_roots(GnostrTimelineView *self, GListModel *r
   /* Now clear our held refs */
   if (self->selection_model) g_clear_object(&self->selection_model);
   if (self->tree_model) g_clear_object(&self->tree_model);
+  if (self->flattened_model) g_clear_object(&self->flattened_model);
+  
   if (roots) {
-    /* root=roots, passthrough=TRUE, autoexpand=TRUE */
-    self->tree_model = gtk_tree_list_model_new(roots, TRUE, TRUE,
-                                               (GtkTreeListModelCreateModelFunc)timeline_child_model_func,
-                                               NULL, NULL);
-    self->selection_model = GTK_SELECTION_MODEL(gtk_single_selection_new(G_LIST_MODEL(self->tree_model)));
+    /* Create a flattened model that includes roots and their children */
+    self->flattened_model = g_list_store_new(timeline_item_get_type());
+    self->tree_model = (GtkTreeListModel*)roots; /* Store reference for debugging */
+    
+    /* Temporarily disable visibility filter to debug */
+    /* GtkFilterListModel *filter_model = gtk_filter_list_model_new(G_LIST_MODEL(self->flattened_model), NULL);
+    GtkCustomFilter *visibility_filter = gtk_custom_filter_new((GtkCustomFilterFunc)visibility_filter_func, NULL, NULL);
+    gtk_filter_list_model_set_filter(filter_model, GTK_FILTER(visibility_filter)); */
+    
+    self->selection_model = GTK_SELECTION_MODEL(gtk_single_selection_new(G_LIST_MODEL(self->flattened_model)));
     /* Take ownership of a non-floating ref so we can clear it later safely */
     g_object_ref_sink(self->selection_model);
+    
+    /* Populate the flattened model with existing roots and their children */
+    populate_flattened_model(self, roots);
   } else {
     self->tree_model = NULL;
+    self->flattened_model = NULL;
     self->selection_model = NULL;
   }
   g_message("timeline_view_set_tree_roots: applying selection model=%p", (void*)self->selection_model);

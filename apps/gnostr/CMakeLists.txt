@@ -36,7 +36,7 @@ add_custom_command(
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
   VERBATIM)
 
-file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c)
+file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c src/model/*.c)
 # Exclude CLI entrypoint from the GUI app target to avoid duplicate main()
 list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/cli_live_logger.c)
 list(APPEND APP_SRC ${GRESOURCE_C})
@@ -71,7 +71,8 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${CMAKE_SOURCE_DIR}/libnostr/include
   ${CMAKE_SOURCE_DIR}/libgo/include
   ${CMAKE_SOURCE_DIR}/nips/nip46/include
-  ${CMAKE_SOURCE_DIR}/nips/nip19/include)
+  ${CMAKE_SOURCE_DIR}/nips/nip19/include
+  ${CMAKE_SOURCE_DIR}/nips/nip10/include)
 # Compile the GI wrapper implementation into the app (no separate gobject lib target)
 # NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
 target_sources(${APP_CLIENT_BIN} PRIVATE 
@@ -82,6 +83,9 @@ if (TARGET nostr_json)
 endif()
 if (TARGET nip19)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nip19)
+endif()
+if (TARGET nip10)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE nip10)
 endif()
 if (TARGET nostr_nip46_core)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip46_core)

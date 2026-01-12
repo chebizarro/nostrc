@@ -110,8 +110,25 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
     case LWS_CALLBACK_CLIENT_WRITEABLE: {
         // Pop a message from the send_channel and send it over the WebSocket (non-blocking)
         if (!conn || !conn->priv || !conn->priv->wsi || !conn->send_channel) break;
+        
+        // Double-check connection is still valid after channel access
+        nsync_mu_lock(&conn->priv->mutex);
+        struct lws *wsi_check = conn->priv->wsi;
+        nsync_mu_unlock(&conn->priv->mutex);
+        if (!wsi_check || wsi_check != wsi) {
+            // Connection has been closed or changed
+            break;
+        }
         WebSocketMessage *msg = NULL;
         if (go_channel_try_receive(conn->send_channel, (void **)&msg) == 0 && msg) {
+            // Validate message structure before use
+            if (!msg->data || msg->length == 0 || msg->length > 1024*1024) {
+                fprintf(stderr, "Invalid message: data=%p length=%zu\n", msg->data, msg->length);
+                if (msg->data) free(msg->data);
+                free(msg);
+                return -1;
+            }
+            
             size_t total = LWS_PRE + msg->length;
             unsigned char *buf = (unsigned char *)malloc(total);
             if (!buf) {

@@ -653,6 +653,30 @@ void gnostr_note_card_row_set_depth(GnostrNoteCardRow *self, guint depth) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
   self->depth = depth;
   gtk_widget_set_margin_start(GTK_WIDGET(self), depth * 16);
+  
+  /* Apply CSS class for depth styling using GTK4 API */
+  GtkWidget *widget = GTK_WIDGET(self);
+  
+  /* Remove existing depth classes */
+  for (guint i = 1; i <= 4; i++) {
+    gchar *class_name = g_strdup_printf("thread-depth-%u", i);
+    gtk_widget_remove_css_class(widget, class_name);
+    g_free(class_name);
+  }
+  
+  /* Add appropriate depth class */
+  if (depth > 0 && depth <= 4) {
+    gchar *class_name = g_strdup_printf("thread-depth-%u", depth);
+    gtk_widget_add_css_class(widget, class_name);
+    g_free(class_name);
+  }
+  
+  /* Add thread-reply class for any depth > 0 */
+  if (depth > 0) {
+    gtk_widget_add_css_class(widget, "thread-reply");
+  } else {
+    gtk_widget_remove_css_class(widget, "thread-reply");
+  }
 }
 
 void gnostr_note_card_row_set_ids(GnostrNoteCardRow *self, const char *id_hex, const char *root_id, const char *pubkey_hex) {

@@ -227,12 +227,23 @@ void nostr_subscription_dispatch_closed(NostrSubscription *sub, const char *reas
 
     // Set the closed flag and dispatch the reason
     if (atomic_exchange(&sub->priv->closed, true) == false) {
+        // Make a copy of the reason string to avoid use-after-free
+        char *reason_copy = strdup(reason);
+        if (!reason_copy) {
+            // Out of memory - log but continue
+            if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
+                fprintf(stderr, "[sub %s] dispatch_closed: OOM copying reason\n", sub->priv->id);
+            }
+            return;
+        }
+        
         // Non-blocking send to avoid deadlock (SHUTDOWN.md line 35)
-        if (go_channel_try_send(sub->closed_reason, (void *)reason) != 0) {
+        if (go_channel_try_send(sub->closed_reason, (void *)reason_copy) != 0) {
             // Channel full or closed - log but don't block
             if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
                 fprintf(stderr, "[sub %s] dispatch_closed: channel full/closed, dropping reason\n", sub->priv->id);
             }
+            free(reason_copy);  // Free the copy since we couldn't send it
         } else {
             nostr_metric_counter_add("sub_closed_signal", 1);
         }

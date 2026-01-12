@@ -354,6 +354,36 @@ static void *write_operations(void *arg) {
     return NULL;
 }
 
+// Cached environment variables to avoid repeated getenv() calls
+static int metrics_sample_rate = 0;
+static int debug_incoming_cached = -1;
+static int debug_eose_cached = -1;
+
+static void init_cached_env() {
+    if (metrics_sample_rate == 0) {
+        const char *rate = getenv("NOSTR_METRICS_SAMPLE_RATE");
+        metrics_sample_rate = rate ? atoi(rate) : 100;
+        if (metrics_sample_rate <= 0) metrics_sample_rate = 100;
+    }
+    if (debug_incoming_cached == -1) {
+        const char *dbg = getenv("NOSTR_DEBUG_INCOMING");
+        debug_incoming_cached = (dbg && *dbg && strcmp(dbg, "0") != 0) ? 1 : 0;
+    }
+    if (debug_eose_cached == -1) {
+        debug_eose_cached = getenv("NOSTR_DEBUG_EOSE") ? 1 : 0;
+    }
+}
+
+// Quick heuristic to identify EOSE/control messages for prioritization
+static int is_priority_message(const char *msg) {
+    if (!msg || !*msg) return 0;
+    // EOSE messages should be processed immediately
+    return strstr(msg, "[\"EOSE\"") || 
+           strstr(msg, "[\"NOTICE\"") ||
+           strstr(msg, "[\"CLOSED\"") ||
+           strstr(msg, "[\"AUTH\"");
+}
+
 // Worker: reads messages from the connection, parses envelopes, dispatches,
 // and emits concise debug summaries on the optional debug_raw channel.
 static void *message_loop(void *arg) {
@@ -361,50 +391,71 @@ static void *message_loop(void *arg) {
     if (!r || !r->priv) return NULL;
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: start\n");
 
+    init_cached_env();
+    
     char buf[4096];
+    char priority_buf[4096];  // Buffer for priority messages
     Error *err = NULL;
+    uint64_t msg_count = 0;
+    int has_priority = 0;
+    
     for (;;) {
         nsync_mu_lock(&r->priv->mutex);
         NostrConnection *conn = r->connection;
         nsync_mu_unlock(&r->priv->mutex);
         if (!conn) break;
 
-        nostr_metric_timer t_read = {0};
-        nostr_metric_timer_start(&t_read);
-        nostr_connection_read_message(conn, r->priv->connection_context, buf, sizeof(buf), &err);
-        static nostr_metric_histogram *h_ws_read_ns;
-        if (!h_ws_read_ns) h_ws_read_ns = nostr_metric_histogram_get("ws_read_ns");
-        nostr_metric_timer_stop(&t_read, h_ws_read_ns);
-        if (err) {
-            free_error(err);
-            err = NULL;
-            break;
+        // Check for priority message first if we have one pending
+        if (has_priority) {
+            strcpy(buf, priority_buf);
+            has_priority = 0;
+        } else {
+            // Read next message
+            nostr_connection_read_message(conn, r->priv->connection_context, buf, sizeof(buf), &err);
+            if (err) {
+                free_error(err);
+                err = NULL;
+                break;
+            }
+            if (buf[0] == '\0') continue;
         }
-        if (buf[0] == '\0') continue;
+        
+        msg_count++;
 
-        size_t blen_for_metrics = strlen(buf);
-        nostr_metric_counter_add("ws_rx_bytes", (uint64_t)blen_for_metrics);
-        nostr_metric_counter_add("ws_rx_messages", 1);
+        // Sample metrics to reduce overhead (only every Nth message)
+        int record_metrics = (msg_count % metrics_sample_rate) == 0;
+        size_t blen_for_metrics = 0;
+        
+        if (record_metrics) {
+            blen_for_metrics = strlen(buf);
+            nostr_metric_counter_add("ws_rx_bytes_sampled", (uint64_t)blen_for_metrics * metrics_sample_rate);
+            nostr_metric_counter_add("ws_rx_messages_sampled", metrics_sample_rate);
+        }
 
-        // Optional inbound raw debug: show what we received before parsing
-        const char *dbg_in_env = getenv("NOSTR_DEBUG_INCOMING");
-        if (dbg_in_env && *dbg_in_env && strcmp(dbg_in_env, "0") != 0) {
-            // Limit to a sane number of bytes to avoid flooding
-            size_t blen = blen_for_metrics;
+        // Use cached debug flag
+        if (debug_incoming_cached) {
+            size_t blen = record_metrics ? blen_for_metrics : strlen(buf);
             size_t show = blen < 512 ? blen : 512;
             fprintf(stderr, "[incoming] %.*s%s\n",
                     (int)show, buf,
                     (blen > show ? "..." : ""));
         }
 
-        nostr_metric_timer t_parse = {0};
-        nostr_metric_timer_start(&t_parse);
-        NostrEnvelope *envelope = nostr_envelope_parse(buf);
-        static nostr_metric_histogram *h_envelope_parse_ns;
-        if (!h_envelope_parse_ns) h_envelope_parse_ns = nostr_metric_histogram_get("envelope_parse_ns");
-        nostr_metric_timer_stop(&t_parse, h_envelope_parse_ns);
+        // Parse envelope (only time parsing for sampled messages)
+        NostrEnvelope *envelope;
+        if (record_metrics) {
+            nostr_metric_timer t_parse = {0};
+            nostr_metric_timer_start(&t_parse);
+            envelope = nostr_envelope_parse(buf);
+            static nostr_metric_histogram *h_envelope_parse_ns;
+            if (!h_envelope_parse_ns) h_envelope_parse_ns = nostr_metric_histogram_get("envelope_parse_ns");
+            nostr_metric_timer_stop(&t_parse, h_envelope_parse_ns);
+        } else {
+            envelope = nostr_envelope_parse(buf);
+        }
+        
         if (!envelope) {
-            if (dbg_in_env && *dbg_in_env && strcmp(dbg_in_env, "0") != 0) {
+            if (debug_incoming_cached) {
                 size_t blen = strlen(buf);
                 size_t show = blen < 256 ? blen : 256;
                 fprintf(stderr, "[incoming][unparsed] %.*s%s\n",
@@ -428,7 +479,7 @@ static void *message_loop(void *arg) {
                 int serial = nostr_sub_id_to_serial(env->message);
                 NostrSubscription *subscription = go_hash_map_get_int(r->subscriptions, serial);
                 if (subscription) {
-                    if (getenv("NOSTR_DEBUG_EOSE")) {
+                    if (debug_eose_cached) {
                         fprintf(stderr, "[EOSE_DISPATCH] relay=%s sid=%s serial=%d - dispatching to subscription\n",
                                 r->url ? r->url : "unknown", env->message, serial);
                     }
@@ -477,15 +528,17 @@ static void *message_loop(void *arg) {
                 // Optionally verify signature if available
                 bool verified = true;
                 if (!r->assume_valid) {
-                    nostr_metric_timer t_verify = {0};
-                    nostr_metric_timer_start(&t_verify);
-                    verified = nostr_event_check_signature(env->event);
-                    static nostr_metric_histogram *h_event_verify_ns;
-                    if (!h_event_verify_ns) h_event_verify_ns = nostr_metric_histogram_get("event_verify_ns");
-                    nostr_metric_timer_stop(&t_verify, h_event_verify_ns);
-                    nostr_metric_counter_add("event_verify_count", 1);
-                    if (verified) nostr_metric_counter_add("event_verify_ok", 1);
-                    else nostr_metric_counter_add("event_verify_fail", 1);
+                    if (record_metrics) {
+                        nostr_metric_timer t_verify = {0};
+                        nostr_metric_timer_start(&t_verify);
+                        verified = nostr_event_check_signature(env->event);
+                        static nostr_metric_histogram *h_event_verify_ns;
+                        if (!h_event_verify_ns) h_event_verify_ns = nostr_metric_histogram_get("event_verify_ns");
+                        nostr_metric_timer_stop(&t_verify, h_event_verify_ns);
+                        nostr_metric_counter_add("event_verify_sampled", metrics_sample_rate);
+                    } else {
+                        verified = nostr_event_check_signature(env->event);
+                    }
                 }
                 if (!verified) {
                     if (env->event->pubkey && *env->event->pubkey) {
@@ -495,21 +548,24 @@ static void *message_loop(void *arg) {
                     }
                     nostr_metric_counter_add("event_invalidsig_record", 1);
                     // drop invalid event
-                    const char *dbg_in_env = getenv("NOSTR_DEBUG_INCOMING");
-                    if (dbg_in_env && *dbg_in_env && strcmp(dbg_in_env, "0") != 0) {
+                    if (debug_incoming_cached) {
                         char tmp[256];
                         const char *id = env->event->id ? env->event->id : "";
                         snprintf(tmp, sizeof(tmp), "DROP invalid signature id=%.8s", id);
                         relay_debug_emit(r, tmp);
                     }
                 } else {
-                    nostr_metric_timer t_dispatch = {0};
-                    nostr_metric_timer_start(&t_dispatch);
-                    nostr_subscription_dispatch_event(subscription, env->event);
-                    static nostr_metric_histogram *h_event_dispatch_ns;
-                    if (!h_event_dispatch_ns) h_event_dispatch_ns = nostr_metric_histogram_get("event_dispatch_ns");
-                    nostr_metric_timer_stop(&t_dispatch, h_event_dispatch_ns);
-                    nostr_metric_counter_add("event_dispatch_count", 1);
+                    if (record_metrics) {
+                        nostr_metric_timer t_dispatch = {0};
+                        nostr_metric_timer_start(&t_dispatch);
+                        nostr_subscription_dispatch_event(subscription, env->event);
+                        static nostr_metric_histogram *h_event_dispatch_ns;
+                        if (!h_event_dispatch_ns) h_event_dispatch_ns = nostr_metric_histogram_get("event_dispatch_ns");
+                        nostr_metric_timer_stop(&t_dispatch, h_event_dispatch_ns);
+                        nostr_metric_counter_add("event_dispatch_sampled", metrics_sample_rate);
+                    } else {
+                        nostr_subscription_dispatch_event(subscription, env->event);
+                    }
                     // ownership passed to subscription; avoid double free
                     env->event = NULL;
                 }

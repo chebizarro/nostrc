@@ -5,6 +5,9 @@
 #include "gnostr-profile-provider.h"
 #include "note_card_row.h"
 #include "../ipc/signer_ipc.h"
+#include "../model/gn-nostr-event-model.h"
+#include "../model/gn-nostr-event-item.h"
+#include "../model/gn-nostr-profile.h"
 #include <gio/gio.h>
 #include <glib.h>
 #include <gtk/gtk.h>
@@ -30,8 +33,12 @@
 #endif
 /* NIP-19 helpers */
 #include "nostr/nip19/nip19.h"
+/* NIP-10 threading */
+#include "nip10.h"
 /* NIP-46 client (remote signer pairing) */
 #include "nostr/nip46/nip46_client.h"
+/* Nostr utilities */
+#include "nostr-utils.h"
 
 /* Implement as-if SimplePool is fully functional; guarded to avoid breaking builds until wired. */
 #ifdef GNOSTR_ENABLE_REAL_SIMPLEPOOL
@@ -223,8 +230,9 @@ struct _GnostrMainWindow {
   GtkWidget *toast_label;
   /* Session state */
   GHashTable *seen_texts; /* owned; keys are g_strdup(text), values unused */
-  GHashTable *seen_ids;   /* owned; keys are g_strdup(event id hex), values unused */
-  /* Thread model */
+  /* NEW: GListModel-based timeline */
+  GnNostrEventModel *event_model; /* owned; reactive model over nostrdb */
+  /* OLD: Thread model (will be deprecated) */
   GListStore *thread_roots;    /* owned; element-type TimelineItem */
   GHashTable *nodes_by_id;     /* owned; key: id string -> TimelineItem* (weak) */
   /* Metadata cache: key=pubkey hex (string), value=UserMeta* (owned) */
@@ -246,6 +254,9 @@ struct _GnostrMainWindow {
   gulong bg_prefetch_handler;   /* signal handler ID */
   GCancellable *bg_prefetch_cancellable; /* cancellable for paginator */
   guint bg_prefetch_interval_ms; /* default 250ms between pages */
+  
+  /* Pending notes without profiles */
+  GHashTable *pending_notes;    /* owned; key=pubkey_hex, value=GPtrArray* of TimelineItem* */
   
   /* Demand-driven profile fetch (debounced batch) */
   GPtrArray   *profile_fetch_queue;   /* owned; char* pubkey hex to fetch */
@@ -294,12 +305,11 @@ static gboolean memory_stats_cb(gpointer data) {
   
   guint timeline_items = self->thread_roots ? g_list_model_get_n_items(G_LIST_MODEL(self->thread_roots)) : 0;
   guint seen_texts = self->seen_texts ? g_hash_table_size(self->seen_texts) : 0;
-  guint seen_ids = self->seen_ids ? g_hash_table_size(self->seen_ids) : 0;
   guint nodes_by_id = self->nodes_by_id ? g_hash_table_size(self->nodes_by_id) : 0;
   guint profile_queue = self->profile_fetch_queue ? self->profile_fetch_queue->len : 0;
   
-  g_message("[MEMORY] timeline=%u dedup_texts=%u dedup_ids=%u nodes=%u profile_queue=%u", 
-            timeline_items, seen_texts, seen_ids, nodes_by_id, profile_queue);
+  g_message("[MEMORY] timeline=%u dedup_texts=%u nodes=%u profile_queue=%u", 
+            timeline_items, seen_texts, nodes_by_id, profile_queue);
   return G_SOURCE_CONTINUE;
 }
 
@@ -887,6 +897,46 @@ static void append_note_from_event(GnostrMainWindow *self, NostrEvent *evt) {
   const char *content = nostr_event_get_content(evt);
   const char *pubkey  = nostr_event_get_pubkey(evt);
   const char *id_hex  = nostr_event_get_id(evt);
+  if (!content || !pubkey || !id_hex) return;
+
+  /* No deduplication needed here - nostrdb handles that automatically */
+
+  /* Parse NIP-10 thread information */
+  char *root_id_hex = NULL;
+  char *reply_id_hex = NULL;
+  
+  /* For now, implement basic thread parsing manually until NIP-10 is properly linked */
+  NostrTags *tags = (NostrTags*)nostr_event_get_tags(evt);
+  if (tags) {
+    for (size_t i = 0; i < nostr_tags_size(tags); i++) {
+      NostrTag *tag = nostr_tags_get(tags, i);
+      if (!tag || nostr_tag_size(tag) < 2) continue;
+      
+      const char *key = nostr_tag_get(tag, 0);
+      if (strcmp(key, "e") != 0) continue;
+      
+      const char *event_id = nostr_tag_get(tag, 1);
+      if (!event_id || strlen(event_id) != 64) continue;
+      
+      /* Check for marker (root/reply) */
+      const char *marker = (nostr_tag_size(tag) >= 4) ? nostr_tag_get(tag, 3) : NULL;
+      
+      if (marker && strcmp(marker, "root") == 0) {
+        root_id_hex = g_strdup(event_id);
+      } else if (marker && strcmp(marker, "reply") == 0) {
+        reply_id_hex = g_strdup(event_id);
+      } else if (!root_id_hex && i == 0) {
+        /* Legacy: first e-tag is root if no explicit markers */
+        root_id_hex = g_strdup(event_id);
+      }
+    }
+  }
+  
+  g_debug("[THREAD] Event %s: root=%s reply=%s tags=%zu", 
+           id_hex, 
+           root_id_hex ? root_id_hex : "(none)",
+           reply_id_hex ? reply_id_hex : "(none)",
+           tags ? nostr_tags_size(tags) : 0);
   gint64 created_at   = nostr_event_get_created_at(evt);
   if (!content) content = "";
   if (!pubkey || !id_hex) return;
@@ -909,9 +959,18 @@ static void append_note_from_event(GnostrMainWindow *self, NostrEvent *evt) {
     g_debug("[TIMELINE] Cap reached (%u), removed oldest item", timeline_cap);
   }
 
+  /* Check if profile exists before adding to timeline */
+  GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey);
+  gboolean has_profile = (meta != NULL);
+  if (meta) {
+    gnostr_profile_meta_free(meta);
+  }
+
   /* Identity from cached profile, if available */
   char *display = NULL, *handle = NULL, *avatar_url = NULL;
-  derive_identity_from_meta(self, pubkey, &display, &handle, &avatar_url);
+  if (has_profile) {
+    derive_identity_from_meta(self, pubkey, &display, &handle, &avatar_url);
+  }
 
   /* Friendly timestamp string for initial bind (view recomputes from created_at too) */
   g_autofree char *ts = format_timestamp_approx(created_at);
@@ -923,34 +982,171 @@ static void append_note_from_event(GnostrMainWindow *self, NostrEvent *evt) {
                                "timestamp",    ts      ? ts      : "",
                                "content",      content,
                                "depth",        0,
+                               "visible",      has_profile,  /* Hide if no profile */
                                NULL);
-  /* Set remaining metadata */
+  /* Set remaining metadata with thread information */
   g_object_set(item,
                "id",          id_hex,
-               "root-id",     id_hex, /* no threading yet: root=self */
+               "root-id",     root_id_hex ? root_id_hex : id_hex, /* Use parsed root or self */
                "pubkey",      pubkey,
                "created-at",  created_at,
                "avatar-url",  avatar_url ? avatar_url : "",
                NULL);
 
-  /* Append to roots model */
-  g_list_store_append(self->thread_roots, item);
-  g_object_unref(item);
+  /* Calculate thread depth */
+  guint depth = 0;
+  if (reply_id_hex) {
+    /* This is a reply - calculate depth by walking up the thread */
+    char *current_parent = g_strdup(reply_id_hex);
+    while (current_parent && depth < 10) { /* Prevent infinite loops */
+      TimelineItem *parent = g_hash_table_lookup(self->nodes_by_id, current_parent);
+      if (!parent) break;
+      
+      depth++;
+      g_free(current_parent);
+      
+      /* Get this parent's parent to continue walking up */
+      gchar *parent_root_id = NULL;
+      g_object_get(parent, "root-id", &parent_root_id, NULL);
+      current_parent = parent_root_id;
+      
+      /* If we've reached the root, stop */
+      if (g_strcmp0(current_parent, parent_root_id) == 0) break;
+    }
+    g_free(current_parent);
+  }
+  
+  /* Update the item's depth */
+  g_object_set(item, "depth", depth, NULL);
+  g_debug("[THREAD] Event %s depth=%u (reply_to=%s)", id_hex, depth, reply_id_hex ? reply_id_hex : "(none)");
 
+  /* Handle threading - add to appropriate parent or as root */
+  gboolean added_to_thread = FALSE;
+  
+  if (reply_id_hex) {
+    /* This is a reply - try to find parent */
+    TimelineItem *parent = g_hash_table_lookup(self->nodes_by_id, reply_id_hex);
+    if (parent) {
+      /* Add as child to parent */
+      gnostr_timeline_item_add_child(parent, (TimelineItem *)item);
+      g_debug("[THREAD] Added %s as child of %s", id_hex, reply_id_hex);
+      added_to_thread = TRUE;
+    } else {
+      g_debug("[THREAD] Parent %s not found for %s, treating as root", reply_id_hex, id_hex);
+    }
+  }
+  
+  if (!added_to_thread) {
+    /* Either not a reply or parent not found - add as root */
+    if (has_profile) {
+      g_list_store_append(self->thread_roots, item);
+      g_debug("[THREAD] Added %s as root note", id_hex);
+    } else {
+      /* Store in pending notes if no profile */
+      GPtrArray *pending = g_hash_table_lookup(self->pending_notes, pubkey);
+      if (!pending) {
+        pending = g_ptr_array_new();
+        g_hash_table_insert(self->pending_notes, g_strdup(pubkey), pending);
+      }
+      g_ptr_array_add(pending, g_object_ref(item));
+      
+      /* Enqueue profile fetch for this pubkey */
+      enqueue_profile_author(self, pubkey);
+      
+      g_debug("[TIMELINE] Note %s from %.8s... stored as pending (no profile)", id_hex, pubkey);
+    }
+  }
+  
+  /* Store in nodes index for future children to find */
+  g_hash_table_insert(self->nodes_by_id, g_strdup(id_hex), g_object_ref(item));
+  
   /* Optional: prefetch avatar in background */
-  if (avatar_url && *avatar_url) gnostr_avatar_prefetch(avatar_url);
+  if (has_profile && avatar_url && *avatar_url) gnostr_avatar_prefetch(avatar_url);
 
+  g_object_unref(item);
   g_free(display);
   g_free(handle);
   g_free(avatar_url);
+  g_free(root_id_hex);
+  g_free(reply_id_hex);
+}
+
+/* Test function to create threaded events for demonstration */
+static void inject_test_threaded_notes(GnostrMainWindow *self) {
+  g_message("[TEST] Injecting test threaded notes");
+  
+  /* First, test with a simple root item to see if basic timeline works */
+  GObject *simple = g_object_new(timeline_item_get_type(),
+                                "display-name", "Simple Test",
+                                "handle",       "@simple",
+                                "timestamp",    "now",
+                                "content",      "This is a simple test item (no threading)",
+                                "depth",        0,
+                                "id",           "test_simple_id",
+                                "root-id",      "test_simple_id",
+                                "pubkey",       "0000000000000000000000000000000000000000000000000000000000000000",
+                                "created-at",   time(NULL),
+                                "visible",      TRUE,
+                                NULL);
+  
+  g_message("[TEST] Adding simple test item (current count: %u)", g_list_model_get_n_items(G_LIST_MODEL(self->thread_roots)));
+  g_list_store_append(self->thread_roots, simple);
+  g_message("[TEST] Simple item added, new count: %u", g_list_model_get_n_items(G_LIST_MODEL(self->thread_roots)));
+  
+  g_hash_table_insert(self->nodes_by_id, g_strdup("test_simple_id"), g_object_ref(simple));
+  g_object_unref(simple);
+  
+  /* Now try threaded items */
+  GObject *root = g_object_new(timeline_item_get_type(),
+                              "display-name", "Test User",
+                              "handle",       "@test",
+                              "timestamp",    "1 hour ago",
+                              "content",      "This is a test root note for threading demonstration",
+                              "depth",        0,
+                              "id",           "test_root_id_123",
+                              "root-id",      "test_root_id_123",
+                              "pubkey",       "0000000000000000000000000000000000000000000000000000000000000000",
+                              "created-at",   time(NULL) - 3600,
+                              "visible",      TRUE,
+                              NULL);
+  
+  GObject *reply = g_object_new(timeline_item_get_type(),
+                               "display-name", "Reply User",
+                               "handle",       "@reply",
+                               "timestamp",    "30 min ago",
+                               "content",      "This is a reply to the root note",
+                               "depth",        1,
+                               "id",           "test_reply_id_456",
+                               "root-id",      "test_root_id_123",
+                               "pubkey",       "1111111111111111111111111111111111111111111111111111111111111111",
+                               "created-at",   time(NULL) - 1800,
+                               "visible",      TRUE,
+                               NULL);
+  
+  /* Build the tree structure BEFORE adding to timeline */
+  gnostr_timeline_item_add_child((TimelineItem *)root, (TimelineItem *)reply);
+  g_message("[TEST] Built tree structure with children");
+  
+  /* Add the threaded root to timeline */
+  g_message("[TEST] Adding threaded root (current count: %u)", g_list_model_get_n_items(G_LIST_MODEL(self->thread_roots)));
+  g_list_store_append(self->thread_roots, root);
+  g_message("[TEST] Threaded root added, new count: %u", g_list_model_get_n_items(G_LIST_MODEL(self->thread_roots)));
+  
+  /* Store in nodes index */
+  g_hash_table_insert(self->nodes_by_id, g_strdup("test_root_id_123"), g_object_ref(root));
+  g_hash_table_insert(self->nodes_by_id, g_strdup("test_reply_id_456"), g_object_ref(reply));
+  
+  g_object_unref(root);
+  g_object_unref(reply);
+  
+  g_message("[TEST] Test notes injected (simple + threaded)");
 }
 
 static void prepopulate_text_notes_from_cache(GnostrMainWindow *self, guint limit) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  g_message("STARTUP_DEBUG: prepopulate_text_notes_from_cache ENTER");
   void *txn = NULL; char **arr = NULL; int n = 0;
   if (storage_ndb_begin_query(&txn) != 0) { g_warning("prepopulate_text_notes_from_cache: begin_query failed"); return; }
-  g_message("STARTUP_DEBUG: DB transaction started");
+  
   /* Build filters: kind 1 with limit */
   g_autofree char *filters = g_strdup_printf("[{\"kinds\":[1],\"limit\":%u}]", limit > 0 ? limit : 30);
   g_message("STARTUP_DEBUG: Starting DB query...");
@@ -1011,16 +1207,42 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   g_return_if_fail(self->composer != NULL);
   /* Initialize weak refs to template children needed in async paths */
   g_weak_ref_init(&self->timeline_ref, self->timeline);
-  /* Prepare timeline roots model and attach to view so subsequent inserts render */
+  /* NEW: Initialize GListModel-based event model */
+  self->event_model = gn_nostr_event_model_new();
+  g_debug("[INIT] Created GnNostrEventModel");
+  
+  /* Configure initial query for kind-1 notes */
+  GnNostrQueryParams params = {
+    .kinds = (gint[]){1},
+    .n_kinds = 1,
+    .authors = NULL,
+    .n_authors = 0,
+    .since = 0,
+    .until = 0,
+    .limit = 100
+  };
+  gn_nostr_event_model_set_query(self->event_model, &params);
+  
+  /* Attach model to timeline view */
+  if (self->timeline && G_TYPE_CHECK_INSTANCE_TYPE(self->timeline, GNOSTR_TYPE_TIMELINE_VIEW)) {
+    g_debug("[INIT] Attaching GnNostrEventModel to timeline view");
+    /* Wrap GListModel in a selection model */
+    GtkSelectionModel *selection = GTK_SELECTION_MODEL(
+      gtk_single_selection_new(G_LIST_MODEL(self->event_model))
+    );
+    gnostr_timeline_view_set_model(GNOSTR_TIMELINE_VIEW(self->timeline), selection);
+    g_object_unref(selection); /* View takes ownership */
+    
+    /* Trigger initial refresh from nostrdb */
+    g_debug("[INIT] Refreshing GnNostrEventModel from nostrdb");
+    gn_nostr_event_model_refresh(self->event_model);
+  }
+  
+  /* OLD: Prepare timeline roots model (will be deprecated) */
   if (!self->thread_roots) {
     extern GType timeline_item_get_type(void);
     self->thread_roots = g_list_store_new(timeline_item_get_type());
-    if (self->timeline && G_TYPE_CHECK_INSTANCE_TYPE(self->timeline, GNOSTR_TYPE_TIMELINE_VIEW)) {
-      g_debug("[INIT] Timeline roots model configured");
-      gnostr_timeline_view_set_tree_roots(GNOSTR_TIMELINE_VIEW(self->timeline), G_LIST_MODEL(self->thread_roots));
-    } else {
-      g_debug("main_window_init: timeline widget not a GnostrTimelineView (type=%s)", self->timeline ? G_OBJECT_TYPE_NAME(self->timeline) : "(null)");
-    }
+    /* Note: Not attaching to view anymore - using new model instead */
   }
   /* Initialize dedup table */
   self->seen_texts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
@@ -1036,6 +1258,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   g_timeout_add_seconds(60, memory_stats_cb, self);
   /* Initialize avatar texture cache */
   self->avatar_tex_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_object_unref);
+  /* Initialize pending notes storage */
+  self->pending_notes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_ptr_array_unref);
   /* Initialize reconnection flag */
   self->reconnection_in_progress = FALSE;
   /* Pre-populate/apply cached profiles here */
@@ -1197,9 +1421,10 @@ static void gnostr_main_window_dispose(GObject *object) {
   }
   if (self->pool) { g_object_unref(self->pool); self->pool = NULL; }
   if (self->seen_texts) { g_hash_table_unref(self->seen_texts); self->seen_texts = NULL; }
-  if (self->seen_ids) { g_hash_table_unref(self->seen_ids); self->seen_ids = NULL; }
+  if (self->event_model) { g_object_unref(self->event_model); self->event_model = NULL; }
   if (self->nodes_by_id) { g_hash_table_unref(self->nodes_by_id); self->nodes_by_id = NULL; }
   if (self->avatar_tex_cache) { g_hash_table_unref(self->avatar_tex_cache); self->avatar_tex_cache = NULL; }
+  if (self->pending_notes) { g_hash_table_unref(self->pending_notes); self->pending_notes = NULL; }
   if (self->thread_roots) { g_object_unref(self->thread_roots); self->thread_roots = NULL; }
   
   /* Shutdown profile provider */
@@ -1256,6 +1481,9 @@ static void initial_refresh_timeout_cb(gpointer data) {
   g_message("STARTUP_DEBUG: prepopulate complete, scheduling profile sweep");
   /* After items exist, sweep local DB for any cached profiles (debounced) */
   schedule_ndb_profile_sweep(self);
+  
+  /* Inject test threaded notes for demonstration */
+  inject_test_threaded_notes(self);
   g_message("STARTUP_DEBUG: initial_refresh_timeout_cb EXIT");
 }
 
@@ -1653,12 +1881,6 @@ static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer us
     if (kind != 1) continue;
     const char *id = nostr_event_get_id(evt);
     if (!id || strlen(id) != 64) continue;
-    /* Dedup on id */
-    if (!self->seen_ids) self->seen_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-    if (g_hash_table_contains(self->seen_ids, id)) {
-      continue;
-    }
-    g_hash_table_insert(self->seen_ids, g_strdup(id), GINT_TO_POINTER(1));
     /* Ingest into nostrdb for persistence */
     char *evt_json = nostr_event_serialize(evt);
     if (evt_json) {
@@ -1672,6 +1894,13 @@ static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer us
   }
   if (appended > 0) {
     g_message("[TIMELINE] ✓ Received %u new notes, queued %u profiles", appended, enqueued_profiles);
+    
+    /* NEW: Refresh GListModel to show new events */
+    if (self->event_model) {
+      g_debug("[MODEL] Refreshing model after %u new events", appended);
+      gn_nostr_event_model_refresh(self->event_model);
+    }
+    
     /* Also sweep local cache (debounced) to apply any already-cached profiles */
     schedule_ndb_profile_sweep(self);
   }
@@ -1924,5 +2153,35 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
   else {
     g_debug("profile_apply: thread_roots is NULL");
   }
+  
+  /* Now handle pending notes for this pubkey */
+  GPtrArray *pending = g_hash_table_lookup(self->pending_notes, pubkey_hex);
+  if (pending && pending->len > 0) {
+    g_debug("[TIMELINE] Processing %u pending notes for %.8s… (profile now available)", 
+           pending->len, pubkey_hex);
+    
+    /* Add pending notes to timeline and make them visible */
+    for (guint i = 0; i < pending->len; i++) {
+      GObject *item = g_ptr_array_index(pending, i);
+      if (item) {
+        /* Update with profile information */
+        g_object_set(item,
+                     "display-name", display ? display : "",
+                     "handle",       handle ? g_strdup_printf("@%s", handle) : "@anon",
+                     "avatar-url",   picture ? picture : "",
+                     "visible",      TRUE,  /* Make visible now that profile exists */
+                     NULL);
+        
+        /* Add to timeline */
+        g_list_store_append(self->thread_roots, item);
+        g_debug("[TIMELINE] Pending note from %.8s... now visible", pubkey_hex);
+      }
+    }
+    
+    /* Clear pending notes for this pubkey */
+    g_hash_table_remove(self->pending_notes, pubkey_hex);
+    g_debug("[TIMELINE] Cleared pending notes for %.8s…", pubkey_hex);
+  }
+  
   if (root) json_decref(root);
 }
