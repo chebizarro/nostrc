@@ -692,6 +692,45 @@ static void on_note_card_open_profile_relay(GnostrNoteCardRow *row, const char *
   (void)user_data;
 }
 
+/* Callback when profile is loaded for an event item - show the row */
+static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  GtkListItem *list_item = GTK_LIST_ITEM(user_data);
+  
+  /* Get the row widget */
+  GtkWidget *row = gtk_list_item_get_child(list_item);
+  if (!GTK_IS_WIDGET(row)) return;
+  
+  /* Check if profile is now available */
+  GObject *profile = NULL;
+  g_object_get(event_item, "profile", &profile, NULL);
+  
+  if (profile) {
+    /* Profile loaded - show the row and update author info */
+    gchar *display = NULL, *handle = NULL, *avatar_url = NULL;
+    g_object_get(profile,
+                 "display-name", &display,
+                 "name",         &handle,
+                 "picture-url",  &avatar_url,
+                 NULL);
+    
+    if (GNOSTR_IS_NOTE_CARD_ROW(row)) {
+      gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row), display, handle, avatar_url);
+      gtk_widget_set_visible(row, TRUE);
+      
+      gchar *event_id = NULL;
+      g_object_get(event_item, "event-id", &event_id, NULL);
+      g_debug("[PROFILE] Profile loaded for event %s - showing row", event_id ? event_id : "(null)");
+      g_free(event_id);
+    }
+    
+    g_free(display);
+    g_free(handle);
+    g_free(avatar_url);
+    g_object_unref(profile);
+  }
+}
+
 static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
   GtkWidget *row = GTK_WIDGET(gnostr_note_card_row_new());
@@ -939,6 +978,19 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
     gnostr_note_card_row_set_depth(GNOSTR_NOTE_CARD_ROW(row), depth);
     gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), id_hex, root_id, pubkey);
+    
+    /* Hide row if no profile is attached (will be shown when profile loads) */
+    gboolean has_profile = (display != NULL || handle != NULL);
+    gtk_widget_set_visible(row, has_profile);
+    if (!has_profile) {
+      g_debug("[BIND] Hiding row for event %s - no profile yet", id_hex ? id_hex : "(null)");
+      
+      /* Connect to profile change notification to show row when profile loads */
+      g_signal_connect_object(obj, "notify::profile",
+                              G_CALLBACK(on_event_item_profile_changed),
+                              item, 0);
+    }
+    
     /* Connect embed request signal
      * NOTE: We don't need to disconnect first - g_signal_connect_object handles duplicates
      * and auto-disconnects when row is destroyed */

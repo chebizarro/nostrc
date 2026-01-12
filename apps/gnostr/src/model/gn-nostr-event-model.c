@@ -248,8 +248,11 @@ static void gn_nostr_event_model_add_event(GnNostrEventModel *self, NostrEvent *
   
   /* Check if already exists */
   if (g_hash_table_contains(self->item_cache, event_id)) {
+    g_debug("[MODEL] Skipping duplicate event %.8s", event_id);
     return;
   }
+  
+  g_debug("[MODEL] Adding new event %.8s", event_id);
   
   /* Parse event data */
   const char *pubkey = nostr_event_get_pubkey(evt);
@@ -439,9 +442,12 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
   int query_rc = storage_ndb_query(txn, filter->str, &ids, &count);
   g_debug("[MODEL] Query result: rc=%d count=%d", query_rc, count);
   
+  guint added = 0, skipped = 0;
   if (query_rc == 0) {
     /* storage_ndb_query returns full JSON event objects, not just IDs */
     g_debug("[MODEL] Processing %d events from query", count);
+    guint before_count = self->event_ids->len;
+    
     for (int i = 0; i < count; i++) {
       const char *event_json = ids[i];
       if (!event_json) {
@@ -457,19 +463,67 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
       
       int deser_rc = nostr_event_deserialize(evt, event_json);
       if (deser_rc == 0) {
+        guint before = self->event_ids->len;
         gn_nostr_event_model_add_event(self, evt);
+        if (self->event_ids->len > before) {
+          added++;
+        } else {
+          skipped++;
+        }
       } else {
         g_warning("[MODEL] Failed to deserialize event %d (rc=%d)", i, deser_rc);
       }
       nostr_event_free(evt);
     }
     storage_ndb_free_results(ids, count);
+    
+    g_message("[MODEL] Refresh complete: %u total items (%u added, %u skipped as duplicates)", 
+              self->event_ids->len, added, skipped);
   }
   
   storage_ndb_end_query(txn);
   g_string_free(filter, TRUE);
+}
+
+void gn_nostr_event_model_update_profile(GObject *model, const char *pubkey_hex, const char *content_json) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(model));
+  g_return_if_fail(pubkey_hex != NULL);
+  g_return_if_fail(content_json != NULL);
   
-  g_debug("[MODEL] Refresh complete: %u items", self->event_ids->len);
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(model);
+  
+  /* Update the profile in the profile cache */
+  GnNostrProfile *profile = g_hash_table_lookup(self->profile_cache, pubkey_hex);
+  if (profile) {
+    gn_nostr_profile_update_from_json(profile, content_json);
+    g_debug("[MODEL] Updated profile for %.8s in cache", pubkey_hex);
+  }
+  
+  /* Update all event items with this pubkey */
+  guint updated = 0;
+  for (guint i = 0; i < self->event_ids->len; i++) {
+    const char *event_id = g_ptr_array_index(self->event_ids, i);
+    GnNostrEventItem *item = g_hash_table_lookup(self->item_cache, event_id);
+    if (!item) continue;
+    
+    gchar *item_pubkey = NULL;
+    g_object_get(item, "pubkey", &item_pubkey, NULL);
+    
+    if (item_pubkey && g_strcmp0(item_pubkey, pubkey_hex) == 0) {
+      /* This item belongs to the updated profile - update its profile reference */
+      if (profile) {
+        gn_nostr_event_item_set_profile(item, profile);
+        updated++;
+        g_debug("[MODEL] Updated profile for event %.8s", event_id);
+      }
+    }
+    
+    g_free(item_pubkey);
+  }
+  
+  if (updated > 0) {
+    g_message("[MODEL] ✓ Profile update for %.8s applied to %u events", pubkey_hex, updated);
+  }
 }
 
 void gn_nostr_event_model_clear(GnNostrEventModel *self) {

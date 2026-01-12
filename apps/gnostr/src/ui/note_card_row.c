@@ -42,6 +42,8 @@ struct _GnostrNoteCardRow {
   char *id_hex;
   char *root_id;
   char *pubkey_hex;
+  gint64 created_at;
+  guint timestamp_timer_id;
   OgPreviewWidget *og_preview;
 };
 
@@ -58,6 +60,13 @@ static guint signals[N_SIGNALS];
 
 static void gnostr_note_card_row_dispose(GObject *obj) {
   GnostrNoteCardRow *self = (GnostrNoteCardRow*)obj;
+  
+  /* Remove timestamp timer */
+  if (self->timestamp_timer_id > 0) {
+    g_source_remove(self->timestamp_timer_id);
+    self->timestamp_timer_id = 0;
+  }
+  
 #ifdef HAVE_SOUP3
   if (self->avatar_cancellable) { g_cancellable_cancel(self->avatar_cancellable); g_clear_object(&self->avatar_cancellable); }
   /* Cancel all media fetches */
@@ -429,8 +438,36 @@ void gnostr_note_card_row_set_author(GnostrNoteCardRow *self, const char *displa
 #endif
 }
 
+/* Timer callback to update timestamp display */
+static gboolean update_timestamp_tick(gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->lbl_timestamp)) {
+    return G_SOURCE_REMOVE;
+  }
+  
+  if (self->created_at > 0) {
+    time_t now = time(NULL);
+    long diff = (long)(now - (time_t)self->created_at);
+    if (diff < 0) diff = 0;
+    char buf[32];
+    if (diff < 5) g_strlcpy(buf, "now", sizeof(buf));
+    else if (diff < 3600) g_snprintf(buf, sizeof(buf), "%ldm", diff/60);
+    else if (diff < 86400) g_snprintf(buf, sizeof(buf), "%ldh", diff/3600);
+    else g_snprintf(buf, sizeof(buf), "%ldd", diff/86400);
+    gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), buf);
+  }
+  
+  return G_SOURCE_CONTINUE;
+}
+
 void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_at, const char *fallback_ts) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->lbl_timestamp)) return;
+  
+  /* Store the created_at timestamp */
+  self->created_at = created_at;
+  
+  /* Update the display immediately */
   if (created_at > 0) {
     time_t now = time(NULL);
     long diff = (long)(now - (time_t)created_at);
@@ -441,6 +478,14 @@ void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_
     else if (diff < 86400) g_snprintf(buf, sizeof(buf), "%ldh", diff/3600);
     else g_snprintf(buf, sizeof(buf), "%ldd", diff/86400);
     gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), buf);
+    
+    /* Remove old timer if exists */
+    if (self->timestamp_timer_id > 0) {
+      g_source_remove(self->timestamp_timer_id);
+    }
+    
+    /* Add timer to update every 60 seconds */
+    self->timestamp_timer_id = g_timeout_add_seconds(60, update_timestamp_tick, self);
   } else {
     gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), fallback_ts ? fallback_ts : "now");
   }

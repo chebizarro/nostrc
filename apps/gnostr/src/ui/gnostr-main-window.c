@@ -97,6 +97,7 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
 static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data);
 static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data);
 static void on_bg_prefetch_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data);
+static gboolean periodic_model_refresh(gpointer user_data);
 
 /* Demand-driven profile fetch helpers */
 static void enqueue_profile_author(GnostrMainWindow *self, const char *pubkey_hex);
@@ -456,30 +457,37 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
   if (GNOSTR_IS_PROFILE_PANE(self->profile_pane)) {
     gnostr_profile_pane_set_pubkey(GNOSTR_PROFILE_PANE(self->profile_pane), pubkey_hex);
     
-    /* Look up profile from provider and update the pane */
-    GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey_hex);
-    if (meta) {
-      /* Build minimal JSON for profile pane from provider data */
-      g_autoptr(GString) json = g_string_new("{");
-      if (meta->display_name) {
-        g_string_append_printf(json, "\"display_name\":\"%s\"", meta->display_name);
-      }
-      if (meta->name) {
-        if (json->len > 1) g_string_append(json, ",");
-        g_string_append_printf(json, "\"name\":\"%s\"", meta->name);
-      }
-      if (meta->picture) {
-        if (json->len > 1) g_string_append(json, ",");
-        g_string_append_printf(json, "\"picture\":\"%s\"", meta->picture);
-      }
-      g_string_append(json, "}");
+    /* Query nostrdb directly for full profile JSON (not just minimal cache) */
+    void *txn = NULL;
+    if (storage_ndb_begin_query(&txn) == 0) {
+      char filter[256];
+      snprintf(filter, sizeof(filter), "[{\"kinds\":[0],\"authors\":[\"%s\"],\"limit\":1}]", pubkey_hex);
       
-      extern void gnostr_profile_pane_update_from_json(GnostrProfilePane *pane, const char *json);
-      gnostr_profile_pane_update_from_json(GNOSTR_PROFILE_PANE(self->profile_pane), json->str);
-      gnostr_profile_meta_free(meta);
-    } else {
-      /* Profile not in cache, enqueue for fetching */
-      enqueue_profile_author(self, pubkey_hex);
+      char **results = NULL;
+      int count = 0;
+      if (storage_ndb_query(txn, filter, &results, &count) == 0 && count > 0) {
+        /* storage_ndb_query returns full JSON event objects */
+        const char *event_json = results[0];
+        if (event_json) {
+          NostrEvent *evt = nostr_event_new();
+          if (evt && nostr_event_deserialize(evt, event_json) == 0) {
+            const char *content = nostr_event_get_content(evt);
+            if (content) {
+              /* Pass full profile JSON to profile pane */
+              extern void gnostr_profile_pane_update_from_json(GnostrProfilePane *pane, const char *json);
+              gnostr_profile_pane_update_from_json(GNOSTR_PROFILE_PANE(self->profile_pane), content);
+              g_debug("[PROFILE] Loaded full profile for %.8s from nostrdb", pubkey_hex);
+            }
+          }
+          if (evt) nostr_event_free(evt);
+        }
+        storage_ndb_free_results(results, count);
+      } else {
+        /* Profile not in DB, enqueue for fetching from relays */
+        g_debug("[PROFILE] Profile %.8s not in DB, enqueueing for fetch", pubkey_hex);
+        enqueue_profile_author(self, pubkey_hex);
+      }
+      storage_ndb_end_query(txn);
     }
   }
 }
@@ -1219,7 +1227,7 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     .n_authors = 0,
     .since = 0,
     .until = 0,
-    .limit = 100
+    .limit = 2000  /* Match timeline cap to ensure new events are included */
   };
   gn_nostr_event_model_set_query(self->event_model, &params);
   
@@ -1316,6 +1324,10 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
       start_pool_live(self);
       /* Also start profile subscription if identity is configured */
       start_profile_subscription(self);
+      
+      /* Start periodic model refresh to pick up new events from nostrdb */
+      g_timeout_add_seconds(5, (GSourceFunc)periodic_model_refresh, self);
+      g_message("[INIT] Started periodic model refresh (every 5 seconds)");
     }
   }
   
@@ -1831,6 +1843,21 @@ static gboolean check_relay_health(gpointer user_data) {
   return G_SOURCE_CONTINUE; /* Keep checking every interval */
 }
 
+/* Periodic model refresh to pick up new events from nostrdb */
+static gboolean periodic_model_refresh(gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) {
+    return G_SOURCE_REMOVE;
+  }
+  
+  if (self->event_model) {
+    g_debug("[MODEL] Periodic refresh triggered");
+    gn_nostr_event_model_refresh(self->event_model);
+  }
+  
+  return G_SOURCE_CONTINUE;
+}
+
 /* Retry live subscription after failure */
 static gboolean retry_pool_live(gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
@@ -1871,6 +1898,9 @@ static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer 
 static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data) {
   (void)pool;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  
+  g_message("[POOL] on_pool_events called with batch size: %u", batch ? batch->len : 0);
+  
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !batch) return;
 
   guint appended = 0, enqueued_profiles = 0;
@@ -1881,13 +1911,16 @@ static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer us
     if (kind != 1) continue;
     const char *id = nostr_event_get_id(evt);
     if (!id || strlen(id) != 64) continue;
+    
+    g_debug("[POOL] Processing event %.8s kind=%d", id, kind);
+    
     /* Ingest into nostrdb for persistence */
     char *evt_json = nostr_event_serialize(evt);
     if (evt_json) {
       storage_ndb_ingest_event_json(evt_json, NULL);
       free(evt_json);
     }
-    append_note_from_event(self, evt);
+    /* OLD: append_note_from_event(self, evt); - removed, using new model */
     appended++;
     const char *pk = nostr_event_get_pubkey(evt);
     if (pk && strlen(pk) == 64) { enqueue_profile_author(self, pk); enqueued_profiles++; }
@@ -1897,12 +1930,14 @@ static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer us
     
     /* NEW: Refresh GListModel to show new events */
     if (self->event_model) {
-      g_debug("[MODEL] Refreshing model after %u new events", appended);
+      g_message("[MODEL] Refreshing model after %u new events from pool", appended);
       gn_nostr_event_model_refresh(self->event_model);
     }
     
     /* Also sweep local cache (debounced) to apply any already-cached profiles */
     schedule_ndb_profile_sweep(self);
+  } else {
+    g_debug("[POOL] No kind-1 events in batch");
   }
 }
 
@@ -2087,6 +2122,14 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
   }
 
   guint updated = 0;
+  
+  /* NEW: Update GnNostrEventModel items */
+  extern void gn_nostr_event_model_update_profile(GObject *model, const char *pubkey_hex, const char *content_json);
+  if (self->event_model) {
+    gn_nostr_event_model_update_profile(G_OBJECT(self->event_model), pubkey_hex, content_json);
+  }
+  
+  /* OLD: Update thread_roots items (legacy) */
   if (self->thread_roots) {
     GListModel *model = G_LIST_MODEL(self->thread_roots);
     guint n = g_list_model_get_n_items(model);
