@@ -462,34 +462,27 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
   if (GNOSTR_IS_PROFILE_PANE(self->profile_pane)) {
     gnostr_profile_pane_set_pubkey(GNOSTR_PROFILE_PANE(self->profile_pane), pubkey_hex);
     
-    /* Query nostrdb directly for full profile JSON (not just minimal cache) */
+    /* Query nostrdb directly for profile using optimized lookup */
     void *txn = NULL;
     if (storage_ndb_begin_query(&txn) == 0) {
-      char filter[256];
-      snprintf(filter, sizeof(filter), "[{\"kinds\":[0],\"authors\":[\"%s\"],\"limit\":1}]", pubkey_hex);
-      
-      char **results = NULL;
-      int count = 0;
-      if (storage_ndb_query(txn, filter, &results, &count) == 0 && count > 0) {
-        /* storage_ndb_query returns full JSON event objects */
-        const char *event_json = results[0];
-        if (event_json) {
-          NostrEvent *evt = nostr_event_new();
-          if (evt && nostr_event_deserialize(evt, event_json) == 0) {
-            const char *content = nostr_event_get_content(evt);
-            if (content) {
-              /* Pass full profile JSON to profile pane */
-              extern void gnostr_profile_pane_update_from_json(GnostrProfilePane *pane, const char *json);
-              gnostr_profile_pane_update_from_json(GNOSTR_PROFILE_PANE(self->profile_pane), content);
-              g_debug("[PROFILE] Loaded full profile for %.8s from nostrdb", pubkey_hex);
-            }
-          }
-          if (evt) nostr_event_free(evt);
+      uint8_t pk32[32];
+      gboolean found = FALSE;
+
+      if (hex_to_bytes32(pubkey_hex, pk32)) {
+        char *profile_json = NULL;
+        int profile_len = 0;
+        if (storage_ndb_get_profile_by_pubkey(txn, pk32, &profile_json, &profile_len) == 0 && profile_json) {
+          /* Pass profile JSON directly to profile pane (no event parsing needed) */
+          extern void gnostr_profile_pane_update_from_json(GnostrProfilePane *pane, const char *json);
+          gnostr_profile_pane_update_from_json(GNOSTR_PROFILE_PANE(self->profile_pane), profile_json);
+          g_debug("[PROFILE] Loaded profile for %.8s from nostrdb (len=%d)", pubkey_hex, profile_len);
+          found = TRUE;
         }
-        storage_ndb_free_results(results, count);
-      } else {
+      }
+
+      if (!found) {
         /* Profile not in DB, enqueue for fetching from relays */
-        g_debug("[PROFILE] Profile %.8s not in DB, enqueueing for fetch", pubkey_hex);
+        g_debug("[PROFILE] Profile %.8s not in nostrdb, enqueueing for fetch", pubkey_hex);
         enqueue_profile_author(self, pubkey_hex);
       }
       storage_ndb_end_query(txn);
