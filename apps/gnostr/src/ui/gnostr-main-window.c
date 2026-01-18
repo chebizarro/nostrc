@@ -469,14 +469,22 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
       gboolean found = FALSE;
 
       if (hex_to_bytes32(pubkey_hex, pk32)) {
-        char *profile_json = NULL;
-        int profile_len = 0;
-        if (storage_ndb_get_profile_by_pubkey(txn, pk32, &profile_json, &profile_len) == 0 && profile_json) {
-          /* Pass profile JSON directly to profile pane (no event parsing needed) */
-          extern void gnostr_profile_pane_update_from_json(GnostrProfilePane *pane, const char *json);
-          gnostr_profile_pane_update_from_json(GNOSTR_PROFILE_PANE(self->profile_pane), profile_json);
-          g_debug("[PROFILE] Loaded profile for %.8s from nostrdb (len=%d)", pubkey_hex, profile_len);
-          found = TRUE;
+        char *event_json = NULL;
+        int event_len = 0;
+        if (storage_ndb_get_profile_by_pubkey(txn, pk32, &event_json, &event_len) == 0 && event_json) {
+          /* storage_ndb_get_profile_by_pubkey returns full event JSON, extract content field */
+          NostrEvent *evt = nostr_event_new();
+          if (evt && nostr_event_deserialize(evt, event_json) == 0) {
+            const char *content = nostr_event_get_content(evt);
+            if (content && *content) {
+              extern void gnostr_profile_pane_update_from_json(GnostrProfilePane *pane, const char *json);
+              gnostr_profile_pane_update_from_json(GNOSTR_PROFILE_PANE(self->profile_pane), content);
+              g_debug("[PROFILE] Loaded profile for %.8s from nostrdb", pubkey_hex);
+              found = TRUE;
+            }
+          }
+          if (evt) nostr_event_free(evt);
+          free(event_json);
         }
       }
 
