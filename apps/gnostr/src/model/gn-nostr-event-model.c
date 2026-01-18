@@ -30,6 +30,9 @@ struct _GnNostrEventModel {
   
   /* Threading data - event_id -> thread info */
   GHashTable *thread_info;  /* key: event_id, value: ThreadInfo* */
+
+  /* Pending events waiting for profile (profile-gated visibility) */
+  GHashTable *pending_by_pubkey;  /* key: pubkey, value: GPtrArray of event_ids */
 };
 
 typedef struct {
@@ -43,6 +46,11 @@ static void thread_info_free(ThreadInfo *info) {
   g_free(info->root_id);
   g_free(info->parent_id);
   g_free(info);
+}
+
+static void pending_event_list_free(gpointer p) {
+  GPtrArray *arr = (GPtrArray *)p;
+  if (arr) g_ptr_array_free(arr, TRUE);
 }
 
 static void gn_nostr_event_model_list_model_iface_init(GListModelInterface *iface);
@@ -61,16 +69,18 @@ static GParamSpec *properties[N_PROPS];
 
 static void gn_nostr_event_model_finalize(GObject *object) {
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(object);
-  
+
   g_free(self->kinds);
   g_strfreev(self->authors);
   g_free(self->root_event_id);
-  
+
   g_ptr_array_unref(self->event_ids);
   g_hash_table_unref(self->item_cache);
   g_hash_table_unref(self->profile_cache);
   g_hash_table_unref(self->thread_info);
-  
+  if (self->pending_by_pubkey)
+    g_hash_table_unref(self->pending_by_pubkey);
+
   G_OBJECT_CLASS(gn_nostr_event_model_parent_class)->finalize(object);
 }
 
@@ -110,6 +120,7 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
   self->item_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
   self->profile_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
   self->thread_info = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)thread_info_free);
+  self->pending_by_pubkey = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, pending_event_list_free);
   self->limit = 100;
 }
 
@@ -149,6 +160,47 @@ static void gn_nostr_event_model_list_model_iface_init(GListModelInterface *ifac
 }
 
 /* Helper functions */
+
+/* Decode 64-char hex pubkey into 32 bytes */
+static gboolean hex_to_bytes32(const char *hex, uint8_t out[32]) {
+  if (!hex || !out) return FALSE;
+  size_t L = strlen(hex);
+  if (L != 64) return FALSE;
+  for (int i = 0; i < 32; i++) {
+    char c1 = hex[i*2];
+    char c2 = hex[i*2+1];
+    int v1, v2;
+    if      (c1 >= '0' && c1 <= '9') v1 = c1 - '0';
+    else if (c1 >= 'a' && c1 <= 'f') v1 = 10 + (c1 - 'a');
+    else if (c1 >= 'A' && c1 <= 'F') v1 = 10 + (c1 - 'A');
+    else return FALSE;
+    if      (c2 >= '0' && c2 <= '9') v2 = c2 - '0';
+    else if (c2 >= 'a' && c2 <= 'f') v2 = 10 + (c2 - 'a');
+    else if (c2 >= 'A' && c2 <= 'F') v2 = 10 + (c2 - 'A');
+    else return FALSE;
+    out[i] = (uint8_t)((v1 << 4) | v2);
+  }
+  return TRUE;
+}
+
+/* Check if a profile exists in nostrdb for the given pubkey */
+static gboolean has_profile_in_ndb(const char *pubkey_hex) {
+  if (!pubkey_hex || strlen(pubkey_hex) != 64) return FALSE;
+
+  uint8_t pk32[32];
+  if (!hex_to_bytes32(pubkey_hex, pk32)) return FALSE;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0) return FALSE;
+
+  char *json = NULL;
+  int len = 0;
+  int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &json, &len);
+  storage_ndb_end_query(txn);
+
+  /* Note: json points to nostrdb memory, do not free */
+  return (rc == 0 && json != NULL && len > 0);
+}
 
 static GnNostrProfile *gn_nostr_event_model_get_or_create_profile(GnNostrEventModel *self, const char *pubkey) {
   GnNostrProfile *profile = g_hash_table_lookup(self->profile_cache, pubkey);
@@ -242,61 +294,11 @@ static guint calculate_thread_depth(GnNostrEventModel *self, const char *event_i
   return depth;
 }
 
-static void gn_nostr_event_model_add_event(GnNostrEventModel *self, NostrEvent *evt) {
-  const char *event_id = nostr_event_get_id(evt);
-  if (!event_id) return;
-  
-  /* Check if already exists */
-  if (g_hash_table_contains(self->item_cache, event_id)) {
-    g_debug("[MODEL] Skipping duplicate event %.8s", event_id);
-    return;
-  }
-  
-  g_debug("[MODEL] Adding new event %.8s", event_id);
-  
-  /* Parse event data */
-  const char *pubkey = nostr_event_get_pubkey(evt);
-  gint64 created_at = nostr_event_get_created_at(evt);
-  const char *content = nostr_event_get_content(evt);
-  gint kind = nostr_event_get_kind(evt);
-  
-  /* Parse NIP-10 threading */
-  char *root_id = NULL;
-  char *reply_id = NULL;
-  parse_nip10_tags(evt, &root_id, &reply_id);
-  
-  g_debug("[THREAD] Event %.8s: root=%s reply=%s", 
-          event_id, 
-          root_id ? root_id : "(none)",
-          reply_id ? reply_id : "(none)");
-  
-  /* Calculate depth */
-  guint depth = calculate_thread_depth(self, event_id, reply_id);
-  
-  /* Store thread info */
-  ThreadInfo *tinfo = g_new0(ThreadInfo, 1);
-  tinfo->root_id = root_id;
-  tinfo->parent_id = reply_id;
-  tinfo->depth = depth;
-  g_hash_table_insert(self->thread_info, g_strdup(event_id), tinfo);
-  
-  /* Create item */
-  GnNostrEventItem *item = gn_nostr_event_item_new(event_id);
-  gn_nostr_event_item_update_from_event(item, pubkey, created_at, content, kind);
-  gn_nostr_event_item_set_thread_info(item, root_id, reply_id, depth);
-  
-  /* Get or create profile */
-  if (pubkey) {
-    GnNostrProfile *profile = gn_nostr_event_model_get_or_create_profile(self, pubkey);
-    gn_nostr_event_item_set_profile(item, profile);
-  }
-  
-  /* Add to cache */
-  g_hash_table_insert(self->item_cache, g_strdup(event_id), item);
-  
+/* Internal helper: add event_id to visible list at the correct position */
+static void add_event_to_visible_list(GnNostrEventModel *self, const char *event_id, gint64 created_at, const char *reply_id) {
   /* Determine insertion position */
   guint position = 0;
-  
+
   if (self->is_thread_view && reply_id) {
     /* Thread view: insert after parent */
     for (guint i = 0; i < self->event_ids->len; i++) {
@@ -320,15 +322,87 @@ static void gn_nostr_event_model_add_event(GnNostrEventModel *self, NostrEvent *
       position = self->event_ids->len;
     }
   }
-  
+
   /* Insert into list */
   g_ptr_array_insert(self->event_ids, position, g_strdup(event_id));
-  
+
   /* Emit items-changed signal */
   g_list_model_items_changed(G_LIST_MODEL(self), position, 0, 1);
-  
-  g_debug("[MODEL] Added event %s at position %u (depth=%u, total=%u)", 
-            event_id, position, depth, self->event_ids->len);
+
+  g_debug("[MODEL] Added event %s at position %u (total=%u)", event_id, position, self->event_ids->len);
+}
+
+static void gn_nostr_event_model_add_event(GnNostrEventModel *self, NostrEvent *evt) {
+  const char *event_id = nostr_event_get_id(evt);
+  if (!event_id) return;
+
+  /* Check if already exists in cache */
+  if (g_hash_table_contains(self->item_cache, event_id)) {
+    g_debug("[MODEL] Skipping duplicate event %.8s", event_id);
+    return;
+  }
+
+  g_debug("[MODEL] Adding new event %.8s", event_id);
+
+  /* Parse event data */
+  const char *pubkey = nostr_event_get_pubkey(evt);
+  gint64 created_at = nostr_event_get_created_at(evt);
+  const char *content = nostr_event_get_content(evt);
+  gint kind = nostr_event_get_kind(evt);
+
+  /* Parse NIP-10 threading */
+  char *root_id = NULL;
+  char *reply_id = NULL;
+  parse_nip10_tags(evt, &root_id, &reply_id);
+
+  g_debug("[THREAD] Event %.8s: root=%s reply=%s",
+          event_id,
+          root_id ? root_id : "(none)",
+          reply_id ? reply_id : "(none)");
+
+  /* Calculate depth */
+  guint depth = calculate_thread_depth(self, event_id, reply_id);
+
+  /* Store thread info */
+  ThreadInfo *tinfo = g_new0(ThreadInfo, 1);
+  tinfo->root_id = root_id;
+  tinfo->parent_id = reply_id;
+  tinfo->depth = depth;
+  g_hash_table_insert(self->thread_info, g_strdup(event_id), tinfo);
+
+  /* Create item */
+  GnNostrEventItem *item = gn_nostr_event_item_new(event_id);
+  gn_nostr_event_item_update_from_event(item, pubkey, created_at, content, kind);
+  gn_nostr_event_item_set_thread_info(item, root_id, reply_id, depth);
+
+  /* Get or create profile */
+  if (pubkey) {
+    GnNostrProfile *profile = gn_nostr_event_model_get_or_create_profile(self, pubkey);
+    gn_nostr_event_item_set_profile(item, profile);
+  }
+
+  /* Add to cache (always) */
+  g_hash_table_insert(self->item_cache, g_strdup(event_id), item);
+
+  /* Profile-gated visibility: only add to visible list if profile exists in nostrdb */
+  if (pubkey && has_profile_in_ndb(pubkey)) {
+    /* Profile exists - add to visible list immediately */
+    add_event_to_visible_list(self, event_id, created_at, reply_id);
+    g_debug("[MODEL] Event %.8s visible (profile found for %.8s)", event_id, pubkey);
+  } else if (pubkey) {
+    /* No profile yet - add to pending list */
+    GPtrArray *pending = g_hash_table_lookup(self->pending_by_pubkey, pubkey);
+    if (!pending) {
+      pending = g_ptr_array_new_with_free_func(g_free);
+      g_hash_table_insert(self->pending_by_pubkey, g_strdup(pubkey), pending);
+    }
+    g_ptr_array_add(pending, g_strdup(event_id));
+    g_debug("[MODEL] Event %.8s pending (no profile for %.8s, pending=%u)", event_id, pubkey, pending->len);
+  } else {
+    /* No pubkey - add to visible list anyway (shouldn't happen for valid events) */
+    add_event_to_visible_list(self, event_id, created_at, reply_id);
+    g_warning("[MODEL] Event %.8s has no pubkey, adding anyway", event_id);
+  }
 }
 
 /* Public API */
@@ -526,19 +600,71 @@ void gn_nostr_event_model_update_profile(GObject *model, const char *pubkey_hex,
   }
 }
 
+void gn_nostr_event_model_check_pending_for_profile(GnNostrEventModel *self, const char *pubkey) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
+  g_return_if_fail(pubkey != NULL);
+
+  /* Look up pending events for this pubkey */
+  GPtrArray *pending = g_hash_table_lookup(self->pending_by_pubkey, pubkey);
+  if (!pending || pending->len == 0) {
+    return;
+  }
+
+  g_message("[MODEL] Profile arrived for %.8s - promoting %u pending events", pubkey, pending->len);
+
+  /* Move all pending events to visible list */
+  guint promoted = 0;
+  for (guint i = 0; i < pending->len; i++) {
+    const char *event_id = g_ptr_array_index(pending, i);
+    if (!event_id) continue;
+
+    /* Skip if already in visible list */
+    gboolean already_visible = FALSE;
+    for (guint j = 0; j < self->event_ids->len; j++) {
+      if (g_strcmp0(g_ptr_array_index(self->event_ids, j), event_id) == 0) {
+        already_visible = TRUE;
+        break;
+      }
+    }
+    if (already_visible) continue;
+
+    /* Get the item from cache to extract created_at and reply_id */
+    GnNostrEventItem *item = g_hash_table_lookup(self->item_cache, event_id);
+    if (!item) continue;
+
+    gint64 created_at = gn_nostr_event_item_get_created_at(item);
+    ThreadInfo *tinfo = g_hash_table_lookup(self->thread_info, event_id);
+    const char *reply_id = tinfo ? tinfo->parent_id : NULL;
+
+    add_event_to_visible_list(self, event_id, created_at, reply_id);
+    promoted++;
+  }
+
+  /* Remove from pending (the hash table owns the array, removal will free it) */
+  g_hash_table_remove(self->pending_by_pubkey, pubkey);
+
+  if (promoted > 0) {
+    g_message("[MODEL] ✓ Promoted %u events for profile %.8s", promoted, pubkey);
+  }
+}
+
 void gn_nostr_event_model_clear(GnNostrEventModel *self) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
-  
+
   guint old_size = self->event_ids->len;
-  if (old_size == 0) return;
-  
+  guint pending_size = self->pending_by_pubkey ? g_hash_table_size(self->pending_by_pubkey) : 0;
+
+  if (old_size == 0 && pending_size == 0) return;
+
   g_ptr_array_remove_range(self->event_ids, 0, old_size);
   g_hash_table_remove_all(self->item_cache);
   g_hash_table_remove_all(self->thread_info);
-  
-  g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, 0);
-  
-  g_debug("[MODEL] Cleared %u items", old_size);
+  g_hash_table_remove_all(self->pending_by_pubkey);
+
+  if (old_size > 0)
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, 0);
+
+  g_debug("[MODEL] Cleared %u visible items, %u pending pubkeys", old_size, pending_size);
 }
 
 gboolean gn_nostr_event_model_get_is_thread_view(GnNostrEventModel *self) {

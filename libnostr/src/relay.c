@@ -174,11 +174,8 @@ NostrRelay *nostr_relay_new(GoContext *context, const char *url, Error **err) {
 
     relay->url = strdup(url);
     relay->subscriptions = go_hash_map_create(16);
-    /* TODO(macOS): Temporarily bypass signature verification on macOS.
-     * Events fail nostr_event_check_signature() despite valid signatures.
-     * Works correctly on Linux. Needs investigation - possibly secp256k1
-     * library or canonical JSON serialization differences. See nostrc-XX. */
-    relay->assume_valid = true;
+    /* nostrdb now handles signature verification - let it do the validation */
+    relay->assume_valid = false;
     relay->refcount = 1;
 
     relay->priv = priv;

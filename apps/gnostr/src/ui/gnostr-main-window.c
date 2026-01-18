@@ -808,7 +808,7 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
       g_warning("[PROFILE] Ingested %u/%u events (%u failed validation)", ingested, jsons->len, failed);
     }
     /* No LDJSON buffer to free: removed to avoid memory spikes */
-    /* Now parse events for UI application */
+    /* Now parse events for UI application and check pending events */
     for (guint i = 0; i < jsons->len; i++) {
       const char *evt_json = (const char*)g_ptr_array_index(jsons, i);
       if (!evt_json) continue;
@@ -823,6 +823,11 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
           pctx->content_json = g_strdup(content);
           g_ptr_array_add(items, pctx);
           dispatched++;
+
+          /* Check pending events for this profile (profile-gated visibility) */
+          if (GNOSTR_IS_MAIN_WINDOW(ctx->self) && ctx->self->event_model) {
+            gn_nostr_event_model_check_pending_for_profile(ctx->self->event_model, pk_hex);
+          }
         }
       } else {
         /* Surface parse problem with a short snippet (first 120 chars) */
@@ -1832,12 +1837,12 @@ static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_url
   if (out_urls) *out_urls = urls;
   if (out_count) *out_count = n;
 
-  /* Build a single filter for kind-1 timeline */
+  /* Build a single filter for timeline: notes (1), reposts (6), threads (11) */
   if (out_filters) {
     NostrFilters *fs = nostr_filters_new();
     NostrFilter *f = nostr_filter_new();
-    int kind1 = 1;
-    nostr_filter_set_kinds(f, &kind1, 1);
+    int note_kinds[] = {1, 6, 11};  /* notes, reposts, threads */
+    nostr_filter_set_kinds(f, note_kinds, 3);
     if (limit > 0) nostr_filter_set_limit(f, limit);
     /* Optional since window */
     /* We only use since if explicitly enabled to avoid missing older cached content */
@@ -2176,46 +2181,63 @@ static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer 
 static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data) {
   (void)pool;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  
+
   g_message("[POOL] on_pool_events called with batch size: %u", batch ? batch->len : 0);
-  
+
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !batch) return;
 
-  guint appended = 0, enqueued_profiles = 0;
+  guint notes_ingested = 0, profiles_ingested = 0, enqueued_profiles = 0;
   for (guint i = 0; i < batch->len; i++) {
     NostrEvent *evt = (NostrEvent*)batch->pdata[i];
     if (!evt) continue;
     int kind = nostr_event_get_kind(evt);
-    if (kind != 1) continue;
     const char *id = nostr_event_get_id(evt);
     if (!id || strlen(id) != 64) continue;
-    
+
+    /* Accept kinds 0 (profiles), 1 (notes), 6 (reposts), 11 (threads) */
+    if (kind != 0 && kind != 1 && kind != 6 && kind != 11) continue;
+
     g_debug("[POOL] Processing event %.8s kind=%d", id, kind);
-    
+
     /* Ingest into nostrdb for persistence */
     char *evt_json = nostr_event_serialize(evt);
     if (evt_json) {
       storage_ndb_ingest_event_json(evt_json, NULL);
       free(evt_json);
     }
-    /* OLD: append_note_from_event(self, evt); - removed, using new model */
-    appended++;
+
     const char *pk = nostr_event_get_pubkey(evt);
-    if (pk && strlen(pk) == 64) { enqueue_profile_author(self, pk); enqueued_profiles++; }
+
+    if (kind == 0) {
+      /* Profile arrived - check pending events for this author */
+      profiles_ingested++;
+      if (pk && strlen(pk) == 64 && self->event_model) {
+        gn_nostr_event_model_check_pending_for_profile(self->event_model, pk);
+      }
+    } else {
+      /* Note/repost/thread - enqueue profile fetch */
+      notes_ingested++;
+      if (pk && strlen(pk) == 64) {
+        enqueue_profile_author(self, pk);
+        enqueued_profiles++;
+      }
+    }
   }
-  if (appended > 0) {
-    g_message("[TIMELINE] ✓ Received %u new notes, queued %u profiles", appended, enqueued_profiles);
-    
-    /* NEW: Refresh GListModel to show new events */
+
+  if (notes_ingested > 0 || profiles_ingested > 0) {
+    g_message("[TIMELINE] ✓ Received %u notes, %u profiles, queued %u profile fetches",
+              notes_ingested, profiles_ingested, enqueued_profiles);
+
+    /* Refresh GListModel to show new events */
     if (self->event_model) {
-      g_message("[MODEL] Refreshing model after %u new events from pool", appended);
+      g_message("[MODEL] Refreshing model after %u new events from pool", notes_ingested + profiles_ingested);
       gn_nostr_event_model_refresh(self->event_model);
     }
-    
+
     /* Also sweep local cache (debounced) to apply any already-cached profiles */
     schedule_ndb_profile_sweep(self);
   } else {
-    g_debug("[POOL] No kind-1 events in batch");
+    g_debug("[POOL] No relevant events in batch");
   }
 }
 

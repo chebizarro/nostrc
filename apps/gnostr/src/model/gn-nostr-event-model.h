@@ -26,6 +26,7 @@ void gn_nostr_event_model_set_thread_root(GnNostrEventModel *self, const char *r
 void gn_nostr_event_model_refresh(GnNostrEventModel *self);
 void gn_nostr_event_model_clear(GnNostrEventModel *self);
 void gn_nostr_event_model_update_profile(GObject *model, const char *pubkey_hex, const char *content_json);
+void gn_nostr_event_model_check_pending_for_profile(GnNostrEventModel *self, const char *pubkey);
 
 gboolean gn_nostr_event_model_get_is_thread_view(GnNostrEventModel *self);
 const char *gn_nostr_event_model_get_root_event_id(GnNostrEventModel *self);
