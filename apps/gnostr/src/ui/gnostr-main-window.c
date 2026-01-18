@@ -66,7 +66,7 @@ static void ui_event_row_free(gpointer p);
 static void schedule_apply_events(GnostrMainWindow *self, GPtrArray *rows /* UiEventRow* */);
 static gboolean periodic_backfill_cb(gpointer data);
 static void on_refresh_clicked(GtkButton *btn, gpointer user_data);
-static void on_composer_post_requested(GnostrComposer *composer, gpointer user_data);
+static void on_composer_post_requested(GnostrComposer *composer, const char *text, gpointer user_data);
 static void on_relays_clicked(GtkButton *btn, gpointer user_data);
 static void on_settings_clicked(GtkButton *btn, gpointer user_data);
 static void on_avatar_login_local_clicked(GtkButton *btn, gpointer user_data);
@@ -1520,11 +1520,180 @@ static void on_refresh_clicked(GtkButton *btn, gpointer user_data) {
   show_toast(self, "Refreshing…");
 }
 
-static void on_composer_post_requested(GnostrComposer *composer, gpointer user_data) {
+/* Context for async sign-and-publish operation */
+typedef struct {
+  GnostrMainWindow *self;  /* weak ref */
+  char *text;              /* owned; original note content */
+} PublishContext;
+
+static void publish_context_free(PublishContext *ctx) {
+  if (!ctx) return;
+  g_free(ctx->text);
+  g_free(ctx);
+}
+
+/* Callback when DBus sign_event completes */
+static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
+  PublishContext *ctx = (PublishContext*)user_data;
+  if (!ctx || !GNOSTR_IS_MAIN_WINDOW(ctx->self)) {
+    publish_context_free(ctx);
+    return;
+  }
+  GnostrMainWindow *self = ctx->self;
+  NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+
+  GError *error = NULL;
+  char *signed_event_json = NULL;
+  gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(proxy, &signed_event_json, res, &error);
+
+  if (!ok || !signed_event_json) {
+    char *msg = g_strdup_printf("Signing failed: %s", error ? error->message : "unknown error");
+    show_toast(self, msg);
+    g_free(msg);
+    g_clear_error(&error);
+    publish_context_free(ctx);
+    return;
+  }
+
+  g_message("[PUBLISH] Signed event: %.100s...", signed_event_json);
+
+  /* Parse the signed event JSON into a NostrEvent */
+  NostrEvent *event = nostr_event_new();
+  int parse_rc = nostr_event_deserialize_compact(event, signed_event_json, strlen(signed_event_json));
+  if (parse_rc != 1) {
+    show_toast(self, "Failed to parse signed event");
+    nostr_event_free(event);
+    g_free(signed_event_json);
+    publish_context_free(ctx);
+    return;
+  }
+
+  /* Get relay URLs from config */
+  GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
+  gnostr_load_relays_into(relay_urls);
+  if (relay_urls->len == 0) {
+    /* Fallback defaults */
+    g_ptr_array_add(relay_urls, g_strdup("wss://relay.primal.net/"));
+    g_ptr_array_add(relay_urls, g_strdup("wss://relay.damus.io/"));
+    g_ptr_array_add(relay_urls, g_strdup("wss://nos.lol/"));
+  }
+
+  /* Publish to each relay */
+  guint success_count = 0;
+  guint fail_count = 0;
+  for (guint i = 0; i < relay_urls->len; i++) {
+    const char *url = (const char*)g_ptr_array_index(relay_urls, i);
+    GNostrRelay *relay = gnostr_relay_new(url);
+    if (!relay) {
+      fail_count++;
+      continue;
+    }
+
+    GError *conn_err = NULL;
+    if (!gnostr_relay_connect(relay, &conn_err)) {
+      g_message("[PUBLISH] Failed to connect to %s: %s", url, conn_err ? conn_err->message : "unknown");
+      g_clear_error(&conn_err);
+      g_object_unref(relay);
+      fail_count++;
+      continue;
+    }
+
+    GError *pub_err = NULL;
+    if (gnostr_relay_publish(relay, event, &pub_err)) {
+      g_message("[PUBLISH] Published to %s", url);
+      success_count++;
+    } else {
+      g_message("[PUBLISH] Publish failed to %s: %s", url, pub_err ? pub_err->message : "unknown");
+      g_clear_error(&pub_err);
+      fail_count++;
+    }
+    g_object_unref(relay);
+  }
+
+  /* Show result toast */
+  if (success_count > 0) {
+    char *msg = g_strdup_printf("Published to %u relay%s", success_count, success_count == 1 ? "" : "s");
+    show_toast(self, msg);
+    g_free(msg);
+
+    /* Clear composer text on success */
+    if (self->composer && GNOSTR_IS_COMPOSER(self->composer)) {
+      gnostr_composer_clear(GNOSTR_COMPOSER(self->composer));
+    }
+
+    /* Switch to timeline tab */
+    if (self->stack && GTK_IS_STACK(self->stack)) {
+      gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "timeline");
+    }
+  } else {
+    show_toast(self, "Failed to publish to any relay");
+  }
+
+  /* Cleanup */
+  nostr_event_free(event);
+  g_free(signed_event_json);
+  g_ptr_array_free(relay_urls, TRUE);
+  publish_context_free(ctx);
+}
+
+static void on_composer_post_requested(GnostrComposer *composer, const char *text, gpointer user_data) {
   (void)composer;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  show_toast(self, "Post requested (stub)");
+
+  /* Validate input */
+  if (!text || !*text) {
+    show_toast(self, "Cannot post empty note");
+    return;
+  }
+
+  /* Get signer proxy */
+  GError *proxy_err = NULL;
+  NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
+  if (!proxy) {
+    char *msg = g_strdup_printf("Signer not available: %s", proxy_err ? proxy_err->message : "not connected");
+    show_toast(self, msg);
+    g_free(msg);
+    g_clear_error(&proxy_err);
+    return;
+  }
+
+  show_toast(self, "Signing...");
+
+  /* Build unsigned event JSON */
+  json_t *event_obj = json_object();
+  json_object_set_new(event_obj, "kind", json_integer(1));
+  json_object_set_new(event_obj, "created_at", json_integer((json_int_t)time(NULL)));
+  json_object_set_new(event_obj, "content", json_string(text));
+  json_object_set_new(event_obj, "tags", json_array());
+
+  char *event_json = json_dumps(event_obj, JSON_COMPACT);
+  json_decref(event_obj);
+
+  if (!event_json) {
+    show_toast(self, "Failed to build event JSON");
+    return;
+  }
+
+  g_message("[PUBLISH] Unsigned event: %s", event_json);
+
+  /* Create async context */
+  PublishContext *ctx = g_new0(PublishContext, 1);
+  ctx->self = self;
+  ctx->text = g_strdup(text);
+
+  /* Call signer asynchronously */
+  nostr_org_nostr_signer_call_sign_event(
+    proxy,
+    event_json,      /* event_json */
+    "",              /* current_user: empty = use default */
+    "gnostr",        /* app_id */
+    NULL,            /* cancellable */
+    on_sign_event_complete,
+    ctx
+  );
+
+  g_free(event_json);
 }
 
 static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_urls, size_t *out_count, NostrFilters **out_filters, int limit) {

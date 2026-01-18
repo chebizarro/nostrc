@@ -90,3 +90,10 @@ static void gnostr_composer_init(GnostrComposer *self) {
 GtkWidget *gnostr_composer_new(void) {
   return g_object_new(GNOSTR_TYPE_COMPOSER, NULL);
 }
+
+void gnostr_composer_clear(GnostrComposer *self) {
+  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+  if (!self->text_view || !GTK_IS_TEXT_VIEW(self->text_view)) return;
+  GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));
+  gtk_text_buffer_set_text(buf, "", 0);
+}

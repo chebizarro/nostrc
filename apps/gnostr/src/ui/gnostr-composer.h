@@ -11,6 +11,9 @@ G_DECLARE_FINAL_TYPE(GnostrComposer, gnostr_composer, GNOSTR, COMPOSER, GtkWidge
 
 GtkWidget *gnostr_composer_new(void);
 
+/* Clear the composer text */
+void gnostr_composer_clear(GnostrComposer *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_COMPOSER_H */
