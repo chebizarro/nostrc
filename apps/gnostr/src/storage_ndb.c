@@ -6,7 +6,36 @@
 #include "libnostr_store.h"
 #include "storage_ndb.h"
 
+/* Direct nostrdb access for subscription API */
+#if defined(__clang__)
+#  pragma clang diagnostic push
+#  pragma clang diagnostic ignored "-Wpedantic"
+#  pragma clang diagnostic ignored "-Wzero-length-array"
+#elif defined(__GNUC__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wpedantic"
+#endif
+#include "nostrdb.h"
+#if defined(__clang__)
+#  pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#  pragma GCC diagnostic pop
+#endif
+
+/* Backend impl structure from ndb_backend.h */
+struct ln_ndb_impl {
+  void *db;
+};
+
 static ln_store *g_store = NULL;
+
+/* Get raw nostrdb handle from our store */
+static struct ndb *get_ndb(void)
+{
+  if (!g_store) return NULL;
+  struct ln_ndb_impl *impl = (struct ln_ndb_impl *)ln_store_get_backend_handle(g_store);
+  return impl ? (struct ndb *)impl->db : NULL;
+}
 
 int storage_ndb_init(const char *dbdir, const char *opts_json)
 {
@@ -106,15 +135,21 @@ static char *ensure_tags_field(const char *json)
 int storage_ndb_ingest_event_json(const char *json, const char *relay_opt)
 {
   if (!g_store || !json) return LN_ERR_INGEST;
-  
+
   /* CRITICAL FIX: Add tags field if missing */
   char *fixed_json = ensure_tags_field(json);
   if (!fixed_json) return LN_ERR_INGEST;
-  
+
   /* Ensure explicit length; some backends may not accept -1 */
   size_t len = strlen(fixed_json);
   int rc = ln_store_ingest_event_json(g_store, fixed_json, (int)len, relay_opt);
-  
+
+  /* Log ingest failures only */
+  if (rc != 0) {
+    fprintf(stderr, "[storage_ndb_ingest] FAILED rc=%d len=%zu json_head=%.100s\n", rc, len, fixed_json);
+    fflush(stderr);
+  }
+
   free(fixed_json);
   return rc;
 }
@@ -205,7 +240,7 @@ void storage_ndb_free_results(char **arr, int n)
 int storage_ndb_get_note_by_id_nontxn(const char *id_hex, char **json_out, int *json_len)
 {
   if (!id_hex || !json_out) return LN_ERR_QUERY;
-  
+
   /* Convert hex to binary */
   unsigned char id32[32];
   for (int i = 0; i < 32; i++) {
@@ -213,44 +248,150 @@ int storage_ndb_get_note_by_id_nontxn(const char *id_hex, char **json_out, int *
     if (sscanf(id_hex + i*2, "%2x", &byte) != 1) return LN_ERR_QUERY;
     id32[i] = (unsigned char)byte;
   }
-  
-  /* Try to get note with internal transaction management and aggressive retries for rc=1003 */
+
+  /* Try to get note with internal transaction management */
   void *txn = NULL;
-  int rc = 0;
-  int max_attempts = 50;  /* More attempts for reader slot contention */
-  
-  for (int attempt = 0; attempt < max_attempts; attempt++) {
-    rc = storage_ndb_begin_query(&txn);
-    
-    if (rc == 0 && txn) {
-      /* Success - fetch the note */
-      char *json_ptr = NULL;
-      rc = storage_ndb_get_note_by_id(txn, id32, &json_ptr, json_len);
-      
-      if (rc == 0 && json_ptr && json_len && *json_len > 0) {
-        /* Copy the JSON before ending transaction */
-        *json_out = malloc(*json_len + 1);
-        if (*json_out) {
-          memcpy(*json_out, json_ptr, *json_len);
-          (*json_out)[*json_len] = '\0';
-        }
-      }
-      
-      storage_ndb_end_query(txn);
-      return rc;
-    }
-    
-    /* If rc=1003 (reader slot exhaustion), retry with backoff */
-    if (rc == 1003) {
-      /* Exponential backoff: 10ms, 20ms, 40ms, 80ms, 160ms, then cap at 200ms */
-      int backoff_ms = 10 * (1 << (attempt < 5 ? attempt : 5));
-      if (backoff_ms > 200) backoff_ms = 200;
-      usleep((useconds_t)backoff_ms * 1000);
-    } else {
-      /* Other error - fail immediately */
-      break;
+  int rc = storage_ndb_begin_query(&txn);
+
+  if (rc != 0 || !txn) {
+    return rc != 0 ? rc : LN_ERR_DB_TXN;
+  }
+
+  char *json_ptr = NULL;
+  rc = storage_ndb_get_note_by_id(txn, id32, &json_ptr, json_len);
+
+  if (rc == 0 && json_ptr && json_len && *json_len > 0) {
+    /* Copy the JSON before ending transaction */
+    *json_out = malloc(*json_len + 1);
+    if (*json_out) {
+      memcpy(*json_out, json_ptr, *json_len);
+      (*json_out)[*json_len] = '\0';
     }
   }
-  
-  return rc != 0 ? rc : LN_ERR_DB_TXN;
+
+  storage_ndb_end_query(txn);
+  return rc;
+}
+
+/* ============== Subscription API Implementation ============== */
+
+void storage_ndb_set_notify_callback(storage_ndb_notify_fn fn, void *ctx)
+{
+  /* Note: nostrdb subscription callback is set at init time via ndb_config.
+   * For now, we don't support changing it after init.
+   * The application should poll for notes instead. */
+  (void)fn;
+  (void)ctx;
+}
+
+uint64_t storage_ndb_subscribe(const char *filter_json)
+{
+  struct ndb *ndb = get_ndb();
+  if (!ndb || !filter_json) return 0;
+
+  struct ndb_filter filter;
+  if (!ndb_filter_init(&filter)) return 0;
+
+  unsigned char *tmpbuf = (unsigned char *)malloc(4096);
+  if (!tmpbuf) {
+    ndb_filter_destroy(&filter);
+    return 0;
+  }
+
+  int len = (int)strlen(filter_json);
+  if (!ndb_filter_from_json(filter_json, len, &filter, tmpbuf, 4096)) {
+    ndb_filter_destroy(&filter);
+    free(tmpbuf);
+    return 0;
+  }
+
+  uint64_t subid = ndb_subscribe(ndb, &filter, 1);
+
+  ndb_filter_destroy(&filter);
+  free(tmpbuf);
+
+  return subid;
+}
+
+void storage_ndb_unsubscribe(uint64_t subid)
+{
+  struct ndb *ndb = get_ndb();
+  if (!ndb || subid == 0) return;
+  ndb_unsubscribe(ndb, subid);
+}
+
+int storage_ndb_poll_notes(uint64_t subid, uint64_t *note_keys, int capacity)
+{
+  struct ndb *ndb = get_ndb();
+  if (!ndb || subid == 0 || !note_keys || capacity <= 0) return 0;
+  return ndb_poll_for_notes(ndb, subid, note_keys, capacity);
+}
+
+/* ============== Direct Note Access API Implementation ============== */
+
+storage_ndb_note *storage_ndb_get_note_ptr(void *txn, uint64_t note_key)
+{
+  if (!txn || note_key == 0) return NULL;
+  struct ndb_txn *ntxn = (struct ndb_txn *)txn;
+  size_t note_size = 0;
+  return ndb_get_note_by_key(ntxn, note_key, &note_size);
+}
+
+uint64_t storage_ndb_get_note_key_by_id(void *txn, const unsigned char id32[32],
+                                         storage_ndb_note **note_out)
+{
+  if (!txn || !id32) return 0;
+  struct ndb_txn *ntxn = (struct ndb_txn *)txn;
+  size_t note_len = 0;
+  uint64_t key = 0;
+  struct ndb_note *note = ndb_get_note_by_id(ntxn, id32, &note_len, &key);
+  if (note_out) *note_out = note;
+  return note ? key : 0;
+}
+
+const unsigned char *storage_ndb_note_id(storage_ndb_note *note)
+{
+  if (!note) return NULL;
+  return ndb_note_id(note);
+}
+
+const unsigned char *storage_ndb_note_pubkey(storage_ndb_note *note)
+{
+  if (!note) return NULL;
+  return ndb_note_pubkey(note);
+}
+
+const char *storage_ndb_note_content(storage_ndb_note *note)
+{
+  if (!note) return NULL;
+  return ndb_note_content(note);
+}
+
+uint32_t storage_ndb_note_content_length(storage_ndb_note *note)
+{
+  if (!note) return 0;
+  return ndb_note_content_length(note);
+}
+
+uint32_t storage_ndb_note_created_at(storage_ndb_note *note)
+{
+  if (!note) return 0;
+  return ndb_note_created_at(note);
+}
+
+uint32_t storage_ndb_note_kind(storage_ndb_note *note)
+{
+  if (!note) return 0;
+  return ndb_note_kind(note);
+}
+
+void storage_ndb_hex_encode(const unsigned char *bin32, char *hex65)
+{
+  if (!bin32 || !hex65) return;
+  static const char hex_chars[] = "0123456789abcdef";
+  for (int i = 0; i < 32; i++) {
+    hex65[i*2] = hex_chars[(bin32[i] >> 4) & 0x0f];
+    hex65[i*2 + 1] = hex_chars[bin32[i] & 0x0f];
+  }
+  hex65[64] = '\0';
 }

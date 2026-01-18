@@ -1,12 +1,19 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* Thin facade over libnostr ln_store_* for NostrdB usage in gnostr. */
+
+/* Opaque note pointer - actually struct ndb_note* from nostrdb */
+typedef struct ndb_note storage_ndb_note;
+
+/* Subscription callback - called from writer thread when notes match subscription */
+typedef void (*storage_ndb_notify_fn)(void *ctx, uint64_t subid);
 
 /* Initialize the store. Returns 1 on success, 0 on failure. */
 int storage_ndb_init(const char *dbdir, const char *opts_json);
@@ -43,6 +50,46 @@ int storage_ndb_stat_json(char **json_out);
 
 /* Free results helpers */
 void storage_ndb_free_results(char **arr, int n);
+
+/* ============== Subscription API ============== */
+
+/* Set global subscription notification callback.
+ * Called from nostrdb writer thread when new notes match a subscription.
+ * Use g_idle_add() to marshal to GTK main loop. */
+void storage_ndb_set_notify_callback(storage_ndb_notify_fn fn, void *ctx);
+
+/* Subscribe to notes matching filter. Returns subscription ID (>0) or 0 on failure.
+ * filter_json is a NIP-01 filter object, e.g. {"kinds":[1],"limit":100} */
+uint64_t storage_ndb_subscribe(const char *filter_json);
+
+/* Unsubscribe from a subscription. */
+void storage_ndb_unsubscribe(uint64_t subid);
+
+/* Poll for new note keys matching subscription. Non-blocking.
+ * Returns number of keys written to array (0 if none available). */
+int storage_ndb_poll_notes(uint64_t subid, uint64_t *note_keys, int capacity);
+
+/* ============== Direct Note Access API ============== */
+
+/* Get raw note pointer by key. Valid only while txn is open.
+ * Returns NULL if not found. DO NOT free the returned pointer. */
+storage_ndb_note *storage_ndb_get_note_ptr(void *txn, uint64_t note_key);
+
+/* Get note key from note ID (32-byte binary). Returns key or 0 if not found.
+ * Also returns note pointer if note_out is not NULL. */
+uint64_t storage_ndb_get_note_key_by_id(void *txn, const unsigned char id32[32],
+                                         storage_ndb_note **note_out);
+
+/* Direct note accessors - work on storage_ndb_note pointer while txn is open */
+const unsigned char *storage_ndb_note_id(storage_ndb_note *note);
+const unsigned char *storage_ndb_note_pubkey(storage_ndb_note *note);
+const char *storage_ndb_note_content(storage_ndb_note *note);
+uint32_t storage_ndb_note_content_length(storage_ndb_note *note);
+uint32_t storage_ndb_note_created_at(storage_ndb_note *note);
+uint32_t storage_ndb_note_kind(storage_ndb_note *note);
+
+/* Convert 32-byte binary to hex string. Caller provides 65-byte buffer. */
+void storage_ndb_hex_encode(const unsigned char *bin32, char *hex65);
 
 #ifdef __cplusplus
 }

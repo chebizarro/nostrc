@@ -104,6 +104,10 @@ endif()
 set(_NDB_VENDOR_DIR ${CMAKE_SOURCE_DIR}/third_party/nostrdb)
 if (TARGET nostrdb_storage)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostrdb_storage)
+  # Add nostrdb include paths for direct API access (subscriptions, etc.)
+  target_include_directories(${APP_CLIENT_BIN} PRIVATE
+    ${_NDB_VENDOR_DIR}/src
+    ${_NDB_VENDOR_DIR}/deps/flatcc/include)
   if (NOT TARGET nostrdb)
     if (EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
       if (APPLE)

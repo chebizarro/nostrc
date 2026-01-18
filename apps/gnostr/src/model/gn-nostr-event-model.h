@@ -28,6 +28,12 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self);
 void gn_nostr_event_model_update_profile(GObject *model, const char *pubkey_hex, const char *content_json);
 void gn_nostr_event_model_check_pending_for_profile(GnNostrEventModel *self, const char *pubkey);
 
+/* Add an event directly from JSON (for live events before nostrdb async ingestion completes) */
+void gn_nostr_event_model_add_event_json(GnNostrEventModel *self, const char *event_json);
+
+/* Add an event directly from NostrEvent pointer (avoids serialization roundtrip) */
+void gn_nostr_event_model_add_live_event(GnNostrEventModel *self, void *nostr_event);
+
 gboolean gn_nostr_event_model_get_is_thread_view(GnNostrEventModel *self);
 const char *gn_nostr_event_model_get_root_event_id(GnNostrEventModel *self);
 

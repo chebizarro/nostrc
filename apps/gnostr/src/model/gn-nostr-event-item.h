@@ -3,12 +3,20 @@
 
 #include "gn-nostr-profile.h"
 #include <glib-object.h>
+#include <stdint.h>
 
 G_BEGIN_DECLS
 
 #define GN_TYPE_NOSTR_EVENT_ITEM (gn_nostr_event_item_get_type())
 G_DECLARE_FINAL_TYPE(GnNostrEventItem, gn_nostr_event_item, GN, NOSTR_EVENT_ITEM, GObject)
 
+/* Create item from nostrdb note key (preferred - uses lazy loading) */
+GnNostrEventItem *gn_nostr_event_item_new_from_key(uint64_t note_key, gint64 created_at);
+
+/* Get the nostrdb note key */
+uint64_t gn_nostr_event_item_get_note_key(GnNostrEventItem *self);
+
+/* Legacy constructor - creates item from hex event id (deprecated) */
 GnNostrEventItem *gn_nostr_event_item_new(const char *event_id);
 
 const char *gn_nostr_event_item_get_event_id(GnNostrEventItem *self);

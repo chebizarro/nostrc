@@ -57,3 +57,11 @@ int ln_store_stat_json(ln_store *s, char **json_out)
   if (!s || !s->ops || !s->ops->stat_json) return LN_ERR_QUERY;
   return s->ops->stat_json(s, json_out);
 }
+
+void *ln_store_get_backend_handle(ln_store *s)
+{
+  if (!s || !s->impl) return NULL;
+  /* For nostrdb backend, impl is struct ln_ndb_impl which has db pointer.
+   * We return the impl and let the caller cast/access as needed. */
+  return s->impl;
+}

@@ -169,7 +169,8 @@ static int ln_ndb_ingest_event_json(ln_store *s, const char *json, int len, cons
   if (!db) return LN_ERR_INGEST;
   if (len < 0) len = (int)strlen(json);
   struct ndb_ingest_meta meta;
-  ndb_ingest_meta_init(&meta, 0, relay);
+  /* client=1 means raw event JSON (not relay websocket format ["EVENT", "subid", {...}]) */
+  ndb_ingest_meta_init(&meta, 1, relay);
   return ndb_process_event_with(db, json, len, &meta) ? LN_OK : LN_ERR_INGEST;
 }
 

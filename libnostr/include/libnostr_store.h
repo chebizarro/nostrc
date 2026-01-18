@@ -50,6 +50,10 @@ int ln_store_get_note_by_id(ln_store *s, void *txn, const unsigned char id[32], 
 int ln_store_get_profile_by_pubkey(ln_store *s, void *txn, const unsigned char pk[32], const char **json, int *json_len);
 int ln_store_stat_json(ln_store *s, char **json_out);
 
+/* Get raw backend handle for direct access (nostrdb only).
+ * Returns NULL for non-nostrdb backends. Caller must cast appropriately. */
+void *ln_store_get_backend_handle(ln_store *s);
+
 #ifdef __cplusplus
 }
 #endif

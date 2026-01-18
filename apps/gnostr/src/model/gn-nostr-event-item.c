@@ -1,21 +1,30 @@
 #include "gn-nostr-event-item.h"
+#include "../storage_ndb.h"
 #include <string.h>
 
 struct _GnNostrEventItem {
   GObject parent_instance;
-  
-  char *event_id;
-  char *pubkey;
+
+  /* Primary identifier - nostrdb note key */
+  uint64_t note_key;
+
+  /* Cached values for sorting and display (avoid repeated txn opens) */
   gint64 created_at;
-  char *content;
   gint kind;
-  
+
+  /* Lazy-loaded cached strings (populated on first access) */
+  char *cached_event_id;
+  char *cached_pubkey;
+  char *cached_content;
+
+  /* Profile object */
   GnNostrProfile *profile;
-  
+
+  /* Thread info (stored, not fetched from nostrdb) */
   char *thread_root_id;
   char *parent_id;
   guint reply_depth;
-  
+
   gboolean is_root;
   gboolean is_reply;
   gboolean is_repost;
@@ -44,35 +53,83 @@ enum {
 
 static GParamSpec *properties[N_PROPS];
 
+/* Helper: Load note data from nostrdb and cache it */
+static gboolean ensure_note_loaded(GnNostrEventItem *self)
+{
+  if (self->note_key == 0) return FALSE;
+  if (self->cached_event_id != NULL) return TRUE;  /* Already loaded */
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return FALSE;
+
+  storage_ndb_note *note = storage_ndb_get_note_ptr(txn, self->note_key);
+  if (note) {
+    /* Cache event ID */
+    const unsigned char *id = storage_ndb_note_id(note);
+    if (id) {
+      self->cached_event_id = g_malloc(65);
+      storage_ndb_hex_encode(id, self->cached_event_id);
+    }
+
+    /* Cache pubkey */
+    const unsigned char *pk = storage_ndb_note_pubkey(note);
+    if (pk) {
+      self->cached_pubkey = g_malloc(65);
+      storage_ndb_hex_encode(pk, self->cached_pubkey);
+    }
+
+    /* Cache content */
+    const char *content = storage_ndb_note_content(note);
+    if (content) {
+      uint32_t len = storage_ndb_note_content_length(note);
+      self->cached_content = g_strndup(content, len);
+    }
+
+    /* Cache kind and created_at */
+    self->kind = (gint)storage_ndb_note_kind(note);
+    self->created_at = (gint64)storage_ndb_note_created_at(note);
+    self->is_repost = (self->kind == 6);
+  }
+
+  storage_ndb_end_query(txn);
+  return (self->cached_event_id != NULL);
+}
+
 static void gn_nostr_event_item_finalize(GObject *object) {
   GnNostrEventItem *self = GN_NOSTR_EVENT_ITEM(object);
-  
-  g_free(self->event_id);
-  g_free(self->pubkey);
-  g_free(self->content);
+
+  g_free(self->cached_event_id);
+  g_free(self->cached_pubkey);
+  g_free(self->cached_content);
   g_free(self->thread_root_id);
   g_free(self->parent_id);
-  
+
   g_clear_object(&self->profile);
-  
+
   G_OBJECT_CLASS(gn_nostr_event_item_parent_class)->finalize(object);
 }
 
 static void gn_nostr_event_item_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {
   GnNostrEventItem *self = GN_NOSTR_EVENT_ITEM(object);
-  
+
+  /* Ensure data is loaded for content-dependent properties */
+  if (prop_id == PROP_EVENT_ID || prop_id == PROP_PUBKEY ||
+      prop_id == PROP_CONTENT || prop_id == PROP_KIND) {
+    ensure_note_loaded(self);
+  }
+
   switch (prop_id) {
     case PROP_EVENT_ID:
-      g_value_set_string(value, self->event_id);
+      g_value_set_string(value, self->cached_event_id);
       break;
     case PROP_PUBKEY:
-      g_value_set_string(value, self->pubkey);
+      g_value_set_string(value, self->cached_pubkey);
       break;
     case PROP_CREATED_AT:
       g_value_set_int64(value, self->created_at);
       break;
     case PROP_CONTENT:
-      g_value_set_string(value, self->content);
+      g_value_set_string(value, self->cached_content);
       break;
     case PROP_KIND:
       g_value_set_int(value, self->kind);
@@ -108,11 +165,11 @@ static void gn_nostr_event_item_get_property(GObject *object, guint prop_id, GVa
 
 static void gn_nostr_event_item_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) {
   GnNostrEventItem *self = GN_NOSTR_EVENT_ITEM(object);
-  
+
   switch (prop_id) {
     case PROP_EVENT_ID:
-      g_free(self->event_id);
-      self->event_id = g_value_dup_string(value);
+      g_free(self->cached_event_id);
+      self->cached_event_id = g_value_dup_string(value);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -121,11 +178,11 @@ static void gn_nostr_event_item_set_property(GObject *object, guint prop_id, con
 
 static void gn_nostr_event_item_class_init(GnNostrEventItemClass *klass) {
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
-  
+
   object_class->finalize = gn_nostr_event_item_finalize;
   object_class->get_property = gn_nostr_event_item_get_property;
   object_class->set_property = gn_nostr_event_item_set_property;
-  
+
   properties[PROP_EVENT_ID] = g_param_spec_string("event-id", "Event ID", "Event ID hex", NULL,
                                                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
   properties[PROP_PUBKEY] = g_param_spec_string("pubkey", "Pubkey", "Author pubkey", NULL,
@@ -152,7 +209,7 @@ static void gn_nostr_event_item_class_init(GnNostrEventItemClass *klass) {
                                                      G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
   properties[PROP_IS_MUTED] = g_param_spec_boolean("is-muted", "Is Muted", "Is muted", FALSE,
                                                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
-  
+
   g_object_class_install_properties(object_class, N_PROPS, properties);
 }
 
@@ -160,18 +217,34 @@ static void gn_nostr_event_item_init(GnNostrEventItem *self) {
   self->kind = 1;
 }
 
+/* New preferred constructor - from nostrdb note key */
+GnNostrEventItem *gn_nostr_event_item_new_from_key(uint64_t note_key, gint64 created_at) {
+  GnNostrEventItem *self = g_object_new(GN_TYPE_NOSTR_EVENT_ITEM, NULL);
+  self->note_key = note_key;
+  self->created_at = created_at;
+  return self;
+}
+
+uint64_t gn_nostr_event_item_get_note_key(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), 0);
+  return self->note_key;
+}
+
+/* Legacy constructor - from hex event ID */
 GnNostrEventItem *gn_nostr_event_item_new(const char *event_id) {
   return g_object_new(GN_TYPE_NOSTR_EVENT_ITEM, "event-id", event_id, NULL);
 }
 
 const char *gn_nostr_event_item_get_event_id(GnNostrEventItem *self) {
   g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
-  return self->event_id;
+  ensure_note_loaded(self);
+  return self->cached_event_id;
 }
 
 const char *gn_nostr_event_item_get_pubkey(GnNostrEventItem *self) {
   g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
-  return self->pubkey;
+  ensure_note_loaded(self);
+  return self->cached_pubkey;
 }
 
 gint64 gn_nostr_event_item_get_created_at(GnNostrEventItem *self) {
@@ -181,11 +254,13 @@ gint64 gn_nostr_event_item_get_created_at(GnNostrEventItem *self) {
 
 const char *gn_nostr_event_item_get_content(GnNostrEventItem *self) {
   g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
-  return self->content;
+  ensure_note_loaded(self);
+  return self->cached_content;
 }
 
 gint gn_nostr_event_item_get_kind(GnNostrEventItem *self) {
   g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), 0);
+  ensure_note_loaded(self);
   return self->kind;
 }
 
@@ -221,6 +296,7 @@ gboolean gn_nostr_event_item_get_is_reply(GnNostrEventItem *self) {
 
 gboolean gn_nostr_event_item_get_is_repost(GnNostrEventItem *self) {
   g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), FALSE);
+  ensure_note_loaded(self);
   return self->is_repost;
 }
 
@@ -231,7 +307,7 @@ gboolean gn_nostr_event_item_get_is_muted(GnNostrEventItem *self) {
 
 void gn_nostr_event_item_set_profile(GnNostrEventItem *self, GnNostrProfile *profile) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
-  
+
   if (g_set_object(&self->profile, profile)) {
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_PROFILE]);
   }
@@ -242,39 +318,42 @@ void gn_nostr_event_item_set_thread_info(GnNostrEventItem *self,
                                           const char *parent_id,
                                           guint depth) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
-  
+
   gboolean changed = FALSE;
-  
+
   if (g_strcmp0(self->thread_root_id, root_id) != 0) {
     g_free(self->thread_root_id);
     self->thread_root_id = g_strdup(root_id);
     changed = TRUE;
   }
-  
+
   if (g_strcmp0(self->parent_id, parent_id) != 0) {
     g_free(self->parent_id);
     self->parent_id = g_strdup(parent_id);
     changed = TRUE;
   }
-  
+
   if (self->reply_depth != depth) {
     self->reply_depth = depth;
     changed = TRUE;
   }
-  
-  gboolean new_is_root = (root_id == NULL || g_strcmp0(self->event_id, root_id) == 0);
+
+  /* Ensure event_id is loaded for comparison */
+  ensure_note_loaded(self);
+
+  gboolean new_is_root = (root_id == NULL || g_strcmp0(self->cached_event_id, root_id) == 0);
   gboolean new_is_reply = (parent_id != NULL);
-  
+
   if (self->is_root != new_is_root) {
     self->is_root = new_is_root;
     changed = TRUE;
   }
-  
+
   if (self->is_reply != new_is_reply) {
     self->is_reply = new_is_reply;
     changed = TRUE;
   }
-  
+
   if (changed) {
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_THREAD_ROOT_ID]);
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_PARENT_ID]);
@@ -284,38 +363,42 @@ void gn_nostr_event_item_set_thread_info(GnNostrEventItem *self,
   }
 }
 
+/* Legacy function - for backward compatibility during migration */
 void gn_nostr_event_item_update_from_event(GnNostrEventItem *self,
                                             const char *pubkey,
                                             gint64 created_at,
                                             const char *content,
                                             gint kind) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
-  
+
+  /* For items created from note_key, this is a no-op since data comes from nostrdb */
+  if (self->note_key != 0) return;
+
   gboolean changed = FALSE;
-  
-  if (g_strcmp0(self->pubkey, pubkey) != 0) {
-    g_free(self->pubkey);
-    self->pubkey = g_strdup(pubkey);
+
+  if (g_strcmp0(self->cached_pubkey, pubkey) != 0) {
+    g_free(self->cached_pubkey);
+    self->cached_pubkey = g_strdup(pubkey);
     changed = TRUE;
   }
-  
+
   if (self->created_at != created_at) {
     self->created_at = created_at;
     changed = TRUE;
   }
-  
-  if (g_strcmp0(self->content, content) != 0) {
-    g_free(self->content);
-    self->content = g_strdup(content);
+
+  if (g_strcmp0(self->cached_content, content) != 0) {
+    g_free(self->cached_content);
+    self->cached_content = g_strdup(content);
     changed = TRUE;
   }
-  
+
   if (self->kind != kind) {
     self->kind = kind;
     self->is_repost = (kind == 6);
     changed = TRUE;
   }
-  
+
   if (changed) {
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_PUBKEY]);
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_CREATED_AT]);

@@ -236,6 +236,7 @@ struct _GnostrMainWindow {
   GHashTable *seen_texts; /* owned; keys are g_strdup(text), values unused */
   /* NEW: GListModel-based timeline */
   GnNostrEventModel *event_model; /* owned; reactive model over nostrdb */
+  guint model_refresh_pending;    /* debounced refresh source id, 0 if none */
   /* OLD: Thread model (will be deprecated) */
   GListStore *thread_roots;    /* owned; element-type TimelineItem */
   GHashTable *nodes_by_id;     /* owned; key: id string -> TimelineItem* (weak) */
@@ -288,6 +289,7 @@ struct _GnostrMainWindow {
   NostrFilters    *live_filters; /* owned; current live filter set */
   gulong           pool_events_handler; /* signal handler id */
   gboolean         reconnection_in_progress; /* prevent concurrent reconnection attempts */
+  guint            health_check_source_id;   /* GLib source id for relay health check */
  
   /* Sequential profile batch dispatch state */
   GPtrArray      *profile_batches;       /* owned; elements: GPtrArray* of char* authors */
@@ -808,7 +810,7 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
       g_warning("[PROFILE] Ingested %u/%u events (%u failed validation)", ingested, jsons->len, failed);
     }
     /* No LDJSON buffer to free: removed to avoid memory spikes */
-    /* Now parse events for UI application and check pending events */
+    /* Now parse events for UI application */
     for (guint i = 0; i < jsons->len; i++) {
       const char *evt_json = (const char*)g_ptr_array_index(jsons, i);
       if (!evt_json) continue;
@@ -823,11 +825,6 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
           pctx->content_json = g_strdup(content);
           g_ptr_array_add(items, pctx);
           dispatched++;
-
-          /* Check pending events for this profile (profile-gated visibility) */
-          if (GNOSTR_IS_MAIN_WINDOW(ctx->self) && ctx->self->event_model) {
-            gn_nostr_event_model_check_pending_for_profile(ctx->self->event_model, pk_hex);
-          }
         }
       } else {
         /* Surface parse problem with a short snippet (first 120 chars) */
@@ -1291,7 +1288,7 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     .n_authors = 0,
     .since = 0,
     .until = 0,
-    .limit = 2000  /* Match timeline cap to ensure new events are included */
+    .limit = 500  /* Match MODEL_MAX_EVENTS to avoid unnecessary work */
   };
   gn_nostr_event_model_set_query(self->event_model, &params);
   
@@ -1389,9 +1386,10 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
       /* Also start profile subscription if identity is configured */
       start_profile_subscription(self);
       
-      /* Start periodic model refresh to pick up new events from nostrdb */
-      g_timeout_add_seconds(5, (GSourceFunc)periodic_model_refresh, self);
-      g_message("[INIT] Started periodic model refresh (every 5 seconds)");
+      /* NOTE: Periodic refresh disabled - events are now added directly in on_pool_events.
+       * This was causing duplicate processing and high memory usage.
+       * The initial refresh from nostrdb happens in constructed(), and live events
+       * are added directly when they arrive from relays. */
     }
   }
   
@@ -1837,12 +1835,12 @@ static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_url
   if (out_urls) *out_urls = urls;
   if (out_count) *out_count = n;
 
-  /* Build a single filter for timeline: notes (1), reposts (6), threads (11) */
+  /* Build a single filter for kind-1 timeline */
   if (out_filters) {
     NostrFilters *fs = nostr_filters_new();
     NostrFilter *f = nostr_filter_new();
-    int note_kinds[] = {1, 6, 11};  /* notes, reposts, threads */
-    nostr_filter_set_kinds(f, note_kinds, 3);
+    int kind1 = 1;
+    nostr_filter_set_kinds(f, &kind1, 1);
     if (limit > 0) nostr_filter_set_limit(f, limit);
     /* Optional since window */
     /* We only use since if explicitly enabled to avoid missing older cached content */
@@ -1989,16 +1987,23 @@ static gboolean periodic_backfill_cb(gpointer data) { (void)data; return G_SOURC
 static void start_pool_live(GnostrMainWindow *self) {
   /* Removed noisy debug */
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  
+
   /* Prevent concurrent reconnection attempts */
   if (self->reconnection_in_progress) {
     g_debug("[RELAY] Reconnection already in progress, skipping");
     return;
   }
   self->reconnection_in_progress = TRUE;
-  
+
   if (!self->pool) self->pool = gnostr_simple_pool_new();
-  if (!self->pool_cancellable) self->pool_cancellable = g_cancellable_new();
+
+  /* Cancel any existing subscription before starting a new one to prevent FD leak */
+  if (self->pool_cancellable) {
+    g_cancellable_cancel(self->pool_cancellable);
+    g_object_unref(self->pool_cancellable);
+    self->pool_cancellable = NULL;
+  }
+  self->pool_cancellable = g_cancellable_new();
 
   /* Build live URLs and filters: text notes (kind 1), optional limit/since */
   const char **urls = NULL; size_t url_count = 0; NostrFilters *filters = NULL;
@@ -2081,6 +2086,9 @@ static gboolean check_relay_health(gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->pool) {
     g_warning("relay_health: invalid window or pool, stopping health checks");
+    if (GNOSTR_IS_MAIN_WINDOW(self)) {
+      self->health_check_source_id = 0;
+    }
     return G_SOURCE_REMOVE;
   }
   
@@ -2164,14 +2172,16 @@ static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer 
   }
   
   if (!ok) {
-    g_warning("live: subscribe_many failed: %s - retrying in 5 seconds", 
+    g_warning("live: subscribe_many failed: %s - retrying in 5 seconds",
               error ? error->message : "(unknown)");
     /* Retry after 5 seconds */
     g_timeout_add_seconds(5, retry_pool_live, g_object_ref(self));
   } else {
     g_message("[RELAY] ✓ Live subscription started successfully");
-    /* Start periodic health check (every 30 seconds) */
-    g_timeout_add_seconds(30, check_relay_health, self);
+    /* Start periodic health check (every 30 seconds) - only if not already running */
+    if (GNOSTR_IS_MAIN_WINDOW(self) && self->health_check_source_id == 0) {
+      self->health_check_source_id = g_timeout_add_seconds(30, check_relay_health, self);
+    }
   }
   if (error) g_clear_error(&error);
   if (self) g_object_unref(self);
@@ -2182,62 +2192,45 @@ static void on_pool_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer us
   (void)pool;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
 
-  g_message("[POOL] on_pool_events called with batch size: %u", batch ? batch->len : 0);
-
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !batch) return;
 
-  guint notes_ingested = 0, profiles_ingested = 0, enqueued_profiles = 0;
+  /* Declare extern for direct event addition */
+  extern void gn_nostr_event_model_add_live_event(GnNostrEventModel *self, void *nostr_event);
+
+  guint appended = 0, enqueued_profiles = 0;
   for (guint i = 0; i < batch->len; i++) {
     NostrEvent *evt = (NostrEvent*)batch->pdata[i];
     if (!evt) continue;
     int kind = nostr_event_get_kind(evt);
+    if (kind != 1) continue;
     const char *id = nostr_event_get_id(evt);
     if (!id || strlen(id) != 64) continue;
 
-    /* Accept kinds 0 (profiles), 1 (notes), 6 (reposts), 11 (threads) */
-    if (kind != 0 && kind != 1 && kind != 6 && kind != 11) continue;
-
-    g_debug("[POOL] Processing event %.8s kind=%d", id, kind);
-
-    /* Ingest into nostrdb for persistence */
-    char *evt_json = nostr_event_serialize(evt);
+    /* Ingest to nostrdb for persistence (uses memory-mapped storage, minimal heap impact) */
+    char *evt_json = nostr_event_serialize_compact(evt);
     if (evt_json) {
-      storage_ndb_ingest_event_json(evt_json, NULL);
+      int ingest_rc = storage_ndb_ingest_event_json(evt_json, NULL);
+      if (ingest_rc != 0) {
+        g_warning("[INGEST] Failed to ingest event %.8s: rc=%d json_len=%zu",
+                  id, ingest_rc, strlen(evt_json));
+      }
       free(evt_json);
-    }
-
-    const char *pk = nostr_event_get_pubkey(evt);
-
-    if (kind == 0) {
-      /* Profile arrived - check pending events for this author */
-      profiles_ingested++;
-      if (pk && strlen(pk) == 64 && self->event_model) {
-        gn_nostr_event_model_check_pending_for_profile(self->event_model, pk);
-      }
     } else {
-      /* Note/repost/thread - enqueue profile fetch */
-      notes_ingested++;
-      if (pk && strlen(pk) == 64) {
-        enqueue_profile_author(self, pk);
-        enqueued_profiles++;
-      }
+      g_warning("[INGEST] Failed to serialize event %.8s", id);
     }
-  }
 
-  if (notes_ingested > 0 || profiles_ingested > 0) {
-    g_message("[TIMELINE] ✓ Received %u notes, %u profiles, queued %u profile fetches",
-              notes_ingested, profiles_ingested, enqueued_profiles);
-
-    /* Refresh GListModel to show new events */
+    /* Add directly to model for immediate visibility */
     if (self->event_model) {
-      g_message("[MODEL] Refreshing model after %u new events from pool", notes_ingested + profiles_ingested);
-      gn_nostr_event_model_refresh(self->event_model);
+      gn_nostr_event_model_add_live_event(self->event_model, evt);
     }
 
-    /* Also sweep local cache (debounced) to apply any already-cached profiles */
+    appended++;
+    const char *pk = nostr_event_get_pubkey(evt);
+    if (pk && strlen(pk) == 64) { enqueue_profile_author(self, pk); enqueued_profiles++; }
+  }
+  if (appended > 0) {
+    /* Sweep local cache (debounced) to apply any already-cached profiles */
     schedule_ndb_profile_sweep(self);
-  } else {
-    g_debug("[POOL] No relevant events in batch");
   }
 }
 
