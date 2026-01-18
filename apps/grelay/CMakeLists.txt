@@ -30,6 +30,10 @@ if (TARGET nostrdb_storage)
       if (APPLE)
         target_link_options(grelay PRIVATE -Wl,-force_load,$<TARGET_FILE:nostrdb_storage>)
         target_link_options(grelay PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
+        # Link LMDB on macOS as well
+        if (EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+          target_link_libraries(grelay PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+        endif()
       else()
         # Group archives to satisfy lld with potential cyclic refs
         target_link_options(grelay PRIVATE -Wl,--start-group)

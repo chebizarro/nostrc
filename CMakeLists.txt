@@ -1,6 +1,92 @@
 cmake_minimum_required(VERSION 3.30)
 project(nostrc C)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# =============================================================================
+# macOS: Configure OpenSSL paths for Homebrew installations
+# =============================================================================
+# On macOS, OpenSSL is typically installed via Homebrew and is not in the
+# default CMake search paths. We need to set OPENSSL_ROOT_DIR before any
+# find_package(OpenSSL) calls in subdirectories.
+if(APPLE)
+  # Check for Homebrew OpenSSL in standard locations
+  # Apple Silicon (arm64): /opt/homebrew/opt/openssl@3
+  # Intel (x86_64): /usr/local/opt/openssl@3
+  set(_openssl_found FALSE)
+  foreach(_openssl_path
+      "/opt/homebrew/opt/openssl@3"
+      "/usr/local/opt/openssl@3"
+      "/opt/homebrew/opt/openssl@1.1"
+      "/usr/local/opt/openssl@1.1"
+      "/opt/homebrew/opt/openssl"
+      "/usr/local/opt/openssl")
+    if(EXISTS "${_openssl_path}" AND NOT _openssl_found)
+      set(OPENSSL_ROOT_DIR "${_openssl_path}" CACHE PATH "OpenSSL root directory" FORCE)
+      # Explicitly set library paths to help CMake's FindOpenSSL
+      set(OPENSSL_CRYPTO_LIBRARY "${_openssl_path}/lib/libcrypto.dylib" CACHE FILEPATH "OpenSSL Crypto library" FORCE)
+      set(OPENSSL_SSL_LIBRARY "${_openssl_path}/lib/libssl.dylib" CACHE FILEPATH "OpenSSL SSL library" FORCE)
+      set(OPENSSL_INCLUDE_DIR "${_openssl_path}/include" CACHE PATH "OpenSSL include directory" FORCE)
+      set(_openssl_found TRUE)
+    endif()
+  endforeach()
+  unset(_openssl_path)
+
+  if(_openssl_found)
+    message(STATUS "macOS: Using OpenSSL from ${OPENSSL_ROOT_DIR}")
+    # Also add to PKG_CONFIG_PATH for pkg-config based detection
+    set(ENV{PKG_CONFIG_PATH} "${OPENSSL_ROOT_DIR}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+  else()
+    message(WARNING "macOS: OpenSSL not found in Homebrew locations. "
+                    "Install with: brew install openssl@3")
+  endif()
+  unset(_openssl_found)
+endif()
+
+# =============================================================================
+# Find OpenSSL early so imported targets are available to all subdirectories
+# =============================================================================
+# This creates OpenSSL::SSL and OpenSSL::Crypto imported targets that can be
+# used by all subdirectories without needing individual find_package calls.
+find_package(OpenSSL REQUIRED)
+if(OpenSSL_FOUND)
+  message(STATUS "Found OpenSSL ${OPENSSL_VERSION} at ${OPENSSL_INCLUDE_DIR}")
+  message(STATUS "  OpenSSL::SSL library: ${OPENSSL_SSL_LIBRARY}")
+  message(STATUS "  OpenSSL::Crypto library: ${OPENSSL_CRYPTO_LIBRARY}")
+else()
+  message(FATAL_ERROR "OpenSSL not found. On macOS, install with: brew install openssl@3")
+endif()
+
+# =============================================================================
+# macOS: Check for stale Homebrew pkg-config paths
+# =============================================================================
+# After Homebrew upgrades, pkg-config may reference old Cellar paths that no
+# longer exist. This causes CMake errors when importing PkgConfig targets.
+if(APPLE)
+  find_package(PkgConfig QUIET)
+  if(PKG_CONFIG_FOUND)
+    # Check for common problematic packages
+    foreach(_pkg libadwaita-1 libsoup-3.0 glib-2.0)
+      execute_process(
+        COMMAND ${PKG_CONFIG_EXECUTABLE} --cflags ${_pkg}
+        OUTPUT_VARIABLE _pkg_cflags
+        ERROR_QUIET
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+      )
+      if(_pkg_cflags MATCHES "/opt/homebrew/Cellar/[^/]+/[0-9]+\\.[0-9]+\\.[0-9]+")
+        string(REGEX MATCH "/opt/homebrew/Cellar/[^/]+/[0-9]+\\.[0-9]+\\.[0-9]+" _cellar_path "${_pkg_cflags}")
+        if(NOT EXISTS "${_cellar_path}")
+          message(WARNING
+            "pkg-config for ${_pkg} references non-existent path: ${_cellar_path}\n"
+            "This is likely caused by a Homebrew upgrade leaving stale pkg-config files.\n"
+            "To fix, run: brew cleanup && brew reinstall ${_pkg}")
+        endif()
+      endif()
+    endforeach()
+    unset(_pkg)
+    unset(_pkg_cflags)
+    unset(_cellar_path)
+  endif()
+endif()
 # Global toggles to make instrumentation builds reproducible from the root
 option(GNOSTR_ENABLE_ASAN "Enable AddressSanitizer (with leak detection) for the entire workspace" OFF)
 option(GNOSTR_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer for the entire workspace" OFF)

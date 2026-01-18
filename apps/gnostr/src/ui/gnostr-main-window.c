@@ -108,6 +108,9 @@ static gboolean profile_dispatch_next(gpointer data);
 /* Forward decl: relay URL builder used by profile fetch */
 static void build_urls_and_filters(GnostrMainWindow *self, const char ***out_urls, size_t *out_count, NostrFilters **out_filters, int limit);
 
+/* Forward decl: hex decode utility */
+static gboolean hex_to_bytes32(const char *hex, uint8_t out[32]);
+
 /* Forward decl: main-loop trampoline to enqueue a single author */
 static gboolean enqueue_author_on_main(gpointer data);
 
@@ -522,26 +525,29 @@ void gnostr_main_window_request_reply(GtkWidget *window, const char *id_hex, con
   /* Try to look up the author's display name for a nicer indicator */
   char *display_name = NULL;
   if (pubkey_hex && strlen(pubkey_hex) == 64) {
-    struct ndb_txn *txn = storage_ndb_begin_query();
-    if (txn) {
-      char *meta_json = NULL;
-      int meta_len = 0;
-      if (storage_ndb_get_profile_meta(txn, pubkey_hex, &meta_json, &meta_len) == 0 && meta_json) {
-        /* Parse JSON to get display name */
-        json_error_t err;
-        json_t *meta = json_loads(meta_json, 0, &err);
-        if (meta) {
-          json_t *name_obj = json_object_get(meta, "display_name");
-          if (!name_obj || !json_is_string(name_obj)) {
-            name_obj = json_object_get(meta, "name");
+    void *txn = NULL;
+    if (storage_ndb_begin_query(&txn) == 0 && txn) {
+      uint8_t pk32[32];
+      if (hex_to_bytes32(pubkey_hex, pk32)) {
+        char *meta_json = NULL;
+        int meta_len = 0;
+        if (storage_ndb_get_profile_by_pubkey(txn, pk32, &meta_json, &meta_len) == 0 && meta_json) {
+          /* Parse JSON to get display name */
+          json_error_t err;
+          json_t *meta = json_loads(meta_json, 0, &err);
+          if (meta) {
+            json_t *name_obj = json_object_get(meta, "display_name");
+            if (!name_obj || !json_is_string(name_obj)) {
+              name_obj = json_object_get(meta, "name");
+            }
+            if (name_obj && json_is_string(name_obj)) {
+              const char *n = json_string_value(name_obj);
+              if (n && *n) display_name = g_strdup(n);
+            }
+            json_decref(meta);
           }
-          if (name_obj && json_is_string(name_obj)) {
-            const char *n = json_string_value(name_obj);
-            if (n && *n) display_name = g_strdup(n);
-          }
-          json_decref(meta);
+          /* Note: meta_json is owned by store, do not free */
         }
-        free(meta_json);
       }
       storage_ndb_end_query(txn);
     }
@@ -1612,7 +1618,7 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
 
   /* Parse the signed event JSON into a NostrEvent */
   NostrEvent *event = nostr_event_new();
-  int parse_rc = nostr_event_deserialize_compact(event, signed_event_json, strlen(signed_event_json));
+  int parse_rc = nostr_event_deserialize_compact(event, signed_event_json);
   if (parse_rc != 1) {
     show_toast(self, "Failed to parse signed event");
     nostr_event_free(event);

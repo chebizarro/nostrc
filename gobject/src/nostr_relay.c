@@ -46,7 +46,7 @@ static void gnostr_relay_class_init(GNostrRelayClass *klass) {
         G_TYPE_FROM_CLASS(klass),
         G_SIGNAL_RUN_FIRST,
         0, NULL, NULL, NULL,
-        G_TYPE_NONE, 1, NOSTR_TYPE_EVENT);
+        G_TYPE_NONE, 1, G_TYPE_POINTER);
 
     nostr_relay_signals[SIGNAL_ERROR] = g_signal_new(
         "error",
@@ -94,7 +94,7 @@ gboolean gnostr_relay_publish(GNostrRelay *self, NostrEvent *event, GError **err
         if (error) g_set_error_literal(error, g_quark_from_static_string("nostr-relay-error"), 1, "invalid arguments");
         return FALSE;
     }
-    nostr_relay_publish(self->relay, event->event);
+    nostr_relay_publish(self->relay, event);
     return TRUE;
 }
 
