@@ -384,25 +384,11 @@ static void gn_nostr_event_model_add_event(GnNostrEventModel *self, NostrEvent *
   /* Add to cache (always) */
   g_hash_table_insert(self->item_cache, g_strdup(event_id), item);
 
-  /* Profile-gated visibility: only add to visible list if profile exists in nostrdb */
-  if (pubkey && has_profile_in_ndb(pubkey)) {
-    /* Profile exists - add to visible list immediately */
-    add_event_to_visible_list(self, event_id, created_at, reply_id);
-    g_debug("[MODEL] Event %.8s visible (profile found for %.8s)", event_id, pubkey);
-  } else if (pubkey) {
-    /* No profile yet - add to pending list */
-    GPtrArray *pending = g_hash_table_lookup(self->pending_by_pubkey, pubkey);
-    if (!pending) {
-      pending = g_ptr_array_new_with_free_func(g_free);
-      g_hash_table_insert(self->pending_by_pubkey, g_strdup(pubkey), pending);
-    }
-    g_ptr_array_add(pending, g_strdup(event_id));
-    g_debug("[MODEL] Event %.8s pending (no profile for %.8s, pending=%u)", event_id, pubkey, pending->len);
-  } else {
-    /* No pubkey - add to visible list anyway (shouldn't happen for valid events) */
-    add_event_to_visible_list(self, event_id, created_at, reply_id);
-    g_warning("[MODEL] Event %.8s has no pubkey, adding anyway", event_id);
-  }
+  /* Add to visible list immediately - profiles populate asynchronously.
+   * Note: We previously tried profile-gated visibility, but nostrdb ingestion
+   * is async, causing a race condition where profiles weren't found even after
+   * ingestion. For better UX, show events immediately. */
+  add_event_to_visible_list(self, event_id, created_at, reply_id);
 }
 
 /* Public API */
