@@ -13,6 +13,8 @@ G_DECLARE_FINAL_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GNOSTR, NOTE_CARD_
  * "open-nostr-target" (gchar* target, gpointer user_data)
  * "open-url" (gchar* url, gpointer user_data)
  * "request-embed" (gchar* target, gpointer user_data)
+ * "open-profile" (gchar* pubkey_hex, gpointer user_data)
+ * "reply-requested" (gchar* id_hex, gchar* root_id, gchar* pubkey_hex, gpointer user_data)
  */
 
 typedef struct _GnostrNoteCardRow GnostrNoteCardRow;

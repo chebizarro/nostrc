@@ -508,6 +508,59 @@ void gnostr_main_window_open_profile(GtkWidget *window, const char *pubkey_hex) 
   on_note_card_open_profile(NULL, pubkey_hex, self);
 }
 
+/* Public wrapper for setting reply context (called from timeline view) */
+void gnostr_main_window_request_reply(GtkWidget *window, const char *id_hex, const char *root_id, const char *pubkey_hex) {
+  if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  g_message("[REPLY] Request reply to id=%s root=%s pubkey=%.8s...",
+            id_hex ? id_hex : "(null)",
+            root_id ? root_id : "(null)",
+            pubkey_hex ? pubkey_hex : "(null)");
+
+  /* Try to look up the author's display name for a nicer indicator */
+  char *display_name = NULL;
+  if (pubkey_hex && strlen(pubkey_hex) == 64) {
+    struct ndb_txn *txn = storage_ndb_begin_query();
+    if (txn) {
+      char *meta_json = NULL;
+      int meta_len = 0;
+      if (storage_ndb_get_profile_meta(txn, pubkey_hex, &meta_json, &meta_len) == 0 && meta_json) {
+        /* Parse JSON to get display name */
+        json_error_t err;
+        json_t *meta = json_loads(meta_json, 0, &err);
+        if (meta) {
+          json_t *name_obj = json_object_get(meta, "display_name");
+          if (!name_obj || !json_is_string(name_obj)) {
+            name_obj = json_object_get(meta, "name");
+          }
+          if (name_obj && json_is_string(name_obj)) {
+            const char *n = json_string_value(name_obj);
+            if (n && *n) display_name = g_strdup(n);
+          }
+          json_decref(meta);
+        }
+        free(meta_json);
+      }
+      storage_ndb_end_query(txn);
+    }
+  }
+
+  /* Set the reply context on the composer */
+  if (self->composer && GNOSTR_IS_COMPOSER(self->composer)) {
+    gnostr_composer_set_reply_context(GNOSTR_COMPOSER(self->composer),
+                                      id_hex, root_id, pubkey_hex,
+                                      display_name ? display_name : "@user");
+  }
+  g_free(display_name);
+
+  /* Switch to composer tab */
+  if (self->stack && GTK_IS_STACK(self->stack)) {
+    gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "compose");
+  }
+}
+
 /* Public wrappers so other UI components (e.g., timeline view) can request prefetch */
 void gnostr_main_window_enqueue_profile_author(GnostrMainWindow *self, const char *pubkey_hex) {
   enqueue_profile_author(self, pubkey_hex);
@@ -1637,7 +1690,6 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
 }
 
 static void on_composer_post_requested(GnostrComposer *composer, const char *text, gpointer user_data) {
-  (void)composer;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
@@ -1665,7 +1717,58 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
   json_object_set_new(event_obj, "kind", json_integer(1));
   json_object_set_new(event_obj, "created_at", json_integer((json_int_t)time(NULL)));
   json_object_set_new(event_obj, "content", json_string(text));
-  json_object_set_new(event_obj, "tags", json_array());
+
+  /* Build tags array */
+  json_t *tags = json_array();
+
+  /* Check if this is a reply - add NIP-10 threading tags */
+  if (composer && GNOSTR_IS_COMPOSER(composer) && gnostr_composer_is_reply(GNOSTR_COMPOSER(composer))) {
+    const char *reply_to_id = gnostr_composer_get_reply_to_id(GNOSTR_COMPOSER(composer));
+    const char *root_id = gnostr_composer_get_root_id(GNOSTR_COMPOSER(composer));
+    const char *reply_to_pubkey = gnostr_composer_get_reply_to_pubkey(GNOSTR_COMPOSER(composer));
+
+    g_message("[PUBLISH] Building reply event: reply_to=%s root=%s pubkey=%.8s...",
+              reply_to_id ? reply_to_id : "(null)",
+              root_id ? root_id : "(null)",
+              reply_to_pubkey ? reply_to_pubkey : "(null)");
+
+    /* NIP-10 recommends using positional markers for replies:
+     * - ["e", "<root-id>", "", "root"] for the thread root
+     * - ["e", "<reply-id>", "", "reply"] for the direct parent
+     * - ["p", "<pubkey>"] for all mentioned pubkeys
+     */
+
+    /* Add root e-tag (always present for replies) */
+    if (root_id && strlen(root_id) == 64) {
+      json_t *root_tag = json_array();
+      json_array_append_new(root_tag, json_string("e"));
+      json_array_append_new(root_tag, json_string(root_id));
+      json_array_append_new(root_tag, json_string("")); /* relay hint */
+      json_array_append_new(root_tag, json_string("root"));
+      json_array_append_new(tags, root_tag);
+    }
+
+    /* Add reply e-tag if different from root (nested reply) */
+    if (reply_to_id && strlen(reply_to_id) == 64 &&
+        (!root_id || strcmp(reply_to_id, root_id) != 0)) {
+      json_t *reply_tag = json_array();
+      json_array_append_new(reply_tag, json_string("e"));
+      json_array_append_new(reply_tag, json_string(reply_to_id));
+      json_array_append_new(reply_tag, json_string("")); /* relay hint */
+      json_array_append_new(reply_tag, json_string("reply"));
+      json_array_append_new(tags, reply_tag);
+    }
+
+    /* Add p-tag for the author being replied to */
+    if (reply_to_pubkey && strlen(reply_to_pubkey) == 64) {
+      json_t *p_tag = json_array();
+      json_array_append_new(p_tag, json_string("p"));
+      json_array_append_new(p_tag, json_string(reply_to_pubkey));
+      json_array_append_new(tags, p_tag);
+    }
+  }
+
+  json_object_set_new(event_obj, "tags", tags);
 
   char *event_json = json_dumps(event_obj, JSON_COMPACT);
   json_decref(event_obj);

@@ -692,6 +692,22 @@ static void on_note_card_open_profile_relay(GnostrNoteCardRow *row, const char *
   (void)user_data;
 }
 
+/* Handler for reply button - relay to main window */
+static void on_note_card_reply_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *root_id, const char *pubkey_hex, gpointer user_data) {
+  /* Relay the signal up to the main window */
+  GtkWidget *widget = GTK_WIDGET(row);
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
+      /* Found the main window, call method to set reply context */
+      extern void gnostr_main_window_request_reply(GtkWidget *window, const char *id_hex, const char *root_id, const char *pubkey_hex);
+      gnostr_main_window_request_reply(widget, id_hex, root_id, pubkey_hex);
+      break;
+    }
+  }
+  (void)user_data;
+}
+
 /* Callback when profile is loaded for an event item - show the row */
 static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
@@ -735,10 +751,12 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
   (void)f; (void)data;
   GtkWidget *row = GTK_WIDGET(gnostr_note_card_row_new());
   g_message("factory_setup_cb: created note-card row=%p for item=%p", (void*)row, (void*)item);
-  
+
   /* Connect the open-profile signal */
   g_signal_connect(row, "open-profile", G_CALLBACK(on_note_card_open_profile_relay), NULL);
-  
+  /* Connect the reply-requested signal */
+  g_signal_connect(row, "reply-requested", G_CALLBACK(on_note_card_reply_requested_relay), NULL);
+
   gtk_list_item_set_child(item, row);
 }
 

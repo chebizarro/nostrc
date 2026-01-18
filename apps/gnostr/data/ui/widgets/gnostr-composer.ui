@@ -10,6 +10,43 @@
         <property name="margin-bottom">6</property>
         <property name="margin-start">6</property>
         <property name="margin-end">6</property>
+        <!-- Reply indicator (hidden by default) -->
+        <child>
+          <object class="GtkBox" id="reply_indicator_box">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">6</property>
+            <property name="visible">false</property>
+            <style>
+              <class name="composer-reply-indicator"/>
+            </style>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">mail-reply-sender-symbolic</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="reply_indicator">
+                <property name="label">Replying to @user</property>
+                <property name="xalign">0</property>
+                <property name="hexpand">true</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_cancel_reply">
+                <property name="icon-name">window-close-symbolic</property>
+                <property name="tooltip-text">Cancel reply</property>
+                <property name="has-frame">false</property>
+                <signal name="clicked" handler="on_cancel_reply_clicked" swapped="yes"/>
+                <style>
+                  <class name="flat"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
         <child>
           <object class="GtkTextView" id="text_view"/>
         </child>

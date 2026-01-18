@@ -20,6 +20,7 @@ struct _GnostrNoteCardRow {
   GtkWidget *btn_avatar;
   GtkWidget *btn_display_name;
   GtkWidget *btn_menu;
+  GtkWidget *btn_reply;
   GtkWidget *avatar_box;
   GtkWidget *avatar_initials;
   GtkWidget *avatar_image;
@@ -54,6 +55,7 @@ enum {
   SIGNAL_OPEN_URL,
   SIGNAL_REQUEST_EMBED,
   SIGNAL_OPEN_PROFILE,
+  SIGNAL_REPLY_REQUESTED,
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -222,6 +224,15 @@ static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
   show_json_viewer(self);
 }
 
+static void on_reply_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (self && self->id_hex && self->pubkey_hex) {
+    g_signal_emit(self, signals[SIGNAL_REPLY_REQUESTED], 0,
+                  self->id_hex, self->root_id, self->pubkey_hex);
+  }
+}
+
 static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   GtkWidgetClass *wclass = GTK_WIDGET_CLASS(klass);
   GObjectClass *gclass = G_OBJECT_CLASS(klass);
@@ -234,6 +245,7 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_avatar);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_display_name);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_menu);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_reply);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_box);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_initials);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_image);
@@ -258,6 +270,9 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   signals[SIGNAL_OPEN_PROFILE] = g_signal_new("open-profile",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIGNAL_REPLY_REQUESTED] = g_signal_new("reply-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 3, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
 }
 
 static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
@@ -279,6 +294,10 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
   /* Connect menu button to show JSON viewer */
   if (GTK_IS_BUTTON(self->btn_menu)) {
     g_signal_connect(self->btn_menu, "clicked", G_CALLBACK(on_menu_clicked), self);
+  }
+  /* Connect reply button */
+  if (GTK_IS_BUTTON(self->btn_reply)) {
+    g_signal_connect(self->btn_reply, "clicked", G_CALLBACK(on_reply_clicked), self);
   }
 #ifdef HAVE_SOUP3
   self->avatar_cancellable = g_cancellable_new();
