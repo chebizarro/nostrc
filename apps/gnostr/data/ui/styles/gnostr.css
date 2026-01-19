@@ -127,3 +127,70 @@
   margin-top: 8px;
   margin-bottom: 8px;
 }
+
+/* DM Inbox Styles */
+.dm-list {
+  background: transparent;
+}
+
+.dm-row {
+  padding: 8px 12px;
+  border-radius: 8px;
+  transition: background 150ms ease;
+}
+
+.dm-row:hover {
+  background: alpha(@theme_fg_color, 0.05);
+}
+
+.dm-row.unread {
+  background: alpha(@accent_bg_color, 0.08);
+}
+
+.dm-row.unread:hover {
+  background: alpha(@accent_bg_color, 0.12);
+}
+
+.dm-avatar {
+  border-radius: 9999px;
+  background: alpha(@theme_bg_color, 0.4);
+}
+
+.dm-name {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.dm-handle {
+  font-size: 13px;
+  opacity: 0.6;
+}
+
+.dm-timestamp {
+  font-size: 12px;
+  opacity: 0.5;
+}
+
+.dm-preview {
+  font-size: 14px;
+  opacity: 0.7;
+}
+
+.unread-badge {
+  background: @accent_bg_color;
+  border-radius: 9999px;
+  padding: 2px 8px;
+  min-width: 18px;
+}
+
+.unread-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: @accent_fg_color;
+}
+
+.avatar-initials {
+  font-size: 16px;
+  font-weight: 600;
+  color: alpha(@theme_fg_color, 0.6);
+}

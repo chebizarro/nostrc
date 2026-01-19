@@ -26,11 +26,13 @@ add_custom_command(
           ${GRESOURCE_XML}
   DEPENDS ${GRESOURCE_XML}
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-main-window.ui
-        ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-composer.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/note-card-row.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-inbox-view.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-row.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-settings-dialog.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-manager.ui
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data

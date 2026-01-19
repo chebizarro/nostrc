@@ -3,6 +3,8 @@
 #include "gnostr-timeline-view.h"
 #include "gnostr-profile-pane.h"
 #include "gnostr-profile-provider.h"
+#include "gnostr-dm-inbox-view.h"
+#include "gnostr-dm-row.h"
 #include "note_card_row.h"
 #include "../ipc/signer_ipc.h"
 #include "../model/gn-nostr-event-model.h"
@@ -229,6 +231,7 @@ struct _GnostrMainWindow {
   GtkWidget *btn_pair_remote;
   GtkWidget *btn_sign_out;
   GtkWidget *composer;
+  GtkWidget *dm_inbox;
   GtkWidget *btn_refresh;
   GtkWidget *toast_revealer;
   GtkWidget *toast_label;
@@ -1516,6 +1519,7 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   g_type_ensure(GNOSTR_TYPE_TIMELINE_VIEW);
   g_type_ensure(GNOSTR_TYPE_COMPOSER);
   g_type_ensure(GNOSTR_TYPE_PROFILE_PANE);
+  g_type_ensure(GNOSTR_TYPE_DM_INBOX_VIEW);
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
   /* Bind expected template children (IDs must match the UI file) */
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, stack);
@@ -1534,6 +1538,7 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_pair_remote);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_sign_out);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, composer);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, dm_inbox);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_refresh);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_revealer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_label);

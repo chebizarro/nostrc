@@ -35,6 +35,16 @@ if(ENABLE_NIP11)
     add_subdirectory(nips/nip11)
 endif()
 
+# NIP-17 depends on NIP-44 for encryption
+if(ENABLE_NIP17)
+    set(ENABLE_NIP44 ON CACHE BOOL "Enable nip44" FORCE)
+endif()
+
+option(ENABLE_NIP17 "Enable nip17 (Private Direct Messages)" ON)
+if(ENABLE_NIP17)
+    add_subdirectory(nips/nip17)
+endif()
+
 option(ENABLE_NIP13 "Enable nip13" OFF)
 if(ENABLE_NIP13)
     add_subdirectory(nips/nip13)

@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnostrDmRow" parent="GtkWidget">
+    <child>
+      <object class="GtkBox" id="root">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">12</property>
+        <property name="margin-end">12</property>
+        <property name="margin-top">8</property>
+        <property name="margin-bottom">8</property>
+        <style>
+          <class name="dm-row"/>
+        </style>
+
+        <!-- Avatar (clickable) -->
+        <child>
+          <object class="GtkButton" id="btn_avatar">
+            <property name="has-frame">false</property>
+            <property name="tooltip-text">View profile</property>
+            <style>
+              <class name="flat"/>
+            </style>
+            <child>
+              <object class="GtkOverlay" id="avatar_box">
+                <property name="width-request">48</property>
+                <property name="height-request">48</property>
+                <style>
+                  <class name="avatar"/>
+                  <class name="dm-avatar"/>
+                </style>
+                <child>
+                  <object class="GtkPicture" id="avatar_image">
+                    <property name="visible">false</property>
+                    <property name="content-fit">cover</property>
+                  </object>
+                </child>
+                <child type="overlay">
+                  <object class="GtkLabel" id="avatar_initials">
+                    <property name="label">?</property>
+                    <property name="xalign">0.5</property>
+                    <property name="yalign">0.5</property>
+                    <style>
+                      <class name="avatar-initials"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Content area -->
+        <child>
+          <object class="GtkBox" id="content_box">
+            <property name="orientation">vertical</property>
+            <property name="hexpand">true</property>
+            <property name="spacing">2</property>
+            <property name="valign">center</property>
+
+            <!-- Top row: name + timestamp -->
+            <child>
+              <object class="GtkBox" id="top_row">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkLabel" id="lbl_display">
+                    <property name="label">Display Name</property>
+                    <property name="xalign">0.0</property>
+                    <property name="ellipsize">end</property>
+                    <property name="max-width-chars">24</property>
+                    <style>
+                      <class name="dm-name"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_handle">
+                    <property name="label">@handle</property>
+                    <property name="xalign">0.0</property>
+                    <property name="ellipsize">end</property>
+                    <property name="visible">false</property>
+                    <style>
+                      <class name="dm-handle"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_timestamp">
+                    <property name="label">2h</property>
+                    <property name="hexpand">true</property>
+                    <property name="halign">end</property>
+                    <style>
+                      <class name="dm-timestamp"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Bottom row: preview + unread badge -->
+            <child>
+              <object class="GtkBox" id="bottom_row">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <child>
+                  <object class="GtkLabel" id="lbl_preview">
+                    <property name="label">Last message preview...</property>
+                    <property name="xalign">0.0</property>
+                    <property name="hexpand">true</property>
+                    <property name="ellipsize">end</property>
+                    <property name="max-width-chars">40</property>
+                    <property name="single-line-mode">true</property>
+                    <style>
+                      <class name="dm-preview"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox" id="unread_badge">
+                    <property name="visible">false</property>
+                    <property name="halign">end</property>
+                    <property name="valign">center</property>
+                    <style>
+                      <class name="unread-badge"/>
+                    </style>
+                    <child>
+                      <object class="GtkLabel" id="lbl_unread">
+                        <property name="label">1</property>
+                        <style>
+                          <class name="unread-count"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>
