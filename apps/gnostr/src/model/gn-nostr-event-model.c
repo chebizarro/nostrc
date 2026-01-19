@@ -171,6 +171,9 @@ static void cache_add(GnNostrEventModel *self, uint64_t key, GnNostrEventItem *i
   }
 }
 
+/* Forward declarations */
+static GnNostrProfile *get_or_create_profile(GnNostrEventModel *self, const char *pubkey);
+
 /* GListModel interface implementation */
 
 static GType gn_nostr_event_model_get_item_type(GListModel *list) {
@@ -208,10 +211,10 @@ static gpointer gn_nostr_event_model_get_item(GListModel *list, guint position) 
     gn_nostr_event_item_set_thread_info(item, tinfo->root_id, tinfo->parent_id, tinfo->depth);
   }
 
-  /* Apply profile if available */
+  /* Apply profile - create and load from nostrdb if not cached */
   const char *pubkey = gn_nostr_event_item_get_pubkey(item);
   if (pubkey) {
-    GnNostrProfile *profile = g_hash_table_lookup(self->profile_cache, pubkey);
+    GnNostrProfile *profile = get_or_create_profile(self, pubkey);
     if (profile) {
       gn_nostr_event_item_set_profile(item, profile);
     }

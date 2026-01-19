@@ -807,25 +807,29 @@ char *nostr_event_serialize_compact(const NostrEvent *event) {
     ADD_COMMA();
     if (append_fmt(&out, &cap, &len, "\"kind\":%d", event->kind) != 0) { free(out); return NULL; }
 
-    // tags
+    // tags (always required by nostrdb)
+    ADD_COMMA();
     if (event->tags) {
         char *tags_json = nostr_tags_to_json(event->tags);
         if (!tags_json) { free(out); return NULL; }
-        ADD_COMMA();
         if (append_str(&out, &cap, &len, "\"tags\":") != 0) { free(tags_json); free(out); return NULL; }
         if (append_str(&out, &cap, &len, tags_json) != 0) { free(tags_json); free(out); return NULL; }
         free(tags_json);
+    } else {
+        if (append_str(&out, &cap, &len, "\"tags\":[]") != 0) { free(out); return NULL; }
     }
 
-    // content
+    // content (always required by nostrdb)
+    ADD_COMMA();
     if (event->content) {
         char *escaped = nostr_escape_string(event->content);
         if (!escaped) { free(out); return NULL; }
-        ADD_COMMA();
         if (append_str(&out, &cap, &len, "\"content\":\"") != 0) { free(escaped); free(out); return NULL; }
         if (append_str(&out, &cap, &len, escaped) != 0) { free(escaped); free(out); return NULL; }
         if (append_str(&out, &cap, &len, "\"") != 0) { free(escaped); free(out); return NULL; }
         free(escaped);
+    } else {
+        if (append_str(&out, &cap, &len, "\"content\":\"\"") != 0) { free(out); return NULL; }
     }
 
     // sig

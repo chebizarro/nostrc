@@ -991,23 +991,32 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   GtkWidget *row = gtk_list_item_get_child(item);
   if (!GTK_IS_WIDGET(row)) return;
   if (GNOSTR_IS_NOTE_CARD_ROW(row)) {
-    gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row), display, handle, avatar_url);
+    /* Use pubkey prefix as fallback if no profile info available */
+    gchar *display_fallback = NULL;
+    if (!display && !handle && pubkey && strlen(pubkey) >= 8) {
+      display_fallback = g_strdup_printf("%.8s...", pubkey);
+    }
+
+    gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row),
+                                     display ? display : display_fallback,
+                                     handle, avatar_url);
     gnostr_note_card_row_set_timestamp(GNOSTR_NOTE_CARD_ROW(row), created_at, ts);
     gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
     gnostr_note_card_row_set_depth(GNOSTR_NOTE_CARD_ROW(row), depth);
     gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), id_hex, root_id, pubkey);
-    
-    /* Hide row if no profile is attached (will be shown when profile loads) */
-    gboolean has_profile = (display != NULL || handle != NULL);
-    gtk_widget_set_visible(row, has_profile);
-    if (!has_profile) {
-      g_debug("[BIND] Hiding row for event %s - no profile yet", id_hex ? id_hex : "(null)");
-      
-      /* Connect to profile change notification to show row when profile loads */
+
+    /* Always show row - use fallback display if no profile */
+    gtk_widget_set_visible(row, TRUE);
+
+    /* Connect to profile change notification to update author when profile loads */
+    if (!display && !handle) {
+      g_debug("[BIND] Using pubkey fallback for event %s", id_hex ? id_hex : "(null)");
       g_signal_connect_object(obj, "notify::profile",
                               G_CALLBACK(on_event_item_profile_changed),
                               item, 0);
     }
+
+    g_free(display_fallback);
     
     /* Connect embed request signal
      * NOTE: We don't need to disconnect first - g_signal_connect_object handles duplicates
