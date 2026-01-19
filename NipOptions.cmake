@@ -161,3 +161,13 @@ if(ENABLE_NIP50)
     add_subdirectory(nips/nip50)
 endif()
 
+# NIP-51 depends on NIP-44 for private entry encryption
+if(ENABLE_NIP51)
+    set(ENABLE_NIP44 ON CACHE BOOL "Enable nip44" FORCE)
+endif()
+
+option(ENABLE_NIP51 "Enable nip51 (User Lists)" ON)
+if(ENABLE_NIP51)
+    add_subdirectory(nips/nip51)
+endif()
+
