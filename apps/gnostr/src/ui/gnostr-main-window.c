@@ -1499,18 +1499,36 @@ static void on_timeline_scroll_value_changed(GtkAdjustment *adj, gpointer user_d
   gdouble value = gtk_adjustment_get_value(adj);
   gdouble upper = gtk_adjustment_get_upper(adj);
   gdouble page_size = gtk_adjustment_get_page_size(adj);
+  gdouble lower = gtk_adjustment_get_lower(adj);
 
-  /* Trigger load when within 20% of the bottom */
-  gdouble threshold = upper - page_size - (page_size * 0.2);
-  if (value >= threshold && upper > page_size) {
+  guint batch = self->load_older_batch_size > 0 ? self->load_older_batch_size : 30;
+  guint max_items = 200; /* Keep at most 200 items in memory */
+
+  /* Trigger load newer when within 20% of the top */
+  gdouble top_threshold = lower + (page_size * 0.2);
+  if (value <= top_threshold && upper > page_size) {
+    self->loading_older = TRUE; /* Reuse flag to prevent concurrent loads */
+    guint added = gn_nostr_event_model_load_newer(self->event_model, batch);
+    g_debug("[SCROLL] Loaded %u newer events", added);
+    self->loading_older = FALSE;
+
+    /* Trim older events to keep memory bounded */
+    guint current = g_list_model_get_n_items(G_LIST_MODEL(self->event_model));
+    if (current > max_items) {
+      gn_nostr_event_model_trim_older(self->event_model, max_items);
+    }
+    return;
+  }
+
+  /* Trigger load older when within 20% of the bottom */
+  gdouble bottom_threshold = upper - page_size - (page_size * 0.2);
+  if (value >= bottom_threshold && upper > page_size) {
     self->loading_older = TRUE;
-    guint batch = self->load_older_batch_size > 0 ? self->load_older_batch_size : 30;
     guint added = gn_nostr_event_model_load_older(self->event_model, batch);
     g_debug("[SCROLL] Loaded %u older events", added);
     self->loading_older = FALSE;
 
-    /* Optionally trim newer events to keep memory bounded */
-    guint max_items = 200; /* Keep at most 200 items in memory */
+    /* Trim newer events to keep memory bounded */
     guint current = g_list_model_get_n_items(G_LIST_MODEL(self->event_model));
     if (current > max_items) {
       gn_nostr_event_model_trim_newer(self->event_model, max_items);

@@ -363,7 +363,7 @@ static int metrics_sample_rate = 0;
 static int debug_incoming_cached = -1;
 static int debug_eose_cached = -1;
 
-static void init_cached_env() {
+static void init_cached_env(void) {
     if (metrics_sample_rate == 0) {
         const char *rate = getenv("NOSTR_METRICS_SAMPLE_RATE");
         metrics_sample_rate = rate ? atoi(rate) : 100;
@@ -376,16 +376,6 @@ static void init_cached_env() {
     if (debug_eose_cached == -1) {
         debug_eose_cached = getenv("NOSTR_DEBUG_EOSE") ? 1 : 0;
     }
-}
-
-// Quick heuristic to identify EOSE/control messages for prioritization
-static int is_priority_message(const char *msg) {
-    if (!msg || !*msg) return 0;
-    // EOSE messages should be processed immediately
-    return strstr(msg, "[\"EOSE\"") || 
-           strstr(msg, "[\"NOTICE\"") ||
-           strstr(msg, "[\"CLOSED\"") ||
-           strstr(msg, "[\"AUTH\"");
 }
 
 // Worker: reads messages from the connection, parses envelopes, dispatches,
