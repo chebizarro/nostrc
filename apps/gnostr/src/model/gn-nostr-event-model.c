@@ -685,6 +685,8 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
   if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
 
+  g_message("[TIMELINE] on_sub_timeline_batch called with %u keys", n_keys);
+
   void *txn = NULL;
   if (storage_ndb_begin_query(&txn) != 0 || !txn) {
     g_warning("[TIMELINE] failed to begin query");
@@ -737,6 +739,9 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
   }
 
   storage_ndb_end_query(txn);
+
+  g_message("[TIMELINE] batch result: added=%u filtered=%u pending=%u no_note=%u total=%u",
+            added, filtered, pending, no_note, self->notes->len);
 
   enforce_window(self);
 }

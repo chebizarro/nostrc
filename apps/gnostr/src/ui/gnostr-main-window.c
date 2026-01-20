@@ -2240,16 +2240,19 @@ static gboolean check_relay_health(gpointer user_data) {
     }
   }
   
-  g_debug("relay_health: status - %u connected, %u disconnected (total %u)",
+  g_message("relay_health: status - %u connected, %u disconnected (total %u)",
           connected_count, disconnected_count, relay_urls->len);
   
-  /* If ANY relays are disconnected, trigger reconnection */
-  if (disconnected_count > 0) {
-    g_warning("relay_health: %u relay(s) disconnected - triggering reconnection", 
+  /* If ALL relays are disconnected, trigger reconnection (not just any) */
+  if (disconnected_count > 0 && connected_count == 0) {
+    g_warning("relay_health: ALL %u relay(s) disconnected - triggering reconnection", 
               disconnected_count);
     
     /* Restart the live subscription to reconnect */
     start_pool_live(self);
+  } else if (disconnected_count > 0) {
+    g_message("relay_health: %u relay(s) disconnected but %u still connected - not reconnecting",
+              disconnected_count, connected_count);
   }
   
   g_ptr_array_unref(relay_urls);
