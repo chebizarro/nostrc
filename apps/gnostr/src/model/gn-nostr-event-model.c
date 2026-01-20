@@ -1471,6 +1471,8 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
   g_string_append_printf(filter, "\"since\":%" G_GINT64_FORMAT ",", newest_ts + 1);
   g_string_append_printf(filter, "\"limit\":%u}]", query_limit);
 
+  g_message("[MODEL] load_newer: newest_ts=%" G_GINT64_FORMAT " filter=%s", newest_ts, filter->str);
+
   void *txn = NULL;
   if (storage_ndb_begin_query(&txn) != 0 || !txn) {
     g_warning("[MODEL] load_newer: Failed to begin query");
@@ -1481,8 +1483,10 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
   char **json_results = NULL;
   int result_count = 0;
   int query_rc = storage_ndb_query(txn, filter->str, &json_results, &result_count);
+  g_message("[MODEL] load_newer: query returned %d results (rc=%d)", result_count, query_rc);
 
   guint added = 0;
+  guint skipped_kind = 0, skipped_query = 0, skipped_dup = 0, skipped_profile = 0;
   if (query_rc == 0 && json_results && result_count > 0) {
     /* Iterate from end (oldest in results) to get events closest to our current window.
      * Results are ordered newest-first, so index result_count-1 is the oldest. */
@@ -1496,6 +1500,7 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
       if (nostr_event_deserialize(evt, event_json) == 0) {
         int kind = nostr_event_get_kind(evt);
         if (kind != 1 && kind != 6) {
+          skipped_kind++;
           nostr_event_free(evt);
           continue;
         }
@@ -1510,6 +1515,7 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
         }
 
         if (!note_matches_query(self, kind, pubkey_hex, created_at)) {
+          skipped_query++;
           nostr_event_free(evt);
           continue;
         }
@@ -1528,6 +1534,7 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
 
         /* Skip if already in model */
         if (has_note_key(self, note_key)) {
+          skipped_dup++;
           nostr_event_free(evt);
           continue;
         }
@@ -1540,6 +1547,7 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
 
         /* Gate by presence of kind-0 profile */
         if (!db_has_profile_event_for_pubkey(txn, pk32)) {
+          skipped_profile++;
           gboolean first_pending = add_pending(self, pubkey_hex, note_key, created_at);
           if (first_pending) {
             g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
@@ -1572,7 +1580,8 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
   storage_ndb_end_query(txn);
   g_string_free(filter, TRUE);
 
-  g_debug("[MODEL] load_newer: added %u events, total now %u", added, self->notes->len);
+  g_message("[MODEL] load_newer: added=%u skipped(kind=%u query=%u dup=%u profile=%u) total=%u",
+            added, skipped_kind, skipped_query, skipped_dup, skipped_profile, self->notes->len);
 
   return added;
 }

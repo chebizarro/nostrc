@@ -1504,12 +1504,19 @@ static void on_timeline_scroll_value_changed(GtkAdjustment *adj, gpointer user_d
   guint batch = self->load_older_batch_size > 0 ? self->load_older_batch_size : 30;
   guint max_items = 200; /* Keep at most 200 items in memory */
 
+  /* Debug: log scroll position periodically */
+  static int scroll_log_counter = 0;
+  if (++scroll_log_counter % 20 == 0) {
+    g_message("[SCROLL] pos: value=%.1f lower=%.1f upper=%.1f page=%.1f", value, lower, upper, page_size);
+  }
+
   /* Trigger load newer when within 20% of the top */
   gdouble top_threshold = lower + (page_size * 0.2);
   if (value <= top_threshold && upper > page_size) {
     self->loading_older = TRUE; /* Reuse flag to prevent concurrent loads */
+    g_message("[SCROLL] Near top: value=%.1f lower=%.1f threshold=%.1f, calling load_newer", value, lower, top_threshold);
     guint added = gn_nostr_event_model_load_newer(self->event_model, batch);
-    g_debug("[SCROLL] Loaded %u newer events", added);
+    g_message("[SCROLL] Loaded %u newer events", added);
     self->loading_older = FALSE;
 
     /* Trim older events to keep memory bounded */
