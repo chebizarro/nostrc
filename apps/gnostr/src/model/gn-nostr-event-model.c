@@ -1435,7 +1435,16 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
     return self->notes->len;
   }
 
-  /* Build filter JSON for kinds with since = newest_ts + 1 */
+  /* Build filter JSON for kinds with since = newest_ts + 1
+   * 
+   * IMPORTANT: nostrdb returns results ordered by timestamp DESCENDING (newest first).
+   * With since+limit, we'd get the N most recent events, not the N events immediately
+   * after our current newest. To get contiguous events, we query a larger batch and
+   * process from the end (oldest in results = closest to our current window).
+   */
+  guint query_limit = count * 4; /* Query more to ensure we get contiguous events */
+  if (query_limit < 100) query_limit = 100;
+
   GString *filter = g_string_new("[{");
 
   if (self->n_kinds > 0) {
@@ -1460,7 +1469,7 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
 
   /* Query for events newer than our newest */
   g_string_append_printf(filter, "\"since\":%" G_GINT64_FORMAT ",", newest_ts + 1);
-  g_string_append_printf(filter, "\"limit\":%u}]", count);
+  g_string_append_printf(filter, "\"limit\":%u}]", query_limit);
 
   void *txn = NULL;
   if (storage_ndb_begin_query(&txn) != 0 || !txn) {
@@ -1475,7 +1484,9 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
 
   guint added = 0;
   if (query_rc == 0 && json_results && result_count > 0) {
-    for (int i = 0; i < result_count; i++) {
+    /* Iterate from end (oldest in results) to get events closest to our current window.
+     * Results are ordered newest-first, so index result_count-1 is the oldest. */
+    for (int i = result_count - 1; i >= 0; i--) {
       const char *event_json = json_results[i];
       if (!event_json) continue;
 
