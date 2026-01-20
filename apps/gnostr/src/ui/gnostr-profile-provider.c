@@ -207,7 +207,8 @@ void gnostr_profile_provider_get_stats(GnostrProfileProviderStats *st) {
 }
 
 void gnostr_profile_provider_log_stats(void) {
-  g_message("[PROFILE_PROVIDER] cache=%u/%u hits=%llu misses=%llu db_hits=%llu db_misses=%llu",
+  g_message("[PROFILE_PROVIDER] cache=%u/%u hits=%" G_GUINT64_FORMAT " misses=%" G_GUINT64_FORMAT
+            " db_hits=%" G_GUINT64_FORMAT " db_misses=%" G_GUINT64_FORMAT,
             s_stats.cache_size, s_cap, s_stats.hits, s_stats.misses, 
             s_stats.db_hits, s_stats.db_misses);
 }

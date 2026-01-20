@@ -1288,3 +1288,8 @@ void gnostr_timeline_view_prepend(GnostrTimelineView *self,
     if (vadj) gtk_adjustment_set_value(vadj, gtk_adjustment_get_lower(vadj));
   }
 }
+
+GtkWidget *gnostr_timeline_view_get_scrolled_window(GnostrTimelineView *self) {
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_VIEW(self), NULL);
+  return self->root_scroller;
+}

@@ -52,6 +52,17 @@ void gn_nostr_event_model_add_live_event(GnNostrEventModel *self, void *nostr_ev
 gboolean gn_nostr_event_model_get_is_thread_view(GnNostrEventModel *self);
 const char *gn_nostr_event_model_get_root_event_id(GnNostrEventModel *self);
 
+/* Sliding window pagination: load older events before the current oldest.
+ * Returns the number of events added. */
+guint gn_nostr_event_model_load_older(GnNostrEventModel *self, guint count);
+
+/* Get the timestamp of the oldest event in the model (0 if empty). */
+gint64 gn_nostr_event_model_get_oldest_timestamp(GnNostrEventModel *self);
+
+/* Trim newer events from the top of the model to keep memory bounded.
+ * Called automatically when scrolling down and loading older events. */
+void gn_nostr_event_model_trim_newer(GnNostrEventModel *self, guint keep_count);
+
 G_END_DECLS
 
 #endif

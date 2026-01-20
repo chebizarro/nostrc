@@ -64,6 +64,7 @@ static void start_pool_live(GnostrMainWindow *self);
 static void start_profile_subscription(GnostrMainWindow *self);
 static void start_bg_profile_prefetch(GnostrMainWindow *self);
 static void on_event_model_need_profile(GnNostrEventModel *model, const char *pubkey_hex, gpointer user_data);
+static void on_timeline_scroll_value_changed(GtkAdjustment *adj, gpointer user_data);
 typedef struct UiEventRow UiEventRow;
 static void ui_event_row_free(gpointer p);
 static void schedule_apply_events(GnostrMainWindow *self, GPtrArray *rows /* UiEventRow* */);
@@ -314,6 +315,10 @@ struct _GnostrMainWindow {
   /* Debounced local NostrDB profile sweep */
   guint           ndb_sweep_source_id;   /* GLib source id, 0 if none */
   guint           ndb_sweep_debounce_ms; /* default ~150ms */
+
+  /* Sliding window pagination */
+  gboolean        loading_older;         /* TRUE while loading older events */
+  guint           load_older_batch_size; /* default 30 */
 };
 
 /* Old LRU functions removed - now using profile provider */
@@ -1318,6 +1323,16 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     gnostr_timeline_view_set_model(GNOSTR_TIMELINE_VIEW(self->timeline), selection);
     g_object_unref(selection); /* View takes ownership */
 
+    /* Connect scroll edge detection for sliding window pagination */
+    GtkWidget *scroller = gnostr_timeline_view_get_scrolled_window(GNOSTR_TIMELINE_VIEW(self->timeline));
+    if (scroller && GTK_IS_SCROLLED_WINDOW(scroller)) {
+      GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
+      if (vadj) {
+        g_signal_connect(vadj, "value-changed", G_CALLBACK(on_timeline_scroll_value_changed), self);
+        g_debug("[INIT] Connected scroll edge detection for sliding window");
+      }
+    }
+
     /* Do NOT call refresh here; we refresh once in initial_refresh_timeout_cb to avoid duplicate rebuilds. */
   }
   
@@ -1473,6 +1488,34 @@ static void on_event_model_need_profile(GnNostrEventModel *model, const char *pu
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
   if (strlen(pubkey_hex) != 64) return;
   enqueue_profile_author(self, pubkey_hex);
+}
+
+/* Scroll edge detection for sliding window pagination */
+static void on_timeline_scroll_value_changed(GtkAdjustment *adj, gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->event_model) return;
+  if (self->loading_older) return; /* Already loading */
+
+  gdouble value = gtk_adjustment_get_value(adj);
+  gdouble upper = gtk_adjustment_get_upper(adj);
+  gdouble page_size = gtk_adjustment_get_page_size(adj);
+
+  /* Trigger load when within 20% of the bottom */
+  gdouble threshold = upper - page_size - (page_size * 0.2);
+  if (value >= threshold && upper > page_size) {
+    self->loading_older = TRUE;
+    guint batch = self->load_older_batch_size > 0 ? self->load_older_batch_size : 30;
+    guint added = gn_nostr_event_model_load_older(self->event_model, batch);
+    g_debug("[SCROLL] Loaded %u older events", added);
+    self->loading_older = FALSE;
+
+    /* Optionally trim newer events to keep memory bounded */
+    guint max_items = 200; /* Keep at most 200 items in memory */
+    guint current = g_list_model_get_n_items(G_LIST_MODEL(self->event_model));
+    if (current > max_items) {
+      gn_nostr_event_model_trim_newer(self->event_model, max_items);
+    }
+  }
 }
 
 GnostrMainWindow *gnostr_main_window_new(GtkApplication *app) {

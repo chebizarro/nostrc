@@ -38,6 +38,9 @@ GListModel *gnostr_timeline_item_get_children(TimelineItem *item);
 /* Centralized avatar cache API */
 #include "gnostr-avatar-cache.h"
 
+/* Get the internal scrolled window for scroll position monitoring */
+GtkWidget *gnostr_timeline_view_get_scrolled_window(GnostrTimelineView *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_TIMELINE_VIEW_H */

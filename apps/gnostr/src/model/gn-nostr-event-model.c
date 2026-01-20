@@ -1220,3 +1220,176 @@ void gn_nostr_event_model_add_live_event(GnNostrEventModel *self, void *nostr_ev
   (void)self;
   (void)nostr_event;
 }
+
+/* ============== Sliding Window Pagination ============== */
+
+gint64 gn_nostr_event_model_get_oldest_timestamp(GnNostrEventModel *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_MODEL(self), 0);
+  if (self->notes->len == 0) return 0;
+  NoteEntry *oldest = &g_array_index(self->notes, NoteEntry, self->notes->len - 1);
+  return oldest->created_at;
+}
+
+void gn_nostr_event_model_trim_newer(GnNostrEventModel *self, guint keep_count) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
+  if (self->notes->len <= keep_count) return;
+
+  guint to_remove = self->notes->len - keep_count;
+
+  /* Remove newest entries (head) and their cached state */
+  for (guint i = 0; i < to_remove; i++) {
+    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
+    uint64_t k = entry->note_key;
+    cache_lru_remove_key(self, k);
+    g_hash_table_remove(self->thread_info, &k);
+    g_hash_table_remove(self->item_cache, &k);
+  }
+
+  /* Remove from front of array */
+  g_array_remove_range(self->notes, 0, to_remove);
+  g_list_model_items_changed(G_LIST_MODEL(self), 0, to_remove, 0);
+
+  g_debug("[MODEL] Trimmed %u newer items, %u remaining", to_remove, self->notes->len);
+}
+
+guint gn_nostr_event_model_load_older(GnNostrEventModel *self, guint count) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_MODEL(self), 0);
+  if (count == 0) return 0;
+
+  gint64 oldest_ts = gn_nostr_event_model_get_oldest_timestamp(self);
+  if (oldest_ts == 0) {
+    /* No events yet, do a normal refresh */
+    gn_nostr_event_model_refresh(self);
+    return self->notes->len;
+  }
+
+  /* Build filter JSON for kinds with until = oldest_ts - 1 */
+  GString *filter = g_string_new("[{");
+
+  if (self->n_kinds > 0) {
+    g_string_append(filter, "\"kinds\":[");
+    for (gsize i = 0; i < self->n_kinds; i++) {
+      if (i > 0) g_string_append_c(filter, ',');
+      g_string_append_printf(filter, "%d", self->kinds[i]);
+    }
+    g_string_append(filter, "],");
+  } else {
+    g_string_append(filter, "\"kinds\":[1,6],");
+  }
+
+  if (self->n_authors > 0) {
+    g_string_append(filter, "\"authors\":[");
+    for (gsize i = 0; i < self->n_authors; i++) {
+      if (i > 0) g_string_append_c(filter, ',');
+      g_string_append_printf(filter, "\"%s\"", self->authors[i]);
+    }
+    g_string_append(filter, "],");
+  }
+
+  /* Query for events older than our oldest */
+  g_string_append_printf(filter, "\"until\":%" G_GINT64_FORMAT ",", oldest_ts - 1);
+  g_string_append_printf(filter, "\"limit\":%u}]", count);
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+    g_warning("[MODEL] load_older: Failed to begin query");
+    g_string_free(filter, TRUE);
+    return 0;
+  }
+
+  char **json_results = NULL;
+  int result_count = 0;
+  int query_rc = storage_ndb_query(txn, filter->str, &json_results, &result_count);
+
+  guint added = 0;
+  if (query_rc == 0 && json_results && result_count > 0) {
+    for (int i = 0; i < result_count; i++) {
+      const char *event_json = json_results[i];
+      if (!event_json) continue;
+
+      NostrEvent *evt = nostr_event_new();
+      if (!evt) continue;
+
+      if (nostr_event_deserialize(evt, event_json) == 0) {
+        int kind = nostr_event_get_kind(evt);
+        if (kind != 1 && kind != 6) {
+          nostr_event_free(evt);
+          continue;
+        }
+
+        const char *event_id = nostr_event_get_id(evt);
+        const char *pubkey_hex = nostr_event_get_pubkey(evt);
+        gint64 created_at = nostr_event_get_created_at(evt);
+
+        if (!event_id || !pubkey_hex) {
+          nostr_event_free(evt);
+          continue;
+        }
+
+        if (!note_matches_query(self, kind, pubkey_hex, created_at)) {
+          nostr_event_free(evt);
+          continue;
+        }
+
+        uint8_t id32[32];
+        if (!hex_to_bytes32(event_id, id32)) {
+          nostr_event_free(evt);
+          continue;
+        }
+
+        uint64_t note_key = storage_ndb_get_note_key_by_id(txn, id32, NULL);
+        if (note_key == 0) {
+          nostr_event_free(evt);
+          continue;
+        }
+
+        /* Skip if already in model */
+        if (has_note_key(self, note_key)) {
+          nostr_event_free(evt);
+          continue;
+        }
+
+        uint8_t pk32[32];
+        if (!hex_to_bytes32(pubkey_hex, pk32)) {
+          nostr_event_free(evt);
+          continue;
+        }
+
+        /* Gate by presence of kind-0 profile */
+        if (!db_has_profile_event_for_pubkey(txn, pk32)) {
+          gboolean first_pending = add_pending(self, pubkey_hex, note_key, created_at);
+          if (first_pending) {
+            g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
+          }
+          nostr_event_free(evt);
+          continue;
+        }
+
+        (void)profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex);
+
+        char *root_id = NULL;
+        char *reply_id = NULL;
+        parse_nip10_tags(evt, &root_id, &reply_id);
+
+        add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
+        added++;
+
+        g_free(root_id);
+        g_free(reply_id);
+      }
+
+      nostr_event_free(evt);
+
+      if (added >= count) break;
+    }
+
+    storage_ndb_free_results(json_results, result_count);
+  }
+
+  storage_ndb_end_query(txn);
+  g_string_free(filter, TRUE);
+
+  g_debug("[MODEL] load_older: added %u events, total now %u", added, self->notes->len);
+
+  return added;
+}
