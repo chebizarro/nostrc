@@ -120,11 +120,11 @@ static GnostrProfileMeta *meta_from_db(const char *pk) {
     pk32[i] = (unsigned char)b;
   }
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 1 || !txn) return NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return NULL;
   char *json = NULL; int len = 0;
   int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &json, &len);
   storage_ndb_end_query(txn);
-  if (rc != 1 || !json) { s_stats.db_misses++; return NULL; }
+  if (rc != 0 || !json) { s_stats.db_misses++; return NULL; }
   s_stats.db_hits++;
   GnostrProfileMeta *m = meta_from_json(pk, json);
   free(json);
@@ -207,7 +207,7 @@ void gnostr_profile_provider_get_stats(GnostrProfileProviderStats *st) {
 }
 
 void gnostr_profile_provider_log_stats(void) {
-  g_message("[PROFILE_PROVIDER] cache=%u/%u hits=%lu misses=%lu db_hits=%lu db_misses=%lu",
+  g_message("[PROFILE_PROVIDER] cache=%u/%u hits=%llu misses=%llu db_hits=%llu db_misses=%llu",
             s_stats.cache_size, s_cap, s_stats.hits, s_stats.misses, 
             s_stats.db_hits, s_stats.db_misses);
 }

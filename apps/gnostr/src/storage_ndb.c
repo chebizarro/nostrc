@@ -29,6 +29,10 @@ struct ln_ndb_impl {
 
 static ln_store *g_store = NULL;
 
+/* Global subscription callback - must be set before init */
+static storage_ndb_notify_fn g_sub_cb = NULL;
+static void *g_sub_cb_ctx = NULL;
+
 /* Get raw nostrdb handle from our store */
 static struct ndb *get_ndb(void)
 {
@@ -277,11 +281,14 @@ int storage_ndb_get_note_by_id_nontxn(const char *id_hex, char **json_out, int *
 
 void storage_ndb_set_notify_callback(storage_ndb_notify_fn fn, void *ctx)
 {
-  /* Note: nostrdb subscription callback is set at init time via ndb_config.
-   * For now, we don't support changing it after init.
-   * The application should poll for notes instead. */
-  (void)fn;
-  (void)ctx;
+  g_sub_cb = fn;
+  g_sub_cb_ctx = ctx;
+}
+
+void storage_ndb_get_notify_callback(storage_ndb_notify_fn *fn_out, void **ctx_out)
+{
+  if (fn_out) *fn_out = g_sub_cb;
+  if (ctx_out) *ctx_out = g_sub_cb_ctx;
 }
 
 uint64_t storage_ndb_subscribe(const char *filter_json)
@@ -325,6 +332,13 @@ int storage_ndb_poll_notes(uint64_t subid, uint64_t *note_keys, int capacity)
   struct ndb *ndb = get_ndb();
   if (!ndb || subid == 0 || !note_keys || capacity <= 0) return 0;
   return ndb_poll_for_notes(ndb, subid, note_keys, capacity);
+}
+
+void storage_ndb_invalidate_txn_cache(void)
+{
+  /* Call the ndb_backend function to invalidate thread-local transaction cache */
+  extern void ln_ndb_invalidate_txn_cache_ext(void);
+  ln_ndb_invalidate_txn_cache_ext();
 }
 
 /* ============== Direct Note Access API Implementation ============== */

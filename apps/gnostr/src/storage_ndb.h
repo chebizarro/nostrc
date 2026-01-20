@@ -55,8 +55,12 @@ void storage_ndb_free_results(char **arr, int n);
 
 /* Set global subscription notification callback.
  * Called from nostrdb writer thread when new notes match a subscription.
- * Use g_idle_add() to marshal to GTK main loop. */
+ * Use g_idle_add() to marshal to GTK main loop.
+ * IMPORTANT: Must be called BEFORE storage_ndb_init() for callback to take effect. */
 void storage_ndb_set_notify_callback(storage_ndb_notify_fn fn, void *ctx);
+
+/* Get the registered subscription callback (for use by ndb_backend at init time). */
+void storage_ndb_get_notify_callback(storage_ndb_notify_fn *fn_out, void **ctx_out);
 
 /* Subscribe to notes matching filter. Returns subscription ID (>0) or 0 on failure.
  * filter_json is a NIP-01 filter object, e.g. {"kinds":[1],"limit":100} */
@@ -68,6 +72,11 @@ void storage_ndb_unsubscribe(uint64_t subid);
 /* Poll for new note keys matching subscription. Non-blocking.
  * Returns number of keys written to array (0 if none available). */
 int storage_ndb_poll_notes(uint64_t subid, uint64_t *note_keys, int capacity);
+
+/* Invalidate the thread-local transaction cache so next begin_query gets fresh data.
+ * Call this before processing subscription callbacks to ensure newly committed
+ * notes are visible. */
+void storage_ndb_invalidate_txn_cache(void);
 
 /* ============== Direct Note Access API ============== */
 

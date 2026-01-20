@@ -2,6 +2,7 @@
 #include <glib/gstdio.h>
 #include <errno.h>
 #include "ui/gnostr-main-window.h"
+#include "model/gn-ndb-sub-dispatcher.h"
 #include "storage_ndb.h"
 
 static void on_activate(GtkApplication *app, gpointer user_data) {
@@ -31,6 +32,9 @@ int main(int argc, char **argv) {
   const char *quit_accels[] = { "<Primary>q", NULL };
   gtk_application_set_accels_for_action(app, "app.quit", quit_accels);
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
+
+  /* Initialize subscription dispatcher BEFORE storage to register callback */
+  gn_ndb_dispatcher_init();
 
   /* Initialize NostrdB-backed storage in user cache directory */
   gchar *dbdir = g_build_filename(g_get_user_cache_dir(), "gnostr", "ndb", NULL);

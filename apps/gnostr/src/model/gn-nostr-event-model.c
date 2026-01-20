@@ -1,17 +1,28 @@
 #include "gn-nostr-event-model.h"
+#include "gn-ndb-sub-dispatcher.h"
 #include "../storage_ndb.h"
 #include <nostr.h>
 #include <string.h>
 
-/* Maximum visible items and LRU cache size */
-#define MODEL_MAX_ITEMS 500
+/* Window sizing and cache sizes */
+#define MODEL_MAX_ITEMS 100
 #define ITEM_CACHE_SIZE 100
+
+/* Subscription filters - storage_ndb_subscribe expects a single filter object, not an array */
+#define FILTER_TIMELINE "{\"kinds\":[1,6]}"
+#define FILTER_PROFILES "{\"kinds\":[0]}"
+#define FILTER_DELETES  "{\"kinds\":[5]}"
 
 /* Note entry for sorted storage */
 typedef struct {
   uint64_t note_key;
   gint64 created_at;
 } NoteEntry;
+
+typedef struct {
+  uint64_t note_key;
+  gint64 created_at;
+} PendingEntry;
 
 struct _GnNostrEventModel {
   GObject parent_instance;
@@ -32,8 +43,13 @@ struct _GnNostrEventModel {
   /* Core data: note keys sorted by created_at (newest first) */
   GArray *notes;  /* element-type: NoteEntry */
 
-  /* nostrdb subscription */
-  uint64_t subscription_id;
+  /* Lifetime nostrdb subscriptions (via dispatcher) */
+  uint64_t sub_timeline; /* kinds 1/6 */
+  uint64_t sub_profiles; /* kind 0 */
+  uint64_t sub_deletes;  /* kind 5 */
+
+  /* Windowing */
+  guint window_size;
 
   /* Small LRU cache for visible items */
   GHashTable *item_cache;  /* key: uint64_t*, value: GnNostrEventItem* */
@@ -41,6 +57,10 @@ struct _GnNostrEventModel {
 
   /* Profile cache - pubkey -> GnNostrProfile */
   GHashTable *profile_cache;  /* key: pubkey (string), value: GnNostrProfile* */
+
+  /* Author readiness (kind 0 exists in DB / loaded) */
+  GHashTable *authors_ready;     /* key: pubkey hex (string), value: GINT_TO_POINTER(1) */
+  GHashTable *pending_by_author; /* key: pubkey hex (string), value: GArray* (PendingEntry) */
 
   /* Thread info cache - note_key -> ThreadInfo */
   GHashTable *thread_info;
@@ -68,6 +88,12 @@ static gboolean uint64_equal(gconstpointer a, gconstpointer b) {
   return *(const uint64_t *)a == *(const uint64_t *)b;
 }
 
+static gint uint64_compare_for_queue(gconstpointer a, gconstpointer b) {
+  const uint64_t av = *(const uint64_t *)a;
+  const uint64_t bv = *(const uint64_t *)b;
+  return (av == bv) ? 0 : 1;
+}
+
 static void gn_nostr_event_model_list_model_iface_init(GListModelInterface *iface);
 
 G_DEFINE_TYPE_WITH_CODE(GnNostrEventModel, gn_nostr_event_model, G_TYPE_OBJECT,
@@ -82,72 +108,36 @@ enum {
 
 static GParamSpec *properties[N_PROPS];
 
-static void gn_nostr_event_model_finalize(GObject *object) {
-  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(object);
+enum {
+  SIGNAL_NEED_PROFILE,
+  N_SIGNALS
+};
 
-  /* Unsubscribe from nostrdb */
-  if (self->subscription_id > 0) {
-    storage_ndb_unsubscribe(self->subscription_id);
-    self->subscription_id = 0;
-  }
+static guint signals[N_SIGNALS];
 
-  g_free(self->kinds);
-  g_strfreev(self->authors);
-  g_free(self->root_event_id);
+/* Forward declarations */
+static GnNostrProfile *profile_cache_get(GnNostrEventModel *self, const char *pubkey_hex);
+static GnNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, void *txn,
+                                                    const unsigned char pk32[32],
+                                                    const char *pubkey_hex);
+static void profile_cache_update_from_content(GnNostrEventModel *self, const char *pubkey_hex,
+                                              const char *content, gsize content_len);
+static gboolean note_matches_query(GnNostrEventModel *self, int kind, const char *pubkey_hex, gint64 created_at);
+static void enforce_window(GnNostrEventModel *self);
+static gboolean remove_note_by_key(GnNostrEventModel *self, uint64_t note_key);
+static void pending_remove_note_key(GnNostrEventModel *self, uint64_t note_key);
+static gboolean add_pending(GnNostrEventModel *self, const char *pubkey_hex, uint64_t note_key, gint64 created_at);
+static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex);
 
-  g_array_unref(self->notes);
-  g_hash_table_unref(self->item_cache);
-  g_queue_free(self->cache_lru);
-  g_hash_table_unref(self->profile_cache);
-  g_hash_table_unref(self->thread_info);
-
-  G_OBJECT_CLASS(gn_nostr_event_model_parent_class)->finalize(object);
-}
-
-static void gn_nostr_event_model_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {
-  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(object);
-
-  switch (prop_id) {
-    case PROP_IS_THREAD_VIEW:
-      g_value_set_boolean(value, self->is_thread_view);
-      break;
-    case PROP_ROOT_EVENT_ID:
-      g_value_set_string(value, self->root_event_id);
-      break;
-    default:
-      G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
-  }
-}
-
-static void gn_nostr_event_model_class_init(GnNostrEventModelClass *klass) {
-  GObjectClass *object_class = G_OBJECT_CLASS(klass);
-
-  object_class->finalize = gn_nostr_event_model_finalize;
-  object_class->get_property = gn_nostr_event_model_get_property;
-
-  properties[PROP_IS_THREAD_VIEW] = g_param_spec_boolean("is-thread-view", "Is Thread View",
-                                                          "Whether this is a thread view", FALSE,
-                                                          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
-  properties[PROP_ROOT_EVENT_ID] = g_param_spec_string("root-event-id", "Root Event ID",
-                                                        "Thread root event ID", NULL,
-                                                        G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
-
-  g_object_class_install_properties(object_class, N_PROPS, properties);
-}
-
-static void gn_nostr_event_model_init(GnNostrEventModel *self) {
-  self->notes = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
-  self->item_cache = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, g_object_unref);
-  self->cache_lru = g_queue_new();
-  self->profile_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
-  self->thread_info = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, (GDestroyNotify)thread_info_free);
-  self->limit = 100;
-}
+/* Subscription callbacks */
+static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
+static void on_sub_profiles_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
+static void on_sub_deletes_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
 
 /* LRU cache management */
 static void cache_touch(GnNostrEventModel *self, uint64_t key) {
   /* Move to front of LRU queue */
-  GList *link = g_queue_find_custom(self->cache_lru, &key, (GCompareFunc)uint64_equal);
+  GList *link = g_queue_find_custom(self->cache_lru, &key, (GCompareFunc)uint64_compare_for_queue);
   if (link) {
     g_queue_unlink(self->cache_lru, link);
     g_queue_push_head_link(self->cache_lru, link);
@@ -166,15 +156,435 @@ static void cache_add(GnNostrEventModel *self, uint64_t key, GnNostrEventItem *i
     uint64_t *old_key = g_queue_pop_tail(self->cache_lru);
     if (old_key) {
       g_hash_table_remove(self->item_cache, old_key);
-      /* Note: key is freed by hash table */
+      /* Note: key is freed by hash table; queue just dropped its pointer */
     }
   }
 }
 
-/* Forward declarations */
-static GnNostrProfile *get_or_create_profile(GnNostrEventModel *self, const char *pubkey);
+/* Helper: remove a key from cache_lru (must be called before removing from item_cache) */
+static void cache_lru_remove_key(GnNostrEventModel *self, uint64_t note_key) {
+  if (!self || !self->cache_lru) return;
+  GList *link = g_queue_find_custom(self->cache_lru, &note_key, (GCompareFunc)uint64_compare_for_queue);
+  if (!link) return;
+  g_queue_unlink(self->cache_lru, link);
+  g_list_free_1(link);
+}
 
-/* GListModel interface implementation */
+/* Helper functions */
+
+static gboolean hex_to_bytes32(const char *hex, uint8_t out[32]) {
+  if (!hex || !out) return FALSE;
+  size_t L = strlen(hex);
+  if (L != 64) return FALSE;
+  for (int i = 0; i < 32; i++) {
+    char c1 = hex[i*2];
+    char c2 = hex[i*2+1];
+    int v1, v2;
+    if      (c1 >= '0' && c1 <= '9') v1 = c1 - '0';
+    else if (c1 >= 'a' && c1 <= 'f') v1 = 10 + (c1 - 'a');
+    else if (c1 >= 'A' && c1 <= 'F') v1 = 10 + (c1 - 'A');
+    else return FALSE;
+    if      (c2 >= '0' && c2 <= '9') v2 = c2 - '0';
+    else if (c2 >= 'a' && c2 <= 'f') v2 = 10 + (c2 - 'a');
+    else if (c2 >= 'A' && c2 <= 'F') v2 = 10 + (c2 - 'A');
+    else return FALSE;
+    out[i] = (uint8_t)((v1 << 4) | v2);
+  }
+  return TRUE;
+}
+
+static gboolean author_is_ready(GnNostrEventModel *self, const char *pubkey_hex) {
+  if (!self || !self->authors_ready || !pubkey_hex) return FALSE;
+  return g_hash_table_contains(self->authors_ready, pubkey_hex);
+}
+
+static void mark_author_ready(GnNostrEventModel *self, const char *pubkey_hex) {
+  if (!self || !self->authors_ready || !pubkey_hex) return;
+  if (!g_hash_table_contains(self->authors_ready, pubkey_hex)) {
+    g_hash_table_insert(self->authors_ready, g_strdup(pubkey_hex), GINT_TO_POINTER(1));
+  }
+}
+
+/* NOTE: This is a strict gating check based on DB availability, not in-memory cache. */
+static gboolean db_has_profile_event_for_pubkey(void *txn, const unsigned char pk32[32]) {
+  if (!txn || !pk32) return FALSE;
+  char *evt_json = NULL;
+  int evt_len = 0;
+  int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &evt_json, &evt_len);
+  if (rc != 0 || !evt_json || evt_len <= 0) {
+    if (evt_json) free(evt_json);
+    return FALSE;
+  }
+  free(evt_json);
+  return TRUE;
+}
+
+static GnNostrProfile *profile_cache_get(GnNostrEventModel *self, const char *pubkey_hex) {
+  if (!self || !self->profile_cache || !pubkey_hex) return NULL;
+  return g_hash_table_lookup(self->profile_cache, pubkey_hex);
+}
+
+/* Load kind-0 profile from DB (storage_ndb_get_profile_by_pubkey returns *event* JSON), then cache it.
+ * Returns a cached GnNostrProfile* on success, NULL if not found.
+ */
+static GnNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, void *txn,
+                                                    const unsigned char pk32[32],
+                                                    const char *pubkey_hex) {
+  if (!self || !txn || !pk32 || !pubkey_hex) return NULL;
+
+  GnNostrProfile *existing = profile_cache_get(self, pubkey_hex);
+  if (existing) return existing;
+
+  char *evt_json = NULL;
+  int evt_len = 0;
+  int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &evt_json, &evt_len);
+  if (rc != 0 || !evt_json || evt_len <= 0) {
+    if (evt_json) free(evt_json);
+    return NULL;
+  }
+
+  NostrEvent *evt = nostr_event_new();
+  if (!evt) {
+    free(evt_json);
+    return NULL;
+  }
+
+  GnNostrProfile *profile = NULL;
+
+  if (nostr_event_deserialize(evt, evt_json) == 0 && nostr_event_get_kind(evt) == 0) {
+    const char *content = nostr_event_get_content(evt);
+    if (content && *content) {
+      profile = gn_nostr_profile_new(pubkey_hex);
+      gn_nostr_profile_update_from_json(profile, content);
+      g_hash_table_replace(self->profile_cache, g_strdup(pubkey_hex), profile);
+      mark_author_ready(self, pubkey_hex);
+    }
+  }
+
+  nostr_event_free(evt);
+  free(evt_json);
+
+  return profile;
+}
+
+static void profile_cache_update_from_content(GnNostrEventModel *self, const char *pubkey_hex,
+                                              const char *content, gsize content_len) {
+  if (!self || !pubkey_hex || !content || content_len == 0) return;
+
+  /* content is kind-0 event content JSON, not necessarily NUL terminated */
+  char *tmp = g_strndup(content, content_len);
+
+  GnNostrProfile *profile = profile_cache_get(self, pubkey_hex);
+  if (!profile) {
+    profile = gn_nostr_profile_new(pubkey_hex);
+    g_hash_table_replace(self->profile_cache, g_strdup(pubkey_hex), profile);
+  }
+
+  gn_nostr_profile_update_from_json(profile, tmp);
+  mark_author_ready(self, pubkey_hex);
+
+  g_free(tmp);
+}
+
+/* Notify cached items that their "profile" property should be re-read by views. */
+static void notify_cached_items_for_pubkey(GnNostrEventModel *self, const char *pubkey_hex) {
+  if (!self || !pubkey_hex || !self->item_cache) return;
+
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->item_cache);
+
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    GnNostrEventItem *item = GN_NOSTR_EVENT_ITEM(value);
+    const char *item_pubkey = gn_nostr_event_item_get_pubkey(item);
+    if (item_pubkey && g_strcmp0(item_pubkey, pubkey_hex) == 0) {
+      g_object_notify(G_OBJECT(item), "profile");
+    }
+  }
+}
+
+static gboolean note_matches_query(GnNostrEventModel *self, int kind, const char *pubkey_hex, gint64 created_at) {
+  if (!self) return FALSE;
+
+  /* Kind filter */
+  if (self->n_kinds > 0) {
+    gboolean kind_ok = FALSE;
+    for (gsize i = 0; i < self->n_kinds; i++) {
+      if (self->kinds[i] == kind) { kind_ok = TRUE; break; }
+    }
+    if (!kind_ok) return FALSE;
+  }
+
+  /* Author filter */
+  if (self->n_authors > 0) {
+    gboolean author_ok = FALSE;
+    for (gsize i = 0; i < self->n_authors; i++) {
+      if (self->authors[i] && pubkey_hex && g_strcmp0(self->authors[i], pubkey_hex) == 0) {
+        author_ok = TRUE;
+        break;
+      }
+    }
+    if (!author_ok) return FALSE;
+  }
+
+  /* since/until filters */
+  if (self->since > 0 && created_at > 0 && created_at < self->since) return FALSE;
+  if (self->until > 0 && created_at > 0 && created_at > self->until) return FALSE;
+
+  return TRUE;
+}
+
+/* Find insertion position for sorted insert (newest first) */
+static guint find_sorted_position(GnNostrEventModel *self, gint64 created_at) {
+  for (guint i = 0; i < self->notes->len; i++) {
+    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
+    if (entry->created_at < created_at) {
+      return i;
+    }
+  }
+  return self->notes->len;
+}
+
+/* Check if note_key is already in the model */
+static gboolean has_note_key(GnNostrEventModel *self, uint64_t key) {
+  for (guint i = 0; i < self->notes->len; i++) {
+    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
+    if (entry->note_key == key) return TRUE;
+  }
+  return FALSE;
+}
+
+/* Parse NIP-10 tags for threading (best-effort; used on refresh paths that have full event JSON) */
+static void parse_nip10_tags(NostrEvent *evt, char **root_id, char **reply_id) {
+  *root_id = NULL;
+  *reply_id = NULL;
+
+  NostrTags *tags = (NostrTags*)nostr_event_get_tags(evt);
+  if (!tags) return;
+
+  for (size_t i = 0; i < nostr_tags_size(tags); i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    if (!tag || nostr_tag_size(tag) < 2) continue;
+
+    const char *key = nostr_tag_get(tag, 0);
+    if (strcmp(key, "e") != 0) continue;
+
+    const char *event_id = nostr_tag_get(tag, 1);
+    if (!event_id || strlen(event_id) != 64) continue;
+
+    const char *marker = (nostr_tag_size(tag) >= 4) ? nostr_tag_get(tag, 3) : NULL;
+
+    if (marker && strcmp(marker, "root") == 0) {
+      *root_id = g_strdup(event_id);
+    } else if (marker && strcmp(marker, "reply") == 0) {
+      *reply_id = g_strdup(event_id);
+    } else if (!*root_id && i == 0) {
+      *root_id = g_strdup(event_id);
+    }
+  }
+}
+
+/* Add a note to the model (assumes gating has already been satisfied) */
+static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64 created_at,
+                               const char *root_id, const char *parent_id, guint depth) {
+  if (has_note_key(self, note_key)) {
+    return;  /* Already in model */
+  }
+
+  /* Store thread info (optional) */
+  if (root_id || parent_id) {
+    ThreadInfo *tinfo = g_new0(ThreadInfo, 1);
+    tinfo->root_id = g_strdup(root_id);
+    tinfo->parent_id = g_strdup(parent_id);
+    tinfo->depth = depth;
+
+    uint64_t *key_copy = g_new(uint64_t, 1);
+    *key_copy = note_key;
+    g_hash_table_insert(self->thread_info, key_copy, tinfo);
+  }
+
+  /* Find insertion position */
+  guint pos = find_sorted_position(self, created_at);
+
+  /* Insert note entry */
+  NoteEntry entry = { .note_key = note_key, .created_at = created_at };
+  g_array_insert_val(self->notes, pos, entry);
+
+  /* Emit items-changed signal */
+  g_list_model_items_changed(G_LIST_MODEL(self), pos, 0, 1);
+}
+
+/* Enforce window size (~100 items) and evict oldest, including cache cleanup. */
+static void enforce_window(GnNostrEventModel *self) {
+  if (!self) return;
+  if (self->is_thread_view) return;
+  guint cap = self->window_size ? self->window_size : MODEL_MAX_ITEMS;
+
+  if (self->notes->len <= cap) return;
+
+  guint to_remove = self->notes->len - cap;
+  guint old_len = self->notes->len;
+
+  /* Remove oldest entries (tail) and their cached state. */
+  for (guint i = 0; i < to_remove; i++) {
+    guint idx = old_len - 1 - i;
+    NoteEntry *old = &g_array_index(self->notes, NoteEntry, idx);
+    uint64_t k = old->note_key;
+
+    /* Ensure we remove from LRU queue before removing from item_cache (which frees key ptr). */
+    cache_lru_remove_key(self, k);
+
+    g_hash_table_remove(self->thread_info, &k);
+    g_hash_table_remove(self->item_cache, &k);
+  }
+
+  g_array_set_size(self->notes, cap);
+  g_list_model_items_changed(G_LIST_MODEL(self), cap, to_remove, 0);
+}
+
+/* Pending queue: pubkey -> array of PendingEntry. Returns TRUE if this pubkey had no pending queue before. */
+static gboolean add_pending(GnNostrEventModel *self, const char *pubkey_hex, uint64_t note_key, gint64 created_at) {
+  if (!self || !self->pending_by_author || !pubkey_hex) return FALSE;
+
+  GArray *arr = g_hash_table_lookup(self->pending_by_author, pubkey_hex);
+  gboolean first = (arr == NULL);
+
+  if (!arr) {
+    arr = g_array_new(FALSE, FALSE, sizeof(PendingEntry));
+    g_hash_table_insert(self->pending_by_author, g_strdup(pubkey_hex), arr);
+  }
+
+  PendingEntry pe = { .note_key = note_key, .created_at = created_at };
+  g_array_append_val(arr, pe);
+
+  return first;
+}
+
+static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex) {
+  if (!self || !pubkey_hex || !self->pending_by_author) return;
+
+  gpointer orig_key = NULL;
+  gpointer value = NULL;
+
+  if (!g_hash_table_lookup_extended(self->pending_by_author, pubkey_hex, &orig_key, &value)) {
+    return;
+  }
+
+  /* Steal so we can process without destroy notify running */
+  g_hash_table_steal(self->pending_by_author, orig_key);
+
+  GArray *arr = (GArray *)value;
+  char *key_str = (char *)orig_key;
+
+  if (!arr) {
+    g_free(key_str);
+    return;
+  }
+
+  for (guint i = 0; i < arr->len; i++) {
+    PendingEntry *pe = &g_array_index(arr, PendingEntry, i);
+    add_note_internal(self, pe->note_key, pe->created_at, NULL, NULL, 0);
+  }
+
+  g_array_unref(arr);
+  g_free(key_str);
+
+  enforce_window(self);
+}
+
+/* Remove a note_key from any pending queues. */
+static void pending_remove_note_key(GnNostrEventModel *self, uint64_t note_key) {
+  if (!self || !self->pending_by_author) return;
+
+  GHashTableIter iter;
+  gpointer k, v;
+  g_hash_table_iter_init(&iter, self->pending_by_author);
+
+  while (g_hash_table_iter_next(&iter, &k, &v)) {
+    GArray *arr = (GArray *)v;
+    if (!arr) continue;
+
+    /* Remove in reverse to preserve indices */
+    for (gint i = (gint)arr->len - 1; i >= 0; i--) {
+      PendingEntry *pe = &g_array_index(arr, PendingEntry, (guint)i);
+      if (pe->note_key == note_key) {
+        g_array_remove_index(arr, (guint)i);
+      }
+    }
+
+    if (arr->len == 0) {
+      g_hash_table_iter_remove(&iter);
+    }
+  }
+}
+
+/* Remove a note from the visible list by note_key (incremental). */
+static gboolean remove_note_by_key(GnNostrEventModel *self, uint64_t note_key) {
+  if (!self || !self->notes) return FALSE;
+
+  for (guint i = 0; i < self->notes->len; i++) {
+    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
+    if (entry->note_key != note_key) continue;
+
+    /* Cleanup caches */
+    cache_lru_remove_key(self, note_key);
+    g_hash_table_remove(self->thread_info, &note_key);
+    g_hash_table_remove(self->item_cache, &note_key);
+
+    /* Remove visible entry and emit change */
+    g_array_remove_index(self->notes, i);
+    g_list_model_items_changed(G_LIST_MODEL(self), i, 1, 0);
+
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
+/* Handle NIP-09 deletes (kind 5) by parsing tags and removing referenced notes incrementally. */
+static void handle_delete_event_json(GnNostrEventModel *self, void *txn, const char *event_json) {
+  if (!self || !txn || !event_json) return;
+
+  NostrEvent *evt = nostr_event_new();
+  if (!evt) return;
+
+  if (nostr_event_deserialize(evt, event_json) != 0 || nostr_event_get_kind(evt) != 5) {
+    nostr_event_free(evt);
+    return;
+  }
+
+  NostrTags *tags = (NostrTags *)nostr_event_get_tags(evt);
+  if (!tags) {
+    nostr_event_free(evt);
+    return;
+  }
+
+  for (size_t i = 0; i < nostr_tags_size(tags); i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    if (!tag || nostr_tag_size(tag) < 2) continue;
+
+    const char *k = nostr_tag_get(tag, 0);
+    if (!k) continue;
+
+    if (strcmp(k, "e") == 0) {
+      const char *id_hex = nostr_tag_get(tag, 1);
+      if (!id_hex || strlen(id_hex) != 64) continue;
+
+      uint8_t id32[32];
+      if (!hex_to_bytes32(id_hex, id32)) continue;
+
+      uint64_t target_key = storage_ndb_get_note_key_by_id(txn, id32, NULL);
+      if (target_key > 0) {
+        (void)remove_note_by_key(self, target_key);
+        pending_remove_note_key(self, target_key);
+      }
+    }
+  }
+
+  nostr_event_free(evt);
+}
+
+/* -------------------- GListModel interface implementation -------------------- */
 
 static GType gn_nostr_event_model_get_item_type(GListModel *list) {
   return GN_TYPE_NOSTR_EVENT_ITEM;
@@ -211,10 +621,10 @@ static gpointer gn_nostr_event_model_get_item(GListModel *list, guint position) 
     gn_nostr_event_item_set_thread_info(item, tinfo->root_id, tinfo->parent_id, tinfo->depth);
   }
 
-  /* Apply profile - create and load from nostrdb if not cached */
+  /* Apply profile if available (gated notes should always have profiles, but be defensive) */
   const char *pubkey = gn_nostr_event_item_get_pubkey(item);
   if (pubkey) {
-    GnNostrProfile *profile = get_or_create_profile(self, pubkey);
+    GnNostrProfile *profile = profile_cache_get(self, pubkey);
     if (profile) {
       gn_nostr_event_item_set_profile(item, profile);
     }
@@ -232,158 +642,237 @@ static void gn_nostr_event_model_list_model_iface_init(GListModelInterface *ifac
   iface->get_item = gn_nostr_event_model_get_item;
 }
 
-/* Helper functions */
+/* -------------------- Subscriptions -------------------- */
 
-static gboolean hex_to_bytes32(const char *hex, uint8_t out[32]) {
-  if (!hex || !out) return FALSE;
-  size_t L = strlen(hex);
-  if (L != 64) return FALSE;
-  for (int i = 0; i < 32; i++) {
-    char c1 = hex[i*2];
-    char c2 = hex[i*2+1];
-    int v1, v2;
-    if      (c1 >= '0' && c1 <= '9') v1 = c1 - '0';
-    else if (c1 >= 'a' && c1 <= 'f') v1 = 10 + (c1 - 'a');
-    else if (c1 >= 'A' && c1 <= 'F') v1 = 10 + (c1 - 'A');
-    else return FALSE;
-    if      (c2 >= '0' && c2 <= '9') v2 = c2 - '0';
-    else if (c2 >= 'a' && c2 <= 'f') v2 = 10 + (c2 - 'a');
-    else if (c2 >= 'A' && c2 <= 'F') v2 = 10 + (c2 - 'A');
-    else return FALSE;
-    out[i] = (uint8_t)((v1 << 4) | v2);
+static void on_sub_profiles_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
+  (void)subid;
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
+
+  for (guint i = 0; i < n_keys; i++) {
+    uint64_t note_key = note_keys[i];
+    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
+    if (!note) continue;
+
+    uint32_t kind = storage_ndb_note_kind(note);
+    if (kind != 0) continue;
+
+    const unsigned char *pk32 = storage_ndb_note_pubkey(note);
+    if (!pk32) continue;
+
+    char pubkey_hex[65];
+    storage_ndb_hex_encode(pk32, pubkey_hex);
+
+    const char *content = storage_ndb_note_content(note);
+    uint32_t content_len = storage_ndb_note_content_length(note);
+    if (!content || content_len == 0) continue;
+
+    profile_cache_update_from_content(self, pubkey_hex, content, (gsize)content_len);
+    notify_cached_items_for_pubkey(self, pubkey_hex);
+
+    /* Any pending notes for this author can now be inserted */
+    flush_pending_notes(self, pubkey_hex);
   }
-  return TRUE;
+
+  storage_ndb_end_query(txn);
 }
 
-static GnNostrProfile *get_or_create_profile(GnNostrEventModel *self, const char *pubkey) {
-  GnNostrProfile *profile = g_hash_table_lookup(self->profile_cache, pubkey);
-  if (!profile) {
-    profile = gn_nostr_profile_new(pubkey);
-    g_hash_table_insert(self->profile_cache, g_strdup(pubkey), profile);
+static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
+  (void)subid;
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
 
-    /* Try to load profile from nostrdb */
-    void *txn = NULL;
-    if (storage_ndb_begin_query(&txn) == 0) {
-      uint8_t pk32[32];
-      if (hex_to_bytes32(pubkey, pk32)) {
-        char *json = NULL;
-        int len = 0;
-        if (storage_ndb_get_profile_by_pubkey(txn, pk32, &json, &len) == 0 && json) {
-          /* Parse profile JSON from kind:0 content */
-          NostrEvent *evt = nostr_event_new();
-          if (evt && nostr_event_deserialize(evt, json) == 0) {
-            const char *content = nostr_event_get_content(evt);
-            if (content) {
-              gn_nostr_profile_update_from_json(profile, content);
-            }
-          }
-          if (evt) nostr_event_free(evt);
-        }
-      }
-      storage_ndb_end_query(txn);
-    }
-  }
-  return profile;
-}
-
-/* Find insertion position for sorted insert (newest first) */
-static guint find_sorted_position(GnNostrEventModel *self, gint64 created_at) {
-  for (guint i = 0; i < self->notes->len; i++) {
-    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
-    if (entry->created_at < created_at) {
-      return i;
-    }
-  }
-  return self->notes->len;
-}
-
-/* Check if note_key is already in the model */
-static gboolean has_note_key(GnNostrEventModel *self, uint64_t key) {
-  for (guint i = 0; i < self->notes->len; i++) {
-    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
-    if (entry->note_key == key) return TRUE;
-  }
-  return FALSE;
-}
-
-/* Parse NIP-10 tags for threading */
-static void parse_nip10_tags(NostrEvent *evt, char **root_id, char **reply_id) {
-  *root_id = NULL;
-  *reply_id = NULL;
-
-  NostrTags *tags = (NostrTags*)nostr_event_get_tags(evt);
-  if (!tags) return;
-
-  for (size_t i = 0; i < nostr_tags_size(tags); i++) {
-    NostrTag *tag = nostr_tags_get(tags, i);
-    if (!tag || nostr_tag_size(tag) < 2) continue;
-
-    const char *key = nostr_tag_get(tag, 0);
-    if (strcmp(key, "e") != 0) continue;
-
-    const char *event_id = nostr_tag_get(tag, 1);
-    if (!event_id || strlen(event_id) != 64) continue;
-
-    const char *marker = (nostr_tag_size(tag) >= 4) ? nostr_tag_get(tag, 3) : NULL;
-
-    if (marker && strcmp(marker, "root") == 0) {
-      *root_id = g_strdup(event_id);
-    } else if (marker && strcmp(marker, "reply") == 0) {
-      *reply_id = g_strdup(event_id);
-    } else if (!*root_id && i == 0) {
-      *root_id = g_strdup(event_id);
-    }
-  }
-}
-
-/* Add a note to the model */
-static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64 created_at,
-                               const char *root_id, const char *parent_id, guint depth) {
-  if (has_note_key(self, note_key)) {
-    return;  /* Already in model */
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+    g_warning("[TIMELINE] failed to begin query");
+    return;
   }
 
-  /* Store thread info */
-  if (root_id || parent_id) {
-    ThreadInfo *tinfo = g_new0(ThreadInfo, 1);
-    tinfo->root_id = g_strdup(root_id);
-    tinfo->parent_id = g_strdup(parent_id);
-    tinfo->depth = depth;
+  guint added = 0, filtered = 0, pending = 0, no_note = 0;
 
-    uint64_t *key_copy = g_new(uint64_t, 1);
-    *key_copy = note_key;
-    g_hash_table_insert(self->thread_info, key_copy, tinfo);
-  }
+  for (guint i = 0; i < n_keys; i++) {
+    uint64_t note_key = note_keys[i];
+    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
 
-  /* Find insertion position */
-  guint pos = find_sorted_position(self, created_at);
+    if (!note) continue;
 
-  /* Insert note entry */
-  NoteEntry entry = { .note_key = note_key, .created_at = created_at };
-  g_array_insert_val(self->notes, pos, entry);
+    uint32_t kind_u32 = storage_ndb_note_kind(note);
+    int kind = (int)kind_u32;
+    if (kind != 1 && kind != 6) { filtered++; continue; }
 
-  /* Emit items-changed signal */
-  g_list_model_items_changed(G_LIST_MODEL(self), pos, 0, 1);
+    gint64 created_at = (gint64)storage_ndb_note_created_at(note);
 
-  /* Enforce limit */
-  if (self->notes->len > MODEL_MAX_ITEMS && !self->is_thread_view) {
-    guint to_remove = self->notes->len - MODEL_MAX_ITEMS;
-    guint old_len = self->notes->len;
+    const unsigned char *pk32 = storage_ndb_note_pubkey(note);
+    if (!pk32) { no_note++; continue; }
 
-    /* Remove oldest entries and their thread info */
-    for (guint i = 0; i < to_remove; i++) {
-      guint idx = old_len - 1 - i;
-      NoteEntry *old = &g_array_index(self->notes, NoteEntry, idx);
-      g_hash_table_remove(self->thread_info, &old->note_key);
-      g_hash_table_remove(self->item_cache, &old->note_key);
+    char pubkey_hex[65];
+    storage_ndb_hex_encode(pk32, pubkey_hex);
+
+    if (!note_matches_query(self, kind, pubkey_hex, created_at)) { filtered++; continue; }
+
+    if (author_is_ready(self, pubkey_hex)) {
+      add_note_internal(self, note_key, created_at, NULL, NULL, 0);
+      added++;
+      continue;
     }
 
-    g_array_set_size(self->notes, MODEL_MAX_ITEMS);
-    g_list_model_items_changed(G_LIST_MODEL(self), MODEL_MAX_ITEMS, to_remove, 0);
+    /* Check DB for an existing profile and cache/mark ready if present */
+    GnNostrProfile *p = profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex);
+    if (p) {
+      (void)p;
+      add_note_internal(self, note_key, created_at, NULL, NULL, 0);
+      added++;
+      continue;
+    }
+
+    /* Still not ready: queue note and request profile fetch */
+    gboolean first_pending = add_pending(self, pubkey_hex, note_key, created_at);
+    if (first_pending) {
+      g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
+    }
+    pending++;
+  }
+
+  storage_ndb_end_query(txn);
+
+  enforce_window(self);
+}
+
+static void on_sub_deletes_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
+  (void)subid;
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
+
+  for (guint i = 0; i < n_keys; i++) {
+    uint64_t del_key = note_keys[i];
+    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, del_key);
+    if (!note) continue;
+
+    uint32_t kind = storage_ndb_note_kind(note);
+    if (kind != 5) continue;
+
+    /* We don't have tag APIs from note ptr, so query full JSON by id to parse tags. */
+    const unsigned char *id32 = storage_ndb_note_id(note);
+    if (!id32) continue;
+
+    char id_hex[65];
+    storage_ndb_hex_encode(id32, id_hex);
+
+    char **arr = NULL;
+    int n = 0;
+    char *filter = g_strdup_printf("[{\"ids\":[\"%s\"]}]", id_hex);
+    int qrc = storage_ndb_query(txn, filter, &arr, &n);
+    g_free(filter);
+
+    if (qrc == 0 && arr && n > 0 && arr[0]) {
+      handle_delete_event_json(self, txn, arr[0]);
+    }
+
+    storage_ndb_free_results(arr, n);
+  }
+
+  storage_ndb_end_query(txn);
+}
+
+/* -------------------- GObject boilerplate -------------------- */
+
+static void gn_nostr_event_model_finalize(GObject *object) {
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(object);
+
+  /* Unsubscribe from nostrdb via dispatcher */
+  if (self->sub_timeline > 0) { gn_ndb_unsubscribe(self->sub_timeline); self->sub_timeline = 0; }
+  if (self->sub_profiles > 0) { gn_ndb_unsubscribe(self->sub_profiles); self->sub_profiles = 0; }
+  if (self->sub_deletes > 0)  { gn_ndb_unsubscribe(self->sub_deletes);  self->sub_deletes = 0;  }
+
+  g_free(self->kinds);
+  g_strfreev(self->authors);
+  g_free(self->root_event_id);
+
+  if (self->notes) g_array_unref(self->notes);
+  if (self->item_cache) g_hash_table_unref(self->item_cache);
+  if (self->cache_lru) g_queue_free(self->cache_lru);
+  if (self->profile_cache) g_hash_table_unref(self->profile_cache);
+  if (self->authors_ready) g_hash_table_unref(self->authors_ready);
+  if (self->pending_by_author) g_hash_table_unref(self->pending_by_author);
+  if (self->thread_info) g_hash_table_unref(self->thread_info);
+
+  G_OBJECT_CLASS(gn_nostr_event_model_parent_class)->finalize(object);
+}
+
+static void gn_nostr_event_model_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(object);
+
+  switch (prop_id) {
+    case PROP_IS_THREAD_VIEW:
+      g_value_set_boolean(value, self->is_thread_view);
+      break;
+    case PROP_ROOT_EVENT_ID:
+      g_value_set_string(value, self->root_event_id);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
   }
 }
 
-/* Public API */
+static void gn_nostr_event_model_class_init(GnNostrEventModelClass *klass) {
+  GObjectClass *object_class = G_OBJECT_CLASS(klass);
+
+  object_class->finalize = gn_nostr_event_model_finalize;
+  object_class->get_property = gn_nostr_event_model_get_property;
+
+  properties[PROP_IS_THREAD_VIEW] =
+    g_param_spec_boolean("is-thread-view", "Is Thread View",
+                         "Whether this is a thread view", FALSE,
+                         G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  properties[PROP_ROOT_EVENT_ID] =
+    g_param_spec_string("root-event-id", "Root Event ID",
+                        "Thread root event ID", NULL,
+                        G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  g_object_class_install_properties(object_class, N_PROPS, properties);
+
+  /* need-profile(pubkey_hex): emitted when kind {1,6} arrives but author has no kind 0 in DB. */
+  signals[SIGNAL_NEED_PROFILE] =
+    g_signal_new("need-profile",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 0,
+                 NULL, NULL,
+                 g_cclosure_marshal_VOID__STRING,
+                 G_TYPE_NONE,
+                 1,
+                 G_TYPE_STRING);
+}
+
+static void gn_nostr_event_model_init(GnNostrEventModel *self) {
+  self->notes = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
+
+  self->item_cache = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, g_object_unref);
+  self->cache_lru = g_queue_new();
+
+  self->profile_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
+  self->thread_info = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, (GDestroyNotify)thread_info_free);
+
+  self->authors_ready = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->pending_by_author = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_array_unref);
+
+  self->limit = MODEL_MAX_ITEMS;
+  self->window_size = MODEL_MAX_ITEMS;
+
+  /* Install lifetime subscriptions via dispatcher (marshals to main loop) */
+  self->sub_profiles = gn_ndb_subscribe(FILTER_PROFILES, on_sub_profiles_batch, self, NULL);
+  self->sub_timeline = gn_ndb_subscribe(FILTER_TIMELINE, on_sub_timeline_batch, self, NULL);
+  self->sub_deletes  = gn_ndb_subscribe(FILTER_DELETES,  on_sub_deletes_batch,  self, NULL);
+}
+
+/* -------------------- Public API -------------------- */
 
 GnNostrEventModel *gn_nostr_event_model_new(void) {
   return g_object_new(GN_TYPE_NOSTR_EVENT_MODEL, NULL);
@@ -419,10 +908,13 @@ void gn_nostr_event_model_set_query(GnNostrEventModel *self, const GnNostrQueryP
 
   self->since = params->since;
   self->until = params->until;
-  self->limit = params->limit > 0 ? params->limit : 100;
 
-  g_debug("[MODEL] Query updated: kinds=%zu authors=%zu limit=%u",
-          self->n_kinds, self->n_authors, self->limit);
+  /* Treat limit as desired window size cap, but never exceed MODEL_MAX_ITEMS */
+  self->limit = params->limit > 0 ? params->limit : MODEL_MAX_ITEMS;
+  self->window_size = MIN((guint)MODEL_MAX_ITEMS, (guint)(self->limit > 0 ? self->limit : MODEL_MAX_ITEMS));
+
+  g_debug("[MODEL] Query updated: kinds=%zu authors=%zu window=%u",
+          self->n_kinds, self->n_authors, self->window_size);
 }
 
 void gn_nostr_event_model_set_thread_root(GnNostrEventModel *self, const char *root_event_id) {
@@ -442,12 +934,16 @@ void gn_nostr_event_model_set_thread_root(GnNostrEventModel *self, const char *r
   g_debug("[MODEL] Thread root set to: %s", root_event_id ? root_event_id : "(none)");
 }
 
+/* Initial/explicit refresh: query nostrdb and populate the visible window with only profile-ready notes.
+ * Live changes are handled incrementally by subscriptions.
+ */
 void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
 
-  g_debug("[MODEL] Refreshing model (current items: %u)", self->notes->len);
+  /* Clear current window */
+  gn_nostr_event_model_clear(self);
 
-  /* Build filter JSON */
+  /* Build filter JSON for kinds (default to 1/6) */
   GString *filter = g_string_new("[{");
 
   if (self->n_kinds > 0) {
@@ -457,6 +953,8 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
       g_string_append_printf(filter, "%d", self->kinds[i]);
     }
     g_string_append(filter, "],");
+  } else {
+    g_string_append(filter, "\"kinds\":[1,6],");
   }
 
   if (self->n_authors > 0) {
@@ -476,13 +974,11 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
     g_string_append_printf(filter, "\"until\":%" G_GINT64_FORMAT ",", self->until);
   }
 
-  g_string_append_printf(filter, "\"limit\":%u}]", self->limit);
-
-  /* Query nostrdb */
-  g_debug("[MODEL] Executing query: %s", filter->str);
+  guint qlimit = self->window_size ? self->window_size : MODEL_MAX_ITEMS;
+  g_string_append_printf(filter, "\"limit\":%u}]", qlimit);
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0) {
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
     g_warning("[MODEL] Failed to begin query");
     g_string_free(filter, TRUE);
     return;
@@ -490,12 +986,10 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
 
   char **json_results = NULL;
   int count = 0;
-
   int query_rc = storage_ndb_query(txn, filter->str, &json_results, &count);
-  g_debug("[MODEL] Query result: rc=%d count=%d", query_rc, count);
 
   guint added = 0;
-  if (query_rc == 0) {
+  if (query_rc == 0 && json_results && count > 0) {
     for (int i = 0; i < count; i++) {
       const char *event_json = json_results[i];
       if (!event_json) continue;
@@ -504,43 +998,84 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
       if (!evt) continue;
 
       if (nostr_event_deserialize(evt, event_json) == 0) {
+        int kind = nostr_event_get_kind(evt);
+        if (kind != 1 && kind != 6) {
+          nostr_event_free(evt);
+          continue;
+        }
+
         const char *event_id = nostr_event_get_id(evt);
-        const char *pubkey = nostr_event_get_pubkey(evt);
+        const char *pubkey_hex = nostr_event_get_pubkey(evt);
         gint64 created_at = nostr_event_get_created_at(evt);
 
-        /* Get note key from nostrdb */
-        uint8_t id32[32];
-        if (event_id && hex_to_bytes32(event_id, id32)) {
-          uint64_t note_key = storage_ndb_get_note_key_by_id(txn, id32, NULL);
-          if (note_key > 0) {
-            /* Parse threading */
-            char *root_id = NULL;
-            char *reply_id = NULL;
-            parse_nip10_tags(evt, &root_id, &reply_id);
-
-            guint old_len = self->notes->len;
-            add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
-            if (self->notes->len > old_len) added++;
-
-            /* Ensure profile is in cache */
-            if (pubkey) {
-              get_or_create_profile(self, pubkey);
-            }
-
-            g_free(root_id);
-            g_free(reply_id);
-          }
+        if (!event_id || !pubkey_hex) {
+          nostr_event_free(evt);
+          continue;
         }
+
+        if (!note_matches_query(self, kind, pubkey_hex, created_at)) {
+          nostr_event_free(evt);
+          continue;
+        }
+
+        uint8_t id32[32];
+        if (!hex_to_bytes32(event_id, id32)) {
+          nostr_event_free(evt);
+          continue;
+        }
+
+        uint64_t note_key = storage_ndb_get_note_key_by_id(txn, id32, NULL);
+        if (note_key == 0) {
+          nostr_event_free(evt);
+          continue;
+        }
+
+        /* Gate by presence of kind-0 profile */
+        uint8_t pk32[32];
+        if (!hex_to_bytes32(pubkey_hex, pk32)) {
+          nostr_event_free(evt);
+          continue;
+        }
+
+        if (!db_has_profile_event_for_pubkey(txn, pk32)) {
+          /* Queue and request profile */
+          gboolean first_pending = add_pending(self, pubkey_hex, note_key, created_at);
+          if (first_pending) {
+            g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
+          }
+          nostr_event_free(evt);
+          continue;
+        }
+
+        /* Cache profile + mark ready */
+        (void)profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex);
+
+        /* Parse thread info best-effort */
+        char *root_id = NULL;
+        char *reply_id = NULL;
+        parse_nip10_tags(evt, &root_id, &reply_id);
+
+        add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
+        added++;
+
+        g_free(root_id);
+        g_free(reply_id);
       }
+
       nostr_event_free(evt);
+
+      if (added >= qlimit) break;
     }
+
     storage_ndb_free_results(json_results, count);
   }
 
   storage_ndb_end_query(txn);
   g_string_free(filter, TRUE);
 
-  g_message("[MODEL] Refresh complete: %u total items (%u added)", self->notes->len, added);
+  enforce_window(self);
+
+  g_debug("[MODEL] Refresh complete: %u total items (%u added)", self->notes->len, added);
 }
 
 void gn_nostr_event_model_update_profile(GObject *model, const char *pubkey_hex, const char *content_json) {
@@ -550,37 +1085,15 @@ void gn_nostr_event_model_update_profile(GObject *model, const char *pubkey_hex,
 
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(model);
 
-  GnNostrProfile *profile = g_hash_table_lookup(self->profile_cache, pubkey_hex);
-  if (!profile) {
-    g_debug("[MODEL] Profile for %.8s not in cache, skipping update", pubkey_hex);
-    return;
-  }
+  profile_cache_update_from_content(self, pubkey_hex, content_json, strlen(content_json));
+  notify_cached_items_for_pubkey(self, pubkey_hex);
 
-  gn_nostr_profile_update_from_json(profile, content_json);
-  g_debug("[MODEL] Updated profile for %.8s in cache", pubkey_hex);
-
-  /* Notify items in cache that have this pubkey */
-  GHashTableIter iter;
-  gpointer key, value;
-  guint updated = 0;
-
-  g_hash_table_iter_init(&iter, self->item_cache);
-  while (g_hash_table_iter_next(&iter, &key, &value)) {
-    GnNostrEventItem *item = GN_NOSTR_EVENT_ITEM(value);
-    const char *item_pubkey = gn_nostr_event_item_get_pubkey(item);
-    if (item_pubkey && g_strcmp0(item_pubkey, pubkey_hex) == 0) {
-      g_object_notify(G_OBJECT(item), "profile");
-      updated++;
-    }
-  }
-
-  if (updated > 0) {
-    g_message("[MODEL] Profile update for %.8s notified on %u cached items", pubkey_hex, updated);
-  }
+  /* New profile may unblock pending notes */
+  flush_pending_notes(self, pubkey_hex);
 }
 
 void gn_nostr_event_model_check_pending_for_profile(GnNostrEventModel *self, const char *pubkey) {
-  /* No longer needed - events shown immediately */
+  /* Subscription-driven gating handles this automatically now. */
   (void)self;
   (void)pubkey;
 }
@@ -589,12 +1102,20 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
 
   guint old_size = self->notes->len;
-  if (old_size == 0) return;
+  if (old_size == 0) {
+    /* Still clear caches/pending to be safe */
+    g_hash_table_remove_all(self->item_cache);
+    g_queue_clear(self->cache_lru);
+    g_hash_table_remove_all(self->thread_info);
+    g_hash_table_remove_all(self->pending_by_author);
+    return;
+  }
 
   g_array_set_size(self->notes, 0);
   g_hash_table_remove_all(self->item_cache);
   g_queue_clear(self->cache_lru);
   g_hash_table_remove_all(self->thread_info);
+  g_hash_table_remove_all(self->pending_by_author);
 
   g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, 0);
 
@@ -611,6 +1132,9 @@ const char *gn_nostr_event_model_get_root_event_id(GnNostrEventModel *self) {
   return self->root_event_id;
 }
 
+/* Compatibility: attempt to add an event by JSON, but still enforce persistence-first gating.
+ * If the event isn't yet in nostrdb, it will not be added here; subscriptions will pick it up after ingest.
+ */
 void gn_nostr_event_model_add_event_json(GnNostrEventModel *self, const char *event_json) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
   g_return_if_fail(event_json != NULL);
@@ -623,184 +1147,76 @@ void gn_nostr_event_model_add_event_json(GnNostrEventModel *self, const char *ev
     return;
   }
 
-  /* Check kind filter */
   int kind = nostr_event_get_kind(evt);
-  gboolean kind_matches = (self->n_kinds == 0);
-  for (gsize i = 0; i < self->n_kinds && !kind_matches; i++) {
-    if (self->kinds[i] == kind) kind_matches = TRUE;
-  }
-
-  if (!kind_matches) {
+  if (kind != 1 && kind != 6) {
     nostr_event_free(evt);
     return;
   }
 
   const char *event_id = nostr_event_get_id(evt);
-  const char *pubkey = nostr_event_get_pubkey(evt);
+  const char *pubkey_hex = nostr_event_get_pubkey(evt);
   gint64 created_at = nostr_event_get_created_at(evt);
 
-  /* Get note key */
-  void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0) {
+  if (!event_id || !pubkey_hex) {
     nostr_event_free(evt);
     return;
   }
 
   uint8_t id32[32];
-  if (event_id && hex_to_bytes32(event_id, id32)) {
-    uint64_t note_key = storage_ndb_get_note_key_by_id(txn, id32, NULL);
-    if (note_key > 0) {
-      char *root_id = NULL;
-      char *reply_id = NULL;
-      parse_nip10_tags(evt, &root_id, &reply_id);
-
-      add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
-
-      if (pubkey) {
-        get_or_create_profile(self, pubkey);
-      }
-
-      g_free(root_id);
-      g_free(reply_id);
-
-      g_message("[MODEL] Added live event %.8s", event_id);
-    }
+  if (!hex_to_bytes32(event_id, id32)) {
+    nostr_event_free(evt);
+    return;
   }
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+    nostr_event_free(evt);
+    return;
+  }
+
+  uint64_t note_key = storage_ndb_get_note_key_by_id(txn, id32, NULL);
+  if (note_key == 0) {
+    storage_ndb_end_query(txn);
+    nostr_event_free(evt);
+    return;
+  }
+
+  uint8_t pk32[32];
+  if (!hex_to_bytes32(pubkey_hex, pk32)) {
+    storage_ndb_end_query(txn);
+    nostr_event_free(evt);
+    return;
+  }
+
+  if (!db_has_profile_event_for_pubkey(txn, pk32)) {
+    gboolean first_pending = add_pending(self, pubkey_hex, note_key, created_at);
+    if (first_pending) g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey_hex);
+    storage_ndb_end_query(txn);
+    nostr_event_free(evt);
+    return;
+  }
+
+  (void)profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex);
+
+  /* Best-effort thread parse */
+  char *root_id = NULL;
+  char *reply_id = NULL;
+  parse_nip10_tags(evt, &root_id, &reply_id);
+
+  add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
+  enforce_window(self);
+
+  g_free(root_id);
+  g_free(reply_id);
 
   storage_ndb_end_query(txn);
   nostr_event_free(evt);
 }
 
-/* Delayed event add data */
-typedef struct {
-  GnNostrEventModel *model;
-  char *event_id;
-  char *pubkey;
-  gint64 created_at;
-  char *root_id;
-  char *reply_id;
-  int retries;
-} DelayedEventAdd;
-
-static void delayed_event_add_free(DelayedEventAdd *data) {
-  if (!data) return;
-  g_free(data->event_id);
-  g_free(data->pubkey);
-  g_free(data->root_id);
-  g_free(data->reply_id);
-  g_free(data);
-}
-
-static gboolean try_add_delayed_event(gpointer user_data) {
-  DelayedEventAdd *data = (DelayedEventAdd *)user_data;
-
-  if (!GN_IS_NOSTR_EVENT_MODEL(data->model)) {
-    delayed_event_add_free(data);
-    return G_SOURCE_REMOVE;
-  }
-
-  void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0) {
-    /* Retry if we haven't exceeded max retries (15 retries @ 100ms = 1.5s) */
-    if (data->retries < 15) {
-      data->retries++;
-      return G_SOURCE_CONTINUE;
-    }
-    g_warning("[MODEL] Failed to get txn for delayed event %.8s after retries", data->event_id);
-    delayed_event_add_free(data);
-    return G_SOURCE_REMOVE;
-  }
-
-  uint8_t id32[32];
-  if (hex_to_bytes32(data->event_id, id32)) {
-    uint64_t note_key = storage_ndb_get_note_key_by_id(txn, id32, NULL);
-    if (note_key > 0) {
-      add_note_internal(data->model, note_key, data->created_at, data->root_id, data->reply_id, 0);
-
-      if (data->pubkey) {
-        get_or_create_profile(data->model, data->pubkey);
-      }
-
-      g_debug("[MODEL] Added delayed event %.8s (key=%lu, retries=%d)", data->event_id, (unsigned long)note_key, data->retries);
-      storage_ndb_end_query(txn);
-      delayed_event_add_free(data);
-      return G_SOURCE_REMOVE;
-    }
-  }
-
-  storage_ndb_end_query(txn);
-
-  /* Not found yet - retry if we haven't exceeded max retries (15 retries @ 100ms = 1.5s) */
-  if (data->retries < 15) {
-    data->retries++;
-    return G_SOURCE_CONTINUE;  /* Try again after another interval */
-  }
-
-  g_warning("[MODEL] Event %.8s not found in nostrdb after retries", data->event_id);
-  delayed_event_add_free(data);
-  return G_SOURCE_REMOVE;
-}
-
+/* Compatibility: deprecated. Subscriptions are the authoritative mechanism for updates.
+ * This function intentionally does nothing to avoid bypassing persistence-first ordering.
+ */
 void gn_nostr_event_model_add_live_event(GnNostrEventModel *self, void *nostr_event) {
-  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
-  g_return_if_fail(nostr_event != NULL);
-
-  NostrEvent *evt = (NostrEvent *)nostr_event;
-
-  /* Check kind filter */
-  int kind = nostr_event_get_kind(evt);
-  gboolean kind_matches = (self->n_kinds == 0);
-  for (gsize i = 0; i < self->n_kinds && !kind_matches; i++) {
-    if (self->kinds[i] == kind) kind_matches = TRUE;
-  }
-
-  if (!kind_matches) {
-    return;
-  }
-
-  const char *event_id = nostr_event_get_id(evt);
-  const char *pubkey = nostr_event_get_pubkey(evt);
-  gint64 created_at = nostr_event_get_created_at(evt);
-
-  if (!event_id) return;
-
-  /* Parse threading now since we have the event */
-  char *root_id = NULL;
-  char *reply_id = NULL;
-  parse_nip10_tags(evt, &root_id, &reply_id);
-
-  /* Try immediate lookup first */
-  void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) == 0) {
-    uint8_t id32[32];
-    if (hex_to_bytes32(event_id, id32)) {
-      uint64_t note_key = storage_ndb_get_note_key_by_id(txn, id32, NULL);
-      if (note_key > 0) {
-        /* Found immediately - add now */
-        add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
-        if (pubkey) {
-          get_or_create_profile(self, pubkey);
-        }
-        g_debug("[MODEL] Added event %.8s immediately (key=%lu)", event_id, (unsigned long)note_key);
-        storage_ndb_end_query(txn);
-        g_free(root_id);
-        g_free(reply_id);
-        return;
-      }
-    }
-    storage_ndb_end_query(txn);
-  }
-
-  /* Not in nostrdb yet (async ingestion) - schedule delayed add */
-  DelayedEventAdd *data = g_new0(DelayedEventAdd, 1);
-  data->model = self;
-  data->event_id = g_strdup(event_id);
-  data->pubkey = g_strdup(pubkey);
-  data->created_at = created_at;
-  data->root_id = root_id;  /* Take ownership */
-  data->reply_id = reply_id;  /* Take ownership */
-  data->retries = 0;
-
-  /* Try again after 100ms (nostrdb async ingestion may take a moment) */
-  g_timeout_add(100, try_add_delayed_event, data);
+  (void)self;
+  (void)nostr_event;
 }

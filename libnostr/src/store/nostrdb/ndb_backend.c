@@ -120,8 +120,17 @@ static int ln_ndb_open(ln_store **out, const char *path, const char *opts_json)
   cfg.writer_scratch_buffer_size = 2 * 1024 * 1024;
   cfg.filter_context = NULL;
   cfg.ingest_filter = NULL;
-  cfg.sub_cb_ctx = NULL;
-  cfg.sub_cb = NULL;
+
+  /* Get subscription callback from storage_ndb layer (if set before init) */
+  {
+    typedef void (*storage_ndb_notify_fn)(void *ctx, uint64_t subid);
+    extern void storage_ndb_get_notify_callback(storage_ndb_notify_fn *fn_out, void **ctx_out);
+    storage_ndb_notify_fn sub_fn = NULL;
+    void *sub_ctx = NULL;
+    storage_ndb_get_notify_callback(&sub_fn, &sub_ctx);
+    cfg.sub_cb = (ndb_sub_fn)sub_fn;
+    cfg.sub_cb_ctx = sub_ctx;
+  }
 
   if (opts_json && *opts_json) {
     long long v = 0;
@@ -259,6 +268,27 @@ static int ln_ndb_end_query(ln_store *s, void *txn)
   int ok = ndb_end_query((struct ndb_txn *)txn);
   free(txn);
   return ok ? LN_OK : LN_ERR_DB_TXN;
+}
+
+/* Invalidate the thread-local transaction cache so next begin_query gets fresh data.
+ * This is needed after subscription callbacks since the cached transaction may not
+ * see newly committed notes. */
+static void ln_ndb_invalidate_txn_cache(ln_store *s)
+{
+  (void)s;
+  tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
+  if (tls && tls->txn) {
+    ndb_end_query(tls->txn);
+    free(tls->txn);
+    tls->txn = NULL;
+    tls->last_used = 0;
+  }
+}
+
+/* External entry point for storage_ndb to call */
+void ln_ndb_invalidate_txn_cache_ext(void)
+{
+  ln_ndb_invalidate_txn_cache(NULL);
 }
 
 static int ln_ndb_query(ln_store *s, void *txn, const char *filters_json, void **results, int *count)

@@ -750,7 +750,7 @@ static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec
 static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
   GtkWidget *row = GTK_WIDGET(gnostr_note_card_row_new());
-  g_message("factory_setup_cb: created note-card row=%p for item=%p", (void*)row, (void*)item);
+  g_debug("factory_setup_cb: created note-card row=%p for item=%p", (void*)row, (void*)item);
 
   /* Connect the open-profile signal */
   g_signal_connect(row, "open-profile", G_CALLBACK(on_note_card_open_profile_relay), NULL);
@@ -1032,13 +1032,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   g_free(display); g_free(handle); g_free(ts); g_free(content); g_free(root_id); g_free(id_hex);
   g_free(avatar_url); /* Fix memory leak */
 
-  /* Demand-driven profile prefetch: enqueue author for visible row */
-  if (pubkey && strlen(pubkey) == 64) {
-    GtkRoot *root = gtk_widget_get_root(row);
-    if (root && GNOSTR_IS_MAIN_WINDOW(root)) {
-      gnostr_main_window_enqueue_profile_author(GNOSTR_MAIN_WINDOW(root), pubkey);
-    }
-  }
+  /* Model-level profile gating handles profile fetching; no bind-time enqueue here. */
   g_free(pubkey);
 
   /* Connect reactive updates so that later metadata changes update UI
@@ -1167,12 +1161,12 @@ static void populate_flattened_model(GnostrTimelineView *self, GListModel *roots
 /* Debug callback for root model changes */
 static void on_root_items_changed(GListModel *list, guint position, guint removed, guint added, gpointer user_data) {
   GnostrTimelineView *self = (GnostrTimelineView *)user_data;
-  g_message("[TREE] Root items changed: position=%u removed=%u added=%u total=%u", 
+  g_debug("[TREE] Root items changed: position=%u removed=%u added=%u total=%u",
            position, removed, added, g_list_model_get_n_items(list));
   
   /* Repopulate flattened model when items change */
   if (self && self->flattened_model && self->tree_model) {
-    g_message("[TREE] Repopulating flattened model due to items changed");
+    g_debug("[TREE] Repopulating flattened model due to items changed");
     populate_flattened_model(self, G_LIST_MODEL(self->tree_model));
   }
 }
@@ -1181,7 +1175,7 @@ static void on_root_items_changed(GListModel *list, guint position, guint remove
 static void populate_flattened_model(GnostrTimelineView *self, GListModel *roots) {
   if (!self || !self->flattened_model || !roots) return;
   
-  g_message("[TREE] Populating flattened model with %u roots", g_list_model_get_n_items(roots));
+  g_debug("[TREE] Populating flattened model with %u roots", g_list_model_get_n_items(roots));
   
   /* Clear existing items */
   g_list_store_remove_all(self->flattened_model);
@@ -1213,18 +1207,18 @@ static void populate_flattened_model(GnostrTimelineView *self, GListModel *roots
     g_object_unref(root);
   }
   
-  g_message("[TREE] Flattened model now has %u items", g_list_model_get_n_items(G_LIST_MODEL(self->flattened_model)));
+  g_debug("[TREE] Flattened model now has %u items", g_list_model_get_n_items(G_LIST_MODEL(self->flattened_model)));
 }
 
 /* New: set tree roots model (GListModel of TimelineItem), creating a flattened model */
 void gnostr_timeline_view_set_tree_roots(GnostrTimelineView *self, GListModel *roots) {
   g_return_if_fail(GNOSTR_IS_TIMELINE_VIEW(self));
-  g_message("timeline_view_set_tree_roots: self=%p roots=%p list_view=%p", (void*)self, (void*)roots, (void*)self->list_view);
+  g_debug("timeline_view_set_tree_roots: self=%p roots=%p list_view=%p", (void*)self, (void*)roots, (void*)self->list_view);
   
   /* Add debug signal to monitor changes to the roots model */
   if (roots) {
     g_signal_connect(roots, "items-changed", G_CALLBACK(on_root_items_changed), self);
-    g_message("[TREE] Connected to roots items-changed signal");
+    g_debug("[TREE] Connected to roots items-changed signal");
   }
   /* Detach any existing model from the list view FIRST to drop its ref safely */
   if (self->list_view) {
@@ -1256,7 +1250,7 @@ void gnostr_timeline_view_set_tree_roots(GnostrTimelineView *self, GListModel *r
     self->flattened_model = NULL;
     self->selection_model = NULL;
   }
-  g_message("timeline_view_set_tree_roots: applying selection model=%p", (void*)self->selection_model);
+  g_debug("timeline_view_set_tree_roots: applying selection model=%p", (void*)self->selection_model);
   gtk_list_view_set_model(GTK_LIST_VIEW(self->list_view), self->selection_model);
 }
 

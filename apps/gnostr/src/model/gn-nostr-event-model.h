@@ -9,6 +9,20 @@ G_BEGIN_DECLS
 #define GN_TYPE_NOSTR_EVENT_MODEL (gn_nostr_event_model_get_type())
 G_DECLARE_FINAL_TYPE(GnNostrEventModel, gn_nostr_event_model, GN, NOSTR_EVENT_MODEL, GObject)
 
+/*
+ * GnNostrEventModel
+ *
+ * Subscription-driven GListModel over nostrdb note keys.
+ *
+ * Key behaviors:
+ * - Maintains lifetime subscriptions to kinds {0,1,5,6} via gn-ndb-sub-dispatcher.
+ * - Exposes a windowed list of kind {1,6} notes whose authors have kind 0 metadata in DB.
+ * - Emits "need-profile" (string pubkey_hex) when a kind {1,6} arrives without a kind 0 profile in DB.
+ *
+ * Note: The "need-profile" signal is registered on the GObject type; consumers should connect via
+ *   g_signal_connect(model, "need-profile", ...).
+ */
+
 typedef struct {
     gint *kinds;
     gsize n_kinds;
@@ -28,10 +42,11 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self);
 void gn_nostr_event_model_update_profile(GObject *model, const char *pubkey_hex, const char *content_json);
 void gn_nostr_event_model_check_pending_for_profile(GnNostrEventModel *self, const char *pubkey);
 
-/* Add an event directly from JSON (for live events before nostrdb async ingestion completes) */
+/* Compatibility APIs (deprecated by subscription-driven updates):
+ * - add_event_json/add_live_event are kept for build compatibility, but normal operation should ingest
+ *   into storage_ndb and rely on subscriptions for UI updates.
+ */
 void gn_nostr_event_model_add_event_json(GnNostrEventModel *self, const char *event_json);
-
-/* Add an event directly from NostrEvent pointer (avoids serialization roundtrip) */
 void gn_nostr_event_model_add_live_event(GnNostrEventModel *self, void *nostr_event);
 
 gboolean gn_nostr_event_model_get_is_thread_view(GnNostrEventModel *self);
