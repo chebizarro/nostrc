@@ -544,6 +544,10 @@ static gpointer subscribe_many_thread(gpointer user_data) {
         nostr_filters_free(ctx->filters);
         ctx->filters = NULL;
     }
+    if (ctx->cancellable) {
+        g_object_unref(ctx->cancellable);
+        ctx->cancellable = NULL;
+    }
     g_object_unref(ctx->self_obj);
     g_free(ctx);
     return NULL;
@@ -578,7 +582,7 @@ void gnostr_simple_pool_subscribe_many_async(GnostrSimplePool *self,
     } else {
         ctx->filters = NULL;
     }
-    ctx->cancellable = cancellable;
+    ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
     g_thread_new("nostr-subscribe-many", subscribe_many_thread, ctx);
 
     /* Immediate success for async setup */
@@ -939,12 +943,12 @@ static void *subscription_goroutine(void *arg) {
     }
     
     SubItem *item = ctx->item;
-    g_message("[GOROUTINE] Starting subscription for relay %s (sub=%p)", item->relay_url, (void*)item->sub);
+    g_debug("[GOROUTINE] Starting subscription for relay %s (sub=%p)", item->relay_url, (void*)item->sub);
     
     /* Verify subscription has channels */
     GoChannel *ch_events = nostr_subscription_get_events_channel(item->sub);
     GoChannel *ch_eose = nostr_subscription_get_eose_channel(item->sub);
-    g_message("[GOROUTINE] Subscription channels: events=%p eose=%p", (void*)ch_events, (void*)ch_eose);
+    g_debug("[GOROUTINE] Subscription channels: events=%p eose=%p", (void*)ch_events, (void*)ch_eose);
     
     /* Fire subscription - this may block, but we're in a goroutine so it's OK */
     Error *err = NULL;
@@ -954,7 +958,7 @@ static void *subscription_goroutine(void *arg) {
                   item->relay_url, err ? err->message : "unknown");
         if (err) free_error(err);
     } else {
-        g_message("[GOROUTINE] Subscription fired successfully for %s", item->relay_url);
+        g_debug("[GOROUTINE] Subscription fired successfully for %s", item->relay_url);
     }
     
     /* Signal completion */
@@ -975,7 +979,7 @@ static void *fetch_profiles_goroutine(void *arg) {
         return NULL;
     }
     
-    g_message("[GOROUTINE] Profile fetch starting (authors=%zu relays=%zu)", 
+    g_debug("[GOROUTINE] Profile fetch starting (authors=%zu relays=%zu)", 
               ctx->author_count, ctx->url_count);
     
     /* Create background context with cancel */
@@ -993,12 +997,12 @@ static void *fetch_profiles_goroutine(void *arg) {
         const char **authv = (const char **)ctx->authors;
         nostr_filter_set_authors(f, authv, ctx->author_count);
         
-        g_message("[GOROUTINE] Requesting kind-0 for %zu authors", ctx->author_count);
+        g_debug("[GOROUTINE] Requesting kind-0 for %zu authors", ctx->author_count);
         for (size_t i = 0; i < ctx->author_count && i < 3; i++) {
-            g_message("[GOROUTINE]   author[%zu]: %.16s...", i, ctx->authors[i] ? ctx->authors[i] : "(null)");
+            g_debug("[GOROUTINE]   author[%zu]: %.16s...", i, ctx->authors[i] ? ctx->authors[i] : "(null)");
         }
         if (ctx->author_count > 3) {
-            g_message("[GOROUTINE]   ... and %zu more", ctx->author_count - 3);
+            g_debug("[GOROUTINE]   ... and %zu more", ctx->author_count - 3);
         }
     }
     nostr_filters_add(filters, f);
@@ -1015,7 +1019,7 @@ static void *fetch_profiles_goroutine(void *arg) {
             continue;
         }
         NostrSimplePool *pool = gobj_pool->pool;
-        g_message("[GOROUTINE] Accessing pool=%p (has %zu relays)", (void*)pool, pool->relay_count);
+        g_debug("[GOROUTINE] Accessing pool=%p (has %zu relays)", (void*)pool, pool->relay_count);
         
         NostrRelay *relay = NULL;
         pthread_mutex_lock(&pool->pool_mutex);
@@ -1055,7 +1059,7 @@ static void *fetch_profiles_goroutine(void *arg) {
         
         /* Debug: log subscription ID */
         const char *sid = nostr_subscription_get_id(sub);
-        g_message("[GOROUTINE] Created subscription sid=%s for relay %s", sid ? sid : "null", url);
+        g_debug("[GOROUTINE] Created subscription sid=%s for relay %s", sid ? sid : "null", url);
         
         /* Launch goroutine to fire subscription */
         SubGoroutineCtx *sub_ctx = g_new0(SubGoroutineCtx, 1);
@@ -1076,12 +1080,12 @@ static void *fetch_profiles_goroutine(void *arg) {
         g_critical("[GOROUTINE] CRITICAL: Created ZERO subscriptions! No profiles will be fetched from relays!");
         g_critical("[GOROUTINE] Requested %zu relays, but none were available", ctx->url_count);
     } else {
-        g_message("[GOROUTINE] Created %u subscriptions (requested %zu relays), waiting for fire completion", 
+        g_debug("[GOROUTINE] Created %u subscriptions (requested %zu relays), waiting for fire completion", 
                   ctx->subs->len, ctx->url_count);
     }
     
     /* Wait for all subscriptions to fire (with timeout to prevent infinite hang) */
-    g_message("[GOROUTINE] Waiting for subscriptions to fire...");
+    g_debug("[GOROUTINE] Waiting for subscriptions to fire...");
     
     /* Poll WaitGroup with timeout instead of blocking forever */
     guint64 wait_start = g_get_monotonic_time();
@@ -1093,7 +1097,7 @@ static void *fetch_profiles_goroutine(void *arg) {
         int count = atomic_load(&wg->counter);
         
         if (count == 0) {
-            g_message("[GOROUTINE] All subscriptions fired, polling for events");
+            g_debug("[GOROUTINE] All subscriptions fired, polling for events");
             break;
         }
         
@@ -1123,7 +1127,7 @@ static void *fetch_profiles_goroutine(void *arg) {
         int timeout_ms = atoi(timeout_env);
         if (timeout_ms > 0) {
             HARD_TIMEOUT_US = (guint64)timeout_ms * 1000;
-            g_message("[GOROUTINE] Using custom timeout: %dms", timeout_ms);
+            g_debug("[GOROUTINE] Using custom timeout: %dms", timeout_ms);
         }
     }
     
@@ -1133,7 +1137,7 @@ static void *fetch_profiles_goroutine(void *arg) {
         
         /* Check cancellation */
         if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) {
-            g_message("[GOROUTINE] Cancelled");
+            g_debug("[GOROUTINE] Cancelled");
             break;
         }
         
@@ -1154,7 +1158,7 @@ static void *fetch_profiles_goroutine(void *arg) {
                     const char *eid = nostr_event_get_id(ev);
                     const char *pk = nostr_event_get_pubkey(ev);
                     
-                    g_message("[GOROUTINE] Received event id=%.16s... pubkey=%.16s...", 
+                    g_debug("[GOROUTINE] Received event id=%.16s... pubkey=%.16s...", 
                               eid ? eid : "(null)", pk ? pk : "(null)");
                     
                     if (eid && *eid && !dedup_set_seen((DedupSet*)ctx->dedup, eid)) {
@@ -1165,7 +1169,7 @@ static void *fetch_profiles_goroutine(void *arg) {
                             guint total = ctx->results->len;
                             g_mutex_unlock((GMutex*)ctx->results_mutex);
                             
-                            g_message("[GOROUTINE] Added profile (total=%u)", total);
+                            g_debug("[GOROUTINE] Added profile (total=%u)", total);
                         }
                     }
                     nostr_event_free(ev);
@@ -1198,7 +1202,7 @@ static void *fetch_profiles_goroutine(void *arg) {
                         SubItem *item = (SubItem*)ctx->subs->pdata[i];
                         if (item && item->sub && item->eosed) eosed_count++;
                     }
-                    g_message("[GOROUTINE] EOSE received from %s", item->relay_url ? item->relay_url : "(null)");
+                    g_debug("[GOROUTINE] EOSE received from %s", item->relay_url ? item->relay_url : "(null)");
                     any_activity = TRUE;
                 }
             }
@@ -1218,7 +1222,7 @@ static void *fetch_profiles_goroutine(void *arg) {
         
         /* Exit if all FIRED subscriptions have sent EOSE (ignore failed ones) */
         if (fired_count > 0 && eosed_count == fired_count) {
-            g_message("[GOROUTINE] All %u fired relays sent EOSE (out of %u total), exiting", 
+            g_debug("[GOROUTINE] All %u fired relays sent EOSE (out of %u total), exiting", 
                       eosed_count, ctx->subs->len);
             break;
         }
@@ -1271,7 +1275,7 @@ static void *fetch_profiles_goroutine(void *arg) {
             
             /* Only cleanup subscriptions that have received EOSE */
             if (item->eosed) {
-                g_message("[GOROUTINE] Cleanup for EOSED subscription sid=%s relay=%s", 
+                g_debug("[GOROUTINE] Cleanup for EOSED subscription sid=%s relay=%s", 
                           sid_copy[0] ? sid_copy : "null", item->relay_url ? item->relay_url : "(null)");
 
                 /* Proper cleanup order for subscriptions that have completed:
@@ -1285,7 +1289,7 @@ static void *fetch_profiles_goroutine(void *arg) {
                 nostr_subscription_wait(item->sub);
                 nostr_subscription_free(item->sub);
                 
-                g_message("[GOROUTINE] Cleanup complete for sid=%s", sid_copy[0] ? sid_copy : "null");
+                g_debug("[GOROUTINE] Cleanup complete for sid=%s", sid_copy[0] ? sid_copy : "null");
             } else {
                 /* Subscription didn't receive EOSE - keep it open but cancel context
                  * to stop it from processing more events */
@@ -1346,7 +1350,7 @@ void fetch_profiles_goroutine_start(FetchProfilesCtx *ctx) {
         return;
     }
     
-    g_message("PROFILE_FETCH_GOROUTINE: Starting (authors=%zu relays=%zu)", 
+    g_debug("PROFILE_FETCH_GOROUTINE: Starting (authors=%zu relays=%zu)", 
               ctx->author_count, ctx->url_count);
     
     /* Initialize goroutine-specific fields */
@@ -1365,7 +1369,7 @@ void fetch_profiles_goroutine_start(FetchProfilesCtx *ctx) {
         return;
     }
     
-    g_message("PROFILE_FETCH_GOROUTINE: Goroutine launched");
+    g_debug("PROFILE_FETCH_GOROUTINE: Goroutine launched");
 }
 
 
@@ -1378,7 +1382,7 @@ void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
                                                         GCancellable *cancellable,
                                                         GAsyncReadyCallback cb,
                                                         gpointer user_data) {
-    g_message("PROFILE_FETCH_GOROUTINE: ENTRY (authors=%zu relays=%zu)", author_count, url_count);
+    g_debug("PROFILE_FETCH_GOROUTINE: ENTRY (authors=%zu relays=%zu)", author_count, url_count);
     
     /* DEBUG: Check if self is valid BEFORE g_return_if_fail */
     if (!self) {
@@ -1391,7 +1395,7 @@ void gnostr_simple_pool_fetch_profiles_by_authors_async(GnostrSimplePool *self,
     }
     
     /* Goroutines are lightweight - no need to serialize fetches */
-    g_message("PROFILE_FETCH_GOROUTINE: Starting (authors=%zu relays=%zu)", author_count, url_count);
+    g_debug("PROFILE_FETCH_GOROUTINE: Starting (authors=%zu relays=%zu)", author_count, url_count);
     
     FetchProfilesCtx *ctx = g_new0(FetchProfilesCtx, 1);
     ctx->self_obj = g_object_ref(G_OBJECT(self));
