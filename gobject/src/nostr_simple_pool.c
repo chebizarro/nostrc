@@ -532,8 +532,12 @@ static gpointer subscribe_many_thread(gpointer user_data) {
     for (guint i = 0; i < subs->len; i++) {
         SubItem *it = (SubItem*)subs->pdata[i];
         if (it) {
-            if (it->sub) { nostr_subscription_close(it->sub, NULL); nostr_subscription_free(it->sub); }
-            if (it->relay) { nostr_relay_disconnect(it->relay); nostr_relay_free(it->relay); }
+            if (it->sub) {
+                nostr_subscription_close(it->sub, NULL);
+                nostr_subscription_unsubscribe(it->sub);  /* Signal lifecycle thread to exit */
+                nostr_subscription_free(it->sub);
+            }
+            /* DON'T free relay - it's from the pool and shared */
             g_free(it);
         }
     }
@@ -550,6 +554,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
     }
     g_object_unref(ctx->self_obj);
     g_free(ctx);
+    g_message("simple_pool: subscribe_many_thread exiting (cleanup complete)");
     return NULL;
 }
 
@@ -583,7 +588,8 @@ void gnostr_simple_pool_subscribe_many_async(GnostrSimplePool *self,
         ctx->filters = NULL;
     }
     ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
-    g_thread_new("nostr-subscribe-many", subscribe_many_thread, ctx);
+    GThread *thr = g_thread_new("nostr-subscribe-many", subscribe_many_thread, ctx);
+    g_thread_unref(thr);  /* Thread runs detached, we don't need to join */
 
     /* Immediate success for async setup */
     GTask *task = g_task_new(G_OBJECT(self), cancellable, cb, user_data);
