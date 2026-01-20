@@ -281,6 +281,8 @@ struct _GnostrMainWindow {
   guint        profile_fetch_source_id; /* GLib source id for debounce */
   guint        profile_fetch_debounce_ms; /* default 150ms */
   GCancellable *profile_fetch_cancellable; /* async cancellable */
+  guint        profile_fetch_active;  /* count of active concurrent fetches */
+  guint        profile_fetch_max_concurrent; /* max concurrent fetches (default 3) */
   
   /* Remote signer (NIP-46) session */
   NostrNip46Session *nip46_session; /* owned */
@@ -879,13 +881,19 @@ static void on_profiles_batch_done(GObject *source, GAsyncResult *res, gpointer 
   if (ctx && GNOSTR_IS_MAIN_WINDOW(ctx->self)) {
     GnostrMainWindow *self = ctx->self;
     
+    /* Decrement active fetch counter */
+    if (self->profile_fetch_active > 0) {
+      self->profile_fetch_active--;
+    }
+    
     /* NOTE: With goroutine-based fetching, we don't need artificial delays!
      * Goroutines complete in ~3-5 seconds and clean up properly.
      * The old delay system (5+ seconds per batch) was for the broken GLib thread implementation.
      * Dispatch next batch immediately for faster profile loading. */
-    g_debug("[PROFILE] Batch %u/%u complete, dispatching next immediately",
+    g_debug("[PROFILE] Batch %u/%u complete (active=%u/%u), dispatching next",
             self->profile_batch_pos, 
-            self->profile_batches ? self->profile_batches->len : 0);
+            self->profile_batches ? self->profile_batches->len : 0,
+            self->profile_fetch_active, self->profile_fetch_max_concurrent);
     g_idle_add_full(G_PRIORITY_DEFAULT,
                     (GSourceFunc)profile_dispatch_next, g_object_ref(self), 
                     (GDestroyNotify)g_object_unref);
@@ -1424,6 +1432,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   self->profile_fetch_source_id = 0;
   self->profile_fetch_debounce_ms = 150;
   self->profile_fetch_cancellable = g_cancellable_new();
+  self->profile_fetch_active = 0;
+  self->profile_fetch_max_concurrent = 3; /* Limit concurrent fetches to reduce goroutine count */
 
   /* Init debounced NostrDB profile sweep */
   self->ndb_sweep_source_id = 0;
@@ -1965,6 +1975,15 @@ static gboolean profile_dispatch_next(gpointer data) {
     return G_SOURCE_REMOVE;
   }
   
+  /* Limit concurrent fetches to prevent goroutine explosion */
+  if (self->profile_fetch_active >= self->profile_fetch_max_concurrent) {
+    g_debug("profile_fetch: at max concurrent (%u/%u), deferring batch",
+            self->profile_fetch_active, self->profile_fetch_max_concurrent);
+    /* Re-schedule after a delay to check again */
+    g_timeout_add(500, profile_dispatch_next, g_object_ref(self));
+    return G_SOURCE_REMOVE;
+  }
+  
   /* NOTE: With goroutine-based fetching, we can allow concurrent batches!
    * Goroutines are lightweight (not OS threads), so multiple batches can run safely.
    * The old serialization flag was needed for the broken GLib thread implementation,
@@ -2056,8 +2075,12 @@ static gboolean profile_dispatch_next(gpointer data) {
   ctx->batch = batch; /* ownership transferred; freed in callback */
 
   int limit_per_author = 0; /* no limit; filter limit is total, not per author */
-  g_debug("[PROFILE] Dispatching batch %u/%u (%zu authors)",
-          self->profile_batch_pos, self->profile_batches ? self->profile_batches->len : 0, n);
+  g_debug("[PROFILE] Dispatching batch %u/%u (%zu authors, active=%u/%u)",
+          self->profile_batch_pos, self->profile_batches ? self->profile_batches->len : 0, n,
+          self->profile_fetch_active, self->profile_fetch_max_concurrent);
+  
+  /* Increment active fetch counter */
+  self->profile_fetch_active++;
   
   gnostr_simple_pool_fetch_profiles_by_authors_async(
       self->pool,
