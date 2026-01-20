@@ -19,4 +19,7 @@
 // Prefer coordinating completion with GoWaitGroup instead of sleeps.
 int go(void *(*start_routine)(void *), void *arg);
 
+// Get the current count of active goroutines (for debugging)
+int go_get_active_count(void);
+
 #endif // GO_H

@@ -2239,8 +2239,12 @@ static gboolean check_relay_health(gpointer user_data) {
     }
   }
   
-  g_message("relay_health: status - %u connected, %u disconnected (total %u)",
-          connected_count, disconnected_count, relay_urls->len);
+  /* Also log the underlying C pool relay count and goroutine count to detect growth */
+  NostrSimplePool *c_pool = GNOSTR_SIMPLE_POOL(self->pool)->pool;
+  size_t c_pool_count = c_pool ? c_pool->relay_count : 0;
+  int goroutine_count = go_get_active_count();
+  g_message("relay_health: status - %u connected, %u disconnected (total %u, c_pool=%zu, goroutines=%d)",
+          connected_count, disconnected_count, relay_urls->len, c_pool_count, goroutine_count);
   
   /* If ALL relays are disconnected, trigger reconnection (not just any) */
   if (disconnected_count > 0 && connected_count == 0) {
