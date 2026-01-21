@@ -242,6 +242,15 @@ static void relay_free_impl(NostrRelay *relay) {
         if (relay->priv->debug_raw) { go_channel_free(relay->priv->debug_raw); relay->priv->debug_raw = NULL; }
         if (relay->priv->ok_callbacks) { go_hash_map_destroy(relay->priv->ok_callbacks); relay->priv->ok_callbacks = NULL; }
         if (relay->priv->challenge) { free(relay->priv->challenge); relay->priv->challenge = NULL; }
+        // Free invalid signature tracking linked list
+        InvalidSigNode *node = (InvalidSigNode *)relay->priv->invalid_sig_head;
+        while (node) {
+            InvalidSigNode *next = node->next;
+            free(node->pk);
+            free(node);
+            node = next;
+        }
+        relay->priv->invalid_sig_head = NULL;
     }
     if (relay->subscriptions) { go_hash_map_destroy(relay->subscriptions); relay->subscriptions = NULL; }
     if (relay->url) { free(relay->url); relay->url = NULL; }
