@@ -48,6 +48,10 @@ int storage_ndb_get_note_by_id_nontxn(const char *id_hex, char **json_out, int *
 /* Stats */
 int storage_ndb_stat_json(char **json_out);
 
+/* Diagnostic counters */
+uint64_t storage_ndb_get_ingest_count(void);
+uint64_t storage_ndb_get_ingest_bytes(void);
+
 /* Free results helpers */
 void storage_ndb_free_results(char **arr, int n);
 

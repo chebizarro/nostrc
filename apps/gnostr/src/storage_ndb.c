@@ -33,6 +33,13 @@ static ln_store *g_store = NULL;
 static storage_ndb_notify_fn g_sub_cb = NULL;
 static void *g_sub_cb_ctx = NULL;
 
+/* Diagnostic counters */
+static guint64 g_ingest_count = 0;
+static guint64 g_ingest_bytes = 0;
+
+guint64 storage_ndb_get_ingest_count(void) { return g_ingest_count; }
+guint64 storage_ndb_get_ingest_bytes(void) { return g_ingest_bytes; }
+
 /* Get raw nostrdb handle from our store */
 static struct ndb *get_ndb(void)
 {
@@ -152,6 +159,10 @@ int storage_ndb_ingest_event_json(const char *json, const char *relay_opt)
   if (rc != 0) {
     fprintf(stderr, "[storage_ndb_ingest] FAILED rc=%d len=%zu json_head=%.100s\n", rc, len, fixed_json);
     fflush(stderr);
+  } else {
+    /* Track successful ingestions */
+    g_ingest_count++;
+    g_ingest_bytes += len;
   }
 
   free(fixed_json);

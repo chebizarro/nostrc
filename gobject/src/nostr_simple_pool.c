@@ -251,7 +251,8 @@ static gpointer paginate_with_interval_thread(gpointer user_data) {
         /* Drain page */
         gboolean page_has_new = FALSE;
         gint64 min_created_at = -1;
-        GPtrArray *batch = g_ptr_array_new();
+        /* CRITICAL FIX: Set free_func so NostrEvent objects are freed when batch is unreffed */
+        GPtrArray *batch = g_ptr_array_new_with_free_func((GDestroyNotify)nostr_event_free);
         for (;;) {
             gboolean any = FALSE;
             for (guint i = 0; i < subs->len; i++) {
@@ -456,7 +457,9 @@ static gpointer subscribe_many_thread(gpointer user_data) {
     DedupSet *dedup = dedup_set_new(65536);
     gboolean bootstrap_emitted = FALSE;
     while (!(ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable))) {
-        GPtrArray *batch = g_ptr_array_new();
+        /* CRITICAL FIX: Set free_func so NostrEvent objects are freed when batch is unreffed.
+         * Without this, every event leaks memory causing unbounded growth. */
+        GPtrArray *batch = g_ptr_array_new_with_free_func((GDestroyNotify)nostr_event_free);
         gboolean any = FALSE;
         /* Collect from all subscriptions non-blocking, drain until empty */
         for (guint i = 0; i < subs->len; i++) {
