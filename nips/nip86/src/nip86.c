@@ -174,7 +174,7 @@ static int nip98_verify(const char *auth_header, const char *method, const char 
     char *tmpj = nostr_event_serialize_compact(ev);
     if (!tmpj) tmpj = nostr_event_serialize(ev);
     if (tmpj) {
-      const char *p = strstr(tmpj, "\"pubkey\"\s*:\s*\"");
+      const char *p = strstr(tmpj, "\"pubkey\":\"");
       if (p) {
         p = strchr(p, '"'); if (p) { p = strchr(p+1, '"'); if (p) { p++; }}
       }

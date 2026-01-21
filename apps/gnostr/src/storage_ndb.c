@@ -347,9 +347,16 @@ int storage_ndb_poll_notes(uint64_t subid, uint64_t *note_keys, int capacity)
 
 void storage_ndb_invalidate_txn_cache(void)
 {
-  /* Call the ndb_backend function to invalidate thread-local transaction cache */
+  /* Call the ndb_backend function to invalidate thread-local transaction cache.
+   * This function is defined in libnostr's ndb_backend.c when LIBNOSTR_WITH_NOSTRDB=ON.
+   * When the backend isn't compiled in, we provide a local no-op stub. */
+#ifdef LIBNOSTR_WITH_NOSTRDB
   extern void ln_ndb_invalidate_txn_cache_ext(void);
   ln_ndb_invalidate_txn_cache_ext();
+#else
+  /* No-op: libnostr ndb backend not compiled in */
+  (void)0;
+#endif
 }
 
 /* ============== Direct Note Access API Implementation ============== */

@@ -69,6 +69,8 @@ if (TARGET nostrdb_storage)
     if (EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
       if (APPLE)
         target_link_options(nostrc-relayd PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
+        # nostrdb uses Security framework for SecRandomCopyBytes on macOS
+        target_link_libraries(nostrc-relayd PRIVATE "-framework Security")
       else()
         target_link_options(nostrc-relayd PRIVATE -Wl,--whole-archive ${_NDB_VENDOR_DIR}/libnostrdb.a -Wl,--no-whole-archive)
       endif()

@@ -109,6 +109,7 @@ if (TARGET nostrdb_storage)
   # Add nostrdb include paths for direct API access (subscriptions, etc.)
   target_include_directories(${APP_CLIENT_BIN} PRIVATE
     ${_NDB_VENDOR_DIR}/src
+    ${_NDB_VENDOR_DIR}/ccan
     ${_NDB_VENDOR_DIR}/deps/flatcc/include)
   if (NOT TARGET nostrdb)
     if (EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
@@ -167,7 +168,10 @@ target_include_directories(gnostr-live-log PRIVATE
   ${CMAKE_SOURCE_DIR}/gobject/include
   ${CMAKE_SOURCE_DIR}/libnostr/include
   ${CMAKE_SOURCE_DIR}/libgo/include
-  ${CMAKE_SOURCE_DIR}/nips/nip46/include)
+  ${CMAKE_SOURCE_DIR}/nips/nip46/include
+  ${_NDB_VENDOR_DIR}/src
+  ${_NDB_VENDOR_DIR}/ccan
+  ${_NDB_VENDOR_DIR}/deps/flatcc/include)
 # Compile GI wrapper into the CLI as well
 # NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
 target_sources(gnostr-live-log PRIVATE
@@ -184,6 +188,25 @@ if (TARGET nostr_nip46_core)
 endif()
 if (TARGET libgo)
   target_link_libraries(gnostr-live-log PRIVATE libgo)
+endif()
+if (TARGET nostrdb_storage)
+  target_link_libraries(gnostr-live-log PRIVATE nostrdb_storage)
+  if (NOT TARGET nostrdb)
+    if (EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
+      if (APPLE)
+        target_link_options(gnostr-live-log PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
+        if (EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+          target_link_libraries(gnostr-live-log PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+        endif()
+        target_link_libraries(gnostr-live-log PRIVATE "-framework Security")
+      else()
+        target_link_options(gnostr-live-log PRIVATE -Wl,--whole-archive ${_NDB_VENDOR_DIR}/libnostrdb.a -Wl,--no-whole-archive)
+        if (EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+          target_link_libraries(gnostr-live-log PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+        endif()
+      endif()
+    endif()
+  endif()
 endif()
 target_link_libraries(gnostr-live-log PRIVATE PkgConfig::GLIB)
 if (SQLITE3_FOUND)

@@ -180,7 +180,7 @@ endif()
 target_compile_definitions(nostr PUBLIC NOSTR_HAVE_LIBGO=1)
 
 # Optional nostrdb backend (Phase A: flag only; backend implementation added in later phases)
-option(LIBNOSTR_WITH_NOSTRDB "Enable nostrdb storage backend" OFF)
+option(LIBNOSTR_WITH_NOSTRDB "Enable nostrdb storage backend" ON)
 if(LIBNOSTR_WITH_NOSTRDB)
   target_compile_definitions(nostr PUBLIC LIBNOSTR_WITH_NOSTRDB=1)
   # Attach backend sources to the existing target
