@@ -74,7 +74,8 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${CMAKE_SOURCE_DIR}/libgo/include
   ${CMAKE_SOURCE_DIR}/nips/nip46/include
   ${CMAKE_SOURCE_DIR}/nips/nip19/include
-  ${CMAKE_SOURCE_DIR}/nips/nip10/include)
+  ${CMAKE_SOURCE_DIR}/nips/nip10/include
+  ${CMAKE_SOURCE_DIR}/nips/nip17/include)
 # Compile the GI wrapper implementation into the app (no separate gobject lib target)
 # NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
 target_sources(${APP_CLIENT_BIN} PRIVATE
@@ -92,6 +93,9 @@ if (TARGET nip10)
 endif()
 if (TARGET nostr_nip46_core)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip46_core)
+endif()
+if (TARGET nostr_nip17_core)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip17_core)
 endif()
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::JSON_GLIB)
 if (SOUP3_FOUND)

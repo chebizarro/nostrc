@@ -5,6 +5,7 @@
 #include "gnostr-profile-provider.h"
 #include "gnostr-dm-inbox-view.h"
 #include "gnostr-dm-row.h"
+#include "gnostr-dm-service.h"
 #include "note_card_row.h"
 #include "../ipc/signer_ipc.h"
 #include "../model/gn-nostr-event-model.h"
@@ -25,7 +26,10 @@
 #include "nostr-json.h"
 /* NostrdB storage */
 #include "../storage_ndb.h"
+#include "../model/gn-ndb-sub-dispatcher.h"
 #include "libnostr_errors.h"
+/* Nostr event kinds */
+#include "nostr-kinds.h"
 /* JSON interface */
 #include "json.h"
 /* Relays helpers */
@@ -63,6 +67,11 @@ static unsigned int getenv_uint_default(const char *name, unsigned int defval);
 static void start_pool_live(GnostrMainWindow *self);
 static void start_profile_subscription(GnostrMainWindow *self);
 static void start_bg_profile_prefetch(GnostrMainWindow *self);
+/* Gift wrap (NIP-59) subscription for private DMs */
+static void start_gift_wrap_subscription(GnostrMainWindow *self);
+static void stop_gift_wrap_subscription(GnostrMainWindow *self);
+static void on_gift_wrap_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
+static char *get_current_user_pubkey_hex(void);
 static void on_event_model_need_profile(GnNostrEventModel *model, const char *pubkey_hex, gpointer user_data);
 static void on_timeline_scroll_value_changed(GtkAdjustment *adj, gpointer user_data);
 typedef struct UiEventRow UiEventRow;
@@ -302,6 +311,14 @@ struct _GnostrMainWindow {
   /* Sliding window pagination */
   gboolean        loading_older;         /* TRUE while loading older events */
   guint           load_older_batch_size; /* default 30 */
+
+  /* Gift wrap (NIP-59) subscription for DMs */
+  uint64_t        sub_gift_wrap;         /* nostrdb subscription ID for kind 1059 */
+  char           *user_pubkey_hex;       /* current user's pubkey (64-char hex), NULL if not signed in */
+  GPtrArray      *gift_wrap_queue;       /* pending gift wrap events to process */
+
+  /* NIP-17 DM Service for decryption and conversation management */
+  GnostrDmService *dm_service;           /* owned; handles gift wrap decryption */
 };
 
 /* Old LRU functions removed - now using profile provider */
@@ -449,6 +466,11 @@ static void on_avatar_login_local_clicked(GtkButton *btn, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
   show_toast(self, "Login with Local Signer (stub)");
+  /* TODO: When full login is implemented:
+   * 1. Save npub to GSettings (current-npub)
+   * 2. Update UI (buttons, labels)
+   * 3. Call start_gift_wrap_subscription(self) to receive encrypted DMs
+   */
 }
 
 static void on_avatar_pair_remote_clicked(GtkButton *btn, gpointer user_data) {
@@ -462,7 +484,16 @@ static void on_avatar_sign_out_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  /* Stop gift wrap subscription when user signs out */
+  stop_gift_wrap_subscription(self);
+
   show_toast(self, "Signed out (stub)");
+  /* TODO: When full sign-out is implemented:
+   * 1. Clear current-npub from GSettings
+   * 2. Update UI (buttons, labels)
+   * 3. Clear gift_wrap_queue
+   */
 }
 
 /* Profile pane signal handlers */
@@ -1114,12 +1145,17 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
       start_pool_live(self);
       /* Also start profile subscription if identity is configured */
       start_profile_subscription(self);
-      
+
       /* NOTE: Periodic refresh disabled - nostrdb ingestion drives UI updates via GnNostrEventModel.
        * This avoids duplicate processing and high memory usage. Initial refresh occurs in
        * initial_refresh_timeout_cb, and subsequent updates stream from nostrdb watchers. */
     }
   }
+
+  /* Start gift wrap (NIP-59) subscription if user is signed in.
+   * This is a nostrdb subscription (not relay), so it works regardless of GNOSTR_LIVE.
+   * Gift wraps are encrypted messages addressed to the current user. */
+  start_gift_wrap_subscription(self);
   
   /* Seed initial items so Timeline page isn't empty */
   g_timeout_add_once(150, (GSourceOnceFunc)initial_refresh_timeout_cb, self);
@@ -1136,6 +1172,18 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   self->ndb_sweep_source_id = 0;
   self->ndb_sweep_debounce_ms = 1000; /* 1 second - prevents transaction contention */
   if (!self->pool) self->pool = gnostr_simple_pool_new();
+
+  /* Init gift wrap (NIP-59) subscription state */
+  self->sub_gift_wrap = 0;
+  self->user_pubkey_hex = NULL;
+  self->gift_wrap_queue = NULL; /* Created lazily when first gift wrap arrives */
+
+  /* Init NIP-17 DM service and wire to inbox view */
+  self->dm_service = gnostr_dm_service_new();
+  if (self->dm_inbox && GNOSTR_IS_DM_INBOX_VIEW(self->dm_inbox)) {
+    gnostr_dm_service_set_inbox_view(self->dm_service, GNOSTR_DM_INBOX_VIEW(self->dm_inbox));
+    g_message("[DM_SERVICE] Connected DM service to inbox view");
+  }
 
   /* Background profile prefetch disabled (model emits need-profile when required). */
 
@@ -1279,7 +1327,21 @@ static void gnostr_main_window_dispose(GObject *object) {
   if (self->seen_texts) { g_hash_table_unref(self->seen_texts); self->seen_texts = NULL; }
   if (self->event_model) { g_object_unref(self->event_model); self->event_model = NULL; }
   if (self->avatar_tex_cache) { g_hash_table_unref(self->avatar_tex_cache); self->avatar_tex_cache = NULL; }
-  
+
+  /* Stop gift wrap subscription */
+  stop_gift_wrap_subscription(self);
+  if (self->gift_wrap_queue) {
+    g_ptr_array_free(self->gift_wrap_queue, TRUE);
+    self->gift_wrap_queue = NULL;
+  }
+
+  /* Stop and cleanup DM service */
+  if (self->dm_service) {
+    gnostr_dm_service_stop(self->dm_service);
+    g_object_unref(self->dm_service);
+    self->dm_service = NULL;
+  }
+
   /* Shutdown profile provider */
   gnostr_profile_provider_shutdown();
   
@@ -2093,7 +2155,163 @@ static void on_bg_prefetch_events(GnostrSimplePool *pool, GPtrArray *batch, gpoi
   if (enq > 0) g_debug("[PROFILE] Background prefetch queued %u authors", enq);
 }
 
-static char *client_settings_get_current_npub(void) { return NULL; }
+/* Get the current user's npub from GSettings */
+static char *client_settings_get_current_npub(void) {
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  if (!settings) return NULL;
+  char *npub = g_settings_get_string(settings, "current-npub");
+  g_object_unref(settings);
+  /* Return NULL if empty string */
+  if (npub && !*npub) {
+    g_free(npub);
+    return NULL;
+  }
+  return npub;
+}
+
+/* Get the current user's pubkey as 64-char hex (from npub bech32).
+ * Returns newly allocated string or NULL if not signed in. Caller must free. */
+static char *get_current_user_pubkey_hex(void) {
+  char *npub = client_settings_get_current_npub();
+  if (!npub) return NULL;
+
+  /* Decode bech32 npub to get raw pubkey bytes */
+  uint8_t pubkey_bytes[32];
+
+  /* Use NIP-19 decoder to convert npub to bytes */
+  int decode_result = nostr_nip19_decode_npub(npub, pubkey_bytes);
+  g_free(npub);
+
+  if (decode_result != 0) {
+    g_warning("[GIFTWRAP] Failed to decode npub to pubkey");
+    return NULL;
+  }
+
+  /* Convert to hex string */
+  char *hex = g_malloc0(65);
+  storage_ndb_hex_encode(pubkey_bytes, hex);
+  return hex;
+}
+
+/* ============== Gift Wrap (NIP-59) Subscription ============== */
+
+/* Callback for gift wrap (kind 1059) events from nostrdb subscription.
+ * Gift wraps are encrypted events addressed to the current user via p-tag.
+ * Events are processed immediately by the DM service for decryption. */
+static void on_gift_wrap_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
+  (void)subid;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !note_keys || n_keys == 0) return;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+    g_warning("[GIFTWRAP] Failed to begin query transaction");
+    return;
+  }
+
+  guint processed = 0;
+  for (guint i = 0; i < n_keys; i++) {
+    uint64_t note_key = note_keys[i];
+    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
+    if (!note) continue;
+
+    uint32_t kind = storage_ndb_note_kind(note);
+    if (kind != NOSTR_KIND_GIFT_WRAP) continue;
+
+    /* Get the note ID for logging */
+    const unsigned char *id32 = storage_ndb_note_id(note);
+    if (!id32) continue;
+
+    char id_hex[65];
+    storage_ndb_hex_encode(id32, id_hex);
+
+    /* Get the JSON representation for the DM service */
+    char *json = NULL;
+    int json_len = 0;
+    if (storage_ndb_get_note_by_id(txn, id32, &json, &json_len) == 0 && json) {
+      /* Send to DM service for decryption */
+      if (self->dm_service) {
+        gnostr_dm_service_process_gift_wrap(self->dm_service, json);
+        processed++;
+        g_debug("[GIFTWRAP] Sent gift wrap %.8s... to DM service for decryption", id_hex);
+      }
+      g_free(json);
+    }
+  }
+
+  storage_ndb_end_query(txn);
+
+  if (processed > 0) {
+    g_message("[GIFTWRAP] Processed %u gift wrap event(s) via DM service", processed);
+  }
+}
+
+/* Start subscription to kind 1059 (gift wrap) events addressed to current user.
+ * The subscription uses a p-tag filter to only receive events where the current
+ * user is the recipient. */
+static void start_gift_wrap_subscription(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  /* Don't start if already subscribed */
+  if (self->sub_gift_wrap > 0) {
+    g_debug("[GIFTWRAP] Subscription already active (subid=%" G_GUINT64_FORMAT ")",
+            (guint64)self->sub_gift_wrap);
+    return;
+  }
+
+  /* Get current user's pubkey */
+  char *pubkey_hex = get_current_user_pubkey_hex();
+  if (!pubkey_hex) {
+    g_debug("[GIFTWRAP] No user signed in, skipping gift wrap subscription");
+    return;
+  }
+
+  /* Store user pubkey for later use */
+  g_free(self->user_pubkey_hex);
+  self->user_pubkey_hex = pubkey_hex;
+
+  /* Set user pubkey on DM service for message direction detection */
+  if (self->dm_service) {
+    gnostr_dm_service_set_user_pubkey(self->dm_service, pubkey_hex);
+    g_message("[DM_SERVICE] Set user pubkey %.8s... on DM service", pubkey_hex);
+  }
+
+  /* Build filter JSON for kind 1059 with p-tag matching current user.
+   * Filter format: {"kinds":[1059],"#p":["<pubkey>"]}
+   * This ensures we only receive gift wraps addressed to us. */
+  char *filter_json = g_strdup_printf(
+    "{\"kinds\":[%d],\"#p\":[\"%s\"]}",
+    NOSTR_KIND_GIFT_WRAP,
+    pubkey_hex
+  );
+
+  /* Subscribe via the NDB dispatcher */
+  self->sub_gift_wrap = gn_ndb_subscribe(filter_json, on_gift_wrap_batch, self, NULL);
+
+  if (self->sub_gift_wrap > 0) {
+    g_message("[GIFTWRAP] Started subscription for user %.8s... (subid=%" G_GUINT64_FORMAT ")",
+              pubkey_hex, (guint64)self->sub_gift_wrap);
+  } else {
+    g_warning("[GIFTWRAP] Failed to subscribe to gift wrap events");
+  }
+
+  g_free(filter_json);
+}
+
+/* Stop the gift wrap subscription (e.g., on logout or window dispose) */
+static void stop_gift_wrap_subscription(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  if (self->sub_gift_wrap > 0) {
+    gn_ndb_unsubscribe(self->sub_gift_wrap);
+    g_message("[GIFTWRAP] Stopped subscription (subid=%" G_GUINT64_FORMAT ")",
+              (guint64)self->sub_gift_wrap);
+    self->sub_gift_wrap = 0;
+  }
+
+  g_free(self->user_pubkey_hex);
+  self->user_pubkey_hex = NULL;
+}
 
 /* Lowercase hex encode */
 static char *hex_encode_lower(const uint8_t *buf, size_t len) {
