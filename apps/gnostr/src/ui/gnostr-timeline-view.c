@@ -21,6 +21,10 @@
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-timeline-view.ui"
 
+/* Cache size limits to prevent unbounded memory growth */
+#define EMBED_CACHE_MAX 500
+#define INFLIGHT_MAX 100
+
 /* Forward decl: NoteCardRow embed handler */
 static void on_row_request_embed(GnostrNoteCardRow *row, const char *target, gpointer user_data);
 
@@ -110,7 +114,20 @@ static void embed_cache_free(gpointer p) { EmbedCacheEntry *e = (EmbedCacheEntry
 static void ensure_embed_cache(void) { if (!s_embed_cache) s_embed_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, embed_cache_free); }
 static EmbedCacheEntry *embed_cache_get(const char *key, int ttl_sec) {
   ensure_embed_cache(); if (!key) return NULL; EmbedCacheEntry *e = (EmbedCacheEntry*)g_hash_table_lookup(s_embed_cache, key); if (!e) return NULL; time_t now = time(NULL); if (ttl_sec > 0 && (now - e->when) > ttl_sec) return NULL; return e; }
-static void embed_cache_put_json(const char *key, const char *json) { ensure_embed_cache(); if (!key) return; EmbedCacheEntry *e = g_new0(EmbedCacheEntry,1); e->json = json ? g_strdup(json) : NULL; e->when = time(NULL); e->negative = json ? FALSE : TRUE; g_hash_table_replace(s_embed_cache, g_strdup(key), e); }
+static void embed_cache_put_json(const char *key, const char *json) {
+  ensure_embed_cache();
+  if (!key) return;
+  /* Enforce size limit - clear cache if too large (no LRU tracking) */
+  if (g_hash_table_size(s_embed_cache) > EMBED_CACHE_MAX) {
+    g_debug("[EMBED_CACHE] Clearing cache (size %u > %u)", g_hash_table_size(s_embed_cache), EMBED_CACHE_MAX);
+    g_hash_table_remove_all(s_embed_cache);
+  }
+  EmbedCacheEntry *e = g_new0(EmbedCacheEntry, 1);
+  e->json = json ? g_strdup(json) : NULL;
+  e->when = time(NULL);
+  e->negative = json ? FALSE : TRUE;
+  g_hash_table_replace(s_embed_cache, g_strdup(key), e);
+}
 static void embed_cache_put_negative(const char *key) { embed_cache_put_json(key, NULL); }
 
 /* Shared async completion (multi): look up inflight by key, update all attached rows, then remove entry */

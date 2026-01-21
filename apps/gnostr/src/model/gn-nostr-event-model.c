@@ -7,6 +7,8 @@
 /* Window sizing and cache sizes */
 #define MODEL_MAX_ITEMS 100
 #define ITEM_CACHE_SIZE 100
+#define PROFILE_CACHE_MAX 500
+#define AUTHORS_READY_MAX 1000
 
 /* Subscription filters - storage_ndb_subscribe expects a single filter object, not an array */
 #define FILTER_TIMELINE "{\"kinds\":[1,6]}"
@@ -55,12 +57,14 @@ struct _GnNostrEventModel {
   GHashTable *item_cache;  /* key: uint64_t*, value: GnNostrEventItem* */
   GQueue *cache_lru;       /* uint64_t* keys in LRU order */
 
-  /* Profile cache - pubkey -> GnNostrProfile */
-  GHashTable *profile_cache;  /* key: pubkey (string), value: GnNostrProfile* */
+  /* Profile cache - pubkey -> GnNostrProfile (with LRU eviction) */
+  GHashTable *profile_cache;      /* key: pubkey (string), value: GnNostrProfile* */
+  GQueue *profile_cache_lru;      /* char* pubkey in LRU order (head=oldest) */
 
-  /* Author readiness (kind 0 exists in DB / loaded) */
-  GHashTable *authors_ready;     /* key: pubkey hex (string), value: GINT_TO_POINTER(1) */
-  GHashTable *pending_by_author; /* key: pubkey hex (string), value: GArray* (PendingEntry) */
+  /* Author readiness (kind 0 exists in DB / loaded) - with LRU eviction */
+  GHashTable *authors_ready;      /* key: pubkey hex (string), value: GINT_TO_POINTER(1) */
+  GQueue *authors_ready_lru;      /* char* pubkey in LRU order (head=oldest) */
+  GHashTable *pending_by_author;  /* key: pubkey hex (string), value: GArray* (PendingEntry) */
 
   /* Thread info cache - note_key -> ThreadInfo */
   GHashTable *thread_info;
@@ -198,10 +202,19 @@ static gboolean author_is_ready(GnNostrEventModel *self, const char *pubkey_hex)
   return g_hash_table_contains(self->authors_ready, pubkey_hex);
 }
 
+static void authors_ready_evict(GnNostrEventModel *self);  /* forward decl */
+static void profile_cache_evict(GnNostrEventModel *self);  /* forward decl */
+
 static void mark_author_ready(GnNostrEventModel *self, const char *pubkey_hex) {
   if (!self || !self->authors_ready || !pubkey_hex) return;
   if (!g_hash_table_contains(self->authors_ready, pubkey_hex)) {
     g_hash_table_insert(self->authors_ready, g_strdup(pubkey_hex), GINT_TO_POINTER(1));
+    /* Track in LRU queue */
+    if (self->authors_ready_lru) {
+      g_queue_push_tail(self->authors_ready_lru, g_strdup(pubkey_hex));
+    }
+    /* Evict if over limit */
+    authors_ready_evict(self);
   }
 }
 
@@ -257,6 +270,11 @@ static GnNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, voi
       profile = gn_nostr_profile_new(pubkey_hex);
       gn_nostr_profile_update_from_json(profile, content);
       g_hash_table_replace(self->profile_cache, g_strdup(pubkey_hex), profile);
+      /* Add to LRU queue (new entry) */
+      if (self->profile_cache_lru) {
+        g_queue_push_tail(self->profile_cache_lru, g_strdup(pubkey_hex));
+        profile_cache_evict(self);
+      }
       mark_author_ready(self, pubkey_hex);
     }
   }
@@ -265,6 +283,52 @@ static GnNostrProfile *profile_cache_ensure_from_db(GnNostrEventModel *self, voi
   free(evt_json);
 
   return profile;
+}
+
+/* Evict oldest entries from profile_cache if over limit */
+static void profile_cache_evict(GnNostrEventModel *self) {
+  if (!self || !self->profile_cache || !self->profile_cache_lru) return;
+  
+  guint before = g_hash_table_size(self->profile_cache);
+  guint evicted = 0;
+  
+  while (g_hash_table_size(self->profile_cache) > PROFILE_CACHE_MAX &&
+         !g_queue_is_empty(self->profile_cache_lru)) {
+    char *oldest = g_queue_pop_head(self->profile_cache_lru);
+    if (oldest) {
+      g_hash_table_remove(self->profile_cache, oldest);
+      g_free(oldest);
+      evicted++;
+    }
+  }
+  
+  if (evicted > 0) {
+    g_debug("[MODEL] profile_cache evicted %u entries (%u -> %u)", 
+            evicted, before, g_hash_table_size(self->profile_cache));
+  }
+}
+
+/* Evict oldest entries from authors_ready if over limit */
+static void authors_ready_evict(GnNostrEventModel *self) {
+  if (!self || !self->authors_ready || !self->authors_ready_lru) return;
+  
+  guint before = g_hash_table_size(self->authors_ready);
+  guint evicted = 0;
+  
+  while (g_hash_table_size(self->authors_ready) > AUTHORS_READY_MAX &&
+         !g_queue_is_empty(self->authors_ready_lru)) {
+    char *oldest = g_queue_pop_head(self->authors_ready_lru);
+    if (oldest) {
+      g_hash_table_remove(self->authors_ready, oldest);
+      g_free(oldest);
+      evicted++;
+    }
+  }
+  
+  if (evicted > 0) {
+    g_debug("[MODEL] authors_ready evicted %u entries (%u -> %u)", 
+            evicted, before, g_hash_table_size(self->authors_ready));
+  }
 }
 
 static void profile_cache_update_from_content(GnNostrEventModel *self, const char *pubkey_hex,
@@ -278,6 +342,10 @@ static void profile_cache_update_from_content(GnNostrEventModel *self, const cha
   if (!profile) {
     profile = gn_nostr_profile_new(pubkey_hex);
     g_hash_table_replace(self->profile_cache, g_strdup(pubkey_hex), profile);
+    /* Add to LRU queue (new entry) */
+    g_queue_push_tail(self->profile_cache_lru, g_strdup(pubkey_hex));
+    /* Evict if over limit */
+    profile_cache_evict(self);
   }
 
   gn_nostr_profile_update_from_json(profile, tmp);
@@ -800,7 +868,13 @@ static void gn_nostr_event_model_finalize(GObject *object) {
   if (self->item_cache) g_hash_table_unref(self->item_cache);
   if (self->cache_lru) g_queue_free(self->cache_lru);
   if (self->profile_cache) g_hash_table_unref(self->profile_cache);
+  if (self->profile_cache_lru) {
+    g_queue_free_full(self->profile_cache_lru, g_free);
+  }
   if (self->authors_ready) g_hash_table_unref(self->authors_ready);
+  if (self->authors_ready_lru) {
+    g_queue_free_full(self->authors_ready_lru, g_free);
+  }
   if (self->pending_by_author) g_hash_table_unref(self->pending_by_author);
   if (self->thread_info) g_hash_table_unref(self->thread_info);
 
@@ -860,9 +934,11 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
   self->cache_lru = g_queue_new();
 
   self->profile_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
+  self->profile_cache_lru = g_queue_new();
   self->thread_info = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, (GDestroyNotify)thread_info_free);
 
   self->authors_ready = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->authors_ready_lru = g_queue_new();
   self->pending_by_author = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_array_unref);
 
   self->limit = MODEL_MAX_ITEMS;
