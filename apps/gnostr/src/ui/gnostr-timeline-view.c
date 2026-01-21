@@ -1113,6 +1113,10 @@ static void gnostr_timeline_view_class_init(GnostrTimelineViewClass *klass) {
 
 static void gnostr_timeline_view_init(GnostrTimelineView *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->list_view),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Timeline List", -1);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->root_scroller),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Timeline Scroll", -1);
   /* Child widgets already have hexpand/vexpand in template */
   g_debug("timeline_view init: self=%p root_scroller=%p list_view=%p", (void*)self, (void*)self->root_scroller, (void*)self->list_view);
   setup_default_factory(self);

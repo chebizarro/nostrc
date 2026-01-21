@@ -104,6 +104,12 @@ static void gnostr_composer_class_init(GnostrComposerClass *klass) {
 
 static void gnostr_composer_init(GnostrComposer *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->text_view),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Composer", -1);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_post),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Composer Post", -1);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_cancel_reply),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Composer Cancel Reply", -1);
   g_message("composer init: self=%p root=%p text_view=%p btn_post=%p",
             (void*)self,
             (void*)self->root,

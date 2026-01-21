@@ -4,10 +4,15 @@
 #include "ui/gnostr-main-window.h"
 #include "model/gn-ndb-sub-dispatcher.h"
 #include "storage_ndb.h"
+#include "util/gnostr_paths.h"
+#include "util/gnostr_e2e.h"
 
 static void on_activate(GtkApplication *app, gpointer user_data) {
   GnostrMainWindow *win = gnostr_main_window_new(app);
   gtk_window_present(GTK_WINDOW(win));
+  if (gnostr_e2e_enabled()) {
+    gnostr_e2e_mark_ready();
+  }
 }
 
 static void on_app_quit(GSimpleAction *action, GVariant *param, gpointer user_data) {
@@ -37,7 +42,7 @@ int main(int argc, char **argv) {
   gn_ndb_dispatcher_init();
 
   /* Initialize NostrdB-backed storage in user cache directory */
-  gchar *dbdir = g_build_filename(g_get_user_cache_dir(), "gnostr", "ndb", NULL);
+  gchar *dbdir = gnostr_get_db_dir();
   g_message("Attempting to initialize storage at %s", dbdir);
   int mkdir_rc = g_mkdir_with_parents(dbdir, 0700);
   if (mkdir_rc != 0) {
@@ -56,6 +61,14 @@ int main(int argc, char **argv) {
   } else {
     fprintf(stderr, "[main] storage_ndb_init SUCCESS for %s\n", dbdir);
     fflush(stderr);
+
+    if (gnostr_e2e_enabled()) {
+      GError *seed_err = NULL;
+      if (!gnostr_e2e_seed_storage(&seed_err)) {
+        g_warning("e2e: seed failed: %s", seed_err ? seed_err->message : "(unknown)");
+        g_clear_error(&seed_err);
+      }
+    }
   }
   g_free(dbdir);
 

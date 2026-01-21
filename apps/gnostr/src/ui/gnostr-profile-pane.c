@@ -124,6 +124,8 @@ static void gnostr_profile_pane_class_init(GnostrProfilePaneClass *klass) {
 
 static void gnostr_profile_pane_init(GnostrProfilePane *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_close),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Close Profile", -1);
   g_signal_connect(self->btn_close, "clicked", G_CALLBACK(on_close_clicked), self);
   
 #ifdef HAVE_SOUP3

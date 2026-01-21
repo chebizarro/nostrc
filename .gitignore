@@ -76,3 +76,8 @@ cmake-build-*/
 # Ignore Visual Studio build artifacts (if using MSVC)
 *.VC.db
 *.VC.VC.opendb
+
+# Ignore Playwright test results
+playwright-report/
+node_modules/
+package-lock.json

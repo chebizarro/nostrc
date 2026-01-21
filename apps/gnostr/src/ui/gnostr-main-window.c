@@ -983,6 +983,12 @@ static void prepopulate_text_notes_from_cache(GnostrMainWindow *self, guint limi
 
 static void gnostr_main_window_init(GnostrMainWindow *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_refresh),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Refresh Timeline", -1);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_relays),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Manage Relays", -1);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_settings),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Settings", -1);
   /* Report HTTP avatar support availability */
 #ifdef HAVE_SOUP3
   g_message("http: libsoup3 enabled; avatar HTTP fetch active");

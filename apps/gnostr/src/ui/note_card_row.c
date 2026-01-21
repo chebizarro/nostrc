@@ -277,6 +277,14 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
 
 static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_reply),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Note Reply", -1);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_menu),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Note More", -1);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_avatar),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Open Profile", -1);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_display_name),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Open Profile", -1);
   gtk_widget_add_css_class(GTK_WIDGET(self), "note-card");
   if (GTK_IS_LABEL(self->content_label)) {
     gtk_label_set_wrap(GTK_LABEL(self->content_label), TRUE);

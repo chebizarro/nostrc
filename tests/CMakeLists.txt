@@ -478,10 +478,9 @@ endif()
 
 # Test: GLib main loop async integration
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(GLIB REQUIRED glib-2.0)
+pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0)
 add_executable(test_glib_async_integration test_glib_async_integration.c)
-target_include_directories(test_glib_async_integration PRIVATE ${GLIB_INCLUDE_DIRS})
-target_link_libraries(test_glib_async_integration PRIVATE libgo nostr pthread ${GLIB_LIBRARIES})
+target_link_libraries(test_glib_async_integration PRIVATE libgo nostr pthread PkgConfig::GLIB)
 apply_sanitizers(test_glib_async_integration)
 add_test(NAME glib_async_integration COMMAND test_glib_async_integration)
 set_tests_properties(glib_async_integration PROPERTIES
@@ -491,8 +490,7 @@ set_tests_properties(glib_async_integration PROPERTIES
 
 # Test: Profile fetch simulation (simulates real profile fetch scenario)
 add_executable(test_profile_fetch_simulation test_profile_fetch_simulation.c)
-target_include_directories(test_profile_fetch_simulation PRIVATE ${GLIB_INCLUDE_DIRS})
-target_link_libraries(test_profile_fetch_simulation PRIVATE libgo nostr pthread ${GLIB_LIBRARIES})
+target_link_libraries(test_profile_fetch_simulation PRIVATE libgo nostr pthread PkgConfig::GLIB)
 apply_sanitizers(test_profile_fetch_simulation)
 add_test(NAME profile_fetch_simulation COMMAND test_profile_fetch_simulation)
 set_tests_properties(profile_fetch_simulation PROPERTIES
@@ -503,8 +501,7 @@ set_tests_properties(profile_fetch_simulation PROPERTIES
 
 # Test: Profile fetch stress test (monitors thread leaks)
 add_executable(test_profile_fetch_stress test_profile_fetch_stress.c)
-target_include_directories(test_profile_fetch_stress PRIVATE ${GLIB_INCLUDE_DIRS})
-target_link_libraries(test_profile_fetch_stress PRIVATE libgo nostr pthread ${GLIB_LIBRARIES})
+target_link_libraries(test_profile_fetch_stress PRIVATE libgo nostr pthread PkgConfig::GLIB)
 apply_sanitizers(test_profile_fetch_stress)
 add_test(NAME profile_fetch_stress COMMAND test_profile_fetch_stress)
 set_tests_properties(profile_fetch_stress PROPERTIES
