@@ -180,18 +180,36 @@ static int test_sign_event(const char *expected_pk_hex) {
     return 0;
 }
 
-/* Test 3: NIP-04 encrypt/decrypt roundtrip
- * Note: NIP-04 uses compressed pubkeys (33 bytes/66 hex) while Nostr uses
- * x-only pubkeys (32 bytes/64 hex). The signer_ops API might need adjustment
- * for proper NIP-04 support. Skipping this test for now. */
+/* Test 3: NIP-04 encrypt/decrypt roundtrip */
 static int test_nip04_roundtrip(const char *peer_pk_hex) {
-    TEST_START("NIP-04 encrypt/decrypt (skipped - pubkey format)");
-    (void)peer_pk_hex;
+    TEST_START("NIP-04 encrypt/decrypt roundtrip");
 
-    /* TODO: NIP-04 requires compressed pubkeys (02/03 prefix + 32 bytes).
-     * The signer_ops API passes x-only pubkeys which may cause failures.
-     * This needs further investigation and potential API adjustment. */
+    const char *plaintext = "Hello, NIP-04!";
+    char *ciphertext = NULL;
 
+    int rc = nostr_nip55l_nip04_encrypt(plaintext, peer_pk_hex, NULL, &ciphertext);
+    if (rc != 0) TEST_FAIL("NIP-04 encrypt failed");
+    if (!ciphertext) TEST_FAIL("ciphertext is NULL");
+
+    char *decrypted = NULL;
+    rc = nostr_nip55l_nip04_decrypt(ciphertext, peer_pk_hex, NULL, &decrypted);
+    if (rc != 0) {
+        free(ciphertext);
+        TEST_FAIL("NIP-04 decrypt failed");
+    }
+    if (!decrypted) {
+        free(ciphertext);
+        TEST_FAIL("decrypted is NULL");
+    }
+
+    if (strcmp(decrypted, plaintext) != 0) {
+        free(ciphertext);
+        free(decrypted);
+        TEST_FAIL("decrypted message doesn't match");
+    }
+
+    free(ciphertext);
+    free(decrypted);
     TEST_PASS();
     return 0;
 }

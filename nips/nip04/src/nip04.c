@@ -68,14 +68,37 @@ static void hkdf_expand(const unsigned char prk[32], const unsigned char *info, 
     OPENSSL_cleanse(t, sizeof t);
 }
 
-/* Derive using binary secret key (32 bytes) from secure memory */
+/* Convert x-only pubkey (32 bytes) to compressed format (33 bytes with 02 prefix).
+ * For ECDH, using 02 prefix (even y) works because the shared secret is the same
+ * regardless of y parity - ECDH only uses the x coordinate of the result. */
+static int xonly_to_compressed(const unsigned char x32[32], unsigned char out33[33]) {
+    out33[0] = 0x02; /* even y parity */
+    memcpy(out33 + 1, x32, 32);
+    return 0;
+}
+
+/* Derive using binary secret key (32 bytes) from secure memory.
+ * Supports x-only (64 hex / 32 bytes), compressed (66 hex / 33 bytes),
+ * and uncompressed (130 hex / 65 bytes) public keys. */
 static int ecdh_derive_key_bin(const char *peer_pub_hex, const unsigned char sk_bin[32], unsigned char key_out32[32]) {
     unsigned char pk_bin[65];
+    size_t pk_bin_len;
     if (!peer_pub_hex || !sk_bin) return -1;
     size_t hexlen = strlen(peer_pub_hex);
-    if (hexlen != 66 && hexlen != 130) return -1; /* compressed 33B or uncompressed 65B */
-    size_t pk_bin_len = hexlen / 2;
-    if (!nostr_hex2bin(pk_bin, peer_pub_hex, pk_bin_len)) return -1;
+
+    if (hexlen == 64) {
+        /* x-only pubkey (Nostr format): convert to compressed */
+        unsigned char x32[32];
+        if (!nostr_hex2bin(x32, peer_pub_hex, 32)) return -1;
+        xonly_to_compressed(x32, pk_bin);
+        pk_bin_len = 33;
+    } else if (hexlen == 66 || hexlen == 130) {
+        /* compressed (33B) or uncompressed (65B) */
+        pk_bin_len = hexlen / 2;
+        if (!nostr_hex2bin(pk_bin, peer_pub_hex, pk_bin_len)) return -1;
+    } else {
+        return -1; /* invalid pubkey length */
+    }
 
     secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
     if (!ctx) return -1;
@@ -167,14 +190,24 @@ static int nip04_kdf_aead_from_x(const unsigned char x[32], unsigned char key32[
 static int nip04_kdf_aead(const char *peer_pub_hex, const char *self_seckey_hex,
                           unsigned char key32[32], unsigned char nonce12[12]) {
     unsigned char sk_bin[32]; unsigned char pk_bin[65];
+    size_t pk_bin_len;
     if (!peer_pub_hex || !self_seckey_hex) return -1;
     size_t seclen = strlen(self_seckey_hex);
     if (seclen != 64) return -1;
     if (!nostr_hex2bin(sk_bin, self_seckey_hex, sizeof(sk_bin))) return -1;
     size_t hexlen = strlen(peer_pub_hex);
-    if (hexlen != 66 && hexlen != 130) { secure_bzero(sk_bin, sizeof sk_bin); return -1; }
-    size_t pk_bin_len = hexlen / 2;
-    if (!nostr_hex2bin(pk_bin, peer_pub_hex, pk_bin_len)) { secure_bzero(sk_bin, sizeof sk_bin); return -1; }
+    if (hexlen == 64) {
+        /* x-only pubkey (Nostr format): convert to compressed */
+        unsigned char x32[32];
+        if (!nostr_hex2bin(x32, peer_pub_hex, 32)) { secure_bzero(sk_bin, sizeof sk_bin); return -1; }
+        xonly_to_compressed(x32, pk_bin);
+        pk_bin_len = 33;
+    } else if (hexlen == 66 || hexlen == 130) {
+        pk_bin_len = hexlen / 2;
+        if (!nostr_hex2bin(pk_bin, peer_pub_hex, pk_bin_len)) { secure_bzero(sk_bin, sizeof sk_bin); return -1; }
+    } else {
+        secure_bzero(sk_bin, sizeof sk_bin); return -1;
+    }
     secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
     if (!ctx) { secure_bzero(sk_bin, sizeof sk_bin); return -1; }
     if (!secp256k1_ec_seckey_verify(ctx, sk_bin)) { secp256k1_context_destroy(ctx); secure_bzero(sk_bin, sizeof sk_bin); return -1; }
@@ -193,10 +226,20 @@ static int nip04_kdf_aead_bin(const char *peer_pub_hex, const unsigned char sk_b
                               unsigned char key32[32], unsigned char nonce12[12]) {
     if (!peer_pub_hex || !sk_bin) return -1;
     unsigned char pk_bin[65];
+    size_t pk_bin_len;
     size_t hexlen = strlen(peer_pub_hex);
-    if (hexlen != 66 && hexlen != 130) return -1;
-    size_t pk_bin_len = hexlen / 2;
-    if (!nostr_hex2bin(pk_bin, peer_pub_hex, pk_bin_len)) return -1;
+    if (hexlen == 64) {
+        /* x-only pubkey (Nostr format): convert to compressed */
+        unsigned char x32[32];
+        if (!nostr_hex2bin(x32, peer_pub_hex, 32)) return -1;
+        xonly_to_compressed(x32, pk_bin);
+        pk_bin_len = 33;
+    } else if (hexlen == 66 || hexlen == 130) {
+        pk_bin_len = hexlen / 2;
+        if (!nostr_hex2bin(pk_bin, peer_pub_hex, pk_bin_len)) return -1;
+    } else {
+        return -1;
+    }
     secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
     if (!ctx) return -1;
     if (!secp256k1_ec_seckey_verify(ctx, sk_bin)) { secp256k1_context_destroy(ctx); return -1; }
@@ -213,22 +256,32 @@ static int nip04_kdf_aead_bin(const char *peer_pub_hex, const unsigned char sk_b
 static int ecdh_derive_key(const char *peer_pub_hex, const char *self_sec_hex, unsigned char key_out32[32]) {
     unsigned char sk_bin[32];
     unsigned char pk_bin[65];
+    size_t pk_bin_len;
     if (!peer_pub_hex || !self_sec_hex) return -1;
     size_t seclen = strlen(self_sec_hex);
     if (seclen != 64) return -1;
     if (!nostr_hex2bin(sk_bin, self_sec_hex, sizeof(sk_bin))) return -1;
     size_t hexlen = strlen(peer_pub_hex);
-    if (hexlen != 66 && hexlen != 130) return -1; /* compressed 33B or uncompressed 65B */
-    size_t pk_bin_len = hexlen / 2;
-    if (!nostr_hex2bin(pk_bin, peer_pub_hex, pk_bin_len)) { secure_bzero(sk_bin, sizeof(sk_bin)); return -1; }
+    if (hexlen == 64) {
+        /* x-only pubkey (Nostr format): convert to compressed */
+        unsigned char x32[32];
+        if (!nostr_hex2bin(x32, peer_pub_hex, 32)) { secure_bzero(sk_bin, sizeof(sk_bin)); return -1; }
+        xonly_to_compressed(x32, pk_bin);
+        pk_bin_len = 33;
+    } else if (hexlen == 66 || hexlen == 130) {
+        pk_bin_len = hexlen / 2;
+        if (!nostr_hex2bin(pk_bin, peer_pub_hex, pk_bin_len)) { secure_bzero(sk_bin, sizeof(sk_bin)); return -1; }
+    } else {
+        secure_bzero(sk_bin, sizeof(sk_bin)); return -1;
+    }
 
     secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
-    if (!ctx) return -1;
+    if (!ctx) { secure_bzero(sk_bin, sizeof(sk_bin)); return -1; }
     if (!secp256k1_ec_seckey_verify(ctx, sk_bin)) { secp256k1_context_destroy(ctx); secure_bzero(sk_bin, sizeof(sk_bin)); return -1; }
     secp256k1_pubkey pub;
-    if (!secp256k1_ec_pubkey_parse(ctx, &pub, pk_bin, pk_bin_len)) { secp256k1_context_destroy(ctx); return -1; }
+    if (!secp256k1_ec_pubkey_parse(ctx, &pub, pk_bin, pk_bin_len)) { secp256k1_context_destroy(ctx); secure_bzero(sk_bin, sizeof(sk_bin)); return -1; }
 
-    if (!secp256k1_ecdh(ctx, key_out32, &pub, sk_bin, ecdh_hash_sha256, NULL)) { secp256k1_context_destroy(ctx); return -1; }
+    if (!secp256k1_ecdh(ctx, key_out32, &pub, sk_bin, ecdh_hash_sha256, NULL)) { secp256k1_context_destroy(ctx); secure_bzero(sk_bin, sizeof(sk_bin)); return -1; }
     secp256k1_context_destroy(ctx);
     secure_bzero(sk_bin, sizeof(sk_bin));
     return 0;
@@ -243,13 +296,23 @@ int nostr_nip04_shared_secret_hex(const char *peer_pubkey_hex,
     /* Compute raw X coordinate via secp256k1_ecdh with identity hash (copy x32) */
     unsigned char sk_bin[32];
     unsigned char pk_bin[65];
+    size_t pk_bin_len;
     size_t seclen = strlen(self_seckey_hex);
     if (seclen != 64) { if (out_error) *out_error = strdup("bad seckey len"); return -1; }
     if (!nostr_hex2bin(sk_bin, self_seckey_hex, sizeof(sk_bin))) { if (out_error) *out_error = strdup("bad seckey hex"); return -1; }
     size_t hexlen = strlen(peer_pubkey_hex);
-    if (hexlen != 66 && hexlen != 130) { secure_bzero(sk_bin, sizeof(sk_bin)); if (out_error) *out_error = strdup("bad pubkey len"); return -1; }
-    size_t pk_bin_len = hexlen / 2;
-    if (!nostr_hex2bin(pk_bin, peer_pubkey_hex, pk_bin_len)) { secure_bzero(sk_bin, sizeof(sk_bin)); if (out_error) *out_error = strdup("bad pubkey hex"); return -1; }
+    if (hexlen == 64) {
+        /* x-only pubkey (Nostr format): convert to compressed */
+        unsigned char x32[32];
+        if (!nostr_hex2bin(x32, peer_pubkey_hex, 32)) { secure_bzero(sk_bin, sizeof(sk_bin)); if (out_error) *out_error = strdup("bad pubkey hex"); return -1; }
+        xonly_to_compressed(x32, pk_bin);
+        pk_bin_len = 33;
+    } else if (hexlen == 66 || hexlen == 130) {
+        pk_bin_len = hexlen / 2;
+        if (!nostr_hex2bin(pk_bin, peer_pubkey_hex, pk_bin_len)) { secure_bzero(sk_bin, sizeof(sk_bin)); if (out_error) *out_error = strdup("bad pubkey hex"); return -1; }
+    } else {
+        secure_bzero(sk_bin, sizeof(sk_bin)); if (out_error) *out_error = strdup("bad pubkey len"); return -1;
+    }
     secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
     if (!ctx) { secure_bzero(sk_bin, sizeof(sk_bin)); if (out_error) *out_error = strdup("ctx"); return -1; }
     if (!secp256k1_ec_seckey_verify(ctx, sk_bin)) { secp256k1_context_destroy(ctx); secure_bzero(sk_bin, sizeof(sk_bin)); if (out_error) *out_error = strdup("bad seckey"); return -1; }

@@ -69,13 +69,6 @@ static char *nostr_event_serialize_nip01_array(const NostrEvent *event) {
 int nostr_event_sign_secure(NostrEvent *event, const nostr_secure_buf *sk) {
     if (!event || !sk || !sk->ptr || sk->len < 32) return -1;
 
-    unsigned char hash[32];
-    /* Use NIP-01 canonical array as signing preimage */
-    char *serialized = nostr_event_serialize_nip01_array(event);
-    if (!serialized) return -1;
-    SHA256((unsigned char *)serialized, strlen(serialized), hash);
-    free(serialized);
-
     secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
     if (!ctx) return -1;
     int return_val = -1;
@@ -88,18 +81,28 @@ int nostr_event_sign_secure(NostrEvent *event, const nostr_secure_buf *sk) {
     if (secp256k1_keypair_create(ctx, &keypair, seckey) != 1) {
         goto cleanup;
     }
-    /* Derive x-only pubkey and set event->pubkey if not already set */
+    /* Derive x-only pubkey and set event->pubkey BEFORE computing hash.
+     * The NIP-01 canonical serialization includes pubkey, so it must be set first. */
     {
         secp256k1_xonly_pubkey xpk;
-        if (secp256k1_keypair_xonly_pub(ctx, &xpk, NULL, &keypair) == 1) {
-            unsigned char x32[32];
-            if (secp256k1_xonly_pubkey_serialize(ctx, x32, &xpk) == 1) {
-                if (event->pubkey) { free(event->pubkey); event->pubkey = NULL; }
-                event->pubkey = nostr_bin2hex(x32, 32);
-                if (!event->pubkey) goto cleanup;
-            }
+        if (secp256k1_keypair_xonly_pub(ctx, &xpk, NULL, &keypair) != 1) {
+            goto cleanup;
         }
+        unsigned char x32[32];
+        if (secp256k1_xonly_pubkey_serialize(ctx, x32, &xpk) != 1) {
+            goto cleanup;
+        }
+        if (event->pubkey) { free(event->pubkey); event->pubkey = NULL; }
+        event->pubkey = nostr_bin2hex(x32, 32);
+        if (!event->pubkey) goto cleanup;
     }
+    /* Now compute the hash with the correct pubkey set */
+    unsigned char hash[32];
+    char *serialized = nostr_event_serialize_nip01_array(event);
+    if (!serialized) goto cleanup;
+    SHA256((unsigned char *)serialized, strlen(serialized), hash);
+    free(serialized);
+
     unsigned char auxiliary_rand[32];
     if (RAND_bytes(auxiliary_rand, sizeof(auxiliary_rand)) != 1) {
         goto cleanup;
@@ -580,21 +583,12 @@ int nostr_event_sign(NostrEvent *event, const char *private_key) {
     if (!event || !private_key)
         return -1;
 
-    unsigned char hash[32]; // Schnorr requires a 32-byte hash
-    /* Use NIP-01 canonical array as signing preimage */
-    char *serialized = nostr_event_serialize_nip01_array(event);
-    if (!serialized)
-        return -1;
-
-    // Hash the serialized event content
-    SHA256((unsigned char *)serialized, strlen(serialized), hash);
-    free(serialized);
-
     secp256k1_context *ctx;
     secp256k1_keypair keypair;
     unsigned char privkey_bin[32];    // 32-byte private key (256-bit)
     unsigned char sig_bin[64];        // 64-byte Schnorr signature
     unsigned char auxiliary_rand[32]; // Auxiliary randomness
+    unsigned char hash[32];           // Schnorr requires a 32-byte hash
     int return_val = -1;
 
     // Convert the private key from hex to binary
@@ -617,7 +611,8 @@ int nostr_event_sign(NostrEvent *event, const char *private_key) {
         return -1;
     }
 
-    /* Derive x-only pubkey and set event->pubkey */
+    /* Derive x-only pubkey and set event->pubkey BEFORE computing hash.
+     * The NIP-01 canonical serialization includes pubkey, so it must be set first. */
     {
         secp256k1_xonly_pubkey xpk;
         if (secp256k1_keypair_xonly_pub(ctx, &xpk, NULL, &keypair) != 1) {
@@ -633,6 +628,15 @@ int nostr_event_sign(NostrEvent *event, const char *private_key) {
         event->pubkey = nostr_bin2hex(x32, 32);
         if (!event->pubkey) { secp256k1_context_destroy(ctx); return -1; }
     }
+
+    /* Now compute the hash with the correct pubkey set */
+    char *serialized = nostr_event_serialize_nip01_array(event);
+    if (!serialized) {
+        secp256k1_context_destroy(ctx);
+        return -1;
+    }
+    SHA256((unsigned char *)serialized, strlen(serialized), hash);
+    free(serialized);
 
     // Generate 32 bytes of randomness for Schnorr signing
     if (RAND_bytes(auxiliary_rand, sizeof(auxiliary_rand)) != 1) {
