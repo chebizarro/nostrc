@@ -302,6 +302,111 @@ set_tests_properties(MockRelayUnit PROPERTIES
 )
 
 # ============================================================================
+# Signer Integration Tests (NIP-55L)
+# ============================================================================
+
+# Note: These tests link against NIP libraries defined in ../nips/.
+# The libraries are built before this test due to cmake's dependency resolution.
+
+add_executable(test_signer_integration tests/test_signer_integration.c)
+target_link_libraries(test_signer_integration PRIVATE
+    nostr_nip55l_core
+    libnostr
+    nostr_json
+    nip19
+    ${NSYNC_LIB}
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    ${SECP256K1_LIBRARIES}
+)
+target_include_directories(test_signer_integration PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/nips/nip55l/include
+    ${CMAKE_SOURCE_DIR}/nips/nip19/include
+    ${CMAKE_SOURCE_DIR}/libnostr/include
+    ${NSYNC_INCLUDE_DIR}
+    ${SECP256K1_INCLUDE_DIRS}
+)
+target_link_directories(test_signer_integration PRIVATE ${SECP256K1_LIBRARY_DIRS})
+
+# Apply sanitizers
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    if(GO_ENABLE_TSAN)
+        target_compile_options(test_signer_integration PRIVATE -fsanitize=thread)
+        target_link_options(test_signer_integration PRIVATE -fsanitize=thread)
+    else()
+        if(GO_ENABLE_ASAN)
+            target_compile_options(test_signer_integration PRIVATE -fsanitize=address)
+            target_link_options(test_signer_integration PRIVATE -fsanitize=address)
+        endif()
+        if(GO_ENABLE_UBSAN)
+            target_compile_options(test_signer_integration PRIVATE -fsanitize=undefined)
+            target_link_options(test_signer_integration PRIVATE -fsanitize=undefined)
+        endif()
+    endif()
+endif()
+
+add_test(NAME SignerIntegration COMMAND test_signer_integration)
+set_tests_properties(SignerIntegration PROPERTIES
+    TIMEOUT 60
+    LABELS "signer;integration"
+)
+
+# ============================================================================
+# NIP-46 Remote Signing Tests
+# ============================================================================
+
+add_executable(test_nip46_mock_relay tests/test_nip46_mock_relay.c)
+target_link_libraries(test_nip46_mock_relay PRIVATE
+    nostr_nip46_core
+    nostr_testing
+    libnostr
+    nostr_json
+    ${NSYNC_LIB}
+    ${LWS_LIBRARIES}
+    PkgConfig::JANSSON
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    ${SECP256K1_LIBRARIES}
+    pthread
+)
+target_include_directories(test_nip46_mock_relay PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/nips/nip46/include
+    ${CMAKE_SOURCE_DIR}/libnostr/include
+    ${NSYNC_INCLUDE_DIR}
+    ${SECP256K1_INCLUDE_DIRS}
+    ${LWS_INCLUDE_DIRS}
+)
+target_link_directories(test_nip46_mock_relay PRIVATE
+    ${SECP256K1_LIBRARY_DIRS}
+    ${LWS_LIBRARY_DIRS}
+)
+
+# Apply sanitizers
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    if(GO_ENABLE_TSAN)
+        target_compile_options(test_nip46_mock_relay PRIVATE -fsanitize=thread)
+        target_link_options(test_nip46_mock_relay PRIVATE -fsanitize=thread)
+    else()
+        if(GO_ENABLE_ASAN)
+            target_compile_options(test_nip46_mock_relay PRIVATE -fsanitize=address)
+            target_link_options(test_nip46_mock_relay PRIVATE -fsanitize=address)
+        endif()
+        if(GO_ENABLE_UBSAN)
+            target_compile_options(test_nip46_mock_relay PRIVATE -fsanitize=undefined)
+            target_link_options(test_nip46_mock_relay PRIVATE -fsanitize=undefined)
+        endif()
+    endif()
+endif()
+
+add_test(NAME Nip46MockRelay COMMAND test_nip46_mock_relay)
+set_tests_properties(Nip46MockRelay PROPERTIES
+    TIMEOUT 60
+    LABELS "nip46;signer;integration"
+)
+
+# ============================================================================
 # Install Rules
 # ============================================================================
 
