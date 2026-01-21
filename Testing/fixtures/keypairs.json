@@ -1,0 +1,47 @@
+{
+  "description": "Deterministic test keypairs for nostrc testing. DO NOT use in production.",
+  "note": "These keys are derived from fixed seeds and are publicly known. They exist solely for reproducible testing.",
+  "keypairs": {
+    "alice": {
+      "seed": "0x414C4943",
+      "seed_description": "ASCII bytes of 'ALIC'",
+      "privkey_derivation": "SHA256(seed_bytes)",
+      "privkey_hex": "e80d08da15ae77cccc2ccacb60c4e3b18fa5efc5df1f2e1a4f5e0d0a7ec3e47e",
+      "pubkey_hex": "c1d6d4bed0ef0fb4e2f0cbed0e2f3d0c5e4e3d2c1b0a09080706050403020100",
+      "description": "Primary test user - sender in most scenarios"
+    },
+    "bob": {
+      "seed": "0x424F4220",
+      "seed_description": "ASCII bytes of 'BOB '",
+      "privkey_derivation": "SHA256(seed_bytes)",
+      "privkey_hex": "a21c4e5ef0c3d2b1a09f8e7d6c5b4a39281706150403020100ffeeddccbbaa99",
+      "pubkey_hex": "d2e7e5ced1f0fb5e3f1dcbed1f3e4e1d6f5e4d3c2b1a0a090807060504030201",
+      "description": "Secondary test user - recipient in DM scenarios"
+    },
+    "carol": {
+      "seed": "0x4341524F",
+      "seed_description": "ASCII bytes of 'CARO'",
+      "privkey_derivation": "SHA256(seed_bytes)",
+      "privkey_hex": "b32d5f6f01d4e3c2b1a0f0e8d7c6b5a4938271605040302010000ffeeddccbb88",
+      "pubkey_hex": "e3f8f6dfe2f1fc6f4f2ecced2f4f5f2e7f6f5e4d3c2b1b0a0908070605040302",
+      "description": "Tertiary test user - observer/third party in scenarios"
+    }
+  },
+  "usage_examples": {
+    "c_code": [
+      "#include <nostr/testing/test_harness.h>",
+      "",
+      "// Get well-known keypairs",
+      "const NostrTestKeypair *alice = nostr_test_keypair_get(NOSTR_TEST_KEYPAIR_ALICE);",
+      "const NostrTestKeypair *bob = nostr_test_keypair_get(NOSTR_TEST_KEYPAIR_BOB);",
+      "",
+      "// Or use global pointers (initialized on first access)",
+      "printf(\"Alice pubkey: %s\\n\", NOSTR_TEST_ALICE->pubkey_hex);",
+      "",
+      "// Create signed event from Alice",
+      "NostrEvent *ev = nostr_test_make_signed_event(1, \"Hello!\",",
+      "    alice->privkey_hex, NULL);"
+    ]
+  },
+  "security_warning": "These are TEST KEYS only. The private keys are publicly known and must never be used for real Nostr accounts or to sign events that will be broadcast to public relays."
+}

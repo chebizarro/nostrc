@@ -295,6 +295,11 @@ add_subdirectory(libgo)
 add_subdirectory(libnostr)
 add_subdirectory(libjson)
 
+# Mock relay testing framework (optional, for unit tests)
+option(BUILD_TESTING_FRAMEWORK "Build the mock relay testing framework" ON)
+if(BUILD_TESTING_FRAMEWORK AND EXISTS ${CMAKE_SOURCE_DIR}/testing/CMakeLists.txt)
+  add_subdirectory(testing)
+endif()
 
 # NIPs are added via NipOptions.cmake per-NIP toggles; avoid adding nips/ twice.
 # Include NIP options/subdirs after global sanitizer flags so all NIP targets inherit them.
