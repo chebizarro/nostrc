@@ -89,6 +89,16 @@ static void on_avatar_pair_remote_clicked(GtkButton *btn, gpointer user_data);
 static void on_avatar_sign_out_clicked(GtkButton *btn, gpointer user_data);
 static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey_hex, gpointer user_data);
 static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer user_data);
+/* Forward declarations for repost/quote signal handlers */
+static void on_note_card_repost_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
+static void on_note_card_quote_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
+static void on_note_card_like_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
+/* Forward declarations for publish context (needed by repost function) */
+typedef struct _PublishContext PublishContext;
+static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer user_data);
+/* Forward declarations for public repost/quote functions (defined after PublishContext) */
+void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
+void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
 static void user_meta_free(gpointer p);
 static void show_toast(GnostrMainWindow *self, const char *msg);
 /* Pre-populate profile from local DB */
@@ -472,18 +482,122 @@ static void relay_manager_update_status(RelayManagerCtx *ctx) {
   g_free(text);
 }
 
+/* Helper to clear all children from a container */
+static void relay_manager_clear_container(GtkWidget *container) {
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(container)) != NULL) {
+    gtk_widget_unparent(child);
+  }
+}
+
+/* Helper to create a NIP badge button */
+static GtkWidget *relay_manager_create_nip_badge(gint nip_num) {
+  gchar *label = g_strdup_printf("NIP-%02d", nip_num);
+  GtkWidget *btn = gtk_button_new_with_label(label);
+  g_free(label);
+
+  gtk_widget_add_css_class(btn, "pill");
+  gtk_widget_add_css_class(btn, "flat");
+  gtk_widget_set_can_focus(btn, FALSE);
+
+  /* Tooltip with NIP description for common NIPs */
+  const gchar *tooltip = NULL;
+  switch (nip_num) {
+    case 1: tooltip = "Basic protocol flow"; break;
+    case 2: tooltip = "Follow List"; break;
+    case 4: tooltip = "Encrypted Direct Messages (deprecated)"; break;
+    case 5: tooltip = "Event Deletion Request"; break;
+    case 9: tooltip = "Event Deletion"; break;
+    case 10: tooltip = "Conventions for clients' use of e and p tags"; break;
+    case 11: tooltip = "Relay Information Document"; break;
+    case 13: tooltip = "Proof of Work"; break;
+    case 15: tooltip = "Nostr Marketplace"; break;
+    case 17: tooltip = "Private Direct Messages"; break;
+    case 20: tooltip = "Expiration"; break;
+    case 22: tooltip = "Comment"; break;
+    case 25: tooltip = "Reactions"; break;
+    case 26: tooltip = "Delegated Event Signing"; break;
+    case 28: tooltip = "Public Chat"; break;
+    case 29: tooltip = "Relay-based Groups"; break;
+    case 40: tooltip = "Relay Authentication"; break;
+    case 42: tooltip = "Authentication of clients to relays"; break;
+    case 44: tooltip = "Versioned encryption"; break;
+    case 45: tooltip = "Counting results"; break;
+    case 50: tooltip = "Search Capability"; break;
+    case 51: tooltip = "Lists"; break;
+    case 56: tooltip = "Reporting"; break;
+    case 57: tooltip = "Lightning Zaps"; break;
+    case 58: tooltip = "Badges"; break;
+    case 59: tooltip = "Gift Wrap"; break;
+    case 65: tooltip = "Relay List Metadata"; break;
+    case 70: tooltip = "Protected Events"; break;
+    case 78: tooltip = "Arbitrary custom app data"; break;
+    case 89: tooltip = "Recommended Application Handlers"; break;
+    case 90: tooltip = "Data Vending Machine"; break;
+    case 94: tooltip = "File Metadata"; break;
+    case 96: tooltip = "HTTP File Storage Integration"; break;
+    case 98: tooltip = "HTTP Auth"; break;
+    case 99: tooltip = "Classified Listings"; break;
+  }
+  if (tooltip) {
+    gchar *full_tooltip = g_strdup_printf("NIP-%02d: %s", nip_num, tooltip);
+    gtk_widget_set_tooltip_text(btn, full_tooltip);
+    g_free(full_tooltip);
+  }
+
+  return btn;
+}
+
+/* Helper to create a warning badge */
+static GtkWidget *relay_manager_create_warning_badge(const gchar *icon_name, const gchar *label, const gchar *tooltip) {
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+  gtk_widget_add_css_class(box, "warning");
+
+  GtkWidget *icon = gtk_image_new_from_icon_name(icon_name);
+  gtk_box_append(GTK_BOX(box), icon);
+
+  GtkWidget *lbl = gtk_label_new(label);
+  gtk_widget_add_css_class(lbl, "warning");
+  gtk_box_append(GTK_BOX(box), lbl);
+
+  if (tooltip) gtk_widget_set_tooltip_text(box, tooltip);
+
+  return box;
+}
+
+/* Callback for copy pubkey button */
+static void relay_manager_on_pubkey_copy(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  const gchar *pubkey = (const gchar*)user_data;
+  if (!pubkey) return;
+
+  GdkClipboard *clipboard = gdk_display_get_clipboard(gdk_display_get_default());
+  gdk_clipboard_set_text(clipboard, pubkey);
+}
+
 static void relay_manager_populate_info(RelayManagerCtx *ctx, GnostrRelayInfo *info) {
   GtkStack *stack = GTK_STACK(gtk_builder_get_object(ctx->builder, "info_stack"));
   if (!stack) return;
 
+  /* Basic labels */
   GtkLabel *name = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_name"));
   GtkLabel *desc = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_description"));
   GtkLabel *software = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_software"));
   GtkLabel *contact = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_contact"));
-  GtkLabel *nips = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_nips"));
   GtkLabel *limitations = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_limitations"));
   GtkLabel *pubkey = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_pubkey"));
 
+  /* Enhanced UI elements */
+  GtkWidget *warnings_box = GTK_WIDGET(gtk_builder_get_object(ctx->builder, "info_warnings_box"));
+  GtkWidget *nips_flowbox = GTK_WIDGET(gtk_builder_get_object(ctx->builder, "info_nips_flowbox"));
+  GtkWidget *nips_empty = GTK_WIDGET(gtk_builder_get_object(ctx->builder, "info_nips_empty"));
+  GtkWidget *contact_link = GTK_WIDGET(gtk_builder_get_object(ctx->builder, "info_contact_link"));
+  GtkWidget *pubkey_copy = GTK_WIDGET(gtk_builder_get_object(ctx->builder, "info_pubkey_copy"));
+  GtkWidget *policy_box = GTK_WIDGET(gtk_builder_get_object(ctx->builder, "info_policy_box"));
+  GtkWidget *posting_policy_link = GTK_WIDGET(gtk_builder_get_object(ctx->builder, "info_posting_policy_link"));
+  GtkWidget *payments_url_link = GTK_WIDGET(gtk_builder_get_object(ctx->builder, "info_payments_url_link"));
+
+  /* Populate basic fields */
   if (name) gtk_label_set_text(name, info->name ? info->name : "(not provided)");
   if (desc) gtk_label_set_text(desc, info->description ? info->description : "(not provided)");
 
@@ -495,21 +609,131 @@ static void relay_manager_populate_info(RelayManagerCtx *ctx, GnostrRelayInfo *i
     g_free(sw_text);
   }
 
-  if (contact) gtk_label_set_text(contact, info->contact ? info->contact : "(not provided)");
-
-  if (nips) {
-    gchar *nips_str = gnostr_relay_info_format_nips(info);
-    gtk_label_set_text(nips, nips_str);
-    g_free(nips_str);
+  /* Contact with clickable link */
+  if (contact) {
+    gtk_label_set_text(contact, info->contact ? info->contact : "(not provided)");
+  }
+  if (contact_link) {
+    if (info->contact && (g_str_has_prefix(info->contact, "mailto:") ||
+                          g_str_has_prefix(info->contact, "http://") ||
+                          g_str_has_prefix(info->contact, "https://"))) {
+      gtk_link_button_set_uri(GTK_LINK_BUTTON(contact_link), info->contact);
+      gtk_widget_set_visible(contact_link, TRUE);
+    } else if (info->contact && strchr(info->contact, '@')) {
+      /* Looks like an email without mailto: prefix */
+      gchar *mailto = g_strdup_printf("mailto:%s", info->contact);
+      gtk_link_button_set_uri(GTK_LINK_BUTTON(contact_link), mailto);
+      gtk_widget_set_visible(contact_link, TRUE);
+      g_free(mailto);
+    } else {
+      gtk_widget_set_visible(contact_link, FALSE);
+    }
   }
 
+  /* Pubkey with copy button */
+  if (pubkey) {
+    if (info->pubkey) {
+      /* Truncate display but keep full value for copy */
+      gchar *truncated = g_strndup(info->pubkey, 16);
+      gchar *display = g_strdup_printf("%s...", truncated);
+      gtk_label_set_text(pubkey, display);
+      gtk_widget_set_tooltip_text(GTK_WIDGET(pubkey), info->pubkey);
+      g_free(truncated);
+      g_free(display);
+    } else {
+      gtk_label_set_text(pubkey, "(not provided)");
+      gtk_widget_set_tooltip_text(GTK_WIDGET(pubkey), NULL);
+    }
+  }
+  if (pubkey_copy) {
+    if (info->pubkey) {
+      gtk_widget_set_visible(pubkey_copy, TRUE);
+      /* Store pubkey as object data for the callback */
+      g_object_set_data_full(G_OBJECT(pubkey_copy), "pubkey", g_strdup(info->pubkey), g_free);
+      g_signal_handlers_disconnect_by_func(pubkey_copy, G_CALLBACK(relay_manager_on_pubkey_copy), NULL);
+      g_signal_connect(pubkey_copy, "clicked", G_CALLBACK(relay_manager_on_pubkey_copy),
+                       g_object_get_data(G_OBJECT(pubkey_copy), "pubkey"));
+    } else {
+      gtk_widget_set_visible(pubkey_copy, FALSE);
+    }
+  }
+
+  /* Populate NIP badges */
+  if (nips_flowbox) {
+    relay_manager_clear_container(nips_flowbox);
+
+    if (info->supported_nips && info->supported_nips_count > 0) {
+      for (gsize i = 0; i < info->supported_nips_count; i++) {
+        GtkWidget *badge = relay_manager_create_nip_badge(info->supported_nips[i]);
+        gtk_flow_box_append(GTK_FLOW_BOX(nips_flowbox), badge);
+      }
+      gtk_widget_set_visible(nips_flowbox, TRUE);
+      if (nips_empty) gtk_widget_set_visible(nips_empty, FALSE);
+    } else {
+      gtk_widget_set_visible(nips_flowbox, FALSE);
+      if (nips_empty) gtk_widget_set_visible(nips_empty, TRUE);
+    }
+  }
+
+  /* Limitations */
   if (limitations) {
     gchar *lim_str = gnostr_relay_info_format_limitations(info);
     gtk_label_set_text(limitations, lim_str);
     g_free(lim_str);
   }
 
-  if (pubkey) gtk_label_set_text(pubkey, info->pubkey ? info->pubkey : "(not provided)");
+  /* Warning indicators */
+  if (warnings_box) {
+    relay_manager_clear_container(warnings_box);
+    gboolean has_warnings = FALSE;
+
+    if (info->auth_required) {
+      GtkWidget *badge = relay_manager_create_warning_badge("dialog-password-symbolic", "Auth Required",
+        "This relay requires authentication (NIP-42). You may need to sign in to use it.");
+      gtk_box_append(GTK_BOX(warnings_box), badge);
+      has_warnings = TRUE;
+    }
+
+    if (info->payment_required) {
+      GtkWidget *badge = relay_manager_create_warning_badge("emblem-money-symbolic", "Payment Required",
+        "This relay requires payment to use.");
+      gtk_box_append(GTK_BOX(warnings_box), badge);
+      has_warnings = TRUE;
+    }
+
+    if (info->restricted_writes) {
+      GtkWidget *badge = relay_manager_create_warning_badge("action-unavailable-symbolic", "Restricted Writes",
+        "This relay has write restrictions. Not all events may be accepted.");
+      gtk_box_append(GTK_BOX(warnings_box), badge);
+      has_warnings = TRUE;
+    }
+
+    gtk_widget_set_visible(warnings_box, has_warnings);
+  }
+
+  /* Policy links */
+  gboolean has_policy_links = FALSE;
+  if (posting_policy_link) {
+    if (info->posting_policy) {
+      gtk_link_button_set_uri(GTK_LINK_BUTTON(posting_policy_link), info->posting_policy);
+      gtk_widget_set_visible(posting_policy_link, TRUE);
+      has_policy_links = TRUE;
+    } else {
+      gtk_widget_set_visible(posting_policy_link, FALSE);
+    }
+  }
+  if (payments_url_link) {
+    if (info->payments_url) {
+      gtk_link_button_set_uri(GTK_LINK_BUTTON(payments_url_link), info->payments_url);
+      gtk_widget_set_visible(payments_url_link, TRUE);
+      has_policy_links = TRUE;
+    } else {
+      gtk_widget_set_visible(payments_url_link, FALSE);
+    }
+  }
+  if (policy_box) {
+    gtk_widget_set_visible(policy_box, has_policy_links);
+  }
 
   gtk_stack_set_visible_child_name(stack, "info");
 }
@@ -700,21 +924,200 @@ static void relay_manager_on_destroy(GtkWidget *widget, gpointer user_data) {
   relay_manager_ctx_free(ctx);
 }
 
+/* Structure to hold row widget references */
+typedef struct {
+  GtkWidget *name_label;
+  GtkWidget *url_label;
+  GtkWidget *status_icon;
+  GtkWidget *nips_box;
+  GtkWidget *warning_icon;
+} RelayRowWidgets;
+
 static void relay_manager_setup_factory_cb(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
   (void)factory; (void)user_data;
-  GtkWidget *label = gtk_label_new(NULL);
-  gtk_label_set_xalign(GTK_LABEL(label), 0.0);
-  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
-  gtk_list_item_set_child(list_item, label);
+
+  /* Create a more sophisticated row layout */
+  GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_margin_top(row, 4);
+  gtk_widget_set_margin_bottom(row, 4);
+
+  /* Status indicator (colored dot) */
+  GtkWidget *status_icon = gtk_image_new_from_icon_name("network-offline-symbolic");
+  gtk_widget_set_size_request(status_icon, 16, 16);
+  gtk_widget_add_css_class(status_icon, "dim-label");
+  gtk_box_append(GTK_BOX(row), status_icon);
+
+  /* Main content box (name + url + nips) */
+  GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+  gtk_widget_set_hexpand(content, TRUE);
+
+  /* Name label (primary) */
+  GtkWidget *name_label = gtk_label_new(NULL);
+  gtk_label_set_xalign(GTK_LABEL(name_label), 0.0);
+  gtk_label_set_ellipsize(GTK_LABEL(name_label), PANGO_ELLIPSIZE_END);
+  gtk_widget_add_css_class(name_label, "heading");
+  gtk_box_append(GTK_BOX(content), name_label);
+
+  /* URL label (secondary, smaller) */
+  GtkWidget *url_label = gtk_label_new(NULL);
+  gtk_label_set_xalign(GTK_LABEL(url_label), 0.0);
+  gtk_label_set_ellipsize(GTK_LABEL(url_label), PANGO_ELLIPSIZE_MIDDLE);
+  gtk_widget_add_css_class(url_label, "dim-label");
+  gtk_widget_add_css_class(url_label, "caption");
+  gtk_box_append(GTK_BOX(content), url_label);
+
+  /* NIP badges row (key NIPs only) */
+  GtkWidget *nips_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+  gtk_widget_set_margin_top(nips_box, 2);
+  gtk_box_append(GTK_BOX(content), nips_box);
+
+  gtk_box_append(GTK_BOX(row), content);
+
+  /* Warning icon (for auth/payment required) */
+  GtkWidget *warning_icon = gtk_image_new_from_icon_name("dialog-warning-symbolic");
+  gtk_widget_set_visible(warning_icon, FALSE);
+  gtk_widget_add_css_class(warning_icon, "warning");
+  gtk_box_append(GTK_BOX(row), warning_icon);
+
+  /* Store widget references for binding */
+  RelayRowWidgets *widgets = g_new0(RelayRowWidgets, 1);
+  widgets->name_label = name_label;
+  widgets->url_label = url_label;
+  widgets->status_icon = status_icon;
+  widgets->nips_box = nips_box;
+  widgets->warning_icon = warning_icon;
+  g_object_set_data_full(G_OBJECT(row), "widgets", widgets, g_free);
+
+  gtk_list_item_set_child(list_item, row);
+}
+
+/* Helper to extract hostname from URL for display */
+static gchar *relay_manager_extract_hostname(const gchar *url) {
+  if (!url) return NULL;
+
+  /* Skip protocol prefix */
+  const gchar *start = url;
+  if (g_str_has_prefix(url, "wss://")) {
+    start = url + 6;
+  } else if (g_str_has_prefix(url, "ws://")) {
+    start = url + 5;
+  }
+
+  /* Find end of hostname (before path or port) */
+  const gchar *end = start;
+  while (*end && *end != '/' && *end != ':') {
+    end++;
+  }
+
+  return g_strndup(start, end - start);
+}
+
+/* Add a small NIP badge to the nips box */
+static void relay_manager_add_small_nip_badge(GtkWidget *box, gint nip) {
+  gchar *text = g_strdup_printf("%d", nip);
+  GtkWidget *badge = gtk_label_new(text);
+  g_free(text);
+
+  gtk_widget_add_css_class(badge, "caption");
+  gtk_widget_add_css_class(badge, "pill");
+  gtk_widget_add_css_class(badge, "accent");
+
+  /* Tooltip for NIP description */
+  gchar *tooltip = g_strdup_printf("NIP-%02d", nip);
+  gtk_widget_set_tooltip_text(badge, tooltip);
+  g_free(tooltip);
+
+  gtk_box_append(GTK_BOX(box), badge);
 }
 
 static void relay_manager_bind_factory_cb(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
   (void)factory; (void)user_data;
-  GtkWidget *label = gtk_list_item_get_child(list_item);
+  GtkWidget *row = gtk_list_item_get_child(list_item);
   GtkStringObject *obj = GTK_STRING_OBJECT(gtk_list_item_get_item(list_item));
-  if (label && obj) {
-    gtk_label_set_text(GTK_LABEL(label), gtk_string_object_get_string(obj));
+
+  if (!row || !obj) return;
+
+  RelayRowWidgets *widgets = g_object_get_data(G_OBJECT(row), "widgets");
+  if (!widgets) return;
+
+  const gchar *url = gtk_string_object_get_string(obj);
+  if (!url) return;
+
+  /* Try to get cached relay info */
+  GnostrRelayInfo *info = gnostr_relay_info_cache_get(url);
+
+  /* Set name (from cache or hostname fallback) */
+  if (info && info->name && *info->name) {
+    gtk_label_set_text(GTK_LABEL(widgets->name_label), info->name);
+  } else {
+    gchar *hostname = relay_manager_extract_hostname(url);
+    gtk_label_set_text(GTK_LABEL(widgets->name_label), hostname ? hostname : url);
+    g_free(hostname);
   }
+
+  /* Set URL */
+  gtk_label_set_text(GTK_LABEL(widgets->url_label), url);
+
+  /* Update status icon based on cache availability */
+  if (info && !info->fetch_failed) {
+    gtk_image_set_from_icon_name(GTK_IMAGE(widgets->status_icon), "network-transmit-receive-symbolic");
+    gtk_widget_remove_css_class(widgets->status_icon, "dim-label");
+    gtk_widget_add_css_class(widgets->status_icon, "success");
+    gtk_widget_set_tooltip_text(widgets->status_icon, "Relay info available");
+  } else if (info && info->fetch_failed) {
+    gtk_image_set_from_icon_name(GTK_IMAGE(widgets->status_icon), "network-error-symbolic");
+    gtk_widget_remove_css_class(widgets->status_icon, "dim-label");
+    gtk_widget_add_css_class(widgets->status_icon, "error");
+    gtk_widget_set_tooltip_text(widgets->status_icon, "Failed to fetch relay info");
+  } else {
+    gtk_image_set_from_icon_name(GTK_IMAGE(widgets->status_icon), "network-offline-symbolic");
+    gtk_widget_remove_css_class(widgets->status_icon, "success");
+    gtk_widget_remove_css_class(widgets->status_icon, "error");
+    gtk_widget_add_css_class(widgets->status_icon, "dim-label");
+    gtk_widget_set_tooltip_text(widgets->status_icon, "Relay info not yet fetched");
+  }
+
+  /* Clear and populate NIP badges (show key NIPs only) */
+  relay_manager_clear_container(widgets->nips_box);
+  if (info && info->supported_nips && info->supported_nips_count > 0) {
+    /* Show only key NIPs: 1, 11, 17, 42, 50, 59 */
+    gint key_nips[] = {1, 11, 17, 42, 50, 59};
+    gint shown = 0;
+    for (gsize i = 0; i < info->supported_nips_count && shown < 4; i++) {
+      gint nip = info->supported_nips[i];
+      for (gsize j = 0; j < G_N_ELEMENTS(key_nips); j++) {
+        if (nip == key_nips[j]) {
+          relay_manager_add_small_nip_badge(widgets->nips_box, nip);
+          shown++;
+          break;
+        }
+      }
+    }
+    /* If we have more NIPs, show count */
+    if (info->supported_nips_count > 4) {
+      gchar *more = g_strdup_printf("+%zu", info->supported_nips_count - shown);
+      GtkWidget *more_label = gtk_label_new(more);
+      g_free(more);
+      gtk_widget_add_css_class(more_label, "dim-label");
+      gtk_widget_add_css_class(more_label, "caption");
+      gtk_box_append(GTK_BOX(widgets->nips_box), more_label);
+    }
+  }
+
+  /* Show warning icon if auth/payment required */
+  if (info && (info->auth_required || info->payment_required || info->restricted_writes)) {
+    gtk_widget_set_visible(widgets->warning_icon, TRUE);
+    GString *tooltip = g_string_new("Warning: ");
+    if (info->auth_required) g_string_append(tooltip, "Auth required. ");
+    if (info->payment_required) g_string_append(tooltip, "Payment required. ");
+    if (info->restricted_writes) g_string_append(tooltip, "Restricted writes.");
+    gtk_widget_set_tooltip_text(widgets->warning_icon, tooltip->str);
+    g_string_free(tooltip, TRUE);
+  } else {
+    gtk_widget_set_visible(widgets->warning_icon, FALSE);
+  }
+
+  if (info) gnostr_relay_info_free(info);
 }
 
 static void on_relays_clicked(GtkButton *btn, gpointer user_data) {
@@ -984,6 +1387,108 @@ void gnostr_main_window_request_reply(GtkWidget *window, const char *id_hex, con
   if (self->stack && GTK_IS_STACK(self->stack)) {
     gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "compose");
   }
+}
+
+/* Public wrapper for requesting a quote post (kind 1 with q-tag) */
+void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, const char *pubkey_hex) {
+  if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  g_message("[QUOTE] Request quote of id=%s pubkey=%.8s...",
+            id_hex ? id_hex : "(null)",
+            pubkey_hex ? pubkey_hex : "(null)");
+
+  if (!id_hex || strlen(id_hex) != 64) {
+    show_toast(self, "Invalid event ID for quote");
+    return;
+  }
+
+  /* Convert event ID hex to note1 bech32 URI */
+  uint8_t id32[32];
+  if (!hex_to_bytes32(id_hex, id32)) {
+    show_toast(self, "Invalid event ID format");
+    return;
+  }
+
+  char *note_bech32 = NULL;
+  int encode_rc = nostr_nip19_encode_note(id32, &note_bech32);
+  if (encode_rc != 0 || !note_bech32) {
+    show_toast(self, "Failed to encode note ID");
+    return;
+  }
+
+  /* Build nostr: URI */
+  char *nostr_uri = g_strdup_printf("nostr:%s", note_bech32);
+  free(note_bech32);
+
+  /* Try to look up the author's display name */
+  char *display_name = NULL;
+  if (pubkey_hex && strlen(pubkey_hex) == 64) {
+    void *txn = NULL;
+    if (storage_ndb_begin_query(&txn) == 0 && txn) {
+      uint8_t pk32[32];
+      if (hex_to_bytes32(pubkey_hex, pk32)) {
+        char *meta_json = NULL;
+        int meta_len = 0;
+        if (storage_ndb_get_profile_by_pubkey(txn, pk32, &meta_json, &meta_len) == 0 && meta_json) {
+          json_error_t err;
+          json_t *meta = json_loads(meta_json, 0, &err);
+          if (meta) {
+            json_t *name_obj = json_object_get(meta, "display_name");
+            if (!name_obj || !json_is_string(name_obj)) {
+              name_obj = json_object_get(meta, "name");
+            }
+            if (name_obj && json_is_string(name_obj)) {
+              const char *n = json_string_value(name_obj);
+              if (n && *n) display_name = g_strdup(n);
+            }
+            json_decref(meta);
+          }
+        }
+      }
+      storage_ndb_end_query(txn);
+    }
+  }
+
+  /* Set the quote context on the composer */
+  if (self->composer && GNOSTR_IS_COMPOSER(self->composer)) {
+    gnostr_composer_set_quote_context(GNOSTR_COMPOSER(self->composer),
+                                      id_hex, pubkey_hex, nostr_uri,
+                                      display_name ? display_name : "@user");
+  }
+  g_free(display_name);
+  g_free(nostr_uri);
+
+  /* Switch to composer tab */
+  if (self->stack && GTK_IS_STACK(self->stack)) {
+    gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "compose");
+  }
+}
+
+/* Signal handler for repost-requested from note card */
+static void on_note_card_repost_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+  (void)row;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  gnostr_main_window_request_repost(GTK_WIDGET(self), id_hex, pubkey_hex);
+}
+
+/* Signal handler for quote-requested from note card */
+static void on_note_card_quote_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+  (void)row;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  gnostr_main_window_request_quote(GTK_WIDGET(self), id_hex, pubkey_hex);
+}
+
+/* Signal handler for like-requested from note card (stub for now) */
+static void on_note_card_like_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+  (void)row;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  g_message("[LIKE] Like requested for id=%s pubkey=%.8s... (not yet implemented)",
+            id_hex ? id_hex : "(null)",
+            pubkey_hex ? pubkey_hex : "(null)");
+  show_toast(self, "Like functionality coming soon!");
 }
 
 /* Public wrappers so other UI components (e.g., timeline view) can request prefetch */
@@ -1778,10 +2283,10 @@ static void on_refresh_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 /* Context for async sign-and-publish operation */
-typedef struct {
+struct _PublishContext {
   GnostrMainWindow *self;  /* weak ref */
   char *text;              /* owned; original note content */
-} PublishContext;
+};
 
 static void publish_context_free(PublishContext *ctx) {
   if (!ctx) return;
@@ -1893,6 +2398,89 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
   publish_context_free(ctx);
 }
 
+/* Public wrapper for requesting a repost (kind 6) - must be after PublishContext is defined */
+void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, const char *pubkey_hex) {
+  if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  g_message("[REPOST] Request repost of id=%s pubkey=%.8s...",
+            id_hex ? id_hex : "(null)",
+            pubkey_hex ? pubkey_hex : "(null)");
+
+  if (!id_hex || strlen(id_hex) != 64) {
+    show_toast(self, "Invalid event ID for repost");
+    return;
+  }
+
+  /* Get signer proxy */
+  GError *proxy_err = NULL;
+  NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
+  if (!proxy) {
+    char *msg = g_strdup_printf("Signer not available: %s", proxy_err ? proxy_err->message : "not connected");
+    show_toast(self, msg);
+    g_free(msg);
+    g_clear_error(&proxy_err);
+    return;
+  }
+
+  show_toast(self, "Reposting...");
+
+  /* Build unsigned kind 6 repost event JSON */
+  json_t *event_obj = json_object();
+  json_object_set_new(event_obj, "kind", json_integer(6));
+  json_object_set_new(event_obj, "created_at", json_integer((json_int_t)time(NULL)));
+  json_object_set_new(event_obj, "content", json_string(""));
+
+  /* Build tags array: e-tag and p-tag */
+  json_t *tags = json_array();
+
+  /* e-tag: ["e", "<reposted-event-id>", "<relay-hint>"] */
+  json_t *e_tag = json_array();
+  json_array_append_new(e_tag, json_string("e"));
+  json_array_append_new(e_tag, json_string(id_hex));
+  json_array_append_new(e_tag, json_string("")); /* relay hint - empty for now */
+  json_array_append_new(tags, e_tag);
+
+  /* p-tag: ["p", "<original-author-pubkey>"] */
+  if (pubkey_hex && strlen(pubkey_hex) == 64) {
+    json_t *p_tag = json_array();
+    json_array_append_new(p_tag, json_string("p"));
+    json_array_append_new(p_tag, json_string(pubkey_hex));
+    json_array_append_new(tags, p_tag);
+  }
+
+  json_object_set_new(event_obj, "tags", tags);
+
+  /* Serialize and sign via signer proxy */
+  char *event_json = json_dumps(event_obj, JSON_COMPACT);
+  json_decref(event_obj);
+
+  if (!event_json) {
+    show_toast(self, "Failed to serialize repost event");
+    return;
+  }
+
+  g_message("[REPOST] Unsigned event: %s", event_json);
+
+  /* Create async context */
+  PublishContext *ctx = g_new0(PublishContext, 1);
+  ctx->self = self;
+  ctx->text = g_strdup(""); /* repost has no text content */
+
+  /* Call signer asynchronously */
+  nostr_org_nostr_signer_call_sign_event(
+    proxy,
+    event_json,
+    "",              /* current_user: empty = use default */
+    "gnostr",        /* app_id */
+    NULL,            /* cancellable */
+    on_sign_event_complete,
+    ctx
+  );
+  g_free(event_json);
+}
+
 static void on_composer_post_requested(GnostrComposer *composer, const char *text, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
@@ -1968,6 +2556,33 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
       json_t *p_tag = json_array();
       json_array_append_new(p_tag, json_string("p"));
       json_array_append_new(p_tag, json_string(reply_to_pubkey));
+      json_array_append_new(tags, p_tag);
+    }
+  }
+
+  /* Check if this is a quote post - add q-tag and p-tag per NIP-18 */
+  if (composer && GNOSTR_IS_COMPOSER(composer) && gnostr_composer_is_quote(GNOSTR_COMPOSER(composer))) {
+    const char *quote_id = gnostr_composer_get_quote_id(GNOSTR_COMPOSER(composer));
+    const char *quote_pubkey = gnostr_composer_get_quote_pubkey(GNOSTR_COMPOSER(composer));
+
+    g_message("[PUBLISH] Building quote post: quote_id=%s pubkey=%.8s...",
+              quote_id ? quote_id : "(null)",
+              quote_pubkey ? quote_pubkey : "(null)");
+
+    /* q-tag: ["q", "<quoted-event-id>", "<relay-hint>"] */
+    if (quote_id && strlen(quote_id) == 64) {
+      json_t *q_tag = json_array();
+      json_array_append_new(q_tag, json_string("q"));
+      json_array_append_new(q_tag, json_string(quote_id));
+      json_array_append_new(q_tag, json_string("")); /* relay hint */
+      json_array_append_new(tags, q_tag);
+    }
+
+    /* p-tag: ["p", "<quoted-author-pubkey>"] */
+    if (quote_pubkey && strlen(quote_pubkey) == 64) {
+      json_t *p_tag = json_array();
+      json_array_append_new(p_tag, json_string("p"));
+      json_array_append_new(p_tag, json_string(quote_pubkey));
       json_array_append_new(tags, p_tag);
     }
   }

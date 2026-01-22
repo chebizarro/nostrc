@@ -194,3 +194,74 @@
   font-weight: 600;
   color: alpha(@theme_fg_color, 0.6);
 }
+
+/* Relay Manager Styles */
+.relay-row {
+  padding: 6px 8px;
+  border-radius: 6px;
+  transition: background 150ms ease;
+}
+
+.relay-row:hover {
+  background: alpha(@theme_fg_color, 0.05);
+}
+
+/* NIP badge pills */
+.pill {
+  border-radius: 9999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.pill.accent {
+  background: alpha(@accent_bg_color, 0.15);
+  color: @accent_bg_color;
+}
+
+/* Status indicators */
+.success {
+  color: #2e7d32;
+}
+
+.error {
+  color: #c62828;
+}
+
+.warning {
+  color: #ed6c02;
+}
+
+/* Warning badge in relay info */
+.relay-warning-badge {
+  background: alpha(#ed6c02, 0.12);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.relay-warning-badge image {
+  color: #ed6c02;
+}
+
+.relay-warning-badge label {
+  color: #ed6c02;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* Caption text style */
+.caption {
+  font-size: 11px;
+}
+
+/* Heading style for relay names */
+.heading {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* Monospace for pubkeys */
+.monospace {
+  font-family: monospace;
+  font-size: 12px;
+}

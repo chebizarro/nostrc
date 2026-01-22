@@ -3,12 +3,12 @@
   <requires lib="gtk" version="4.0"/>
   <object class="GtkWindow" id="relay_manager_window">
     <property name="title">Relays</property>
-    <property name="default-width">700</property>
-    <property name="default-height">520</property>
+    <property name="default-width">800</property>
+    <property name="default-height">580</property>
     <child>
       <object class="GtkPaned" id="main_paned">
         <property name="orientation">horizontal</property>
-        <property name="position">320</property>
+        <property name="position">340</property>
         <property name="shrink-start-child">false</property>
         <property name="shrink-end-child">false</property>
 
@@ -222,6 +222,16 @@
                             <property name="margin-top">4</property>
                             <property name="margin-bottom">4</property>
 
+                            <!-- Warning indicators box -->
+                            <child>
+                              <object class="GtkBox" id="info_warnings_box">
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">8</property>
+                                <property name="visible">false</property>
+                                <property name="margin-bottom">4</property>
+                              </object>
+                            </child>
+
                             <!-- Name -->
                             <child>
                               <object class="GtkBox">
@@ -294,7 +304,7 @@
                               </object>
                             </child>
 
-                            <!-- Contact -->
+                            <!-- Contact (clickable) -->
                             <child>
                               <object class="GtkBox">
                                 <property name="orientation">vertical</property>
@@ -308,21 +318,77 @@
                                   </object>
                                 </child>
                                 <child>
-                                  <object class="GtkLabel" id="info_contact">
-                                    <property name="xalign">0.0</property>
-                                    <property name="wrap">true</property>
-                                    <property name="selectable">true</property>
-                                    <property name="label">-</property>
+                                  <object class="GtkBox" id="info_contact_box">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">8</property>
+                                    <child>
+                                      <object class="GtkLabel" id="info_contact">
+                                        <property name="xalign">0.0</property>
+                                        <property name="wrap">true</property>
+                                        <property name="selectable">true</property>
+                                        <property name="label">-</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLinkButton" id="info_contact_link">
+                                        <property name="visible">false</property>
+                                        <property name="label">Open</property>
+                                        <property name="valign">center</property>
+                                      </object>
+                                    </child>
                                   </object>
                                 </child>
                               </object>
                             </child>
 
-                            <!-- Supported NIPs -->
+                            <!-- Admin Pubkey (clickable) -->
                             <child>
                               <object class="GtkBox">
                                 <property name="orientation">vertical</property>
                                 <property name="spacing">2</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="xalign">0.0</property>
+                                    <property name="use-markup">true</property>
+                                    <property name="label">&lt;b&gt;Admin Pubkey&lt;/b&gt;</property>
+                                    <property name="css-classes">dim-label</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">8</property>
+                                    <child>
+                                      <object class="GtkLabel" id="info_pubkey">
+                                        <property name="xalign">0.0</property>
+                                        <property name="wrap">true</property>
+                                        <property name="wrap-mode">char</property>
+                                        <property name="selectable">true</property>
+                                        <property name="label">-</property>
+                                        <property name="css-classes">monospace</property>
+                                        <property name="ellipsize">middle</property>
+                                        <property name="max-width-chars">24</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="info_pubkey_copy">
+                                        <property name="visible">false</property>
+                                        <property name="icon-name">edit-copy-symbolic</property>
+                                        <property name="tooltip-text">Copy pubkey</property>
+                                        <property name="valign">center</property>
+                                        <property name="css-classes">flat</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Supported NIPs (as flow box with badges) -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">4</property>
                                 <child>
                                   <object class="GtkLabel">
                                     <property name="xalign">0.0</property>
@@ -332,17 +398,27 @@
                                   </object>
                                 </child>
                                 <child>
-                                  <object class="GtkLabel" id="info_nips">
+                                  <object class="GtkFlowBox" id="info_nips_flowbox">
+                                    <property name="selection-mode">none</property>
+                                    <property name="homogeneous">false</property>
+                                    <property name="row-spacing">4</property>
+                                    <property name="column-spacing">4</property>
+                                    <property name="max-children-per-line">12</property>
+                                    <property name="min-children-per-line">1</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="info_nips_empty">
                                     <property name="xalign">0.0</property>
-                                    <property name="wrap">true</property>
-                                    <property name="selectable">true</property>
-                                    <property name="label">-</property>
+                                    <property name="label">(none)</property>
+                                    <property name="css-classes">dim-label</property>
+                                    <property name="visible">false</property>
                                   </object>
                                 </child>
                               </object>
                             </child>
 
-                            <!-- Limitations -->
+                            <!-- Limitations (clean format) -->
                             <child>
                               <object class="GtkBox">
                                 <property name="orientation">vertical</property>
@@ -366,27 +442,36 @@
                               </object>
                             </child>
 
-                            <!-- Admin Pubkey -->
+                            <!-- Policy Links -->
                             <child>
-                              <object class="GtkBox">
+                              <object class="GtkBox" id="info_policy_box">
                                 <property name="orientation">vertical</property>
                                 <property name="spacing">2</property>
+                                <property name="visible">false</property>
                                 <child>
                                   <object class="GtkLabel">
                                     <property name="xalign">0.0</property>
                                     <property name="use-markup">true</property>
-                                    <property name="label">&lt;b&gt;Admin Pubkey&lt;/b&gt;</property>
+                                    <property name="label">&lt;b&gt;Policies&lt;/b&gt;</property>
                                     <property name="css-classes">dim-label</property>
                                   </object>
                                 </child>
                                 <child>
-                                  <object class="GtkLabel" id="info_pubkey">
-                                    <property name="xalign">0.0</property>
-                                    <property name="wrap">true</property>
-                                    <property name="wrap-mode">char</property>
-                                    <property name="selectable">true</property>
-                                    <property name="label">-</property>
-                                    <property name="css-classes">monospace</property>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">12</property>
+                                    <child>
+                                      <object class="GtkLinkButton" id="info_posting_policy_link">
+                                        <property name="visible">false</property>
+                                        <property name="label">Posting Policy</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLinkButton" id="info_payments_url_link">
+                                        <property name="visible">false</property>
+                                        <property name="label">Payments</property>
+                                      </object>
+                                    </child>
                                   </object>
                                 </child>
                               </object>
