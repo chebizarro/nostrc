@@ -1,6 +1,6 @@
 /* relay_store.c - Relay configuration implementation */
 #include "relay_store.h"
-#include <json.h>
+#include <json-glib/json-glib.h>
 #include <string.h>
 #include <time.h>
 
@@ -53,36 +53,42 @@ void relay_store_load(RelayStore *rs) {
     return;
   }
 
-  json_object *root = json_tokener_parse(contents);
+  JsonParser *parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, contents, -1, NULL)) {
+    g_free(contents);
+    g_object_unref(parser);
+    return;
+  }
   g_free(contents);
 
-  if (!root || !json_object_is_type(root, json_type_array)) {
-    if (root) json_object_put(root);
+  JsonNode *root_node = json_parser_get_root(parser);
+  if (!JSON_NODE_HOLDS_ARRAY(root_node)) {
+    g_object_unref(parser);
     return;
   }
 
+  JsonArray *root = json_node_get_array(root_node);
   g_ptr_array_set_size(rs->relays, 0);
 
-  int n = json_object_array_length(root);
-  for (int i = 0; i < n; i++) {
-    json_object *item = json_object_array_get_idx(root, i);
-    if (!item) continue;
+  guint n = json_array_get_length(root);
+  for (guint i = 0; i < n; i++) {
+    JsonNode *item_node = json_array_get_element(root, i);
+    if (!JSON_NODE_HOLDS_OBJECT(item_node)) continue;
 
-    json_object *url_obj, *read_obj, *write_obj;
-
-    if (!json_object_object_get_ex(item, "url", &url_obj)) continue;
+    JsonObject *item = json_node_get_object(item_node);
+    if (!json_object_has_member(item, "url")) continue;
 
     RelayEntry *entry = g_new0(RelayEntry, 1);
-    entry->url = g_strdup(json_object_get_string(url_obj));
+    entry->url = g_strdup(json_object_get_string_member(item, "url"));
 
-    if (json_object_object_get_ex(item, "read", &read_obj)) {
-      entry->read = json_object_get_boolean(read_obj);
+    if (json_object_has_member(item, "read")) {
+      entry->read = json_object_get_boolean_member(item, "read");
     } else {
       entry->read = TRUE;
     }
 
-    if (json_object_object_get_ex(item, "write", &write_obj)) {
-      entry->write = json_object_get_boolean(write_obj);
+    if (json_object_has_member(item, "write")) {
+      entry->write = json_object_get_boolean_member(item, "write");
     } else {
       entry->write = TRUE;
     }
@@ -90,26 +96,39 @@ void relay_store_load(RelayStore *rs) {
     g_ptr_array_add(rs->relays, entry);
   }
 
-  json_object_put(root);
+  g_object_unref(parser);
 }
 
 void relay_store_save(RelayStore *rs) {
   if (!rs) return;
 
-  json_object *root = json_object_new_array();
+  JsonBuilder *builder = json_builder_new();
+  json_builder_begin_array(builder);
 
   for (guint i = 0; i < rs->relays->len; i++) {
     RelayEntry *entry = g_ptr_array_index(rs->relays, i);
 
-    json_object *item = json_object_new_object();
-    json_object_object_add(item, "url", json_object_new_string(entry->url));
-    json_object_object_add(item, "read", json_object_new_boolean(entry->read));
-    json_object_object_add(item, "write", json_object_new_boolean(entry->write));
-
-    json_object_array_add(root, item);
+    json_builder_begin_object(builder);
+    json_builder_set_member_name(builder, "url");
+    json_builder_add_string_value(builder, entry->url);
+    json_builder_set_member_name(builder, "read");
+    json_builder_add_boolean_value(builder, entry->read);
+    json_builder_set_member_name(builder, "write");
+    json_builder_add_boolean_value(builder, entry->write);
+    json_builder_end_object(builder);
   }
 
-  const gchar *json_str = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PRETTY);
+  json_builder_end_array(builder);
+
+  JsonNode *root = json_builder_get_root(builder);
+  JsonGenerator *gen = json_generator_new();
+  json_generator_set_pretty(gen, TRUE);
+  json_generator_set_root(gen, root);
+  gchar *json_str = json_generator_to_data(gen, NULL);
+
+  g_object_unref(gen);
+  json_node_unref(root);
+  g_object_unref(builder);
 
   GError *err = NULL;
   if (!g_file_set_contents(rs->config_path, json_str, -1, &err)) {
@@ -119,7 +138,7 @@ void relay_store_save(RelayStore *rs) {
     }
   }
 
-  json_object_put(root);
+  g_free(json_str);
 }
 
 static gint find_relay_by_url(RelayStore *rs, const gchar *url) {
@@ -197,36 +216,52 @@ guint relay_store_count(RelayStore *rs) {
 gchar *relay_store_build_event_json(RelayStore *rs) {
   if (!rs) return NULL;
 
+  JsonBuilder *builder = json_builder_new();
+  json_builder_begin_object(builder);
+
+  json_builder_set_member_name(builder, "kind");
+  json_builder_add_int_value(builder, 10002);
+
+  json_builder_set_member_name(builder, "created_at");
+  json_builder_add_int_value(builder, (gint64)time(NULL));
+
   /* Build tags array per NIP-65 */
-  json_object *tags = json_object_new_array();
+  json_builder_set_member_name(builder, "tags");
+  json_builder_begin_array(builder);
 
   for (guint i = 0; i < rs->relays->len; i++) {
     RelayEntry *entry = g_ptr_array_index(rs->relays, i);
 
-    json_object *tag = json_object_new_array();
-    json_object_array_add(tag, json_object_new_string("r"));
-    json_object_array_add(tag, json_object_new_string(entry->url));
+    json_builder_begin_array(builder);
+    json_builder_add_string_value(builder, "r");
+    json_builder_add_string_value(builder, entry->url);
 
     /* Add marker for read-only or write-only */
     if (entry->read && !entry->write) {
-      json_object_array_add(tag, json_object_new_string("read"));
+      json_builder_add_string_value(builder, "read");
     } else if (!entry->read && entry->write) {
-      json_object_array_add(tag, json_object_new_string("write"));
+      json_builder_add_string_value(builder, "write");
     }
     /* If both read and write, no marker needed */
 
-    json_object_array_add(tags, tag);
+    json_builder_end_array(builder);
   }
 
-  /* Build event */
-  json_object *event = json_object_new_object();
-  json_object_object_add(event, "kind", json_object_new_int(10002));
-  json_object_object_add(event, "created_at", json_object_new_int64((int64_t)time(NULL)));
-  json_object_object_add(event, "tags", tags);
-  json_object_object_add(event, "content", json_object_new_string(""));
+  json_builder_end_array(builder);
 
-  gchar *result = g_strdup(json_object_to_json_string(event));
-  json_object_put(event);
+  json_builder_set_member_name(builder, "content");
+  json_builder_add_string_value(builder, "");
+
+  json_builder_end_object(builder);
+
+  JsonNode *root = json_builder_get_root(builder);
+  JsonGenerator *gen = json_generator_new();
+  json_generator_set_root(gen, root);
+  gchar *result = json_generator_to_data(gen, NULL);
+
+  g_object_unref(gen);
+  json_node_unref(root);
+  g_object_unref(builder);
 
   return result;
 }
@@ -234,50 +269,63 @@ gchar *relay_store_build_event_json(RelayStore *rs) {
 gboolean relay_store_parse_event(RelayStore *rs, const gchar *event_json) {
   if (!rs || !event_json) return FALSE;
 
-  json_object *root = json_tokener_parse(event_json);
-  if (!root) return FALSE;
-
-  json_object *kind_obj;
-  if (!json_object_object_get_ex(root, "kind", &kind_obj) ||
-      json_object_get_int(kind_obj) != 10002) {
-    json_object_put(root);
+  JsonParser *parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, event_json, -1, NULL)) {
+    g_object_unref(parser);
     return FALSE;
   }
 
-  json_object *tags_obj;
-  if (!json_object_object_get_ex(root, "tags", &tags_obj) ||
-      !json_object_is_type(tags_obj, json_type_array)) {
-    json_object_put(root);
+  JsonNode *root_node = json_parser_get_root(parser);
+  if (!JSON_NODE_HOLDS_OBJECT(root_node)) {
+    g_object_unref(parser);
     return FALSE;
   }
+
+  JsonObject *root = json_node_get_object(root_node);
+
+  if (!json_object_has_member(root, "kind") ||
+      json_object_get_int_member(root, "kind") != 10002) {
+    g_object_unref(parser);
+    return FALSE;
+  }
+
+  if (!json_object_has_member(root, "tags")) {
+    g_object_unref(parser);
+    return FALSE;
+  }
+
+  JsonNode *tags_node = json_object_get_member(root, "tags");
+  if (!JSON_NODE_HOLDS_ARRAY(tags_node)) {
+    g_object_unref(parser);
+    return FALSE;
+  }
+
+  JsonArray *tags_arr = json_node_get_array(tags_node);
 
   /* Clear existing and parse tags */
   g_ptr_array_set_size(rs->relays, 0);
 
-  int n = json_object_array_length(tags_obj);
-  for (int i = 0; i < n; i++) {
-    json_object *tag = json_object_array_get_idx(tags_obj, i);
-    if (!tag || !json_object_is_type(tag, json_type_array)) continue;
+  guint n = json_array_get_length(tags_arr);
+  for (guint i = 0; i < n; i++) {
+    JsonNode *tag_node = json_array_get_element(tags_arr, i);
+    if (!JSON_NODE_HOLDS_ARRAY(tag_node)) continue;
 
-    int tag_len = json_object_array_length(tag);
+    JsonArray *tag = json_node_get_array(tag_node);
+    guint tag_len = json_array_get_length(tag);
     if (tag_len < 2) continue;
 
-    json_object *tag_type = json_object_array_get_idx(tag, 0);
-    if (!tag_type || g_strcmp0(json_object_get_string(tag_type), "r") != 0) continue;
+    const gchar *tag_type = json_array_get_string_element(tag, 0);
+    if (g_strcmp0(tag_type, "r") != 0) continue;
 
-    json_object *url_obj = json_object_array_get_idx(tag, 1);
-    if (!url_obj) continue;
-
-    const gchar *url = json_object_get_string(url_obj);
+    const gchar *url = json_array_get_string_element(tag, 1);
     if (!url || !*url) continue;
 
     gboolean read = TRUE, write = TRUE;
 
     /* Check for marker */
     if (tag_len >= 3) {
-      json_object *marker_obj = json_object_array_get_idx(tag, 2);
-      if (marker_obj) {
-        const gchar *marker = json_object_get_string(marker_obj);
+      const gchar *marker = json_array_get_string_element(tag, 2);
+      if (marker) {
         if (g_strcmp0(marker, "read") == 0) {
           write = FALSE;
         } else if (g_strcmp0(marker, "write") == 0) {
@@ -289,7 +337,7 @@ gboolean relay_store_parse_event(RelayStore *rs, const gchar *event_json) {
     relay_store_add(rs, url, read, write);
   }
 
-  json_object_put(root);
+  g_object_unref(parser);
   return TRUE;
 }
 

@@ -3,7 +3,7 @@
  * Caches profiles locally and provides helpers for editing.
  */
 #include "profile_store.h"
-#include <json.h>
+#include <json-glib/json-glib.h>
 #include <string.h>
 #include <time.h>
 
@@ -111,15 +111,27 @@ NostrProfile *profile_store_parse_event(const gchar *event_json) {
   if (!event_json) return NULL;
 
   /* Parse JSON - looking for content field which is itself JSON */
-  json_object *root = json_tokener_parse(event_json);
-  if (!root) return NULL;
+  JsonParser *parser = json_parser_new();
+  GError *error = NULL;
 
+  if (!json_parser_load_from_data(parser, event_json, -1, &error)) {
+    g_clear_error(&error);
+    g_object_unref(parser);
+    return NULL;
+  }
+
+  JsonNode *root_node = json_parser_get_root(parser);
+  if (!JSON_NODE_HOLDS_OBJECT(root_node)) {
+    g_object_unref(parser);
+    return NULL;
+  }
+
+  JsonObject *root = json_node_get_object(root_node);
   NostrProfile *p = g_new0(NostrProfile, 1);
 
   /* Get pubkey */
-  json_object *pubkey_obj = NULL;
-  if (json_object_object_get_ex(root, "pubkey", &pubkey_obj)) {
-    const gchar *pk = json_object_get_string(pubkey_obj);
+  if (json_object_has_member(root, "pubkey")) {
+    const gchar *pk = json_object_get_string_member(root, "pubkey");
     if (pk) {
       /* Convert hex to npub */
       p->npub = g_strdup(pk); /* For now, store as hex; convert later if needed */
@@ -127,48 +139,48 @@ NostrProfile *profile_store_parse_event(const gchar *event_json) {
   }
 
   /* Get created_at */
-  json_object *created_obj = NULL;
-  if (json_object_object_get_ex(root, "created_at", &created_obj)) {
-    p->created_at = json_object_get_int64(created_obj);
+  if (json_object_has_member(root, "created_at")) {
+    p->created_at = json_object_get_int_member(root, "created_at");
   }
 
   /* Parse content (which is JSON string of metadata) */
-  json_object *content_obj = NULL;
-  if (json_object_object_get_ex(root, "content", &content_obj)) {
-    const gchar *content_str = json_object_get_string(content_obj);
+  if (json_object_has_member(root, "content")) {
+    const gchar *content_str = json_object_get_string_member(root, "content");
     if (content_str && *content_str) {
-      json_object *meta = json_tokener_parse(content_str);
-      if (meta) {
-        json_object *val;
+      JsonParser *meta_parser = json_parser_new();
+      if (json_parser_load_from_data(meta_parser, content_str, -1, NULL)) {
+        JsonNode *meta_node = json_parser_get_root(meta_parser);
+        if (JSON_NODE_HOLDS_OBJECT(meta_node)) {
+          JsonObject *meta = json_node_get_object(meta_node);
 
-        if (json_object_object_get_ex(meta, "name", &val)) {
-          p->name = g_strdup(json_object_get_string(val));
+          if (json_object_has_member(meta, "name")) {
+            p->name = g_strdup(json_object_get_string_member(meta, "name"));
+          }
+          if (json_object_has_member(meta, "about")) {
+            p->about = g_strdup(json_object_get_string_member(meta, "about"));
+          }
+          if (json_object_has_member(meta, "picture")) {
+            p->picture = g_strdup(json_object_get_string_member(meta, "picture"));
+          }
+          if (json_object_has_member(meta, "banner")) {
+            p->banner = g_strdup(json_object_get_string_member(meta, "banner"));
+          }
+          if (json_object_has_member(meta, "nip05")) {
+            p->nip05 = g_strdup(json_object_get_string_member(meta, "nip05"));
+          }
+          if (json_object_has_member(meta, "lud16")) {
+            p->lud16 = g_strdup(json_object_get_string_member(meta, "lud16"));
+          }
+          if (json_object_has_member(meta, "website")) {
+            p->website = g_strdup(json_object_get_string_member(meta, "website"));
+          }
         }
-        if (json_object_object_get_ex(meta, "about", &val)) {
-          p->about = g_strdup(json_object_get_string(val));
-        }
-        if (json_object_object_get_ex(meta, "picture", &val)) {
-          p->picture = g_strdup(json_object_get_string(val));
-        }
-        if (json_object_object_get_ex(meta, "banner", &val)) {
-          p->banner = g_strdup(json_object_get_string(val));
-        }
-        if (json_object_object_get_ex(meta, "nip05", &val)) {
-          p->nip05 = g_strdup(json_object_get_string(val));
-        }
-        if (json_object_object_get_ex(meta, "lud16", &val)) {
-          p->lud16 = g_strdup(json_object_get_string(val));
-        }
-        if (json_object_object_get_ex(meta, "website", &val)) {
-          p->website = g_strdup(json_object_get_string(val));
-        }
-
-        json_object_put(meta);
       }
+      g_object_unref(meta_parser);
     }
   }
 
-  json_object_put(root);
+  g_object_unref(parser);
   return p;
 }
 
@@ -176,43 +188,75 @@ gchar *profile_store_build_event_json(const NostrProfile *profile) {
   if (!profile) return NULL;
 
   /* Build content object */
-  json_object *content = json_object_new_object();
+  JsonBuilder *content_builder = json_builder_new();
+  json_builder_begin_object(content_builder);
 
   if (profile->name && *profile->name) {
-    json_object_object_add(content, "name", json_object_new_string(profile->name));
+    json_builder_set_member_name(content_builder, "name");
+    json_builder_add_string_value(content_builder, profile->name);
   }
   if (profile->about && *profile->about) {
-    json_object_object_add(content, "about", json_object_new_string(profile->about));
+    json_builder_set_member_name(content_builder, "about");
+    json_builder_add_string_value(content_builder, profile->about);
   }
   if (profile->picture && *profile->picture) {
-    json_object_object_add(content, "picture", json_object_new_string(profile->picture));
+    json_builder_set_member_name(content_builder, "picture");
+    json_builder_add_string_value(content_builder, profile->picture);
   }
   if (profile->banner && *profile->banner) {
-    json_object_object_add(content, "banner", json_object_new_string(profile->banner));
+    json_builder_set_member_name(content_builder, "banner");
+    json_builder_add_string_value(content_builder, profile->banner);
   }
   if (profile->nip05 && *profile->nip05) {
-    json_object_object_add(content, "nip05", json_object_new_string(profile->nip05));
+    json_builder_set_member_name(content_builder, "nip05");
+    json_builder_add_string_value(content_builder, profile->nip05);
   }
   if (profile->lud16 && *profile->lud16) {
-    json_object_object_add(content, "lud16", json_object_new_string(profile->lud16));
+    json_builder_set_member_name(content_builder, "lud16");
+    json_builder_add_string_value(content_builder, profile->lud16);
   }
   if (profile->website && *profile->website) {
-    json_object_object_add(content, "website", json_object_new_string(profile->website));
+    json_builder_set_member_name(content_builder, "website");
+    json_builder_add_string_value(content_builder, profile->website);
   }
 
-  const gchar *content_str = json_object_to_json_string(content);
+  json_builder_end_object(content_builder);
+  JsonNode *content_node = json_builder_get_root(content_builder);
+  JsonGenerator *content_gen = json_generator_new();
+  json_generator_set_root(content_gen, content_node);
+  gchar *content_str = json_generator_to_data(content_gen, NULL);
+  g_object_unref(content_gen);
+  json_node_unref(content_node);
+  g_object_unref(content_builder);
 
   /* Build event object */
-  json_object *event = json_object_new_object();
-  json_object_object_add(event, "kind", json_object_new_int(0));
-  json_object_object_add(event, "created_at", json_object_new_int64((int64_t)time(NULL)));
-  json_object_object_add(event, "tags", json_object_new_array());
-  json_object_object_add(event, "content", json_object_new_string(content_str));
+  JsonBuilder *event_builder = json_builder_new();
+  json_builder_begin_object(event_builder);
 
-  gchar *result = g_strdup(json_object_to_json_string(event));
+  json_builder_set_member_name(event_builder, "kind");
+  json_builder_add_int_value(event_builder, 0);
 
-  json_object_put(content);
-  json_object_put(event);
+  json_builder_set_member_name(event_builder, "created_at");
+  json_builder_add_int_value(event_builder, (gint64)time(NULL));
+
+  json_builder_set_member_name(event_builder, "tags");
+  json_builder_begin_array(event_builder);
+  json_builder_end_array(event_builder);
+
+  json_builder_set_member_name(event_builder, "content");
+  json_builder_add_string_value(event_builder, content_str);
+
+  json_builder_end_object(event_builder);
+
+  JsonNode *event_node = json_builder_get_root(event_builder);
+  JsonGenerator *event_gen = json_generator_new();
+  json_generator_set_root(event_gen, event_node);
+  gchar *result = json_generator_to_data(event_gen, NULL);
+
+  g_object_unref(event_gen);
+  json_node_unref(event_node);
+  g_object_unref(event_builder);
+  g_free(content_str);
 
   return result;
 }
@@ -243,41 +287,50 @@ gboolean profile_store_load_cached(ProfileStore *ps, const gchar *npub,
   g_free(path);
 
   /* Parse cached JSON */
-  json_object *root = json_tokener_parse(contents);
+  JsonParser *parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, contents, -1, NULL)) {
+    g_free(contents);
+    g_object_unref(parser);
+    return FALSE;
+  }
   g_free(contents);
 
-  if (!root) return FALSE;
+  JsonNode *root_node = json_parser_get_root(parser);
+  if (!JSON_NODE_HOLDS_OBJECT(root_node)) {
+    g_object_unref(parser);
+    return FALSE;
+  }
 
+  JsonObject *root = json_node_get_object(root_node);
   NostrProfile *p = g_new0(NostrProfile, 1);
   p->npub = g_strdup(npub);
 
-  json_object *val;
-  if (json_object_object_get_ex(root, "name", &val)) {
-    p->name = g_strdup(json_object_get_string(val));
+  if (json_object_has_member(root, "name")) {
+    p->name = g_strdup(json_object_get_string_member(root, "name"));
   }
-  if (json_object_object_get_ex(root, "about", &val)) {
-    p->about = g_strdup(json_object_get_string(val));
+  if (json_object_has_member(root, "about")) {
+    p->about = g_strdup(json_object_get_string_member(root, "about"));
   }
-  if (json_object_object_get_ex(root, "picture", &val)) {
-    p->picture = g_strdup(json_object_get_string(val));
+  if (json_object_has_member(root, "picture")) {
+    p->picture = g_strdup(json_object_get_string_member(root, "picture"));
   }
-  if (json_object_object_get_ex(root, "banner", &val)) {
-    p->banner = g_strdup(json_object_get_string(val));
+  if (json_object_has_member(root, "banner")) {
+    p->banner = g_strdup(json_object_get_string_member(root, "banner"));
   }
-  if (json_object_object_get_ex(root, "nip05", &val)) {
-    p->nip05 = g_strdup(json_object_get_string(val));
+  if (json_object_has_member(root, "nip05")) {
+    p->nip05 = g_strdup(json_object_get_string_member(root, "nip05"));
   }
-  if (json_object_object_get_ex(root, "lud16", &val)) {
-    p->lud16 = g_strdup(json_object_get_string(val));
+  if (json_object_has_member(root, "lud16")) {
+    p->lud16 = g_strdup(json_object_get_string_member(root, "lud16"));
   }
-  if (json_object_object_get_ex(root, "website", &val)) {
-    p->website = g_strdup(json_object_get_string(val));
+  if (json_object_has_member(root, "website")) {
+    p->website = g_strdup(json_object_get_string_member(root, "website"));
   }
-  if (json_object_object_get_ex(root, "created_at", &val)) {
-    p->created_at = json_object_get_int64(val);
+  if (json_object_has_member(root, "created_at")) {
+    p->created_at = json_object_get_int_member(root, "created_at");
   }
 
-  json_object_put(root);
+  g_object_unref(parser);
 
   *out_profile = p;
   return TRUE;
@@ -286,32 +339,51 @@ gboolean profile_store_load_cached(ProfileStore *ps, const gchar *npub,
 void profile_store_save_cached(ProfileStore *ps, const NostrProfile *profile) {
   if (!ps || !profile || !profile->npub) return;
 
-  json_object *root = json_object_new_object();
+  JsonBuilder *builder = json_builder_new();
+  json_builder_begin_object(builder);
 
   if (profile->name) {
-    json_object_object_add(root, "name", json_object_new_string(profile->name));
+    json_builder_set_member_name(builder, "name");
+    json_builder_add_string_value(builder, profile->name);
   }
   if (profile->about) {
-    json_object_object_add(root, "about", json_object_new_string(profile->about));
+    json_builder_set_member_name(builder, "about");
+    json_builder_add_string_value(builder, profile->about);
   }
   if (profile->picture) {
-    json_object_object_add(root, "picture", json_object_new_string(profile->picture));
+    json_builder_set_member_name(builder, "picture");
+    json_builder_add_string_value(builder, profile->picture);
   }
   if (profile->banner) {
-    json_object_object_add(root, "banner", json_object_new_string(profile->banner));
+    json_builder_set_member_name(builder, "banner");
+    json_builder_add_string_value(builder, profile->banner);
   }
   if (profile->nip05) {
-    json_object_object_add(root, "nip05", json_object_new_string(profile->nip05));
+    json_builder_set_member_name(builder, "nip05");
+    json_builder_add_string_value(builder, profile->nip05);
   }
   if (profile->lud16) {
-    json_object_object_add(root, "lud16", json_object_new_string(profile->lud16));
+    json_builder_set_member_name(builder, "lud16");
+    json_builder_add_string_value(builder, profile->lud16);
   }
   if (profile->website) {
-    json_object_object_add(root, "website", json_object_new_string(profile->website));
+    json_builder_set_member_name(builder, "website");
+    json_builder_add_string_value(builder, profile->website);
   }
-  json_object_object_add(root, "created_at", json_object_new_int64(profile->created_at));
+  json_builder_set_member_name(builder, "created_at");
+  json_builder_add_int_value(builder, profile->created_at);
 
-  const gchar *json_str = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PRETTY);
+  json_builder_end_object(builder);
+
+  JsonNode *root = json_builder_get_root(builder);
+  JsonGenerator *gen = json_generator_new();
+  json_generator_set_pretty(gen, TRUE);
+  json_generator_set_root(gen, root);
+  gchar *json_str = json_generator_to_data(gen, NULL);
+
+  g_object_unref(gen);
+  json_node_unref(root);
+  g_object_unref(builder);
 
   /* Build cache file path */
   gchar *safe_npub = g_strdup(profile->npub);
@@ -331,7 +403,7 @@ void profile_store_save_cached(ProfileStore *ps, const NostrProfile *profile) {
   }
 
   g_free(path);
-  json_object_put(root);
+  g_free(json_str);
 }
 
 gboolean profile_store_is_dirty(ProfileStore *ps, const gchar *npub) {

@@ -3,7 +3,7 @@
 #include "../app-resources.h"
 #include "../../profile_store.h"
 
-#include <json.h>
+#include <json-glib/json-glib.h>
 #include <time.h>
 
 struct _SheetProfileEditor {
@@ -36,8 +36,6 @@ static void on_cancel(GtkButton *btn, gpointer user_data) {
 }
 
 static gchar *build_profile_json(SheetProfileEditor *self) {
-  json_object *content = json_object_new_object();
-
   const gchar *name = gtk_editable_get_text(GTK_EDITABLE(self->entry_name));
   const gchar *about = gtk_editable_get_text(GTK_EDITABLE(self->entry_about));
   const gchar *picture = gtk_editable_get_text(GTK_EDITABLE(self->entry_picture));
@@ -46,41 +44,76 @@ static gchar *build_profile_json(SheetProfileEditor *self) {
   const gchar *lud16 = gtk_editable_get_text(GTK_EDITABLE(self->entry_lud16));
   const gchar *website = gtk_editable_get_text(GTK_EDITABLE(self->entry_website));
 
+  /* Build content object */
+  JsonBuilder *content_builder = json_builder_new();
+  json_builder_begin_object(content_builder);
+
   if (name && *name) {
-    json_object_object_add(content, "name", json_object_new_string(name));
+    json_builder_set_member_name(content_builder, "name");
+    json_builder_add_string_value(content_builder, name);
   }
   if (about && *about) {
-    json_object_object_add(content, "about", json_object_new_string(about));
+    json_builder_set_member_name(content_builder, "about");
+    json_builder_add_string_value(content_builder, about);
   }
   if (picture && *picture) {
-    json_object_object_add(content, "picture", json_object_new_string(picture));
+    json_builder_set_member_name(content_builder, "picture");
+    json_builder_add_string_value(content_builder, picture);
   }
   if (banner && *banner) {
-    json_object_object_add(content, "banner", json_object_new_string(banner));
+    json_builder_set_member_name(content_builder, "banner");
+    json_builder_add_string_value(content_builder, banner);
   }
   if (nip05 && *nip05) {
-    json_object_object_add(content, "nip05", json_object_new_string(nip05));
+    json_builder_set_member_name(content_builder, "nip05");
+    json_builder_add_string_value(content_builder, nip05);
   }
   if (lud16 && *lud16) {
-    json_object_object_add(content, "lud16", json_object_new_string(lud16));
+    json_builder_set_member_name(content_builder, "lud16");
+    json_builder_add_string_value(content_builder, lud16);
   }
   if (website && *website) {
-    json_object_object_add(content, "website", json_object_new_string(website));
+    json_builder_set_member_name(content_builder, "website");
+    json_builder_add_string_value(content_builder, website);
   }
 
-  const gchar *content_str = json_object_to_json_string(content);
+  json_builder_end_object(content_builder);
+  JsonNode *content_node = json_builder_get_root(content_builder);
+  JsonGenerator *content_gen = json_generator_new();
+  json_generator_set_root(content_gen, content_node);
+  gchar *content_str = json_generator_to_data(content_gen, NULL);
+  g_object_unref(content_gen);
+  json_node_unref(content_node);
+  g_object_unref(content_builder);
 
   /* Build event */
-  json_object *event = json_object_new_object();
-  json_object_object_add(event, "kind", json_object_new_int(0));
-  json_object_object_add(event, "created_at", json_object_new_int64((int64_t)time(NULL)));
-  json_object_object_add(event, "tags", json_object_new_array());
-  json_object_object_add(event, "content", json_object_new_string(content_str));
+  JsonBuilder *event_builder = json_builder_new();
+  json_builder_begin_object(event_builder);
 
-  gchar *result = g_strdup(json_object_to_json_string(event));
+  json_builder_set_member_name(event_builder, "kind");
+  json_builder_add_int_value(event_builder, 0);
 
-  json_object_put(content);
-  json_object_put(event);
+  json_builder_set_member_name(event_builder, "created_at");
+  json_builder_add_int_value(event_builder, (gint64)time(NULL));
+
+  json_builder_set_member_name(event_builder, "tags");
+  json_builder_begin_array(event_builder);
+  json_builder_end_array(event_builder);
+
+  json_builder_set_member_name(event_builder, "content");
+  json_builder_add_string_value(event_builder, content_str);
+
+  json_builder_end_object(event_builder);
+
+  JsonNode *event_node = json_builder_get_root(event_builder);
+  JsonGenerator *event_gen = json_generator_new();
+  json_generator_set_root(event_gen, event_node);
+  gchar *result = json_generator_to_data(event_gen, NULL);
+
+  g_object_unref(event_gen);
+  json_node_unref(event_node);
+  g_object_unref(event_builder);
+  g_free(content_str);
 
   return result;
 }

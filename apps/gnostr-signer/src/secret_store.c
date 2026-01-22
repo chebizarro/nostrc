@@ -398,7 +398,7 @@ SecretStoreResult secret_store_generate(const gchar *label,
   *out_npub = NULL;
 
   /* Generate new keypair using libnostr */
-  gchar *sk_hex = nostr_key_new();
+  gchar *sk_hex = nostr_key_generate_private();
   if (!sk_hex) {
     return SECRET_STORE_ERR_BACKEND;
   }
