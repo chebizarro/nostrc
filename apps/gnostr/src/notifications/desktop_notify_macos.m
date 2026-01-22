@@ -70,9 +70,12 @@ void gnostr_desktop_notify_handle_action(GnostrDesktopNotify *self,
                           UNNotificationPresentationOptionSound |
                           UNNotificationPresentationOptionBadge);
     } else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         completionHandler(UNNotificationPresentationOptionAlert |
                           UNNotificationPresentationOptionSound |
                           UNNotificationPresentationOptionBadge);
+#pragma clang diagnostic pop
     }
 }
 
