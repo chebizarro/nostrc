@@ -7,25 +7,24 @@
     <property name="default-width">700</property>
     <property name="default-height">500</property>
     <property name="resizable">true</property>
+    <!-- Header bar as titlebar for proper CSD on GNOME -->
+    <child type="titlebar">
+      <object class="GtkHeaderBar">
+        <property name="show-title-buttons">true</property>
+        <child type="title">
+          <object class="GtkLabel">
+            <property name="label">Settings</property>
+            <style>
+              <class name="title"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
     <child>
       <object class="GtkBox">
         <property name="orientation">vertical</property>
         <property name="spacing">0</property>
-
-        <!-- Header bar -->
-        <child>
-          <object class="GtkHeaderBar">
-            <property name="show-title-buttons">true</property>
-            <child type="title">
-              <object class="GtkLabel">
-                <property name="label">Settings</property>
-                <style>
-                  <class name="title"/>
-                </style>
-              </object>
-            </child>
-          </object>
-        </child>
 
         <!-- Main content with sidebar -->
         <child>
@@ -77,6 +76,129 @@
                             <property name="margin-top">24</property>
                             <property name="margin-bottom">24</property>
 
+                            <!-- System Settings (nostrc-61s.6: Background mode) -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">8</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">System</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkListBox">
+                                    <property name="selection-mode">none</property>
+                                    <style>
+                                      <class name="boxed-list"/>
+                                    </style>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
+                                                <property name="hexpand">true</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Run in Background</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Keep app running when window is closed</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSwitch" id="w_background_mode">
+                                                <property name="valign">center</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+
+                <!-- Advanced Settings Page (Technical/Developer options) -->
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="name">advanced</property>
+                    <property name="title">Advanced</property>
+                    <property name="icon-name">applications-engineering-symbolic</property>
+                    <property name="child">
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">16</property>
+                            <property name="margin-start">24</property>
+                            <property name="margin-end">24</property>
+                            <property name="margin-top">24</property>
+                            <property name="margin-bottom">24</property>
+
+                            <!-- Warning Banner -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">8</property>
+                                <style>
+                                  <class name="warning"/>
+                                  <class name="frame"/>
+                                </style>
+                                <child>
+                                  <object class="GtkImage">
+                                    <property name="icon-name">dialog-warning-symbolic</property>
+                                    <property name="margin-start">12</property>
+                                    <property name="margin-top">8</property>
+                                    <property name="margin-bottom">8</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">These settings are for advanced users. Changing them may affect app performance.</property>
+                                    <property name="wrap">true</property>
+                                    <property name="xalign">0</property>
+                                    <property name="margin-start">4</property>
+                                    <property name="margin-end">12</property>
+                                    <property name="margin-top">8</property>
+                                    <property name="margin-bottom">8</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
                             <!-- Timeline Settings -->
                             <child>
                               <object class="GtkBox">
@@ -109,10 +231,25 @@
                                             <property name="margin-top">8</property>
                                             <property name="margin-bottom">8</property>
                                             <child>
-                                              <object class="GtkLabel">
-                                                <property name="label">Default Limit</property>
+                                              <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
                                                 <property name="hexpand">true</property>
-                                                <property name="xalign">0</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Default Limit</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Maximum events to request per query</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
                                               </object>
                                             </child>
                                             <child>
@@ -142,10 +279,25 @@
                                             <property name="margin-top">8</property>
                                             <property name="margin-bottom">8</property>
                                             <child>
-                                              <object class="GtkLabel">
-                                                <property name="label">Batch Max</property>
+                                              <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
                                                 <property name="hexpand">true</property>
-                                                <property name="xalign">0</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Batch Max</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Events to process per batch</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
                                               </object>
                                             </child>
                                             <child>
@@ -175,10 +327,25 @@
                                             <property name="margin-top">8</property>
                                             <property name="margin-bottom">8</property>
                                             <child>
-                                              <object class="GtkLabel">
-                                                <property name="label">Post Interval (ms)</property>
+                                              <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
                                                 <property name="hexpand">true</property>
-                                                <property name="xalign">0</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Post Interval (ms)</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Delay between processing batches</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
                                               </object>
                                             </child>
                                             <child>
@@ -233,10 +400,25 @@
                                             <property name="margin-top">8</property>
                                             <property name="margin-bottom">8</property>
                                             <child>
-                                              <object class="GtkLabel">
-                                                <property name="label">EOSE Quiet (ms)</property>
+                                              <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
                                                 <property name="hexpand">true</property>
-                                                <property name="xalign">0</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">EOSE Quiet (ms)</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Wait time after End-Of-Stored-Events</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
                                               </object>
                                             </child>
                                             <child>
@@ -266,10 +448,25 @@
                                             <property name="margin-top">8</property>
                                             <property name="margin-bottom">8</property>
                                             <child>
-                                              <object class="GtkLabel">
-                                                <property name="label">Hard Timeout (ms)</property>
+                                              <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
                                                 <property name="hexpand">true</property>
-                                                <property name="xalign">0</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Hard Timeout (ms)</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Maximum wait time for relay responses</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
                                               </object>
                                             </child>
                                             <child>
@@ -341,10 +538,25 @@
                                             <property name="margin-top">8</property>
                                             <property name="margin-bottom">8</property>
                                             <child>
-                                              <object class="GtkLabel">
-                                                <property name="label">Since Seconds</property>
+                                              <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
                                                 <property name="hexpand">true</property>
-                                                <property name="xalign">0</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Since Seconds</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Time window size for event filtering</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
                                               </object>
                                             </child>
                                             <child>
@@ -374,10 +586,25 @@
                                             <property name="margin-top">8</property>
                                             <property name="margin-bottom">8</property>
                                             <child>
-                                              <object class="GtkLabel">
-                                                <property name="label">Backfill interval (sec, 0=off)</property>
+                                              <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
                                                 <property name="hexpand">true</property>
-                                                <property name="xalign">0</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Backfill Interval (sec)</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Auto-fetch older events interval (0=off)</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
                                               </object>
                                             </child>
                                             <child>
@@ -389,73 +616,6 @@
                                                     <property name="step-increment">1</property>
                                                   </object>
                                                 </property>
-                                              </object>
-                                            </child>
-                                          </object>
-                                        </child>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-
-                            <!-- System Settings (nostrc-61s.6: Background mode) -->
-                            <child>
-                              <object class="GtkBox">
-                                <property name="orientation">vertical</property>
-                                <property name="spacing">8</property>
-                                <child>
-                                  <object class="GtkLabel">
-                                    <property name="label">System</property>
-                                    <property name="xalign">0</property>
-                                    <style>
-                                      <class name="heading"/>
-                                    </style>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkListBox">
-                                    <property name="selection-mode">none</property>
-                                    <style>
-                                      <class name="boxed-list"/>
-                                    </style>
-                                    <child>
-                                      <object class="GtkListBoxRow">
-                                        <property name="activatable">false</property>
-                                        <child>
-                                          <object class="GtkBox">
-                                            <property name="orientation">horizontal</property>
-                                            <property name="spacing">12</property>
-                                            <property name="margin-start">12</property>
-                                            <property name="margin-end">12</property>
-                                            <property name="margin-top">8</property>
-                                            <property name="margin-bottom">8</property>
-                                            <child>
-                                              <object class="GtkBox">
-                                                <property name="orientation">vertical</property>
-                                                <property name="hexpand">true</property>
-                                                <child>
-                                                  <object class="GtkLabel">
-                                                    <property name="label">Run in Background</property>
-                                                    <property name="xalign">0</property>
-                                                  </object>
-                                                </child>
-                                                <child>
-                                                  <object class="GtkLabel">
-                                                    <property name="label">Keep app running when window is closed</property>
-                                                    <property name="xalign">0</property>
-                                                    <style>
-                                                      <class name="dim-label"/>
-                                                      <class name="caption"/>
-                                                    </style>
-                                                  </object>
-                                                </child>
-                                              </object>
-                                            </child>
-                                            <child>
-                                              <object class="GtkSwitch" id="w_background_mode">
-                                                <property name="valign">center</property>
                                               </object>
                                             </child>
                                           </object>
