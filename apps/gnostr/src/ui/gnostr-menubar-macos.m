@@ -19,10 +19,14 @@
 @property (nonatomic, assign) GtkWindow *window;
 @property (nonatomic, strong) NSStatusItem *statusItem;
 @property (nonatomic, assign) int unreadCount;
+@property (nonatomic, assign) int relayConnectedCount;
+@property (nonatomic, assign) int relayTotalCount;
+@property (nonatomic, assign) GnostrRelayConnectionState relayState;
 
 - (instancetype)initWithApp:(GtkApplication *)app;
 - (void)setWindow:(GtkWindow *)window;
 - (void)setUnreadCount:(int)count;
+- (void)setRelayStatusConnected:(int)connected total:(int)total state:(GnostrRelayConnectionState)state;
 - (void)cleanup;
 
 /* Menu actions */
@@ -117,6 +121,16 @@
 
     [menu addItem:[NSMenuItem separatorItem]];
 
+    /* Relay Status (informational, not clickable) */
+    NSMenuItem *relayStatusItem = [[NSMenuItem alloc] initWithTitle:@"Relays: Disconnected"
+                                                             action:nil
+                                                      keyEquivalent:@""];
+    relayStatusItem.tag = 3; /* Tag for updating relay status */
+    relayStatusItem.enabled = NO;
+    [menu addItem:relayStatusItem];
+
+    [menu addItem:[NSMenuItem separatorItem]];
+
     /* New Note */
     NSMenuItem *newNoteItem = [[NSMenuItem alloc] initWithTitle:@"New Note"
                                                          action:@selector(newNote:)
@@ -168,6 +182,13 @@
     [self updateDMsLabel];
 }
 
+- (void)setRelayStatusConnected:(int)connected total:(int)total state:(GnostrRelayConnectionState)state {
+    _relayConnectedCount = connected;
+    _relayTotalCount = total;
+    _relayState = state;
+    [self updateRelayStatusLabel];
+}
+
 - (void)updateShowHideLabel {
     if (!_statusItem.menu) return;
 
@@ -188,6 +209,35 @@
         } else {
             item.title = @"Check DMs";
         }
+    }
+}
+
+- (void)updateRelayStatusLabel {
+    if (!_statusItem.menu) return;
+
+    NSMenuItem *item = [_statusItem.menu itemWithTag:3];
+    if (item) {
+        NSString *label = nil;
+        switch (_relayState) {
+            case GNOSTR_RELAY_STATE_CONNECTED:
+                label = [NSString stringWithFormat:@"Relays: %d/%d connected",
+                         _relayConnectedCount, _relayTotalCount];
+                break;
+            case GNOSTR_RELAY_STATE_CONNECTING:
+                label = [NSString stringWithFormat:@"Relays: Connecting (%d/%d)",
+                         _relayConnectedCount, _relayTotalCount];
+                break;
+            case GNOSTR_RELAY_STATE_DISCONNECTED:
+            default:
+                if (_relayTotalCount > 0) {
+                    label = [NSString stringWithFormat:@"Relays: Disconnected (0/%d)",
+                             _relayTotalCount];
+                } else {
+                    label = @"Relays: Not configured";
+                }
+                break;
+        }
+        item.title = label;
     }
 }
 
@@ -307,7 +357,11 @@
             gtk_widget_set_visible(GTK_WIDGET(self->_window), FALSE);
         } else {
             gtk_widget_set_visible(GTK_WIDGET(self->_window), TRUE);
+            /* Present and activate application for proper focus */
             gtk_window_present(self->_window);
+            if (self->_app) {
+                g_application_activate(G_APPLICATION(self->_app));
+            }
         }
         [self updateShowHideLabel];
     });
@@ -323,6 +377,7 @@
             gtk_widget_set_visible(GTK_WIDGET(self->_window), TRUE);
         }
         gtk_window_present(self->_window);
+        if (self->_app) g_application_activate(G_APPLICATION(self->_app));
 
         /* Activate the app action for new note if it exists */
         if (self->_app) {
@@ -351,6 +406,7 @@
             gtk_widget_set_visible(GTK_WIDGET(self->_window), TRUE);
         }
         gtk_window_present(self->_window);
+        if (self->_app) g_application_activate(G_APPLICATION(self->_app));
 
         /* Activate the DM view action if it exists */
         if (self->_app) {
@@ -378,6 +434,7 @@
             gtk_widget_set_visible(GTK_WIDGET(self->_window), TRUE);
         }
         gtk_window_present(self->_window);
+        if (self->_app) g_application_activate(G_APPLICATION(self->_app));
 
         /* Activate the preferences action */
         if (self->_app) {
@@ -512,6 +569,22 @@ gnostr_tray_icon_set_unread_count(GnostrTrayIcon *self, int count)
         @autoreleasepool {
             GnostrMenuBarHelper *helper = (__bridge GnostrMenuBarHelper *)self->helper;
             [helper setUnreadCount:count];
+        }
+    }
+}
+
+void
+gnostr_tray_icon_set_relay_status(GnostrTrayIcon *self,
+                                   int connected_count,
+                                   int total_count,
+                                   GnostrRelayConnectionState state)
+{
+    g_return_if_fail(GNOSTR_IS_TRAY_ICON(self));
+
+    if (self->helper) {
+        @autoreleasepool {
+            GnostrMenuBarHelper *helper = (__bridge GnostrMenuBarHelper *)self->helper;
+            [helper setRelayStatusConnected:connected_count total:total_count state:state];
         }
     }
 }

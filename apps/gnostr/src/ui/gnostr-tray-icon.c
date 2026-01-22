@@ -94,7 +94,13 @@ struct _GnostrTrayIcon {
   DbusmenuServer *menu_server;
   DbusmenuMenuitem *root_menu;
   DbusmenuMenuitem *item_show_hide;
+  DbusmenuMenuitem *item_relay_status;
 #endif
+
+  /* Relay status */
+  int relay_connected_count;
+  int relay_total_count;
+  GnostrRelayConnectionState relay_state;
 
   GDBusNodeInfo *sni_introspection_data;
   gboolean registered;
@@ -109,6 +115,7 @@ static void setup_dbus_interface(GnostrTrayIcon *self);
 static void on_menu_show_hide(DbusmenuMenuitem *item, guint timestamp, gpointer user_data);
 static void on_menu_quit(DbusmenuMenuitem *item, guint timestamp, gpointer user_data);
 static void update_show_hide_label(GnostrTrayIcon *self);
+static void update_relay_status_label(GnostrTrayIcon *self);
 #endif
 
 /* D-Bus method call handler */
@@ -135,7 +142,11 @@ handle_method_call(GDBusConnection       *connection,
         gtk_widget_set_visible(GTK_WIDGET(self->window), FALSE);
       } else {
         gtk_widget_set_visible(GTK_WIDGET(self->window), TRUE);
+        /* Present and activate application for proper focus */
         gtk_window_present(self->window);
+        if (self->app) {
+          g_application_activate(G_APPLICATION(self->app));
+        }
       }
 #ifdef HAVE_DBUSMENU
       update_show_hide_label(self);
@@ -192,9 +203,26 @@ handle_get_property(GDBusConnection  *connection,
     /* Empty pixmap array - we use named icons */
 
     gchar *tooltip_title = self->title ? self->title : "GNostr";
-    gchar *tooltip_desc = "";
+    gchar *tooltip_desc = NULL;
+    gboolean need_free = FALSE;
+
+    /* Build tooltip description with unread count and relay status */
+    GString *desc = g_string_new(NULL);
     if (self->unread_count > 0) {
-      tooltip_desc = g_strdup_printf("%d unread", self->unread_count);
+      g_string_append_printf(desc, "%d unread", self->unread_count);
+    }
+    if (self->relay_total_count > 0) {
+      if (desc->len > 0) g_string_append(desc, " | ");
+      g_string_append_printf(desc, "Relays: %d/%d",
+                             self->relay_connected_count,
+                             self->relay_total_count);
+    }
+    if (desc->len > 0) {
+      tooltip_desc = g_string_free(desc, FALSE);
+      need_free = TRUE;
+    } else {
+      g_string_free(desc, TRUE);
+      tooltip_desc = "";
     }
 
     GVariant *result = g_variant_new("(sa(iiay)ss)",
@@ -203,8 +231,8 @@ handle_get_property(GDBusConnection  *connection,
                                      tooltip_title,
                                      tooltip_desc);
 
-    if (self->unread_count > 0) {
-      g_free((gchar*)tooltip_desc);
+    if (need_free) {
+      g_free(tooltip_desc);
     }
 
     return result;
@@ -467,12 +495,29 @@ gnostr_tray_icon_new(GtkApplication *app)
   g_signal_connect(self->item_show_hide, DBUSMENU_MENUITEM_SIGNAL_ITEM_ACTIVATED,
                    G_CALLBACK(on_menu_show_hide), self);
 
-  /* Separator */
-  DbusmenuMenuitem *separator = dbusmenu_menuitem_new();
-  dbusmenu_menuitem_property_set(separator,
+  /* Separator before relay status */
+  DbusmenuMenuitem *separator1 = dbusmenu_menuitem_new();
+  dbusmenu_menuitem_property_set(separator1,
                                  DBUSMENU_MENUITEM_PROP_TYPE,
                                  DBUSMENU_CLIENT_TYPES_SEPARATOR);
-  dbusmenu_menuitem_child_append(self->root_menu, separator);
+  dbusmenu_menuitem_child_append(self->root_menu, separator1);
+
+  /* Relay status menu item (not clickable, just informational) */
+  self->item_relay_status = dbusmenu_menuitem_new();
+  dbusmenu_menuitem_property_set(self->item_relay_status,
+                                 DBUSMENU_MENUITEM_PROP_LABEL,
+                                 "Relays: Disconnected");
+  dbusmenu_menuitem_property_set_bool(self->item_relay_status,
+                                      DBUSMENU_MENUITEM_PROP_ENABLED,
+                                      FALSE);
+  dbusmenu_menuitem_child_append(self->root_menu, self->item_relay_status);
+
+  /* Separator before Quit */
+  DbusmenuMenuitem *separator2 = dbusmenu_menuitem_new();
+  dbusmenu_menuitem_property_set(separator2,
+                                 DBUSMENU_MENUITEM_PROP_TYPE,
+                                 DBUSMENU_CLIENT_TYPES_SEPARATOR);
+  dbusmenu_menuitem_child_append(self->root_menu, separator2);
 
   /* Quit menu item */
   DbusmenuMenuitem *item_quit = dbusmenu_menuitem_new();
@@ -542,6 +587,41 @@ update_show_hide_label(GnostrTrayIcon *self)
 }
 
 static void
+update_relay_status_label(GnostrTrayIcon *self)
+{
+  if (!self->item_relay_status)
+    return;
+
+  gchar *label = NULL;
+  switch (self->relay_state) {
+    case GNOSTR_RELAY_STATE_CONNECTED:
+      label = g_strdup_printf("Relays: %d/%d connected",
+                              self->relay_connected_count,
+                              self->relay_total_count);
+      break;
+    case GNOSTR_RELAY_STATE_CONNECTING:
+      label = g_strdup_printf("Relays: Connecting (%d/%d)",
+                              self->relay_connected_count,
+                              self->relay_total_count);
+      break;
+    case GNOSTR_RELAY_STATE_DISCONNECTED:
+    default:
+      if (self->relay_total_count > 0) {
+        label = g_strdup_printf("Relays: Disconnected (0/%d)",
+                                self->relay_total_count);
+      } else {
+        label = g_strdup("Relays: Not configured");
+      }
+      break;
+  }
+
+  dbusmenu_menuitem_property_set(self->item_relay_status,
+                                 DBUSMENU_MENUITEM_PROP_LABEL,
+                                 label);
+  g_free(label);
+}
+
+static void
 on_menu_show_hide(DbusmenuMenuitem *item, guint timestamp, gpointer user_data)
 {
   (void)item;
@@ -555,7 +635,11 @@ on_menu_show_hide(DbusmenuMenuitem *item, guint timestamp, gpointer user_data)
     gtk_widget_set_visible(GTK_WIDGET(self->window), FALSE);
   } else {
     gtk_widget_set_visible(GTK_WIDGET(self->window), TRUE);
+    /* Present and activate application for proper focus */
     gtk_window_present(self->window);
+    if (self->app) {
+      g_application_activate(G_APPLICATION(self->app));
+    }
   }
 
   update_show_hide_label(self);
@@ -611,6 +695,26 @@ gnostr_tray_icon_set_unread_count(GnostrTrayIcon *self, int count)
     emit_signal(self, "NewTitle", NULL);
     emit_signal(self, "NewToolTip", NULL);
   }
+}
+
+void
+gnostr_tray_icon_set_relay_status(GnostrTrayIcon *self,
+                                   int connected_count,
+                                   int total_count,
+                                   GnostrRelayConnectionState state)
+{
+  g_return_if_fail(GNOSTR_IS_TRAY_ICON(self));
+
+  self->relay_connected_count = connected_count;
+  self->relay_total_count = total_count;
+  self->relay_state = state;
+
+#ifdef HAVE_DBUSMENU
+  update_relay_status_label(self);
+#endif
+
+  /* Update tooltip to include relay status */
+  emit_signal(self, "NewToolTip", NULL);
 }
 
 #endif /* !__APPLE__ */
