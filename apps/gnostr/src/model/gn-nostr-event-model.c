@@ -638,7 +638,8 @@ static void begin_batch(GnNostrEventModel *self) {
 }
 
 /* End batch mode and emit a single comprehensive items-changed signal.
- * Uses idle scheduling to prevent re-entrancy issues. */
+ * Since items are inserted at various sorted positions during batch,
+ * we emit a "full refresh" signal telling GTK the entire model changed. */
 static void end_batch(GnNostrEventModel *self) {
   if (!self || !self->in_batch) return;
   self->in_batch = FALSE;
@@ -647,14 +648,9 @@ static void end_batch(GnNostrEventModel *self) {
   guint old_len = self->batch_start_len;
 
   if (new_len != old_len) {
-    /* Schedule a single emission covering all changes */
-    if (new_len > old_len) {
-      /* Items were added */
-      schedule_items_changed(self, 0, new_len - old_len);
-    } else {
-      /* Items were removed - emit directly since removal is less problematic */
-      g_list_model_items_changed(G_LIST_MODEL(self), new_len, old_len - new_len, 0);
-    }
+    /* Emit full model refresh: "old_len items at position 0 replaced with new_len items"
+     * This is the only correct signal when items were inserted at various positions. */
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
   }
 }
 
