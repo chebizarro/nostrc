@@ -10,38 +10,6 @@
           <class name="profile-pane"/>
         </style>
 
-        <!-- Header with close button -->
-        <child>
-          <object class="GtkBox">
-            <property name="orientation">horizontal</property>
-            <property name="spacing">8</property>
-            <property name="margin-start">12</property>
-            <property name="margin-end">12</property>
-            <property name="margin-top">12</property>
-            <property name="margin-bottom">8</property>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Profile</property>
-                <property name="hexpand">true</property>
-                <property name="xalign">0.0</property>
-                <style>
-                  <class name="title-4"/>
-                </style>
-              </object>
-            </child>
-            <child>
-              <object class="GtkButton" id="btn_close">
-                <property name="icon-name">window-close-symbolic</property>
-                <property name="tooltip-text">Close profile pane</property>
-                <style>
-                  <class name="flat"/>
-                  <class name="circular"/>
-                </style>
-              </object>
-            </child>
-          </object>
-        </child>
-
         <!-- Banner with extended height for avatar overlap area -->
         <child>
           <object class="GtkOverlay">
@@ -141,6 +109,21 @@
                     </child>
                   </object>
                 </child>
+              </object>
+            </child>
+            <!-- Close button overlay in top-right corner of banner -->
+            <child type="overlay">
+              <object class="GtkButton" id="btn_close">
+                <property name="icon-name">window-close-symbolic</property>
+                <property name="tooltip-text">Close profile pane</property>
+                <property name="halign">end</property>
+                <property name="valign">start</property>
+                <property name="margin-top">8</property>
+                <property name="margin-end">8</property>
+                <style>
+                  <class name="circular"/>
+                  <class name="profile-close-button"/>
+                </style>
               </object>
             </child>
           </object>
