@@ -229,18 +229,6 @@
 
                 <child>
                   <object class="GtkStackPage">
-                    <property name="title">Compose</property>
-                    <property name="child">
-                      <object class="GnostrComposer" id="composer">
-                        <property name="hexpand">true</property>
-                        <property name="vexpand">true</property>
-                      </object>
-                    </property>
-                  </object>
-                </child>
-
-                <child>
-                  <object class="GtkStackPage">
                     <property name="title">Discover</property>
                     <property name="child">
                       <object class="GnostrPageDiscover" id="page_discover">
@@ -265,6 +253,14 @@
                   </object>
                 </child>
 
+              </object>
+            </child>
+
+            <!-- Composer at bottom of window (hidden when logged out) -->
+            <child>
+              <object class="GnostrComposer" id="composer">
+                <property name="hexpand">true</property>
+                <property name="visible">false</property>
               </object>
             </child>
           </object>

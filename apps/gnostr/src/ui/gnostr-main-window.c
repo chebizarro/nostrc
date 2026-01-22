@@ -108,6 +108,9 @@ static void on_avatar_pair_remote_clicked(GtkButton *btn, gpointer user_data);
 static void on_avatar_sign_out_clicked(GtkButton *btn, gpointer user_data);
 static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey_hex, gpointer user_data);
 static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer user_data);
+/* Forward declarations for discover page signal handlers */
+static void on_discover_open_profile(GnostrPageDiscover *page, const char *pubkey_hex, gpointer user_data);
+static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, gpointer user_data);
 /* Forward declaration for ESC key handler to close profile sidebar */
 static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data);
 /* Forward declaration for close-request handler (nostrc-61s.6: background mode) */
@@ -288,6 +291,7 @@ struct _GnostrMainWindow {
   GtkWidget *composer;
   GtkWidget *dm_inbox;
   GtkWidget *notifications_view;
+  GtkWidget *page_discover;
   GtkWidget *btn_refresh;
   GtkWidget *toast_revealer;
   GtkWidget *toast_label;
@@ -2438,6 +2442,44 @@ static void update_login_ui_state(GnostrMainWindow *self) {
     gtk_widget_set_visible(self->btn_sign_out, signed_in);
   }
 
+  /* nostrc-x3m: Disable Notifications and Messages tabs when logged out.
+   * These features require authentication:
+   * - Notifications: requires pubkey to fetch mentions
+   * - Messages/DM: requires keys for NIP-17 encryption */
+  if (self->notifications_view && GTK_IS_WIDGET(self->notifications_view)) {
+    gtk_widget_set_sensitive(self->notifications_view, signed_in);
+    gtk_widget_set_tooltip_text(self->notifications_view,
+                                signed_in ? NULL : "Log in to view notifications");
+  }
+  if (self->dm_inbox && GTK_IS_WIDGET(self->dm_inbox)) {
+    gtk_widget_set_sensitive(self->dm_inbox, signed_in);
+    gtk_widget_set_tooltip_text(self->dm_inbox,
+                                signed_in ? NULL : "Log in to send and receive messages");
+  }
+
+  /* If user just logged out and is currently on a disabled tab, switch to Timeline */
+  if (!signed_in && self->stack && GTK_IS_STACK(self->stack)) {
+    GtkWidget *visible_child = gtk_stack_get_visible_child(GTK_STACK(self->stack));
+    if (visible_child == self->notifications_view || visible_child == self->dm_inbox) {
+      /* Switch to Timeline tab (first child) */
+      GtkWidget *timeline_child = gtk_stack_get_child_by_name(GTK_STACK(self->stack), "Timeline");
+      if (!timeline_child) {
+        /* Fallback: use the timeline widget directly */
+        timeline_child = gtk_widget_get_parent(self->timeline);
+        if (timeline_child && GTK_IS_OVERLAY(timeline_child)) {
+          gtk_stack_set_visible_child(GTK_STACK(self->stack), timeline_child);
+        }
+      } else {
+        gtk_stack_set_visible_child(GTK_STACK(self->stack), timeline_child);
+      }
+    }
+  }
+
+  /* nostrc-ct3: Show/hide composer based on login state */
+  if (self->composer && GTK_IS_WIDGET(self->composer)) {
+    gtk_widget_set_visible(self->composer, signed_in);
+  }
+
   g_free(npub);
 }
 
@@ -2515,6 +2557,33 @@ static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer us
 
   g_debug("[UI] Closing profile pane");
   gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), FALSE);
+}
+
+/* Discover page signal handlers (nostrc-dr3) */
+static void on_discover_open_profile(GnostrPageDiscover *page, const char *pubkey_hex, gpointer user_data) {
+  (void)page;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
+
+  g_debug("[DISCOVER] Open profile requested: %.*s...", 8, pubkey_hex);
+  /* Reuse the note card open profile logic */
+  on_note_card_open_profile(NULL, pubkey_hex, self);
+}
+
+static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !GTK_IS_STACK(stack)) return;
+
+  GtkWidget *visible_child = gtk_stack_get_visible_child(stack);
+
+  /* When Discover page becomes visible, load profiles */
+  if (visible_child == self->page_discover) {
+    g_debug("[DISCOVER] Page became visible, loading profiles");
+    if (GNOSTR_IS_PAGE_DISCOVER(self->page_discover)) {
+      gnostr_page_discover_load_profiles(GNOSTR_PAGE_DISCOVER(self->page_discover));
+    }
+  }
 }
 
 /* nostrc-61s.6: Handle window close-request for background mode */
@@ -3373,6 +3442,18 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                      G_CALLBACK(on_thread_view_open_profile), self);
     g_debug("connected thread view signals");
   }
+  /* Connect discover page signals (nostrc-dr3) */
+  if (self->page_discover && GNOSTR_IS_PAGE_DISCOVER(self->page_discover)) {
+    g_signal_connect(self->page_discover, "open-profile",
+                     G_CALLBACK(on_discover_open_profile), self);
+    g_debug("connected discover page open-profile signal");
+  }
+  /* Connect stack visible-child-name signal to load discover profiles on demand */
+  if (self->stack && GTK_IS_STACK(self->stack)) {
+    g_signal_connect(self->stack, "notify::visible-child",
+                     G_CALLBACK(on_stack_visible_child_changed), self);
+    g_debug("connected stack visible-child signal for discover page");
+  }
   /* Add key event controller for ESC to close profile sidebar */
   {
     GtkEventController *key_controller = gtk_event_controller_key_new();
@@ -3491,6 +3572,17 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
       gtk_widget_set_sensitive(self->btn_pair_remote, !signed_in);
     if (self->btn_sign_out && GTK_IS_WIDGET(self->btn_sign_out))
       gtk_widget_set_sensitive(self->btn_sign_out, signed_in);
+    /* nostrc-x3m: Initialize Notifications and Messages tabs sensitivity */
+    if (self->notifications_view && GTK_IS_WIDGET(self->notifications_view)) {
+      gtk_widget_set_sensitive(self->notifications_view, signed_in);
+      gtk_widget_set_tooltip_text(self->notifications_view,
+                                  signed_in ? NULL : "Log in to view notifications");
+    }
+    if (self->dm_inbox && GTK_IS_WIDGET(self->dm_inbox)) {
+      gtk_widget_set_sensitive(self->dm_inbox, signed_in);
+      gtk_widget_set_tooltip_text(self->dm_inbox,
+                                  signed_in ? NULL : "Log in to send and receive messages");
+    }
   }
 }
 
@@ -3748,6 +3840,7 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, composer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, dm_inbox);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, notifications_view);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, page_discover);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_refresh);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_revealer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_label);
