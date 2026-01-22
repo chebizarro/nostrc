@@ -931,6 +931,7 @@ void gnostr_get_write_relay_urls_into(GPtrArray *out) {
 
 /* --- NIP-65 Publishing Implementation --- */
 
+#ifndef GNOSTR_RELAY_TEST_ONLY
 #include "../ipc/signer_ipc.h"
 #include "nostr-relay.h"
 #include <time.h>
@@ -1211,6 +1212,8 @@ void gnostr_nip65_apply_to_local_config(GPtrArray *nip65_relays) {
   /* Emit relay change notification for live switching */
   gnostr_relay_change_emit();
 }
+
+#endif /* GNOSTR_RELAY_TEST_ONLY */
 
 /* --- Live Relay Switching Implementation (nostrc-36y.4) --- */
 

@@ -277,7 +277,9 @@ if (BUILD_TESTING)
   pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0)
   add_executable(gnostr-test-relays tests/test_relays.c)
   target_compile_features(gnostr-test-relays PRIVATE c_std_11)
-  target_include_directories(gnostr-test-relays PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_include_directories(gnostr-test-relays PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/libnostr/include)
   target_sources(gnostr-test-relays PRIVATE src/util/relays.c)
   # Disable NIP-65 async functionality for this test (avoids nostr_simple_pool dependency)
   target_compile_definitions(gnostr-test-relays PRIVATE GNOSTR_RELAY_TEST_ONLY=1)
@@ -290,10 +292,17 @@ if (BUILD_TESTING)
   target_compile_features(gnostr-test-blossom PRIVATE c_std_11)
   target_include_directories(gnostr-test-blossom PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/libnostr/include)
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_SOURCE_DIR}/libnostr/include
+    ${CMAKE_SOURCE_DIR}/nips/nip19/include
+    ${CMAKE_SOURCE_DIR}/gobject/include)
   target_sources(gnostr-test-blossom PRIVATE
-    src/util/blossom.c)
-  target_link_libraries(gnostr-test-blossom PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB)
+    src/util/blossom.c
+    src/util/blossom_settings.c
+    src/util/relays.c
+    src/ipc/signer_ipc.c
+    ${SIGNER_PROXY_C})
+  target_link_libraries(gnostr-test-blossom PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB nostr nip19)
   _gnostr_apply_sanitizers(gnostr-test-blossom)
   add_test(NAME gnostr-test-blossom COMMAND gnostr-test-blossom)
   set_tests_properties(gnostr-test-blossom PROPERTIES
