@@ -644,11 +644,14 @@ static gboolean query_single_complete_ok(gpointer data) {
 
 static gpointer query_single_thread(gpointer user_data) {
     QuerySingleCtx *ctx = (QuerySingleCtx *)user_data;
-    GnostrSimplePool *self = GNOSTR_SIMPLE_POOL(ctx->self_obj);
-    
+    GnostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
+
     // Create results array
     ctx->results = g_ptr_array_new_with_free_func(g_free);
-    
+
+    // Track relays we created (not from pool) for cleanup
+    GPtrArray *created_relays = g_ptr_array_new();
+
     // Create a temporary subscription for each URL until we get a result
     for (size_t i = 0; i < ctx->url_count; i++) {
         if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) {
@@ -658,46 +661,100 @@ static gpointer query_single_thread(gpointer user_data) {
         const char *url = ctx->urls[i];
         if (!url || !*url) continue;
 
-        // Create a new relay connection
-        Error *err = NULL;
-        GoContext *gctx = go_context_background();
-        NostrRelay *relay = nostr_relay_new(gctx, url, &err);
-        if (!relay) {
-            g_warning("Failed to create relay for %s: %s", url, 
-                     err ? err->message : "unknown error");
-            if (err) { free_error(err); err = NULL; }
-            continue;
+        // REUSE existing relay from pool if available (like subscribe_many_thread)
+        NostrRelay *relay = NULL;
+        gboolean relay_from_pool = FALSE;
+
+        if (gobj_pool && gobj_pool->pool) {
+            pthread_mutex_lock(&gobj_pool->pool->pool_mutex);
+            for (size_t j = 0; j < gobj_pool->pool->relay_count; j++) {
+                if (gobj_pool->pool->relays[j] &&
+                    gobj_pool->pool->relays[j]->url &&
+                    strcmp(gobj_pool->pool->relays[j]->url, url) == 0) {
+                    relay = gobj_pool->pool->relays[j];
+                    relay_from_pool = TRUE;
+                    g_debug("query_single: Reusing existing relay %s from pool", url);
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&gobj_pool->pool->pool_mutex);
         }
 
-        // Connect to the relay
-        if (!nostr_relay_connect(relay, &err)) {
-            g_warning("Failed to connect to %s: %s", url, 
-                     err ? err->message : "unknown error");
-            if (err) { free_error(err); err = NULL; }
-            nostr_relay_free(relay);
+        // Only create new relay if not found in pool
+        if (!relay) {
+            Error *err = NULL;
+            GoContext *gctx = go_context_background();
+            relay = nostr_relay_new(gctx, url, &err);
+            if (!relay) {
+                g_warning("query_single: Failed to create relay for %s: %s", url,
+                         err ? err->message : "unknown error");
+                if (err) { free_error(err); err = NULL; }
+                continue;
+            }
+
+            // Connect to the relay
+            if (!nostr_relay_connect(relay, &err)) {
+                g_warning("query_single: Failed to connect to %s: %s", url,
+                         err ? err->message : "unknown error");
+                if (err) { free_error(err); err = NULL; }
+                nostr_relay_free(relay);
+                continue;
+            }
+
+            // Add new relay to pool for future reuse
+            if (gobj_pool && gobj_pool->pool) {
+                nostr_simple_pool_add_relay(gobj_pool->pool, relay);
+                relay_from_pool = TRUE;
+                g_debug("query_single: Added NEW relay %s to pool", url);
+            } else {
+                // Track for cleanup since not added to pool
+                g_ptr_array_add(created_relays, relay);
+            }
+        }
+
+        // Check if relay is connected
+        if (!nostr_relay_is_connected(relay)) {
+            g_warning("query_single: Relay %s is not connected, skipping", url);
             continue;
         }
 
         // Create a subscription with the filter
+        GoContext *bg = go_context_background();
         NostrFilters *filters = nostr_filters_new();
         NostrFilter *fcopy = nostr_filter_copy(ctx->filter);
         nostr_filters_add(filters, fcopy); /* moves fcopy contents */
-        NostrSubscription *sub = nostr_subscription_new(relay, filters); /* takes ownership of filters */
+        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, bg, filters);
 
-        // Fire the subscription
-        if (!nostr_subscription_fire(sub, &err)) {
-            g_warning("Failed to fire subscription to %s: %s", url, 
-                     err ? err->message : "unknown error");
-            if (err) { free_error(err); err = NULL; }
-            nostr_subscription_free(sub);
-            nostr_relay_free(relay);
+        if (!sub) {
+            g_warning("query_single: Failed to prepare subscription for %s", url);
+            nostr_filters_free(filters);
             continue;
         }
 
-        // Wait for first event or EOSE
+        // Fire the subscription
+        Error *err = NULL;
+        if (!nostr_subscription_fire(sub, &err)) {
+            g_warning("query_single: Failed to fire subscription to %s: %s", url,
+                     err ? err->message : "unknown error");
+            if (err) { free_error(err); err = NULL; }
+            nostr_subscription_close(sub, NULL);
+            nostr_subscription_free(sub);
+            continue;
+        }
+
+        // Wait for first event or EOSE with timeout
         bool got_event = false;
+        guint64 start_time = g_get_monotonic_time();
+        const guint64 timeout_us = 10000000;  // 10 seconds timeout
+
         while (!got_event) {
             if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) {
+                break;
+            }
+
+            // Check timeout
+            if ((g_get_monotonic_time() - start_time) > timeout_us) {
+                g_debug("query_single: Timeout waiting for event from %s", url);
                 break;
             }
 
@@ -720,17 +777,27 @@ static gpointer query_single_thread(gpointer user_data) {
             }
 
             // Small sleep to prevent busy waiting
-            g_usleep(1000);  // 1ms
+            g_usleep(5000);  // 5ms
         }
 
-        // Cleanup
+        // Cleanup subscription (but NOT relay if from pool)
+        nostr_subscription_close(sub, NULL);
         nostr_subscription_free(sub);
-        nostr_relay_free(relay);
 
         if (got_event) {
             break;  // Got our event, no need to try other relays
         }
     }
+
+    // Cleanup only relays we created that weren't added to pool
+    for (guint i = 0; i < created_relays->len; i++) {
+        NostrRelay *r = (NostrRelay*)created_relays->pdata[i];
+        if (r) {
+            nostr_relay_disconnect(r);
+            nostr_relay_free(r);
+        }
+    }
+    g_ptr_array_free(created_relays, TRUE);
 
     // Schedule completion on the main thread; task owns ctx via task_data
     g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, query_single_complete_ok,

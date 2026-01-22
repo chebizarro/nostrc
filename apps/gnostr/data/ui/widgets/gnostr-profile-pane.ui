@@ -495,6 +495,110 @@
               </object>
             </child>
 
+            <!-- Media Tab -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">media</property>
+                <property name="title">Media</property>
+                <property name="child">
+                  <object class="GtkBox" id="media_container">
+                    <property name="orientation">vertical</property>
+                    <property name="vexpand">true</property>
+
+                    <!-- Media Grid -->
+                    <child>
+                      <object class="GtkScrolledWindow" id="media_scroll">
+                        <property name="vexpand">true</property>
+                        <property name="hscrollbar-policy">never</property>
+                        <child>
+                          <object class="GtkGridView" id="media_grid">
+                            <property name="min-columns">3</property>
+                            <property name="max-columns">4</property>
+                            <property name="single-click-activate">true</property>
+                            <style>
+                              <class name="profile-media-grid"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Loading indicator -->
+                    <child>
+                      <object class="GtkBox" id="media_loading_box">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">8</property>
+                        <property name="halign">center</property>
+                        <property name="valign">center</property>
+                        <property name="vexpand">true</property>
+                        <property name="margin-bottom">32</property>
+                        <property name="visible">false</property>
+                        <child>
+                          <object class="GtkSpinner" id="media_spinner">
+                            <property name="spinning">true</property>
+                            <property name="width-request">32</property>
+                            <property name="height-request">32</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">Loading media...</property>
+                            <style>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Empty state -->
+                    <child>
+                      <object class="GtkBox" id="media_empty_box">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">8</property>
+                        <property name="halign">center</property>
+                        <property name="valign">center</property>
+                        <property name="vexpand">true</property>
+                        <property name="visible">false</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">image-x-generic-symbolic</property>
+                            <property name="pixel-size">48</property>
+                            <style>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="media_empty_label">
+                            <property name="label">No media yet</property>
+                            <style>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Load more button -->
+                    <child>
+                      <object class="GtkButton" id="btn_media_load_more">
+                        <property name="label">Load More</property>
+                        <property name="halign">center</property>
+                        <property name="margin-top">8</property>
+                        <property name="margin-bottom">16</property>
+                        <property name="visible">false</property>
+                        <style>
+                          <class name="pill"/>
+                        </style>
+                      </object>
+                    </child>
+
+                  </object>
+                </property>
+              </object>
+            </child>
+
           </object>
         </child>
 

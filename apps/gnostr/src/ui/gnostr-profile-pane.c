@@ -119,6 +119,96 @@ static ProfilePostItem *profile_post_item_new(const char *id_hex, const char *pu
                       NULL);
 }
 
+/* Media item for the grid model */
+typedef struct _ProfileMediaItem {
+  GObject parent_instance;
+  char *url;           /* Media URL (image/video) */
+  char *thumb_url;     /* Thumbnail URL (may be same as url) */
+  char *event_id_hex;  /* Source event ID */
+  char *mime_type;     /* MIME type if known */
+  gint64 created_at;
+} ProfileMediaItem;
+
+typedef struct _ProfileMediaItemClass {
+  GObjectClass parent_class;
+} ProfileMediaItemClass;
+
+G_DEFINE_TYPE(ProfileMediaItem, profile_media_item, G_TYPE_OBJECT)
+
+enum {
+  MEDIA_PROP_0,
+  MEDIA_PROP_URL,
+  MEDIA_PROP_THUMB_URL,
+  MEDIA_PROP_EVENT_ID_HEX,
+  MEDIA_PROP_MIME_TYPE,
+  MEDIA_PROP_CREATED_AT,
+  MEDIA_N_PROPS
+};
+
+static GParamSpec *media_props[MEDIA_N_PROPS];
+
+static void profile_media_item_set_property(GObject *obj, guint prop_id, const GValue *value, GParamSpec *pspec) {
+  ProfileMediaItem *self = (ProfileMediaItem*)obj;
+  switch (prop_id) {
+    case MEDIA_PROP_URL:         g_free(self->url);         self->url         = g_value_dup_string(value); break;
+    case MEDIA_PROP_THUMB_URL:   g_free(self->thumb_url);   self->thumb_url   = g_value_dup_string(value); break;
+    case MEDIA_PROP_EVENT_ID_HEX: g_free(self->event_id_hex); self->event_id_hex = g_value_dup_string(value); break;
+    case MEDIA_PROP_MIME_TYPE:   g_free(self->mime_type);   self->mime_type   = g_value_dup_string(value); break;
+    case MEDIA_PROP_CREATED_AT:  self->created_at           = g_value_get_int64(value); break;
+    default: G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop_id, pspec);
+  }
+}
+
+static void profile_media_item_get_property(GObject *obj, guint prop_id, GValue *value, GParamSpec *pspec) {
+  ProfileMediaItem *self = (ProfileMediaItem*)obj;
+  switch (prop_id) {
+    case MEDIA_PROP_URL:          g_value_set_string(value, self->url); break;
+    case MEDIA_PROP_THUMB_URL:    g_value_set_string(value, self->thumb_url); break;
+    case MEDIA_PROP_EVENT_ID_HEX: g_value_set_string(value, self->event_id_hex); break;
+    case MEDIA_PROP_MIME_TYPE:    g_value_set_string(value, self->mime_type); break;
+    case MEDIA_PROP_CREATED_AT:   g_value_set_int64(value, self->created_at); break;
+    default: G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop_id, pspec);
+  }
+}
+
+static void profile_media_item_dispose(GObject *obj) {
+  ProfileMediaItem *self = (ProfileMediaItem*)obj;
+  g_clear_pointer(&self->url, g_free);
+  g_clear_pointer(&self->thumb_url, g_free);
+  g_clear_pointer(&self->event_id_hex, g_free);
+  g_clear_pointer(&self->mime_type, g_free);
+  G_OBJECT_CLASS(profile_media_item_parent_class)->dispose(obj);
+}
+
+static void profile_media_item_class_init(ProfileMediaItemClass *klass) {
+  GObjectClass *oc = G_OBJECT_CLASS(klass);
+  oc->set_property = profile_media_item_set_property;
+  oc->get_property = profile_media_item_get_property;
+  oc->dispose = profile_media_item_dispose;
+
+  media_props[MEDIA_PROP_URL]          = g_param_spec_string("url",          "url",          "Media URL",     NULL, G_PARAM_READWRITE);
+  media_props[MEDIA_PROP_THUMB_URL]    = g_param_spec_string("thumb-url",    "thumb-url",    "Thumbnail URL", NULL, G_PARAM_READWRITE);
+  media_props[MEDIA_PROP_EVENT_ID_HEX] = g_param_spec_string("event-id-hex", "event-id-hex", "Event ID",      NULL, G_PARAM_READWRITE);
+  media_props[MEDIA_PROP_MIME_TYPE]    = g_param_spec_string("mime-type",    "mime-type",    "MIME Type",     NULL, G_PARAM_READWRITE);
+  media_props[MEDIA_PROP_CREATED_AT]   = g_param_spec_int64 ("created-at",   "created-at",   "Created At",    0, G_MAXINT64, 0, G_PARAM_READWRITE);
+  g_object_class_install_properties(oc, MEDIA_N_PROPS, media_props);
+}
+
+static void profile_media_item_init(ProfileMediaItem *self) { (void)self; }
+
+static ProfileMediaItem *profile_media_item_new(const char *url, const char *thumb_url, const char *event_id_hex, const char *mime_type, gint64 created_at) {
+  return g_object_new(profile_media_item_get_type(),
+                      "url", url,
+                      "thumb-url", thumb_url ? thumb_url : url,
+                      "event-id-hex", event_id_hex,
+                      "mime-type", mime_type,
+                      "created-at", created_at,
+                      NULL);
+}
+
+/* Maximum media items to fetch per page */
+#define MEDIA_PAGE_SIZE 30
+
 struct _GnostrProfilePane {
   GtkWidget parent_instance;
 
@@ -163,6 +253,23 @@ struct _GnostrProfilePane {
   GListStore *posts_model;
   GtkSelectionModel *posts_selection;
 
+  /* Media tab widgets */
+  GtkWidget *media_container;
+  GtkWidget *media_scroll;
+  GtkWidget *media_grid;
+  GtkWidget *media_loading_box;
+  GtkWidget *media_spinner;
+  GtkWidget *media_empty_box;
+  GtkWidget *media_empty_label;
+  GtkWidget *btn_media_load_more;
+
+  /* Media model */
+  GListStore *media_model;
+  GtkSelectionModel *media_selection;
+  GCancellable *media_cancellable;
+  gboolean media_loaded;
+  gint64 media_oldest_timestamp;
+
   /* State */
   char *current_pubkey;
   char *own_pubkey;              /* Current user's pubkey */
@@ -175,8 +282,11 @@ struct _GnostrProfilePane {
   GtkWidget *nip05_row;          /* NIP-05 metadata row */
   GCancellable *nip05_cancellable;
   GCancellable *posts_cancellable;
+  GCancellable *nip65_cancellable;
   gboolean posts_loaded;
   gint64 posts_oldest_timestamp;  /* For pagination */
+  GPtrArray *nip65_relays;        /* Cached NIP-65 relay list (GnostrNip65Relay*) */
+  gboolean nip65_fetched;         /* Whether NIP-65 lookup was attempted */
 #ifdef HAVE_SOUP3
   SoupSession *soup_session;
   GCancellable *banner_cancellable;
@@ -203,6 +313,8 @@ static void load_image_async(GnostrProfilePane *self, const char *url, GtkPictur
 #endif
 static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json);
 static void load_posts(GnostrProfilePane *self);
+static void load_posts_with_relays(GnostrProfilePane *self, GPtrArray *relay_urls);
+static void load_media(GnostrProfilePane *self);
 static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, gpointer user_data);
 
 static void gnostr_profile_pane_dispose(GObject *obj) {
@@ -217,6 +329,13 @@ static void gnostr_profile_pane_dispose(GObject *obj) {
     g_cancellable_cancel(self->posts_cancellable);
     g_clear_object(&self->posts_cancellable);
   }
+  /* Cancel NIP-65 relay lookup */
+  if (self->nip65_cancellable) {
+    g_cancellable_cancel(self->nip65_cancellable);
+    g_clear_object(&self->nip65_cancellable);
+  }
+  /* Clear NIP-65 relay cache */
+  g_clear_pointer(&self->nip65_relays, g_ptr_array_unref);
 #ifdef HAVE_SOUP3
   if (self->banner_cancellable) {
     g_cancellable_cancel(self->banner_cancellable);
@@ -235,6 +354,19 @@ static void gnostr_profile_pane_dispose(GObject *obj) {
   }
   g_clear_object(&self->posts_selection);
   g_clear_object(&self->posts_model);
+
+  /* Cancel media loading */
+  if (self->media_cancellable) {
+    g_cancellable_cancel(self->media_cancellable);
+    g_clear_object(&self->media_cancellable);
+  }
+  /* Clear media model */
+  if (self->media_grid && GTK_IS_GRID_VIEW(self->media_grid)) {
+    gtk_grid_view_set_model(GTK_GRID_VIEW(self->media_grid), NULL);
+  }
+  g_clear_object(&self->media_selection);
+  g_clear_object(&self->media_model);
+
   g_clear_object(&self->simple_pool);
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_PROFILE_PANE);
   G_OBJECT_CLASS(gnostr_profile_pane_parent_class)->dispose(obj);
@@ -441,6 +573,16 @@ static void gnostr_profile_pane_class_init(GnostrProfilePaneClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, posts_empty_label);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_load_more);
 
+  /* Media tab widgets */
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, media_container);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, media_scroll);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, media_grid);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, media_loading_box);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, media_spinner);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, media_empty_box);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, media_empty_label);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_media_load_more);
+
   gtk_widget_class_bind_template_callback(wclass, on_close_clicked);
   gtk_widget_class_bind_template_callback(wclass, on_edit_profile_clicked);
 
@@ -587,6 +729,14 @@ void gnostr_profile_pane_clear(GnostrProfilePane *self) {
   self->posts_loaded = FALSE;
   self->posts_oldest_timestamp = 0;
 
+  /* Clear NIP-65 relay cache */
+  if (self->nip65_cancellable) {
+    g_cancellable_cancel(self->nip65_cancellable);
+    g_clear_object(&self->nip65_cancellable);
+  }
+  g_clear_pointer(&self->nip65_relays, g_ptr_array_unref);
+  self->nip65_fetched = FALSE;
+
   /* Reset posts UI state */
   if (self->posts_loading_box)
     gtk_widget_set_visible(self->posts_loading_box, FALSE);
@@ -596,6 +746,29 @@ void gnostr_profile_pane_clear(GnostrProfilePane *self) {
     gtk_widget_set_visible(self->btn_load_more, FALSE);
   if (self->posts_scroll)
     gtk_widget_set_visible(self->posts_scroll, TRUE);
+
+  /* Cancel media loading */
+  if (self->media_cancellable) {
+    g_cancellable_cancel(self->media_cancellable);
+    g_clear_object(&self->media_cancellable);
+  }
+
+  /* Clear media */
+  if (self->media_model) {
+    g_list_store_remove_all(self->media_model);
+  }
+  self->media_loaded = FALSE;
+  self->media_oldest_timestamp = 0;
+
+  /* Reset media UI state */
+  if (self->media_loading_box)
+    gtk_widget_set_visible(self->media_loading_box, FALSE);
+  if (self->media_empty_box)
+    gtk_widget_set_visible(self->media_empty_box, FALSE);
+  if (self->btn_media_load_more)
+    gtk_widget_set_visible(self->btn_media_load_more, FALSE);
+  if (self->media_scroll)
+    gtk_widget_set_visible(self->media_scroll, TRUE);
 
   /* Clear profile data for posts */
   g_clear_pointer(&self->current_display_name, g_free);
@@ -1058,8 +1231,8 @@ static void on_posts_query_done(GObject *source, GAsyncResult *res, gpointer use
   g_ptr_array_unref(results);
 }
 
-/* Load posts for the current profile */
-static void load_posts(GnostrProfilePane *self) {
+/* Actually load posts using the given relay URLs */
+static void load_posts_with_relays(GnostrProfilePane *self, GPtrArray *relay_urls) {
   if (!self->current_pubkey || !*self->current_pubkey) {
     g_debug("profile_pane: no pubkey set, cannot load posts");
     return;
@@ -1071,14 +1244,6 @@ static void load_posts(GnostrProfilePane *self) {
     g_clear_object(&self->posts_cancellable);
   }
   self->posts_cancellable = g_cancellable_new();
-
-  /* Show loading indicator */
-  if (self->posts_loading_box)
-    gtk_widget_set_visible(self->posts_loading_box, TRUE);
-  if (self->posts_empty_box)
-    gtk_widget_set_visible(self->posts_empty_box, FALSE);
-  if (self->btn_load_more)
-    gtk_widget_set_visible(self->btn_load_more, FALSE);
 
   /* Build filter for kind 1 events by this author */
   NostrFilter *filter = nostr_filter_new();
@@ -1096,28 +1261,17 @@ static void load_posts(GnostrProfilePane *self) {
     nostr_filter_set_until_i64(filter, self->posts_oldest_timestamp - 1);
   }
 
-  /* Get relay URLs */
-  GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);
-  gnostr_load_relays_into(relay_arr);
-
-  if (relay_arr->len == 0) {
-    /* Add default relays if none configured */
-    g_ptr_array_add(relay_arr, g_strdup("wss://relay.damus.io"));
-    g_ptr_array_add(relay_arr, g_strdup("wss://nos.lol"));
-    g_ptr_array_add(relay_arr, g_strdup("wss://relay.nostr.band"));
-  }
-
   /* Build URL array */
-  const char **urls = g_new0(const char*, relay_arr->len);
-  for (guint i = 0; i < relay_arr->len; i++) {
-    urls[i] = g_ptr_array_index(relay_arr, i);
+  const char **urls = g_new0(const char*, relay_urls->len);
+  for (guint i = 0; i < relay_urls->len; i++) {
+    urls[i] = g_ptr_array_index(relay_urls, i);
   }
 
   /* Start query */
   gnostr_simple_pool_query_single_async(
     self->simple_pool,
     urls,
-    relay_arr->len,
+    relay_urls->len,
     filter,
     self->posts_cancellable,
     on_posts_query_done,
@@ -1125,7 +1279,433 @@ static void load_posts(GnostrProfilePane *self) {
   );
 
   g_free(urls);
-  g_ptr_array_unref(relay_arr);
+  nostr_filter_free(filter);
+}
+
+/* Callback when NIP-65 relays are fetched */
+static void on_nip65_relays_fetched(GPtrArray *relays, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+
+  /* Mark as fetched */
+  self->nip65_fetched = TRUE;
+
+  /* Cache the relays */
+  g_clear_pointer(&self->nip65_relays, g_ptr_array_unref);
+  if (relays && relays->len > 0) {
+    self->nip65_relays = g_ptr_array_ref(relays);
+    g_debug("profile_pane: fetched %u NIP-65 relays for %s", relays->len, self->current_pubkey);
+  } else {
+    self->nip65_relays = NULL;
+    g_debug("profile_pane: no NIP-65 relays found for %s", self->current_pubkey);
+  }
+
+  /* Now load posts using NIP-65 write relays or fallback */
+  GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
+
+  /* Use write relays from NIP-65 (where the user publishes their posts) */
+  if (self->nip65_relays && self->nip65_relays->len > 0) {
+    GPtrArray *write_relays = gnostr_nip65_get_write_relays(self->nip65_relays);
+    for (guint i = 0; i < write_relays->len; i++) {
+      g_ptr_array_add(relay_urls, g_strdup(g_ptr_array_index(write_relays, i)));
+    }
+    g_ptr_array_unref(write_relays);
+  }
+
+  /* Fall back to configured relays if no NIP-65 write relays */
+  if (relay_urls->len == 0) {
+    gnostr_load_relays_into(relay_urls);
+  }
+
+  /* Add default relays if still empty */
+  if (relay_urls->len == 0) {
+    g_ptr_array_add(relay_urls, g_strdup("wss://relay.damus.io"));
+    g_ptr_array_add(relay_urls, g_strdup("wss://nos.lol"));
+    g_ptr_array_add(relay_urls, g_strdup("wss://relay.nostr.band"));
+  }
+
+  load_posts_with_relays(self, relay_urls);
+  g_ptr_array_unref(relay_urls);
+}
+
+/* Load posts for the current profile */
+static void load_posts(GnostrProfilePane *self) {
+  if (!self->current_pubkey || !*self->current_pubkey) {
+    g_debug("profile_pane: no pubkey set, cannot load posts");
+    return;
+  }
+
+  /* Show loading indicator */
+  if (self->posts_loading_box)
+    gtk_widget_set_visible(self->posts_loading_box, TRUE);
+  if (self->posts_empty_box)
+    gtk_widget_set_visible(self->posts_empty_box, FALSE);
+  if (self->btn_load_more)
+    gtk_widget_set_visible(self->btn_load_more, FALSE);
+
+  /* If NIP-65 relays already fetched for this profile, use them directly */
+  if (self->nip65_fetched) {
+    GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
+
+    /* Use write relays from NIP-65 (where the user publishes their posts) */
+    if (self->nip65_relays && self->nip65_relays->len > 0) {
+      GPtrArray *write_relays = gnostr_nip65_get_write_relays(self->nip65_relays);
+      for (guint i = 0; i < write_relays->len; i++) {
+        g_ptr_array_add(relay_urls, g_strdup(g_ptr_array_index(write_relays, i)));
+      }
+      g_ptr_array_unref(write_relays);
+    }
+
+    /* Fall back to configured relays if no NIP-65 write relays */
+    if (relay_urls->len == 0) {
+      gnostr_load_relays_into(relay_urls);
+    }
+
+    /* Add default relays if still empty */
+    if (relay_urls->len == 0) {
+      g_ptr_array_add(relay_urls, g_strdup("wss://relay.damus.io"));
+      g_ptr_array_add(relay_urls, g_strdup("wss://nos.lol"));
+      g_ptr_array_add(relay_urls, g_strdup("wss://relay.nostr.band"));
+    }
+
+    load_posts_with_relays(self, relay_urls);
+    g_ptr_array_unref(relay_urls);
+    return;
+  }
+
+  /* Cancel previous NIP-65 request */
+  if (self->nip65_cancellable) {
+    g_cancellable_cancel(self->nip65_cancellable);
+    g_clear_object(&self->nip65_cancellable);
+  }
+  self->nip65_cancellable = g_cancellable_new();
+
+  /* First fetch NIP-65 relay list for this profile */
+  g_debug("profile_pane: fetching NIP-65 relays for %s", self->current_pubkey);
+  gnostr_nip65_fetch_relays_async(
+    self->current_pubkey,
+    self->nip65_cancellable,
+    on_nip65_relays_fetched,
+    self
+  );
+}
+
+/* Check if URL looks like media (image/video) */
+static gboolean is_media_url(const char *url) {
+  if (!url || !*url) return FALSE;
+
+  /* Common image extensions */
+  const char *image_exts[] = { ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".bmp", NULL };
+  /* Common video extensions */
+  const char *video_exts[] = { ".mp4", ".webm", ".mov", ".avi", ".mkv", NULL };
+
+  /* Get lowercase extension */
+  const char *last_dot = strrchr(url, '.');
+  if (!last_dot) return FALSE;
+
+  char *ext_lower = g_ascii_strdown(last_dot, -1);
+  gboolean result = FALSE;
+
+  /* Check image extensions */
+  for (int i = 0; image_exts[i]; i++) {
+    if (g_str_has_prefix(ext_lower, image_exts[i])) {
+      result = TRUE;
+      break;
+    }
+  }
+
+  /* Check video extensions */
+  if (!result) {
+    for (int i = 0; video_exts[i]; i++) {
+      if (g_str_has_prefix(ext_lower, video_exts[i])) {
+        result = TRUE;
+        break;
+      }
+    }
+  }
+
+  g_free(ext_lower);
+  return result;
+}
+
+/* Extract media URLs from note content */
+static GPtrArray *extract_media_urls_from_content(const char *content) {
+  GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
+  if (!content || !*content) return urls;
+
+  /* Simple regex-free URL extraction - look for http:// or https:// */
+  const char *p = content;
+  while (*p) {
+    const char *start = NULL;
+
+    /* Look for URL start */
+    if (g_str_has_prefix(p, "https://")) {
+      start = p;
+    } else if (g_str_has_prefix(p, "http://")) {
+      start = p;
+    }
+
+    if (start) {
+      /* Find end of URL (whitespace or end of string) */
+      const char *end = start;
+      while (*end && !g_ascii_isspace(*end)) {
+        end++;
+      }
+
+      /* Extract URL */
+      gchar *url = g_strndup(start, end - start);
+
+      /* Check if it's a media URL */
+      if (is_media_url(url)) {
+        g_ptr_array_add(urls, url);
+      } else {
+        g_free(url);
+      }
+
+      p = end;
+    } else {
+      p++;
+    }
+  }
+
+  return urls;
+}
+
+/* Setup media grid item widget factory */
+static void setup_media_item(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+  (void)factory;
+  (void)user_data;
+
+  /* Create a square frame with image inside */
+  GtkWidget *frame = gtk_frame_new(NULL);
+  gtk_widget_set_size_request(frame, 100, 100);
+  gtk_widget_add_css_class(frame, "profile-media-item");
+
+  GtkWidget *picture = gtk_picture_new();
+  gtk_picture_set_content_fit(GTK_PICTURE(picture), GTK_CONTENT_FIT_COVER);
+  gtk_picture_set_can_shrink(GTK_PICTURE(picture), TRUE);
+  gtk_widget_set_size_request(picture, 100, 100);
+
+  gtk_frame_set_child(GTK_FRAME(frame), picture);
+  gtk_list_item_set_child(list_item, frame);
+}
+
+static void bind_media_item(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+  (void)factory;
+  (void)user_data;
+
+  GObject *item = gtk_list_item_get_item(list_item);
+  ProfileMediaItem *media = (ProfileMediaItem *)item;
+
+  GtkWidget *frame = gtk_list_item_get_child(list_item);
+  if (!GTK_IS_FRAME(frame)) return;
+
+  GtkWidget *picture = gtk_frame_get_child(GTK_FRAME(frame));
+  if (!GTK_IS_PICTURE(picture)) return;
+
+  const char *url = media->thumb_url ? media->thumb_url : media->url;
+  if (url && *url) {
+    /* Try to load from cache or download */
+    GdkTexture *cached = gnostr_avatar_try_load_cached(url);
+    if (cached) {
+      gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(cached));
+      g_object_unref(cached);
+    } else {
+      /* Download async - use avatar download (it works for any image) */
+      gnostr_avatar_download_async(url, picture, NULL);
+    }
+  }
+}
+
+/* Callback for media query completion */
+static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+
+  GError *err = NULL;
+  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+
+  if (err) {
+    if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_warning("profile_pane: media query error: %s", err->message);
+    }
+    g_error_free(err);
+
+    /* Show empty state */
+    if (self->media_loading_box)
+      gtk_widget_set_visible(self->media_loading_box, FALSE);
+    if (self->media_empty_box)
+      gtk_widget_set_visible(self->media_empty_box, TRUE);
+    return;
+  }
+
+  self->media_loaded = TRUE;
+
+  /* Hide loading */
+  if (self->media_loading_box)
+    gtk_widget_set_visible(self->media_loading_box, FALSE);
+
+  if (!results || results->len == 0) {
+    /* Show empty state */
+    if (self->media_empty_box)
+      gtk_widget_set_visible(self->media_empty_box, TRUE);
+    if (results) g_ptr_array_unref(results);
+    return;
+  }
+
+  g_debug("profile_pane: received %u events for media extraction", results->len);
+
+  /* Track oldest timestamp for pagination */
+  gint64 oldest_timestamp = G_MAXINT64;
+
+  /* Extract media from each event */
+  for (guint i = 0; i < results->len; i++) {
+    const char *json = g_ptr_array_index(results, i);
+    if (!json) continue;
+
+    NostrEvent *evt = nostr_event_new();
+    if (!evt || nostr_event_deserialize(evt, json) != 0) {
+      if (evt) nostr_event_free(evt);
+      continue;
+    }
+
+    const char *id_hex = nostr_event_get_id(evt);
+    const char *content = nostr_event_get_content(evt);
+    gint64 created_at = (gint64)nostr_event_get_created_at(evt);
+
+    if (created_at > 0 && created_at < oldest_timestamp) {
+      oldest_timestamp = created_at;
+    }
+
+    /* Extract media URLs from content */
+    GPtrArray *media_urls = extract_media_urls_from_content(content);
+
+    for (guint j = 0; j < media_urls->len; j++) {
+      const char *url = g_ptr_array_index(media_urls, j);
+
+      ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
+      g_list_store_append(self->media_model, item);
+      g_object_unref(item);
+    }
+
+    g_ptr_array_unref(media_urls);
+    nostr_event_free(evt);
+  }
+
+  self->media_oldest_timestamp = oldest_timestamp;
+
+  /* Check if we have any media */
+  guint media_count = g_list_model_get_n_items(G_LIST_MODEL(self->media_model));
+  if (media_count == 0) {
+    if (self->media_empty_box)
+      gtk_widget_set_visible(self->media_empty_box, TRUE);
+  } else {
+    /* Show load more if we got a full page */
+    if (self->btn_media_load_more)
+      gtk_widget_set_visible(self->btn_media_load_more, results->len >= MEDIA_PAGE_SIZE);
+  }
+
+  g_ptr_array_unref(results);
+}
+
+/* Load media for the current profile */
+static void load_media(GnostrProfilePane *self) {
+  if (!self->current_pubkey || !*self->current_pubkey) {
+    g_debug("profile_pane: no pubkey set, cannot load media");
+    return;
+  }
+
+  /* Cancel previous request */
+  if (self->media_cancellable) {
+    g_cancellable_cancel(self->media_cancellable);
+    g_clear_object(&self->media_cancellable);
+  }
+  self->media_cancellable = g_cancellable_new();
+
+  /* Setup model and selection if not done */
+  if (!self->media_model) {
+    self->media_model = g_list_store_new(profile_media_item_get_type());
+  }
+
+  if (!self->media_selection && self->media_model) {
+    self->media_selection = GTK_SELECTION_MODEL(gtk_no_selection_new(G_LIST_MODEL(self->media_model)));
+
+    if (GTK_IS_GRID_VIEW(self->media_grid)) {
+      /* Setup factory */
+      GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
+      g_signal_connect(factory, "setup", G_CALLBACK(setup_media_item), self);
+      g_signal_connect(factory, "bind", G_CALLBACK(bind_media_item), self);
+
+      gtk_grid_view_set_model(GTK_GRID_VIEW(self->media_grid), self->media_selection);
+      gtk_grid_view_set_factory(GTK_GRID_VIEW(self->media_grid), factory);
+      g_object_unref(factory);
+    }
+  }
+
+  /* Show loading indicator */
+  if (self->media_loading_box)
+    gtk_widget_set_visible(self->media_loading_box, TRUE);
+  if (self->media_empty_box)
+    gtk_widget_set_visible(self->media_empty_box, FALSE);
+  if (self->btn_media_load_more)
+    gtk_widget_set_visible(self->btn_media_load_more, FALSE);
+
+  /* Build filter for kind 1 events by this author */
+  NostrFilter *filter = nostr_filter_new();
+
+  int kinds[1] = { 1 };
+  nostr_filter_set_kinds(filter, kinds, 1);
+
+  const char *authors[1] = { self->current_pubkey };
+  nostr_filter_set_authors(filter, authors, 1);
+
+  nostr_filter_set_limit(filter, MEDIA_PAGE_SIZE);
+
+  /* Set until for pagination (if not first page) */
+  if (self->media_oldest_timestamp > 0) {
+    nostr_filter_set_until_i64(filter, self->media_oldest_timestamp - 1);
+  }
+
+  /* Get relay URLs - use NIP-65 if available or fall back to configured */
+  GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
+
+  if (self->nip65_relays && self->nip65_relays->len > 0) {
+    GPtrArray *write_relays = gnostr_nip65_get_write_relays(self->nip65_relays);
+    for (guint i = 0; i < write_relays->len; i++) {
+      g_ptr_array_add(relay_urls, g_strdup(g_ptr_array_index(write_relays, i)));
+    }
+    g_ptr_array_unref(write_relays);
+  }
+
+  if (relay_urls->len == 0) {
+    gnostr_load_relays_into(relay_urls);
+  }
+
+  if (relay_urls->len == 0) {
+    g_ptr_array_add(relay_urls, g_strdup("wss://relay.damus.io"));
+    g_ptr_array_add(relay_urls, g_strdup("wss://nos.lol"));
+    g_ptr_array_add(relay_urls, g_strdup("wss://relay.nostr.band"));
+  }
+
+  /* Build URL array */
+  const char **urls = g_new0(const char*, relay_urls->len);
+  for (guint i = 0; i < relay_urls->len; i++) {
+    urls[i] = g_ptr_array_index(relay_urls, i);
+  }
+
+  /* Start query */
+  gnostr_simple_pool_query_single_async(
+    self->simple_pool,
+    urls,
+    relay_urls->len,
+    filter,
+    self->media_cancellable,
+    on_media_query_done,
+    self
+  );
+
+  g_free(urls);
+  g_ptr_array_unref(relay_urls);
   nostr_filter_free(filter);
 }
 
@@ -1140,6 +1720,9 @@ static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, g
   if (g_strcmp0(visible, "posts") == 0 && !self->posts_loaded) {
     /* Lazy load posts on first tab switch */
     load_posts(self);
+  } else if (g_strcmp0(visible, "media") == 0 && !self->media_loaded) {
+    /* Lazy load media on first tab switch */
+    load_media(self);
   }
 }
 

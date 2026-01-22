@@ -65,6 +65,10 @@ struct _GnostrNoteEmbed {
   /* Cancellable for async operations */
   GCancellable *cancellable;
 
+  /* Track whether relay hints have been attempted (for fallback to main pool) */
+  gboolean hints_attempted;
+  gboolean main_pool_attempted;
+
 #ifdef HAVE_SOUP3
   SoupSession *session;
 #endif
@@ -465,6 +469,8 @@ void gnostr_note_embed_set_nostr_uri(GnostrNoteEmbed *self, const char *uri) {
   /* Clear previous state */
   g_clear_pointer(&self->target_id, g_free);
   g_clear_pointer(&self->original_uri, g_free);
+  self->hints_attempted = FALSE;
+  self->main_pool_attempted = FALSE;
   if (self->relay_hints) {
     for (size_t i = 0; i < self->relay_hints_count; i++) {
       g_free(self->relay_hints[i]);
@@ -781,6 +787,9 @@ static void fetch_event_from_local(GnostrNoteEmbed *self, const unsigned char id
   storage_ndb_end_query(txn);
 }
 
+/* Forward declaration for fallback */
+static void fetch_event_from_main_pool(GnostrNoteEmbed *self, const char *id_hex);
+
 /* Callback for relay query */
 static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   GnostrNoteEmbed *self = GNOSTR_NOTE_EMBED(user_data);
@@ -792,6 +801,13 @@ static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer use
 
   if (err) {
     if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      /* If hints were tried and failed (but main pool not yet), fall back to main pool */
+      if (self->hints_attempted && !self->main_pool_attempted && self->relay_hints_count > 0) {
+        g_debug("note_embed: hint relays failed, falling back to main pool");
+        g_error_free(err);
+        fetch_event_from_main_pool(self, self->target_id);
+        return;
+      }
       gnostr_note_embed_set_error(self, "Network error");
     }
     g_error_free(err);
@@ -799,6 +815,13 @@ static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer use
   }
 
   if (!results || results->len == 0) {
+    /* If hints were tried and found nothing (but main pool not yet), fall back to main pool */
+    if (self->hints_attempted && !self->main_pool_attempted && self->relay_hints_count > 0) {
+      g_debug("note_embed: not found on hint relays, falling back to main pool");
+      if (results) g_ptr_array_unref(results);
+      fetch_event_from_main_pool(self, self->target_id);
+      return;
+    }
     gnostr_note_embed_set_error(self, "Not found");
     if (results) g_ptr_array_unref(results);
     return;
@@ -839,40 +862,97 @@ static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer use
   g_ptr_array_unref(results);
 }
 
-/* Fetch event from relays */
+/* Shared pool for embed queries - initialized lazily with pre-connected relays */
+static GnostrSimplePool *embed_pool = NULL;
+static gboolean embed_pool_initialized = FALSE;
+
+/* Initialize the shared embed pool with pre-connected relays */
+static void ensure_embed_pool_initialized(void) {
+  if (embed_pool_initialized) return;
+  embed_pool_initialized = TRUE;
+
+  if (!embed_pool) {
+    embed_pool = gnostr_simple_pool_new();
+  }
+
+  /* Pre-load configured relays into pool for faster first queries */
+  GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
+  gnostr_load_relays_into(urls);
+
+  if (urls->len > 0) {
+    g_debug("embed_pool: Pre-connecting %u relays for embed queries", urls->len);
+    /* The pool's query_single will connect and add relays as needed,
+     * but we can prime the process by logging the relay count */
+  }
+
+  g_ptr_array_free(urls, TRUE);
+}
+
+/* Fetch event from relays - try hints first, then main pool */
 static void fetch_event_from_relays(GnostrNoteEmbed *self, const char *id_hex) {
   if (!id_hex) {
     gnostr_note_embed_set_error(self, "No event ID");
     return;
   }
 
-  /* Build relay list with hints first */
-  GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
+  /* Ensure pool is initialized */
+  ensure_embed_pool_initialized();
 
-  /* Add hints first */
-  if (self->relay_hints) {
+  /* If we have relay hints and haven't tried them yet, use hints only first */
+  if (self->relay_hints && self->relay_hints_count > 0 && !self->hints_attempted) {
+    self->hints_attempted = TRUE;
+
+    GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
     for (size_t i = 0; i < self->relay_hints_count; i++) {
       g_ptr_array_add(urls, g_strdup(self->relay_hints[i]));
     }
+
+    g_debug("note_embed: trying %zu relay hints first for %s", self->relay_hints_count, id_hex);
+
+    /* Build filter */
+    NostrFilter *filter = nostr_filter_new();
+    const char *ids[1] = { id_hex };
+    nostr_filter_set_ids(filter, ids, 1);
+
+    /* Convert GPtrArray to const char** */
+    const char **url_arr = g_new0(const char*, urls->len);
+    for (guint i = 0; i < urls->len; i++) {
+      url_arr[i] = (const char*)g_ptr_array_index(urls, i);
+    }
+
+    gnostr_simple_pool_query_single_async(embed_pool, url_arr, urls->len, filter,
+                                           self->cancellable, on_relay_query_done, self);
+
+    g_free(url_arr);
+    g_ptr_array_free(urls, TRUE);
+    nostr_filter_free(filter);
+    return;
   }
 
-  /* Add configured relays */
+  /* No hints or hints already tried - use main pool */
+  fetch_event_from_main_pool(self, id_hex);
+}
+
+/* Fetch event from main relay pool (fallback) */
+static void fetch_event_from_main_pool(GnostrNoteEmbed *self, const char *id_hex) {
+  self->main_pool_attempted = TRUE;
+
+  GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
   gnostr_load_relays_into(urls);
 
   if (urls->len == 0) {
-    g_ptr_array_free(urls, TRUE);
-    gnostr_note_embed_set_error(self, "No relays configured");
-    return;
+    /* Add default relays as last resort */
+    g_ptr_array_add(urls, g_strdup("wss://relay.damus.io"));
+    g_ptr_array_add(urls, g_strdup("wss://nos.lol"));
+    g_ptr_array_add(urls, g_strdup("wss://relay.nostr.band"));
   }
+
+  g_debug("note_embed: trying %u main pool relays for %s", urls->len, id_hex);
 
   /* Build filter */
   NostrFilter *filter = nostr_filter_new();
   const char *ids[1] = { id_hex };
   nostr_filter_set_ids(filter, ids, 1);
-
-  /* Query */
-  static GnostrSimplePool *pool = NULL;
-  if (!pool) pool = gnostr_simple_pool_new();
 
   /* Convert GPtrArray to const char** */
   const char **url_arr = g_new0(const char*, urls->len);
@@ -880,7 +960,7 @@ static void fetch_event_from_relays(GnostrNoteEmbed *self, const char *id_hex) {
     url_arr[i] = (const char*)g_ptr_array_index(urls, i);
   }
 
-  gnostr_simple_pool_query_single_async(pool, url_arr, urls->len, filter,
+  gnostr_simple_pool_query_single_async(embed_pool, url_arr, urls->len, filter,
                                          self->cancellable, on_relay_query_done, self);
 
   g_free(url_arr);

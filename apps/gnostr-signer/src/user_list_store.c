@@ -1,6 +1,6 @@
 /* user_list_store.c - User list management implementation */
 #include "user_list_store.h"
-#include <json.h>
+#include <json-glib/json-glib.h>
 #include <string.h>
 #include <time.h>
 
@@ -65,63 +65,79 @@ void user_list_store_load(UserListStore *store) {
     return;
   }
 
-  json_object *root = json_tokener_parse(contents);
+  JsonParser *parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, contents, -1, NULL)) {
+    g_free(contents);
+    g_object_unref(parser);
+    return;
+  }
   g_free(contents);
 
-  if (!root || !json_object_is_type(root, json_type_array)) {
-    if (root) json_object_put(root);
+  JsonNode *root_node = json_parser_get_root(parser);
+  if (!JSON_NODE_HOLDS_ARRAY(root_node)) {
+    g_object_unref(parser);
     return;
   }
 
+  JsonArray *root = json_node_get_array(root_node);
   g_ptr_array_set_size(store->entries, 0);
 
-  int n = json_object_array_length(root);
-  for (int i = 0; i < n; i++) {
-    json_object *item = json_object_array_get_idx(root, i);
-    if (!item) continue;
+  guint n = json_array_get_length(root);
+  for (guint i = 0; i < n; i++) {
+    JsonNode *item_node = json_array_get_element(root, i);
+    if (!JSON_NODE_HOLDS_OBJECT(item_node)) continue;
 
-    json_object *pubkey_obj;
-    if (!json_object_object_get_ex(item, "pubkey", &pubkey_obj)) continue;
+    JsonObject *item = json_node_get_object(item_node);
+    if (!json_object_has_member(item, "pubkey")) continue;
 
     UserListEntry *entry = g_new0(UserListEntry, 1);
-    entry->pubkey = g_strdup(json_object_get_string(pubkey_obj));
+    entry->pubkey = g_strdup(json_object_get_string_member(item, "pubkey"));
 
-    json_object *relay_obj, *petname_obj;
-    if (json_object_object_get_ex(item, "relay", &relay_obj)) {
-      entry->relay_hint = g_strdup(json_object_get_string(relay_obj));
+    if (json_object_has_member(item, "relay")) {
+      entry->relay_hint = g_strdup(json_object_get_string_member(item, "relay"));
     }
-    if (json_object_object_get_ex(item, "petname", &petname_obj)) {
-      entry->petname = g_strdup(json_object_get_string(petname_obj));
+    if (json_object_has_member(item, "petname")) {
+      entry->petname = g_strdup(json_object_get_string_member(item, "petname"));
     }
 
     g_ptr_array_add(store->entries, entry);
   }
 
-  json_object_put(root);
+  g_object_unref(parser);
 }
 
 void user_list_store_save(UserListStore *store) {
   if (!store) return;
 
-  json_object *root = json_object_new_array();
+  JsonBuilder *builder = json_builder_new();
+  json_builder_begin_array(builder);
 
   for (guint i = 0; i < store->entries->len; i++) {
     UserListEntry *entry = g_ptr_array_index(store->entries, i);
 
-    json_object *item = json_object_new_object();
-    json_object_object_add(item, "pubkey", json_object_new_string(entry->pubkey));
+    json_builder_begin_object(builder);
+    json_builder_set_member_name(builder, "pubkey");
+    json_builder_add_string_value(builder, entry->pubkey);
 
     if (entry->relay_hint && *entry->relay_hint) {
-      json_object_object_add(item, "relay", json_object_new_string(entry->relay_hint));
+      json_builder_set_member_name(builder, "relay");
+      json_builder_add_string_value(builder, entry->relay_hint);
     }
     if (entry->petname && *entry->petname) {
-      json_object_object_add(item, "petname", json_object_new_string(entry->petname));
+      json_builder_set_member_name(builder, "petname");
+      json_builder_add_string_value(builder, entry->petname);
     }
 
-    json_object_array_add(root, item);
+    json_builder_end_object(builder);
   }
 
-  const gchar *json_str = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PRETTY);
+  json_builder_end_array(builder);
+
+  JsonNode *root = json_builder_get_root(builder);
+  JsonGenerator *gen = json_generator_new();
+  json_generator_set_pretty(gen, TRUE);
+  json_generator_set_root(gen, root);
+  gchar *json_str = json_generator_to_data(gen, NULL);
 
   GError *err = NULL;
   if (!g_file_set_contents(store->config_path, json_str, -1, &err)) {
@@ -131,7 +147,10 @@ void user_list_store_save(UserListStore *store) {
     }
   }
 
-  json_object_put(root);
+  g_free(json_str);
+  g_object_unref(gen);
+  json_node_unref(root);
+  g_object_unref(builder);
 }
 
 static gint find_entry_by_pubkey(UserListStore *store, const gchar *pubkey) {
@@ -217,39 +236,55 @@ gchar *user_list_store_build_event_json(UserListStore *store) {
   gint kind = user_list_store_get_kind(store);
 
   /* Build tags array */
-  json_object *tags = json_object_new_array();
+  JsonBuilder *builder = json_builder_new();
+  json_builder_begin_object(builder);
+
+  json_builder_set_member_name(builder, "kind");
+  json_builder_add_int_value(builder, kind);
+
+  json_builder_set_member_name(builder, "created_at");
+  json_builder_add_int_value(builder, (gint64)time(NULL));
+
+  json_builder_set_member_name(builder, "tags");
+  json_builder_begin_array(builder);
 
   for (guint i = 0; i < store->entries->len; i++) {
     UserListEntry *entry = g_ptr_array_index(store->entries, i);
 
-    json_object *tag = json_object_new_array();
-    json_object_array_add(tag, json_object_new_string("p"));
-    json_object_array_add(tag, json_object_new_string(entry->pubkey));
+    json_builder_begin_array(builder);
+    json_builder_add_string_value(builder, "p");
+    json_builder_add_string_value(builder, entry->pubkey);
 
     /* Add relay hint if present */
     if (entry->relay_hint && *entry->relay_hint) {
-      json_object_array_add(tag, json_object_new_string(entry->relay_hint));
+      json_builder_add_string_value(builder, entry->relay_hint);
     } else {
-      json_object_array_add(tag, json_object_new_string(""));
+      json_builder_add_string_value(builder, "");
     }
 
     /* Add petname if present (for follows) */
     if (store->type == USER_LIST_FOLLOWS && entry->petname && *entry->petname) {
-      json_object_array_add(tag, json_object_new_string(entry->petname));
+      json_builder_add_string_value(builder, entry->petname);
     }
 
-    json_object_array_add(tags, tag);
+    json_builder_end_array(builder);
   }
 
-  /* Build event */
-  json_object *event = json_object_new_object();
-  json_object_object_add(event, "kind", json_object_new_int(kind));
-  json_object_object_add(event, "created_at", json_object_new_int64((int64_t)time(NULL)));
-  json_object_object_add(event, "tags", tags);
-  json_object_object_add(event, "content", json_object_new_string(""));
+  json_builder_end_array(builder);
 
-  gchar *result = g_strdup(json_object_to_json_string(event));
-  json_object_put(event);
+  json_builder_set_member_name(builder, "content");
+  json_builder_add_string_value(builder, "");
+
+  json_builder_end_object(builder);
+
+  JsonNode *root = json_builder_get_root(builder);
+  JsonGenerator *gen = json_generator_new();
+  json_generator_set_root(gen, root);
+  gchar *result = json_generator_to_data(gen, NULL);
+
+  g_object_unref(gen);
+  json_node_unref(root);
+  g_object_unref(builder);
 
   return result;
 }
@@ -257,67 +292,75 @@ gchar *user_list_store_build_event_json(UserListStore *store) {
 gboolean user_list_store_parse_event(UserListStore *store, const gchar *event_json) {
   if (!store || !event_json) return FALSE;
 
-  json_object *root = json_tokener_parse(event_json);
-  if (!root) return FALSE;
+  JsonParser *parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, event_json, -1, NULL)) {
+    g_object_unref(parser);
+    return FALSE;
+  }
+
+  JsonNode *root_node = json_parser_get_root(parser);
+  if (!JSON_NODE_HOLDS_OBJECT(root_node)) {
+    g_object_unref(parser);
+    return FALSE;
+  }
+
+  JsonObject *root = json_node_get_object(root_node);
 
   /* Verify kind */
-  json_object *kind_obj;
-  if (!json_object_object_get_ex(root, "kind", &kind_obj)) {
-    json_object_put(root);
+  if (!json_object_has_member(root, "kind")) {
+    g_object_unref(parser);
     return FALSE;
   }
 
-  gint kind = json_object_get_int(kind_obj);
+  gint kind = (gint)json_object_get_int_member(root, "kind");
   gint expected_kind = user_list_store_get_kind(store);
   if (kind != expected_kind) {
-    json_object_put(root);
+    g_object_unref(parser);
     return FALSE;
   }
 
-  json_object *tags_obj;
-  if (!json_object_object_get_ex(root, "tags", &tags_obj) ||
-      !json_object_is_type(tags_obj, json_type_array)) {
-    json_object_put(root);
+  if (!json_object_has_member(root, "tags")) {
+    g_object_unref(parser);
     return FALSE;
   }
+
+  JsonNode *tags_node = json_object_get_member(root, "tags");
+  if (!JSON_NODE_HOLDS_ARRAY(tags_node)) {
+    g_object_unref(parser);
+    return FALSE;
+  }
+
+  JsonArray *tags = json_node_get_array(tags_node);
 
   /* Clear and parse tags */
   g_ptr_array_set_size(store->entries, 0);
 
-  int n = json_object_array_length(tags_obj);
-  for (int i = 0; i < n; i++) {
-    json_object *tag = json_object_array_get_idx(tags_obj, i);
-    if (!tag || !json_object_is_type(tag, json_type_array)) continue;
+  guint n = json_array_get_length(tags);
+  for (guint i = 0; i < n; i++) {
+    JsonNode *tag_node = json_array_get_element(tags, i);
+    if (!JSON_NODE_HOLDS_ARRAY(tag_node)) continue;
 
-    int tag_len = json_object_array_length(tag);
+    JsonArray *tag = json_node_get_array(tag_node);
+    guint tag_len = json_array_get_length(tag);
     if (tag_len < 2) continue;
 
-    json_object *tag_type = json_object_array_get_idx(tag, 0);
-    if (!tag_type || g_strcmp0(json_object_get_string(tag_type), "p") != 0) continue;
+    const gchar *tag_type = json_array_get_string_element(tag, 0);
+    if (g_strcmp0(tag_type, "p") != 0) continue;
 
-    json_object *pubkey_obj = json_object_array_get_idx(tag, 1);
-    if (!pubkey_obj) continue;
-
-    const gchar *pubkey = json_object_get_string(pubkey_obj);
+    const gchar *pubkey = json_array_get_string_element(tag, 1);
     if (!pubkey || !*pubkey) continue;
 
     gchar *relay_hint = NULL;
     gchar *petname = NULL;
 
     if (tag_len >= 3) {
-      json_object *relay_obj = json_object_array_get_idx(tag, 2);
-      if (relay_obj) {
-        const gchar *r = json_object_get_string(relay_obj);
-        if (r && *r) relay_hint = g_strdup(r);
-      }
+      const gchar *r = json_array_get_string_element(tag, 2);
+      if (r && *r) relay_hint = g_strdup(r);
     }
 
     if (tag_len >= 4 && store->type == USER_LIST_FOLLOWS) {
-      json_object *petname_obj = json_object_array_get_idx(tag, 3);
-      if (petname_obj) {
-        const gchar *p = json_object_get_string(petname_obj);
-        if (p && *p) petname = g_strdup(p);
-      }
+      const gchar *p = json_array_get_string_element(tag, 3);
+      if (p && *p) petname = g_strdup(p);
     }
 
     UserListEntry *entry = g_new0(UserListEntry, 1);
@@ -328,7 +371,7 @@ gboolean user_list_store_parse_event(UserListStore *store, const gchar *event_js
     g_ptr_array_add(store->entries, entry);
   }
 
-  json_object_put(root);
+  g_object_unref(parser);
   return TRUE;
 }
 
