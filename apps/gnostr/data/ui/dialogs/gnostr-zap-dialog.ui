@@ -7,42 +7,41 @@
     <property name="default-width">380</property>
     <property name="default-height">500</property>
     <property name="resizable">false</property>
-    <child>
-      <object class="GtkBox">
-        <property name="orientation">vertical</property>
-        <property name="spacing">0</property>
-
-        <!-- Header bar -->
-        <child>
-          <object class="GtkHeaderBar">
-            <property name="show-title-buttons">false</property>
-            <child type="start">
-              <object class="GtkButton" id="btn_cancel">
-                <property name="label">Cancel</property>
-                <signal name="clicked" handler="on_cancel_clicked"/>
+    <!-- Header bar as titlebar for proper CSD on GNOME -->
+    <child type="titlebar">
+      <object class="GtkHeaderBar">
+        <property name="show-title-buttons">false</property>
+        <child type="start">
+          <object class="GtkButton" id="btn_cancel">
+            <property name="label">Cancel</property>
+            <signal name="clicked" handler="on_cancel_clicked"/>
+          </object>
+        </child>
+        <child type="title">
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">8</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">weather-storm-symbolic</property>
               </object>
             </child>
-            <child type="title">
-              <object class="GtkBox">
-                <property name="orientation">horizontal</property>
-                <property name="spacing">8</property>
-                <child>
-                  <object class="GtkImage">
-                    <property name="icon-name">weather-storm-symbolic</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label">Send Zap</property>
-                    <style>
-                      <class name="title"/>
-                    </style>
-                  </object>
-                </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Send Zap</property>
+                <style>
+                  <class name="title"/>
+                </style>
               </object>
             </child>
           </object>
         </child>
+      </object>
+    </child>
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">0</property>
 
         <!-- Toast revealer -->
         <child>

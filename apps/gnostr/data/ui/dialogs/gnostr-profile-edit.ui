@@ -7,45 +7,44 @@
     <property name="default-width">480</property>
     <property name="default-height">600</property>
     <property name="resizable">true</property>
+    <!-- Header bar as titlebar for proper CSD on GNOME -->
+    <child type="titlebar">
+      <object class="GtkHeaderBar">
+        <property name="show-title-buttons">false</property>
+        <child type="start">
+          <object class="GtkButton" id="btn_cancel">
+            <property name="label">Cancel</property>
+            <signal name="clicked" handler="on_cancel_clicked"/>
+          </object>
+        </child>
+        <child type="title">
+          <object class="GtkLabel">
+            <property name="label">Edit Profile</property>
+            <style>
+              <class name="title"/>
+            </style>
+          </object>
+        </child>
+        <child type="end">
+          <object class="GtkButton" id="btn_save">
+            <property name="label">Save</property>
+            <signal name="clicked" handler="on_save_clicked"/>
+            <style>
+              <class name="suggested-action"/>
+            </style>
+          </object>
+        </child>
+        <child type="end">
+          <object class="GtkSpinner" id="spinner">
+            <property name="visible">false</property>
+          </object>
+        </child>
+      </object>
+    </child>
     <child>
       <object class="GtkBox">
         <property name="orientation">vertical</property>
         <property name="spacing">0</property>
-
-        <!-- Header bar -->
-        <child>
-          <object class="GtkHeaderBar">
-            <property name="show-title-buttons">false</property>
-            <child type="start">
-              <object class="GtkButton" id="btn_cancel">
-                <property name="label">Cancel</property>
-                <signal name="clicked" handler="on_cancel_clicked"/>
-              </object>
-            </child>
-            <child type="title">
-              <object class="GtkLabel">
-                <property name="label">Edit Profile</property>
-                <style>
-                  <class name="title"/>
-                </style>
-              </object>
-            </child>
-            <child type="end">
-              <object class="GtkButton" id="btn_save">
-                <property name="label">Save</property>
-                <signal name="clicked" handler="on_save_clicked"/>
-                <style>
-                  <class name="suggested-action"/>
-                </style>
-              </object>
-            </child>
-            <child type="end">
-              <object class="GtkSpinner" id="spinner">
-                <property name="visible">false</property>
-              </object>
-            </child>
-          </object>
-        </child>
 
         <!-- Toast revealer -->
         <child>

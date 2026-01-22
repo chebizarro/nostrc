@@ -7,25 +7,24 @@
     <property name="default-width">400</property>
     <property name="default-height">450</property>
     <property name="resizable">false</property>
+    <!-- Header bar as titlebar for proper CSD on GNOME -->
+    <child type="titlebar">
+      <object class="GtkHeaderBar">
+        <property name="show-title-buttons">true</property>
+        <child type="title">
+          <object class="GtkLabel">
+            <property name="label">About</property>
+            <style>
+              <class name="title"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
     <child>
       <object class="GtkBox">
         <property name="orientation">vertical</property>
         <property name="spacing">0</property>
-
-        <!-- Header bar -->
-        <child>
-          <object class="GtkHeaderBar">
-            <property name="show-title-buttons">true</property>
-            <child type="title">
-              <object class="GtkLabel">
-                <property name="label">About</property>
-                <style>
-                  <class name="title"/>
-                </style>
-              </object>
-            </child>
-          </object>
-        </child>
 
         <!-- Main content -->
         <child>
