@@ -13,6 +13,8 @@
 #include "nostr/nip19/nip19.h"
 #include <glib/gi18n.h>
 #include <jansson.h>
+#include <secp256k1.h>
+#include <secp256k1_extrakeys.h>
 
 /* QR code generation - using qrencode if available */
 #ifdef HAVE_QRENCODE
@@ -406,7 +408,7 @@ static void generate_nostrconnect_uri(GnostrLogin *self) {
     secret_bytes[i] = g_random_int_range(0, 256);
   }
 
-  /* Encode secret as hex */
+  /* Encode secret as hex for the URI query parameter */
   char secret_hex[65];
   for (int i = 0; i < 32; i++) {
     sprintf(secret_hex + i * 2, "%02x", secret_bytes[i]);
@@ -416,18 +418,47 @@ static void generate_nostrconnect_uri(GnostrLogin *self) {
   g_free(self->nostrconnect_secret);
   self->nostrconnect_secret = g_strdup(secret_hex);
 
+  /* Compute client pubkey from secret_bytes using secp256k1 */
+  char client_pubkey_hex[65] = {0};
+  secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+  if (ctx) {
+    secp256k1_keypair keypair;
+    if (secp256k1_keypair_create(ctx, &keypair, secret_bytes)) {
+      secp256k1_xonly_pubkey xonly_pubkey;
+      if (secp256k1_keypair_xonly_pub(ctx, &xonly_pubkey, NULL, &keypair)) {
+        uint8_t pubkey_bytes[32];
+        secp256k1_xonly_pubkey_serialize(ctx, pubkey_bytes, &xonly_pubkey);
+        /* Encode pubkey as hex */
+        for (int i = 0; i < 32; i++) {
+          sprintf(client_pubkey_hex + i * 2, "%02x", pubkey_bytes[i]);
+        }
+        client_pubkey_hex[64] = '\0';
+      }
+    }
+    secp256k1_context_destroy(ctx);
+  }
+
+  /* Fallback if pubkey derivation failed */
+  if (client_pubkey_hex[0] == '\0') {
+    g_warning("Failed to derive client pubkey from secret");
+    /* Clear secret bytes on failure */
+    memset(secret_bytes, 0, sizeof(secret_bytes));
+    return;
+  }
+
+  /* Clear secret bytes from stack */
+  memset(secret_bytes, 0, sizeof(secret_bytes));
+
   /* Build nostrconnect:// URI with relay and metadata
    * Format: nostrconnect://<client-pubkey>?relay=...&secret=...&name=...
-   * For now, use a placeholder since we need to compute the pubkey from secret
    */
-  /* TODO: Compute actual client pubkey from secret_bytes using secp256k1 */
   const char *relay = "wss://relay.nsec.app";
 
-  /* Create a simple nostrconnect URI */
+  /* Create the nostrconnect URI with the computed client pubkey */
   g_free(self->nostrconnect_uri);
   self->nostrconnect_uri = g_strdup_printf(
     "nostrconnect://%s?relay=%s&secret=%s&name=GNostr",
-    "placeholder",  /* TODO: actual client pubkey */
+    client_pubkey_hex,
     relay,
     secret_hex
   );

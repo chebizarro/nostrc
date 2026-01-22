@@ -477,7 +477,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json) {
         NostrClosedEnvelope *env = (NostrClosedEnvelope *)base;
         env->subscription_id = parse_json_string(&p);
         if (!env->subscription_id) break;
-        q = parse_comma(p); if (!q) { ok = 1; break; }
+        q = parse_comma(p); if (!q) break; // reason is required
         p = q;
         env->reason = parse_json_string(&p);
         if (!env->reason) break;

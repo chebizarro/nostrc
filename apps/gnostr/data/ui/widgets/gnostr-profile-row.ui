@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnostrProfileRow" parent="GtkWidget">
+    <child>
+      <object class="GtkBox" id="root">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">12</property>
+        <property name="margin-end">12</property>
+        <property name="margin-top">8</property>
+        <property name="margin-bottom">8</property>
+        <style>
+          <class name="profile-row"/>
+        </style>
+
+        <!-- Avatar -->
+        <child>
+          <object class="GtkOverlay" id="avatar_box">
+            <property name="width-request">48</property>
+            <property name="height-request">48</property>
+            <style>
+              <class name="avatar"/>
+              <class name="profile-row-avatar"/>
+            </style>
+            <child>
+              <object class="GtkPicture" id="avatar_image">
+                <property name="visible">false</property>
+                <property name="content-fit">cover</property>
+                <property name="width-request">48</property>
+                <property name="height-request">48</property>
+                <style>
+                  <class name="profile-row-avatar-image"/>
+                </style>
+              </object>
+            </child>
+            <child type="overlay">
+              <object class="GtkLabel" id="avatar_initials">
+                <property name="label">?</property>
+                <property name="xalign">0.5</property>
+                <property name="yalign">0.5</property>
+                <style>
+                  <class name="avatar-initials"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Content area -->
+        <child>
+          <object class="GtkBox" id="content_box">
+            <property name="orientation">vertical</property>
+            <property name="hexpand">true</property>
+            <property name="spacing">2</property>
+            <property name="valign">center</property>
+
+            <!-- Top row: display name + NIP-05 badge -->
+            <child>
+              <object class="GtkBox" id="top_row">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkLabel" id="lbl_display">
+                    <property name="label">Display Name</property>
+                    <property name="xalign">0.0</property>
+                    <property name="ellipsize">end</property>
+                    <property name="max-width-chars">24</property>
+                    <style>
+                      <class name="profile-row-name"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkImage" id="nip05_badge">
+                    <property name="icon-name">emblem-ok-symbolic</property>
+                    <property name="visible">false</property>
+                    <property name="tooltip-text">Verified NIP-05</property>
+                    <style>
+                      <class name="nip05-badge"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_nip05">
+                    <property name="label">@nip05</property>
+                    <property name="xalign">0.0</property>
+                    <property name="ellipsize">end</property>
+                    <property name="hexpand">true</property>
+                    <property name="visible">false</property>
+                    <style>
+                      <class name="profile-row-nip05"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Bottom row: bio preview -->
+            <child>
+              <object class="GtkLabel" id="lbl_bio">
+                <property name="label">Bio preview...</property>
+                <property name="xalign">0.0</property>
+                <property name="hexpand">true</property>
+                <property name="ellipsize">end</property>
+                <property name="max-width-chars">50</property>
+                <property name="single-line-mode">true</property>
+                <style>
+                  <class name="profile-row-bio"/>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Follow status indicator -->
+        <child>
+          <object class="GtkImage" id="follow_indicator">
+            <property name="icon-name">emblem-favorite-symbolic</property>
+            <property name="visible">false</property>
+            <property name="valign">center</property>
+            <property name="tooltip-text">Following</property>
+            <style>
+              <class name="follow-indicator"/>
+            </style>
+          </object>
+        </child>
+
+        <!-- Actions menu button -->
+        <child>
+          <object class="GtkMenuButton" id="btn_actions">
+            <property name="icon-name">view-more-symbolic</property>
+            <property name="valign">center</property>
+            <property name="tooltip-text">Actions</property>
+            <property name="has-frame">false</property>
+            <style>
+              <class name="flat"/>
+              <class name="profile-row-actions"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

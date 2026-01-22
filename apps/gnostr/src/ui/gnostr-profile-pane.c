@@ -7,6 +7,7 @@
 #include "gnostr-avatar-cache.h"
 #include "../util/nip05.h"
 #include "../util/relays.h"
+#include "../storage_ndb.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr-json.h"
@@ -296,6 +297,10 @@ struct _GnostrProfilePane {
 
   /* SimplePool for fetching posts */
   GnostrSimplePool *simple_pool;
+
+  /* Profile fetch state */
+  GCancellable *profile_cancellable;  /* For network profile fetch */
+  gboolean profile_loaded_from_cache; /* Whether we showed cached data */
 };
 
 G_DEFINE_TYPE(GnostrProfilePane, gnostr_profile_pane, GTK_TYPE_WIDGET)
@@ -316,9 +321,15 @@ static void load_posts(GnostrProfilePane *self);
 static void load_posts_with_relays(GnostrProfilePane *self, GPtrArray *relay_urls);
 static void load_media(GnostrProfilePane *self);
 static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, gpointer user_data);
+static void fetch_profile_from_cache_or_network(GnostrProfilePane *self);
 
 static void gnostr_profile_pane_dispose(GObject *obj) {
   GnostrProfilePane *self = GNOSTR_PROFILE_PANE(obj);
+  /* Cancel profile loading */
+  if (self->profile_cancellable) {
+    g_cancellable_cancel(self->profile_cancellable);
+    g_clear_object(&self->profile_cancellable);
+  }
   /* Cancel NIP-05 verification if in progress */
   if (self->nip05_cancellable) {
     g_cancellable_cancel(self->nip05_cancellable);
@@ -715,6 +726,13 @@ void gnostr_profile_pane_clear(GnostrProfilePane *self) {
     g_cancellable_cancel(self->nip05_cancellable);
     g_clear_object(&self->nip05_cancellable);
   }
+
+  /* Cancel profile loading */
+  if (self->profile_cancellable) {
+    g_cancellable_cancel(self->profile_cancellable);
+    g_clear_object(&self->profile_cancellable);
+  }
+  self->profile_loaded_from_cache = FALSE;
 
   /* Cancel posts loading */
   if (self->posts_cancellable) {
@@ -1143,7 +1161,127 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
   }
 }
 
-/* Callback for posts query completion */
+/* Helper: Check if a post with this ID already exists in the model */
+static gboolean post_exists_in_model(GnostrProfilePane *self, const char *id_hex) {
+  if (!self->posts_model || !id_hex) return FALSE;
+
+  guint n_items = g_list_model_get_n_items(G_LIST_MODEL(self->posts_model));
+  for (guint i = 0; i < n_items; i++) {
+    ProfilePostItem *item = g_list_model_get_item(G_LIST_MODEL(self->posts_model), i);
+    if (item) {
+      gboolean match = (item->id_hex && g_strcmp0(item->id_hex, id_hex) == 0);
+      g_object_unref(item);
+      if (match) return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+/* Load posts from local nostrdb cache.
+ * Returns number of posts loaded from cache. */
+static guint load_posts_from_cache(GnostrProfilePane *self) {
+  if (!self->current_pubkey || !*self->current_pubkey) {
+    g_debug("profile_pane: no pubkey set, cannot load from cache");
+    return 0;
+  }
+
+  /* Build NIP-01 filter JSON for author's kind:1 posts */
+  GString *filter_json = g_string_new("[{");
+  g_string_append(filter_json, "\"kinds\":[1],");
+  g_string_append_printf(filter_json, "\"authors\":[\"%s\"],", self->current_pubkey);
+
+  /* Apply pagination if we already have posts */
+  if (self->posts_oldest_timestamp > 0) {
+    g_string_append_printf(filter_json, "\"until\":%" G_GINT64_FORMAT ",",
+                           self->posts_oldest_timestamp - 1);
+  }
+
+  g_string_append_printf(filter_json, "\"limit\":%d}]", POSTS_PAGE_SIZE);
+
+  g_debug("profile_pane: querying nostrdb with filter: %s", filter_json->str);
+
+  /* Begin query transaction */
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+    g_warning("profile_pane: failed to begin nostrdb query");
+    g_string_free(filter_json, TRUE);
+    return 0;
+  }
+
+  /* Execute query */
+  char **json_results = NULL;
+  int count = 0;
+  int rc = storage_ndb_query(txn, filter_json->str, &json_results, &count);
+  g_string_free(filter_json, TRUE);
+
+  if (rc != 0) {
+    g_warning("profile_pane: nostrdb query failed with rc=%d", rc);
+    storage_ndb_end_query(txn);
+    return 0;
+  }
+
+  g_debug("profile_pane: nostrdb returned %d cached posts for %s", count, self->current_pubkey);
+
+  guint added = 0;
+  gint64 oldest_timestamp = self->posts_oldest_timestamp > 0 ? self->posts_oldest_timestamp : G_MAXINT64;
+
+  for (int i = 0; i < count; i++) {
+    const char *json_str = json_results[i];
+    if (!json_str) continue;
+
+    /* Parse event */
+    NostrEvent *evt = nostr_event_new();
+    if (nostr_event_deserialize(evt, json_str) != 0) {
+      nostr_event_free(evt);
+      continue;
+    }
+
+    const char *id_hex = nostr_event_get_id(evt);
+    const char *pubkey_hex = nostr_event_get_pubkey(evt);
+    const char *content = nostr_event_get_content(evt);
+    gint64 created_at = (gint64)nostr_event_get_created_at(evt);
+
+    /* Skip if already in model (dedup) */
+    if (post_exists_in_model(self, id_hex)) {
+      nostr_event_free(evt);
+      continue;
+    }
+
+    /* Track oldest timestamp for pagination */
+    if (created_at < oldest_timestamp) {
+      oldest_timestamp = created_at;
+    }
+
+    /* Create post item */
+    ProfilePostItem *item = profile_post_item_new(id_hex, pubkey_hex, content, created_at);
+
+    /* Set author info from profile */
+    item->display_name = g_strdup(self->current_display_name);
+    item->handle = g_strdup(self->current_handle);
+    item->avatar_url = g_strdup(self->current_avatar_url);
+
+    /* Add to model */
+    g_list_store_append(self->posts_model, item);
+    g_object_unref(item);
+    added++;
+
+    nostr_event_free(evt);
+  }
+
+  storage_ndb_free_results(json_results, count);
+  storage_ndb_end_query(txn);
+
+  if (added > 0) {
+    self->posts_oldest_timestamp = oldest_timestamp;
+    self->posts_loaded = TRUE;
+  }
+
+  g_debug("profile_pane: loaded %u posts from cache (oldest_ts=%" G_GINT64_FORMAT ")",
+          added, oldest_timestamp);
+  return added;
+}
+
+/* Callback for posts query completion (network fetch) */
 static void on_posts_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
 
@@ -1183,8 +1321,9 @@ static void on_posts_query_done(GObject *source, GAsyncResult *res, gpointer use
 
   self->posts_loaded = TRUE;
 
-  /* Parse and add posts to model */
-  gint64 oldest_timestamp = G_MAXINT64;
+  /* Parse and add posts to model, deduplicating with cached results */
+  gint64 oldest_timestamp = self->posts_oldest_timestamp > 0 ? self->posts_oldest_timestamp : G_MAXINT64;
+  guint added = 0;
 
   for (guint i = 0; i < results->len; i++) {
     const char *json_str = g_ptr_array_index(results, i);
@@ -1202,6 +1341,12 @@ static void on_posts_query_done(GObject *source, GAsyncResult *res, gpointer use
     const char *content = nostr_event_get_content(evt);
     gint64 created_at = (gint64)nostr_event_get_created_at(evt);
 
+    /* Skip if already in model (dedup with cache) */
+    if (post_exists_in_model(self, id_hex)) {
+      nostr_event_free(evt);
+      continue;
+    }
+
     /* Track oldest timestamp for pagination */
     if (created_at < oldest_timestamp) {
       oldest_timestamp = created_at;
@@ -1218,11 +1363,13 @@ static void on_posts_query_done(GObject *source, GAsyncResult *res, gpointer use
     /* Add to model */
     g_list_store_append(self->posts_model, item);
     g_object_unref(item);
+    added++;
 
     nostr_event_free(evt);
   }
 
   self->posts_oldest_timestamp = oldest_timestamp;
+  g_debug("profile_pane: network fetch added %u new posts", added);
 
   /* Show load more button if we got a full page */
   if (self->btn_load_more)
@@ -1322,20 +1469,42 @@ static void on_nip65_relays_fetched(GPtrArray *relays, gpointer user_data) {
   g_ptr_array_unref(relay_urls);
 }
 
-/* Load posts for the current profile */
+/* Load posts for the current profile.
+ * nostrc-76x: First query nostrdb cache for existing posts, display immediately,
+ * then optionally fetch newer posts from relays in background. */
 static void load_posts(GnostrProfilePane *self) {
   if (!self->current_pubkey || !*self->current_pubkey) {
     g_debug("profile_pane: no pubkey set, cannot load posts");
     return;
   }
 
-  /* Show loading indicator */
+  /* Show loading indicator initially */
   if (self->posts_loading_box)
     gtk_widget_set_visible(self->posts_loading_box, TRUE);
   if (self->posts_empty_box)
     gtk_widget_set_visible(self->posts_empty_box, FALSE);
   if (self->btn_load_more)
     gtk_widget_set_visible(self->btn_load_more, FALSE);
+
+  /* nostrc-76x: First load cached posts from nostrdb and display immediately */
+  guint cached_count = load_posts_from_cache(self);
+
+  if (cached_count > 0) {
+    /* Hide loading indicator - we have cached data to show */
+    if (self->posts_loading_box)
+      gtk_widget_set_visible(self->posts_loading_box, FALSE);
+    if (self->posts_scroll)
+      gtk_widget_set_visible(self->posts_scroll, TRUE);
+
+    /* Show load more button if we got a full page from cache */
+    if (self->btn_load_more)
+      gtk_widget_set_visible(self->btn_load_more, cached_count >= POSTS_PAGE_SIZE);
+
+    g_debug("profile_pane: displayed %u cached posts, fetching updates from network", cached_count);
+  }
+
+  /* nostrc-76x: Now fetch from network in background to get newer posts
+   * The callback will merge new posts with cached ones, deduplicating */
 
   /* If NIP-65 relays already fetched for this profile, use them directly */
   if (self->nip65_fetched) {
@@ -1369,7 +1538,7 @@ static void load_posts(GnostrProfilePane *self) {
   }
   self->nip65_cancellable = g_cancellable_new();
 
-  /* First fetch NIP-65 relay list for this profile */
+  /* Fetch NIP-65 relay list for this profile, then load from network */
   g_debug("profile_pane: fetching NIP-65 relays for %s", self->current_pubkey);
   gnostr_nip65_fetch_relays_async(
     self->current_pubkey,
@@ -1695,6 +1864,162 @@ static void load_media(GnostrProfilePane *self) {
   nostr_filter_free(filter);
 }
 
+/* ============== Profile Cache/Network Fetch ============== */
+
+/* Helper: convert hex string to 32-byte binary */
+static gboolean hex_to_bytes32(const char *hex, uint8_t *out32) {
+  if (!hex || strlen(hex) != 64) return FALSE;
+  for (int i = 0; i < 32; i++) {
+    unsigned int b;
+    if (sscanf(hex + i*2, "%2x", &b) != 1) return FALSE;
+    out32[i] = (uint8_t)b;
+  }
+  return TRUE;
+}
+
+/* Callback when network profile fetch completes */
+static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+
+  GError *error = NULL;
+  GPtrArray *results = gnostr_simple_pool_fetch_profiles_by_authors_finish(
+    GNOSTR_SIMPLE_POOL(source), res, &error);
+
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_debug("profile_pane: network profile fetch failed: %s", error->message);
+    }
+    g_error_free(error);
+    return;
+  }
+
+  if (!results || results->len == 0) {
+    g_debug("profile_pane: no profile found on network for %.8s",
+            self->current_pubkey ? self->current_pubkey : "(null)");
+    if (results) g_ptr_array_unref(results);
+    return;
+  }
+
+  g_debug("profile_pane: received %u profile events from network", results->len);
+
+  /* Find the most recent kind:0 event */
+  char *best_content = NULL;
+  gint64 best_created_at = 0;
+
+  for (guint i = 0; i < results->len; i++) {
+    const char *event_json = g_ptr_array_index(results, i);
+    if (!event_json) continue;
+
+    NostrEvent *evt = nostr_event_new();
+    if (evt && nostr_event_deserialize(evt, event_json) == 0) {
+      gint64 created_at = (gint64)nostr_event_get_created_at(evt);
+      if (created_at > best_created_at) {
+        best_created_at = created_at;
+        /* Store content - make a copy since we need it after freeing the event */
+        g_free(best_content);
+        const char *content = nostr_event_get_content(evt);
+        best_content = content ? g_strdup(content) : NULL;
+      }
+    }
+    if (evt) nostr_event_free(evt);
+  }
+
+  if (best_content && *best_content) {
+    g_debug("profile_pane: updating UI with network profile for %.8s (created_at=%" G_GINT64_FORMAT ")",
+            self->current_pubkey ? self->current_pubkey : "(null)", best_created_at);
+    gnostr_profile_pane_update_from_json(self, best_content);
+  }
+  g_free(best_content);
+
+  g_ptr_array_unref(results);
+}
+
+/* Fetch profile from nostrdb cache first, then from network */
+static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
+  if (!self->current_pubkey || !*self->current_pubkey) {
+    g_debug("profile_pane: no pubkey set, cannot fetch profile");
+    return;
+  }
+
+  g_debug("profile_pane: fetching profile for %.8s", self->current_pubkey);
+
+  /* Cancel any previous profile fetch */
+  if (self->profile_cancellable) {
+    g_cancellable_cancel(self->profile_cancellable);
+    g_clear_object(&self->profile_cancellable);
+  }
+  self->profile_cancellable = g_cancellable_new();
+  self->profile_loaded_from_cache = FALSE;
+
+  /* Step 1: Try nostrdb cache first */
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) == 0 && txn) {
+    uint8_t pk32[32];
+    if (hex_to_bytes32(self->current_pubkey, pk32)) {
+      char *event_json = NULL;
+      int event_len = 0;
+
+      if (storage_ndb_get_profile_by_pubkey(txn, pk32, &event_json, &event_len) == 0 && event_json) {
+        /* Parse the event to get the content field */
+        NostrEvent *evt = nostr_event_new();
+        if (evt && nostr_event_deserialize(evt, event_json) == 0) {
+          const char *content = nostr_event_get_content(evt);
+          if (content && *content) {
+            g_debug("profile_pane: loaded profile from nostrdb cache for %.8s", self->current_pubkey);
+            gnostr_profile_pane_update_from_json(self, content);
+            self->profile_loaded_from_cache = TRUE;
+          }
+        }
+        if (evt) nostr_event_free(evt);
+        /* Note: event_json is owned by nostrdb, do not free */
+      }
+    }
+    storage_ndb_end_query(txn);
+  }
+
+  /* Step 2: Always fetch from network for fresh data (even if cached) */
+  GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
+
+  /* Use read relays from GSettings */
+  gnostr_get_read_relay_urls_into(relay_urls);
+
+  if (relay_urls->len == 0) {
+    g_debug("profile_pane: no relays configured for profile fetch");
+    g_ptr_array_unref(relay_urls);
+    return;
+  }
+
+  /* Build URL array for the API */
+  const char **urls = g_new0(const char*, relay_urls->len);
+  for (guint i = 0; i < relay_urls->len; i++) {
+    urls[i] = g_ptr_array_index(relay_urls, i);
+  }
+
+  /* Build authors array */
+  const char *authors[1] = { self->current_pubkey };
+
+  g_debug("profile_pane: fetching profile from %u relays for %.8s",
+          relay_urls->len, self->current_pubkey);
+
+  /* Fetch profile from network */
+  gnostr_simple_pool_fetch_profiles_by_authors_async(
+    self->simple_pool,
+    urls,
+    relay_urls->len,
+    authors,
+    1,      /* author_count */
+    1,      /* limit - we only need the latest */
+    self->profile_cancellable,
+    on_profile_fetch_done,
+    self
+  );
+
+  g_free(urls);
+  g_ptr_array_unref(relay_urls);
+}
+
 /* Handle tab switch */
 static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
@@ -1720,28 +2045,27 @@ const char* gnostr_profile_pane_get_current_pubkey(GnostrProfilePane *self) {
 void gnostr_profile_pane_set_pubkey(GnostrProfilePane *self, const char *pubkey_hex) {
   g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
   g_return_if_fail(pubkey_hex != NULL);
-  
+
   /* Check if already showing this profile */
   if (self->current_pubkey && strcmp(self->current_pubkey, pubkey_hex) == 0) {
     return;
   }
-  
+
   /* Clear previous profile */
   gnostr_profile_pane_clear(self);
-  
+
   /* Store new pubkey */
   self->current_pubkey = g_strdup(pubkey_hex);
-  
-  /* TODO: Fetch profile from cache or network
-   * For now, we'll emit a signal that the main window can handle
-   * The main window already has profile caching logic we can reuse
-   */
-  g_message("ProfilePane: set_pubkey called for %.*s...", 8, pubkey_hex);
-  
-  /* Temporary: show pubkey as handle */
-  char *temp_handle = g_strdup_printf("npub1%.*s...", 8, pubkey_hex);
+
+  g_debug("profile_pane: set_pubkey called for %.8s...", pubkey_hex);
+
+  /* Show temporary handle while loading */
+  char *temp_handle = g_strdup_printf("npub1%.8s...", pubkey_hex);
   gtk_label_set_text(GTK_LABEL(self->lbl_handle), temp_handle);
   g_free(temp_handle);
+
+  /* Fetch profile from cache first, then network for updates */
+  fetch_profile_from_cache_or_network(self);
 }
 
 /* Public API to update profile from JSON (called by main window) */
@@ -1784,4 +2108,23 @@ void gnostr_profile_pane_set_own_pubkey(GnostrProfilePane *self, const char *own
 const char* gnostr_profile_pane_get_profile_json(GnostrProfilePane *self) {
   g_return_val_if_fail(GNOSTR_IS_PROFILE_PANE(self), NULL);
   return self->current_profile_json;
+}
+
+void gnostr_profile_pane_refresh(GnostrProfilePane *self) {
+  g_return_if_fail(GNOSTR_IS_PROFILE_PANE(self));
+
+  if (!self->current_pubkey || !*self->current_pubkey) {
+    g_debug("profile_pane: no pubkey set, cannot refresh");
+    return;
+  }
+
+  g_debug("profile_pane: refreshing profile for %.8s", self->current_pubkey);
+
+  /* Fetch profile from cache first, then network for updates */
+  fetch_profile_from_cache_or_network(self);
+}
+
+gboolean gnostr_profile_pane_is_profile_cached(GnostrProfilePane *self) {
+  g_return_val_if_fail(GNOSTR_IS_PROFILE_PANE(self), FALSE);
+  return self->profile_loaded_from_cache;
 }

@@ -28,9 +28,21 @@ struct _GnostrComposer {
   /* Upload state */
   GCancellable *upload_cancellable;   /* cancellable for ongoing upload */
   gboolean upload_in_progress;        /* TRUE while uploading */
+  /* Uploaded media metadata for NIP-92 imeta tags */
+  GPtrArray *uploaded_media;          /* array of GnostrComposerMedia* */
 };
 
 G_DEFINE_TYPE(GnostrComposer, gnostr_composer, GTK_TYPE_WIDGET)
+
+/* Helper to free a GnostrComposerMedia struct */
+static void composer_media_free(gpointer p) {
+  GnostrComposerMedia *m = (GnostrComposerMedia *)p;
+  if (!m) return;
+  g_free(m->url);
+  g_free(m->sha256);
+  g_free(m->mime_type);
+  g_free(m);
+}
 
 enum {
   SIGNAL_POST_REQUESTED,
@@ -68,6 +80,10 @@ static void gnostr_composer_finalize(GObject *obj) {
     g_cancellable_cancel(self->upload_cancellable);
     g_object_unref(self->upload_cancellable);
     self->upload_cancellable = NULL;
+  }
+  if (self->uploaded_media) {
+    g_ptr_array_free(self->uploaded_media, TRUE);
+    self->uploaded_media = NULL;
   }
   G_OBJECT_CLASS(gnostr_composer_parent_class)->finalize(obj);
 }
@@ -157,6 +173,17 @@ static void on_blossom_upload_complete(GnostrBlossomBlob *blob, GError *error, g
     return;
   }
 
+  /* Store media metadata for NIP-92 imeta tags */
+  if (!self->uploaded_media) {
+    self->uploaded_media = g_ptr_array_new_with_free_func(composer_media_free);
+  }
+  GnostrComposerMedia *media = g_new0(GnostrComposerMedia, 1);
+  media->url = g_strdup(blob->url);
+  media->sha256 = g_strdup(blob->sha256);
+  media->mime_type = g_strdup(blob->mime_type);
+  media->size = blob->size;
+  g_ptr_array_add(self->uploaded_media, media);
+
   /* Insert the URL into the text view at cursor position */
   if (self->text_view && GTK_IS_TEXT_VIEW(self->text_view)) {
     GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));
@@ -174,7 +201,9 @@ static void on_blossom_upload_complete(GnostrBlossomBlob *blob, GError *error, g
     gtk_text_buffer_insert(buf, &cursor, blob->url, -1);
     gtk_text_buffer_insert(buf, &cursor, "\n", 1);
 
-    g_message("composer: inserted uploaded media URL: %s", blob->url);
+    g_message("composer: inserted uploaded media URL: %s (sha256=%s, type=%s, size=%" G_GINT64_FORMAT ")",
+              blob->url, blob->sha256 ? blob->sha256 : "?",
+              blob->mime_type ? blob->mime_type : "?", blob->size);
   }
 
   gnostr_blossom_blob_free(blob);
@@ -377,6 +406,8 @@ void gnostr_composer_clear(GnostrComposer *self) {
   /* Also clear reply and quote context */
   gnostr_composer_clear_reply_context(self);
   gnostr_composer_clear_quote_context(self);
+  /* Clear uploaded media metadata */
+  gnostr_composer_clear_uploaded_media(self);
 }
 
 void gnostr_composer_set_reply_context(GnostrComposer *self,
@@ -579,5 +610,28 @@ void gnostr_composer_cancel_upload(GnostrComposer *self) {
   /* Re-enable attach button */
   if (self->btn_attach && GTK_IS_WIDGET(self->btn_attach)) {
     gtk_widget_set_sensitive(self->btn_attach, TRUE);
+  }
+}
+
+/* NIP-92 imeta: Get uploaded media list */
+GnostrComposerMedia **gnostr_composer_get_uploaded_media(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+  if (!self->uploaded_media || self->uploaded_media->len == 0) {
+    return NULL;
+  }
+  /* Return the pdata array directly (NULL-terminated by GPtrArray) */
+  return (GnostrComposerMedia **)self->uploaded_media->pdata;
+}
+
+gsize gnostr_composer_get_uploaded_media_count(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), 0);
+  if (!self->uploaded_media) return 0;
+  return self->uploaded_media->len;
+}
+
+void gnostr_composer_clear_uploaded_media(GnostrComposer *self) {
+  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+  if (self->uploaded_media) {
+    g_ptr_array_set_size(self->uploaded_media, 0);
   }
 }

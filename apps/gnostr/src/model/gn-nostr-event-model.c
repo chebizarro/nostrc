@@ -1,3 +1,5 @@
+#define G_LOG_DOMAIN "gnostr-event-model"
+
 #include "gn-nostr-event-model.h"
 #include "gn-ndb-sub-dispatcher.h"
 #include "../storage_ndb.h"
@@ -10,6 +12,11 @@
 #define ITEM_CACHE_SIZE 100
 #define PROFILE_CACHE_MAX 500
 #define AUTHORS_READY_MAX 1000
+
+/* nostrc-yi2: Calm timeline - debounce and rate limiting */
+#define DEBOUNCE_INTERVAL_MS 500     /* Batch rapid updates */
+#define MAX_UPDATES_PER_SEC 3        /* Rate limit UI refreshes */
+#define MIN_UPDATE_INTERVAL_MS (1000 / MAX_UPDATES_PER_SEC)
 
 /* Subscription filters - storage_ndb_subscribe expects a single filter object, not an array */
 #define FILTER_TIMELINE "{\"kinds\":[1,6]}"
@@ -74,6 +81,13 @@ struct _GnNostrEventModel {
   guint visible_start;  /* First visible position in the list */
   guint visible_end;    /* Last visible position in the list */
   GHashTable *skip_animation_keys;  /* key: uint64_t*, value: GINT_TO_POINTER(1) */
+
+  /* nostrc-yi2: Calm timeline - debounce and batching */
+  gboolean user_at_top;           /* TRUE if user is at scroll top (auto-scroll allowed) */
+  GArray *deferred_notes;         /* NoteEntry items waiting to be inserted */
+  guint debounce_source_id;       /* Pending debounce timeout */
+  gint64 last_update_time_ms;     /* Timestamp of last items-changed emission */
+  guint pending_new_count;        /* Count of new items waiting (for indicator) */
 };
 
 typedef struct {
@@ -120,6 +134,7 @@ static GParamSpec *properties[N_PROPS];
 
 enum {
   SIGNAL_NEED_PROFILE,
+  SIGNAL_NEW_ITEMS_PENDING,  /* nostrc-yi2: emitted when new items are waiting */
   N_SIGNALS
 };
 
@@ -138,6 +153,12 @@ static gboolean remove_note_by_key(GnNostrEventModel *self, uint64_t note_key);
 static void pending_remove_note_key(GnNostrEventModel *self, uint64_t note_key);
 static gboolean add_pending(GnNostrEventModel *self, const char *pubkey_hex, uint64_t note_key, gint64 created_at);
 static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex);
+
+/* nostrc-yi2: Calm timeline helpers */
+static void defer_note_insertion(GnNostrEventModel *self, uint64_t note_key, gint64 created_at);
+static gboolean flush_deferred_notes_cb(gpointer user_data);
+static void schedule_deferred_flush(GnNostrEventModel *self);
+static gint64 get_current_time_ms(void);
 
 /* Subscription callbacks */
 static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
@@ -464,11 +485,123 @@ static void parse_nip10_tags(NostrEvent *evt, char **root_id, char **reply_id) {
   }
 }
 
+/* nostrc-yi2: Get current time in milliseconds */
+static gint64 get_current_time_ms(void) {
+  return g_get_monotonic_time() / 1000;
+}
+
+/* nostrc-yi2: Actually insert deferred notes into the model */
+static gboolean flush_deferred_notes_cb(gpointer user_data) {
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return G_SOURCE_REMOVE;
+
+  self->debounce_source_id = 0;  /* Mark as not pending */
+
+  if (!self->deferred_notes || self->deferred_notes->len == 0) {
+    return G_SOURCE_REMOVE;
+  }
+
+  /* Rate limit check */
+  gint64 now_ms = get_current_time_ms();
+  gint64 elapsed = now_ms - self->last_update_time_ms;
+  if (elapsed < MIN_UPDATE_INTERVAL_MS && self->last_update_time_ms > 0) {
+    /* Too soon, reschedule */
+    gint64 delay = MIN_UPDATE_INTERVAL_MS - elapsed;
+    self->debounce_source_id = g_timeout_add((guint)delay, flush_deferred_notes_cb, self);
+    return G_SOURCE_REMOVE;
+  }
+
+  g_debug("[CALM] Flushing %u deferred notes", self->deferred_notes->len);
+
+  /* Insert all deferred notes */
+  guint inserted = 0;
+  for (guint i = 0; i < self->deferred_notes->len; i++) {
+    NoteEntry *entry = &g_array_index(self->deferred_notes, NoteEntry, i);
+
+    /* Check if already in model */
+    gboolean found = FALSE;
+    for (guint j = 0; j < self->notes->len; j++) {
+      NoteEntry *existing = &g_array_index(self->notes, NoteEntry, j);
+      if (existing->note_key == entry->note_key) {
+        found = TRUE;
+        break;
+      }
+    }
+    if (found) continue;
+
+    /* Find insertion position */
+    guint pos = 0;
+    for (guint j = 0; j < self->notes->len; j++) {
+      NoteEntry *e = &g_array_index(self->notes, NoteEntry, j);
+      if (e->created_at < entry->created_at) {
+        pos = j;
+        break;
+      }
+      pos = j + 1;
+    }
+
+    /* Insert at position */
+    g_array_insert_val(self->notes, pos, *entry);
+    inserted++;
+  }
+
+  /* Clear deferred queue */
+  g_array_set_size(self->deferred_notes, 0);
+
+  /* Update timestamp and emit batch signal */
+  self->last_update_time_ms = now_ms;
+  if (inserted > 0) {
+    /* Emit a single items-changed for all insertions (position 0, added inserted) */
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, inserted);
+  }
+
+  /* Clear pending count and notify */
+  self->pending_new_count = 0;
+  g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
+
+  return G_SOURCE_REMOVE;
+}
+
+/* nostrc-yi2: Schedule a flush of deferred notes */
+static void schedule_deferred_flush(GnNostrEventModel *self) {
+  if (self->debounce_source_id > 0) {
+    return;  /* Already scheduled */
+  }
+  self->debounce_source_id = g_timeout_add(DEBOUNCE_INTERVAL_MS, flush_deferred_notes_cb, self);
+}
+
+/* nostrc-yi2: Defer note insertion (when user is not at top) */
+static void defer_note_insertion(GnNostrEventModel *self, uint64_t note_key, gint64 created_at) {
+  /* Check if already in deferred queue */
+  for (guint i = 0; i < self->deferred_notes->len; i++) {
+    NoteEntry *entry = &g_array_index(self->deferred_notes, NoteEntry, i);
+    if (entry->note_key == note_key) return;  /* Already queued */
+  }
+
+  NoteEntry entry = { .note_key = note_key, .created_at = created_at };
+  g_array_append_val(self->deferred_notes, entry);
+
+  /* Update pending count and notify UI */
+  self->pending_new_count = self->deferred_notes->len;
+  g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->pending_new_count);
+
+  g_debug("[CALM] Deferred note insertion, %u pending", self->pending_new_count);
+}
+
 /* Add a note to the model (assumes gating has already been satisfied) */
 static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64 created_at,
                                const char *root_id, const char *parent_id, guint depth) {
   if (has_note_key(self, note_key)) {
     return;  /* Already in model */
+  }
+
+  /* nostrc-yi2: Calm timeline - defer insertion if user is scrolled down reading
+   * This prevents jarring auto-scroll and visual churn while the user is reading.
+   * Notes are queued and a "N new notes" indicator is shown instead.
+   * Skip deferral for thread views (they need immediate updates). */
+  if (!self->is_thread_view && !self->user_at_top) {
+    defer_note_insertion(self, note_key, created_at);
+    return;
   }
 
   /* Store thread info (optional) */
@@ -497,8 +630,16 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
   NoteEntry entry = { .note_key = note_key, .created_at = created_at };
   g_array_insert_val(self->notes, pos, entry);
 
-  /* Emit items-changed signal */
-  g_list_model_items_changed(G_LIST_MODEL(self), pos, 0, 1);
+  /* nostrc-yi2: Rate-limited emit - debounce rapid updates */
+  gint64 now_ms = get_current_time_ms();
+  gint64 elapsed = now_ms - self->last_update_time_ms;
+  if (elapsed >= MIN_UPDATE_INTERVAL_MS || self->last_update_time_ms == 0) {
+    self->last_update_time_ms = now_ms;
+    g_list_model_items_changed(G_LIST_MODEL(self), pos, 0, 1);
+  } else {
+    /* Schedule debounced flush */
+    schedule_deferred_flush(self);
+  }
 }
 
 /* Enforce window size (~100 items) and evict oldest, including cache cleanup. */
@@ -907,6 +1048,13 @@ static void gn_nostr_event_model_finalize(GObject *object) {
   /* nostrc-7o7: Clean up animation skip tracking */
   if (self->skip_animation_keys) g_hash_table_unref(self->skip_animation_keys);
 
+  /* nostrc-yi2: Clean up calm timeline fields */
+  if (self->debounce_source_id > 0) {
+    g_source_remove(self->debounce_source_id);
+    self->debounce_source_id = 0;
+  }
+  if (self->deferred_notes) g_array_unref(self->deferred_notes);
+
   G_OBJECT_CLASS(gn_nostr_event_model_parent_class)->finalize(object);
 }
 
@@ -954,6 +1102,18 @@ static void gn_nostr_event_model_class_init(GnNostrEventModelClass *klass) {
                  G_TYPE_NONE,
                  1,
                  G_TYPE_STRING);
+
+  /* nostrc-yi2: new-items-pending(count): emitted when new items are waiting due to scroll position */
+  signals[SIGNAL_NEW_ITEMS_PENDING] =
+    g_signal_new("new-items-pending",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 0,
+                 NULL, NULL,
+                 g_cclosure_marshal_VOID__UINT,
+                 G_TYPE_NONE,
+                 1,
+                 G_TYPE_UINT);
 }
 
 static void gn_nostr_event_model_init(GnNostrEventModel *self) {
@@ -977,6 +1137,13 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
   self->visible_start = 0;
   self->visible_end = 10;  /* Default to showing first 10 items as "visible" */
   self->skip_animation_keys = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
+
+  /* nostrc-yi2: Initialize calm timeline fields */
+  self->user_at_top = TRUE;  /* Assume user starts at top */
+  self->deferred_notes = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
+  self->debounce_source_id = 0;
+  self->last_update_time_ms = 0;
+  self->pending_new_count = 0;
 
   /* Install lifetime subscriptions via dispatcher (marshals to main loop) */
   self->sub_profiles = gn_ndb_subscribe(FILTER_PROFILES, on_sub_profiles_batch, self, NULL);
@@ -1694,4 +1861,39 @@ void gn_nostr_event_model_set_visible_range(GnNostrEventModel *self, guint start
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
   self->visible_start = start;
   self->visible_end = end;
+}
+
+/* nostrc-yi2: Set whether user is at top of scroll (enables auto-insert) */
+void gn_nostr_event_model_set_user_at_top(GnNostrEventModel *self, gboolean at_top) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
+
+  gboolean was_at_top = self->user_at_top;
+  self->user_at_top = at_top;
+
+  /* If user just scrolled to top, flush any deferred notes */
+  if (at_top && !was_at_top && self->deferred_notes && self->deferred_notes->len > 0) {
+    g_debug("[CALM] User scrolled to top, flushing %u deferred notes", self->deferred_notes->len);
+    flush_deferred_notes_cb(self);
+  }
+}
+
+/* nostrc-yi2: Get the count of pending new items */
+guint gn_nostr_event_model_get_pending_count(GnNostrEventModel *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_MODEL(self), 0);
+  return self->pending_new_count;
+}
+
+/* nostrc-yi2: Force flush of deferred notes (e.g., when user clicks indicator) */
+void gn_nostr_event_model_flush_pending(GnNostrEventModel *self) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
+
+  if (self->deferred_notes && self->deferred_notes->len > 0) {
+    g_debug("[CALM] Manually flushing %u deferred notes", self->deferred_notes->len);
+    /* Cancel any pending debounce */
+    if (self->debounce_source_id > 0) {
+      g_source_remove(self->debounce_source_id);
+      self->debounce_source_id = 0;
+    }
+    flush_deferred_notes_cb(self);
+  }
 }

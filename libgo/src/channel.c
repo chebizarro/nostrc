@@ -301,19 +301,26 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
             size_t occ2 = (head + 1) - tail; // post-increment occupancy
             nostr_metric_counter_add("go_chan_send_depth_sum", occ2);
         }
-        // Wake a receiver if transition from empty (head==tail before increment)
-        if (head == tail) {
+        // Wake a receiver that may be blocked waiting for data.
+        // With REFINED_SIGNALING, we must always signal because only one
+        // waiter wakes per signal, leaving others blocked even when data exists.
+        {
+            int was_empty = (head == tail);
             NLOCK(&chan->mutex);
 #if NOSTR_REFINED_SIGNALING
             nsync_cv_signal(&chan->cond_empty);
 #else
-            nsync_cv_broadcast(&chan->cond_empty);
+            if (was_empty) {
+                nsync_cv_broadcast(&chan->cond_empty);
+            }
 #endif
             NUNLOCK(&chan->mutex);
 #ifdef NOSTR_ARM_WFE
             NOSTR_EVENT_SEND();
 #endif
-            nostr_metric_counter_add("go_chan_signal_empty", 1);
+            if (was_empty) {
+                nostr_metric_counter_add("go_chan_signal_empty", 1);
+            }
         }
         return 0;
     }
@@ -372,17 +379,21 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
             nostr_metric_counter_add("go_chan_send_depth_sum", chan->size);
 #endif
         }
-        // Signal receiver(s) that data is available
-        if (was_empty) {
+        // Signal receiver(s) that data is available.
+        // With REFINED_SIGNALING, always signal because only one waiter
+        // wakes per signal, leaving others blocked even when data exists.
 #if NOSTR_REFINED_SIGNALING
-            nsync_cv_signal(&chan->cond_empty);
+        nsync_cv_signal(&chan->cond_empty);
 #else
+        if (was_empty) {
             nsync_cv_broadcast(&chan->cond_empty);
+        }
 #endif
-            // On ARM with WFE/SEV, send event to nudge sleeping peers
+        // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
-            NOSTR_EVENT_SEND();
+        NOSTR_EVENT_SEND();
 #endif
+        if (was_empty) {
             nostr_metric_counter_add("go_chan_signal_empty", 1);
         }
         rc = 0;
@@ -435,20 +446,29 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
             size_t occ2 = head - (tail + 1); // post-decrement occupancy
             nostr_metric_counter_add("go_chan_recv_depth_sum", occ2);
         }
-        // Wake a sender if transition from full (head - tail == capacity before dec)
-        if ((head - tail) == chan->capacity) {
+        // Wake a sender that may be blocked waiting for space.
+        // With REFINED_SIGNALING, we must always signal because only one
+        // waiter wakes per signal, leaving others blocked even when space exists.
+        {
+            int was_full = ((head - tail) == chan->capacity);
             // Signal under mutex to avoid lost wakeups
             NLOCK(&chan->mutex);
 #if NOSTR_REFINED_SIGNALING
+            // Always signal to wake one blocked sender
             nsync_cv_signal(&chan->cond_full);
 #else
-            nsync_cv_broadcast(&chan->cond_full);
+            // Broadcast only needed when transitioning from full
+            if (was_full) {
+                nsync_cv_broadcast(&chan->cond_full);
+            }
 #endif
             NUNLOCK(&chan->mutex);
 #ifdef NOSTR_ARM_WFE
             NOSTR_EVENT_SEND();
 #endif
-            nostr_metric_counter_add("go_chan_signal_full", 1);
+            if (was_full) {
+                nostr_metric_counter_add("go_chan_signal_full", 1);
+            }
         }
         return 0;
     }
@@ -501,17 +521,21 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
             nostr_metric_counter_add("go_chan_recv_depth_sum", chan->size);
 #endif
         }
-        // Signal sender(s) that space is available
-        if (was_full) {
+        // Signal sender(s) that space is available.
+        // With REFINED_SIGNALING, always signal because only one waiter
+        // wakes per signal, leaving others blocked even when space exists.
 #if NOSTR_REFINED_SIGNALING
-            nsync_cv_signal(&chan->cond_full);
+        nsync_cv_signal(&chan->cond_full);
 #else
+        if (was_full) {
             nsync_cv_broadcast(&chan->cond_full);
+        }
 #endif
-            // On ARM with WFE/SEV, send event to nudge sleeping peers
+        // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
-            NOSTR_EVENT_SEND();
+        NOSTR_EVENT_SEND();
 #endif
+        if (was_full) {
             nostr_metric_counter_add("go_chan_signal_full", 1);
         }
         rc = 0;
@@ -753,13 +777,18 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
     nostr_metric_counter_add("go_chan_send_depth_sum", chan->size);
 #endif
 
-    // Signal receiver(s) that data is available
-    if (was_empty) {
+    // Signal receiver(s) that data is available.
+    // With REFINED_SIGNALING, always signal because only one waiter
+    // wakes per signal, leaving others blocked even when data exists.
 #if NOSTR_REFINED_SIGNALING
-        nsync_cv_signal(&chan->cond_empty);
+    nsync_cv_signal(&chan->cond_empty);
 #else
+    if (was_empty) {
         nsync_cv_broadcast(&chan->cond_empty);
+    }
 #endif
+    (void)was_empty; // suppress unused warning when REFINED_SIGNALING
+    if (was_empty) {
         // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
         NOSTR_EVENT_SEND();
@@ -930,17 +959,24 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
     nostr_metric_counter_add("go_chan_recv_depth_sum", chan->size);
 #endif
 
-    // Signal sender(s) that space is available
-    if (was_full) {
+    // Signal sender(s) that space is available.
+    // Always signal when space exists - a blocked sender may be waiting
+    // even if we weren't at full capacity (due to REFINED_SIGNALING only
+    // waking one waiter, leaving others blocked).
 #if NOSTR_REFINED_SIGNALING
-        nsync_cv_signal(&chan->cond_full);
+    // With refined signaling, always signal to wake one blocked sender
+    nsync_cv_signal(&chan->cond_full);
 #else
+    // Broadcast only needed when transitioning from full
+    if (was_full) {
         nsync_cv_broadcast(&chan->cond_full);
+    }
 #endif
-        // On ARM with WFE/SEV, send event to nudge sleeping peers
+    // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
-        NOSTR_EVENT_SEND();
+    NOSTR_EVENT_SEND();
 #endif
+    if (was_full) {
         nostr_metric_counter_add("go_chan_signal_full", 1);
     }
 
@@ -1070,17 +1106,21 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
     nostr_metric_counter_add("go_chan_send_depth_sum", chan->size);
 #endif
 
-    // Signal receiver(s) that data is available
-    if (was_empty2) {
+    // Signal receiver(s) that data is available.
+    // With REFINED_SIGNALING, always signal because only one waiter
+    // wakes per signal, leaving others blocked even when data exists.
 #if NOSTR_REFINED_SIGNALING
-        nsync_cv_signal(&chan->cond_empty);
+    nsync_cv_signal(&chan->cond_empty);
 #else
+    if (was_empty2) {
         nsync_cv_broadcast(&chan->cond_empty);
+    }
 #endif
-        // On ARM with WFE/SEV, send event to nudge sleeping peers
+    // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
-        NOSTR_EVENT_SEND();
+    NOSTR_EVENT_SEND();
 #endif
+    if (was_empty2) {
         nostr_metric_counter_add("go_chan_signal_empty", 1);
     }
 
@@ -1265,17 +1305,24 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
     nostr_metric_counter_add("go_chan_recv_depth_sum", chan->size);
 #endif
 
-    // Signal sender(s) that space is available
-    if (was_full2) {
+    // Signal sender(s) that space is available.
+    // Always signal when space exists - a blocked sender may be waiting
+    // even if we weren't at full capacity (due to REFINED_SIGNALING only
+    // waking one waiter, leaving others blocked).
 #if NOSTR_REFINED_SIGNALING
-        nsync_cv_signal(&chan->cond_full);
+    // With refined signaling, always signal to wake one blocked sender
+    nsync_cv_signal(&chan->cond_full);
 #else
+    // Broadcast only needed when transitioning from full
+    if (was_full2) {
         nsync_cv_broadcast(&chan->cond_full);
+    }
 #endif
-        // On ARM with WFE/SEV, send event to nudge sleeping peers
+    // On ARM with WFE/SEV, send event to nudge sleeping peers
 #ifdef NOSTR_ARM_WFE
-        NOSTR_EVENT_SEND();
+    NOSTR_EVENT_SEND();
 #endif
+    if (was_full2) {
         nostr_metric_counter_add("go_chan_signal_full", 1);
     }
 

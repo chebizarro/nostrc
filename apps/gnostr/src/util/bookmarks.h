@@ -3,6 +3,15 @@
  *
  * Provides bookmark list management for the gnostr GTK app.
  * Handles loading/parsing kind 10003 events and managing bookmarks.
+ *
+ * Relay Sync (NIP-51):
+ * - Fetches user's bookmark list from relays on login via gnostr_bookmarks_fetch_async()
+ * - Merges remote bookmarks with local (prefers most recent by created_at)
+ * - Publishes updated bookmark list when user adds/removes bookmarks
+ * - Supports both public bookmarks (in tags) and private bookmarks (encrypted content)
+ *
+ * Note: Private bookmark encryption requires NIP-44 which is not yet implemented.
+ * Private bookmarks are currently stored locally only.
  */
 
 #ifndef GNOSTR_BOOKMARKS_H
@@ -55,11 +64,15 @@ gboolean gnostr_bookmarks_load_from_json(GnostrBookmarks *self,
  * gnostr_bookmarks_fetch_async:
  * @self: bookmark list instance
  * @pubkey_hex: user's public key (64 hex chars)
- * @relays: NULL-terminated array of relay URLs
+ * @relays: (nullable): NULL-terminated array of relay URLs, or NULL to use configured relays
  * @callback: callback when fetch completes
  * @user_data: user data for callback
  *
- * Fetches the user's bookmark list from relays asynchronously.
+ * Fetches the user's bookmark list (kind 10003) from relays asynchronously.
+ * Uses SimplePool to query configured relays and merges results with local bookmarks.
+ * Conflict resolution: prefers the most recent event by created_at timestamp.
+ *
+ * If @relays is NULL, uses the user's configured relay list from GSettings.
  */
 typedef void (*GnostrBookmarksFetchCallback)(GnostrBookmarks *self,
                                               gboolean success,
@@ -135,7 +148,15 @@ gboolean gnostr_bookmarks_toggle(GnostrBookmarks *self,
  * @callback: callback when save completes
  * @user_data: user data for callback
  *
- * Signs and publishes the bookmark list to relays via signer IPC.
+ * Signs and publishes the bookmark list (kind 10003) to relays via signer IPC.
+ * Uses the user's configured write relays for publishing.
+ *
+ * The event is signed using the nostr-homed signer service. After signing,
+ * the event is published to all configured write relays. The callback is
+ * invoked with success=TRUE if at least one relay accepts the event.
+ *
+ * Note: Private bookmarks (is_private=TRUE) are currently stored as public
+ * until NIP-44 encryption is implemented.
  */
 typedef void (*GnostrBookmarksSaveCallback)(GnostrBookmarks *self,
                                              gboolean success,
@@ -174,6 +195,29 @@ gboolean gnostr_bookmarks_is_dirty(GnostrBookmarks *self);
  * Returns: number of bookmarked events
  */
 size_t gnostr_bookmarks_get_count(GnostrBookmarks *self);
+
+/* ---- Auto-Sync ---- */
+
+/**
+ * gnostr_bookmarks_sync_on_login:
+ * @pubkey_hex: user's public key (64 hex chars)
+ *
+ * Convenience function to fetch bookmarks when user logs in.
+ * Fetches the user's bookmark list from configured relays and merges
+ * with any local bookmarks.
+ *
+ * This is a fire-and-forget operation; no callback is provided.
+ * Connect to the "changed" signal to be notified when sync completes.
+ */
+void gnostr_bookmarks_sync_on_login(const char *pubkey_hex);
+
+/**
+ * gnostr_bookmarks_get_last_sync_time:
+ * @self: bookmark list instance
+ *
+ * Returns: the created_at timestamp of the last synced event, or 0 if never synced
+ */
+gint64 gnostr_bookmarks_get_last_sync_time(GnostrBookmarks *self);
 
 /* ---- Signals ---- */
 

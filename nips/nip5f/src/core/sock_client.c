@@ -13,8 +13,19 @@
 struct Nip5fConn { int fd; unsigned long next_id; };
 
 /* Local JSON helpers (kept internal to NIP-5F client) */
-static inline char *json_str(const char *s) {
-  return nostr_escape_string(s); /* returns quoted+escaped string; caller frees */
+static char *json_str(const char *s) {
+  /* Escape the string content and wrap in quotes for valid JSON string value */
+  char *escaped = nostr_escape_string(s);
+  if (!escaped) return NULL;
+  size_t elen = strlen(escaped);
+  char *quoted = (char*)malloc(elen + 3); /* 2 quotes + NUL */
+  if (!quoted) { free(escaped); return NULL; }
+  quoted[0] = '"';
+  memcpy(quoted + 1, escaped, elen);
+  quoted[elen + 1] = '"';
+  quoted[elen + 2] = '\0';
+  free(escaped);
+  return quoted;
 }
 
 static int jsonrpc_build_req(struct Nip5fConn *c, const char *method, const char *params_raw, char **out_req, char idbuf[32]) {

@@ -37,6 +37,16 @@
         If empty, falls back to regular relays. Published in kind 10050 events.
       </description>
     </key>
+    <key name="index-relays" type="as">
+      <default>['wss://relay.nostr.band', 'wss://search.nos.today']</default>
+      <summary>Index Relay URLs (NIP-50 search)</summary>
+      <description>
+        List of Nostr relay URLs that support NIP-50 search queries.
+        These relays are used for the Discover tab to search for profiles
+        by name, npub, NIP-05, or keywords. Index relays maintain search
+        indexes and respond to filters with a "search" field.
+      </description>
+    </key>
   </schema>
   <!-- Display settings -->
   <schema id="org.gnostr.Display" path="/org/gnostr/display/">
@@ -165,6 +175,143 @@
       <summary>NIP-51 last sync timestamp</summary>
       <description>
         Unix timestamp of the last successful NIP-51 settings sync.
+      </description>
+    </key>
+    <key name="background-mode" type="b">
+      <default>false</default>
+      <summary>Background mode enabled</summary>
+      <description>
+        When enabled, closing the main window hides it instead of quitting.
+        The app continues running in the background, keeping relay connections
+        alive and receiving notifications. Quit via the system tray menu.
+      </description>
+    </key>
+  </schema>
+  <!-- Notification settings -->
+  <schema id="org.gnostr.Notifications" path="/org/gnostr/notifications/">
+    <!-- Global notification toggle -->
+    <key name="enabled" type="b">
+      <default>true</default>
+      <summary>Notifications enabled</summary>
+      <description>
+        Master switch for all notifications. When disabled, no notifications
+        will be shown regardless of per-type settings.
+      </description>
+    </key>
+    <!-- Per-type notification toggles -->
+    <key name="notify-dm-enabled" type="b">
+      <default>true</default>
+      <summary>DM notifications enabled</summary>
+      <description>
+        Whether to show notifications for new direct messages.
+      </description>
+    </key>
+    <key name="notify-mention-enabled" type="b">
+      <default>true</default>
+      <summary>Mention notifications enabled</summary>
+      <description>
+        Whether to show notifications when mentioned in notes.
+      </description>
+    </key>
+    <key name="notify-reply-enabled" type="b">
+      <default>true</default>
+      <summary>Reply notifications enabled</summary>
+      <description>
+        Whether to show notifications for replies to your notes.
+      </description>
+    </key>
+    <key name="notify-zap-enabled" type="b">
+      <default>true</default>
+      <summary>Zap notifications enabled</summary>
+      <description>
+        Whether to show notifications for received zaps.
+      </description>
+    </key>
+    <!-- Notification presentation options -->
+    <key name="sound-enabled" type="b">
+      <default>true</default>
+      <summary>Notification sound enabled</summary>
+      <description>
+        Whether to play a sound when notifications arrive.
+      </description>
+    </key>
+    <key name="tray-badge-enabled" type="b">
+      <default>true</default>
+      <summary>Tray badge enabled</summary>
+      <description>
+        Whether to show unread count badge on the tray icon.
+      </description>
+    </key>
+    <key name="desktop-popup-enabled" type="b">
+      <default>true</default>
+      <summary>Desktop popup notifications enabled</summary>
+      <description>
+        Whether to show desktop notification popups.
+      </description>
+    </key>
+    <!-- Badge settings (per-type) -->
+    <key name="badge-dm-enabled" type="b">
+      <default>true</default>
+      <summary>Badge for DMs enabled</summary>
+      <description>
+        Whether to show badge count for unread direct messages.
+      </description>
+    </key>
+    <key name="badge-mention-enabled" type="b">
+      <default>true</default>
+      <summary>Badge for mentions enabled</summary>
+      <description>
+        Whether to show badge count for mentions in notes.
+      </description>
+    </key>
+    <key name="badge-reply-enabled" type="b">
+      <default>true</default>
+      <summary>Badge for replies enabled</summary>
+      <description>
+        Whether to show badge count for replies to your notes.
+      </description>
+    </key>
+    <key name="badge-zap-enabled" type="b">
+      <default>true</default>
+      <summary>Badge for zaps enabled</summary>
+      <description>
+        Whether to show badge count for zap receipts.
+      </description>
+    </key>
+    <key name="badge-display-mode" type="s">
+      <default>'count'</default>
+      <summary>Badge display mode</summary>
+      <description>
+        How to display the notification badge: 'count' (numeric), 'dot' (indicator), or 'none'.
+      </description>
+    </key>
+    <!-- Last read timestamps -->
+    <key name="last-read-dm" type="x">
+      <default>0</default>
+      <summary>Last read DM timestamp</summary>
+      <description>
+        Unix timestamp of when DMs were last viewed.
+      </description>
+    </key>
+    <key name="last-read-mention" type="x">
+      <default>0</default>
+      <summary>Last read mention timestamp</summary>
+      <description>
+        Unix timestamp of when mentions were last viewed.
+      </description>
+    </key>
+    <key name="last-read-reply" type="x">
+      <default>0</default>
+      <summary>Last read reply timestamp</summary>
+      <description>
+        Unix timestamp of when replies were last viewed.
+      </description>
+    </key>
+    <key name="last-read-zap" type="x">
+      <default>0</default>
+      <summary>Last read zap timestamp</summary>
+      <description>
+        Unix timestamp of when zaps were last viewed.
       </description>
     </key>
   </schema>

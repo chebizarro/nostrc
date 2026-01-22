@@ -2,6 +2,10 @@
 #include "sheet-relay-config.h"
 #include "../app-resources.h"
 #include "../../relay_store.h"
+#include "../../relay_info.h"
+
+/* Forward declarations */
+static void on_info_button_clicked(GtkButton *btn, gpointer user_data);
 
 struct _SheetRelayConfig {
   AdwDialog parent_instance;
@@ -11,6 +15,7 @@ struct _SheetRelayConfig {
   GtkButton *btn_publish;
   GtkButton *btn_add;
   GtkButton *btn_test_all;
+  GtkButton *btn_fetch_info;
   GtkEntry *entry_url;
   GtkListBox *list_relays;
 
@@ -28,11 +33,14 @@ typedef struct {
   GtkCheckButton *chk_read;
   GtkCheckButton *chk_write;
   GtkImage *status_icon;
+  GtkLabel *lbl_subtitle;
+  RelayInfo *info;
 } RelayRowData;
 
 static void relay_row_data_free(RelayRowData *data) {
   if (!data) return;
   g_free(data->url);
+  if (data->info) relay_info_free(data->info);
   g_free(data);
 }
 
@@ -115,6 +123,78 @@ static void update_status_icon(GtkImage *icon, RelayConnectionStatus status) {
   }
 }
 
+/* Update row subtitle with NIP-11 info */
+static void update_row_with_info(AdwActionRow *row, RelayRowData *data, RelayInfo *info) {
+  if (!row || !data) return;
+
+  /* Store info in row data */
+  if (data->info) relay_info_free(data->info);
+  data->info = info;
+
+  if (!info) {
+    adw_action_row_set_subtitle(row, NULL);
+    return;
+  }
+
+  /* Build subtitle with name and NIPs */
+  GString *subtitle = g_string_new(NULL);
+
+  if (info->name && *info->name) {
+    g_string_append(subtitle, info->name);
+  }
+
+  if (info->supported_nips && info->supported_nips_count > 0) {
+    gchar *nips_str = relay_info_format_nips(info);
+    if (subtitle->len > 0) g_string_append(subtitle, " | ");
+    g_string_append_printf(subtitle, "NIPs: %s", nips_str);
+    g_free(nips_str);
+  }
+
+  if (info->software && *info->software) {
+    if (subtitle->len > 0) g_string_append(subtitle, " | ");
+    g_string_append(subtitle, info->software);
+    if (info->version && *info->version) {
+      g_string_append_printf(subtitle, " %s", info->version);
+    }
+  }
+
+  if (info->auth_required) {
+    if (subtitle->len > 0) g_string_append(subtitle, " | ");
+    g_string_append(subtitle, "Auth required");
+  }
+
+  if (info->payment_required) {
+    if (subtitle->len > 0) g_string_append(subtitle, " | ");
+    g_string_append(subtitle, "Paid");
+  }
+
+  if (subtitle->len > 0) {
+    adw_action_row_set_subtitle(row, subtitle->str);
+  }
+
+  g_string_free(subtitle, TRUE);
+}
+
+/* Callback for NIP-11 info fetch */
+typedef struct {
+  SheetRelayConfig *self;
+  AdwActionRow *row;
+  RelayRowData *data;
+} InfoFetchData;
+
+static void on_info_fetch_complete(RelayInfo *info, const gchar *error, gpointer user_data) {
+  InfoFetchData *fetch_data = user_data;
+  (void)error; /* Ignore errors silently for now */
+
+  if (fetch_data && fetch_data->row && fetch_data->data) {
+    update_row_with_info(fetch_data->row, fetch_data->data, info);
+  } else if (info) {
+    relay_info_free(info);
+  }
+
+  g_free(fetch_data);
+}
+
 static GtkWidget *create_relay_row(SheetRelayConfig *self, const gchar *url,
                                    gboolean read, gboolean write) {
   AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
@@ -124,6 +204,12 @@ static GtkWidget *create_relay_row(SheetRelayConfig *self, const gchar *url,
   GtkImage *status_icon = GTK_IMAGE(gtk_image_new_from_icon_name("network-wired-symbolic"));
   gtk_widget_set_valign(GTK_WIDGET(status_icon), GTK_ALIGN_CENTER);
   gtk_widget_set_tooltip_text(GTK_WIDGET(status_icon), "Connection status unknown");
+
+  /* Info button */
+  GtkButton *btn_info = GTK_BUTTON(gtk_button_new_from_icon_name("dialog-information-symbolic"));
+  gtk_widget_set_valign(GTK_WIDGET(btn_info), GTK_ALIGN_CENTER);
+  gtk_widget_add_css_class(GTK_WIDGET(btn_info), "flat");
+  gtk_widget_set_tooltip_text(GTK_WIDGET(btn_info), "Show relay info (NIP-11)");
 
   /* Read checkbox */
   GtkCheckButton *chk_read = GTK_CHECK_BUTTON(gtk_check_button_new_with_label("Read"));
@@ -142,6 +228,7 @@ static GtkWidget *create_relay_row(SheetRelayConfig *self, const gchar *url,
 
   /* Pack into row */
   adw_action_row_add_prefix(row, GTK_WIDGET(status_icon));
+  adw_action_row_add_suffix(row, GTK_WIDGET(btn_info));
   adw_action_row_add_suffix(row, GTK_WIDGET(chk_read));
   adw_action_row_add_suffix(row, GTK_WIDGET(chk_write));
   adw_action_row_add_suffix(row, GTK_WIDGET(btn_remove));
@@ -152,11 +239,17 @@ static GtkWidget *create_relay_row(SheetRelayConfig *self, const gchar *url,
   data->chk_read = chk_read;
   data->chk_write = chk_write;
   data->status_icon = status_icon;
+  data->info = NULL;
   g_object_set_data_full(G_OBJECT(row), "relay-data", data, (GDestroyNotify)relay_row_data_free);
 
   g_signal_connect(btn_remove, "clicked", G_CALLBACK(on_row_remove), row);
 
-  (void)self; /* Silence unused warning */
+  /* Store reference to row in info button for later use */
+  g_object_set_data(G_OBJECT(btn_info), "action-row", row);
+  g_object_set_data(G_OBJECT(btn_info), "relay-data", data);
+  g_object_set_data(G_OBJECT(btn_info), "sheet-config", self);
+  g_signal_connect(btn_info, "clicked", G_CALLBACK(on_info_button_clicked), NULL);
+
   return GTK_WIDGET(row);
 }
 
@@ -287,6 +380,106 @@ static void on_test_all(GtkButton *btn, gpointer user_data) {
   }
 }
 
+/* Show NIP-11 info dialog for a single relay */
+static void show_relay_info_dialog(SheetRelayConfig *self, RelayRowData *data) {
+  if (!data || !data->info) return;
+
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  RelayInfo *info = data->info;
+
+  /* Build info message */
+  GString *msg = g_string_new(NULL);
+
+  if (info->name && *info->name) {
+    g_string_append_printf(msg, "<b>Name:</b> %s\n", info->name);
+  }
+
+  if (info->description && *info->description) {
+    g_string_append_printf(msg, "<b>Description:</b> %s\n", info->description);
+  }
+
+  if (info->software && *info->software) {
+    g_string_append_printf(msg, "<b>Software:</b> %s", info->software);
+    if (info->version && *info->version) {
+      g_string_append_printf(msg, " %s", info->version);
+    }
+    g_string_append(msg, "\n");
+  }
+
+  if (info->contact && *info->contact) {
+    g_string_append_printf(msg, "<b>Contact:</b> %s\n", info->contact);
+  }
+
+  if (info->supported_nips && info->supported_nips_count > 0) {
+    gchar *nips = relay_info_format_nips(info);
+    g_string_append_printf(msg, "<b>Supported NIPs:</b> %s\n", nips);
+    g_free(nips);
+  }
+
+  if (info->auth_required) {
+    g_string_append(msg, "<b>Auth required:</b> Yes\n");
+  }
+
+  if (info->payment_required) {
+    g_string_append(msg, "<b>Payment required:</b> Yes\n");
+  }
+
+  /* Show dialog */
+  GtkAlertDialog *dlg = gtk_alert_dialog_new("%s", data->url);
+  gtk_alert_dialog_set_detail(dlg, msg->str);
+  gtk_alert_dialog_show(dlg, GTK_WINDOW(root));
+  g_object_unref(dlg);
+
+  g_string_free(msg, TRUE);
+}
+
+/* Handler for individual info button click */
+static void on_info_button_clicked(GtkButton *btn, gpointer user_data) {
+  (void)user_data;
+
+  SheetRelayConfig *self = g_object_get_data(G_OBJECT(btn), "sheet-config");
+  AdwActionRow *row = g_object_get_data(G_OBJECT(btn), "action-row");
+  RelayRowData *data = g_object_get_data(G_OBJECT(btn), "relay-data");
+
+  if (!self || !row || !data) return;
+
+  /* If we already have info cached, show it */
+  if (data->info) {
+    show_relay_info_dialog(self, data);
+    return;
+  }
+
+  /* Fetch info */
+  InfoFetchData *fetch_data = g_new0(InfoFetchData, 1);
+  fetch_data->self = self;
+  fetch_data->row = row;
+  fetch_data->data = data;
+
+  relay_info_fetch_async(data->url, on_info_fetch_complete, fetch_data);
+}
+
+/* Fetch NIP-11 info for all relays */
+static void on_fetch_info(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  SheetRelayConfig *self = user_data;
+
+  for (GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self->list_relays));
+       child != NULL;
+       child = gtk_widget_get_next_sibling(child)) {
+    if (!ADW_IS_ACTION_ROW(child)) continue;
+
+    RelayRowData *row_data = g_object_get_data(G_OBJECT(child), "relay-data");
+    if (!row_data) continue;
+
+    InfoFetchData *fetch_data = g_new0(InfoFetchData, 1);
+    fetch_data->self = self;
+    fetch_data->row = ADW_ACTION_ROW(child);
+    fetch_data->data = row_data;
+
+    relay_info_fetch_async(row_data->url, on_info_fetch_complete, fetch_data);
+  }
+}
+
 static void sheet_relay_config_finalize(GObject *obj) {
   SheetRelayConfig *self = SHEET_RELAY_CONFIG(obj);
   relay_store_free(self->store);
@@ -304,6 +497,7 @@ static void sheet_relay_config_class_init(SheetRelayConfigClass *klass) {
   gtk_widget_class_bind_template_child(wc, SheetRelayConfig, btn_publish);
   gtk_widget_class_bind_template_child(wc, SheetRelayConfig, btn_add);
   gtk_widget_class_bind_template_child(wc, SheetRelayConfig, btn_test_all);
+  gtk_widget_class_bind_template_child(wc, SheetRelayConfig, btn_fetch_info);
   gtk_widget_class_bind_template_child(wc, SheetRelayConfig, entry_url);
   gtk_widget_class_bind_template_child(wc, SheetRelayConfig, list_relays);
 }
@@ -318,6 +512,9 @@ static void sheet_relay_config_init(SheetRelayConfig *self) {
   g_signal_connect(self->btn_publish, "clicked", G_CALLBACK(on_publish), self);
   g_signal_connect(self->btn_add, "clicked", G_CALLBACK(on_add_relay), self);
   g_signal_connect(self->btn_test_all, "clicked", G_CALLBACK(on_test_all), self);
+  if (self->btn_fetch_info) {
+    g_signal_connect(self->btn_fetch_info, "clicked", G_CALLBACK(on_fetch_info), self);
+  }
   g_signal_connect(self->entry_url, "activate", G_CALLBACK(on_entry_activate), self);
 
   populate_list(self);

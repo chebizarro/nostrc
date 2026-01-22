@@ -16,6 +16,7 @@
 #define NOSTR_KIND_SIMPLE_GROUP_REPLY           12
 #define NOSTR_KIND_SEAL                         13
 #define NOSTR_KIND_DIRECT_MESSAGE               14
+#define NOSTR_KIND_FILE_MESSAGE                 15
 #define NOSTR_KIND_GENERIC_REPOST               16
 #define NOSTR_KIND_REACTION_TO_WEBSITE          17
 #define NOSTR_KIND_CHANNEL_CREATION             40

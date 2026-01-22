@@ -195,8 +195,32 @@ int nostr_nip46_request_parse(const char *json, NostrNip46Request *out) {
     if (!json || !out) return -1; memset(out, 0, sizeof(*out));
     if (nostr_json_get_string(json, "id", &out->id) != 0) return -1;
     if (nostr_json_get_string(json, "method", &out->method) != 0) return -1;
+
     // First try to parse as array of strings (legacy behavior)
+    int need_fallback = 0;
     if (nostr_json_get_string_array(json, "params", &out->params, &out->n_params) != 0 || out->n_params == 0) {
+        need_fallback = 1;
+    } else {
+        // Check if any params are NULL (happens when elements aren't strings)
+        for (size_t i = 0; i < out->n_params; ++i) {
+            if (!out->params[i]) {
+                need_fallback = 1;
+                break;
+            }
+        }
+    }
+
+    if (need_fallback) {
+        // Free any partially allocated params from string_array attempt
+        if (out->params) {
+            for (size_t i = 0; i < out->n_params; ++i) {
+                free(out->params[i]);
+            }
+            free(out->params);
+            out->params = NULL;
+            out->n_params = 0;
+        }
+
         // Fallback: get raw params array and split into raw elements
         char *raw = NULL;
         if (nostr_json_get_raw(json, "params", &raw) == 0 && raw) {

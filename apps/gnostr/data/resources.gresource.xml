@@ -8,9 +8,14 @@
     <file>ui/widgets/note-card-row.ui</file>
     <file>ui/widgets/gnostr-dm-inbox-view.ui</file>
     <file>ui/widgets/gnostr-dm-row.ui</file>
+    <file>ui/widgets/gnostr-notifications-view.ui</file>
+    <file>ui/widgets/gnostr-notification-row.ui</file>
     <file>ui/widgets/gnostr-profile-pane.ui</file>
     <file>ui/widgets/gnostr-thread-view.ui</file>
     <file>ui/widgets/gnostr-note-embed.ui</file>
+    <file>ui/widgets/page-discover.ui</file>
+    <file>ui/widgets/gnostr-profile-row.ui</file>
+    <file>ui/widgets/gnostr-search-results-view.ui</file>
     <file>ui/dialogs/gnostr-settings-dialog.ui</file>
     <file>ui/dialogs/gnostr-relay-manager.ui</file>
     <file>ui/dialogs/gnostr-profile-edit.ui</file>
@@ -18,6 +23,7 @@
     <file>ui/dialogs/gnostr-zap-dialog.ui</file>
     <file>ui/dialogs/gnostr-mute-list.ui</file>
     <file>ui/dialogs/gnostr-login.ui</file>
+    <file>ui/dialogs/gnostr-about-dialog.ui</file>
     <file>ui/styles/gnostr.css</file>
   </gresource>
 </gresources>

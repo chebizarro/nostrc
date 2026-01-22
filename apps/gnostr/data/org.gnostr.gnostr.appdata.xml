@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.gnostr.gnostr</id>
+  <name>GNostr</name>
+  <summary>GTK4 Nostr client for the decentralized social protocol</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="org.gnostr">
+    <name>GNostr Team</name>
+  </developer>
+
+  <description>
+    <p>
+      GNostr is a native GTK4 client for Nostr, the decentralized social protocol.
+      It provides a modern desktop experience for interacting with the Nostr network,
+      including reading and publishing notes, managing your profile, and connecting
+      to relays.
+    </p>
+    <p>Features include:</p>
+    <ul>
+      <li>Timeline view with real-time updates</li>
+      <li>Profile management and editing</li>
+      <li>Direct messaging (NIP-17)</li>
+      <li>Relay management</li>
+      <li>Integration with GNostr Signer for secure key management</li>
+      <li>Nostr Wallet Connect (NIP-47) for Lightning payments</li>
+      <li>Blossom media uploads</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">org.gnostr.gnostr.desktop</launchable>
+
+  <url type="homepage">https://github.com/gnostr-org/gnostr</url>
+  <url type="bugtracker">https://github.com/gnostr-org/gnostr/issues</url>
+
+  <provides>
+    <binary>gnostr</binary>
+  </provides>
+
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </recommends>
+
+  <categories>
+    <category>Network</category>
+    <category>Chat</category>
+    <category>InstantMessaging</category>
+  </categories>
+
+  <keywords>
+    <keyword>nostr</keyword>
+    <keyword>social</keyword>
+    <keyword>decentralized</keyword>
+    <keyword>relay</keyword>
+    <keyword>notes</keyword>
+    <keyword>chat</keyword>
+  </keywords>
+
+  <content_rating type="oars-1.1">
+    <content_attribute id="social-chat">intense</content_attribute>
+    <content_attribute id="social-info">intense</content_attribute>
+  </content_rating>
+
+  <releases>
+    <release version="0.1.0" date="2025-01-22">
+      <description>
+        <p>Initial release with core functionality:</p>
+        <ul>
+          <li>Timeline viewing and note publishing</li>
+          <li>Profile management</li>
+          <li>Relay configuration</li>
+          <li>Signer integration</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+</component>

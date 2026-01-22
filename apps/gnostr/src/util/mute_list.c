@@ -3,14 +3,23 @@
  *
  * Manages mute lists (kind 10000) for filtering content.
  * Uses the nip51 library for parsing and creating list events.
+ * Supports private mute entries via NIP-44 encryption.
  */
 
 #include "mute_list.h"
+#include "relays.h"
 #include "../ipc/signer_ipc.h"
 #include <glib.h>
 #include <jansson.h>
 #include <string.h>
 #include <time.h>
+
+#ifndef GNOSTR_MUTE_LIST_TEST_ONLY
+#include "nostr_simple_pool.h"
+#include "nostr-filter.h"
+#include "nostr-event.h"
+#include "nostr_relay.h"
+#endif
 
 /* Kind 10000 = Mute List per NIP-51 */
 #define MUTE_LIST_KIND 10000
@@ -229,15 +238,250 @@ static void fetch_context_free(FetchContext *ctx) {
     }
 }
 
-/* TODO: Implement relay fetch using SimplePool */
-/* For now, this is a stub that can be connected to the main window's pool */
+#ifndef GNOSTR_MUTE_LIST_TEST_ONLY
+
+/* Context for private entry decryption */
+typedef struct {
+    GnostrMuteList *mute_list;
+    char *encrypted_content;
+    char *user_pubkey;
+} DecryptPrivateContext;
+
+static void decrypt_private_ctx_free(DecryptPrivateContext *ctx) {
+    if (ctx) {
+        g_free(ctx->encrypted_content);
+        g_free(ctx->user_pubkey);
+        g_free(ctx);
+    }
+}
+
+/* Parse decrypted private entries (JSON array of tags) */
+static void parse_private_entries(GnostrMuteList *self, const char *decrypted_json) {
+    if (!self || !decrypted_json || !*decrypted_json) return;
+
+    json_error_t error;
+    json_t *root = json_loads(decrypted_json, 0, &error);
+    if (!root) {
+        g_warning("mute_list: failed to parse decrypted private entries: %s", error.text);
+        return;
+    }
+
+    /* Expecting an array of tags: [["p", "pubkey"], ["word", "text"], ...] */
+    if (!json_is_array(root)) {
+        g_warning("mute_list: decrypted content is not an array");
+        json_decref(root);
+        return;
+    }
+
+    g_mutex_lock(&self->lock);
+
+    size_t idx;
+    json_t *tag;
+    json_array_foreach(root, idx, tag) {
+        if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+
+        const char *tag_name = json_string_value(json_array_get(tag, 0));
+        const char *value = json_string_value(json_array_get(tag, 1));
+        if (!tag_name || !value) continue;
+
+        MuteEntry *entry = mute_entry_new(value, TRUE);  /* is_private = TRUE */
+
+        if (strcmp(tag_name, "p") == 0) {
+            if (!g_hash_table_contains(self->muted_pubkeys, value)) {
+                g_hash_table_insert(self->muted_pubkeys, entry->value, entry);
+                g_debug("mute_list: loaded private pubkey %s", value);
+            } else {
+                mute_entry_free(entry);
+            }
+        } else if (strcmp(tag_name, "e") == 0) {
+            if (!g_hash_table_contains(self->muted_events, value)) {
+                g_hash_table_insert(self->muted_events, entry->value, entry);
+                g_debug("mute_list: loaded private event %s", value);
+            } else {
+                mute_entry_free(entry);
+            }
+        } else if (strcmp(tag_name, "t") == 0) {
+            if (!g_hash_table_contains(self->muted_hashtags, value)) {
+                g_hash_table_insert(self->muted_hashtags, entry->value, entry);
+                g_debug("mute_list: loaded private hashtag %s", value);
+            } else {
+                mute_entry_free(entry);
+            }
+        } else if (strcmp(tag_name, "word") == 0) {
+            gchar *lower_word = g_utf8_strdown(value, -1);
+            if (!g_hash_table_contains(self->muted_words, lower_word)) {
+                mute_entry_free(entry);
+                entry = mute_entry_new(lower_word, TRUE);
+                g_hash_table_insert(self->muted_words, entry->value, entry);
+                g_debug("mute_list: loaded private word '%s'", lower_word);
+            } else {
+                mute_entry_free(entry);
+            }
+            g_free(lower_word);
+        } else {
+            mute_entry_free(entry);
+        }
+    }
+
+    g_mutex_unlock(&self->lock);
+    json_decref(root);
+
+    g_message("mute_list: parsed private entries");
+}
+
+/* Callback when private entries are decrypted */
+static void on_private_entries_decrypted(GObject *source, GAsyncResult *res, gpointer user_data) {
+    DecryptPrivateContext *ctx = (DecryptPrivateContext *)user_data;
+    if (!ctx) return;
+
+    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+    GError *error = NULL;
+    char *decrypted_json = NULL;
+
+    gboolean ok = nostr_org_nostr_signer_call_nip44_decrypt_finish(
+        proxy, &decrypted_json, res, &error);
+
+    if (!ok || !decrypted_json || !*decrypted_json) {
+        /* Not an error - just means no private entries or decryption failed */
+        g_debug("mute_list: no private entries to decrypt or decryption failed: %s",
+                error ? error->message : "empty result");
+        g_clear_error(&error);
+        decrypt_private_ctx_free(ctx);
+        return;
+    }
+
+    g_debug("mute_list: decrypted private entries: %.100s...", decrypted_json);
+    parse_private_entries(ctx->mute_list, decrypted_json);
+
+    g_free(decrypted_json);
+    decrypt_private_ctx_free(ctx);
+}
+
+/* Decrypt private mute entries from event content */
+static void decrypt_private_entries_async(GnostrMuteList *self,
+                                           const char *encrypted_content,
+                                           const char *user_pubkey) {
+    if (!self || !encrypted_content || !*encrypted_content || !user_pubkey) return;
+
+    GError *error = NULL;
+    NostrSignerProxy *proxy = gnostr_signer_proxy_get(&error);
+    if (!proxy) {
+        g_debug("mute_list: cannot decrypt private entries - signer not available: %s",
+                error ? error->message : "unknown");
+        g_clear_error(&error);
+        return;
+    }
+
+    DecryptPrivateContext *ctx = g_new0(DecryptPrivateContext, 1);
+    ctx->mute_list = self;
+    ctx->encrypted_content = g_strdup(encrypted_content);
+    ctx->user_pubkey = g_strdup(user_pubkey);
+
+    /* NIP-44 decrypt: for mute list, we encrypt to ourselves */
+    nostr_org_nostr_signer_call_nip44_decrypt(
+        proxy,
+        encrypted_content,
+        user_pubkey,      /* peer pubkey = self (encrypted to self) */
+        user_pubkey,      /* identity = current user */
+        NULL,             /* GCancellable */
+        on_private_entries_decrypted,
+        ctx);
+}
+
+/* Callback when relay query completes */
+static void on_mute_list_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+    FetchContext *ctx = (FetchContext *)user_data;
+    if (!ctx) return;
+
+    GError *err = NULL;
+    GPtrArray *results = gnostr_simple_pool_query_single_finish(
+        GNOSTR_SIMPLE_POOL(source), res, &err);
+
+    if (err) {
+        if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+            g_warning("mute_list: query failed: %s", err->message);
+        }
+        if (ctx->callback) {
+            ctx->callback(ctx->mute_list, FALSE, ctx->user_data);
+        }
+        g_error_free(err);
+        fetch_context_free(ctx);
+        return;
+    }
+
+    gboolean success = FALSE;
+    gint64 newest_created_at = 0;
+    const char *newest_event_json = NULL;
+    const char *encrypted_content = NULL;
+
+    /* Find the newest mute list event */
+    if (results && results->len > 0) {
+        for (guint i = 0; i < results->len; i++) {
+            const char *json = g_ptr_array_index(results, i);
+
+            json_error_t error;
+            json_t *root = json_loads(json, 0, &error);
+            if (!root) continue;
+
+            /* Verify kind */
+            json_t *kind_val = json_object_get(root, "kind");
+            if (!kind_val || json_integer_value(kind_val) != MUTE_LIST_KIND) {
+                json_decref(root);
+                continue;
+            }
+
+            /* Check timestamp */
+            json_t *created_at = json_object_get(root, "created_at");
+            gint64 event_time = created_at ? json_integer_value(created_at) : 0;
+
+            if (event_time > newest_created_at) {
+                newest_created_at = event_time;
+                newest_event_json = json;
+
+                /* Get encrypted content for private entries */
+                json_t *content = json_object_get(root, "content");
+                if (content && json_is_string(content)) {
+                    const char *content_str = json_string_value(content);
+                    if (content_str && *content_str) {
+                        encrypted_content = content_str;
+                    }
+                }
+            }
+            json_decref(root);
+        }
+    }
+
+    /* Load the newest event */
+    if (newest_event_json) {
+        if (gnostr_mute_list_load_from_json(ctx->mute_list, newest_event_json)) {
+            success = TRUE;
+
+            /* Decrypt private entries if present */
+            if (encrypted_content && *encrypted_content) {
+                decrypt_private_entries_async(ctx->mute_list, encrypted_content, ctx->pubkey_hex);
+            }
+        }
+    }
+
+    if (results) g_ptr_array_unref(results);
+
+    if (ctx->callback) {
+        ctx->callback(ctx->mute_list, success, ctx->user_data);
+    }
+
+    fetch_context_free(ctx);
+}
+
+/* Static pool for mute list operations */
+static GnostrSimplePool *s_mute_list_pool = NULL;
+
+#endif /* GNOSTR_MUTE_LIST_TEST_ONLY */
+
 void gnostr_mute_list_fetch_async(GnostrMuteList *self,
                                    const char *pubkey_hex,
                                    const char * const *relays,
                                    GnostrMuteListFetchCallback callback,
                                    gpointer user_data) {
-    (void)relays; /* Will be used when implementing relay fetch */
-
     if (!self || !pubkey_hex) {
         if (callback) callback(self, FALSE, user_data);
         return;
@@ -248,10 +492,65 @@ void gnostr_mute_list_fetch_async(GnostrMuteList *self,
     self->user_pubkey = g_strdup(pubkey_hex);
     g_mutex_unlock(&self->lock);
 
-    /* TODO: Use SimplePool to fetch kind 10000 from relays */
-    /* For now, just call the callback indicating we need external loading */
-    g_message("mute_list: fetch requested for pubkey %s (stub - load from storage)", pubkey_hex);
+#ifdef GNOSTR_MUTE_LIST_TEST_ONLY
+    (void)relays;
+    g_message("mute_list: fetch requested for pubkey %s (test mode - stub)", pubkey_hex);
     if (callback) callback(self, TRUE, user_data);
+#else
+    FetchContext *ctx = g_new0(FetchContext, 1);
+    ctx->mute_list = self;
+    ctx->callback = callback;
+    ctx->user_data = user_data;
+    ctx->pubkey_hex = g_strdup(pubkey_hex);
+
+    /* Build filter for kind 10000 by author */
+    NostrFilter *filter = nostr_filter_new();
+    int kinds[1] = { MUTE_LIST_KIND };
+    nostr_filter_set_kinds(filter, kinds, 1);
+    const char *authors[1] = { pubkey_hex };
+    nostr_filter_set_authors(filter, authors, 1);
+    nostr_filter_set_limit(filter, 5);  /* Get a few to find newest */
+
+    /* Get relay URLs */
+    GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);
+
+    if (relays && relays[0]) {
+        /* Use provided relays */
+        for (const char * const *r = relays; *r; r++) {
+            g_ptr_array_add(relay_arr, g_strdup(*r));
+        }
+    } else {
+        /* Fall back to configured relays */
+        gnostr_load_relays_into(relay_arr);
+    }
+
+    const char **urls = g_new0(const char*, relay_arr->len + 1);
+    for (guint i = 0; i < relay_arr->len; i++) {
+        urls[i] = g_ptr_array_index(relay_arr, i);
+    }
+
+    /* Use static pool */
+    if (!s_mute_list_pool) {
+        s_mute_list_pool = gnostr_simple_pool_new();
+    }
+
+    g_message("mute_list: fetching kind %d for pubkey %.8s from %u relays",
+              MUTE_LIST_KIND, pubkey_hex, relay_arr->len);
+
+    gnostr_simple_pool_query_single_async(
+        s_mute_list_pool,
+        urls,
+        relay_arr->len,
+        filter,
+        NULL,  /* cancellable */
+        on_mute_list_query_done,
+        ctx
+    );
+
+    g_free(urls);
+    g_ptr_array_unref(relay_arr);
+    nostr_filter_free(filter);
+#endif
 }
 
 /* ---- Query Functions ---- */
@@ -508,14 +807,99 @@ typedef struct {
     GnostrMuteListSaveCallback callback;
     gpointer user_data;
     char *event_json;
+    char *private_tags_json;  /* JSON array of private tags for encryption */
+    char *user_pubkey;
 } SaveContext;
 
 static void save_context_free(SaveContext *ctx) {
     if (ctx) {
         g_free(ctx->event_json);
+        g_free(ctx->private_tags_json);
+        g_free(ctx->user_pubkey);
         g_free(ctx);
     }
 }
+
+#ifndef GNOSTR_MUTE_LIST_TEST_ONLY
+
+/* Publish signed event to relays */
+static void publish_to_relays(SaveContext *ctx, const char *signed_event_json) {
+    /* Parse the signed event */
+    NostrEvent *event = nostr_event_new();
+    int parse_rc = nostr_event_deserialize_compact(event, signed_event_json);
+    if (parse_rc != 1) {
+        g_warning("mute_list: failed to parse signed event");
+        if (ctx->callback) {
+            ctx->callback(ctx->mute_list, FALSE, "Failed to parse signed event", ctx->user_data);
+        }
+        nostr_event_free(event);
+        save_context_free(ctx);
+        return;
+    }
+
+    /* Get relay URLs */
+    GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
+    gnostr_load_relays_into(relay_urls);
+
+    /* Publish to relays */
+    guint success_count = 0;
+    guint fail_count = 0;
+
+    for (guint i = 0; i < relay_urls->len; i++) {
+        const gchar *url = (const gchar*)g_ptr_array_index(relay_urls, i);
+        GNostrRelay *relay = gnostr_relay_new(url);
+        if (!relay) {
+            fail_count++;
+            continue;
+        }
+
+        GError *conn_err = NULL;
+        if (!gnostr_relay_connect(relay, &conn_err)) {
+            g_debug("mute_list: failed to connect to %s: %s",
+                    url, conn_err ? conn_err->message : "unknown");
+            g_clear_error(&conn_err);
+            g_object_unref(relay);
+            fail_count++;
+            continue;
+        }
+
+        GError *pub_err = NULL;
+        if (gnostr_relay_publish(relay, event, &pub_err)) {
+            g_message("mute_list: published to %s", url);
+            success_count++;
+        } else {
+            g_debug("mute_list: publish failed to %s: %s",
+                    url, pub_err ? pub_err->message : "unknown");
+            g_clear_error(&pub_err);
+            fail_count++;
+        }
+        g_object_unref(relay);
+    }
+
+    nostr_event_free(event);
+    g_ptr_array_free(relay_urls, TRUE);
+
+    /* Update state on success */
+    if (success_count > 0) {
+        g_mutex_lock(&ctx->mute_list->lock);
+        ctx->mute_list->dirty = FALSE;
+        ctx->mute_list->last_event_time = (gint64)time(NULL);
+        g_mutex_unlock(&ctx->mute_list->lock);
+    }
+
+    if (ctx->callback) {
+        if (success_count > 0) {
+            ctx->callback(ctx->mute_list, TRUE, NULL, ctx->user_data);
+        } else {
+            ctx->callback(ctx->mute_list, FALSE, "Failed to publish to any relay", ctx->user_data);
+        }
+    }
+
+    g_message("mute_list: published to %u relays, failed %u", success_count, fail_count);
+    save_context_free(ctx);
+}
+
+#endif /* GNOSTR_MUTE_LIST_TEST_ONLY */
 
 static void on_mute_list_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
     SaveContext *ctx = (SaveContext *)user_data;
@@ -541,8 +925,8 @@ static void on_mute_list_sign_complete(GObject *source, GAsyncResult *res, gpoin
 
     g_message("mute_list: signed event successfully");
 
-    /* TODO: Publish to relays via SimplePool */
-    /* For now, mark as saved and notify success */
+#ifdef GNOSTR_MUTE_LIST_TEST_ONLY
+    /* In test mode, just mark as saved */
     g_mutex_lock(&ctx->mute_list->lock);
     ctx->mute_list->dirty = FALSE;
     ctx->mute_list->last_event_time = (gint64)time(NULL);
@@ -551,9 +935,218 @@ static void on_mute_list_sign_complete(GObject *source, GAsyncResult *res, gpoin
     if (ctx->callback) {
         ctx->callback(ctx->mute_list, TRUE, NULL, ctx->user_data);
     }
-
     g_free(signed_event_json);
     save_context_free(ctx);
+#else
+    /* Publish to relays */
+    publish_to_relays(ctx, signed_event_json);
+    g_free(signed_event_json);
+#endif
+}
+
+/* Helper to build JSON array of private tags */
+static char *build_private_tags_json(GnostrMuteList *self) {
+    json_t *private_tags = json_array();
+    GHashTableIter iter;
+    gpointer key, value;
+
+    /* Add private pubkeys */
+    g_hash_table_iter_init(&iter, self->muted_pubkeys);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        MuteEntry *entry = (MuteEntry *)value;
+        if (entry->is_private) {
+            json_t *tag = json_array();
+            json_array_append_new(tag, json_string("p"));
+            json_array_append_new(tag, json_string(entry->value));
+            json_array_append(private_tags, tag);
+            json_decref(tag);
+        }
+    }
+
+    /* Add private events */
+    g_hash_table_iter_init(&iter, self->muted_events);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        MuteEntry *entry = (MuteEntry *)value;
+        if (entry->is_private) {
+            json_t *tag = json_array();
+            json_array_append_new(tag, json_string("e"));
+            json_array_append_new(tag, json_string(entry->value));
+            json_array_append(private_tags, tag);
+            json_decref(tag);
+        }
+    }
+
+    /* Add private hashtags */
+    g_hash_table_iter_init(&iter, self->muted_hashtags);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        MuteEntry *entry = (MuteEntry *)value;
+        if (entry->is_private) {
+            json_t *tag = json_array();
+            json_array_append_new(tag, json_string("t"));
+            json_array_append_new(tag, json_string(entry->value));
+            json_array_append(private_tags, tag);
+            json_decref(tag);
+        }
+    }
+
+    /* Add private words */
+    g_hash_table_iter_init(&iter, self->muted_words);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        MuteEntry *entry = (MuteEntry *)value;
+        if (entry->is_private) {
+            json_t *tag = json_array();
+            json_array_append_new(tag, json_string("word"));
+            json_array_append_new(tag, json_string(entry->value));
+            json_array_append(private_tags, tag);
+            json_decref(tag);
+        }
+    }
+
+    /* Return NULL if no private tags */
+    if (json_array_size(private_tags) == 0) {
+        json_decref(private_tags);
+        return NULL;
+    }
+
+    char *result = json_dumps(private_tags, JSON_COMPACT);
+    json_decref(private_tags);
+    return result;
+}
+
+/* Forward declaration */
+static void proceed_to_sign(SaveContext *ctx, const char *encrypted_content);
+
+/* Callback when private tags are encrypted */
+static void on_private_tags_encrypted(GObject *source, GAsyncResult *res, gpointer user_data) {
+    SaveContext *ctx = (SaveContext *)user_data;
+    if (!ctx) return;
+
+    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+    GError *error = NULL;
+    char *encrypted_content = NULL;
+
+    gboolean ok = nostr_org_nostr_signer_call_nip44_encrypt_finish(
+        proxy, &encrypted_content, res, &error);
+
+    if (!ok || !encrypted_content) {
+        g_warning("mute_list: failed to encrypt private entries: %s",
+                  error ? error->message : "unknown");
+        g_clear_error(&error);
+        /* Proceed without private entries - still save public ones */
+        proceed_to_sign(ctx, "");
+        return;
+    }
+
+    g_debug("mute_list: encrypted private entries");
+    proceed_to_sign(ctx, encrypted_content);
+    g_free(encrypted_content);
+}
+
+/* Build and sign the event with given content */
+static void proceed_to_sign(SaveContext *ctx, const char *encrypted_content) {
+    GError *proxy_err = NULL;
+    NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
+    if (!proxy) {
+        char *msg = g_strdup_printf("Signer not available: %s",
+                                     proxy_err ? proxy_err->message : "not connected");
+        if (ctx->callback) ctx->callback(ctx->mute_list, FALSE, msg, ctx->user_data);
+        g_free(msg);
+        g_clear_error(&proxy_err);
+        save_context_free(ctx);
+        return;
+    }
+
+    g_mutex_lock(&ctx->mute_list->lock);
+
+    /* Build the public tags array */
+    json_t *tags = json_array();
+    GHashTableIter iter;
+    gpointer key, value;
+
+    /* Add public pubkeys */
+    g_hash_table_iter_init(&iter, ctx->mute_list->muted_pubkeys);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        MuteEntry *entry = (MuteEntry *)value;
+        if (!entry->is_private) {
+            json_t *tag = json_array();
+            json_array_append_new(tag, json_string("p"));
+            json_array_append_new(tag, json_string(entry->value));
+            json_array_append(tags, tag);
+            json_decref(tag);
+        }
+    }
+
+    /* Add public events */
+    g_hash_table_iter_init(&iter, ctx->mute_list->muted_events);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        MuteEntry *entry = (MuteEntry *)value;
+        if (!entry->is_private) {
+            json_t *tag = json_array();
+            json_array_append_new(tag, json_string("e"));
+            json_array_append_new(tag, json_string(entry->value));
+            json_array_append(tags, tag);
+            json_decref(tag);
+        }
+    }
+
+    /* Add public hashtags */
+    g_hash_table_iter_init(&iter, ctx->mute_list->muted_hashtags);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        MuteEntry *entry = (MuteEntry *)value;
+        if (!entry->is_private) {
+            json_t *tag = json_array();
+            json_array_append_new(tag, json_string("t"));
+            json_array_append_new(tag, json_string(entry->value));
+            json_array_append(tags, tag);
+            json_decref(tag);
+        }
+    }
+
+    /* Add public words */
+    g_hash_table_iter_init(&iter, ctx->mute_list->muted_words);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        MuteEntry *entry = (MuteEntry *)value;
+        if (!entry->is_private) {
+            json_t *tag = json_array();
+            json_array_append_new(tag, json_string("word"));
+            json_array_append_new(tag, json_string(entry->value));
+            json_array_append(tags, tag);
+            json_decref(tag);
+        }
+    }
+
+    g_mutex_unlock(&ctx->mute_list->lock);
+
+    /* Build unsigned event with encrypted content for private entries */
+    json_t *event_obj = json_object();
+    json_object_set_new(event_obj, "kind", json_integer(MUTE_LIST_KIND));
+    json_object_set_new(event_obj, "created_at", json_integer((json_int_t)time(NULL)));
+    json_object_set_new(event_obj, "content", json_string(encrypted_content ? encrypted_content : ""));
+    json_object_set_new(event_obj, "tags", tags);
+
+    char *event_json = json_dumps(event_obj, JSON_COMPACT);
+    json_decref(event_obj);
+
+    if (!event_json) {
+        if (ctx->callback) ctx->callback(ctx->mute_list, FALSE, "Failed to build event JSON", ctx->user_data);
+        save_context_free(ctx);
+        return;
+    }
+
+    g_message("mute_list: requesting signature for event");
+    g_free(ctx->event_json);
+    ctx->event_json = event_json;
+
+    /* Call signer to sign the event */
+    nostr_org_nostr_signer_call_sign_event(
+        proxy,
+        event_json,
+        "",        /* current_user: empty = use default */
+        "gnostr",  /* app_id */
+        NULL,      /* cancellable */
+        on_mute_list_sign_complete,
+        ctx
+    );
 }
 
 void gnostr_mute_list_save_async(GnostrMuteList *self,
@@ -576,101 +1169,36 @@ void gnostr_mute_list_save_async(GnostrMuteList *self,
         return;
     }
 
-    g_mutex_lock(&self->lock);
-
-    /* Build the tags array */
-    json_t *tags = json_array();
-
-    /* Add pubkeys */
-    GHashTableIter iter;
-    gpointer key, value;
-    g_hash_table_iter_init(&iter, self->muted_pubkeys);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        MuteEntry *entry = (MuteEntry *)value;
-        if (!entry->is_private) {
-            json_t *tag = json_array();
-            json_array_append_new(tag, json_string("p"));
-            json_array_append_new(tag, json_string(entry->value));
-            json_array_append(tags, tag);
-            json_decref(tag);
-        }
-    }
-
-    /* Add events */
-    g_hash_table_iter_init(&iter, self->muted_events);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        MuteEntry *entry = (MuteEntry *)value;
-        if (!entry->is_private) {
-            json_t *tag = json_array();
-            json_array_append_new(tag, json_string("e"));
-            json_array_append_new(tag, json_string(entry->value));
-            json_array_append(tags, tag);
-            json_decref(tag);
-        }
-    }
-
-    /* Add hashtags */
-    g_hash_table_iter_init(&iter, self->muted_hashtags);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        MuteEntry *entry = (MuteEntry *)value;
-        if (!entry->is_private) {
-            json_t *tag = json_array();
-            json_array_append_new(tag, json_string("t"));
-            json_array_append_new(tag, json_string(entry->value));
-            json_array_append(tags, tag);
-            json_decref(tag);
-        }
-    }
-
-    /* Add words */
-    g_hash_table_iter_init(&iter, self->muted_words);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        MuteEntry *entry = (MuteEntry *)value;
-        if (!entry->is_private) {
-            json_t *tag = json_array();
-            json_array_append_new(tag, json_string("word"));
-            json_array_append_new(tag, json_string(entry->value));
-            json_array_append(tags, tag);
-            json_decref(tag);
-        }
-    }
-
-    g_mutex_unlock(&self->lock);
-
-    /* Build unsigned event */
-    json_t *event_obj = json_object();
-    json_object_set_new(event_obj, "kind", json_integer(MUTE_LIST_KIND));
-    json_object_set_new(event_obj, "created_at", json_integer((json_int_t)time(NULL)));
-    json_object_set_new(event_obj, "content", json_string("")); /* TODO: Add encrypted private entries */
-    json_object_set_new(event_obj, "tags", tags);
-
-    char *event_json = json_dumps(event_obj, JSON_COMPACT);
-    json_decref(event_obj);
-
-    if (!event_json) {
-        if (callback) callback(self, FALSE, "Failed to build event JSON", user_data);
-        return;
-    }
-
-    g_message("mute_list: requesting signature for: %s", event_json);
-
     /* Create save context */
     SaveContext *ctx = g_new0(SaveContext, 1);
     ctx->mute_list = self;
     ctx->callback = callback;
     ctx->user_data = user_data;
-    ctx->event_json = event_json;
 
-    /* Call signer asynchronously */
-    nostr_org_nostr_signer_call_sign_event(
-        proxy,
-        event_json,
-        "",        /* current_user: empty = use default */
-        "gnostr",  /* app_id */
-        NULL,      /* cancellable */
-        on_mute_list_sign_complete,
-        ctx
-    );
+    /* Get user pubkey for encryption */
+    g_mutex_lock(&self->lock);
+    ctx->user_pubkey = g_strdup(self->user_pubkey);
+
+    /* Build private tags JSON */
+    ctx->private_tags_json = build_private_tags_json(self);
+    g_mutex_unlock(&self->lock);
+
+    /* If there are private entries and we have user pubkey, encrypt them first */
+    if (ctx->private_tags_json && ctx->user_pubkey) {
+        g_message("mute_list: encrypting private entries");
+        nostr_org_nostr_signer_call_nip44_encrypt(
+            proxy,
+            ctx->private_tags_json,
+            ctx->user_pubkey,  /* encrypt to self */
+            ctx->user_pubkey,  /* identity = current user */
+            NULL,              /* GCancellable */
+            on_private_tags_encrypted,
+            ctx
+        );
+    } else {
+        /* No private entries or no pubkey - proceed directly to sign */
+        proceed_to_sign(ctx, "");
+    }
 }
 
 /* ---- Accessors ---- */

@@ -43,6 +43,26 @@ void gnostr_profile_pane_set_own_pubkey(GnostrProfilePane *self, const char *own
  */
 const char* gnostr_profile_pane_get_profile_json(GnostrProfilePane *self);
 
+/**
+ * gnostr_profile_pane_refresh:
+ * @self: the profile pane
+ *
+ * Refresh the current profile by fetching from cache and network.
+ * The profile pane automatically fetches on set_pubkey, but this
+ * can be used to manually trigger a refresh.
+ */
+void gnostr_profile_pane_refresh(GnostrProfilePane *self);
+
+/**
+ * gnostr_profile_pane_is_profile_cached:
+ * @self: the profile pane
+ *
+ * Check if the current profile was loaded from cache.
+ *
+ * Returns: TRUE if the profile was loaded from nostrdb cache, FALSE otherwise
+ */
+gboolean gnostr_profile_pane_is_profile_cached(GnostrProfilePane *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_PROFILE_PANE_H */

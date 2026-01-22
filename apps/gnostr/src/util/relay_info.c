@@ -114,6 +114,8 @@ static GnostrRelayInfo *gnostr_relay_info_copy(const GnostrRelayInfo *src) {
   dst->max_event_tags = src->max_event_tags;
   dst->max_content_length = src->max_content_length;
   dst->min_pow_difficulty = src->min_pow_difficulty;
+  dst->created_at_lower_limit = src->created_at_lower_limit;
+  dst->created_at_upper_limit = src->created_at_upper_limit;
   dst->auth_required = src->auth_required;
   dst->payment_required = src->payment_required;
   dst->restricted_writes = src->restricted_writes;
@@ -157,6 +159,14 @@ static gint json_object_get_int_or_zero(JsonObject *obj, const gchar *member) {
   JsonNode *node = json_object_get_member(obj, member);
   if (!node || JSON_NODE_TYPE(node) != JSON_NODE_VALUE) return 0;
   return (gint)json_node_get_int(node);
+}
+
+/* Helper to get optional int64 from JSON object */
+static gint64 json_object_get_int64_or_zero(JsonObject *obj, const gchar *member) {
+  if (!json_object_has_member(obj, member)) return 0;
+  JsonNode *node = json_object_get_member(obj, member);
+  if (!node || JSON_NODE_TYPE(node) != JSON_NODE_VALUE) return 0;
+  return json_node_get_int(node);
 }
 
 /* Helper to get optional bool from JSON object */
@@ -251,6 +261,8 @@ GnostrRelayInfo *gnostr_relay_info_parse_json(const gchar *json, const gchar *ur
       info->max_event_tags = json_object_get_int_or_zero(lim, "max_event_tags");
       info->max_content_length = json_object_get_int_or_zero(lim, "max_content_length");
       info->min_pow_difficulty = json_object_get_int_or_zero(lim, "min_pow_difficulty");
+      info->created_at_lower_limit = json_object_get_int64_or_zero(lim, "created_at_lower_limit");
+      info->created_at_upper_limit = json_object_get_int64_or_zero(lim, "created_at_upper_limit");
       info->auth_required = json_object_get_bool_or_false(lim, "auth_required");
       info->payment_required = json_object_get_bool_or_false(lim, "payment_required");
       info->restricted_writes = json_object_get_bool_or_false(lim, "restricted_writes");
@@ -498,6 +510,14 @@ gchar *gnostr_relay_info_format_limitations(const GnostrRelayInfo *info) {
     g_string_append_printf(str, "Min PoW difficulty: %d\n", info->min_pow_difficulty);
     has_any = TRUE;
   }
+  if (info->created_at_lower_limit > 0) {
+    g_string_append_printf(str, "Max event age: %" G_GINT64_FORMAT " seconds\n", info->created_at_lower_limit);
+    has_any = TRUE;
+  }
+  if (info->created_at_upper_limit > 0) {
+    g_string_append_printf(str, "Max future timestamp: %" G_GINT64_FORMAT " seconds\n", info->created_at_upper_limit);
+    has_any = TRUE;
+  }
   if (info->auth_required) {
     g_string_append(str, "Auth required: Yes\n");
     has_any = TRUE;
@@ -522,4 +542,181 @@ gchar *gnostr_relay_info_format_limitations(const GnostrRelayInfo *info) {
   }
 
   return g_string_free(str, FALSE);
+}
+
+/* ---- Event Validation Against Relay Limits (NIP-11) ---- */
+
+GnostrRelayValidationResult *gnostr_relay_validation_result_new(void) {
+  GnostrRelayValidationResult *result = g_new0(GnostrRelayValidationResult, 1);
+  result->violations = GNOSTR_LIMIT_NONE;
+  return result;
+}
+
+void gnostr_relay_validation_result_free(GnostrRelayValidationResult *result) {
+  if (!result) return;
+  g_free(result->relay_url);
+  g_free(result->relay_name);
+  g_free(result);
+}
+
+gboolean gnostr_relay_validation_result_is_valid(const GnostrRelayValidationResult *result) {
+  if (!result) return TRUE;
+  return result->violations == GNOSTR_LIMIT_NONE;
+}
+
+gchar *gnostr_relay_validation_result_format_errors(const GnostrRelayValidationResult *result) {
+  if (!result || result->violations == GNOSTR_LIMIT_NONE) return NULL;
+
+  GString *str = g_string_new(NULL);
+  const gchar *relay_desc = result->relay_name ? result->relay_name :
+                            (result->relay_url ? result->relay_url : "relay");
+
+  if (result->violations & GNOSTR_LIMIT_CONTENT_LENGTH) {
+    g_string_append_printf(str, "%s: Content too long (%d bytes, max %d)\n",
+                           relay_desc, result->content_length, result->max_content_length);
+  }
+
+  if (result->violations & GNOSTR_LIMIT_EVENT_TAGS) {
+    g_string_append_printf(str, "%s: Too many tags (%d, max %d)\n",
+                           relay_desc, result->tag_count, result->max_tags);
+  }
+
+  if (result->violations & GNOSTR_LIMIT_MESSAGE_LENGTH) {
+    g_string_append_printf(str, "%s: Message too large (%d bytes, max %d)\n",
+                           relay_desc, result->message_length, result->max_message_length);
+  }
+
+  if (result->violations & GNOSTR_LIMIT_TIMESTAMP_TOO_OLD) {
+    g_string_append_printf(str, "%s: Event timestamp too old\n", relay_desc);
+  }
+
+  if (result->violations & GNOSTR_LIMIT_TIMESTAMP_TOO_NEW) {
+    g_string_append_printf(str, "%s: Event timestamp too far in the future\n", relay_desc);
+  }
+
+  if (result->violations & GNOSTR_LIMIT_POW_REQUIRED) {
+    g_string_append_printf(str, "%s: Proof-of-work required\n", relay_desc);
+  }
+
+  if (result->violations & GNOSTR_LIMIT_AUTH_REQUIRED) {
+    g_string_append_printf(str, "%s: Authentication required\n", relay_desc);
+  }
+
+  if (result->violations & GNOSTR_LIMIT_PAYMENT_REQUIRED) {
+    g_string_append_printf(str, "%s: Payment required\n", relay_desc);
+  }
+
+  if (result->violations & GNOSTR_LIMIT_RESTRICTED_WRITES) {
+    g_string_append_printf(str, "%s: Writes are restricted\n", relay_desc);
+  }
+
+  /* Remove trailing newline */
+  if (str->len > 0 && str->str[str->len - 1] == '\n') {
+    g_string_truncate(str, str->len - 1);
+  }
+
+  return g_string_free(str, FALSE);
+}
+
+GnostrRelayValidationResult *gnostr_relay_info_validate_event(
+    const GnostrRelayInfo *info,
+    const gchar *content,
+    gssize content_length,
+    gint tag_count,
+    gint64 created_at,
+    gssize serialized_length) {
+
+  GnostrRelayValidationResult *result = gnostr_relay_validation_result_new();
+
+  /* If no relay info, assume no limits (graceful degradation) */
+  if (!info) {
+    return result;
+  }
+
+  result->relay_url = g_strdup(info->url);
+  result->relay_name = g_strdup(info->name);
+
+  /* Calculate content length if not provided */
+  gint actual_content_length = (content_length >= 0) ? (gint)content_length :
+                               (content ? (gint)strlen(content) : 0);
+  result->content_length = actual_content_length;
+  result->tag_count = tag_count;
+  result->event_created_at = created_at;
+
+  /* Check content length */
+  if (info->max_content_length > 0 && actual_content_length > info->max_content_length) {
+    result->violations |= GNOSTR_LIMIT_CONTENT_LENGTH;
+    result->max_content_length = info->max_content_length;
+  }
+
+  /* Check tag count */
+  if (info->max_event_tags > 0 && tag_count > info->max_event_tags) {
+    result->violations |= GNOSTR_LIMIT_EVENT_TAGS;
+    result->max_tags = info->max_event_tags;
+  }
+
+  /* Check message length (serialized event) */
+  if (serialized_length >= 0 && info->max_message_length > 0 &&
+      serialized_length > info->max_message_length) {
+    result->violations |= GNOSTR_LIMIT_MESSAGE_LENGTH;
+    result->message_length = (gint)serialized_length;
+    result->max_message_length = info->max_message_length;
+  }
+
+  /* Check timestamp bounds */
+  if (created_at > 0) {
+    gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+
+    /* created_at_lower_limit: how many seconds before now is allowed */
+    if (info->created_at_lower_limit > 0) {
+      gint64 min_allowed = now - info->created_at_lower_limit;
+      result->min_allowed_timestamp = min_allowed;
+      if (created_at < min_allowed) {
+        result->violations |= GNOSTR_LIMIT_TIMESTAMP_TOO_OLD;
+      }
+    }
+
+    /* created_at_upper_limit: how many seconds after now is allowed */
+    if (info->created_at_upper_limit > 0) {
+      gint64 max_allowed = now + info->created_at_upper_limit;
+      result->max_allowed_timestamp = max_allowed;
+      if (created_at > max_allowed) {
+        result->violations |= GNOSTR_LIMIT_TIMESTAMP_TOO_NEW;
+      }
+    }
+  }
+
+  /* Check PoW requirement (just flag it, we don't calculate PoW here) */
+  if (info->min_pow_difficulty > 0) {
+    result->violations |= GNOSTR_LIMIT_POW_REQUIRED;
+  }
+
+  return result;
+}
+
+GnostrRelayValidationResult *gnostr_relay_info_validate_for_publishing(
+    const GnostrRelayInfo *info) {
+
+  GnostrRelayValidationResult *result = gnostr_relay_validation_result_new();
+
+  if (!info) {
+    return result;
+  }
+
+  result->relay_url = g_strdup(info->url);
+  result->relay_name = g_strdup(info->name);
+
+  if (info->auth_required) {
+    result->violations |= GNOSTR_LIMIT_AUTH_REQUIRED;
+  }
+
+  if (info->payment_required) {
+    result->violations |= GNOSTR_LIMIT_PAYMENT_REQUIRED;
+  }
+
+  if (info->restricted_writes) {
+    result->violations |= GNOSTR_LIMIT_RESTRICTED_WRITES;
+  }
+
+  return result;
 }

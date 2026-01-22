@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnostrNotificationRow" parent="GtkWidget">
+    <child>
+      <object class="GtkBox" id="root">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">12</property>
+        <property name="margin-end">12</property>
+        <property name="margin-top">8</property>
+        <property name="margin-bottom">8</property>
+        <style>
+          <class name="notification-row"/>
+        </style>
+
+        <!-- Unread indicator -->
+        <child>
+          <object class="GtkBox" id="unread_indicator">
+            <property name="visible">true</property>
+            <property name="width-request">4</property>
+            <property name="valign">fill</property>
+            <style>
+              <class name="unread-dot"/>
+            </style>
+          </object>
+        </child>
+
+        <!-- Avatar (clickable) -->
+        <child>
+          <object class="GtkButton" id="btn_avatar">
+            <property name="has-frame">false</property>
+            <property name="tooltip-text">View profile</property>
+            <style>
+              <class name="flat"/>
+            </style>
+            <child>
+              <object class="GtkOverlay" id="avatar_box">
+                <property name="width-request">48</property>
+                <property name="height-request">48</property>
+                <style>
+                  <class name="avatar"/>
+                  <class name="notification-avatar"/>
+                </style>
+                <child>
+                  <object class="GtkPicture" id="avatar_image">
+                    <property name="visible">false</property>
+                    <property name="content-fit">cover</property>
+                    <property name="width-request">48</property>
+                    <property name="height-request">48</property>
+                    <style>
+                      <class name="notification-avatar-image"/>
+                    </style>
+                  </object>
+                </child>
+                <child type="overlay">
+                  <object class="GtkLabel" id="avatar_initials">
+                    <property name="label">?</property>
+                    <property name="xalign">0.5</property>
+                    <property name="yalign">0.5</property>
+                    <style>
+                      <class name="avatar-initials"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Content area -->
+        <child>
+          <object class="GtkBox" id="content_box">
+            <property name="orientation">vertical</property>
+            <property name="hexpand">true</property>
+            <property name="spacing">2</property>
+            <property name="valign">center</property>
+
+            <!-- Top row: actor name + type icon + action + timestamp -->
+            <child>
+              <object class="GtkBox" id="top_row">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkLabel" id="lbl_actor">
+                    <property name="label">Actor Name</property>
+                    <property name="xalign">0.0</property>
+                    <property name="ellipsize">end</property>
+                    <property name="max-width-chars">16</property>
+                    <style>
+                      <class name="notification-actor"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkImage" id="type_icon">
+                    <property name="icon-name">emblem-favorite-symbolic</property>
+                    <property name="pixel-size">16</property>
+                    <style>
+                      <class name="notification-type-icon"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_action">
+                    <property name="label">liked your note</property>
+                    <property name="xalign">0.0</property>
+                    <property name="hexpand">true</property>
+                    <property name="ellipsize">end</property>
+                    <style>
+                      <class name="notification-action"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_timestamp">
+                    <property name="label">2h</property>
+                    <property name="halign">end</property>
+                    <style>
+                      <class name="notification-timestamp"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Bottom row: content preview -->
+            <child>
+              <object class="GtkLabel" id="lbl_content">
+                <property name="label">Content preview...</property>
+                <property name="xalign">0.0</property>
+                <property name="hexpand">true</property>
+                <property name="ellipsize">end</property>
+                <property name="max-width-chars">50</property>
+                <property name="single-line-mode">true</property>
+                <property name="visible">false</property>
+                <style>
+                  <class name="notification-content"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

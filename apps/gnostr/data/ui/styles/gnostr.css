@@ -82,7 +82,12 @@ label a:visited {
   border-radius: 50%;
   min-width: 36px;
   min-height: 36px;
-  background: alpha(@theme_bg_color, 0.4);
+  /* Default fallback gradient for avatars without images */
+  background: linear-gradient(
+    135deg,
+    alpha(@accent_bg_color, 0.2) 0%,
+    alpha(@accent_bg_color, 0.35) 100%
+  );
 }
 
 .note-avatar picture {
@@ -261,12 +266,28 @@ gnostr-video-player {
   background: #000;
 }
 
+/* Hide native GtkVideo controls since we use custom overlay controls.
+ * This prevents duplicate controls from showing (nostrc-bxj). */
+gnostr-video-player video > mediacontrols {
+  opacity: 0;
+  /* Ensure native controls don't receive input */
+  min-height: 0;
+  min-width: 0;
+}
+
 .video-content {
   background: #000;
 }
 
 .video-content-fullscreen {
   background: #000;
+}
+
+/* Hide native controls in fullscreen video as well (nostrc-bxj) */
+.video-content-fullscreen > mediacontrols {
+  opacity: 0;
+  min-height: 0;
+  min-width: 0;
 }
 
 /* Video Controls Overlay */
@@ -409,7 +430,12 @@ gnostr-video-player {
 
 .dm-avatar {
   border-radius: 9999px;
-  background: alpha(@theme_bg_color, 0.4);
+  /* Default fallback gradient for DM avatars without images */
+  background: linear-gradient(
+    135deg,
+    alpha(@accent_bg_color, 0.2) 0%,
+    alpha(@accent_bg_color, 0.35) 100%
+  );
 }
 
 .dm-avatar picture {
@@ -561,6 +587,45 @@ gnostr-video-player {
 .reply-to-text {
   font-size: 12px;
   font-style: italic;
+}
+
+/* Clickable reply indicator - navigates to parent note on click */
+.reply-indicator-clickable {
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin-left: -6px;
+  transition: all 150ms ease;
+}
+
+.reply-indicator-clickable:hover {
+  background: alpha(@accent_bg_color, 0.1);
+}
+
+.reply-indicator-clickable:hover label,
+.reply-indicator-clickable:hover image {
+  color: @accent_bg_color;
+}
+
+/* Thread root indicator - shows reply count */
+.thread-root-badge {
+  border-radius: 4px;
+  padding: 2px 8px;
+  background: alpha(@accent_bg_color, 0.08);
+  transition: all 150ms ease;
+}
+
+.thread-root-badge:hover {
+  background: alpha(@accent_bg_color, 0.15);
+}
+
+.thread-root-badge label {
+  font-size: 11px;
+  font-weight: 500;
+  color: @accent_bg_color;
+}
+
+.thread-root-badge image {
+  color: @accent_bg_color;
 }
 
 /* Thread button styling */
@@ -934,7 +999,12 @@ button.pill:hover {
   border-radius: 50%;
   min-width: 24px;
   min-height: 24px;
-  background: alpha(@theme_bg_color, 0.4);
+  /* Default fallback gradient for embed avatars without images */
+  background: linear-gradient(
+    135deg,
+    alpha(@accent_bg_color, 0.2) 0%,
+    alpha(@accent_bg_color, 0.35) 100%
+  );
 }
 
 .embed-avatar picture {
@@ -1075,4 +1145,62 @@ button.liked image {
 /* Liked state styling */
 .note-liked #btn_like image {
   color: #e91e63;
+}
+
+/* ===== nostrc-yi2: Calm Timeline Styles ===== */
+
+/* "N new notes" floating indicator */
+.new-notes-indicator {
+  background: @accent_bg_color;
+  color: @accent_fg_color;
+  border-radius: 9999px;
+  padding: 8px 16px;
+  font-weight: 600;
+  font-size: 13px;
+  box-shadow: 0 2px 8px alpha(black, 0.25),
+              0 4px 16px alpha(black, 0.15);
+  transition: all 200ms ease;
+}
+
+.new-notes-indicator:hover {
+  background: shade(@accent_bg_color, 0.9);
+  box-shadow: 0 4px 12px alpha(black, 0.3),
+              0 6px 20px alpha(black, 0.2);
+  transform: translateY(-1px);
+}
+
+.new-notes-indicator:active {
+  background: shade(@accent_bg_color, 0.85);
+  transform: translateY(0);
+}
+
+/* ===== Default Avatar/Banner Fallback Styles (nostrc-uzi) ===== */
+
+/* Default avatar icon (person silhouette) - alternative to initials */
+.avatar-default-icon {
+  color: alpha(@theme_fg_color, 0.5);
+}
+
+/* Note card avatar with icon fallback */
+.note-avatar .avatar-default-icon {
+  min-width: 20px;
+  min-height: 20px;
+}
+
+/* Profile avatar with icon fallback */
+.profile-avatar .avatar-default-icon {
+  min-width: 48px;
+  min-height: 48px;
+}
+
+/* Embed avatar with icon fallback */
+.embed-avatar .avatar-default-icon {
+  min-width: 14px;
+  min-height: 14px;
+}
+
+/* DM avatar with icon fallback */
+.dm-avatar .avatar-default-icon {
+  min-width: 20px;
+  min-height: 20px;
 }

@@ -130,6 +130,9 @@ static void gnostr_image_viewer_init(GnostrImageViewer *self) {
   gtk_window_set_decorated(GTK_WINDOW(self), FALSE);
   gtk_window_set_modal(GTK_WINDOW(self), TRUE);
 
+  /* Prevent fullscreen mode - the modal should stay within parent bounds */
+  gtk_window_set_resizable(GTK_WINDOW(self), FALSE);
+
   /* Add CSS class for styling */
   gtk_widget_add_css_class(GTK_WIDGET(self), "image-viewer");
 
@@ -870,10 +873,12 @@ void gnostr_image_viewer_present(GnostrImageViewer *self) {
     int parent_width = gtk_widget_get_width(GTK_WIDGET(parent));
     int parent_height = gtk_widget_get_height(GTK_WIDGET(parent));
 
-    /* Use 90% of parent window size, with reasonable minimums */
-    int viewer_width = MAX(600, (int)(parent_width * 0.9));
-    int viewer_height = MAX(400, (int)(parent_height * 0.9));
+    /* Constrain viewer to exactly parent window size */
+    /* This ensures the modal cannot extend beyond the gnostr window (nostrc-zqb) */
+    int viewer_width = MAX(400, parent_width);
+    int viewer_height = MAX(300, parent_height);
 
+    /* Set default size to match parent bounds exactly */
     gtk_window_set_default_size(GTK_WINDOW(self), viewer_width, viewer_height);
   } else {
     /* Fallback: use a reasonable default size if no parent */

@@ -15,6 +15,35 @@ typedef struct {
 } IpcStats;
 
 static IpcStats g_ipc_stats = {0};
+
+/* Windows Named Pipe IPC Support */
+#ifdef G_OS_WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <sddl.h>
+#include <stddef.h>
+#include "nostr/nip5f/nip5f.h"
+#include "json.h"
+
+/* Connection argument for Windows named pipe handler thread */
+typedef struct NpipeConnArg {
+  HANDLE pipe;
+  void *ud;
+  Nip5fGetPubFn get_pub;
+  Nip5fSignEventFn sign_event;
+  Nip5fNip44EncFn enc44;
+  Nip5fNip44DecFn dec44;
+  Nip5fListKeysFn list_keys;
+  gpointer server;  /* Back pointer to GnostrIpcServer for stats */
+} NpipeConnArg;
+
+/* Forward declarations for Windows named pipe functions */
+static gpointer npipe_ipc_accept_thread(gpointer data);
+static gpointer npipe_conn_handler_thread(gpointer data);
+static int npipe_read_frame(HANDLE pipe, char **out_json, size_t *out_len);
+static int npipe_write_frame(HANDLE pipe, const char *json, size_t len);
+#endif /* G_OS_WIN32 */
+
 #ifdef GNOSTR_ENABLE_TCP_IPC
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -61,6 +90,15 @@ struct GnostrIpcServer {
   gchar host[64];
   guint max_connections;
   gint active_connections;
+#endif
+#ifdef G_OS_WIN32
+  HANDLE npipe_handle;   /* Current pipe instance for accept */
+  GThread *npipe_thr;    /* Accept thread */
+  gint npipe_stop_flag;  /* Stop signal for thread */
+  gchar *npipe_token_path;
+  gchar *npipe_token;
+  guint npipe_max_connections;
+  gint npipe_active_connections;
 #endif
 };
 
@@ -277,13 +315,89 @@ GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint) {
 #endif
   } else if (g_str_has_prefix(ep, "npipe:")) {
 #ifdef G_OS_WIN32
-    g_warning("named pipe endpoint not yet implemented on Windows build");
+    /* Parse npipe:\\.\pipe\name format */
+    const char *pipe_name = ep + 6;  /* Skip "npipe:" prefix */
+
+    /* Validate pipe name format */
+    if (!g_str_has_prefix(pipe_name, "\\\\.\\pipe\\") &&
+        !g_str_has_prefix(pipe_name, "\\\\\\\\.\\\\pipe\\\\")) {
+      g_warning("npipe: invalid pipe name format: %s (expected \\\\.\\pipe\\name)", pipe_name);
+      if (ep_alloc) g_free(ep_alloc);
+      ipc_stats_cleanup(srv);
+      g_free((gpointer)srv);
+      return NULL;
+    }
+
+    /* Normalize escaped backslashes if present (from command line) */
+    gchar *normalized_name = g_strdup(pipe_name);
+    if (g_str_has_prefix(pipe_name, "\\\\\\\\.\\\\pipe\\\\")) {
+      g_free(normalized_name);
+      /* Convert \\\\.\\ to \\.\ and \\\\pipe\\ to \\pipe\ */
+      normalized_name = g_strdup_printf("\\\\.\\pipe\\%s",
+                                         pipe_name + strlen("\\\\\\\\.\\\\pipe\\\\"));
+    }
+
+    /* Set maximum concurrent connections */
+    const char *max_conn_env = g_getenv("NOSTR_SIGNER_MAX_CONNECTIONS");
+    srv->npipe_max_connections = max_conn_env ? (guint)g_ascii_strtoull(max_conn_env, NULL, 10) : 100;
+    if (srv->npipe_max_connections == 0) srv->npipe_max_connections = 100;
+    srv->npipe_active_connections = 0;
+
+    /* Prepare token file under LOCALAPPDATA/gnostr/token for authentication */
+    const char *localapp = g_getenv("LOCALAPPDATA");
+    if (!localapp || !*localapp) {
+      localapp = g_get_user_config_dir();
+    }
+    gchar *dir = g_build_filename(localapp, "gnostr", NULL);
+    g_mkdir_with_parents(dir, 0700);
+    srv->npipe_token_path = g_build_filename(dir, "npipe-token", NULL);
+    g_free(dir);
+
+    /* Load or create authentication token (64 hex chars) */
+    GError *err = NULL;
+    if (!g_file_get_contents(srv->npipe_token_path, &srv->npipe_token, NULL, &err)) {
+      if (err) g_clear_error(&err);
+      guint8 rnd[32];
+      g_random_set_seed((guint32)g_get_monotonic_time());
+      for (gsize i = 0; i < sizeof(rnd); ++i) {
+        rnd[i] = (guint8)g_random_int_range(0, 256);
+      }
+      gchar *hex = g_malloc0(65);
+      static const char *H = "0123456789abcdef";
+      for (int i = 0; i < 32; i++) {
+        hex[i * 2] = H[(rnd[i] >> 4) & 0xF];
+        hex[i * 2 + 1] = H[rnd[i] & 0xF];
+      }
+      g_file_set_contents(srv->npipe_token_path, hex, 64, NULL);
+      srv->npipe_token = hex;
+    }
+
+    /* Store endpoint for accept thread */
+    srv->endpoint = normalized_name;
+
+    /* Start accept thread */
+    g_atomic_int_set(&srv->npipe_stop_flag, 0);
+    srv->npipe_thr = g_thread_new("gnostr-npipe-ipc", npipe_ipc_accept_thread, srv);
+    if (!srv->npipe_thr) {
+      g_warning("npipe: failed to start accept thread");
+      g_free(srv->endpoint);
+      g_free(srv->npipe_token_path);
+      g_free(srv->npipe_token);
+      if (ep_alloc) g_free(ep_alloc);
+      ipc_stats_cleanup(srv);
+      g_free((gpointer)srv);
+      return NULL;
+    }
+
+    srv->kind = IPC_NPIPE;
     if (ep_alloc) g_free(ep_alloc);
-    g_free((gpointer)srv);
-    return NULL;
+    g_message("npipe ipc server started on %s (token: %s, max_connections: %u)",
+              srv->endpoint, srv->npipe_token_path, srv->npipe_max_connections);
+    return srv;
 #else
     g_warning("npipe: endpoint only supported on Windows");
     if (ep_alloc) g_free(ep_alloc);
+    ipc_stats_cleanup(srv);
     g_free((gpointer)srv);
     return NULL;
 #endif
@@ -340,7 +454,39 @@ void gnostr_ipc_server_stop(GnostrIpcServer *srv) {
     g_clear_pointer(&srv->token, g_free);
   }
 #endif
-  
+
+#ifdef G_OS_WIN32
+  if (srv->kind == IPC_NPIPE) {
+    /* Signal stop and wait for accept thread */
+    g_atomic_int_set(&srv->npipe_stop_flag, 1);
+
+    /* Cancel any pending ConnectNamedPipe by creating a dummy connection */
+    if (srv->endpoint) {
+      HANDLE dummy = CreateFileA(
+          srv->endpoint,
+          GENERIC_READ | GENERIC_WRITE,
+          0,
+          NULL,
+          OPEN_EXISTING,
+          0,
+          NULL);
+      if (dummy != INVALID_HANDLE_VALUE) {
+        CloseHandle(dummy);
+      }
+    }
+
+    if (srv->npipe_thr) {
+      g_message("npipe: waiting for accept thread to finish");
+      g_thread_join(srv->npipe_thr);
+      srv->npipe_thr = NULL;
+    }
+
+    g_clear_pointer(&srv->npipe_token_path, g_free);
+    g_clear_pointer(&srv->npipe_token, g_free);
+    g_message("npipe: server stopped");
+  }
+#endif
+
   ipc_stats_cleanup(srv);
   g_clear_pointer(&srv->endpoint, g_free);
   g_free(srv);
@@ -482,3 +628,557 @@ static gpointer tcp_ipc_accept_thread(gpointer data) {
   return NULL;
 }
 #endif
+
+/* Windows Named Pipe IPC Implementation */
+#ifdef G_OS_WIN32
+/* Maximum frame size for NIP-5F protocol */
+#define NPIPE_MAX_FRAME (1024 * 1024)
+#define NPIPE_BUFFER_SIZE 4096
+
+/* Read a length-prefixed frame from named pipe.
+ * Protocol: 4-byte big-endian length followed by JSON payload.
+ * Returns 0 on success, -1 on error. */
+static int npipe_read_frame(HANDLE pipe, char **out_json, size_t *out_len) {
+  if (!out_json || !out_len) return -1;
+  *out_json = NULL;
+  *out_len = 0;
+
+  /* Read 4-byte length prefix */
+  guint8 hdr[4];
+  DWORD bytes_read = 0;
+  BOOL ok = ReadFile(pipe, hdr, 4, &bytes_read, NULL);
+  if (!ok || bytes_read != 4) {
+    return -1;
+  }
+
+  /* Parse big-endian length */
+  guint32 frame_len = ((guint32)hdr[0] << 24) | ((guint32)hdr[1] << 16) |
+                      ((guint32)hdr[2] << 8)  | (guint32)hdr[3];
+
+  if (frame_len == 0 || frame_len > NPIPE_MAX_FRAME) {
+    g_warning("npipe: invalid frame length %u", frame_len);
+    return -1;
+  }
+
+  /* Allocate buffer and read payload */
+  char *buf = (char*)g_malloc(frame_len + 1);
+  if (!buf) return -1;
+
+  DWORD total_read = 0;
+  while (total_read < frame_len) {
+    DWORD to_read = frame_len - total_read;
+    DWORD n = 0;
+    ok = ReadFile(pipe, buf + total_read, to_read, &n, NULL);
+    if (!ok || n == 0) {
+      g_free(buf);
+      return -1;
+    }
+    total_read += n;
+  }
+  buf[frame_len] = '\0';
+
+  *out_json = buf;
+  *out_len = frame_len;
+  return 0;
+}
+
+/* Write a length-prefixed frame to named pipe.
+ * Returns 0 on success, -1 on error. */
+static int npipe_write_frame(HANDLE pipe, const char *json, size_t len) {
+  if (!json || len == 0 || len > NPIPE_MAX_FRAME) return -1;
+
+  /* Build 4-byte big-endian length header */
+  guint8 hdr[4];
+  hdr[0] = (guint8)((len >> 24) & 0xFF);
+  hdr[1] = (guint8)((len >> 16) & 0xFF);
+  hdr[2] = (guint8)((len >> 8) & 0xFF);
+  hdr[3] = (guint8)(len & 0xFF);
+
+  /* Write header */
+  DWORD bytes_written = 0;
+  BOOL ok = WriteFile(pipe, hdr, 4, &bytes_written, NULL);
+  if (!ok || bytes_written != 4) {
+    return -1;
+  }
+
+  /* Write payload */
+  DWORD total_written = 0;
+  while (total_written < len) {
+    DWORD to_write = (DWORD)(len - total_written);
+    DWORD n = 0;
+    ok = WriteFile(pipe, json + total_written, to_write, &n, NULL);
+    if (!ok || n == 0) {
+      return -1;
+    }
+    total_written += n;
+  }
+
+  FlushFileBuffers(pipe);
+  return 0;
+}
+
+/* Build a minimal error response JSON */
+static char *npipe_build_error_json(const char *id, int code, const char *msg) {
+  const char *id_field = id ? id : "";
+  size_t need = strlen(id_field) + strlen(msg) + 96;
+  char *buf = (char*)g_malloc(need);
+  if (!buf) return NULL;
+  g_snprintf(buf, need, "{\"id\":\"%s\",\"result\":null,\"error\":{\"code\":%d,\"message\":\"%s\"}}",
+             id_field, code, msg);
+  return buf;
+}
+
+/* Build a minimal success response with raw JSON result */
+static char *npipe_build_ok_json_raw(const char *id, const char *raw_json) {
+  const char *id_field = id ? id : "";
+  size_t need = strlen(id_field) + strlen(raw_json) + 64;
+  char *buf = (char*)g_malloc(need);
+  if (!buf) return NULL;
+  g_snprintf(buf, need, "{\"id\":\"%s\",\"result\":%s,\"error\":null}", id_field, raw_json);
+  return buf;
+}
+
+/* Connection handler thread for Windows named pipe.
+ * Similar to nip5f_conn_thread but uses Windows pipe I/O. */
+static gpointer npipe_conn_handler_thread(gpointer data) {
+  NpipeConnArg *carg = (NpipeConnArg*)data;
+  HANDLE pipe = carg->pipe;
+  GnostrIpcServer *srv = (GnostrIpcServer*)carg->server;
+
+  g_message("npipe: client connected");
+
+  /* Process requests in a loop */
+  for (;;) {
+    char *req = NULL;
+    size_t rlen = 0;
+    if (npipe_read_frame(pipe, &req, &rlen) != 0) {
+      break;
+    }
+
+    /* Extract id and method from request */
+    char *id = NULL;
+    char *method = NULL;
+    (void)nostr_json_get_string(req, "id", &id);
+    (void)nostr_json_get_string(req, "method", &method);
+
+    if (!method) {
+      char *err = npipe_build_error_json(id, 1, "invalid request");
+      if (err) {
+        npipe_write_frame(pipe, err, strlen(err));
+        g_free(err);
+      }
+      g_free(id);
+      g_free(req);
+      continue;
+    }
+
+    /* Dispatch methods - same as NIP-5F protocol */
+    if (g_strcmp0(method, "get_public_key") == 0) {
+      char *pub = NULL;
+      int rc = -2;
+      if (carg->get_pub) rc = carg->get_pub(carg->ud, &pub);
+      else rc = nostr_nip5f_builtin_get_public_key(&pub);
+
+      if (rc == 0 && pub) {
+        size_t L = strlen(pub) + 3;
+        char *jres = (char*)g_malloc(L);
+        if (jres) {
+          g_snprintf(jres, L, "\"%s\"", pub);
+          char *ok = npipe_build_ok_json_raw(id, jres);
+          if (ok) {
+            npipe_write_frame(pipe, ok, strlen(ok));
+            g_free(ok);
+          }
+          g_free(jres);
+        }
+        g_free(pub);
+      } else {
+        char *err = npipe_build_error_json(id, 10, "get_public_key failed");
+        if (err) {
+          npipe_write_frame(pipe, err, strlen(err));
+          g_free(err);
+        }
+      }
+    } else if (g_strcmp0(method, "sign_event") == 0) {
+      char *ev = NULL;
+      char *pub = NULL;
+      (void)nostr_json_get_string_at(req, "params", "event", &ev);
+      (void)nostr_json_get_string_at(req, "params", "pubkey", &pub);
+
+      if (!ev) {
+        char *err = npipe_build_error_json(id, 1, "invalid params");
+        if (err) {
+          npipe_write_frame(pipe, err, strlen(err));
+          g_free(err);
+        }
+      } else {
+        char *signed_json = NULL;
+        int rc = -2;
+        if (carg->sign_event) rc = carg->sign_event(carg->ud, ev, pub, &signed_json);
+        else rc = nostr_nip5f_builtin_sign_event(ev, pub, &signed_json);
+
+        if (rc == 0 && signed_json) {
+          char *ok = npipe_build_ok_json_raw(id, signed_json);
+          if (ok) {
+            npipe_write_frame(pipe, ok, strlen(ok));
+            g_free(ok);
+          }
+          g_free(signed_json);
+        } else {
+          char *err = npipe_build_error_json(id, 10, "sign_event failed");
+          if (err) {
+            npipe_write_frame(pipe, err, strlen(err));
+            g_free(err);
+          }
+        }
+      }
+      g_free(ev);
+      g_free(pub);
+    } else if (g_strcmp0(method, "nip44_encrypt") == 0) {
+      char *peer = NULL;
+      char *pt = NULL;
+      (void)nostr_json_get_string_at(req, "params", "peer_pub", &peer);
+      (void)nostr_json_get_string_at(req, "params", "plaintext", &pt);
+
+      if (!peer || !pt) {
+        char *err = npipe_build_error_json(id, 1, "invalid params");
+        if (err) {
+          npipe_write_frame(pipe, err, strlen(err));
+          g_free(err);
+        }
+      } else {
+        char *b64 = NULL;
+        int rc = -2;
+        if (carg->enc44) rc = carg->enc44(carg->ud, peer, pt, &b64);
+        else rc = nostr_nip5f_builtin_nip44_encrypt(peer, pt, &b64);
+
+        if (rc == 0 && b64) {
+          size_t L = strlen(b64) + 3;
+          char *jres = (char*)g_malloc(L);
+          if (jres) {
+            g_snprintf(jres, L, "\"%s\"", b64);
+            char *ok = npipe_build_ok_json_raw(id, jres);
+            if (ok) {
+              npipe_write_frame(pipe, ok, strlen(ok));
+              g_free(ok);
+            }
+            g_free(jres);
+          }
+          g_free(b64);
+        } else {
+          char *err = npipe_build_error_json(id, 10, "nip44_encrypt failed");
+          if (err) {
+            npipe_write_frame(pipe, err, strlen(err));
+            g_free(err);
+          }
+        }
+      }
+      g_free(peer);
+      g_free(pt);
+    } else if (g_strcmp0(method, "nip44_decrypt") == 0) {
+      char *peer = NULL;
+      char *ct = NULL;
+      (void)nostr_json_get_string_at(req, "params", "peer_pub", &peer);
+      (void)nostr_json_get_string_at(req, "params", "cipher_b64", &ct);
+
+      if (!peer || !ct) {
+        char *err = npipe_build_error_json(id, 1, "invalid params");
+        if (err) {
+          npipe_write_frame(pipe, err, strlen(err));
+          g_free(err);
+        }
+      } else {
+        char *plaintext = NULL;
+        int rc = -2;
+        if (carg->dec44) rc = carg->dec44(carg->ud, peer, ct, &plaintext);
+        else rc = nostr_nip5f_builtin_nip44_decrypt(peer, ct, &plaintext);
+
+        if (rc == 0 && plaintext) {
+          size_t L = strlen(plaintext) + 3;
+          char *jres = (char*)g_malloc(L);
+          if (jres) {
+            g_snprintf(jres, L, "\"%s\"", plaintext);
+            char *ok = npipe_build_ok_json_raw(id, jres);
+            if (ok) {
+              npipe_write_frame(pipe, ok, strlen(ok));
+              g_free(ok);
+            }
+            g_free(jres);
+          }
+          g_free(plaintext);
+        } else {
+          char *err = npipe_build_error_json(id, 10, "nip44_decrypt failed");
+          if (err) {
+            npipe_write_frame(pipe, err, strlen(err));
+            g_free(err);
+          }
+        }
+      }
+      g_free(peer);
+      g_free(ct);
+    } else if (g_strcmp0(method, "list_public_keys") == 0) {
+      char *arr = NULL;
+      int rc = -2;
+      if (carg->list_keys) rc = carg->list_keys(carg->ud, &arr);
+      else rc = nostr_nip5f_builtin_list_public_keys(&arr);
+
+      if (rc == 0 && arr) {
+        char *ok = npipe_build_ok_json_raw(id, arr);
+        if (ok) {
+          npipe_write_frame(pipe, ok, strlen(ok));
+          g_free(ok);
+        }
+        g_free(arr);
+      } else {
+        char *err = npipe_build_error_json(id, 10, "list_public_keys failed");
+        if (err) {
+          npipe_write_frame(pipe, err, strlen(err));
+          g_free(err);
+        }
+      }
+    } else if (g_strcmp0(method, "activate_uri") == 0) {
+      /* Single-instance URI activation support */
+      char *uri = NULL;
+      (void)nostr_json_get_string_at(req, "params", "uri", &uri);
+
+      if (uri) {
+        g_message("npipe: received URI activation: %s", uri);
+        /* In a real implementation, this would signal the main window
+         * to handle the nostr: URI. For now, acknowledge receipt. */
+        char *ok = npipe_build_ok_json_raw(id, "true");
+        if (ok) {
+          npipe_write_frame(pipe, ok, strlen(ok));
+          g_free(ok);
+        }
+        g_free(uri);
+      } else {
+        char *err = npipe_build_error_json(id, 1, "invalid params");
+        if (err) {
+          npipe_write_frame(pipe, err, strlen(err));
+          g_free(err);
+        }
+      }
+    } else {
+      char *err = npipe_build_error_json(id, 2, "method not supported");
+      if (err) {
+        npipe_write_frame(pipe, err, strlen(err));
+        g_free(err);
+      }
+    }
+
+    g_free(id);
+    g_free(method);
+    g_free(req);
+  }
+
+  g_message("npipe: client disconnected");
+
+  /* Clean up */
+  FlushFileBuffers(pipe);
+  DisconnectNamedPipe(pipe);
+  CloseHandle(pipe);
+
+  /* Update stats */
+  if (srv) {
+    g_atomic_int_dec_and_test(&srv->npipe_active_connections);
+    ipc_stats_connection_closed(srv);
+  }
+
+  g_free(carg);
+  return NULL;
+}
+
+/* Create a security descriptor for the named pipe.
+ * Restricts access to the current user only for security. */
+static PSECURITY_DESCRIPTOR npipe_create_security_descriptor(void) {
+  PSECURITY_DESCRIPTOR pSD = NULL;
+
+  /* SDDL string: D:P(A;;GA;;;CO) - Allow Generic All to Creator Owner only */
+  /* This ensures only the current user can access the pipe */
+  const char *sddl = "D:P(A;;GA;;;CO)(A;;GA;;;BA)";
+
+  if (!ConvertStringSecurityDescriptorToSecurityDescriptorA(
+          sddl, SDDL_REVISION_1, &pSD, NULL)) {
+    g_warning("npipe: failed to create security descriptor: %lu", GetLastError());
+    return NULL;
+  }
+
+  return pSD;
+}
+
+/* Accept thread for Windows named pipe server.
+ * Creates pipe instances and waits for client connections. */
+static gpointer npipe_ipc_accept_thread(gpointer data) {
+  GnostrIpcServer *s = (GnostrIpcServer*)data;
+
+  /* Ensure JSON interface is initialized */
+  extern NostrJsonInterface *jansson_impl;
+  nostr_set_json_interface(jansson_impl);
+  nostr_json_init();
+
+  g_message("npipe: accept thread started on %s", s->endpoint);
+
+  /* Create security attributes for the pipe */
+  PSECURITY_DESCRIPTOR pSD = npipe_create_security_descriptor();
+  SECURITY_ATTRIBUTES sa;
+  sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+  sa.lpSecurityDescriptor = pSD;
+  sa.bInheritHandle = FALSE;
+
+  while (!g_atomic_int_get(&s->npipe_stop_flag)) {
+    /* Check connection limit */
+    if (g_atomic_int_get(&s->npipe_active_connections) >= (gint)s->npipe_max_connections) {
+      Sleep(100);
+      continue;
+    }
+
+    /* Create a new pipe instance for this connection */
+    HANDLE pipe = CreateNamedPipeA(
+        s->endpoint,
+        PIPE_ACCESS_DUPLEX,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+        PIPE_UNLIMITED_INSTANCES,
+        NPIPE_BUFFER_SIZE,
+        NPIPE_BUFFER_SIZE,
+        0,
+        pSD ? &sa : NULL);
+
+    if (pipe == INVALID_HANDLE_VALUE) {
+      DWORD err = GetLastError();
+      if (!g_atomic_int_get(&s->npipe_stop_flag)) {
+        g_warning("npipe: CreateNamedPipe failed: %lu", err);
+        ipc_stats_error(s);
+      }
+      Sleep(100);
+      continue;
+    }
+
+    /* Wait for a client to connect */
+    BOOL connected = ConnectNamedPipe(pipe, NULL);
+    if (!connected) {
+      DWORD err = GetLastError();
+      if (err == ERROR_PIPE_CONNECTED) {
+        /* Client already connected before we called ConnectNamedPipe */
+        connected = TRUE;
+      } else if (!g_atomic_int_get(&s->npipe_stop_flag)) {
+        g_warning("npipe: ConnectNamedPipe failed: %lu", err);
+        CloseHandle(pipe);
+        ipc_stats_error(s);
+        continue;
+      } else {
+        CloseHandle(pipe);
+        break;
+      }
+    }
+
+    g_atomic_int_inc(&s->npipe_active_connections);
+    ipc_stats_connection_opened(s);
+
+    /* Perform token authentication if enabled */
+    gboolean authed = FALSE;
+    if (s->npipe_token && s->npipe_token[0]) {
+      /* Read AUTH line: "AUTH <token>\n" */
+      char buf[256];
+      DWORD bytes_read = 0;
+      if (ReadFile(pipe, buf, sizeof(buf) - 1, &bytes_read, NULL) && bytes_read > 0) {
+        buf[bytes_read] = '\0';
+        if (g_str_has_prefix(buf, "AUTH ")) {
+          char *nl = strchr(buf, '\n');
+          if (nl) *nl = '\0';
+          const char *tok = buf + 5;
+          if (tok && strlen(tok) == strlen(s->npipe_token) &&
+              g_strcmp0(tok, s->npipe_token) == 0) {
+            authed = TRUE;
+          }
+        }
+      }
+
+      if (!authed) {
+        const char *resp = "{\"error\":\"unauthorized\"}\n";
+        DWORD written = 0;
+        WriteFile(pipe, resp, (DWORD)strlen(resp), &written, NULL);
+        FlushFileBuffers(pipe);
+        DisconnectNamedPipe(pipe);
+        CloseHandle(pipe);
+        g_atomic_int_dec_and_test(&s->npipe_active_connections);
+        ipc_stats_connection_closed(s);
+        ipc_stats_error(s);
+        g_message("npipe: rejected unauthorized connection");
+        continue;
+      }
+    } else {
+      /* No token auth required - proceed directly */
+      authed = TRUE;
+    }
+
+    /* Send NIP-5F banner */
+    const char *banner = "{\"name\":\"nostr-signer\",\"supported_methods\":[\"get_public_key\",\"sign_event\",\"nip44_encrypt\",\"nip44_decrypt\",\"list_public_keys\",\"activate_uri\"]}";
+    if (npipe_write_frame(pipe, banner, strlen(banner)) != 0) {
+      g_warning("npipe: failed to write banner");
+      DisconnectNamedPipe(pipe);
+      CloseHandle(pipe);
+      g_atomic_int_dec_and_test(&s->npipe_active_connections);
+      ipc_stats_connection_closed(s);
+      ipc_stats_error(s);
+      continue;
+    }
+
+    /* Read client hello (ignore content for now) */
+    char *hello = NULL;
+    size_t hlen = 0;
+    if (npipe_read_frame(pipe, &hello, &hlen) != 0) {
+      g_warning("npipe: failed to read client hello");
+      DisconnectNamedPipe(pipe);
+      CloseHandle(pipe);
+      g_atomic_int_dec_and_test(&s->npipe_active_connections);
+      ipc_stats_connection_closed(s);
+      ipc_stats_error(s);
+      continue;
+    }
+    g_free(hello);
+
+    /* Spawn handler thread for this connection */
+    NpipeConnArg *carg = (NpipeConnArg*)g_new0(NpipeConnArg, 1);
+    if (!carg) {
+      g_warning("npipe: failed to allocate connection arg");
+      DisconnectNamedPipe(pipe);
+      CloseHandle(pipe);
+      g_atomic_int_dec_and_test(&s->npipe_active_connections);
+      ipc_stats_connection_closed(s);
+      ipc_stats_error(s);
+      continue;
+    }
+
+    carg->pipe = pipe;
+    carg->server = s;
+    carg->ud = NULL;
+    carg->get_pub = NULL;
+    carg->sign_event = NULL;
+    carg->enc44 = NULL;
+    carg->dec44 = NULL;
+    carg->list_keys = NULL;
+
+    GThread *handler = g_thread_new("npipe-conn", npipe_conn_handler_thread, carg);
+    if (handler) {
+      g_thread_unref(handler);  /* Detach thread */
+      g_message("npipe: spawned handler thread for connection");
+    } else {
+      g_warning("npipe: failed to create handler thread");
+      g_free(carg);
+      DisconnectNamedPipe(pipe);
+      CloseHandle(pipe);
+      g_atomic_int_dec_and_test(&s->npipe_active_connections);
+      ipc_stats_connection_closed(s);
+      ipc_stats_error(s);
+    }
+  }
+
+  /* Cleanup */
+  if (pSD) {
+    LocalFree(pSD);
+  }
+
+  g_message("npipe: accept thread exiting");
+  return NULL;
+}
+#endif /* G_OS_WIN32 */

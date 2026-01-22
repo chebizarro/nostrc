@@ -30,6 +30,7 @@ struct _GnostrNoteCardRow {
   GtkWidget *btn_reply;
   GtkWidget *btn_repost;
   GtkWidget *btn_like;
+  GtkWidget *lbl_like_count;
   GtkWidget *btn_zap;
   GtkWidget *lbl_zap_count;
   GtkWidget *btn_bookmark;
@@ -50,6 +51,10 @@ struct _GnostrNoteCardRow {
   /* Reply indicator widgets */
   GtkWidget *reply_indicator_box;
   GtkWidget *reply_indicator_label;
+  /* Reply count widgets (thread root indicator) */
+  GtkWidget *reply_count_box;
+  GtkWidget *reply_count_label;
+  guint reply_count;
   // state
   char *avatar_url;
 #ifdef HAVE_SOUP3
@@ -79,12 +84,16 @@ struct _GnostrNoteCardRow {
   gboolean is_bookmarked;
   /* Like state (NIP-25 reactions) */
   gboolean is_liked;
+  guint like_count;
   /* Zap state */
   gint64 zap_total_msat;
   guint zap_count;
   gchar *author_lud16;  /* Author's lightning address from profile */
   /* Content state (plain text for clipboard) */
   gchar *content_text;
+  /* NIP-09: Track if this is the current user's own note (for delete option) */
+  gboolean is_own_note;
+  GtkWidget *delete_btn;  /* Reference to delete button for visibility toggle */
 };
 
 G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
@@ -107,6 +116,8 @@ enum {
   SIGNAL_REPORT_NOTE_REQUESTED,
   SIGNAL_SHARE_NOTE_REQUESTED,
   SIGNAL_SEARCH_HASHTAG,
+  SIGNAL_NAVIGATE_TO_NOTE,
+  SIGNAL_DELETE_NOTE_REQUESTED,
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -160,6 +171,7 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   self->media_box = NULL; self->embed_box = NULL; self->og_preview_container = NULL; self->actions_box = NULL;
   self->btn_repost = NULL; self->btn_like = NULL; self->btn_bookmark = NULL; self->btn_thread = NULL;
   self->reply_indicator_box = NULL; self->reply_indicator_label = NULL;
+  self->reply_count_box = NULL; self->reply_count_label = NULL;
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->dispose(obj);
 }
 
@@ -511,6 +523,21 @@ static void on_share_note_clicked(GtkButton *btn, gpointer user_data) {
   }
 }
 
+/* NIP-09: Delete note (only shown for own notes) */
+static void on_delete_note_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (!self || !self->id_hex || !self->pubkey_hex) return;
+
+  /* Hide popover first */
+  if (self->menu_popover && GTK_IS_POPOVER(self->menu_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
+  }
+
+  /* Emit signal to request deletion (NIP-09) */
+  g_signal_emit(self, signals[SIGNAL_DELETE_NOTE_REQUESTED], 0, self->id_hex, self->pubkey_hex);
+}
+
 static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
   GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
   (void)btn;
@@ -635,6 +662,32 @@ static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
     gtk_button_set_has_frame(GTK_BUTTON(report_btn), FALSE);
     g_signal_connect(report_btn, "clicked", G_CALLBACK(on_report_note_clicked), self);
     gtk_box_append(GTK_BOX(box), report_btn);
+
+    /* Separator before Delete section (NIP-09) */
+    GtkWidget *sep3 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_widget_set_margin_top(sep3, 4);
+    gtk_widget_set_margin_bottom(sep3, 4);
+    gtk_box_append(GTK_BOX(box), sep3);
+
+    /* Delete Note button (NIP-09) - only visible for own notes */
+    GtkWidget *delete_btn = gtk_button_new();
+    GtkWidget *delete_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *delete_icon = gtk_image_new_from_icon_name("user-trash-symbolic");
+    GtkWidget *delete_label = gtk_label_new("Delete Note");
+    gtk_box_append(GTK_BOX(delete_box), delete_icon);
+    gtk_box_append(GTK_BOX(delete_box), delete_label);
+    gtk_button_set_child(GTK_BUTTON(delete_btn), delete_box);
+    gtk_button_set_has_frame(GTK_BUTTON(delete_btn), FALSE);
+    gtk_widget_add_css_class(delete_btn, "destructive-action");
+    g_signal_connect(delete_btn, "clicked", G_CALLBACK(on_delete_note_clicked), self);
+    gtk_box_append(GTK_BOX(box), delete_btn);
+    /* Store reference for visibility toggle */
+    self->delete_btn = delete_btn;
+    /* Initially hide delete button - will be shown if is_own_note is set */
+    gtk_widget_set_visible(delete_btn, self->is_own_note);
+    gtk_widget_set_visible(sep3, self->is_own_note);
+    /* Store separator reference for visibility toggle */
+    g_object_set_data(G_OBJECT(delete_btn), "delete-separator", sep3);
 
     gtk_popover_set_child(GTK_POPOVER(self->menu_popover), box);
   }
@@ -818,6 +871,37 @@ static void on_thread_clicked(GtkButton *btn, gpointer user_data) {
   }
 }
 
+/* Callback when reply indicator is clicked - navigate to parent note */
+static void on_reply_indicator_clicked(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)gesture;
+  (void)n_press;
+  (void)x;
+  (void)y;
+
+  if (!self) return;
+
+  /* Navigate to parent note if available, otherwise to thread root */
+  const char *target = self->parent_id ? self->parent_id : self->root_id;
+  if (target && *target) {
+    g_signal_emit(self, signals[SIGNAL_NAVIGATE_TO_NOTE], 0, target);
+  }
+}
+
+/* Callback when reply count badge is clicked - open thread view */
+static void on_reply_count_clicked(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)gesture;
+  (void)n_press;
+  (void)x;
+  (void)y;
+
+  if (!self || !self->id_hex) return;
+
+  /* Open thread view with this note as the root */
+  g_signal_emit(self, signals[SIGNAL_VIEW_THREAD_REQUESTED], 0, self->id_hex);
+}
+
 static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   GtkWidgetClass *wclass = GTK_WIDGET_CLASS(klass);
   GObjectClass *gclass = G_OBJECT_CLASS(klass);
@@ -833,12 +917,15 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_reply);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_repost);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_like);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_like_count);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_zap);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_zap_count);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_bookmark);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_thread);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, reply_indicator_box);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, reply_indicator_label);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, reply_count_box);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, reply_count_label);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_box);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_initials);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_image);
@@ -902,6 +989,13 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   signals[SIGNAL_SEARCH_HASHTAG] = g_signal_new("search-hashtag",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIGNAL_NAVIGATE_TO_NOTE] = g_signal_new("navigate-to-note",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 1, G_TYPE_STRING);
+  /* NIP-09 deletion request: id_hex, pubkey_hex */
+  signals[SIGNAL_DELETE_NOTE_REQUESTED] = g_signal_new("delete-note-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
 }
 
 static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
@@ -965,6 +1059,26 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
     g_signal_connect(self->btn_thread, "clicked", G_CALLBACK(on_thread_clicked), self);
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_thread),
                                    GTK_ACCESSIBLE_PROPERTY_LABEL, "View Thread", -1);
+  }
+
+  /* Make reply indicator clickable - navigate to parent note */
+  if (GTK_IS_WIDGET(self->reply_indicator_box)) {
+    GtkGesture *reply_click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(reply_click), GDK_BUTTON_PRIMARY);
+    g_signal_connect(reply_click, "pressed", G_CALLBACK(on_reply_indicator_clicked), self);
+    gtk_widget_add_controller(self->reply_indicator_box, GTK_EVENT_CONTROLLER(reply_click));
+    /* Add CSS class for hover styling and cursor */
+    gtk_widget_add_css_class(self->reply_indicator_box, "reply-indicator-clickable");
+    gtk_widget_set_cursor_from_name(self->reply_indicator_box, "pointer");
+  }
+
+  /* Make reply count badge clickable - opens thread view */
+  if (GTK_IS_WIDGET(self->reply_count_box)) {
+    GtkGesture *count_click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(count_click), GDK_BUTTON_PRIMARY);
+    g_signal_connect(count_click, "pressed", G_CALLBACK(on_reply_count_clicked), self);
+    gtk_widget_add_controller(self->reply_count_box, GTK_EVENT_CONTROLLER(count_click));
+    gtk_widget_set_cursor_from_name(self->reply_count_box, "pointer");
   }
 
   /* Add right-click gesture for context menu */
@@ -2157,16 +2271,30 @@ void gnostr_note_card_row_set_liked(GnostrNoteCardRow *self, gboolean is_liked) 
   /* Update button visual state */
   if (GTK_IS_BUTTON(self->btn_like)) {
     /* Use CSS class for visual differentiation - more reliable than icon switching.
-     * CSS can style the "liked" class with different color (e.g., red/pink).
-     * We also try to use filled variant icon if available. */
+     * CSS can style the "liked" class with different color (e.g., red/pink). */
     if (is_liked) {
       gtk_widget_add_css_class(GTK_WIDGET(self->btn_like), "liked");
-      /* Try emblem-favorite (filled) for liked state */
-      gtk_button_set_icon_name(GTK_BUTTON(self->btn_like), "emblem-favorite-symbolic");
     } else {
       gtk_widget_remove_css_class(GTK_WIDGET(self->btn_like), "liked");
-      /* Keep the default favorite icon for unliked state */
-      gtk_button_set_icon_name(GTK_BUTTON(self->btn_like), "emblem-favorite-symbolic");
+    }
+  }
+}
+
+/* Set like count and update display (NIP-25 reactions) */
+void gnostr_note_card_row_set_like_count(GnostrNoteCardRow *self, guint count) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  self->like_count = count;
+
+  /* Update the like count label */
+  if (GTK_IS_LABEL(self->lbl_like_count)) {
+    if (count > 0) {
+      gchar *text = g_strdup_printf("%u", count);
+      gtk_label_set_text(GTK_LABEL(self->lbl_like_count), text);
+      gtk_widget_set_visible(self->lbl_like_count, TRUE);
+      g_free(text);
+    } else {
+      gtk_widget_set_visible(self->lbl_like_count, FALSE);
     }
   }
 }
@@ -2206,6 +2334,52 @@ void gnostr_note_card_row_set_zap_stats(GnostrNoteCardRow *self, guint zap_count
       g_free(formatted);
     } else {
       gtk_widget_set_visible(self->lbl_zap_count, FALSE);
+    }
+  }
+}
+
+/* Set the reply count for thread root indicator */
+void gnostr_note_card_row_set_reply_count(GnostrNoteCardRow *self, guint count) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  self->reply_count = count;
+  self->is_thread_root = (count > 0);
+
+  /* Update the reply count box visibility and label */
+  if (GTK_IS_WIDGET(self->reply_count_box)) {
+    gtk_widget_set_visible(self->reply_count_box, count > 0);
+  }
+
+  if (count > 0 && GTK_IS_LABEL(self->reply_count_label)) {
+    gchar *text = NULL;
+    if (count == 1) {
+      text = g_strdup("1 reply");
+    } else {
+      text = g_strdup_printf("%u replies", count);
+    }
+    gtk_label_set_text(GTK_LABEL(self->reply_count_label), text);
+    g_free(text);
+  }
+
+  /* Also show the thread button when there are replies */
+  if (GTK_IS_BUTTON(self->btn_thread)) {
+    gtk_widget_set_visible(GTK_WIDGET(self->btn_thread), count > 0);
+  }
+}
+
+/* NIP-09: Set whether this is the current user's own note (enables delete option) */
+void gnostr_note_card_row_set_is_own_note(GnostrNoteCardRow *self, gboolean is_own) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  self->is_own_note = is_own;
+
+  /* Update delete button visibility if menu has been created */
+  if (GTK_IS_BUTTON(self->delete_btn)) {
+    gtk_widget_set_visible(self->delete_btn, is_own);
+    /* Also update separator visibility */
+    GtkWidget *sep = g_object_get_data(G_OBJECT(self->delete_btn), "delete-separator");
+    if (GTK_IS_WIDGET(sep)) {
+      gtk_widget_set_visible(sep, is_own);
     }
   }
 }

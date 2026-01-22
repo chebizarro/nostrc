@@ -1,3 +1,5 @@
+#define G_LOG_DOMAIN "gnostr-pool"
+
 #include "nostr_simple_pool.h"
 #include "nostr_relay.h"
 #include "nostr-subscription.h"
@@ -395,7 +397,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
                     strcmp(gobj_pool->pool->relays[j]->url, url) == 0) {
                     relay = gobj_pool->pool->relays[j];
                     relay_is_from_pool = TRUE;
-                    g_message("simple_pool: Reusing existing relay %s from pool", url);
+                    g_debug("simple_pool: Reusing existing relay %s from pool", url);
                     break;
                 }
             }
@@ -422,7 +424,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
             if (gobj_pool && gobj_pool->pool) {
                 nostr_simple_pool_add_relay(gobj_pool->pool, relay);
                 relay_is_from_pool = TRUE; /* Now it's in the pool */
-                g_message("simple_pool: Added NEW relay %s to pool (now has %zu relays)", url, gobj_pool->pool->relay_count);
+                g_debug("simple_pool: Added NEW relay %s to pool (now has %zu relays)", url, gobj_pool->pool->relay_count);
             }
         }
         
@@ -511,7 +513,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
             }
             if (all_eosed) {
                 bootstrap_emitted = TRUE;
-                g_message("simple_pool: bootstrap complete (EOSE from all relays)");
+                g_debug("simple_pool: bootstrap complete (EOSE from all relays)");
             }
         }
         /* Adaptive sleep: if nothing was read, back off a bit; otherwise, immediately iterate */
@@ -526,8 +528,8 @@ static gpointer subscribe_many_thread(gpointer user_data) {
         unsigned long long enq = nostr_subscription_events_enqueued(it->sub);
         unsigned long long drop = nostr_subscription_events_dropped(it->sub);
         double eose_ms = (it->eose_us >= 0) ? (it->eose_us / 1000.0) : -1.0;
-        g_message("simple_pool: stats url=%s enqueued=%llu emitted=%" G_GUINT64_FORMAT " dropped=%llu eose_ms=%.3f",
-                  url ? url : "<null>", enq, it->emitted, drop, eose_ms);
+        g_debug("simple_pool: stats url=%s enqueued=%llu emitted=%" G_GUINT64_FORMAT " dropped=%llu eose_ms=%.3f",
+                url ? url : "<null>", enq, it->emitted, drop, eose_ms);
     }
 
     /* Cleanup */
@@ -557,7 +559,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
     }
     g_object_unref(ctx->self_obj);
     g_free(ctx);
-    g_message("simple_pool: subscribe_many_thread exiting (cleanup complete)");
+    g_debug("simple_pool: subscribe_many_thread exiting (cleanup complete)");
     return NULL;
 }
 
@@ -933,7 +935,7 @@ extern void fetch_profiles_goroutine_start(FetchProfilesCtx *ctx);
 static void fetch_profiles_state_free(FetchProfilesState *state) {
     if (!state) return;
     
-    g_message("PROFILE_FETCH: Freeing state (subs=%u)", state->subs ? state->subs->len : 0);
+    g_debug("PROFILE_FETCH: Freeing state (subs=%u)", state->subs ? state->subs->len : 0);
     
     if (state->idle_source_id) {
         g_source_remove(state->idle_source_id);
@@ -1369,8 +1371,8 @@ static void *fetch_profiles_goroutine(void *arg) {
             } else {
                 /* Subscription didn't receive EOSE - keep it open but cancel context
                  * to stop it from processing more events */
-                g_message("[PROFILE_FETCH] Subscription sid=%s relay=%s did not receive EOSE within timeout, closing (normal for slow relays)", 
-                          sid_copy[0] ? sid_copy : "null", item->relay_url ? item->relay_url : "(null)");
+                g_debug("[PROFILE_FETCH] Subscription sid=%s relay=%s did not receive EOSE within timeout, closing (normal for slow relays)",
+                        sid_copy[0] ? sid_copy : "null", item->relay_url ? item->relay_url : "(null)");
                 
                 /* Still need to cleanup even if no EOSE, but log it as abnormal */
                 nostr_subscription_close(item->sub, NULL);
@@ -1593,7 +1595,7 @@ void gnostr_simple_pool_sync_relays(GnostrSimplePool *self, const char **urls, s
 
     if (!self->pool) return;
 
-    g_message("[RELAY_SYNC] Syncing pool with %zu relay URLs", url_count);
+    g_debug("[RELAY_SYNC] Syncing pool with %zu relay URLs", url_count);
 
     /* Build set of new URLs for fast lookup */
     GHashTable *new_urls = g_hash_table_new(g_str_hash, g_str_equal);
@@ -1610,7 +1612,7 @@ void gnostr_simple_pool_sync_relays(GnostrSimplePool *self, const char **urls, s
     for (guint i = 0; i < current->len; i++) {
         const char *url = g_ptr_array_index(current, i);
         if (!g_hash_table_contains(new_urls, url)) {
-            g_message("[RELAY_SYNC] Removing relay: %s", url);
+            g_debug("[RELAY_SYNC] Removing relay: %s", url);
             gnostr_simple_pool_remove_relay(self, url);
         }
     }
@@ -1628,7 +1630,7 @@ void gnostr_simple_pool_sync_relays(GnostrSimplePool *self, const char **urls, s
         }
 
         if (!found) {
-            g_message("[RELAY_SYNC] Adding relay: %s", urls[i]);
+            g_debug("[RELAY_SYNC] Adding relay: %s", urls[i]);
             nostr_simple_pool_ensure_relay(self->pool, urls[i]);
         }
     }
@@ -1636,5 +1638,5 @@ void gnostr_simple_pool_sync_relays(GnostrSimplePool *self, const char **urls, s
     g_ptr_array_unref(current);
     g_hash_table_destroy(new_urls);
 
-    g_message("[RELAY_SYNC] Sync complete, pool now has %zu relays", self->pool->relay_count);
+    g_debug("[RELAY_SYNC] Sync complete, pool now has %zu relays", self->pool->relay_count);
 }

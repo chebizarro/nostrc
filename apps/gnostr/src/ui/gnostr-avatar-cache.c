@@ -171,66 +171,141 @@ static GdkTexture *texture_new_from_pixbuf(GdkPixbuf *pixbuf) {
   return texture;
 }
 
+/* Create a centered, cropped square pixbuf from source pixbuf.
+ * This implements "cover" style scaling: the image fills the target size
+ * while maintaining aspect ratio, with overflow cropped from center. */
+static GdkPixbuf *pixbuf_crop_to_square(GdkPixbuf *src, int target_size) {
+  g_return_val_if_fail(src != NULL, NULL);
+
+  int src_w = gdk_pixbuf_get_width(src);
+  int src_h = gdk_pixbuf_get_height(src);
+
+  /* Calculate scale factor so shorter side equals target_size */
+  double scale;
+  if (src_w < src_h) {
+    scale = (double)target_size / src_w;
+  } else {
+    scale = (double)target_size / src_h;
+  }
+
+  int scaled_w = (int)(src_w * scale + 0.5);
+  int scaled_h = (int)(src_h * scale + 0.5);
+
+  /* Scale the image preserving aspect ratio */
+  GdkPixbuf *scaled = gdk_pixbuf_scale_simple(src, scaled_w, scaled_h, GDK_INTERP_BILINEAR);
+  if (!scaled) return NULL;
+
+  /* Calculate crop offset to center the image */
+  int crop_x = (scaled_w - target_size) / 2;
+  int crop_y = (scaled_h - target_size) / 2;
+
+  /* Clamp to valid range */
+  if (crop_x < 0) crop_x = 0;
+  if (crop_y < 0) crop_y = 0;
+  if (crop_x + target_size > scaled_w) crop_x = scaled_w - target_size;
+  if (crop_y + target_size > scaled_h) crop_y = scaled_h - target_size;
+
+  /* Create the cropped square pixbuf */
+  GdkPixbuf *cropped = gdk_pixbuf_new_subpixbuf(scaled, crop_x, crop_y, target_size, target_size);
+  if (!cropped) {
+    g_object_unref(scaled);
+    return NULL;
+  }
+
+  /* gdk_pixbuf_new_subpixbuf shares data with parent, so we need to copy */
+  GdkPixbuf *result = gdk_pixbuf_copy(cropped);
+  g_object_unref(cropped);
+  g_object_unref(scaled);
+
+  return result;
+}
+
 /* Decode image at bounded size using GdkPixbuf, then create GdkTexture.
  * This drastically reduces memory usage vs. loading full-size images.
+ * Images are scaled with "cover" style: maintaining aspect ratio,
+ * scaling so the shorter side fills the target, and cropping to center.
  * Returns new ref or NULL on error. */
 static GdkTexture *avatar_texture_from_file_scaled(const char *path, GError **error) {
   g_return_val_if_fail(path != NULL, NULL);
 
-  /* Load and scale using GdkPixbuf.
-   * IMPORTANT: preserve_aspect_ratio=FALSE ensures square output for circular avatars.
-   * With TRUE, non-square source images would produce ovals instead of circles. */
-  GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file_at_scale(
+  /* First load the image at a reasonable size for memory efficiency.
+   * We use a larger size here to allow for quality cropping, then crop to final size. */
+  int load_size = s_avatar_size * 2; /* Load at 2x for better quality after crop */
+  if (load_size > 512) load_size = 512; /* Cap at reasonable max */
+
+  GdkPixbuf *loaded = gdk_pixbuf_new_from_file_at_scale(
     path,
-    s_avatar_size,  /* width */
-    s_avatar_size,  /* height */
-    FALSE,          /* preserve aspect ratio - FALSE for square avatars */
+    load_size,  /* width */
+    load_size,  /* height */
+    TRUE,       /* preserve aspect ratio - TRUE to avoid distortion */
     error
   );
 
-  if (!pixbuf) {
+  if (!loaded) {
     return NULL;
   }
 
-  /* Create texture from scaled pixbuf */
-  GdkTexture *texture = texture_new_from_pixbuf(pixbuf);
-  g_object_unref(pixbuf);
+  /* Crop to centered square */
+  GdkPixbuf *cropped = pixbuf_crop_to_square(loaded, s_avatar_size);
+  g_object_unref(loaded);
+
+  if (!cropped) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to crop avatar to square");
+    return NULL;
+  }
+
+  /* Create texture from cropped pixbuf */
+  GdkTexture *texture = texture_new_from_pixbuf(cropped);
+  g_object_unref(cropped);
 
   return texture;
 }
 
-/* Decode image from bytes at bounded size. Returns new ref or NULL on error. */
+/* Decode image from bytes at bounded size. Returns new ref or NULL on error.
+ * Images are scaled with "cover" style: maintaining aspect ratio,
+ * scaling so the shorter side fills the target, and cropping to center. */
 static GdkTexture *avatar_texture_from_bytes_scaled(GBytes *bytes, GError **error) {
   g_return_val_if_fail(bytes != NULL, NULL);
-  
+
   /* Create input stream from bytes */
   GInputStream *stream = g_memory_input_stream_new_from_bytes(bytes);
   if (!stream) {
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to create input stream");
     return NULL;
   }
-  
-  /* Load and scale using GdkPixbuf.
-   * IMPORTANT: preserve_aspect_ratio=FALSE ensures square output for circular avatars.
-   * With TRUE, non-square source images would produce ovals instead of circles. */
-  GdkPixbuf *pixbuf = gdk_pixbuf_new_from_stream_at_scale(
+
+  /* Load at a larger size for quality cropping */
+  int load_size = s_avatar_size * 2;
+  if (load_size > 512) load_size = 512;
+
+  /* Load and scale using GdkPixbuf, preserving aspect ratio */
+  GdkPixbuf *loaded = gdk_pixbuf_new_from_stream_at_scale(
     stream,
-    s_avatar_size,  /* width */
-    s_avatar_size,  /* height */
-    FALSE,          /* preserve aspect ratio - FALSE for square avatars */
-    NULL,           /* cancellable */
+    load_size,  /* width */
+    load_size,  /* height */
+    TRUE,       /* preserve aspect ratio - TRUE to avoid distortion */
+    NULL,       /* cancellable */
     error
   );
-  
+
   g_object_unref(stream);
-  
-  if (!pixbuf) {
+
+  if (!loaded) {
     return NULL;
   }
 
-  /* Create texture from scaled pixbuf */
-  GdkTexture *texture = texture_new_from_pixbuf(pixbuf);
-  g_object_unref(pixbuf);
+  /* Crop to centered square */
+  GdkPixbuf *cropped = pixbuf_crop_to_square(loaded, s_avatar_size);
+  g_object_unref(loaded);
+
+  if (!cropped) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to crop avatar to square");
+    return NULL;
+  }
+
+  /* Create texture from cropped pixbuf */
+  GdkTexture *texture = texture_new_from_pixbuf(cropped);
+  g_object_unref(cropped);
 
   return texture;
 }
@@ -374,8 +449,12 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
   if (!bytes) {
     s_avatar_metrics.http_error++;
+    s_avatar_metrics.initials_shown++;
     g_debug("avatar http: error fetching url=%s: %s", ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
-    g_message("avatar http: fetch failed; profile metadata/UI remain applied (url=%s)", ctx && ctx->url ? ctx->url : "(null)");
+    g_message("avatar http: fetch failed; showing initials fallback (url=%s)", ctx && ctx->url ? ctx->url : "(null)");
+    /* Ensure initials fallback is visible */
+    if (GTK_IS_WIDGET(ctx->initials)) gtk_widget_set_visible(ctx->initials, TRUE);
+    if (GTK_IS_PICTURE(ctx->image)) gtk_widget_set_visible(ctx->image, FALSE);
     g_clear_error(&error);
     avatar_ctx_free(ctx);
     return;
@@ -387,8 +466,12 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
   /* CRITICAL: Validate it's actually an image BEFORE caching, and decode at bounded size */
   GdkTexture *tex = avatar_texture_from_bytes_scaled(bytes, &error);
   if (!tex) {
-    g_warning("avatar http: INVALID IMAGE DATA for url=%s: %s (likely HTML error page)", 
+    s_avatar_metrics.initials_shown++;
+    g_warning("avatar http: INVALID IMAGE DATA for url=%s: %s (likely HTML error page)",
               ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
+    /* Ensure initials fallback is visible for invalid images */
+    if (GTK_IS_WIDGET(ctx->initials)) gtk_widget_set_visible(ctx->initials, TRUE);
+    if (GTK_IS_PICTURE(ctx->image)) gtk_widget_set_visible(ctx->image, FALSE);
     g_clear_error(&error);
     g_bytes_unref(bytes);
     avatar_ctx_free(ctx);

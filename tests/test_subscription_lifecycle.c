@@ -16,22 +16,6 @@
 // Include private API to drive dispatchers directly and observe internals
 #include "../libnostr/src/subscription-private.h"
 
-static GoContext *ctx_with_timeout_ms(int ms) {
-    GoContext *bg = go_context_background();
-    struct timespec now;
-    clock_gettime(CLOCK_REALTIME, &now);
-    struct timespec deadline = now;
-    // add ms to deadline
-    deadline.tv_sec += ms / 1000;
-    long nsec_add = (long)(ms % 1000) * 1000000L;
-    deadline.tv_nsec += nsec_add;
-    if (deadline.tv_nsec >= 1000000000L) {
-        deadline.tv_sec += 1;
-        deadline.tv_nsec -= 1000000000L;
-    }
-    return go_with_deadline(bg, deadline);
-}
-
 static NostrEvent *make_dummy_event(void) {
     NostrEvent *ev = nostr_event_new();
     ev->kind = 1; // text note
@@ -43,6 +27,22 @@ static NostrFilters *make_min_filters(void) {
     NostrFilters *fs = nostr_filters_new();
     nostr_filters_add(fs, nostr_filter_new());
     return fs;
+}
+
+// Helper: poll for channel to have data, using try_receive with timeout
+// Returns: 0 = got data, 1 = timeout (empty but open), -1 = closed
+static int poll_receive(GoChannel *ch, void **out, int max_ms) {
+    int elapsed = 0;
+    while (elapsed < max_ms) {
+        int rc = go_channel_try_receive(ch, out);
+        if (rc == 0) return 0;  // Got data
+        // rc == -1 means either empty or closed; check which
+        if (go_channel_is_closed(ch)) return -1;  // Actually closed
+        // Otherwise just empty, keep polling
+        usleep(10000);  // 10ms
+        elapsed += 10;
+    }
+    return 1;  // Timeout (channel open but no data)
 }
 
 static void test_eose_then_receive_signal(void) {
@@ -61,15 +61,14 @@ static void test_eose_then_receive_signal(void) {
     nostr_subscription_dispatch_eose(sub);
     assert(atomic_load(&sub->priv->eosed));
 
-    // Receive on end_of_stored_events promptly
-    GoContext *rxctx = ctx_with_timeout_ms(200);
+    // Receive on end_of_stored_events - data was sent so should succeed
     void *sig = NULL;
-    int rc = go_channel_receive_with_context(sub->end_of_stored_events, &sig, rxctx);
+    int rc = poll_receive(sub->end_of_stored_events, &sig, 200);
     assert(rc == 0);
 
     nostr_subscription_unsubscribe(sub);
-    nostr_subscription_unsubscribe(sub);
-    usleep(50000);
+    nostr_subscription_unsubscribe(sub);  // Idempotent - should be fine
+    usleep(100000);  // Give lifecycle thread time to exit
     nostr_subscription_free(sub);
     nostr_filters_free(fs);
     nostr_relay_free(relay);
@@ -91,13 +90,15 @@ static void test_closed_with_reason(void) {
     nostr_subscription_dispatch_closed(sub, reason);
     assert(atomic_load(&sub->priv->closed));
 
-    GoContext *rxctx = ctx_with_timeout_ms(200);
+    // Receive the closed reason - data was sent so should succeed
     char *got = NULL;
-    int rc = go_channel_receive_with_context(sub->closed_reason, (void **)&got, rxctx);
+    int rc = poll_receive(sub->closed_reason, (void **)&got, 200);
     assert(rc == 0);
-    assert(got == reason || (got && strcmp(got, reason) == 0));
+    assert(got != NULL && strcmp(got, reason) == 0);
+    free(got);  // dispatch_closed makes a copy
 
     nostr_subscription_unsubscribe(sub);
+    usleep(100000);
     nostr_subscription_free(sub);
     nostr_filters_free(fs);
     nostr_relay_free(relay);
@@ -121,10 +122,12 @@ static void test_unsubscribe_closes_events_channel(void) {
     // Unsubscribe triggers cancel; lifecycle thread will close events channel
     nostr_subscription_unsubscribe(sub);
 
-    // Receive should promptly fail with -1 due to closed+empty
-    GoContext *rxctx = ctx_with_timeout_ms(300);
+    // Wait for lifecycle thread to close the channel
+    usleep(100000);
+
+    // Events channel should be closed (empty + closed = -1)
     void *msg = NULL;
-    int rc = go_channel_receive_with_context(sub->events, &msg, rxctx);
+    int rc = go_channel_try_receive(sub->events, &msg);
     assert(rc == -1);
 
     nostr_subscription_free(sub);
@@ -135,6 +138,8 @@ static void test_unsubscribe_closes_events_channel(void) {
 
 static void test_event_queue_full_drops(void) {
     setenv("NOSTR_TEST_MODE", "1", 1);
+    // Set capacity to 1 for this test to verify drop behavior
+    setenv("NOSTR_SUB_EVENTS_CAP", "1", 1);
     Error *err = NULL;
     GoContext *ctx = go_context_background();
     NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
@@ -153,23 +158,30 @@ static void test_event_queue_full_drops(void) {
     nostr_subscription_dispatch_event(sub, e1);
     nostr_subscription_dispatch_event(sub, e2); // should be dropped if queue full
 
-    // We expect exactly one receive success, second receive should block; use try-receive via short timeout
-    GoContext *rxctx1 = ctx_with_timeout_ms(200);
+    // First receive should succeed (got e1)
     void *got1 = NULL;
-    int rc1 = go_channel_receive_with_context(sub->events, &got1, rxctx1);
+    int rc1 = poll_receive(sub->events, &got1, 200);
     assert(rc1 == 0 && got1 != NULL);
+    nostr_event_free((NostrEvent *)got1);
 
-    GoContext *rxctx2 = ctx_with_timeout_ms(100);
+    // Second receive should timeout (e2 was dropped)
     void *got2 = NULL;
-    int rc2 = go_channel_receive_with_context(sub->events, &got2, rxctx2);
-    assert(rc2 == -1); // nothing else (second was dropped)
+    int rc2 = poll_receive(sub->events, &got2, 100);
+    assert(rc2 == 1);  // Timeout - no more events
+
+    // Verify drop counter was incremented
+    assert(atomic_load(&sub->priv->events_dropped) >= 1);
 
     // Cleanup
     nostr_subscription_unsubscribe(sub);
+    usleep(100000);
     nostr_subscription_free(sub);
     nostr_filters_free(fs);
     nostr_relay_free(relay);
     go_context_free(ctx);
+
+    // Reset capacity for other tests
+    unsetenv("NOSTR_SUB_EVENTS_CAP");
 }
 
 int main(void) {

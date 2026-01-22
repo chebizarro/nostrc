@@ -1,4 +1,7 @@
+#define G_LOG_DOMAIN "gnostr-relays"
+
 #include "relays.h"
+#include "relay_info.h"
 
 #include <gio/gio.h>
 #include <string.h>
@@ -1026,7 +1029,7 @@ static void on_nip65_sign_complete(GObject *source, GAsyncResult *res, gpointer 
     return;
   }
 
-  g_message("nip65: signed event successfully");
+  g_debug("nip65: signed event successfully");
 
   /* Parse the signed event JSON into a NostrEvent */
   NostrEvent *event = nostr_event_new();
@@ -1046,11 +1049,39 @@ static void on_nip65_sign_complete(GObject *source, GAsyncResult *res, gpointer 
   GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
   gnostr_load_relays_into(relay_urls);
 
+  /* Extract event properties for NIP-11 validation */
+  const char *nip65_content = nostr_event_get_content(event);
+  gint nip65_content_len = nip65_content ? (gint)strlen(nip65_content) : 0;
+  NostrTags *nip65_tags = nostr_event_get_tags(event);
+  gint nip65_tag_count = nip65_tags ? (gint)nostr_tags_size(nip65_tags) : 0;
+  gint64 nip65_created_at = nostr_event_get_created_at(event);
+  gssize nip65_serialized_len = signed_event_json ? (gssize)strlen(signed_event_json) : -1;
+
   /* Publish to each relay */
   guint success_count = 0;
   guint fail_count = 0;
   for (guint i = 0; i < relay_urls->len; i++) {
     const gchar *url = (const gchar*)g_ptr_array_index(relay_urls, i);
+
+    /* NIP-11: Check relay limitations before publishing */
+    GnostrRelayInfo *relay_info = gnostr_relay_info_cache_get(url);
+    if (relay_info) {
+      GnostrRelayValidationResult *validation = gnostr_relay_info_validate_event(
+        relay_info, nip65_content, nip65_content_len, nip65_tag_count, nip65_created_at, nip65_serialized_len);
+
+      if (!gnostr_relay_validation_result_is_valid(validation)) {
+        gchar *errors = gnostr_relay_validation_result_format_errors(validation);
+        g_debug("nip65: skipping %s due to limit violations: %s", url, errors ? errors : "unknown");
+        g_free(errors);
+        gnostr_relay_validation_result_free(validation);
+        gnostr_relay_info_free(relay_info);
+        fail_count++;
+        continue;
+      }
+      gnostr_relay_validation_result_free(validation);
+      gnostr_relay_info_free(relay_info);
+    }
+
     GNostrRelay *relay = gnostr_relay_new(url);
     if (!relay) {
       fail_count++;
@@ -1068,7 +1099,7 @@ static void on_nip65_sign_complete(GObject *source, GAsyncResult *res, gpointer 
 
     GError *pub_err = NULL;
     if (gnostr_relay_publish(relay, event, &pub_err)) {
-      g_message("nip65: published to %s", url);
+      g_debug("nip65: published to %s", url);
       success_count++;
     } else {
       g_debug("nip65: publish failed to %s: %s", url, pub_err ? pub_err->message : "unknown");
@@ -1092,7 +1123,7 @@ static void on_nip65_sign_complete(GObject *source, GAsyncResult *res, gpointer 
     }
   }
 
-  g_message("nip65: published to %u relays, failed %u", success_count, fail_count);
+  g_debug("nip65: published to %u relays, failed %u", success_count, fail_count);
   nip65_publish_ctx_free(ctx);
 }
 
@@ -1118,7 +1149,7 @@ void gnostr_nip65_publish_async(GPtrArray *nip65_relays,
     return;
   }
 
-  g_message("nip65: requesting signature for relay list event");
+  g_debug("nip65: requesting signature for relay list event");
 
   /* Create publish context */
   Nip65PublishCtx *ctx = g_new0(Nip65PublishCtx, 1);
@@ -1159,14 +1190,14 @@ static void on_nip65_load_login_done(GPtrArray *relays, gpointer user_data) {
   }
 
   if (relays && relays->len > 0) {
-    g_message("nip65: loaded %u relays from network for user %.*s...",
-              relays->len, 8, ctx->pubkey_hex ? ctx->pubkey_hex : "");
+    g_debug("nip65: loaded %u relays from network for user %.*s...",
+            relays->len, 8, ctx->pubkey_hex ? ctx->pubkey_hex : "");
 
     /* Apply to local config */
     gnostr_nip65_apply_to_local_config(relays);
   } else {
-    g_message("nip65: no relay list found on network for user %.*s...",
-              8, ctx->pubkey_hex ? ctx->pubkey_hex : "");
+    g_debug("nip65: no relay list found on network for user %.*s...",
+            8, ctx->pubkey_hex ? ctx->pubkey_hex : "");
   }
 
   /* Call user callback with the relay list */
@@ -1207,7 +1238,7 @@ void gnostr_nip65_apply_to_local_config(GPtrArray *nip65_relays) {
   /* Save using the existing function that preserves types */
   gnostr_save_nip65_relays(nip65_relays);
 
-  g_message("nip65: applied %u relays to local config", nip65_relays->len);
+  g_debug("nip65: applied %u relays to local config", nip65_relays->len);
 
   /* Emit relay change notification for live switching */
   gnostr_relay_change_emit();
@@ -1240,8 +1271,8 @@ static void on_gsettings_relays_changed(GSettings *settings, const gchar *key, g
       g_strcmp0(key, "dm-relays") != 0) {
     return;
   }
-  g_message("[RELAYS] GSettings '%s' changed, notifying %u handlers",
-            key, s_relay_change_handlers ? s_relay_change_handlers->len : 0);
+  g_debug("[RELAYS] GSettings '%s' changed, notifying %u handlers",
+          key, s_relay_change_handlers ? s_relay_change_handlers->len : 0);
   gnostr_relay_change_emit();
 }
 
@@ -1303,8 +1334,8 @@ void gnostr_relay_change_disconnect(gulong handler_id) {
 void gnostr_relay_change_emit(void) {
   if (!s_relay_change_handlers) return;
 
-  g_message("[RELAYS] Emitting relay change notification to %u handlers",
-            s_relay_change_handlers->len);
+  g_debug("[RELAYS] Emitting relay change notification to %u handlers",
+          s_relay_change_handlers->len);
 
   /* Copy handlers to avoid issues if callbacks modify the list */
   GPtrArray *handlers_copy = g_ptr_array_new();

@@ -182,6 +182,32 @@
               </object>
             </child>
 
+            <!-- Thread Root Indicator (shows reply count when this note has replies) -->
+            <child>
+              <object class="GtkBox" id="reply_count_box">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">4</property>
+                <property name="visible">false</property>
+                <property name="halign">start</property>
+                <property name="margin-top">4</property>
+                <style>
+                  <class name="thread-root-badge"/>
+                </style>
+                <child>
+                  <object class="GtkImage" id="reply_count_icon">
+                    <property name="icon-name">mail-reply-all-symbolic</property>
+                    <property name="icon-size">1</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="reply_count_label">
+                    <property name="label">0 replies</property>
+                    <property name="xalign">0.0</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+
             <!-- Actions -->
             <child>
               <object class="GtkBox" id="actions_box">
@@ -201,8 +227,27 @@
                 </child>
                 <child>
                   <object class="GtkButton" id="btn_like">
-                    <property name="icon-name">emblem-favorite-symbolic</property>
                     <property name="tooltip-text">Like</property>
+                    <child>
+                      <object class="GtkBox" id="like_button_box">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">4</property>
+                        <child>
+                          <object class="GtkImage" id="like_icon">
+                            <property name="icon-name">emblem-favorite-symbolic</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="lbl_like_count">
+                            <property name="label"></property>
+                            <property name="visible">false</property>
+                            <style>
+                              <class name="like-count"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
                   </object>
                 </child>
                 <child>

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=GNostr
+GenericName=Nostr Client
+Comment=GTK4 Nostr client for the decentralized social protocol
+Exec=gnostr %U
+Icon=org.gnostr.gnostr
+Terminal=false
+Categories=Network;Chat;InstantMessaging;GTK;
+Keywords=nostr;social;decentralized;relay;notes;
+StartupWMClass=gnostr
+MimeType=x-scheme-handler/nostr;x-scheme-handler/web+nostr;
+X-GNOME-UsesNotifications=true

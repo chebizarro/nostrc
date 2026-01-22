@@ -14,6 +14,11 @@
 #include <libsoup/soup.h>
 #endif
 
+/* bolt11 parsing from nostrdb */
+#include "bolt11/bolt11.h"
+#include "bolt11/amount.h"
+#include "ccan/tal/tal.h"
+
 GQuark gnostr_zap_error_quark(void) {
   return g_quark_from_static_string("gnostr-zap-error");
 }
@@ -43,6 +48,7 @@ void gnostr_zap_request_free(GnostrZapRequest *req) {
 void gnostr_zap_receipt_free(GnostrZapReceipt *receipt) {
   if (!receipt) return;
   g_free(receipt->id);
+  g_free(receipt->event_pubkey);
   g_free(receipt->bolt11);
   g_free(receipt->preimage);
   g_free(receipt->description);
@@ -615,6 +621,12 @@ GnostrZapReceipt *gnostr_zap_parse_receipt(const gchar *event_json) {
     receipt->id = g_strdup(json_string_value(id));
   }
 
+  /* Extract event pubkey for validation against expected_nostr_pubkey */
+  json_t *pubkey = json_object_get(root, "pubkey");
+  if (pubkey && json_is_string(pubkey)) {
+    receipt->event_pubkey = g_strdup(json_string_value(pubkey));
+  }
+
   json_t *created_at = json_object_get(root, "created_at");
   if (created_at && json_is_integer(created_at)) {
     receipt->created_at = json_integer_value(created_at);
@@ -652,8 +664,27 @@ GnostrZapReceipt *gnostr_zap_parse_receipt(const gchar *event_json) {
     }
   }
 
-  /* TODO: Parse amount from bolt11 invoice */
-  /* For now, try to get amount from the description (zap request) */
+  /* Parse amount from bolt11 invoice using nostrdb's bolt11 decoder */
+  if (receipt->bolt11) {
+    char *fail = NULL;
+    struct bolt11 *b11 = bolt11_decode_minimal(NULL, receipt->bolt11, &fail);
+    if (b11) {
+      if (b11->msat) {
+        receipt->amount_msat = (gint64)b11->msat->millisatoshis;
+        g_debug("zap: parsed bolt11 amount: %lld msat", (long long)receipt->amount_msat);
+      } else {
+        g_debug("zap: bolt11 invoice has no amount specified");
+        receipt->amount_msat = 0;
+      }
+      tal_free(b11);
+    } else {
+      g_debug("zap: failed to parse bolt11 invoice: %s", fail ? fail : "unknown error");
+      if (fail) tal_free(fail);
+      receipt->amount_msat = 0;
+    }
+  }
+
+  /* Parse zap request amount from description for validation */
   if (receipt->description) {
     json_error_t desc_err;
     json_t *zap_req = json_loads(receipt->description, 0, &desc_err);
@@ -668,7 +699,8 @@ GnostrZapReceipt *gnostr_zap_parse_receipt(const gchar *event_json) {
             json_t *ztag_value = json_array_get(ztag, 1);
             if (json_is_string(ztag_name) && json_is_string(ztag_value)) {
               if (g_strcmp0(json_string_value(ztag_name), "amount") == 0) {
-                receipt->amount_msat = g_ascii_strtoll(json_string_value(ztag_value), NULL, 10);
+                receipt->zap_request_amount_msat = g_ascii_strtoll(json_string_value(ztag_value), NULL, 10);
+                g_debug("zap: parsed zap request amount: %lld msat", (long long)receipt->zap_request_amount_msat);
                 break;
               }
             }
@@ -706,11 +738,42 @@ gboolean gnostr_zap_validate_receipt(const GnostrZapReceipt *receipt,
     return FALSE;
   }
 
-  /* TODO: Verify that the receipt's pubkey matches expected_nostr_pubkey */
-  /* This requires knowing the event's pubkey, which we don't have here */
-  (void)expected_nostr_pubkey;
+  /* NIP-57 Appendix F: Verify that the receipt's pubkey matches expected_nostr_pubkey
+   * "The zap receipt event's pubkey MUST be the same as the recipient's lnurl
+   * provider's nostrPubkey (retrieved in step 1 of the protocol flow)." */
+  if (expected_nostr_pubkey && expected_nostr_pubkey[0] != '\0') {
+    if (!receipt->event_pubkey) {
+      g_set_error(error, GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_PARSE_FAILED,
+                  "Receipt missing event pubkey for validation");
+      return FALSE;
+    }
+    if (g_ascii_strcasecmp(receipt->event_pubkey, expected_nostr_pubkey) != 0) {
+      g_set_error(error, GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_PARSE_FAILED,
+                  "Receipt pubkey %s does not match expected %s",
+                  receipt->event_pubkey, expected_nostr_pubkey);
+      return FALSE;
+    }
+    g_debug("zap: receipt pubkey validation passed");
+  }
 
-  /* TODO: Verify that invoiceAmount in bolt11 matches amount in zap request */
+  /* NIP-57 Appendix F: Verify that invoiceAmount in bolt11 matches zap request amount
+   * "The invoiceAmount contained in the bolt11 tag of the zap receipt MUST equal
+   * the amount tag of the zap request (if present)." */
+  if (receipt->zap_request_amount_msat > 0) {
+    if (receipt->amount_msat <= 0) {
+      g_set_error(error, GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_PARSE_FAILED,
+                  "Could not parse bolt11 amount for validation");
+      return FALSE;
+    }
+    if (receipt->amount_msat != receipt->zap_request_amount_msat) {
+      g_set_error(error, GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_PARSE_FAILED,
+                  "Bolt11 amount %lld msat does not match zap request amount %lld msat",
+                  (long long)receipt->amount_msat,
+                  (long long)receipt->zap_request_amount_msat);
+      return FALSE;
+    }
+    g_debug("zap: amount validation passed (%lld msat)", (long long)receipt->amount_msat);
+  }
 
   return TRUE;
 }

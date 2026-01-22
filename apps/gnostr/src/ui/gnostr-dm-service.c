@@ -453,9 +453,10 @@ on_rumor_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
     }
     g_free(rumor_json);
 
-    /* Validate: rumor kind should be 14 (DIRECT_MESSAGE) */
-    if (nostr_event_get_kind(rumor) != NOSTR_KIND_DIRECT_MESSAGE) {
-        g_warning("[DM_SERVICE] Invalid rumor kind: %d", nostr_event_get_kind(rumor));
+    /* Validate: rumor kind should be 14 (DIRECT_MESSAGE) or 15 (FILE_MESSAGE) */
+    int rumor_kind = nostr_event_get_kind(rumor);
+    if (rumor_kind != NOSTR_KIND_DIRECT_MESSAGE && rumor_kind != NOSTR_KIND_FILE_MESSAGE) {
+        g_warning("[DM_SERVICE] Invalid rumor kind: %d", rumor_kind);
         nostr_event_free(rumor);
         decrypt_ctx_free(ctx);
         return;
@@ -482,14 +483,52 @@ on_rumor_decrypted(GObject *source, GAsyncResult *res, gpointer user_data)
     gboolean is_outgoing = (rumor_pubkey && self->user_pubkey &&
                             strcmp(rumor_pubkey, self->user_pubkey) == 0);
 
-    if (peer_pubkey && content) {
-        g_message("[DM_SERVICE] Received DM from %s: %.50s%s",
-                  is_outgoing ? "self" : peer_pubkey,
-                  content,
-                  strlen(content) > 50 ? "..." : "");
+    if (peer_pubkey) {
+        /* For file messages (kind 15), show a file attachment indicator */
+        const char *display_content = content;
+        char *file_preview = NULL;
 
-        update_conversation(self, peer_pubkey, content, created_at,
-                            is_outgoing, TRUE);
+        if (rumor_kind == NOSTR_KIND_FILE_MESSAGE) {
+            /* Extract file-type tag if available for better preview */
+            NostrTags *tags = nostr_event_get_tags(rumor);
+            const char *file_type = NULL;
+            if (tags) {
+                NostrTag *prefix = nostr_tag_new("file-type", NULL);
+                NostrTag *ft_tag = nostr_tags_get_first(tags, prefix);
+                nostr_tag_free(prefix);
+                if (ft_tag && nostr_tag_size(ft_tag) >= 2) {
+                    file_type = nostr_tag_get(ft_tag, 1);
+                }
+            }
+
+            if (file_type && g_str_has_prefix(file_type, "image/")) {
+                file_preview = g_strdup("[Image attachment]");
+            } else if (file_type && g_str_has_prefix(file_type, "video/")) {
+                file_preview = g_strdup("[Video attachment]");
+            } else if (file_type && g_str_has_prefix(file_type, "audio/")) {
+                file_preview = g_strdup("[Audio attachment]");
+            } else {
+                file_preview = g_strdup("[File attachment]");
+            }
+            display_content = file_preview;
+
+            g_message("[DM_SERVICE] Received file message from %s: %s (type=%s)",
+                      is_outgoing ? "self" : peer_pubkey,
+                      content ? content : "(no url)",
+                      file_type ? file_type : "unknown");
+        } else if (content) {
+            g_message("[DM_SERVICE] Received DM from %s: %.50s%s",
+                      is_outgoing ? "self" : peer_pubkey,
+                      content,
+                      strlen(content) > 50 ? "..." : "");
+        }
+
+        if (display_content) {
+            update_conversation(self, peer_pubkey, display_content, created_at,
+                                is_outgoing, TRUE);
+        }
+
+        g_free(file_preview);
     }
 
     g_free(peer_pubkey);

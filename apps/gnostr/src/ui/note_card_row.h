@@ -27,6 +27,8 @@ G_DECLARE_FINAL_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GNOSTR, NOTE_CARD_
  * "report-note-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data) - NIP-56 report request
  * "share-note-requested" (gchar* nostr_uri, gpointer user_data) - share note URI
  * "search-hashtag" (gchar* hashtag, gpointer user_data) - search for hashtag (without # prefix)
+ * "navigate-to-note" (gchar* event_id_hex, gpointer user_data) - navigate to specific note (e.g., parent note)
+ * "delete-note-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data) - NIP-09 deletion request
  */
 
 typedef struct _GnostrNoteCardRow GnostrNoteCardRow;
@@ -71,11 +73,20 @@ void gnostr_note_card_row_set_bookmarked(GnostrNoteCardRow *self, gboolean is_bo
 /* NIP-25 Reactions: update the like button icon based on state */
 void gnostr_note_card_row_set_liked(GnostrNoteCardRow *self, gboolean is_liked);
 
+/* NIP-25 Reactions: update the like count display */
+void gnostr_note_card_row_set_like_count(GnostrNoteCardRow *self, guint count);
+
 /* NIP-57 Zaps: set author's lightning address for zapping */
 void gnostr_note_card_row_set_author_lud16(GnostrNoteCardRow *self, const char *lud16);
 
 /* NIP-57 Zaps: update zap statistics display */
 void gnostr_note_card_row_set_zap_stats(GnostrNoteCardRow *self, guint zap_count, gint64 total_msat);
+
+/* NIP-10 Threading: set reply count to show thread root indicator */
+void gnostr_note_card_row_set_reply_count(GnostrNoteCardRow *self, guint count);
+
+/* NIP-09 Deletion: set whether this is the current user's own note (enables delete option) */
+void gnostr_note_card_row_set_is_own_note(GnostrNoteCardRow *self, gboolean is_own);
 
 G_END_DECLS
 

@@ -400,6 +400,73 @@
                               </object>
                             </child>
 
+                            <!-- System Settings (nostrc-61s.6: Background mode) -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">8</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">System</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkListBox">
+                                    <property name="selection-mode">none</property>
+                                    <style>
+                                      <class name="boxed-list"/>
+                                    </style>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
+                                                <property name="hexpand">true</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Run in Background</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Keep app running when window is closed</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSwitch" id="w_background_mode">
+                                                <property name="valign">center</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
                           </object>
                         </child>
                       </object>
@@ -845,6 +912,69 @@
                               </object>
                             </child>
 
+                            <!-- Index Relays Section (NIP-50 Search) -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">8</property>
+                                <property name="margin-top">16</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Index Relays (NIP-50 Search)</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Relays that support NIP-50 search queries. Used for the Discover tab to search profiles by name, npub, or keywords.</property>
+                                    <property name="xalign">0</property>
+                                    <property name="wrap">true</property>
+                                    <style>
+                                      <class name="dim-label"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin-top">8</property>
+                                    <child>
+                                      <object class="GtkEntry" id="entry_index_relay">
+                                        <property name="hexpand">true</property>
+                                        <property name="placeholder-text">wss://relay.nostr.band</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="btn_add_index_relay">
+                                        <property name="icon-name">list-add-symbolic</property>
+                                        <property name="tooltip-text">Add index relay</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkScrolledWindow">
+                                    <property name="min-content-height">100</property>
+                                    <property name="max-content-height">150</property>
+                                    <property name="hscrollbar-policy">never</property>
+                                    <child>
+                                      <object class="GtkListBox" id="list_index_relays">
+                                        <property name="selection-mode">none</property>
+                                        <property name="show-separators">true</property>
+                                        <style>
+                                          <class name="boxed-list"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
                           </object>
                         </child>
 
@@ -1189,6 +1319,400 @@
                                             </child>
                                             <child>
                                               <object class="GtkSwitch" id="w_enable_animations">
+                                                <property name="valign">center</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+
+                <!-- Notifications Settings Page -->
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="name">notifications</property>
+                    <property name="title">Notifications</property>
+                    <property name="icon-name">preferences-system-notifications-symbolic</property>
+                    <property name="child">
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">16</property>
+                            <property name="margin-start">24</property>
+                            <property name="margin-end">24</property>
+                            <property name="margin-top">24</property>
+                            <property name="margin-bottom">24</property>
+
+                            <!-- Global Notifications Toggle -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">8</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Notifications</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkListBox">
+                                    <property name="selection-mode">none</property>
+                                    <style>
+                                      <class name="boxed-list"/>
+                                    </style>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
+                                                <property name="hexpand">true</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Enable Notifications</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Master switch for all notifications</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSwitch" id="w_notif_enabled">
+                                                <property name="valign">center</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Per-Type Notification Toggles -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">8</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Notify For</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Choose which events trigger notifications</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="dim-label"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkListBox">
+                                    <property name="selection-mode">none</property>
+                                    <style>
+                                      <class name="boxed-list"/>
+                                    </style>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label">Mentions</property>
+                                                <property name="hexpand">true</property>
+                                                <property name="xalign">0</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSwitch" id="w_notif_mention">
+                                                <property name="valign">center</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label">Direct Messages</property>
+                                                <property name="hexpand">true</property>
+                                                <property name="xalign">0</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSwitch" id="w_notif_dm">
+                                                <property name="valign">center</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label">Zaps</property>
+                                                <property name="hexpand">true</property>
+                                                <property name="xalign">0</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSwitch" id="w_notif_zap">
+                                                <property name="valign">center</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label">Replies</property>
+                                                <property name="hexpand">true</property>
+                                                <property name="xalign">0</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSwitch" id="w_notif_reply">
+                                                <property name="valign">center</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Notification Presentation Settings -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">8</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Presentation</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">How notifications are shown to you</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="dim-label"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkListBox">
+                                    <property name="selection-mode">none</property>
+                                    <style>
+                                      <class name="boxed-list"/>
+                                    </style>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
+                                                <property name="hexpand">true</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Sound</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Play a sound when notifications arrive</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSwitch" id="w_notif_sound">
+                                                <property name="valign">center</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
+                                                <property name="hexpand">true</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Tray Badge</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Show unread count on the system tray icon</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSwitch" id="w_notif_tray_badge">
+                                                <property name="valign">center</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
+                                                <property name="hexpand">true</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Desktop Popup</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Show desktop notification popups</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSwitch" id="w_notif_desktop_popup">
                                                 <property name="valign">center</property>
                                               </object>
                                             </child>

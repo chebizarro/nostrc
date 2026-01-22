@@ -5,8 +5,8 @@ include(GNUInstallDirs)
 
 set(APP_CLIENT_NAME "GNostr")
 set(APP_CLIENT_BIN "gnostr")
-set(APP_CLIENT_FLATPAK_ID "org.gnostr.Client")
-set(APP_CLIENT_GSETTINGS "org.gnostr.Client")
+set(APP_CLIENT_FLATPAK_ID "org.gnostr.gnostr")
+set(APP_CLIENT_GSETTINGS "org.gnostr.gnostr")
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)
@@ -34,8 +34,13 @@ add_custom_command(
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-thread-view.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-note-embed.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/page-discover.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-row.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-search-results-view.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-inbox-view.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-row.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notifications-view.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notification-row.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-settings-dialog.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-manager.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-profile-edit.ui
@@ -43,12 +48,19 @@ add_custom_command(
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-zap-dialog.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-mute-list.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-login.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-about-dialog.ui
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
   VERBATIM)
 
-file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c src/model/*.c)
+file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c src/model/*.c src/notifications/*.c)
 # Exclude CLI entrypoint from the GUI app target to avoid duplicate main()
 list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/cli_live_logger.c)
+# Platform-specific files: on macOS, exclude the Linux C implementations
+# (the macOS Objective-C implementations are added later via target_sources)
+if (APPLE)
+  list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-tray-icon.c)
+  list(REMOVE_ITEM APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/notifications/desktop_notify.c)
+endif()
 list(APPEND APP_SRC ${GRESOURCE_C})
 if (NOT APP_SRC)
   set(APP_SRC src/main_app.c)
@@ -133,6 +145,13 @@ if (QRENCODE_FOUND)
   target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_QRENCODE=1)
 endif()
 
+# ---- OpenSSL for DM file encryption (AES-GCM) ----
+# OpenSSL is already found at the top-level CMakeLists.txt
+if (OPENSSL_FOUND)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE OpenSSL::Crypto)
+  target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_OPENSSL=1)
+endif()
+
 # ---- Secure Key Storage (platform-native) ----
 # Linux: libsecret (GNOME Keyring / KDE Wallet)
 # macOS: Security.framework (Keychain Services)
@@ -153,6 +172,65 @@ else()
     message(STATUS "Secure key storage: libsecret (GNOME Keyring / KDE Wallet)")
   else()
     message(STATUS "Secure key storage: NOT AVAILABLE (install libsecret-1-dev)")
+  endif()
+endif()
+
+# ---- System Tray / Menu Bar Icon ----
+# Linux: Uses libayatana-appindicator3 (preferred) or libappindicator3 (fallback)
+#        with libdbusmenu-glib for GTK4 compatibility
+# macOS: Uses NSStatusItem via Objective-C wrapper (AppKit)
+if (APPLE)
+  # macOS: Add the Objective-C menu bar and notification implementations
+  # (Linux C implementations were already excluded from APP_SRC before add_executable)
+  target_sources(${APP_CLIENT_BIN} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-menubar-macos.m
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/notifications/desktop_notify_macos.m)
+
+  # Enable ARC (Automatic Reference Counting) for Objective-C files
+  set_source_files_properties(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-menubar-macos.m
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/notifications/desktop_notify_macos.m
+    PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+
+  # Link AppKit framework for NSStatusItem
+  find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE ${APPKIT_FRAMEWORK})
+
+  # Link UserNotifications framework for UNUserNotificationCenter (macOS 10.14+)
+  find_library(USERNOTIFICATIONS_FRAMEWORK UserNotifications REQUIRED)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE ${USERNOTIFICATIONS_FRAMEWORK})
+
+  message(STATUS "Menu bar: macOS NSStatusItem (AppKit)")
+  message(STATUS "Desktop notifications: macOS UNUserNotificationCenter")
+elseif (UNIX)
+  # Linux: Try libayatana-appindicator3 first (modern, widely supported)
+  pkg_check_modules(AYATANA_APPINDICATOR QUIET IMPORTED_TARGET ayatana-appindicator3-0.1)
+  if (AYATANA_APPINDICATOR_FOUND)
+    pkg_check_modules(DBUSMENU_GLIB QUIET IMPORTED_TARGET dbusmenu-glib-0.4)
+    if (DBUSMENU_GLIB_FOUND)
+      target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::AYATANA_APPINDICATOR PkgConfig::DBUSMENU_GLIB)
+      target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_APPINDICATOR=1)
+      message(STATUS "System tray: libayatana-appindicator3 + dbusmenu-glib")
+    else()
+      message(STATUS "System tray: libdbusmenu-glib-0.4 not found (install libdbusmenu-glib-dev)")
+    endif()
+  else()
+    # Fallback to legacy libappindicator3
+    pkg_check_modules(APPINDICATOR QUIET IMPORTED_TARGET appindicator3-0.1)
+    if (APPINDICATOR_FOUND)
+      pkg_check_modules(DBUSMENU_GLIB QUIET IMPORTED_TARGET dbusmenu-glib-0.4)
+      if (DBUSMENU_GLIB_FOUND)
+        target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::APPINDICATOR PkgConfig::DBUSMENU_GLIB)
+        target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_APPINDICATOR=1)
+        # Legacy appindicator uses different header path
+        target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_LEGACY_APPINDICATOR=1)
+        message(STATUS "System tray: libappindicator3 (legacy) + dbusmenu-glib")
+      else()
+        message(STATUS "System tray: libdbusmenu-glib-0.4 not found (install libdbusmenu-glib-dev)")
+      endif()
+    else()
+      message(STATUS "System tray: NOT AVAILABLE (install libayatana-appindicator3-dev or libappindicator3-dev)")
+    endif()
   endif()
 endif()
 
@@ -446,7 +524,10 @@ install(FILES data/schemas/org.gnostr.gnostr.gschema.xml
         DESTINATION ${CMAKE_INSTALL_DATADIR}/glib-2.0/schemas)
 
 # ---- Desktop entry ----
-install(FILES packaging/appimage/gnostr.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
+install(FILES data/org.gnostr.gnostr.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
+
+# ---- AppStream metadata ----
+install(FILES data/org.gnostr.gnostr.appdata.xml DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/metainfo)
 
 # ---- Icons (hicolor) ----
 set(ICON_BASENAME "${APP_CLIENT_FLATPAK_ID}")

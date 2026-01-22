@@ -1,3 +1,5 @@
+#define G_LOG_DOMAIN "gnostr-blossom-settings"
+
 /**
  * gnostr Blossom Settings Implementation
  *
@@ -361,7 +363,7 @@ static void on_blossom_sign_complete(GObject *source, GAsyncResult *res, gpointe
     return;
   }
 
-  g_message("blossom: signed event successfully");
+  g_debug("blossom: signed event successfully");
 
   /* Parse the signed event JSON into a NostrEvent */
   NostrEvent *event = nostr_event_new();
@@ -406,7 +408,7 @@ static void on_blossom_sign_complete(GObject *source, GAsyncResult *res, gpointe
 
     GError *pub_err = NULL;
     if (gnostr_relay_publish(relay, event, &pub_err)) {
-      g_message("blossom: published kind 10063 to %s", url);
+      g_debug("blossom: published kind 10063 to %s", url);
       success_count++;
     } else {
       g_debug("blossom: publish failed to %s: %s", url, pub_err ? pub_err->message : "unknown");
@@ -433,7 +435,7 @@ static void on_blossom_sign_complete(GObject *source, GAsyncResult *res, gpointe
     }
   }
 
-  g_message("blossom: published to %u relays, failed %u", success_count, fail_count);
+  g_debug("blossom: published to %u relays, failed %u", success_count, fail_count);
   blossom_publish_ctx_free(ctx);
 }
 
@@ -508,8 +510,8 @@ static void on_blossom_fetch_complete(GObject *source, GAsyncResult *res, gpoint
 
   if (newest_event_json) {
     if (gnostr_blossom_settings_from_event(newest_event_json)) {
-      g_message("blossom: loaded server list from relay (created_at: %" G_GINT64_FORMAT ")",
-                newest_created_at);
+      g_debug("blossom: loaded server list from relay (created_at: %" G_GINT64_FORMAT ")",
+              newest_created_at);
       found = TRUE;
     }
   }
@@ -517,8 +519,8 @@ static void on_blossom_fetch_complete(GObject *source, GAsyncResult *res, gpoint
   if (results) g_ptr_array_unref(results);
 
   if (!found) {
-    g_message("blossom: no server list found on network for user %.*s, using local config",
-              8, ctx->pubkey_hex ? ctx->pubkey_hex : "");
+    g_debug("blossom: no server list found on network for user %.*s, using local config",
+            8, ctx->pubkey_hex ? ctx->pubkey_hex : "");
     load_servers_from_gsettings();
   }
 
@@ -616,7 +618,7 @@ void gnostr_blossom_settings_publish_async(GnostrBlossomSettingsPublishCallback 
     return;
   }
 
-  g_message("blossom: requesting signature for server list event (kind 10063)");
+  g_debug("blossom: requesting signature for server list event (kind 10063)");
 
   /* Create publish context */
   BlossomPublishCtx *ctx = g_new0(BlossomPublishCtx, 1);

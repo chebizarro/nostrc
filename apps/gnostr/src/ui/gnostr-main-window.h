@@ -3,6 +3,9 @@
 
 #include <gtk/gtk.h>
 
+/* Forward declaration for GnostrNoteCardRow (avoid circular dependency) */
+typedef struct _GnostrNoteCardRow GnostrNoteCardRow;
+
 G_BEGIN_DECLS
 
 #define GNOSTR_TYPE_MAIN_WINDOW (gnostr_main_window_get_type())
@@ -17,6 +20,12 @@ void gnostr_main_window_enqueue_profile_authors(GnostrMainWindow *self, const ch
 
 /* Public: Show a toast message in the main window (auto-dismisses after 2s) */
 void gnostr_main_window_show_toast(GtkWidget *window, const char *message);
+
+/* Public: Request a like/reaction (kind 7) for an event - NIP-25 */
+void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, const char *pubkey_hex, GnostrNoteCardRow *row);
+
+/* Public: Request deletion of a note (kind 5) - NIP-09 */
+void gnostr_main_window_request_delete_note(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
 
 G_END_DECLS
 

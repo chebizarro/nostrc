@@ -61,20 +61,26 @@
               </object>
             </child>
 
-            <!-- Test connection button -->
+            <!-- Info and test buttons -->
             <child>
               <object class="GtkBox">
                 <property name="orientation">horizontal</property>
                 <property name="spacing">8</property>
                 <child>
                   <object class="GtkLabel">
-                    <property name="label" translatable="yes">Configure which relays to use for reading and writing events. This will be published as a kind:10002 event.</property>
+                    <property name="label" translatable="yes">Configure which relays to use for reading and writing events (NIP-65). Click "Fetch Info" to get relay metadata (NIP-11).</property>
                     <property name="wrap">true</property>
                     <property name="xalign">0</property>
                     <property name="hexpand">true</property>
                     <style>
                       <class name="dim-label"/>
                     </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_fetch_info">
+                    <property name="label" translatable="yes">Fetch Info</property>
+                    <property name="tooltip-text" translatable="yes">Fetch NIP-11 relay information for all relays</property>
                   </object>
                 </child>
                 <child>

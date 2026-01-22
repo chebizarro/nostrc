@@ -761,6 +761,65 @@ static int parse_string_array_values_as_tags(NostrFilter *filter, const char *ta
     return 0;
 }
 
+/* Parse a JSON string array into a StringArray */
+static int parse_string_array_to_array(StringArray *arr, const char **pp) {
+    const char *p = skip_ws_f(*pp);
+    if (*p != '[') return 0;
+    ++p;
+    p = skip_ws_f(p);
+    if (*p == ']') { *pp = p+1; return 1; }
+    while (*p) {
+        if (*p != '"') return 0;
+        const char *ps = p;
+        char *val = parse_string_dup(&ps);
+        if (!val) return 0;
+        string_array_add(arr, val);
+        free(val);
+        p = skip_ws_f(ps);
+        if (*p == ',') { ++p; p = skip_ws_f(p); continue; }
+        if (*p == ']') { *pp = p+1; return 1; }
+        return 0;
+    }
+    return 0;
+}
+
+/* Parse a JSON integer array into an IntArray */
+static int parse_int_array_to_array(IntArray *arr, const char **pp) {
+    const char *p = skip_ws_f(*pp);
+    if (*p != '[') return 0;
+    ++p;
+    p = skip_ws_f(p);
+    if (*p == ']') { *pp = p+1; return 1; }
+    while (*p) {
+        int sign = 1;
+        if (*p == '-') { sign = -1; ++p; }
+        else if (*p == '+') { ++p; }
+        if (*p < '0' || *p > '9') return 0;
+        long val = 0;
+        while (*p >= '0' && *p <= '9') { val = val * 10 + (*p - '0'); ++p; }
+        int_array_add(arr, (int)(sign * val));
+        p = skip_ws_f(p);
+        if (*p == ',') { ++p; p = skip_ws_f(p); continue; }
+        if (*p == ']') { *pp = p+1; return 1; }
+        return 0;
+    }
+    return 0;
+}
+
+/* Parse a JSON integer value */
+static int parse_int64_value(const char **pp, int64_t *out) {
+    const char *p = skip_ws_f(*pp);
+    int sign = 1;
+    if (*p == '-') { sign = -1; ++p; }
+    else if (*p == '+') { ++p; }
+    if (*p < '0' || *p > '9') return 0;
+    int64_t val = 0;
+    while (*p >= '0' && *p <= '9') { val = val * 10 + (*p - '0'); ++p; }
+    *out = sign * val;
+    *pp = p;
+    return 1;
+}
+
 int nostr_filter_deserialize_compact(NostrFilter *filter, const char *json) {
     if (!filter || !json) return 0;
     const char *p = skip_ws_f(json);
@@ -783,6 +842,43 @@ int nostr_filter_deserialize_compact(NostrFilter *filter, const char *json) {
             int ok = parse_string_array_values_as_tags(filter, kbuf, &p);
             free(key);
             if (!ok) return 0;
+            touched = 1;
+        } else if (strcmp(key, "ids") == 0) {
+            free(key);
+            if (!parse_string_array_to_array(&filter->ids, &p)) return 0;
+            touched = 1;
+        } else if (strcmp(key, "kinds") == 0) {
+            free(key);
+            if (!parse_int_array_to_array(&filter->kinds, &p)) return 0;
+            touched = 1;
+        } else if (strcmp(key, "authors") == 0) {
+            free(key);
+            if (!parse_string_array_to_array(&filter->authors, &p)) return 0;
+            touched = 1;
+        } else if (strcmp(key, "since") == 0) {
+            free(key);
+            int64_t val = 0;
+            if (!parse_int64_value(&p, &val)) return 0;
+            filter->since = val;
+            touched = 1;
+        } else if (strcmp(key, "until") == 0) {
+            free(key);
+            int64_t val = 0;
+            if (!parse_int64_value(&p, &val)) return 0;
+            filter->until = val;
+            touched = 1;
+        } else if (strcmp(key, "limit") == 0) {
+            free(key);
+            int64_t val = 0;
+            if (!parse_int64_value(&p, &val)) return 0;
+            filter->limit = (int)val;
+            touched = 1;
+        } else if (strcmp(key, "search") == 0) {
+            free(key);
+            char *val = parse_string_dup(&p);
+            if (!val) return 0;
+            if (filter->search) free(filter->search);
+            filter->search = val;
             touched = 1;
         } else {
             // skip other values quickly

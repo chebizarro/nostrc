@@ -1,0 +1,245 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnostrSearchResultsView" parent="GtkWidget">
+    <child>
+      <object class="GtkBox" id="root">
+        <property name="orientation">vertical</property>
+        <property name="hexpand">true</property>
+        <property name="vexpand">true</property>
+        <property name="spacing">0</property>
+
+        <!-- Header with search and filters -->
+        <child>
+          <object class="GtkBox" id="header">
+            <property name="orientation">vertical</property>
+            <property name="spacing">8</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">12</property>
+            <property name="margin-bottom">8</property>
+
+            <!-- Title -->
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Search Notes</property>
+                <property name="xalign">0.0</property>
+                <style>
+                  <class name="title-2"/>
+                </style>
+              </object>
+            </child>
+
+            <!-- Search entry -->
+            <child>
+              <object class="GtkSearchEntry" id="search_entry">
+                <property name="placeholder-text">Search by content, #hashtag, or @mention...</property>
+                <property name="hexpand">true</property>
+              </object>
+            </child>
+
+            <!-- Filter chips row -->
+            <child>
+              <object class="GtkBox" id="filter_row">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <property name="halign">start</property>
+
+                <child>
+                  <object class="GtkToggleButton" id="btn_local">
+                    <property name="label">Local</property>
+                    <property name="active">true</property>
+                    <property name="tooltip-text">Search notes cached locally (fast, offline)</property>
+                    <style>
+                      <class name="pill"/>
+                    </style>
+                  </object>
+                </child>
+
+                <child>
+                  <object class="GtkToggleButton" id="btn_relay">
+                    <property name="label">Relay (NIP-50)</property>
+                    <property name="tooltip-text">Search on relays that support NIP-50 search</property>
+                    <style>
+                      <class name="pill"/>
+                    </style>
+                  </object>
+                </child>
+
+              </object>
+            </child>
+
+            <!-- Results count label -->
+            <child>
+              <object class="GtkLabel" id="results_count_label">
+                <property name="label"></property>
+                <property name="xalign">0.0</property>
+                <property name="visible">false</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+
+          </object>
+        </child>
+
+        <!-- Separator -->
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">horizontal</property>
+          </object>
+        </child>
+
+        <!-- Content stack: results / empty / loading / no-results -->
+        <child>
+          <object class="GtkStack" id="content_stack">
+            <property name="hexpand">true</property>
+            <property name="vexpand">true</property>
+            <property name="transition-type">crossfade</property>
+
+            <!-- Results view -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">results</property>
+                <property name="child">
+                  <object class="GtkScrolledWindow" id="scroller">
+                    <property name="hexpand">true</property>
+                    <property name="vexpand">true</property>
+                    <property name="hscrollbar-policy">never</property>
+                    <child>
+                      <object class="GtkListView" id="results_list">
+                        <property name="hexpand">true</property>
+                        <property name="vexpand">true</property>
+                        <style>
+                          <class name="navigation-sidebar"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Empty state (before search) -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">empty</property>
+                <property name="child">
+                  <object class="GtkBox" id="empty_state">
+                    <property name="orientation">vertical</property>
+                    <property name="halign">center</property>
+                    <property name="valign">center</property>
+                    <property name="spacing">12</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">system-search-symbolic</property>
+                        <property name="pixel-size">64</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Search Notes</property>
+                        <style>
+                          <class name="title-2"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Search for notes by text content, #hashtags, or @mentions.</property>
+                        <property name="wrap">true</property>
+                        <property name="justify">center</property>
+                        <property name="max-width-chars">40</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Loading state -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">loading</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="halign">center</property>
+                    <property name="valign">center</property>
+                    <property name="spacing">12</property>
+                    <child>
+                      <object class="GtkSpinner" id="loading_spinner">
+                        <property name="spinning">false</property>
+                        <property name="width-request">32</property>
+                        <property name="height-request">32</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Searching...</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- No results state -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">no-results</property>
+                <property name="child">
+                  <object class="GtkBox" id="no_results_state">
+                    <property name="orientation">vertical</property>
+                    <property name="halign">center</property>
+                    <property name="valign">center</property>
+                    <property name="spacing">12</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">face-uncertain-symbolic</property>
+                        <property name="pixel-size">64</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">No Results</property>
+                        <style>
+                          <class name="title-2"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="no_results_hint">
+                        <property name="label">Try a different search term or switch to relay search.</property>
+                        <property name="wrap">true</property>
+                        <property name="justify">center</property>
+                        <property name="max-width-chars">40</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

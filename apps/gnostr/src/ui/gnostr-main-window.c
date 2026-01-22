@@ -1,3 +1,5 @@
+#define G_LOG_DOMAIN "gnostr-main-window"
+
 #include "gnostr-main-window.h"
 #include "gnostr-composer.h"
 #include "gnostr-timeline-view.h"
@@ -7,6 +9,8 @@
 #include "gnostr-dm-inbox-view.h"
 #include "gnostr-dm-row.h"
 #include "gnostr-dm-service.h"
+#include "gnostr-notifications-view.h"
+#include "gnostr-notification-row.h"
 #include "note_card_row.h"
 #include "../ipc/signer_ipc.h"
 #include "../model/gn-nostr-event-model.h"
@@ -86,6 +90,8 @@ static void on_gift_wrap_batch(uint64_t subid, const uint64_t *note_keys, guint 
 static char *get_current_user_pubkey_hex(void);
 static void on_event_model_need_profile(GnNostrEventModel *model, const char *pubkey_hex, gpointer user_data);
 static void on_timeline_scroll_value_changed(GtkAdjustment *adj, gpointer user_data);
+static void on_event_model_new_items_pending(GnNostrEventModel *model, guint count, gpointer user_data);
+static void on_new_notes_clicked(GtkButton *btn, gpointer user_data);
 typedef struct UiEventRow UiEventRow;
 static void ui_event_row_free(gpointer p);
 static void schedule_apply_events(GnostrMainWindow *self, GPtrArray *rows /* UiEventRow* */);
@@ -102,6 +108,8 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
 static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer user_data);
 /* Forward declaration for ESC key handler to close profile sidebar */
 static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data);
+/* Forward declaration for close-request handler (nostrc-61s.6: background mode) */
+static gboolean on_window_close_request(GtkWindow *window, gpointer user_data);
 /* Forward declarations for repost/quote/like signal handlers */
 static void on_note_card_repost_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
 static void on_note_card_quote_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
@@ -277,9 +285,14 @@ struct _GnostrMainWindow {
   GtkWidget *btn_sign_out;
   GtkWidget *composer;
   GtkWidget *dm_inbox;
+  GtkWidget *notifications_view;
   GtkWidget *btn_refresh;
   GtkWidget *toast_revealer;
   GtkWidget *toast_label;
+  /* nostrc-yi2: Calm timeline - new notes indicator */
+  GtkWidget *new_notes_revealer;
+  GtkWidget *btn_new_notes;
+  GtkWidget *lbl_new_notes_count;
   /* Session state */
   GHashTable *seen_texts; /* owned; keys are g_strdup(text), values unused */
   /* GListModel-based timeline (primary data source) */
@@ -356,6 +369,9 @@ struct _GnostrMainWindow {
 
   /* Liked events cache (NIP-25 reactions) */
   GHashTable      *liked_events;  /* owned; key=event_id_hex (char*), value=unused (GINT_TO_POINTER(1)) */
+
+  /* nostrc-61s.6: Background operation mode */
+  gboolean         background_mode_enabled; /* hide on close instead of quit */
 };
 
 /* Old LRU functions removed - now using profile provider */
@@ -375,7 +391,7 @@ static gboolean memory_stats_cb(gpointer data) {
   guint avatar_size = self->avatar_tex_cache ? g_hash_table_size(self->avatar_tex_cache) : 0;
   guint model_items = self->event_model ? g_list_model_get_n_items(G_LIST_MODEL(self->event_model)) : 0;
   
-  g_message("[MEMORY] model=%u seen_texts=%u avatars=%u profile_q=%u",
+  g_debug("[MEMORY] model=%u seen_texts=%u avatars=%u profile_q=%u",
           model_items, seen_texts_size, avatar_size, profile_queue);
   
   /* Prune caches if they exceed limits to prevent unbounded memory growth */
@@ -383,20 +399,20 @@ static gboolean memory_stats_cb(gpointer data) {
   
   /* Prune avatar_tex_cache - clear entirely if too large */
   if (avatar_size > AVATAR_CACHE_MAX) {
-    g_message("[MEMORY] Pruning avatar_tex_cache: %u -> 0", avatar_size);
+    g_debug("[MEMORY] Pruning avatar_tex_cache: %u -> 0", avatar_size);
     g_hash_table_remove_all(self->avatar_tex_cache);
     pruned = TRUE;
   }
   
   /* Prune seen_texts - clear if too large */
   if (seen_texts_size > SEEN_TEXTS_MAX) {
-    g_message("[MEMORY] Pruning seen_texts: %u -> 0", seen_texts_size);
+    g_debug("[MEMORY] Pruning seen_texts: %u -> 0", seen_texts_size);
     g_hash_table_remove_all(self->seen_texts);
     pruned = TRUE;
   }
   
   if (pruned) {
-    g_message("[MEMORY] Cache pruning complete");
+    g_debug("[MEMORY] Cache pruning complete");
   }
   
   return G_SOURCE_CONTINUE;
@@ -940,7 +956,7 @@ static void relay_manager_on_save_clicked(GtkButton *btn, gpointer user_data) {
   gnostr_save_nip65_relays(relays);
 
   /* Publish NIP-65 relay list event to relays */
-  g_message("[RELAYS] Publishing NIP-65 relay list with %u relays", relays->len);
+  g_debug("[RELAYS] Publishing NIP-65 relay list with %u relays", relays->len);
   gnostr_nip65_publish_async(relays, NULL, NULL);
 
   g_ptr_array_unref(relays);
@@ -1396,6 +1412,26 @@ static void on_nip51_restore_clicked(GtkButton *btn, gpointer user_data) {
   gnostr_nip51_settings_load_async(pubkey, NULL, NULL);
 }
 
+/* Forward declaration for background mode callback */
+static void on_background_mode_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data);
+
+/* nostrc-61s.6: Setup general settings panel (background mode) */
+static void settings_dialog_setup_general_panel(SettingsDialogCtx *ctx) {
+  if (!ctx || !ctx->builder) return;
+
+  GSettings *client_settings = g_settings_new("org.gnostr.Client");
+  if (!client_settings) return;
+
+  /* Background mode switch */
+  GtkSwitch *w_background_mode = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_background_mode"));
+  if (w_background_mode) {
+    gtk_switch_set_active(w_background_mode, g_settings_get_boolean(client_settings, "background-mode"));
+    g_signal_connect(w_background_mode, "notify::active", G_CALLBACK(on_background_mode_changed), ctx);
+  }
+
+  g_object_unref(client_settings);
+}
+
 /* Update Display settings panel from GSettings */
 static void settings_dialog_setup_display_panel(SettingsDialogCtx *ctx) {
   if (!ctx || !ctx->builder) return;
@@ -1530,6 +1566,213 @@ static void settings_dialog_setup_relay_panel(SettingsDialogCtx *ctx) {
   }
 
   g_ptr_array_unref(relays);
+}
+
+/* ---- Index Relay Panel (NIP-50 Search) ---- */
+
+/* Context for index relay row */
+typedef struct {
+  SettingsDialogCtx *dialog_ctx;
+  gsize relay_index;
+  char *relay_url;
+} IndexRelayRowCtx;
+
+static void index_relay_row_ctx_free(gpointer data) {
+  IndexRelayRowCtx *ctx = (IndexRelayRowCtx *)data;
+  if (!ctx) return;
+  g_free(ctx->relay_url);
+  g_free(ctx);
+}
+
+/* Forward declare refresh function */
+static void settings_dialog_refresh_index_relay_list(SettingsDialogCtx *ctx);
+
+/* Callback for remove button on an index relay row */
+static void on_index_relay_remove(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  IndexRelayRowCtx *row_ctx = (IndexRelayRowCtx *)user_data;
+  if (!row_ctx || !row_ctx->dialog_ctx) return;
+
+  /* Load current index relays from GSettings */
+  GSettings *settings = g_settings_new("org.gnostr.gnostr");
+  if (!settings) return;
+
+  gchar **relays = g_settings_get_strv(settings, "index-relays");
+  if (!relays) {
+    g_object_unref(settings);
+    return;
+  }
+
+  /* Count relays and build new array without the removed one */
+  gsize count = g_strv_length(relays);
+  GPtrArray *new_relays = g_ptr_array_new();
+
+  for (gsize i = 0; i < count; i++) {
+    if (g_strcmp0(relays[i], row_ctx->relay_url) != 0) {
+      g_ptr_array_add(new_relays, relays[i]);
+    }
+  }
+  g_ptr_array_add(new_relays, NULL);
+
+  g_settings_set_strv(settings, "index-relays", (const gchar *const *)new_relays->pdata);
+
+  g_ptr_array_free(new_relays, TRUE);
+  g_strfreev(relays);
+  g_object_unref(settings);
+
+  settings_dialog_refresh_index_relay_list(row_ctx->dialog_ctx);
+
+  if (row_ctx->dialog_ctx->main_window) {
+    show_toast(row_ctx->dialog_ctx->main_window, "Index relay removed");
+  }
+}
+
+/* Callback for add index relay button */
+static void on_index_relay_add(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx *)user_data;
+  if (!ctx || !ctx->builder) return;
+
+  GtkEntry *entry = GTK_ENTRY(gtk_builder_get_object(ctx->builder, "entry_index_relay"));
+  if (!entry) return;
+
+  GtkEntryBuffer *buffer = gtk_entry_get_buffer(entry);
+  const char *url = gtk_entry_buffer_get_text(buffer);
+  if (!url || !*url) {
+    if (ctx->main_window) show_toast(ctx->main_window, "Enter a relay URL");
+    return;
+  }
+
+  /* Validate URL starts with wss:// or ws:// */
+  if (!g_str_has_prefix(url, "wss://") && !g_str_has_prefix(url, "ws://")) {
+    if (ctx->main_window) show_toast(ctx->main_window, "URL must start with wss:// or ws://");
+    return;
+  }
+
+  /* Load current index relays from GSettings */
+  GSettings *settings = g_settings_new("org.gnostr.gnostr");
+  if (!settings) return;
+
+  gchar **relays = g_settings_get_strv(settings, "index-relays");
+
+  /* Check if relay already exists */
+  gboolean exists = FALSE;
+  if (relays) {
+    for (gsize i = 0; relays[i] != NULL; i++) {
+      if (g_strcmp0(relays[i], url) == 0) {
+        exists = TRUE;
+        break;
+      }
+    }
+  }
+
+  if (exists) {
+    g_strfreev(relays);
+    g_object_unref(settings);
+    if (ctx->main_window) show_toast(ctx->main_window, "Relay already in list");
+    return;
+  }
+
+  /* Add new relay to array */
+  gsize count = relays ? g_strv_length(relays) : 0;
+  gchar **new_relays = g_new0(gchar *, count + 2);
+  for (gsize i = 0; i < count; i++) {
+    new_relays[i] = g_strdup(relays[i]);
+  }
+  new_relays[count] = g_strdup(url);
+  new_relays[count + 1] = NULL;
+
+  g_settings_set_strv(settings, "index-relays", (const gchar *const *)new_relays);
+
+  g_strfreev(new_relays);
+  g_strfreev(relays);
+  g_object_unref(settings);
+
+  gtk_entry_buffer_set_text(buffer, "", 0);
+  settings_dialog_refresh_index_relay_list(ctx);
+  if (ctx->main_window) show_toast(ctx->main_window, "Index relay added");
+}
+
+/* Refresh the index relay list in settings */
+static void settings_dialog_refresh_index_relay_list(SettingsDialogCtx *ctx) {
+  if (!ctx || !ctx->builder) return;
+
+  GtkListBox *list = GTK_LIST_BOX(gtk_builder_get_object(ctx->builder, "list_index_relays"));
+  if (!list) return;
+
+  /* Clear existing rows */
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(list))) != NULL) {
+    gtk_list_box_remove(list, child);
+  }
+
+  /* Load index relays from GSettings */
+  GSettings *settings = g_settings_new("org.gnostr.gnostr");
+  if (!settings) return;
+
+  gchar **relays = g_settings_get_strv(settings, "index-relays");
+  g_object_unref(settings);
+
+  if (!relays) return;
+
+  for (gsize i = 0; relays[i] != NULL; i++) {
+    /* Create row context */
+    IndexRelayRowCtx *row_ctx = g_new0(IndexRelayRowCtx, 1);
+    row_ctx->dialog_ctx = ctx;
+    row_ctx->relay_index = i;
+    row_ctx->relay_url = g_strdup(relays[i]);
+
+    /* Create row widget */
+    GtkWidget *row = gtk_list_box_row_new();
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_margin_start(box, 12);
+    gtk_widget_set_margin_end(box, 8);
+    gtk_widget_set_margin_top(box, 6);
+    gtk_widget_set_margin_bottom(box, 6);
+
+    /* URL label */
+    GtkWidget *label = gtk_label_new(relays[i]);
+    gtk_label_set_xalign(GTK_LABEL(label), 0);
+    gtk_widget_set_hexpand(label, TRUE);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_MIDDLE);
+    gtk_box_append(GTK_BOX(box), label);
+
+    /* Remove button */
+    GtkWidget *btn_remove = gtk_button_new_from_icon_name("user-trash-symbolic");
+    gtk_widget_add_css_class(btn_remove, "flat");
+    gtk_widget_add_css_class(btn_remove, "error");
+    gtk_widget_set_tooltip_text(btn_remove, "Remove relay");
+    g_signal_connect(btn_remove, "clicked", G_CALLBACK(on_index_relay_remove), row_ctx);
+    gtk_box_append(GTK_BOX(box), btn_remove);
+
+    gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
+    gtk_list_box_append(list, row);
+
+    /* Free row context when row is destroyed */
+    g_object_set_data_full(G_OBJECT(row), "row-ctx", row_ctx, index_relay_row_ctx_free);
+  }
+
+  g_strfreev(relays);
+}
+
+/* Setup index relay panel */
+static void settings_dialog_setup_index_relay_panel(SettingsDialogCtx *ctx) {
+  if (!ctx || !ctx->builder) return;
+
+  /* Connect add button */
+  GtkButton *btn_add = GTK_BUTTON(gtk_builder_get_object(ctx->builder, "btn_add_index_relay"));
+  if (btn_add) {
+    g_signal_connect(btn_add, "clicked", G_CALLBACK(on_index_relay_add), ctx);
+  }
+
+  /* Allow Enter key in entry to add relay */
+  GtkEntry *entry = GTK_ENTRY(gtk_builder_get_object(ctx->builder, "entry_index_relay"));
+  if (entry) {
+    g_signal_connect_swapped(entry, "activate", G_CALLBACK(on_index_relay_add), ctx);
+  }
+
+  /* Populate relay list */
+  settings_dialog_refresh_index_relay_list(ctx);
 }
 
 /* ---- Blossom Server Panel ---- */
@@ -1782,6 +2025,37 @@ static void on_video_loop_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer use
   g_object_unref(settings);
 }
 
+/* nostrc-61s.6: Background mode switch handler */
+static void on_background_mode_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
+  gboolean active = gtk_switch_get_active(sw);
+
+  /* Save to GSettings */
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  g_settings_set_boolean(settings, "background-mode", active);
+  g_object_unref(settings);
+
+  /* Update the main window's background_mode_enabled flag live */
+  if (ctx && ctx->main_window && GNOSTR_IS_MAIN_WINDOW(ctx->main_window)) {
+    GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(ctx->main_window);
+    gboolean was_enabled = self->background_mode_enabled;
+    self->background_mode_enabled = active;
+
+    /* Manage application hold/release based on change */
+    GtkApplication *app = GTK_APPLICATION(gtk_window_get_application(GTK_WINDOW(self)));
+    if (app) {
+      if (active && !was_enabled) {
+        g_application_hold(G_APPLICATION(app));
+        g_debug("[SETTINGS] Background mode enabled - application held");
+      } else if (!active && was_enabled) {
+        g_application_release(G_APPLICATION(app));
+        g_debug("[SETTINGS] Background mode disabled - application released");
+      }
+    }
+  }
+}
+
 /* Setup media (playback) settings panel */
 static void settings_dialog_setup_media_panel(SettingsDialogCtx *ctx) {
   if (!ctx || !ctx->builder) return;
@@ -1804,6 +2078,132 @@ static void settings_dialog_setup_media_panel(SettingsDialogCtx *ctx) {
   }
 
   g_object_unref(client_settings);
+}
+
+/* Signal handlers for notification settings switches */
+static void on_notif_enabled_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec; (void)user_data;
+  gboolean active = gtk_switch_get_active(sw);
+  GSettings *settings = g_settings_new("org.gnostr.Notifications");
+  g_settings_set_boolean(settings, "enabled", active);
+  g_object_unref(settings);
+}
+
+static void on_notif_mention_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec; (void)user_data;
+  gboolean active = gtk_switch_get_active(sw);
+  GSettings *settings = g_settings_new("org.gnostr.Notifications");
+  g_settings_set_boolean(settings, "notify-mention-enabled", active);
+  g_object_unref(settings);
+}
+
+static void on_notif_dm_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec; (void)user_data;
+  gboolean active = gtk_switch_get_active(sw);
+  GSettings *settings = g_settings_new("org.gnostr.Notifications");
+  g_settings_set_boolean(settings, "notify-dm-enabled", active);
+  g_object_unref(settings);
+}
+
+static void on_notif_zap_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec; (void)user_data;
+  gboolean active = gtk_switch_get_active(sw);
+  GSettings *settings = g_settings_new("org.gnostr.Notifications");
+  g_settings_set_boolean(settings, "notify-zap-enabled", active);
+  g_object_unref(settings);
+}
+
+static void on_notif_reply_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec; (void)user_data;
+  gboolean active = gtk_switch_get_active(sw);
+  GSettings *settings = g_settings_new("org.gnostr.Notifications");
+  g_settings_set_boolean(settings, "notify-reply-enabled", active);
+  g_object_unref(settings);
+}
+
+static void on_notif_sound_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec; (void)user_data;
+  gboolean active = gtk_switch_get_active(sw);
+  GSettings *settings = g_settings_new("org.gnostr.Notifications");
+  g_settings_set_boolean(settings, "sound-enabled", active);
+  g_object_unref(settings);
+}
+
+static void on_notif_tray_badge_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec; (void)user_data;
+  gboolean active = gtk_switch_get_active(sw);
+  GSettings *settings = g_settings_new("org.gnostr.Notifications");
+  g_settings_set_boolean(settings, "tray-badge-enabled", active);
+  g_object_unref(settings);
+}
+
+static void on_notif_desktop_popup_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec; (void)user_data;
+  gboolean active = gtk_switch_get_active(sw);
+  GSettings *settings = g_settings_new("org.gnostr.Notifications");
+  g_settings_set_boolean(settings, "desktop-popup-enabled", active);
+  g_object_unref(settings);
+}
+
+/* Setup notifications settings panel */
+static void settings_dialog_setup_notifications_panel(SettingsDialogCtx *ctx) {
+  if (!ctx || !ctx->builder) return;
+
+  GSettings *notif_settings = g_settings_new("org.gnostr.Notifications");
+  if (!notif_settings) return;
+
+  /* Global enable switch */
+  GtkSwitch *w_enabled = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_notif_enabled"));
+  if (w_enabled) {
+    gtk_switch_set_active(w_enabled, g_settings_get_boolean(notif_settings, "enabled"));
+    g_signal_connect(w_enabled, "notify::active", G_CALLBACK(on_notif_enabled_changed), NULL);
+  }
+
+  /* Per-type toggles */
+  GtkSwitch *w_mention = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_notif_mention"));
+  if (w_mention) {
+    gtk_switch_set_active(w_mention, g_settings_get_boolean(notif_settings, "notify-mention-enabled"));
+    g_signal_connect(w_mention, "notify::active", G_CALLBACK(on_notif_mention_changed), NULL);
+  }
+
+  GtkSwitch *w_dm = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_notif_dm"));
+  if (w_dm) {
+    gtk_switch_set_active(w_dm, g_settings_get_boolean(notif_settings, "notify-dm-enabled"));
+    g_signal_connect(w_dm, "notify::active", G_CALLBACK(on_notif_dm_changed), NULL);
+  }
+
+  GtkSwitch *w_zap = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_notif_zap"));
+  if (w_zap) {
+    gtk_switch_set_active(w_zap, g_settings_get_boolean(notif_settings, "notify-zap-enabled"));
+    g_signal_connect(w_zap, "notify::active", G_CALLBACK(on_notif_zap_changed), NULL);
+  }
+
+  GtkSwitch *w_reply = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_notif_reply"));
+  if (w_reply) {
+    gtk_switch_set_active(w_reply, g_settings_get_boolean(notif_settings, "notify-reply-enabled"));
+    g_signal_connect(w_reply, "notify::active", G_CALLBACK(on_notif_reply_changed), NULL);
+  }
+
+  /* Presentation switches */
+  GtkSwitch *w_sound = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_notif_sound"));
+  if (w_sound) {
+    gtk_switch_set_active(w_sound, g_settings_get_boolean(notif_settings, "sound-enabled"));
+    g_signal_connect(w_sound, "notify::active", G_CALLBACK(on_notif_sound_changed), NULL);
+  }
+
+  GtkSwitch *w_tray_badge = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_notif_tray_badge"));
+  if (w_tray_badge) {
+    gtk_switch_set_active(w_tray_badge, g_settings_get_boolean(notif_settings, "tray-badge-enabled"));
+    g_signal_connect(w_tray_badge, "notify::active", G_CALLBACK(on_notif_tray_badge_changed), NULL);
+  }
+
+  GtkSwitch *w_desktop_popup = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_notif_desktop_popup"));
+  if (w_desktop_popup) {
+    gtk_switch_set_active(w_desktop_popup, g_settings_get_boolean(notif_settings, "desktop-popup-enabled"));
+    g_signal_connect(w_desktop_popup, "notify::active", G_CALLBACK(on_notif_desktop_popup_changed), NULL);
+  }
+
+  g_object_unref(notif_settings);
 }
 
 static void on_settings_dialog_destroy(GtkWidget *widget, gpointer user_data) {
@@ -1854,8 +2254,11 @@ static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   if (w_backfill) gtk_spin_button_set_value(w_backfill, self->backfill_interval_sec);
 
   /* Setup new panels */
+  settings_dialog_setup_general_panel(ctx);  /* nostrc-61s.6: background mode */
   settings_dialog_setup_relay_panel(ctx);
+  settings_dialog_setup_index_relay_panel(ctx);
   settings_dialog_setup_display_panel(ctx);
+  settings_dialog_setup_notifications_panel(ctx);
   settings_dialog_setup_account_panel(ctx);
   settings_dialog_setup_blossom_panel(ctx);
   settings_dialog_setup_media_panel(ctx);
@@ -1874,7 +2277,7 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
-  g_message("[AUTH] User signed in: %s", npub ? npub : "(null)");
+  g_debug("[AUTH] User signed in: %s", npub ? npub : "(null)");
 
   /* Update user_pubkey_hex from npub */
   if (npub && g_str_has_prefix(npub, "npub1")) {
@@ -1893,11 +2296,11 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
 
   /* Load NIP-65 relay list for the user */
   if (self->user_pubkey_hex) {
-    g_message("[AUTH] Loading NIP-65 relay list for user %.*s...", 8, self->user_pubkey_hex);
+    g_debug("[AUTH] Loading NIP-65 relay list for user %.*s...", 8, self->user_pubkey_hex);
     gnostr_nip65_load_on_login_async(self->user_pubkey_hex, NULL, NULL);
 
     /* Load Blossom server list (kind 10063) */
-    g_message("[AUTH] Loading Blossom server list (kind 10063) for user %.*s...", 8, self->user_pubkey_hex);
+    g_debug("[AUTH] Loading Blossom server list (kind 10063) for user %.*s...", 8, self->user_pubkey_hex);
     gnostr_blossom_settings_load_from_relays_async(self->user_pubkey_hex, NULL, NULL);
 
     /* Auto-sync NIP-51 settings if enabled */
@@ -2032,7 +2435,7 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
 
-  g_message("[UI] Profile click for %.*s...", 8, pubkey_hex);
+  g_debug("[UI] Profile click for %.*s...", 8, pubkey_hex);
 
   /* Check if profile pane is currently visible */
   gboolean sidebar_visible = gtk_revealer_get_reveal_child(GTK_REVEALER(self->profile_revealer));
@@ -2102,6 +2505,23 @@ static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer us
   gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), FALSE);
 }
 
+/* nostrc-61s.6: Handle window close-request for background mode */
+static gboolean on_window_close_request(GtkWindow *window, gpointer user_data) {
+  (void)user_data;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return FALSE; /* Let default close happen */
+
+  if (self->background_mode_enabled) {
+    /* Hide window instead of closing when background mode is enabled */
+    g_debug("[UI] Background mode: hiding window instead of closing");
+    gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+    return TRUE; /* Stop the close request, window stays alive */
+  }
+
+  /* Background mode disabled: allow normal close (quit) */
+  return FALSE;
+}
+
 /* ESC key handler to close profile sidebar */
 static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data) {
   (void)controller;
@@ -2146,7 +2566,7 @@ void gnostr_main_window_request_reply(GtkWidget *window, const char *id_hex, con
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
-  g_message("[REPLY] Request reply to id=%s root=%s pubkey=%.8s...",
+  g_debug("[REPLY] Request reply to id=%s root=%s pubkey=%.8s...",
             id_hex ? id_hex : "(null)",
             root_id ? root_id : "(null)",
             pubkey_hex ? pubkey_hex : "(null)");
@@ -2202,7 +2622,7 @@ void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, con
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
-  g_message("[QUOTE] Request quote of id=%s pubkey=%.8s...",
+  g_debug("[QUOTE] Request quote of id=%s pubkey=%.8s...",
             id_hex ? id_hex : "(null)",
             pubkey_hex ? pubkey_hex : "(null)");
 
@@ -2309,7 +2729,7 @@ void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id
     return;
   }
 
-  g_message("[THREAD] View thread requested for root=%s", root_event_id);
+  g_debug("[THREAD] View thread requested for root=%s", root_event_id);
 
   /* Show thread view panel */
   if (!self->thread_view || !GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
@@ -2375,7 +2795,7 @@ void gnostr_main_window_mute_user(GtkWidget *window, const char *pubkey_hex) {
     return;
   }
 
-  g_message("[MUTE] Mute user requested for pubkey=%.16s...", pubkey_hex);
+  g_debug("[MUTE] Mute user requested for pubkey=%.16s...", pubkey_hex);
 
   /* Add to mute list */
   GnostrMuteList *mute_list = gnostr_mute_list_get_default();
@@ -2400,7 +2820,7 @@ void gnostr_main_window_mute_thread(GtkWidget *window, const char *event_id_hex)
     return;
   }
 
-  g_message("[MUTE] Mute thread requested for event=%.16s...", event_id_hex);
+  g_debug("[MUTE] Mute thread requested for event=%.16s...", event_id_hex);
 
   /* Add to mute list (events) */
   GnostrMuteList *mute_list = gnostr_mute_list_get_default();
@@ -2746,7 +3166,7 @@ static void prepopulate_all_profiles_from_cache(GnostrMainWindow *self) {
   if (brc != 0) { g_warning("prepopulate_all_profiles_from_cache: begin_query failed rc=%d", brc); return; }
   const char *filters = "[{\"kinds\":[0]}]"; /* all kind-0 profiles */
   int rc = storage_ndb_query(txn, filters, &arr, &n);
-  g_message("prepopulate_all_profiles_from_cache: query rc=%d count=%d", rc, n);
+  g_debug("prepopulate_all_profiles_from_cache: query rc=%d count=%d", rc, n);
   if (rc == 0 && arr && n > 0) {
     GPtrArray *items = g_ptr_array_new_with_free_func(profile_apply_item_free);
     for (int i = 0; i < n; i++) {
@@ -2768,7 +3188,7 @@ static void prepopulate_all_profiles_from_cache(GnostrMainWindow *self) {
       if (evt) nostr_event_free(evt);
     }
     if (items->len > 0) {
-      g_message("prepopulate_all_profiles_from_cache: scheduling %u cached profiles", items->len);
+      g_debug("prepopulate_all_profiles_from_cache: scheduling %u cached profiles", items->len);
       schedule_apply_profiles(self, items); /* transfers ownership */
       items = NULL;
     } else {
@@ -2815,9 +3235,9 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Settings", -1);
   /* Report HTTP avatar support availability */
 #ifdef HAVE_SOUP3
-  g_message("http: libsoup3 enabled; avatar HTTP fetch active");
+  g_debug("http: libsoup3 enabled; avatar HTTP fetch active");
 #else
-  g_warning("http: libsoup3 NOT enabled; avatar HTTP fetch disabled");
+  g_debug("http: libsoup3 NOT enabled; avatar HTTP fetch disabled");
 #endif
   /* Sanity logging and guard for avatar popover attachment */
   GtkPopover *init_pop = NULL;
@@ -2848,6 +3268,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
 
   /* REPOMARK:SCOPE: 4 - Wire GnNostrEventModel "need-profile" signal to enqueue_profile_author() and disable legacy thread_roots/prefetch initialization in gnostr_main_window_init */
   g_signal_connect(self->event_model, "need-profile", G_CALLBACK(on_event_model_need_profile), self);
+  /* nostrc-yi2: Calm timeline - connect new items pending signal */
+  g_signal_connect(self->event_model, "new-items-pending", G_CALLBACK(on_event_model_new_items_pending), self);
   
   /* Attach model to timeline view */
   if (self->timeline && G_TYPE_CHECK_INSTANCE_TYPE(self->timeline, GNOSTR_TYPE_TIMELINE_VIEW)) {
@@ -2902,9 +3324,12 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   gnostr_load_settings(self);
   self->backfill_source_id = 0;
 
+  /* nostrc-61s.6: Connect close-request signal for background mode */
+  g_signal_connect(self, "close-request", G_CALLBACK(on_window_close_request), NULL);
+
   /* Register for relay configuration changes (live relay switching, nostrc-36y.4) */
   self->relay_change_handler_id = gnostr_relay_change_connect(on_relay_config_changed, self);
-  g_message("[LIVE_RELAY] Registered relay change handler (id=%lu)", self->relay_change_handler_id);
+  g_debug("[LIVE_RELAY] Registered relay change handler (id=%lu)", self->relay_change_handler_id);
   /* Build app menu for header button */
   if (self->btn_menu) {
     GMenu *menu = g_menu_new();
@@ -2912,17 +3337,21 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(self->btn_menu), G_MENU_MODEL(menu));
     g_object_unref(menu);
   }
-  g_message("connecting post-requested handler on composer=%p", (void*)self->composer);
+  g_debug("connecting post-requested handler on composer=%p", (void*)self->composer);
   g_signal_connect(self->composer, "post-requested",
                    G_CALLBACK(on_composer_post_requested), self);
   if (self->btn_refresh) {
     g_signal_connect(self->btn_refresh, "clicked", G_CALLBACK(on_refresh_clicked), self);
   }
+  /* nostrc-yi2: Calm timeline - connect new notes button click */
+  if (self->btn_new_notes) {
+    g_signal_connect(self->btn_new_notes, "clicked", G_CALLBACK(on_new_notes_clicked), self);
+  }
   /* Connect profile pane signals */
   if (self->profile_pane && GNOSTR_IS_PROFILE_PANE(self->profile_pane)) {
     g_signal_connect(self->profile_pane, "close-requested",
                      G_CALLBACK(on_profile_pane_close_requested), self);
-    g_message("connected profile pane close-requested signal");
+    g_debug("connected profile pane close-requested signal");
   }
   /* Connect thread view signals */
   if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
@@ -2930,14 +3359,14 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                      G_CALLBACK(on_thread_view_close_requested), self);
     g_signal_connect(self->thread_view, "open-profile",
                      G_CALLBACK(on_thread_view_open_profile), self);
-    g_message("connected thread view signals");
+    g_debug("connected thread view signals");
   }
   /* Add key event controller for ESC to close profile sidebar */
   {
     GtkEventController *key_controller = gtk_event_controller_key_new();
     g_signal_connect(key_controller, "key-pressed", G_CALLBACK(on_key_pressed), self);
     gtk_widget_add_controller(GTK_WIDGET(self), key_controller);
-    g_message("connected ESC key handler for profile sidebar");
+    g_debug("connected ESC key handler for profile sidebar");
   }
   if (self->btn_avatar) {
     /* Ensure avatar button is interactable */
@@ -2957,7 +3386,7 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   {
     const char *live = g_getenv("GNOSTR_LIVE");
     if (live && *live && g_strcmp0(live, "0") != 0) {
-      g_message("[INIT] Starting live subscriptions (GNOSTR_LIVE=TRUE)");
+      g_debug("[INIT] Starting live subscriptions (GNOSTR_LIVE=TRUE)");
       start_pool_live(self);
       /* Also start profile subscription if identity is configured */
       start_profile_subscription(self);
@@ -2998,7 +3427,7 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   self->dm_service = gnostr_dm_service_new();
   if (self->dm_inbox && GNOSTR_IS_DM_INBOX_VIEW(self->dm_inbox)) {
     gnostr_dm_service_set_inbox_view(self->dm_service, GNOSTR_DM_INBOX_VIEW(self->dm_inbox));
-    g_message("[DM_SERVICE] Connected DM service to inbox view");
+    g_debug("[DM_SERVICE] Connected DM service to inbox view");
   }
 
   /* Background profile prefetch disabled (model emits need-profile when required). */
@@ -3087,6 +3516,13 @@ static void on_timeline_scroll_value_changed(GtkAdjustment *adj, gpointer user_d
     }
   }
 
+  /* nostrc-yi2: Calm timeline - track if user is at top of scroll
+   * "At top" means within 50px of the top edge. This allows auto-scroll when
+   * the user is viewing the most recent content, but defers updates when
+   * they're scrolled down reading older content. */
+  gboolean user_at_top = (value <= lower + 50.0);
+  gn_nostr_event_model_set_user_at_top(self->event_model, user_at_top);
+
   guint batch = self->load_older_batch_size > 0 ? self->load_older_batch_size : 30;
   guint max_items = 200; /* Keep at most 200 items in memory */
 
@@ -3122,6 +3558,57 @@ static void on_timeline_scroll_value_changed(GtkAdjustment *adj, gpointer user_d
   }
 }
 
+
+/* nostrc-yi2: Calm timeline - handle pending new items count change */
+static void on_event_model_new_items_pending(GnNostrEventModel *model, guint count, gpointer user_data) {
+  (void)model;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  if (count > 0) {
+    /* Update label and show indicator */
+    char *label = g_strdup_printf("%u new note%s", count, count == 1 ? "" : "s");
+    if (self->lbl_new_notes_count && GTK_IS_LABEL(self->lbl_new_notes_count)) {
+      gtk_label_set_text(GTK_LABEL(self->lbl_new_notes_count), label);
+    }
+    g_free(label);
+
+    if (self->new_notes_revealer && GTK_IS_REVEALER(self->new_notes_revealer)) {
+      gtk_revealer_set_reveal_child(GTK_REVEALER(self->new_notes_revealer), TRUE);
+    }
+  } else {
+    /* Hide indicator when count is 0 */
+    if (self->new_notes_revealer && GTK_IS_REVEALER(self->new_notes_revealer)) {
+      gtk_revealer_set_reveal_child(GTK_REVEALER(self->new_notes_revealer), FALSE);
+    }
+  }
+}
+
+/* nostrc-yi2: Calm timeline - handle new notes indicator button click */
+static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->event_model) return;
+
+  /* Flush pending notes */
+  gn_nostr_event_model_flush_pending(self->event_model);
+
+  /* Scroll to top */
+  if (self->timeline && G_TYPE_CHECK_INSTANCE_TYPE(self->timeline, GNOSTR_TYPE_TIMELINE_VIEW)) {
+    GtkWidget *scroller = gnostr_timeline_view_get_scrolled_window(GNOSTR_TIMELINE_VIEW(self->timeline));
+    if (scroller && GTK_IS_SCROLLED_WINDOW(scroller)) {
+      GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
+      if (vadj) {
+        gtk_adjustment_set_value(vadj, gtk_adjustment_get_lower(vadj));
+      }
+    }
+  }
+
+  /* Hide indicator */
+  if (self->new_notes_revealer && GTK_IS_REVEALER(self->new_notes_revealer)) {
+    gtk_revealer_set_reveal_child(GTK_REVEALER(self->new_notes_revealer), FALSE);
+  }
+}
 GnostrMainWindow *gnostr_main_window_new(GtkApplication *app) {
   return g_object_new(GNOSTR_TYPE_MAIN_WINDOW, "application", app, NULL);
 }
@@ -3211,6 +3698,8 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   g_type_ensure(GNOSTR_TYPE_PROFILE_PANE);
   g_type_ensure(GNOSTR_TYPE_DM_INBOX_VIEW);
   g_type_ensure(GNOSTR_TYPE_THREAD_VIEW);
+  g_type_ensure(GNOSTR_TYPE_NOTIFICATIONS_VIEW);
+  g_type_ensure(GNOSTR_TYPE_NOTIFICATION_ROW);
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
   /* Bind expected template children (IDs must match the UI file) */
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, stack);
@@ -3232,9 +3721,14 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_sign_out);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, composer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, dm_inbox);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, notifications_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_refresh);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_revealer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_label);
+  /* nostrc-yi2: Calm timeline - new notes indicator */
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, new_notes_revealer);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_new_notes);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, lbl_new_notes_count);
   /* Bind template callbacks referenced by the UI file */
   gtk_widget_class_bind_template_callback(widget_class, on_relays_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_settings_clicked);
@@ -3247,13 +3741,13 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
 static void initial_refresh_timeout_cb(gpointer data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  g_message("STARTUP_DEBUG: initial_refresh_timeout_cb ENTER");
+  g_debug("STARTUP_DEBUG: initial_refresh_timeout_cb ENTER");
 
   if (self->event_model) {
     gn_nostr_event_model_refresh(self->event_model);
   }
 
-  g_message("STARTUP_DEBUG: initial_refresh_timeout_cb EXIT");
+  g_debug("STARTUP_DEBUG: initial_refresh_timeout_cb EXIT");
 }
 
 static void user_meta_free(gpointer p) { g_free(p); }
@@ -3268,7 +3762,26 @@ static unsigned int getenv_uint_default(const char *name, unsigned int defval) {
   return (unsigned int)val;
 }
 
-static void gnostr_load_settings(GnostrMainWindow *self) { (void)self; /* TODO: load persisted settings */ }
+static void gnostr_load_settings(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  /* nostrc-61s.6: Load background mode setting */
+  GSettings *client_settings = g_settings_new("org.gnostr.Client");
+  if (client_settings) {
+    self->background_mode_enabled = g_settings_get_boolean(client_settings, "background-mode");
+    g_debug("[SETTINGS] background_mode_enabled=%d", self->background_mode_enabled);
+
+    /* If background mode is enabled, hold the application to prevent quit on last window close */
+    if (self->background_mode_enabled) {
+      GtkApplication *app = GTK_APPLICATION(gtk_window_get_application(GTK_WINDOW(self)));
+      if (app) {
+        g_application_hold(G_APPLICATION(app));
+        g_debug("[SETTINGS] Application held for background mode");
+      }
+    }
+    g_object_unref(client_settings);
+  }
+}
 
 static void on_refresh_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
@@ -3312,7 +3825,7 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
     return;
   }
 
-  g_message("[PUBLISH] Signed event: %.100s...", signed_event_json);
+  g_debug("[PUBLISH] Signed event: %.100s...", signed_event_json);
 
   /* Parse the signed event JSON into a NostrEvent */
   NostrEvent *event = nostr_event_new();
@@ -3328,11 +3841,46 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
   /* Get write-capable relay URLs from config (NIP-65: write-only or read+write) */
   GPtrArray *relay_urls = gnostr_get_write_relay_urls();
 
+  /* Extract event properties for validation */
+  const char *content = nostr_event_get_content(event);
+  gint content_len = content ? (gint)strlen(content) : 0;
+  NostrTags *tags = nostr_event_get_tags(event);
+  gint tag_count = tags ? (gint)nostr_tags_size(tags) : 0;
+  gint64 created_at = nostr_event_get_created_at(event);
+  gssize serialized_len = signed_event_json ? (gssize)strlen(signed_event_json) : -1;
+
   /* Publish to each write relay */
   guint success_count = 0;
   guint fail_count = 0;
+  guint limit_skip_count = 0;
+  GString *limit_warnings = g_string_new(NULL);
+
   for (guint i = 0; i < relay_urls->len; i++) {
     const char *url = (const char*)g_ptr_array_index(relay_urls, i);
+
+    /* NIP-11: Check relay limitations before publishing */
+    GnostrRelayInfo *relay_info = gnostr_relay_info_cache_get(url);
+    if (relay_info) {
+      GnostrRelayValidationResult *validation = gnostr_relay_info_validate_event(
+        relay_info, content, content_len, tag_count, created_at, serialized_len);
+
+      if (!gnostr_relay_validation_result_is_valid(validation)) {
+        gchar *errors = gnostr_relay_validation_result_format_errors(validation);
+        g_debug("[PUBLISH] Skipping %s due to limit violations: %s", url, errors ? errors : "unknown");
+        if (errors) {
+          if (limit_warnings->len > 0) g_string_append(limit_warnings, "\n");
+          g_string_append(limit_warnings, errors);
+          g_free(errors);
+        }
+        gnostr_relay_validation_result_free(validation);
+        gnostr_relay_info_free(relay_info);
+        limit_skip_count++;
+        continue;
+      }
+      gnostr_relay_validation_result_free(validation);
+      gnostr_relay_info_free(relay_info);
+    }
+
     GNostrRelay *relay = gnostr_relay_new(url);
     if (!relay) {
       fail_count++;
@@ -3341,7 +3889,7 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
 
     GError *conn_err = NULL;
     if (!gnostr_relay_connect(relay, &conn_err)) {
-      g_message("[PUBLISH] Failed to connect to %s: %s", url, conn_err ? conn_err->message : "unknown");
+      g_debug("[PUBLISH] Failed to connect to %s: %s", url, conn_err ? conn_err->message : "unknown");
       g_clear_error(&conn_err);
       g_object_unref(relay);
       fail_count++;
@@ -3350,10 +3898,10 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
 
     GError *pub_err = NULL;
     if (gnostr_relay_publish(relay, event, &pub_err)) {
-      g_message("[PUBLISH] Published to %s", url);
+      g_debug("[PUBLISH] Published to %s", url);
       success_count++;
     } else {
-      g_message("[PUBLISH] Publish failed to %s: %s", url, pub_err ? pub_err->message : "unknown");
+      g_debug("[PUBLISH] Publish failed to %s: %s", url, pub_err ? pub_err->message : "unknown");
       g_clear_error(&pub_err);
       fail_count++;
     }
@@ -3362,7 +3910,13 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
 
   /* Show result toast */
   if (success_count > 0) {
-    char *msg = g_strdup_printf("Published to %u relay%s", success_count, success_count == 1 ? "" : "s");
+    char *msg;
+    if (limit_skip_count > 0) {
+      msg = g_strdup_printf("Published to %u relay%s (%u skipped due to limits)",
+                            success_count, success_count == 1 ? "" : "s", limit_skip_count);
+    } else {
+      msg = g_strdup_printf("Published to %u relay%s", success_count, success_count == 1 ? "" : "s");
+    }
     show_toast(self, msg);
     g_free(msg);
 
@@ -3376,10 +3930,23 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
       gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "timeline");
     }
   } else {
-    show_toast(self, "Failed to publish to any relay");
+    if (limit_skip_count > 0 && limit_warnings->len > 0) {
+      /* All relays skipped due to limits - show detailed warning */
+      char *msg = g_strdup_printf("Event exceeds relay limits:\n%s", limit_warnings->str);
+      show_toast(self, msg);
+      g_free(msg);
+    } else {
+      show_toast(self, "Failed to publish to any relay");
+    }
+  }
+
+  /* Log limit warnings for debugging */
+  if (limit_warnings->len > 0) {
+    g_warning("[PUBLISH] Relay limit violations:\n%s", limit_warnings->str);
   }
 
   /* Cleanup */
+  g_string_free(limit_warnings, TRUE);
   nostr_event_free(event);
   g_free(signed_event_json);
   g_ptr_array_free(relay_urls, TRUE);
@@ -3392,7 +3959,7 @@ void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, co
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
-  g_message("[REPOST] Request repost of id=%s pubkey=%.8s...",
+  g_debug("[REPOST] Request repost of id=%s pubkey=%.8s...",
             id_hex ? id_hex : "(null)",
             pubkey_hex ? pubkey_hex : "(null)");
 
@@ -3449,12 +4016,110 @@ void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, co
     return;
   }
 
-  g_message("[REPOST] Unsigned event: %s", event_json);
+  g_debug("[REPOST] Unsigned event: %s", event_json);
 
   /* Create async context */
   PublishContext *ctx = g_new0(PublishContext, 1);
   ctx->self = self;
   ctx->text = g_strdup(""); /* repost has no text content */
+
+  /* Call signer asynchronously */
+  nostr_org_nostr_signer_call_sign_event(
+    proxy,
+    event_json,
+    "",              /* current_user: empty = use default */
+    "gnostr",        /* app_id */
+    NULL,            /* cancellable */
+    on_sign_event_complete,
+    ctx
+  );
+  g_free(event_json);
+}
+
+/* ================= NIP-09 Event Deletion Implementation ================= */
+
+/* Public wrapper for requesting deletion of a note (kind 5) per NIP-09 */
+void gnostr_main_window_request_delete_note(GtkWidget *window, const char *id_hex, const char *pubkey_hex) {
+  if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  g_debug("[DELETE] Request deletion of id=%s pubkey=%.8s...",
+            id_hex ? id_hex : "(null)",
+            pubkey_hex ? pubkey_hex : "(null)");
+
+  if (!id_hex || strlen(id_hex) != 64) {
+    show_toast(self, "Invalid event ID for deletion");
+    return;
+  }
+
+  /* Verify user is signed in and owns the note */
+  if (!self->user_pubkey_hex || !*self->user_pubkey_hex) {
+    show_toast(self, "Sign in to delete notes");
+    return;
+  }
+
+  /* Security check: Only allow deletion of own notes */
+  if (!pubkey_hex || strlen(pubkey_hex) != 64 ||
+      g_ascii_strcasecmp(pubkey_hex, self->user_pubkey_hex) != 0) {
+    show_toast(self, "Can only delete your own notes");
+    return;
+  }
+
+  /* Get signer proxy */
+  GError *proxy_err = NULL;
+  NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
+  if (!proxy) {
+    char *msg = g_strdup_printf("Signer not available: %s", proxy_err ? proxy_err->message : "not connected");
+    show_toast(self, msg);
+    g_free(msg);
+    g_clear_error(&proxy_err);
+    return;
+  }
+
+  show_toast(self, "Deleting note...");
+
+  /* Build unsigned kind 5 deletion event JSON per NIP-09 */
+  json_t *event_obj = json_object();
+  json_object_set_new(event_obj, "kind", json_integer(5));  /* NOSTR_KIND_DELETION */
+  json_object_set_new(event_obj, "created_at", json_integer((json_int_t)time(NULL)));
+  json_object_set_new(event_obj, "content", json_string("")); /* Optional deletion reason */
+
+  /* Build tags array per NIP-09:
+   * - ["e", "<event-id-to-delete>"]
+   * - ["k", "<kind-of-deleted-event>"] (kind 1 for text notes)
+   */
+  json_t *tags = json_array();
+
+  /* e-tag: ["e", "<event-id-to-delete>"] */
+  json_t *e_tag = json_array();
+  json_array_append_new(e_tag, json_string("e"));
+  json_array_append_new(e_tag, json_string(id_hex));
+  json_array_append_new(tags, e_tag);
+
+  /* k-tag: ["k", "1"] to indicate we're deleting a kind 1 note */
+  json_t *k_tag = json_array();
+  json_array_append_new(k_tag, json_string("k"));
+  json_array_append_new(k_tag, json_string("1"));
+  json_array_append_new(tags, k_tag);
+
+  json_object_set_new(event_obj, "tags", tags);
+
+  /* Serialize and sign via signer proxy */
+  char *event_json = json_dumps(event_obj, JSON_COMPACT);
+  json_decref(event_obj);
+
+  if (!event_json) {
+    show_toast(self, "Failed to serialize deletion event");
+    return;
+  }
+
+  g_debug("[DELETE] Unsigned deletion event: %s", event_json);
+
+  /* Create async context */
+  PublishContext *ctx = g_new0(PublishContext, 1);
+  ctx->self = self;
+  ctx->text = g_strdup(""); /* deletion has no text content */
 
   /* Call signer asynchronously */
   nostr_org_nostr_signer_call_sign_event(
@@ -3507,7 +4172,7 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
     return;
   }
 
-  g_message("[LIKE] Signed reaction event: %.100s...", signed_event_json);
+  g_debug("[LIKE] Signed reaction event: %.100s...", signed_event_json);
 
   /* Parse the signed event JSON into a NostrEvent */
   NostrEvent *event = nostr_event_new();
@@ -3523,11 +4188,41 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
   /* Get write-capable relay URLs from config (NIP-65: write-only or read+write) */
   GPtrArray *relay_urls = gnostr_get_write_relay_urls();
 
+  /* Extract event properties for NIP-11 validation */
+  const char *like_content = nostr_event_get_content(event);
+  gint like_content_len = like_content ? (gint)strlen(like_content) : 0;
+  NostrTags *like_tags = nostr_event_get_tags(event);
+  gint like_tag_count = like_tags ? (gint)nostr_tags_size(like_tags) : 0;
+  gint64 like_created_at = nostr_event_get_created_at(event);
+  gssize like_serialized_len = signed_event_json ? (gssize)strlen(signed_event_json) : -1;
+
   /* Publish to each write relay */
   guint success_count = 0;
   guint fail_count = 0;
+  guint limit_skip_count = 0;
+
   for (guint i = 0; i < relay_urls->len; i++) {
     const char *url = (const char*)g_ptr_array_index(relay_urls, i);
+
+    /* NIP-11: Check relay limitations before publishing */
+    GnostrRelayInfo *relay_info = gnostr_relay_info_cache_get(url);
+    if (relay_info) {
+      GnostrRelayValidationResult *validation = gnostr_relay_info_validate_event(
+        relay_info, like_content, like_content_len, like_tag_count, like_created_at, like_serialized_len);
+
+      if (!gnostr_relay_validation_result_is_valid(validation)) {
+        gchar *errors = gnostr_relay_validation_result_format_errors(validation);
+        g_debug("[LIKE] Skipping %s due to limit violations: %s", url, errors ? errors : "unknown");
+        g_free(errors);
+        gnostr_relay_validation_result_free(validation);
+        gnostr_relay_info_free(relay_info);
+        limit_skip_count++;
+        continue;
+      }
+      gnostr_relay_validation_result_free(validation);
+      gnostr_relay_info_free(relay_info);
+    }
+
     GNostrRelay *relay = gnostr_relay_new(url);
     if (!relay) {
       fail_count++;
@@ -3536,7 +4231,7 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
 
     GError *conn_err = NULL;
     if (!gnostr_relay_connect(relay, &conn_err)) {
-      g_message("[LIKE] Failed to connect to %s: %s", url, conn_err ? conn_err->message : "unknown");
+      g_debug("[LIKE] Failed to connect to %s: %s", url, conn_err ? conn_err->message : "unknown");
       g_clear_error(&conn_err);
       g_object_unref(relay);
       fail_count++;
@@ -3545,10 +4240,10 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
 
     GError *pub_err = NULL;
     if (gnostr_relay_publish(relay, event, &pub_err)) {
-      g_message("[LIKE] Published reaction to %s", url);
+      g_debug("[LIKE] Published reaction to %s", url);
       success_count++;
     } else {
-      g_message("[LIKE] Publish failed to %s: %s", url, pub_err ? pub_err->message : "unknown");
+      g_debug("[LIKE] Publish failed to %s: %s", url, pub_err ? pub_err->message : "unknown");
       g_clear_error(&pub_err);
       fail_count++;
     }
@@ -3557,7 +4252,13 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
 
   /* Show result toast and update UI */
   if (success_count > 0) {
-    show_toast(self, "Liked!");
+    if (limit_skip_count > 0) {
+      char *msg = g_strdup_printf("Liked! (%u relays skipped due to limits)", limit_skip_count);
+      show_toast(self, msg);
+      g_free(msg);
+    } else {
+      show_toast(self, "Liked!");
+    }
 
     /* Mark event as liked in local cache */
     if (ctx->event_id_hex && self->liked_events) {
@@ -3595,7 +4296,7 @@ void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, cons
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
-  g_message("[LIKE] Request like of id=%s pubkey=%.8s...",
+  g_debug("[LIKE] Request like of id=%s pubkey=%.8s...",
             id_hex ? id_hex : "(null)",
             pubkey_hex ? pubkey_hex : "(null)");
 
@@ -3646,6 +4347,12 @@ void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, cons
     json_array_append_new(tags, p_tag);
   }
 
+  /* k-tag: ["k", "<kind-of-reacted-event>"] per NIP-25 */
+  json_t *k_tag = json_array();
+  json_array_append_new(k_tag, json_string("k"));
+  json_array_append_new(k_tag, json_string("1"));  /* text note - could be enhanced to pass actual kind */
+  json_array_append_new(tags, k_tag);
+
   json_object_set_new(event_obj, "tags", tags);
 
   /* Serialize and sign via signer proxy */
@@ -3657,7 +4364,7 @@ void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, cons
     return;
   }
 
-  g_message("[LIKE] Unsigned reaction event: %s", event_json);
+  g_debug("[LIKE] Unsigned reaction event: %s", event_json);
 
   /* Create async context */
   LikeContext *ctx = g_new0(LikeContext, 1);
@@ -3716,10 +4423,10 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
     const char *root_id = gnostr_composer_get_root_id(GNOSTR_COMPOSER(composer));
     const char *reply_to_pubkey = gnostr_composer_get_reply_to_pubkey(GNOSTR_COMPOSER(composer));
 
-    g_message("[PUBLISH] Building reply event: reply_to=%s root=%s pubkey=%.8s...",
-              reply_to_id ? reply_to_id : "(null)",
-              root_id ? root_id : "(null)",
-              reply_to_pubkey ? reply_to_pubkey : "(null)");
+    g_debug("[PUBLISH] Building reply event: reply_to=%s root=%s pubkey=%.8s...",
+            reply_to_id ? reply_to_id : "(null)",
+            root_id ? root_id : "(null)",
+            reply_to_pubkey ? reply_to_pubkey : "(null)");
 
     /* NIP-10 recommends using positional markers for replies:
      * - ["e", "<root-id>", "", "root"] for the thread root
@@ -3762,9 +4469,9 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
     const char *quote_id = gnostr_composer_get_quote_id(GNOSTR_COMPOSER(composer));
     const char *quote_pubkey = gnostr_composer_get_quote_pubkey(GNOSTR_COMPOSER(composer));
 
-    g_message("[PUBLISH] Building quote post: quote_id=%s pubkey=%.8s...",
-              quote_id ? quote_id : "(null)",
-              quote_pubkey ? quote_pubkey : "(null)");
+    g_debug("[PUBLISH] Building quote post: quote_id=%s pubkey=%.8s...",
+            quote_id ? quote_id : "(null)",
+            quote_pubkey ? quote_pubkey : "(null)");
 
     /* q-tag: ["q", "<quoted-event-id>", "<relay-hint>"] */
     if (quote_id && strlen(quote_id) == 64) {
@@ -3784,6 +4491,53 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
     }
   }
 
+  /* NIP-92: Add imeta tags for uploaded media */
+  if (composer && GNOSTR_IS_COMPOSER(composer)) {
+    gsize media_count = gnostr_composer_get_uploaded_media_count(GNOSTR_COMPOSER(composer));
+    if (media_count > 0) {
+      GnostrComposerMedia **media_list = gnostr_composer_get_uploaded_media(GNOSTR_COMPOSER(composer));
+      for (gsize i = 0; i < media_count && media_list && media_list[i]; i++) {
+        GnostrComposerMedia *m = media_list[i];
+        if (!m->url) continue;
+
+        /* Build imeta tag: ["imeta", "url <url>", "m <mime>", "x <sha256>", "size <bytes>"] */
+        json_t *imeta_tag = json_array();
+        json_array_append_new(imeta_tag, json_string("imeta"));
+
+        /* url field (required) */
+        char *url_field = g_strdup_printf("url %s", m->url);
+        json_array_append_new(imeta_tag, json_string(url_field));
+        g_free(url_field);
+
+        /* m field (MIME type) */
+        if (m->mime_type && *m->mime_type) {
+          char *mime_field = g_strdup_printf("m %s", m->mime_type);
+          json_array_append_new(imeta_tag, json_string(mime_field));
+          g_free(mime_field);
+        }
+
+        /* x field (SHA-256 hash) */
+        if (m->sha256 && *m->sha256) {
+          char *hash_field = g_strdup_printf("x %s", m->sha256);
+          json_array_append_new(imeta_tag, json_string(hash_field));
+          g_free(hash_field);
+        }
+
+        /* size field */
+        if (m->size > 0) {
+          char *size_field = g_strdup_printf("size %" G_GINT64_FORMAT, m->size);
+          json_array_append_new(imeta_tag, json_string(size_field));
+          g_free(size_field);
+        }
+
+        json_array_append_new(tags, imeta_tag);
+        g_debug("[PUBLISH] Added imeta tag for: %s (type=%s, sha256=%.16s...)",
+                m->url, m->mime_type ? m->mime_type : "?",
+                m->sha256 ? m->sha256 : "?");
+      }
+    }
+  }
+
   json_object_set_new(event_obj, "tags", tags);
 
   char *event_json = json_dumps(event_obj, JSON_COMPACT);
@@ -3794,7 +4548,7 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
     return;
   }
 
-  g_message("[PUBLISH] Unsigned event: %s", event_json);
+  g_debug("[PUBLISH] Unsigned event: %s", event_json);
 
   /* Create async context */
   PublishContext *ctx = g_new0(PublishContext, 1);
@@ -4018,7 +4772,7 @@ static void on_relay_config_changed(gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
-  g_message("[LIVE_RELAY] Relay configuration changed, syncing pool...");
+  g_debug("[LIVE_RELAY] Relay configuration changed, syncing pool...");
 
   /* Get updated relay URLs */
   GPtrArray *read_relays = gnostr_get_read_relay_urls();
@@ -4058,7 +4812,7 @@ static void on_relay_config_changed(gpointer user_data) {
 
   /* If we have an active subscription, restart it to use new relays */
   if (self->pool_cancellable) {
-    g_message("[LIVE_RELAY] Restarting live subscription with updated relays");
+    g_debug("[LIVE_RELAY] Restarting live subscription with updated relays");
     g_cancellable_cancel(self->pool_cancellable);
     g_object_unref(self->pool_cancellable);
     self->pool_cancellable = NULL;
@@ -4069,12 +4823,12 @@ static void on_relay_config_changed(gpointer user_data) {
 
   /* Restart DM service to pick up new DM relays (nostrc-36y.4) */
   if (self->dm_service) {
-    g_message("[LIVE_RELAY] Restarting DM service with updated DM relays");
+    g_debug("[LIVE_RELAY] Restarting DM service with updated DM relays");
     gnostr_dm_service_stop(self->dm_service);
     gnostr_dm_service_start_with_dm_relays(self->dm_service);
   }
 
-  g_message("[LIVE_RELAY] Relay sync complete");
+  g_debug("[LIVE_RELAY] Relay sync complete");
 }
 
 /* Helper to restart live subscription after relay change */
@@ -4143,15 +4897,15 @@ static void start_pool_live(GnostrMainWindow *self) {
    * Profile fetch code skips relays not in pool (to avoid blocking main thread).
    * We call sync_relays() here BEFORE starting subscriptions to populate the pool.
    * This is acceptable because start_pool_live() runs early at startup, not on main loop yet. */
-  g_message("[RELAY] Initializing %zu relays in pool", self->live_url_count);
+  g_debug("[RELAY] Initializing %zu relays in pool", self->live_url_count);
   gnostr_simple_pool_sync_relays(self->pool, self->live_urls, self->live_url_count);
-  g_message("[RELAY] ✓ All relays initialized");
+  g_debug("[RELAY] ✓ All relays initialized");
   /* Hook up events signal exactly once */
   if (self->pool_events_handler == 0) {
     self->pool_events_handler = g_signal_connect(self->pool, "events", G_CALLBACK(on_pool_events), self);
   }
 
-  g_message("[RELAY] Starting live subscription to %zu relays", self->live_url_count);
+  g_debug("[RELAY] Starting live subscription to %zu relays", self->live_url_count);
   gnostr_simple_pool_subscribe_many_async(self->pool,
                                          self->live_urls,
                                          self->live_url_count,
@@ -4186,7 +4940,7 @@ static void start_bg_profile_prefetch(GnostrMainWindow *self) {
   /* Connect a temporary events handler for prefetch-only author enqueue */
   g_signal_connect(self->pool, "events", G_CALLBACK(on_bg_prefetch_events), self);
   guint interval = self->bg_prefetch_interval_ms ? self->bg_prefetch_interval_ms : 250;
-  g_message("start_bg_profile_prefetch: paginate %zu relay(s) interval=%ums", url_count, interval);
+  g_debug("start_bg_profile_prefetch: paginate %zu relay(s) interval=%ums", url_count, interval);
   /* Build a standalone filter for paginator: kind=1 with same since/limit */
   NostrFilter *pf = nostr_filter_new();
   int kind1 = 1;
@@ -4253,7 +5007,7 @@ static gboolean check_relay_health(gpointer user_data) {
   guint64 ingest_count = storage_ndb_get_ingest_count();
   guint64 ingest_mb = storage_ndb_get_ingest_bytes() / (1024 * 1024);
 
-  g_message("relay_health: status - %u connected, %u disconnected (total %u, goroutines=%d, ingested=%" G_GUINT64_FORMAT ", ingest_mb=%" G_GUINT64_FORMAT ")",
+  g_debug("relay_health: status - %u connected, %u disconnected (total %u, goroutines=%d, ingested=%" G_GUINT64_FORMAT ", ingest_mb=%" G_GUINT64_FORMAT ")",
           connected_count, disconnected_count, relay_urls->len, goroutine_count, ingest_count, ingest_mb);
   
   /* If ALL relays are disconnected, trigger reconnection (not just any) */
@@ -4264,7 +5018,7 @@ static gboolean check_relay_health(gpointer user_data) {
     /* Restart the live subscription to reconnect */
     start_pool_live(self);
   } else if (disconnected_count > 0) {
-    g_message("relay_health: %u relay(s) disconnected but %u still connected - not reconnecting",
+    g_debug("relay_health: %u relay(s) disconnected but %u still connected - not reconnecting",
               disconnected_count, connected_count);
   }
   
@@ -4293,7 +5047,7 @@ static gboolean retry_pool_live(gpointer user_data) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) {
     return G_SOURCE_REMOVE;
   }
-  g_message("[RELAY] Retrying subscription after failure");
+  g_debug("[RELAY] Retrying subscription after failure");
   start_pool_live(self);
   return G_SOURCE_REMOVE;
 }
@@ -4315,7 +5069,7 @@ static void on_pool_subscribe_done(GObject *source, GAsyncResult *res, gpointer 
     /* Retry after 5 seconds */
     g_timeout_add_seconds(5, retry_pool_live, g_object_ref(self));
   } else {
-    g_message("[RELAY] ✓ Live subscription started successfully");
+    g_debug("[RELAY] ✓ Live subscription started successfully");
     /* Start periodic health check (every 30 seconds) - only if not already running */
     if (GNOSTR_IS_MAIN_WINDOW(self) && self->health_check_source_id == 0) {
       self->health_check_source_id = g_timeout_add_seconds(30, check_relay_health, self);
@@ -4469,7 +5223,7 @@ static void on_gift_wrap_batch(uint64_t subid, const uint64_t *note_keys, guint 
   storage_ndb_end_query(txn);
 
   if (processed > 0) {
-    g_message("[GIFTWRAP] Processed %u gift wrap event(s) via DM service", processed);
+    g_debug("[GIFTWRAP] Processed %u gift wrap event(s) via DM service", processed);
   }
 }
 
@@ -4500,7 +5254,7 @@ static void start_gift_wrap_subscription(GnostrMainWindow *self) {
   /* Set user pubkey on DM service for message direction detection */
   if (self->dm_service) {
     gnostr_dm_service_set_user_pubkey(self->dm_service, pubkey_hex);
-    g_message("[DM_SERVICE] Set user pubkey %.8s... on DM service", pubkey_hex);
+    g_debug("[DM_SERVICE] Set user pubkey %.8s... on DM service", pubkey_hex);
   }
 
   /* Build filter JSON for kind 1059 with p-tag matching current user.
@@ -4516,8 +5270,8 @@ static void start_gift_wrap_subscription(GnostrMainWindow *self) {
   self->sub_gift_wrap = gn_ndb_subscribe(filter_json, on_gift_wrap_batch, self, NULL);
 
   if (self->sub_gift_wrap > 0) {
-    g_message("[GIFTWRAP] Started subscription for user %.8s... (subid=%" G_GUINT64_FORMAT ")",
-              pubkey_hex, (guint64)self->sub_gift_wrap);
+    g_debug("[GIFTWRAP] Started subscription for user %.8s... (subid=%" G_GUINT64_FORMAT ")",
+            pubkey_hex, (guint64)self->sub_gift_wrap);
   } else {
     g_warning("[GIFTWRAP] Failed to subscribe to gift wrap events");
   }
@@ -4531,8 +5285,8 @@ static void stop_gift_wrap_subscription(GnostrMainWindow *self) {
 
   if (self->sub_gift_wrap > 0) {
     gn_ndb_unsubscribe(self->sub_gift_wrap);
-    g_message("[GIFTWRAP] Stopped subscription (subid=%" G_GUINT64_FORMAT ")",
-              (guint64)self->sub_gift_wrap);
+    g_debug("[GIFTWRAP] Stopped subscription (subid=%" G_GUINT64_FORMAT ")",
+            (guint64)self->sub_gift_wrap);
     self->sub_gift_wrap = 0;
   }
 

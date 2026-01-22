@@ -134,8 +134,13 @@ bool nostr_relay_is_connected(NostrRelay *relay) {
     bool connected = false;
     if (relay->connection && relay->connection->priv) {
         nsync_mu_lock(&relay->connection->priv->mutex);
-        /* Check if websocket is actually alive, not just if connection object exists */
-        connected = (relay->connection->priv->wsi != NULL);
+        /* In test mode, connection is always "connected" since we bypass real network */
+        if (relay->connection->priv->test_mode) {
+            connected = true;
+        } else {
+            /* Check if websocket is actually alive, not just if connection object exists */
+            connected = (relay->connection->priv->wsi != NULL);
+        }
         nsync_mu_unlock(&relay->connection->priv->mutex);
     }
     nsync_mu_unlock(&relay->priv->mutex);
@@ -738,13 +743,15 @@ NostrSubscription *nostr_relay_prepare_subscription(NostrRelay *relay, GoContext
     // Generate id string from counter
     char idbuf[32];
     snprintf(idbuf, sizeof(idbuf), "%lld", (long long)subscription_id);
+    free(subscription->priv->id);  // free the id set by nostr_subscription_new
     subscription->priv->id = strdup(idbuf);
-    // Context with cancel for this subscription
-    CancelContextResult subctx = go_context_with_cancel(ctx);
-    subscription->context = subctx.context;
-    subscription->priv->cancel = subctx.cancel;
+    // Note: nostr_subscription_new() already creates a context derived from the relay's
+    // connection context and starts the lifecycle thread. We don't create a new context
+    // here to avoid orphaning the lifecycle thread which is waiting on the original context.
+    // The ctx parameter is accepted for API compatibility but the subscription's context
+    // will be derived from relay->priv->connection_context as set up in nostr_subscription_new().
+    (void)ctx; // Mark as intentionally unused
     subscription->priv->match = nostr_filters_match; // Function for matching filters with events
-    // Lifecycle watcher is already started in nostr_subscription_new()
 
     // Store subscription in relay subscriptions map
     go_hash_map_insert_int(relay->subscriptions, subscription->priv->counter, subscription);

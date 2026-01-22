@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <object class="GtkWindow" id="about_window">
+    <property name="modal">true</property>
+    <property name="title">About GNostr</property>
+    <property name="default-width">400</property>
+    <property name="default-height">450</property>
+    <property name="resizable">false</property>
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">0</property>
+
+        <!-- Header bar -->
+        <child>
+          <object class="GtkHeaderBar">
+            <property name="show-title-buttons">true</property>
+            <child type="title">
+              <object class="GtkLabel">
+                <property name="label">About</property>
+                <style>
+                  <class name="title"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Main content -->
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="spacing">24</property>
+            <property name="margin-start">32</property>
+            <property name="margin-end">32</property>
+            <property name="margin-top">32</property>
+            <property name="margin-bottom">32</property>
+            <property name="vexpand">true</property>
+            <property name="valign">center</property>
+
+            <!-- App icon placeholder -->
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">applications-internet-symbolic</property>
+                <property name="pixel-size">96</property>
+                <property name="halign">center</property>
+              </object>
+            </child>
+
+            <!-- App name -->
+            <child>
+              <object class="GtkLabel">
+                <property name="label">GNostr</property>
+                <property name="halign">center</property>
+                <style>
+                  <class name="title-1"/>
+                </style>
+              </object>
+            </child>
+
+            <!-- Version -->
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Version 0.1.0</property>
+                <property name="halign">center</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+
+            <!-- Description -->
+            <child>
+              <object class="GtkLabel">
+                <property name="label">A Nostr client for GNOME</property>
+                <property name="halign">center</property>
+                <property name="wrap">true</property>
+                <property name="justify">center</property>
+              </object>
+            </child>
+
+            <!-- Credits section -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <property name="margin-top">16</property>
+
+                <!-- Credits header -->
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">Credits</property>
+                    <property name="halign">center</property>
+                    <style>
+                      <class name="title-4"/>
+                    </style>
+                  </object>
+                </child>
+
+                <!-- Biz -->
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">2</property>
+                    <property name="halign">center</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Biz</property>
+                        <property name="halign">center</property>
+                        <style>
+                          <class name="heading"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Creator &amp; Lead Developer</property>
+                        <property name="halign">center</property>
+                        <style>
+                          <class name="dim-label"/>
+                          <class name="caption"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Claude -->
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">2</property>
+                    <property name="halign">center</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Claude (Anthropic)</property>
+                        <property name="halign">center</property>
+                        <style>
+                          <class name="heading"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">AI Pair Programmer</property>
+                        <property name="halign">center</property>
+                        <style>
+                          <class name="dim-label"/>
+                          <class name="caption"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Chatty-G -->
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">2</property>
+                    <property name="halign">center</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Chatty-G (OpenAI)</property>
+                        <property name="halign">center</property>
+                        <style>
+                          <class name="heading"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">AI Contributor</property>
+                        <property name="halign">center</property>
+                        <style>
+                          <class name="dim-label"/>
+                          <class name="caption"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- License -->
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Licensed under the MIT License</property>
+                <property name="halign">center</property>
+                <property name="margin-top">16</property>
+                <style>
+                  <class name="dim-label"/>
+                  <class name="caption"/>
+                </style>
+              </object>
+            </child>
+
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>

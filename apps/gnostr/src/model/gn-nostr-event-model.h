@@ -78,6 +78,13 @@ void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count);
  * Items added outside the visible range will skip their fade-in animation. */
 void gn_nostr_event_model_set_visible_range(GnNostrEventModel *self, guint start, guint end);
 
+/* nostrc-yi2: Calm timeline - scroll position awareness.
+ * When user is scrolled down reading, new items are deferred to avoid jarring auto-scroll.
+ * A "N new notes" indicator is shown instead; clicking it flushes deferred items. */
+void gn_nostr_event_model_set_user_at_top(GnNostrEventModel *self, gboolean at_top);
+guint gn_nostr_event_model_get_pending_count(GnNostrEventModel *self);
+void gn_nostr_event_model_flush_pending(GnNostrEventModel *self);
+
 G_END_DECLS
 
 #endif

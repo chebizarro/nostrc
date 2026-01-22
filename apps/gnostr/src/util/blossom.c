@@ -1,3 +1,5 @@
+#define G_LOG_DOMAIN "gnostr-blossom"
+
 /**
  * gnostr Blossom Service Implementation
  *
@@ -1176,8 +1178,8 @@ static void on_fallback_upload_complete(GnostrBlossomBlob *blob, GError *error, 
                                      ctx->server_urls[ctx->current_index],
                                      error->message);
     g_ptr_array_add(ctx->errors, err_msg);
-    g_message("Blossom upload to %s failed: %s",
-              ctx->server_urls[ctx->current_index], error->message);
+    g_debug("Blossom upload to %s failed: %s",
+            ctx->server_urls[ctx->current_index], error->message);
   }
 
   ctx->current_index++;
@@ -1220,8 +1222,8 @@ static void try_next_server(FallbackUploadContext *ctx) {
   }
 
   const char *server_url = ctx->server_urls[ctx->current_index];
-  g_message("Blossom: trying upload to server %zu/%zu: %s",
-            ctx->current_index + 1, ctx->n_servers, server_url);
+  g_debug("Blossom: trying upload to server %zu/%zu: %s",
+          ctx->current_index + 1, ctx->n_servers, server_url);
 
   gnostr_blossom_upload_async(server_url, ctx->file_path, ctx->mime_type,
                                on_fallback_upload_complete, ctx,

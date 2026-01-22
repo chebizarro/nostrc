@@ -2,6 +2,7 @@
 #include "gnostr-main-window.h"
 #include "note_card_row.h"
 #include "gnostr-zap-dialog.h"
+#include "gnostr-profile-provider.h"
 #include "../model/gn-nostr-event-item.h"
 #include "../storage_ndb.h"
 #include "nostr-event.h"
@@ -107,6 +108,32 @@ static void free_urls_owned(char **urls, size_t count) {
   if (!urls) return;
   for (size_t i = 0; i < count; i++) g_free(urls[i]);
   g_free(urls);
+}
+
+/* NIP-09: Get current user's pubkey as 64-char hex from GSettings.
+ * Returns newly allocated string or NULL if not signed in. Caller must free. */
+static char *get_current_user_pubkey_hex(void) {
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  if (!settings) return NULL;
+  char *npub = g_settings_get_string(settings, "current-npub");
+  g_object_unref(settings);
+  if (!npub || !*npub) {
+    g_free(npub);
+    return NULL;
+  }
+  /* Decode bech32 npub to get raw pubkey bytes */
+  uint8_t pubkey_bytes[32];
+  int decode_result = nostr_nip19_decode_npub(npub, pubkey_bytes);
+  g_free(npub);
+  if (decode_result != 0) {
+    return NULL;
+  }
+  /* Convert to hex string (64 chars + null) */
+  char *hex = g_malloc0(65);
+  for (int i = 0; i < 32; i++) {
+    snprintf(hex + i * 2, 3, "%02x", pubkey_bytes[i]);
+  }
+  return hex;
 }
 
 /* Small TTL cache for embed results */
@@ -766,8 +793,8 @@ static void on_note_card_like_requested_relay(GnostrNoteCardRow *row, const char
   while (widget) {
     widget = gtk_widget_get_parent(widget);
     if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
-      /* Found the main window - like not yet implemented, just log */
-      g_message("[TIMELINE] Like requested for id=%s (not yet implemented)", id_hex ? id_hex : "(null)");
+      /* Found the main window - call the like function */
+      gnostr_main_window_request_like(widget, id_hex, pubkey_hex, row);
       break;
     }
   }
@@ -802,8 +829,40 @@ static void on_note_card_zap_requested_relay(GnostrNoteCardRow *row, const char 
   /* Create and show zap dialog */
   GnostrZapDialog *dialog = gnostr_zap_dialog_new(parent);
 
-  /* Set recipient - TODO: get display name from profile cache */
-  gnostr_zap_dialog_set_recipient(dialog, pubkey_hex, NULL, lud16);
+  /* Look up display name from profile cache, fall back to npub prefix */
+  gchar *display_name = NULL;
+  GnostrProfileMeta *profile = gnostr_profile_provider_get(pubkey_hex);
+  if (profile) {
+    /* Prefer display_name, fall back to name */
+    if (profile->display_name && *profile->display_name) {
+      display_name = g_strdup(profile->display_name);
+    } else if (profile->name && *profile->name) {
+      display_name = g_strdup(profile->name);
+    }
+    gnostr_profile_meta_free(profile);
+  }
+
+  /* Fall back to npub prefix if no profile name available */
+  if (!display_name && pubkey_hex) {
+    /* Convert hex to npub and use first 12 chars + "..." */
+    uint8_t pk32[32];
+    gboolean valid = TRUE;
+    for (int i = 0; i < 32 && valid; i++) {
+      unsigned int b;
+      if (sscanf(pubkey_hex + i*2, "%2x", &b) != 1) valid = FALSE;
+      else pk32[i] = (uint8_t)b;
+    }
+    if (valid) {
+      char *npub = NULL;
+      if (nostr_nip19_encode_npub(pk32, &npub) == 0 && npub) {
+        display_name = g_strdup_printf("%.12s...", npub);
+        free(npub);
+      }
+    }
+  }
+
+  gnostr_zap_dialog_set_recipient(dialog, pubkey_hex, display_name, lud16);
+  g_free(display_name);
 
   /* Set the event being zapped */
   gnostr_zap_dialog_set_event(dialog, id_hex, 1);  /* kind 1 = text note */
@@ -833,6 +892,22 @@ static void on_note_card_view_thread_requested_relay(GnostrNoteCardRow *row, con
       /* Found the main window, call method to show thread view */
       extern void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id);
       gnostr_main_window_view_thread(widget, root_event_id);
+      break;
+    }
+  }
+  (void)user_data;
+}
+
+/* Handler for navigate-to-note signal - opens thread view focused on target note */
+static void on_note_card_navigate_to_note_relay(GnostrNoteCardRow *row, const char *event_id, gpointer user_data) {
+  /* Relay the signal up to the main window - opens thread view focused on the target note */
+  GtkWidget *widget = GTK_WIDGET(row);
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
+      /* Found the main window, call method to show thread view focused on specific note */
+      extern void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id);
+      gnostr_main_window_view_thread(widget, event_id);
       break;
     }
   }
@@ -916,6 +991,22 @@ static void on_note_card_bookmark_toggled_cb(GnostrNoteCardRow *row, const char 
   g_message("[BOOKMARK] Bookmark %s for event %s", is_bookmarked ? "added" : "removed", event_id);
 }
 
+/* NIP-09: Handler for delete-note-requested signal - relay to main window */
+static void on_note_card_delete_note_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+  /* Relay the signal up to the main window */
+  GtkWidget *widget = GTK_WIDGET(row);
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
+      /* Found the main window, call method to delete note */
+      extern void gnostr_main_window_request_delete_note(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
+      gnostr_main_window_request_delete_note(widget, id_hex, pubkey_hex);
+      break;
+    }
+  }
+  (void)user_data;
+}
+
 /* Callback when profile is loaded for an event item - show the row */
 static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
@@ -974,6 +1065,8 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
   g_signal_connect(row, "zap-requested", G_CALLBACK(on_note_card_zap_requested_relay), NULL);
   /* Connect the view-thread-requested signal */
   g_signal_connect(row, "view-thread-requested", G_CALLBACK(on_note_card_view_thread_requested_relay), NULL);
+  /* Connect the navigate-to-note signal (for reply indicator click) */
+  g_signal_connect(row, "navigate-to-note", G_CALLBACK(on_note_card_navigate_to_note_relay), NULL);
   /* Connect the mute-user-requested signal */
   g_signal_connect(row, "mute-user-requested", G_CALLBACK(on_note_card_mute_user_requested_relay), NULL);
   /* Connect the mute-thread-requested signal */
@@ -982,6 +1075,8 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
   g_signal_connect(row, "show-toast", G_CALLBACK(on_note_card_show_toast_relay), NULL);
   /* Connect the bookmark-toggled signal */
   g_signal_connect(row, "bookmark-toggled", G_CALLBACK(on_note_card_bookmark_toggled_cb), NULL);
+  /* Connect the delete-note-requested signal (NIP-09) */
+  g_signal_connect(row, "delete-note-requested", G_CALLBACK(on_note_card_delete_note_requested_relay), NULL);
 
   gtk_list_item_set_child(item, row);
 }
@@ -1256,6 +1351,18 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       if (bookmarks) {
         gboolean is_bookmarked = gnostr_bookmarks_is_bookmarked(bookmarks, id_hex);
         gnostr_note_card_row_set_bookmarked(GNOSTR_NOTE_CARD_ROW(row), is_bookmarked);
+      }
+    }
+
+    /* NIP-09: Check if this is the current user's own note (enables delete option) */
+    if (pubkey && strlen(pubkey) == 64) {
+      gchar *user_pubkey = get_current_user_pubkey_hex();
+      if (user_pubkey) {
+        gboolean is_own = (g_ascii_strcasecmp(pubkey, user_pubkey) == 0);
+        gnostr_note_card_row_set_is_own_note(GNOSTR_NOTE_CARD_ROW(row), is_own);
+        g_free(user_pubkey);
+      } else {
+        gnostr_note_card_row_set_is_own_note(GNOSTR_NOTE_CARD_ROW(row), FALSE);
       }
     }
 

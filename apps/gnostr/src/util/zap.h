@@ -61,6 +61,7 @@ typedef struct {
  */
 typedef struct {
   gchar *id;                /* Receipt event ID */
+  gchar *event_pubkey;      /* Receipt event signing pubkey (for validation) */
   gchar *bolt11;            /* The paid invoice */
   gchar *preimage;          /* Payment preimage (optional) */
   gchar *description;       /* JSON-encoded zap request */
@@ -68,6 +69,7 @@ typedef struct {
   gchar *recipient_pubkey;  /* Zap recipient pubkey (from p tag) */
   gchar *event_id;          /* Zapped event ID (from e tag, optional) */
   gint64 amount_msat;       /* Amount from bolt11 invoice */
+  gint64 zap_request_amount_msat; /* Amount from zap request (for validation) */
   gint64 created_at;        /* Receipt creation timestamp */
 } GnostrZapReceipt;
 

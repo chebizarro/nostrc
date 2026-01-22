@@ -42,6 +42,32 @@ const char *gnostr_composer_get_quote_nostr_uri(GnostrComposer *self);
 gboolean gnostr_composer_is_uploading(GnostrComposer *self);
 void gnostr_composer_cancel_upload(GnostrComposer *self);
 
+/* Media metadata for NIP-92 imeta tags */
+typedef struct {
+  char *url;        /* Uploaded file URL */
+  char *sha256;     /* SHA-256 hash (hex) */
+  char *mime_type;  /* MIME type */
+  gint64 size;      /* File size in bytes */
+} GnostrComposerMedia;
+
+/**
+ * Get the list of uploaded media for this composer session.
+ * Returns a NULL-terminated array of GnostrComposerMedia pointers.
+ * The array and its contents are owned by the composer; do not free.
+ */
+GnostrComposerMedia **gnostr_composer_get_uploaded_media(GnostrComposer *self);
+
+/**
+ * Get the count of uploaded media items.
+ */
+gsize gnostr_composer_get_uploaded_media_count(GnostrComposer *self);
+
+/**
+ * Clear all uploaded media metadata.
+ * Called when composer is cleared after successful post.
+ */
+void gnostr_composer_clear_uploaded_media(GnostrComposer *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_COMPOSER_H */
