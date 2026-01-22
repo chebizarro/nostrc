@@ -471,13 +471,19 @@ static gboolean has_note_key(GnNostrEventModel *self, uint64_t key) {
   return FALSE;
 }
 
-/* Parse NIP-10 tags for threading (best-effort; used on refresh paths that have full event JSON) */
+/* Parse NIP-10 tags for threading (best-effort; used on refresh paths that have full event JSON)
+ * Supports both marked e-tags (root/reply markers) and deprecated positional scheme.
+ * Positional rules: first unmarked e-tag = root, last unmarked e-tag = reply (if different) */
 static void parse_nip10_tags(NostrEvent *evt, char **root_id, char **reply_id) {
   *root_id = NULL;
   *reply_id = NULL;
 
   NostrTags *tags = (NostrTags*)nostr_event_get_tags(evt);
   if (!tags) return;
+
+  /* Track unmarked e-tags for positional fallback */
+  const char *first_unmarked_e = NULL;
+  const char *last_unmarked_e = NULL;
 
   for (size_t i = 0; i < nostr_tags_size(tags); i++) {
     NostrTag *tag = nostr_tags_get(tags, i);
@@ -492,12 +498,27 @@ static void parse_nip10_tags(NostrEvent *evt, char **root_id, char **reply_id) {
     const char *marker = (nostr_tag_size(tag) >= 4) ? nostr_tag_get(tag, 3) : NULL;
 
     if (marker && strcmp(marker, "root") == 0) {
+      g_free(*root_id);
       *root_id = g_strdup(event_id);
     } else if (marker && strcmp(marker, "reply") == 0) {
+      g_free(*reply_id);
       *reply_id = g_strdup(event_id);
-    } else if (!*root_id && i == 0) {
-      *root_id = g_strdup(event_id);
+    } else if (marker == NULL || *marker == '\0') {
+      /* Unmarked e-tag - track for positional fallback */
+      if (!first_unmarked_e) {
+        first_unmarked_e = event_id;
+      }
+      last_unmarked_e = event_id;
     }
+    /* Skip "mention" markers - they don't establish reply hierarchy */
+  }
+
+  /* Apply positional fallback for unmarked e-tags (deprecated NIP-10 scheme) */
+  if (!*root_id && first_unmarked_e) {
+    *root_id = g_strdup(first_unmarked_e);
+  }
+  if (!*reply_id && last_unmarked_e && last_unmarked_e != first_unmarked_e) {
+    *reply_id = g_strdup(last_unmarked_e);
   }
 }
 
