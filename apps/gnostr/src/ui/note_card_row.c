@@ -24,6 +24,7 @@ struct _GnostrNoteCardRow {
   GtkWidget *btn_reply;
   GtkWidget *btn_repost;
   GtkWidget *btn_like;
+  GtkWidget *btn_thread;
   GtkWidget *avatar_box;
   GtkWidget *avatar_initials;
   GtkWidget *avatar_image;
@@ -36,6 +37,9 @@ struct _GnostrNoteCardRow {
   GtkWidget *og_preview_container;
   GtkWidget *actions_box;
   GtkWidget *repost_popover;  /* popover menu for repost/quote options */
+  /* Reply indicator widgets */
+  GtkWidget *reply_indicator_box;
+  GtkWidget *reply_indicator_label;
   // state
   char *avatar_url;
 #ifdef HAVE_SOUP3
@@ -46,7 +50,9 @@ struct _GnostrNoteCardRow {
   guint depth;
   char *id_hex;
   char *root_id;
+  char *parent_id;
   char *pubkey_hex;
+  char *parent_pubkey;
   gint64 created_at;
   guint timestamp_timer_id;
   OgPreviewWidget *og_preview;
@@ -54,6 +60,9 @@ struct _GnostrNoteCardRow {
   char *nip05;
   GtkWidget *nip05_badge;
   GCancellable *nip05_cancellable;
+  /* Reply state */
+  gboolean is_reply;
+  gboolean is_thread_root;
 };
 
 G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
@@ -67,6 +76,7 @@ enum {
   SIGNAL_REPOST_REQUESTED,
   SIGNAL_QUOTE_REQUESTED,
   SIGNAL_LIKE_REQUESTED,
+  SIGNAL_VIEW_THREAD_REQUESTED,
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -113,7 +123,8 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
   self->lbl_display = NULL; self->lbl_handle = NULL; self->lbl_timestamp = NULL; self->content_label = NULL;
   self->media_box = NULL; self->embed_box = NULL; self->og_preview_container = NULL; self->actions_box = NULL;
-  self->btn_repost = NULL; self->btn_like = NULL;
+  self->btn_repost = NULL; self->btn_like = NULL; self->btn_thread = NULL;
+  self->reply_indicator_box = NULL; self->reply_indicator_label = NULL;
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->dispose(obj);
 }
 
@@ -122,7 +133,9 @@ static void gnostr_note_card_row_finalize(GObject *obj) {
   g_clear_pointer(&self->avatar_url, g_free);
   g_clear_pointer(&self->id_hex, g_free);
   g_clear_pointer(&self->root_id, g_free);
+  g_clear_pointer(&self->parent_id, g_free);
   g_clear_pointer(&self->pubkey_hex, g_free);
+  g_clear_pointer(&self->parent_pubkey, g_free);
   g_clear_pointer(&self->nip05, g_free);
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->finalize(obj);
 }
@@ -340,6 +353,18 @@ static void on_like_clicked(GtkButton *btn, gpointer user_data) {
   }
 }
 
+static void on_thread_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (self) {
+    /* Use root_id if available, otherwise use the note's own id as thread root */
+    const char *thread_root = self->root_id ? self->root_id : self->id_hex;
+    if (thread_root) {
+      g_signal_emit(self, signals[SIGNAL_VIEW_THREAD_REQUESTED], 0, thread_root);
+    }
+  }
+}
+
 static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   GtkWidgetClass *wclass = GTK_WIDGET_CLASS(klass);
   GObjectClass *gclass = G_OBJECT_CLASS(klass);
@@ -355,6 +380,9 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_reply);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_repost);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_like);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_thread);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, reply_indicator_box);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, reply_indicator_label);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_box);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_initials);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_image);
@@ -391,6 +419,9 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   signals[SIGNAL_LIKE_REQUESTED] = g_signal_new("like-requested",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
+  signals[SIGNAL_VIEW_THREAD_REQUESTED] = g_signal_new("view-thread-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 1, G_TYPE_STRING);
 }
 
 static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
@@ -436,6 +467,12 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
     g_signal_connect(self->btn_like, "clicked", G_CALLBACK(on_like_clicked), self);
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_like),
                                    GTK_ACCESSIBLE_PROPERTY_LABEL, "Like Note", -1);
+  }
+  /* Connect view thread button */
+  if (GTK_IS_BUTTON(self->btn_thread)) {
+    g_signal_connect(self->btn_thread, "clicked", G_CALLBACK(on_thread_clicked), self);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_thread),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "View Thread", -1);
   }
 #ifdef HAVE_SOUP3
   self->avatar_cancellable = g_cancellable_new();
@@ -886,6 +923,42 @@ void gnostr_note_card_row_set_ids(GnostrNoteCardRow *self, const char *id_hex, c
   g_free(self->id_hex); self->id_hex = g_strdup(id_hex);
   g_free(self->root_id); self->root_id = g_strdup(root_id);
   g_free(self->pubkey_hex); self->pubkey_hex = g_strdup(pubkey_hex);
+}
+
+void gnostr_note_card_row_set_thread_info(GnostrNoteCardRow *self,
+                                           const char *root_id,
+                                           const char *parent_id,
+                                           const char *parent_author_name,
+                                           gboolean is_reply) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  g_free(self->root_id);
+  self->root_id = g_strdup(root_id);
+  g_free(self->parent_id);
+  self->parent_id = g_strdup(parent_id);
+  self->is_reply = is_reply;
+
+  /* Update reply indicator visibility and text */
+  if (GTK_IS_WIDGET(self->reply_indicator_box)) {
+    gtk_widget_set_visible(self->reply_indicator_box, is_reply);
+  }
+
+  if (is_reply && GTK_IS_LABEL(self->reply_indicator_label)) {
+    char *indicator_text = NULL;
+    if (parent_author_name && *parent_author_name) {
+      indicator_text = g_strdup_printf("In reply to %s", parent_author_name);
+    } else {
+      indicator_text = g_strdup("In reply to...");
+    }
+    gtk_label_set_text(GTK_LABEL(self->reply_indicator_label), indicator_text);
+    g_free(indicator_text);
+  }
+
+  /* Show/hide view thread button - visible if this is a reply or has a root */
+  if (GTK_IS_BUTTON(self->btn_thread)) {
+    gboolean show_thread_btn = (is_reply || (root_id != NULL && *root_id));
+    gtk_widget_set_visible(GTK_WIDGET(self->btn_thread), show_thread_btn);
+  }
 }
 
 /* Public helper to set the embed mini-card content */

@@ -18,6 +18,7 @@ G_DECLARE_FINAL_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GNOSTR, NOTE_CARD_
  * "repost-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data)
  * "quote-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data)
  * "like-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data)
+ * "view-thread-requested" (gchar* root_event_id, gpointer user_data)
  */
 
 typedef struct _GnostrNoteCardRow GnostrNoteCardRow;
@@ -35,6 +36,13 @@ void gnostr_note_card_row_set_embed_rich(GnostrNoteCardRow *self, const char *ti
 
 /* NIP-05 verification: set identifier and trigger async verification */
 void gnostr_note_card_row_set_nip05(GnostrNoteCardRow *self, const char *nip05, const char *pubkey_hex);
+
+/* NIP-10 threading: set thread info and update reply indicator */
+void gnostr_note_card_row_set_thread_info(GnostrNoteCardRow *self,
+                                           const char *root_id,
+                                           const char *parent_id,
+                                           const char *parent_author_name,
+                                           gboolean is_reply);
 
 G_END_DECLS
 

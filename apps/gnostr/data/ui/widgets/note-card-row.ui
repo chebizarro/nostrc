@@ -17,6 +17,39 @@
               <class name="note-card"/>
             </style>
 
+            <!-- Reply Indicator (shown when this note is a reply) -->
+            <child>
+              <object class="GtkBox" id="reply_indicator_box">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">4</property>
+                <property name="visible">false</property>
+                <property name="margin-bottom">4</property>
+                <style>
+                  <class name="reply-indicator"/>
+                </style>
+                <child>
+                  <object class="GtkImage" id="reply_indicator_icon">
+                    <property name="icon-name">mail-reply-sender-symbolic</property>
+                    <property name="icon-size">1</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="reply_indicator_label">
+                    <property name="label">In reply to @user</property>
+                    <property name="xalign">0.0</property>
+                    <property name="ellipsize">end</property>
+                    <style>
+                      <class name="dim-label"/>
+                      <class name="reply-to-text"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
             <!-- Header -->
             <child>
               <object class="GtkBox" id="header">
@@ -37,11 +70,17 @@
                         <property name="height-request">36</property>
                         <style>
                           <class name="avatar"/>
+                          <class name="note-avatar"/>
                         </style>
                         <child>
                           <object class="GtkPicture" id="avatar_image">
                             <property name="visible">false</property>
                             <property name="content-fit">cover</property>
+                            <property name="width-request">36</property>
+                            <property name="height-request">36</property>
+                            <style>
+                              <class name="note-avatar-image"/>
+                            </style>
                           </object>
                         </child>
                         <child type="overlay">
@@ -49,6 +88,9 @@
                             <property name="label">AN</property>
                             <property name="xalign">0.5</property>
                             <property name="yalign">0.5</property>
+                            <style>
+                              <class name="avatar-initials"/>
+                            </style>
                           </object>
                         </child>
                       </object>
@@ -161,6 +203,13 @@
                   <object class="GtkButton" id="btn_like">
                     <property name="icon-name">emblem-favorite-symbolic</property>
                     <property name="tooltip-text">Like</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_thread">
+                    <property name="icon-name">view-list-symbolic</property>
+                    <property name="tooltip-text">View thread</property>
+                    <property name="visible">false</property>
                   </object>
                 </child>
                 <child>

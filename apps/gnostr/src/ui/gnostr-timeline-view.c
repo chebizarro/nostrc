@@ -772,6 +772,22 @@ static void on_note_card_like_requested_relay(GnostrNoteCardRow *row, const char
   (void)user_data;
 }
 
+/* Handler for view-thread button - relay to main window */
+static void on_note_card_view_thread_requested_relay(GnostrNoteCardRow *row, const char *root_event_id, gpointer user_data) {
+  /* Relay the signal up to the main window */
+  GtkWidget *widget = GTK_WIDGET(row);
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
+      /* Found the main window, call method to show thread view */
+      extern void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id);
+      gnostr_main_window_view_thread(widget, root_event_id);
+      break;
+    }
+  }
+  (void)user_data;
+}
+
 /* Callback when profile is loaded for an event item - show the row */
 static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
@@ -826,6 +842,8 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
   g_signal_connect(row, "quote-requested", G_CALLBACK(on_note_card_quote_requested_relay), NULL);
   /* Connect the like-requested signal */
   g_signal_connect(row, "like-requested", G_CALLBACK(on_note_card_like_requested_relay), NULL);
+  /* Connect the view-thread-requested signal */
+  g_signal_connect(row, "view-thread-requested", G_CALLBACK(on_note_card_view_thread_requested_relay), NULL);
 
   gtk_list_item_set_child(item, row);
 }
@@ -1000,13 +1018,14 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   }
   
   gchar *display = NULL, *handle = NULL, *ts = NULL, *content = NULL, *root_id = NULL, *avatar_url = NULL;
-  gchar *pubkey = NULL, *id_hex = NULL, *parent_id = NULL;
+  gchar *pubkey = NULL, *id_hex = NULL, *parent_id = NULL, *parent_pubkey = NULL;
   guint depth = 0; gboolean is_reply = FALSE; gint64 created_at = 0;
   
   /* Check if this is a GnNostrEventItem (new model) */
   extern GType gn_nostr_event_item_get_type(void);
   if (G_IS_OBJECT(obj) && G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
     /* NEW: GnNostrEventItem binding */
+    gboolean item_is_reply = FALSE;
     g_object_get(obj,
                  "event-id",      &id_hex,
                  "pubkey",        &pubkey,
@@ -1015,8 +1034,11 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                  "thread-root-id", &root_id,
                  "parent-id",     &parent_id,
                  "reply-depth",   &depth,
+                 "is-reply",      &item_is_reply,
                  NULL);
-    
+
+    is_reply = item_is_reply || (parent_id != NULL);
+
     /* Get profile information */
     GObject *profile = NULL;
     g_object_get(obj, "profile", &profile, NULL);
@@ -1028,7 +1050,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                    NULL);
       g_object_unref(profile);
     }
-    
+
     /* Format timestamp */
     if (created_at > 0) {
       time_t t = (time_t)created_at;
@@ -1037,8 +1059,6 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", tm_info);
       ts = g_strdup(buf);
     }
-    
-    is_reply = depth > 0;
     g_debug("[BIND] GnNostrEventItem: id=%s depth=%u profile=%s", 
             id_hex ? id_hex : "(null)", depth, display ? display : "(none)");
   }
@@ -1075,6 +1095,13 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     gnostr_note_card_row_set_depth(GNOSTR_NOTE_CARD_ROW(row), depth);
     gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), id_hex, root_id, pubkey);
 
+    /* Set NIP-10 thread info (reply indicator, view thread button) */
+    gnostr_note_card_row_set_thread_info(GNOSTR_NOTE_CARD_ROW(row),
+                                          root_id,
+                                          parent_id,
+                                          NULL, /* parent_author_name - will be resolved asynchronously if needed */
+                                          is_reply);
+
     /* Always show row - use fallback display if no profile */
     gtk_widget_set_visible(row, TRUE);
 
@@ -1100,7 +1127,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
            id_hex ? id_hex : "(null)",
            root_id ? root_id : "(null)");
   g_free(display); g_free(handle); g_free(ts); g_free(content); g_free(root_id); g_free(id_hex);
-  g_free(avatar_url); /* Fix memory leak */
+  g_free(avatar_url); g_free(parent_id); g_free(parent_pubkey);
 
   /* Model-level profile gating handles profile fetching; no bind-time enqueue here. */
   g_free(pubkey);
