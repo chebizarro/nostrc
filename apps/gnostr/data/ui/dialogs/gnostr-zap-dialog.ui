@@ -1,0 +1,322 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnostrZapDialog" parent="GtkWindow">
+    <property name="modal">true</property>
+    <property name="title">Send Zap</property>
+    <property name="default-width">380</property>
+    <property name="default-height">500</property>
+    <property name="resizable">false</property>
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">0</property>
+
+        <!-- Header bar -->
+        <child>
+          <object class="GtkHeaderBar">
+            <property name="show-title-buttons">false</property>
+            <child type="start">
+              <object class="GtkButton" id="btn_cancel">
+                <property name="label">Cancel</property>
+                <signal name="clicked" handler="on_cancel_clicked"/>
+              </object>
+            </child>
+            <child type="title">
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">weather-storm-symbolic</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">Send Zap</property>
+                    <style>
+                      <class name="title"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Toast revealer -->
+        <child>
+          <object class="GtkRevealer" id="toast_revealer">
+            <property name="reveal-child">false</property>
+            <property name="transition-type">slide-down</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <property name="margin-top">8</property>
+                <property name="margin-bottom">8</property>
+                <style>
+                  <class name="app-notification"/>
+                </style>
+                <child>
+                  <object class="GtkLabel" id="toast_label">
+                    <property name="label"></property>
+                    <property name="hexpand">true</property>
+                    <property name="xalign">0</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Main content -->
+        <child>
+          <object class="GtkBox" id="content_box">
+            <property name="orientation">vertical</property>
+            <property name="spacing">16</property>
+            <property name="margin-start">24</property>
+            <property name="margin-end">24</property>
+            <property name="margin-top">16</property>
+            <property name="margin-bottom">24</property>
+            <property name="vexpand">true</property>
+
+            <!-- Recipient info -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">8</property>
+                <property name="halign">center</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">Zapping</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_recipient">
+                    <property name="label">-</property>
+                    <property name="ellipsize">middle</property>
+                    <property name="max-width-chars">30</property>
+                    <style>
+                      <class name="title-3"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_lud16">
+                    <property name="label">-</property>
+                    <property name="ellipsize">end</property>
+                    <style>
+                      <class name="dim-label"/>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Preset amount buttons -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">8</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">Amount (sats)</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="heading"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkFlowBox" id="preset_flow">
+                    <property name="selection-mode">single</property>
+                    <property name="homogeneous">true</property>
+                    <property name="max-children-per-line">4</property>
+                    <property name="min-children-per-line">3</property>
+                    <property name="row-spacing">8</property>
+                    <property name="column-spacing">8</property>
+                    <child>
+                      <object class="GtkToggleButton" id="btn_21">
+                        <property name="label">21</property>
+                        <style>
+                          <class name="zap-amount"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkToggleButton" id="btn_100">
+                        <property name="label">100</property>
+                        <style>
+                          <class name="zap-amount"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkToggleButton" id="btn_500">
+                        <property name="label">500</property>
+                        <style>
+                          <class name="zap-amount"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkToggleButton" id="btn_1k">
+                        <property name="label">1K</property>
+                        <property name="active">true</property>
+                        <style>
+                          <class name="zap-amount"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkToggleButton" id="btn_5k">
+                        <property name="label">5K</property>
+                        <style>
+                          <class name="zap-amount"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkToggleButton" id="btn_10k">
+                        <property name="label">10K</property>
+                        <style>
+                          <class name="zap-amount"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkToggleButton" id="btn_21k">
+                        <property name="label">21K</property>
+                        <style>
+                          <class name="zap-amount"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkToggleButton" id="btn_custom">
+                        <property name="label">Custom</property>
+                        <style>
+                          <class name="zap-amount"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Custom amount entry (shown when Custom is selected) -->
+            <child>
+              <object class="GtkBox" id="custom_amount_box">
+                <property name="orientation">vertical</property>
+                <property name="spacing">4</property>
+                <property name="visible">false</property>
+                <child>
+                  <object class="GtkEntry" id="entry_custom_amount">
+                    <property name="placeholder-text">Enter amount in sats</property>
+                    <property name="input-purpose">number</property>
+                    <property name="halign">center</property>
+                    <property name="width-chars">15</property>
+                    <style>
+                      <class name="zap-custom-entry"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Comment entry -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">8</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">Comment (optional)</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkEntry" id="entry_comment">
+                    <property name="placeholder-text">Add a message...</property>
+                    <property name="max-length">280</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Spacer -->
+            <child>
+              <object class="GtkBox">
+                <property name="vexpand">true</property>
+              </object>
+            </child>
+
+            <!-- Status/error display -->
+            <child>
+              <object class="GtkBox" id="status_box">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <property name="halign">center</property>
+                <property name="visible">false</property>
+                <child>
+                  <object class="GtkSpinner" id="spinner">
+                    <property name="spinning">true</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_status">
+                    <property name="label">Processing...</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Zap button -->
+            <child>
+              <object class="GtkButton" id="btn_zap">
+                <property name="halign">center</property>
+                <signal name="clicked" handler="on_zap_clicked"/>
+                <style>
+                  <class name="suggested-action"/>
+                  <class name="pill"/>
+                </style>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">8</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">weather-storm-symbolic</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="lbl_zap_button">
+                        <property name="label">Zap 1,000 sats</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+          </object>
+        </child>
+
+      </object>
+    </child>
+  </template>
+</interface>

@@ -9,6 +9,7 @@
 #include "gnostr-avatar-cache.h"
 #include "../util/nip05.h"
 #include "../util/imeta.h"
+#include "../util/zap.h"
 #include "../storage_ndb.h"
 #include <nostr/nip19/nip19.h>
 #ifdef HAVE_SOUP3
@@ -29,6 +30,8 @@ struct _GnostrNoteCardRow {
   GtkWidget *btn_reply;
   GtkWidget *btn_repost;
   GtkWidget *btn_like;
+  GtkWidget *btn_zap;
+  GtkWidget *lbl_zap_count;
   GtkWidget *btn_bookmark;
   GtkWidget *btn_thread;
   GtkWidget *avatar_box;
@@ -74,6 +77,10 @@ struct _GnostrNoteCardRow {
   gboolean is_thread_root;
   /* Bookmark state */
   gboolean is_bookmarked;
+  /* Zap state */
+  gint64 zap_total_msat;
+  guint zap_count;
+  gchar *author_lud16;  /* Author's lightning address from profile */
 };
 
 G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
@@ -87,6 +94,7 @@ enum {
   SIGNAL_REPOST_REQUESTED,
   SIGNAL_QUOTE_REQUESTED,
   SIGNAL_LIKE_REQUESTED,
+  SIGNAL_ZAP_REQUESTED,
   SIGNAL_VIEW_THREAD_REQUESTED,
   SIGNAL_MUTE_USER_REQUESTED,
   SIGNAL_MUTE_THREAD_REQUESTED,
@@ -157,6 +165,7 @@ static void gnostr_note_card_row_finalize(GObject *obj) {
   g_clear_pointer(&self->pubkey_hex, g_free);
   g_clear_pointer(&self->parent_pubkey, g_free);
   g_clear_pointer(&self->nip05, g_free);
+  g_clear_pointer(&self->author_lud16, g_free);
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->finalize(obj);
 }
 
@@ -590,6 +599,16 @@ static void on_like_clicked(GtkButton *btn, gpointer user_data) {
   }
 }
 
+static void on_zap_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (self && self->id_hex && self->pubkey_hex) {
+    /* Emit zap requested signal with event_id, pubkey, and lud16 if available */
+    g_signal_emit(self, signals[SIGNAL_ZAP_REQUESTED], 0,
+                  self->id_hex, self->pubkey_hex, self->author_lud16);
+  }
+}
+
 static void on_bookmark_clicked(GtkButton *btn, gpointer user_data) {
   GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
   (void)btn;
@@ -636,6 +655,8 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_reply);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_repost);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_like);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_zap);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_zap_count);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_bookmark);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_thread);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, reply_indicator_box);
@@ -676,6 +697,9 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   signals[SIGNAL_LIKE_REQUESTED] = g_signal_new("like-requested",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
+  signals[SIGNAL_ZAP_REQUESTED] = g_signal_new("zap-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 3, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
   signals[SIGNAL_VIEW_THREAD_REQUESTED] = g_signal_new("view-thread-requested",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 1, G_TYPE_STRING);
@@ -736,6 +760,12 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
     g_signal_connect(self->btn_like, "clicked", G_CALLBACK(on_like_clicked), self);
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_like),
                                    GTK_ACCESSIBLE_PROPERTY_LABEL, "Like Note", -1);
+  }
+  /* Connect zap button */
+  if (GTK_IS_BUTTON(self->btn_zap)) {
+    g_signal_connect(self->btn_zap, "clicked", G_CALLBACK(on_zap_clicked), self);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_zap),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Zap Note", -1);
   }
   /* Connect bookmark button */
   if (GTK_IS_BUTTON(self->btn_bookmark)) {
@@ -1682,5 +1712,44 @@ void gnostr_note_card_row_set_bookmarked(GnostrNoteCardRow *self, gboolean is_bo
   if (GTK_IS_BUTTON(self->btn_bookmark)) {
     gtk_button_set_icon_name(GTK_BUTTON(self->btn_bookmark),
       is_bookmarked ? "user-bookmarks-symbolic" : "bookmark-new-symbolic");
+  }
+}
+
+/* Set author's lightning address for NIP-57 zaps */
+void gnostr_note_card_row_set_author_lud16(GnostrNoteCardRow *self, const char *lud16) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  g_clear_pointer(&self->author_lud16, g_free);
+  self->author_lud16 = g_strdup(lud16);
+
+  /* Update zap button sensitivity based on whether lud16 is available */
+  if (GTK_IS_BUTTON(self->btn_zap)) {
+    gboolean can_zap = (lud16 != NULL && *lud16 != '\0');
+    gtk_widget_set_sensitive(GTK_WIDGET(self->btn_zap), can_zap);
+    if (!can_zap) {
+      gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_zap), "User has no lightning address");
+    } else {
+      gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_zap), "Zap");
+    }
+  }
+}
+
+/* Update zap statistics display */
+void gnostr_note_card_row_set_zap_stats(GnostrNoteCardRow *self, guint zap_count, gint64 total_msat) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  self->zap_count = zap_count;
+  self->zap_total_msat = total_msat;
+
+  /* Update the zap count label */
+  if (GTK_IS_LABEL(self->lbl_zap_count)) {
+    if (zap_count > 0) {
+      gchar *formatted = gnostr_zap_format_amount(total_msat);
+      gtk_label_set_text(GTK_LABEL(self->lbl_zap_count), formatted);
+      gtk_widget_set_visible(self->lbl_zap_count, TRUE);
+      g_free(formatted);
+    } else {
+      gtk_widget_set_visible(self->lbl_zap_count, FALSE);
+    }
   }
 }

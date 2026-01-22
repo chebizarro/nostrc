@@ -39,7 +39,6 @@
 #include "../util/relay_info.h"
 /* NIP-51 mute list */
 #include "../util/mute_list.h"
-#include "gnostr-mute-list.h"
 #include "gnostr-login.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
@@ -1250,17 +1249,6 @@ static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   gtk_window_present(win);
 }
 
-/* Handler for "Mute List" menu action */
-static void on_show_mute_list_activated(GSimpleAction *action, GVariant *param, gpointer user_data) {
-  (void)action; (void)param;
-  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-
-  /* Create and show the mute list dialog */
-  GnostrMuteListDialog *dialog = gnostr_mute_list_dialog_new(GTK_WINDOW(self));
-  gtk_window_present(GTK_WINDOW(dialog));
-}
-
 /* Forward declaration for updating login UI state */
 static void update_login_ui_state(GnostrMainWindow *self);
 
@@ -2289,15 +2277,9 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   /* Build app menu for header button */
   if (self->btn_menu) {
     GMenu *menu = g_menu_new();
-    g_menu_append(menu, "Mute List", "win.show-mute-list");
     g_menu_append(menu, "Quit", "app.quit");
     gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(self->btn_menu), G_MENU_MODEL(menu));
     g_object_unref(menu);
-
-    /* Register action for showing mute list */
-    GSimpleAction *mute_list_action = g_simple_action_new("show-mute-list", NULL);
-    g_signal_connect(mute_list_action, "activate", G_CALLBACK(on_show_mute_list_activated), self);
-    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(mute_list_action));
   }
   g_message("connecting post-requested handler on composer=%p", (void*)self->composer);
   g_signal_connect(self->composer, "post-requested",

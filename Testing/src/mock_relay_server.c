@@ -108,8 +108,18 @@ static bool filter_matches_event_json(const char *filter_json, const char *event
 
 /* Protocol definitions */
 static const struct lws_protocols protocols[] = {
-    { "http", mock_http_callback, 0, 0 },
-    { "nostr", mock_ws_callback, sizeof(MockConnection*), MAX_MSG_SIZE },
+    {
+        .name = "http",
+        .callback = mock_http_callback,
+        .per_session_data_size = 0,
+        .rx_buffer_size = 0,
+    },
+    {
+        .name = "nostr",
+        .callback = mock_ws_callback,
+        .per_session_data_size = sizeof(MockConnection*),
+        .rx_buffer_size = MAX_MSG_SIZE,
+    },
     LWS_PROTOCOL_LIST_TERM
 };
 

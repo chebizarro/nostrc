@@ -18,6 +18,7 @@ G_DECLARE_FINAL_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GNOSTR, NOTE_CARD_
  * "repost-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data)
  * "quote-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data)
  * "like-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data)
+ * "zap-requested" (gchar* id_hex, gchar* pubkey_hex, gchar* lud16, gpointer user_data)
  * "view-thread-requested" (gchar* root_event_id, gpointer user_data)
  * "mute-user-requested" (gchar* pubkey_hex, gpointer user_data)
  * "mute-thread-requested" (gchar* event_id_hex, gpointer user_data) - mutes the thread root event
@@ -63,6 +64,12 @@ void gnostr_note_card_row_set_thread_info(GnostrNoteCardRow *self,
 
 /* Bookmark state: update the bookmark button icon based on state */
 void gnostr_note_card_row_set_bookmarked(GnostrNoteCardRow *self, gboolean is_bookmarked);
+
+/* NIP-57 Zaps: set author's lightning address for zapping */
+void gnostr_note_card_row_set_author_lud16(GnostrNoteCardRow *self, const char *lud16);
+
+/* NIP-57 Zaps: update zap statistics display */
+void gnostr_note_card_row_set_zap_stats(GnostrNoteCardRow *self, guint zap_count, gint64 total_msat);
 
 G_END_DECLS
 

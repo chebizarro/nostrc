@@ -15,6 +15,7 @@
     <file>ui/dialogs/gnostr-relay-manager.ui</file>
     <file>ui/dialogs/gnostr-profile-edit.ui</file>
     <file>ui/dialogs/gnostr-nwc-connect.ui</file>
+    <file>ui/dialogs/gnostr-zap-dialog.ui</file>
     <file>ui/dialogs/gnostr-mute-list.ui</file>
     <file>ui/dialogs/gnostr-login.ui</file>
     <file>ui/styles/gnostr.css</file>

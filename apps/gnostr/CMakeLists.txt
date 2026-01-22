@@ -255,6 +255,36 @@ if (BUILD_TESTING)
   _gnostr_apply_sanitizers(gnostr-test-relays)
   add_test(NAME gnostr-test-relays COMMAND gnostr-test-relays)
 
+  # Blossom (BUD-01/BUD-02) unit tests
+  add_executable(gnostr-test-blossom tests/test_blossom.c)
+  target_compile_features(gnostr-test-blossom PRIVATE c_std_11)
+  target_include_directories(gnostr-test-blossom PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/libnostr/include)
+  target_sources(gnostr-test-blossom PRIVATE
+    src/util/blossom.c)
+  target_link_libraries(gnostr-test-blossom PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB)
+  _gnostr_apply_sanitizers(gnostr-test-blossom)
+  add_test(NAME gnostr-test-blossom COMMAND gnostr-test-blossom)
+  set_tests_properties(gnostr-test-blossom PROPERTIES
+    TIMEOUT 30
+    LABELS "blossom;unit;gnostr")
+
+  # Blossom settings (kind 10063) unit tests
+  add_executable(gnostr-test-blossom-settings tests/test_blossom_settings.c)
+  target_compile_features(gnostr-test-blossom-settings PRIVATE c_std_11)
+  target_include_directories(gnostr-test-blossom-settings PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/libnostr/include)
+  target_sources(gnostr-test-blossom-settings PRIVATE
+    src/util/blossom_settings.c)
+  target_link_libraries(gnostr-test-blossom-settings PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB)
+  _gnostr_apply_sanitizers(gnostr-test-blossom-settings)
+  add_test(NAME gnostr-test-blossom-settings COMMAND gnostr-test-blossom-settings)
+  set_tests_properties(gnostr-test-blossom-settings PROPERTIES
+    TIMEOUT 30
+    LABELS "blossom;settings;unit;gnostr")
+
   # NIP-46 E2E tests
   add_executable(gnostr-test-nip46-e2e tests/test_nip46_e2e.c)
   target_compile_features(gnostr-test-nip46-e2e PRIVATE c_std_11)

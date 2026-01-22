@@ -1,6 +1,7 @@
 #include "gnostr-timeline-view.h"
 #include "gnostr-main-window.h"
 #include "note_card_row.h"
+#include "gnostr-zap-dialog.h"
 #include "../model/gn-nostr-event-item.h"
 #include "../storage_ndb.h"
 #include "nostr-event.h"
@@ -773,6 +774,49 @@ static void on_note_card_like_requested_relay(GnostrNoteCardRow *row, const char
   (void)user_data;
 }
 
+/* Handler for zap button - show zap dialog */
+static void on_note_card_zap_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, const char *lud16, gpointer user_data) {
+  (void)user_data;
+
+  if (!id_hex || !pubkey_hex) {
+    g_warning("[TIMELINE] Zap requested but missing id or pubkey");
+    return;
+  }
+
+  if (!lud16 || !*lud16) {
+    g_message("[TIMELINE] Zap requested but user has no lightning address");
+    return;
+  }
+
+  /* Find the parent window */
+  GtkWidget *widget = GTK_WIDGET(row);
+  GtkWindow *parent = NULL;
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && GTK_IS_WINDOW(widget)) {
+      parent = GTK_WINDOW(widget);
+      break;
+    }
+  }
+
+  /* Create and show zap dialog */
+  GnostrZapDialog *dialog = gnostr_zap_dialog_new(parent);
+
+  /* Set recipient - TODO: get display name from profile cache */
+  gnostr_zap_dialog_set_recipient(dialog, pubkey_hex, NULL, lud16);
+
+  /* Set the event being zapped */
+  gnostr_zap_dialog_set_event(dialog, id_hex, 1);  /* kind 1 = text note */
+
+  /* TODO: Set relays from config */
+  const gchar *default_relays[] = {"wss://relay.damus.io", "wss://nos.lol", NULL};
+  gnostr_zap_dialog_set_relays(dialog, default_relays);
+
+  gtk_window_present(GTK_WINDOW(dialog));
+
+  g_message("[TIMELINE] Zap dialog opened for id=%s lud16=%s", id_hex, lud16);
+}
+
 /* Handler for view-thread button - relay to main window */
 static void on_note_card_view_thread_requested_relay(GnostrNoteCardRow *row, const char *root_event_id, gpointer user_data) {
   /* Relay the signal up to the main window */
@@ -891,6 +935,8 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
   g_signal_connect(row, "quote-requested", G_CALLBACK(on_note_card_quote_requested_relay), NULL);
   /* Connect the like-requested signal */
   g_signal_connect(row, "like-requested", G_CALLBACK(on_note_card_like_requested_relay), NULL);
+  /* Connect the zap-requested signal */
+  g_signal_connect(row, "zap-requested", G_CALLBACK(on_note_card_zap_requested_relay), NULL);
   /* Connect the view-thread-requested signal */
   g_signal_connect(row, "view-thread-requested", G_CALLBACK(on_note_card_view_thread_requested_relay), NULL);
   /* Connect the mute-user-requested signal */
