@@ -3,90 +3,405 @@
   <requires lib="gtk" version="4.0"/>
   <object class="GtkWindow" id="relay_manager_window">
     <property name="title">Relays</property>
-    <property name="default-width">520</property>
-    <property name="default-height">420</property>
+    <property name="default-width">700</property>
+    <property name="default-height">520</property>
     <child>
-      <object class="GtkBox">
-        <property name="orientation">vertical</property>
-        <property name="spacing">12</property>
-        <property name="margin-start">12</property>
-        <property name="margin-end">12</property>
-        <property name="margin-top">12</property>
-        <property name="margin-bottom">12</property>
+      <object class="GtkPaned" id="main_paned">
+        <property name="orientation">horizontal</property>
+        <property name="position">320</property>
+        <property name="shrink-start-child">false</property>
+        <property name="shrink-end-child">false</property>
 
+        <!-- Left pane: relay list -->
         <child>
           <object class="GtkBox">
-            <property name="spacing">6</property>
+            <property name="orientation">vertical</property>
+            <property name="spacing">12</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">6</property>
+            <property name="margin-top">12</property>
+            <property name="margin-bottom">12</property>
+
             <child>
-              <object class="GtkEntry" id="relay_entry">
+              <object class="GtkBox">
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkEntry" id="relay_entry">
+                    <property name="hexpand">true</property>
+                    <property name="placeholder-text">wss://example.com</property>
+                    <property name="tooltip-text">Enter a relay URL (ws:// or wss://). Press Enter to add.</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_add">
+                    <property name="label">_Add</property>
+                    <property name="use-underline">true</property>
+                    <property name="tooltip-text">Add relay (Enter in field)</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_remove">
+                    <property name="label">_Remove</property>
+                    <property name="use-underline">true</property>
+                    <property name="tooltip-text">Remove selected (Delete)</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkLabel" id="shortcut_hint">
+                <property name="xalign">0.0</property>
+                <property name="use-markup">true</property>
+                <property name="wrap">true</property>
+                <property name="label">&lt;small&gt;Click a relay to view NIP-11 info. &lt;b&gt;Enter&lt;/b&gt; to add, &lt;b&gt;Delete&lt;/b&gt; to remove.&lt;/small&gt;</property>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkScrolledWindow">
                 <property name="hexpand">true</property>
-                <property name="placeholder-text">wss://example.com</property>
-                <property name="tooltip-text">Enter a relay URL (ws:// or wss://). Press Enter to add.</property>
+                <property name="vexpand">true</property>
+                <child>
+                  <object class="GtkListView" id="relay_list"/>
+                </child>
               </object>
             </child>
+
             <child>
-              <object class="GtkButton" id="btn_add">
-                <property name="label">_Add</property>
-                <property name="use-underline">true</property>
-                <property name="tooltip-text">Add relay (Enter in field)</property>
+              <object class="GtkLabel" id="status_label">
+                <property name="xalign">0.0</property>
+                <property name="use-markup">true</property>
+                <property name="wrap">false</property>
+                <property name="label">&lt;small&gt;0 relays&lt;/small&gt;</property>
               </object>
             </child>
+
             <child>
-              <object class="GtkButton" id="btn_remove">
-                <property name="label">_Remove</property>
-                <property name="use-underline">true</property>
-                <property name="tooltip-text">Remove selected (Delete)</property>
+              <object class="GtkBox">
+                <property name="halign">end</property>
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkButton" id="btn_cancel">
+                    <property name="label">_Cancel</property>
+                    <property name="use-underline">true</property>
+                    <property name="tooltip-text">Close without saving (Esc)</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_save">
+                    <property name="label">_Save</property>
+                    <property name="use-underline">true</property>
+                    <property name="tooltip-text">Save relays (Ctrl+Enter)</property>
+                  </object>
+                </child>
               </object>
             </child>
+
           </object>
         </child>
 
-        <child>
-          <object class="GtkLabel" id="shortcut_hint">
-            <property name="xalign">0.0</property>
-            <property name="use-markup">true</property>
-            <property name="wrap">true</property>
-            <property name="label">&lt;small&gt;Tips: Press &lt;b&gt;Enter&lt;/b&gt; to add, &lt;b&gt;Delete&lt;/b&gt; to remove, &lt;b&gt;Ctrl+Enter&lt;/b&gt; to save, &lt;b&gt;Esc&lt;/b&gt; to close.&lt;/small&gt;</property>
-          </object>
-        </child>
-
-        <child>
-          <object class="GtkScrolledWindow">
-            <property name="hexpand">true</property>
-            <property name="vexpand">true</property>
-            <child>
-              <object class="GtkListView" id="relay_list"/>
-            </child>
-          </object>
-        </child>
-
-        <child>
-          <object class="GtkLabel" id="status_label">
-            <property name="xalign">0.0</property>
-            <property name="use-markup">true</property>
-            <property name="wrap">false</property>
-            <property name="label">&lt;small&gt;0 relays • Saved&lt;/small&gt;</property>
-          </object>
-        </child>
-
+        <!-- Right pane: relay info (NIP-11) -->
         <child>
           <object class="GtkBox">
-            <property name="halign">end</property>
-            <property name="spacing">6</property>
+            <property name="orientation">vertical</property>
+            <property name="spacing">8</property>
+            <property name="margin-start">6</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">12</property>
+            <property name="margin-bottom">12</property>
+
             <child>
-              <object class="GtkButton" id="btn_cancel">
-                <property name="label">_Cancel</property>
-                <property name="use-underline">true</property>
-                <property name="tooltip-text">Close without saving (Esc)</property>
+              <object class="GtkLabel" id="info_header">
+                <property name="xalign">0.0</property>
+                <property name="use-markup">true</property>
+                <property name="label">&lt;b&gt;Relay Information&lt;/b&gt;</property>
               </object>
             </child>
+
             <child>
-              <object class="GtkButton" id="btn_save">
-                <property name="label">_Save</property>
-                <property name="use-underline">true</property>
-                <property name="tooltip-text">Save relays (Ctrl+Enter)</property>
+              <object class="GtkSeparator">
+                <property name="orientation">horizontal</property>
               </object>
             </child>
+
+            <child>
+              <object class="GtkStack" id="info_stack">
+                <property name="vexpand">true</property>
+                <property name="hexpand">true</property>
+
+                <!-- Empty state -->
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="name">empty</property>
+                    <property name="child">
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="valign">center</property>
+                        <property name="halign">center</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">Select a relay to view its information</property>
+                            <property name="css-classes">dim-label</property>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+
+                <!-- Loading state -->
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="name">loading</property>
+                    <property name="child">
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="valign">center</property>
+                        <property name="halign">center</property>
+                        <property name="spacing">12</property>
+                        <child>
+                          <object class="GtkSpinner" id="info_spinner">
+                            <property name="spinning">true</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">Fetching relay info...</property>
+                            <property name="css-classes">dim-label</property>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+
+                <!-- Error state -->
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="name">error</property>
+                    <property name="child">
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="valign">center</property>
+                        <property name="halign">center</property>
+                        <property name="spacing">8</property>
+                        <child>
+                          <object class="GtkLabel" id="info_error_label">
+                            <property name="label">Failed to fetch relay info</property>
+                            <property name="wrap">true</property>
+                            <property name="css-classes">error</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="btn_retry">
+                            <property name="label">_Retry</property>
+                            <property name="use-underline">true</property>
+                            <property name="halign">center</property>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+
+                <!-- Info display -->
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="name">info</property>
+                    <property name="child">
+                      <object class="GtkScrolledWindow">
+                        <property name="vexpand">true</property>
+                        <property name="hexpand">true</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">12</property>
+                            <property name="margin-start">4</property>
+                            <property name="margin-end">4</property>
+                            <property name="margin-top">4</property>
+                            <property name="margin-bottom">4</property>
+
+                            <!-- Name -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">2</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="xalign">0.0</property>
+                                    <property name="use-markup">true</property>
+                                    <property name="label">&lt;b&gt;Name&lt;/b&gt;</property>
+                                    <property name="css-classes">dim-label</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="info_name">
+                                    <property name="xalign">0.0</property>
+                                    <property name="wrap">true</property>
+                                    <property name="selectable">true</property>
+                                    <property name="label">-</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Description -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">2</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="xalign">0.0</property>
+                                    <property name="use-markup">true</property>
+                                    <property name="label">&lt;b&gt;Description&lt;/b&gt;</property>
+                                    <property name="css-classes">dim-label</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="info_description">
+                                    <property name="xalign">0.0</property>
+                                    <property name="wrap">true</property>
+                                    <property name="selectable">true</property>
+                                    <property name="label">-</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Software -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">2</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="xalign">0.0</property>
+                                    <property name="use-markup">true</property>
+                                    <property name="label">&lt;b&gt;Software&lt;/b&gt;</property>
+                                    <property name="css-classes">dim-label</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="info_software">
+                                    <property name="xalign">0.0</property>
+                                    <property name="wrap">true</property>
+                                    <property name="selectable">true</property>
+                                    <property name="label">-</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Contact -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">2</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="xalign">0.0</property>
+                                    <property name="use-markup">true</property>
+                                    <property name="label">&lt;b&gt;Contact&lt;/b&gt;</property>
+                                    <property name="css-classes">dim-label</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="info_contact">
+                                    <property name="xalign">0.0</property>
+                                    <property name="wrap">true</property>
+                                    <property name="selectable">true</property>
+                                    <property name="label">-</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Supported NIPs -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">2</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="xalign">0.0</property>
+                                    <property name="use-markup">true</property>
+                                    <property name="label">&lt;b&gt;Supported NIPs&lt;/b&gt;</property>
+                                    <property name="css-classes">dim-label</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="info_nips">
+                                    <property name="xalign">0.0</property>
+                                    <property name="wrap">true</property>
+                                    <property name="selectable">true</property>
+                                    <property name="label">-</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Limitations -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">2</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="xalign">0.0</property>
+                                    <property name="use-markup">true</property>
+                                    <property name="label">&lt;b&gt;Limitations&lt;/b&gt;</property>
+                                    <property name="css-classes">dim-label</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="info_limitations">
+                                    <property name="xalign">0.0</property>
+                                    <property name="wrap">true</property>
+                                    <property name="selectable">true</property>
+                                    <property name="label">-</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Admin Pubkey -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">2</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="xalign">0.0</property>
+                                    <property name="use-markup">true</property>
+                                    <property name="label">&lt;b&gt;Admin Pubkey&lt;/b&gt;</property>
+                                    <property name="css-classes">dim-label</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="info_pubkey">
+                                    <property name="xalign">0.0</property>
+                                    <property name="wrap">true</property>
+                                    <property name="wrap-mode">char</property>
+                                    <property name="selectable">true</property>
+                                    <property name="label">-</property>
+                                    <property name="css-classes">monospace</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+
+              </object>
+            </child>
+
           </object>
         </child>
 

@@ -34,6 +34,8 @@
 #include "json.h"
 /* Relays helpers */
 #include "../util/relays.h"
+/* NIP-11 relay information */
+#include "../util/relay_info.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -434,11 +436,365 @@ static void settings_on_close_clicked(GtkButton *btn, gpointer user_data) {
   if (GTK_IS_WINDOW(win)) gtk_window_close(win);
 }
 
+/* ---- Relay Manager Dialog with NIP-11 support ---- */
+
+/* Forward declarations for relay manager */
+typedef struct _RelayManagerCtx RelayManagerCtx;
+static void relay_manager_fetch_info(RelayManagerCtx *ctx, const gchar *url);
+
+struct _RelayManagerCtx {
+  GtkWindow *window;
+  GtkBuilder *builder;
+  GtkStringList *relay_model;
+  GtkSingleSelection *selection;
+  GCancellable *fetch_cancellable;
+  gchar *selected_url;  /* Currently selected relay URL */
+  gboolean modified;    /* Track if relays list was modified */
+};
+
+static void relay_manager_ctx_free(RelayManagerCtx *ctx) {
+  if (!ctx) return;
+  if (ctx->fetch_cancellable) {
+    g_cancellable_cancel(ctx->fetch_cancellable);
+    g_object_unref(ctx->fetch_cancellable);
+  }
+  g_free(ctx->selected_url);
+  g_free(ctx);
+}
+
+static void relay_manager_update_status(RelayManagerCtx *ctx) {
+  GtkLabel *status = GTK_LABEL(gtk_builder_get_object(ctx->builder, "status_label"));
+  if (!status) return;
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(ctx->relay_model));
+  gchar *text = g_strdup_printf("<small>%u relay%s%s</small>", n, n == 1 ? "" : "s",
+                                 ctx->modified ? " (modified)" : "");
+  gtk_label_set_markup(status, text);
+  g_free(text);
+}
+
+static void relay_manager_populate_info(RelayManagerCtx *ctx, GnostrRelayInfo *info) {
+  GtkStack *stack = GTK_STACK(gtk_builder_get_object(ctx->builder, "info_stack"));
+  if (!stack) return;
+
+  GtkLabel *name = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_name"));
+  GtkLabel *desc = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_description"));
+  GtkLabel *software = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_software"));
+  GtkLabel *contact = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_contact"));
+  GtkLabel *nips = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_nips"));
+  GtkLabel *limitations = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_limitations"));
+  GtkLabel *pubkey = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_pubkey"));
+
+  if (name) gtk_label_set_text(name, info->name ? info->name : "(not provided)");
+  if (desc) gtk_label_set_text(desc, info->description ? info->description : "(not provided)");
+
+  if (software) {
+    gchar *sw_text = info->software && info->version
+      ? g_strdup_printf("%s v%s", info->software, info->version)
+      : (info->software ? g_strdup(info->software) : g_strdup("(not provided)"));
+    gtk_label_set_text(software, sw_text);
+    g_free(sw_text);
+  }
+
+  if (contact) gtk_label_set_text(contact, info->contact ? info->contact : "(not provided)");
+
+  if (nips) {
+    gchar *nips_str = gnostr_relay_info_format_nips(info);
+    gtk_label_set_text(nips, nips_str);
+    g_free(nips_str);
+  }
+
+  if (limitations) {
+    gchar *lim_str = gnostr_relay_info_format_limitations(info);
+    gtk_label_set_text(limitations, lim_str);
+    g_free(lim_str);
+  }
+
+  if (pubkey) gtk_label_set_text(pubkey, info->pubkey ? info->pubkey : "(not provided)");
+
+  gtk_stack_set_visible_child_name(stack, "info");
+}
+
+static void on_relay_info_fetched(GObject *source, GAsyncResult *result, gpointer user_data) {
+  (void)source;
+  RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
+  if (!ctx || !ctx->builder) return;
+
+  GError *err = NULL;
+  GnostrRelayInfo *info = gnostr_relay_info_fetch_finish(result, &err);
+
+  GtkStack *stack = GTK_STACK(gtk_builder_get_object(ctx->builder, "info_stack"));
+  if (!stack) {
+    if (info) gnostr_relay_info_free(info);
+    g_clear_error(&err);
+    return;
+  }
+
+  if (err) {
+    GtkLabel *error_label = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_error_label"));
+    if (error_label) {
+      gchar *msg = g_strdup_printf("Failed to fetch relay info:\n%s", err->message);
+      gtk_label_set_text(error_label, msg);
+      g_free(msg);
+    }
+    gtk_stack_set_visible_child_name(stack, "error");
+    g_clear_error(&err);
+    return;
+  }
+
+  if (!info) {
+    GtkLabel *error_label = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_error_label"));
+    if (error_label) gtk_label_set_text(error_label, "Failed to parse relay info");
+    gtk_stack_set_visible_child_name(stack, "error");
+    return;
+  }
+
+  relay_manager_populate_info(ctx, info);
+  gnostr_relay_info_free(info);
+}
+
+static void relay_manager_fetch_info(RelayManagerCtx *ctx, const gchar *url) {
+  if (!ctx || !url) return;
+
+  /* Cancel any pending fetch */
+  if (ctx->fetch_cancellable) {
+    g_cancellable_cancel(ctx->fetch_cancellable);
+    g_object_unref(ctx->fetch_cancellable);
+  }
+  ctx->fetch_cancellable = g_cancellable_new();
+
+  g_free(ctx->selected_url);
+  ctx->selected_url = g_strdup(url);
+
+  GtkStack *stack = GTK_STACK(gtk_builder_get_object(ctx->builder, "info_stack"));
+  if (stack) gtk_stack_set_visible_child_name(stack, "loading");
+
+  gnostr_relay_info_fetch_async(url, ctx->fetch_cancellable, on_relay_info_fetched, ctx);
+}
+
+static void on_relay_selection_changed(GtkSelectionModel *model, guint position, guint n_items, gpointer user_data) {
+  (void)position; (void)n_items;
+  RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
+  if (!ctx) return;
+
+  GtkSingleSelection *sel = GTK_SINGLE_SELECTION(model);
+  guint selected_pos = gtk_single_selection_get_selected(sel);
+  GtkStringObject *obj = GTK_STRING_OBJECT(gtk_single_selection_get_selected_item(sel));
+
+  if (obj) {
+    const gchar *url = gtk_string_object_get_string(obj);
+    if (url && *url) {
+      relay_manager_fetch_info(ctx, url);
+    }
+  } else {
+    GtkStack *stack = GTK_STACK(gtk_builder_get_object(ctx->builder, "info_stack"));
+    if (stack) gtk_stack_set_visible_child_name(stack, "empty");
+  }
+}
+
+static void relay_manager_on_retry_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
+  if (!ctx || !ctx->selected_url) return;
+  relay_manager_fetch_info(ctx, ctx->selected_url);
+}
+
+static void relay_manager_on_add_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
+  if (!ctx || !ctx->builder) return;
+
+  GtkEntry *entry = GTK_ENTRY(gtk_builder_get_object(ctx->builder, "relay_entry"));
+  if (!entry) return;
+
+  const gchar *text = gtk_editable_get_text(GTK_EDITABLE(entry));
+  if (!text || !*text) return;
+
+  gchar *normalized = gnostr_normalize_relay_url(text);
+  if (!normalized) {
+    /* Invalid URL */
+    return;
+  }
+
+  /* Check for duplicates */
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(ctx->relay_model));
+  for (guint i = 0; i < n; i++) {
+    GtkStringObject *obj = GTK_STRING_OBJECT(g_list_model_get_item(G_LIST_MODEL(ctx->relay_model), i));
+    if (obj) {
+      const gchar *existing = gtk_string_object_get_string(obj);
+      if (existing && g_strcmp0(existing, normalized) == 0) {
+        g_object_unref(obj);
+        g_free(normalized);
+        return; /* Already exists */
+      }
+      g_object_unref(obj);
+    }
+  }
+
+  gtk_string_list_append(ctx->relay_model, normalized);
+  gtk_editable_set_text(GTK_EDITABLE(entry), "");
+  ctx->modified = TRUE;
+  relay_manager_update_status(ctx);
+  g_free(normalized);
+}
+
+static void relay_manager_on_entry_activate(GtkEntry *entry, gpointer user_data) {
+  relay_manager_on_add_clicked(NULL, user_data);
+}
+
+static void relay_manager_on_remove_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
+  if (!ctx || !ctx->selection) return;
+
+  guint pos = gtk_single_selection_get_selected(ctx->selection);
+  if (pos == GTK_INVALID_LIST_POSITION) return;
+
+  gtk_string_list_remove(ctx->relay_model, pos);
+  ctx->modified = TRUE;
+  relay_manager_update_status(ctx);
+
+  /* Clear info pane */
+  GtkStack *stack = GTK_STACK(gtk_builder_get_object(ctx->builder, "info_stack"));
+  if (stack) gtk_stack_set_visible_child_name(stack, "empty");
+}
+
+static void relay_manager_on_save_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
+  if (!ctx) return;
+
+  /* Collect all relay URLs */
+  GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(ctx->relay_model));
+  for (guint i = 0; i < n; i++) {
+    GtkStringObject *obj = GTK_STRING_OBJECT(g_list_model_get_item(G_LIST_MODEL(ctx->relay_model), i));
+    if (obj) {
+      const gchar *url = gtk_string_object_get_string(obj);
+      if (url && *url) g_ptr_array_add(urls, g_strdup(url));
+      g_object_unref(obj);
+    }
+  }
+
+  gnostr_save_relays_from(urls);
+  g_ptr_array_free(urls, TRUE);
+
+  ctx->modified = FALSE;
+  relay_manager_update_status(ctx);
+  gtk_window_close(ctx->window);
+}
+
+static void relay_manager_on_cancel_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
+  if (!ctx || !ctx->window) return;
+  gtk_window_close(ctx->window);
+}
+
+static void relay_manager_on_destroy(GtkWidget *widget, gpointer user_data) {
+  (void)widget;
+  RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
+  if (ctx && ctx->builder) {
+    g_object_unref(ctx->builder);
+    ctx->builder = NULL;
+  }
+  relay_manager_ctx_free(ctx);
+}
+
+static void relay_manager_setup_factory_cb(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+  (void)factory; (void)user_data;
+  GtkWidget *label = gtk_label_new(NULL);
+  gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+  gtk_list_item_set_child(list_item, label);
+}
+
+static void relay_manager_bind_factory_cb(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+  (void)factory; (void)user_data;
+  GtkWidget *label = gtk_list_item_get_child(list_item);
+  GtkStringObject *obj = GTK_STRING_OBJECT(gtk_list_item_get_item(list_item));
+  if (label && obj) {
+    gtk_label_set_text(GTK_LABEL(label), gtk_string_object_get_string(obj));
+  }
+}
+
 static void on_relays_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  show_toast(self, "Relays settings (stub)");
+
+  GtkBuilder *builder = gtk_builder_new_from_resource("/org/gnostr/ui/ui/dialogs/gnostr-relay-manager.ui");
+  if (!builder) {
+    show_toast(self, "Relay manager UI missing");
+    return;
+  }
+
+  GtkWindow *win = GTK_WINDOW(gtk_builder_get_object(builder, "relay_manager_window"));
+  if (!win) {
+    g_object_unref(builder);
+    show_toast(self, "Relay manager window missing");
+    return;
+  }
+
+  gtk_window_set_transient_for(win, GTK_WINDOW(self));
+  gtk_window_set_modal(win, TRUE);
+
+  /* Create context */
+  RelayManagerCtx *ctx = g_new0(RelayManagerCtx, 1);
+  ctx->window = win;
+  ctx->builder = builder;
+  ctx->modified = FALSE;
+
+  /* Create relay list model */
+  ctx->relay_model = gtk_string_list_new(NULL);
+
+  /* Load saved relays */
+  GPtrArray *saved = g_ptr_array_new_with_free_func(g_free);
+  gnostr_load_relays_into(saved);
+  for (guint i = 0; i < saved->len; i++) {
+    const gchar *url = g_ptr_array_index(saved, i);
+    if (url && *url) gtk_string_list_append(ctx->relay_model, url);
+  }
+  g_ptr_array_free(saved, TRUE);
+
+  /* Setup selection model */
+  ctx->selection = gtk_single_selection_new(G_LIST_MODEL(ctx->relay_model));
+  gtk_single_selection_set_autoselect(ctx->selection, FALSE);
+  gtk_single_selection_set_can_unselect(ctx->selection, TRUE);
+
+  /* Setup list view with factory */
+  GtkListView *list_view = GTK_LIST_VIEW(gtk_builder_get_object(builder, "relay_list"));
+  if (list_view) {
+    GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(factory, "setup", G_CALLBACK(relay_manager_setup_factory_cb), NULL);
+    g_signal_connect(factory, "bind", G_CALLBACK(relay_manager_bind_factory_cb), NULL);
+    gtk_list_view_set_factory(list_view, factory);
+    gtk_list_view_set_model(list_view, GTK_SELECTION_MODEL(ctx->selection));
+    g_object_unref(factory);
+  }
+
+  /* Connect selection change signal */
+  g_signal_connect(ctx->selection, "selection-changed", G_CALLBACK(on_relay_selection_changed), ctx);
+
+  /* Wire buttons */
+  GtkWidget *btn_add = GTK_WIDGET(gtk_builder_get_object(builder, "btn_add"));
+  GtkWidget *btn_remove = GTK_WIDGET(gtk_builder_get_object(builder, "btn_remove"));
+  GtkWidget *btn_save = GTK_WIDGET(gtk_builder_get_object(builder, "btn_save"));
+  GtkWidget *btn_cancel = GTK_WIDGET(gtk_builder_get_object(builder, "btn_cancel"));
+  GtkWidget *btn_retry = GTK_WIDGET(gtk_builder_get_object(builder, "btn_retry"));
+  GtkWidget *relay_entry = GTK_WIDGET(gtk_builder_get_object(builder, "relay_entry"));
+
+  if (btn_add) g_signal_connect(btn_add, "clicked", G_CALLBACK(relay_manager_on_add_clicked), ctx);
+  if (btn_remove) g_signal_connect(btn_remove, "clicked", G_CALLBACK(relay_manager_on_remove_clicked), ctx);
+  if (btn_save) g_signal_connect(btn_save, "clicked", G_CALLBACK(relay_manager_on_save_clicked), ctx);
+  if (btn_cancel) g_signal_connect(btn_cancel, "clicked", G_CALLBACK(relay_manager_on_cancel_clicked), ctx);
+  if (btn_retry) g_signal_connect(btn_retry, "clicked", G_CALLBACK(relay_manager_on_retry_clicked), ctx);
+  if (relay_entry) g_signal_connect(relay_entry, "activate", G_CALLBACK(relay_manager_on_entry_activate), ctx);
+
+  /* Update status and cleanup on destroy */
+  relay_manager_update_status(ctx);
+  g_signal_connect(win, "destroy", G_CALLBACK(relay_manager_on_destroy), ctx);
+
+  gtk_window_present(win);
 }
 
 static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
