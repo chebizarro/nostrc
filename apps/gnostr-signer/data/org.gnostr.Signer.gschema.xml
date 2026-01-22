@@ -1,35 +1,132 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
   <schema id="org.gnostr.Signer" path="/org/gnostr/Signer/">
+
+    <!-- Identity Settings -->
+    <key name="default-identity" type="s">
+      <default>''</default>
+      <summary>Default identity id</summary>
+      <description>Identifier (npub) for the default/active identity (non-sensitive).</description>
+    </key>
+
+    <key name="identity-labels" type="a{ss}">
+      <default>{}</default>
+      <summary>Identity labels</summary>
+      <description>Map of npub to display label for each identity.</description>
+    </key>
+
+    <!-- UI Settings -->
     <key name="theme" type="s">
       <default>'system'</default>
       <summary>Preferred theme</summary>
       <description>Theme preference: 'system', 'light', or 'dark'.</description>
     </key>
+
+    <key name="window-width" type="i">
+      <default>920</default>
+      <summary>Window width</summary>
+      <description>Last window width in pixels.</description>
+    </key>
+
+    <key name="window-height" type="i">
+      <default>640</default>
+      <summary>Window height</summary>
+      <description>Last window height in pixels.</description>
+    </key>
+
+    <key name="window-maximized" type="b">
+      <default>false</default>
+      <summary>Window maximized</summary>
+      <description>Whether the window was maximized.</description>
+    </key>
+
+    <!-- Security Settings -->
     <key name="lock-timeout-sec" type="i">
       <default>300</default>
       <summary>Auto-lock timeout</summary>
-      <description>Seconds of inactivity before locking the signer UI and keys.</description>
+      <description>Seconds of inactivity before locking the signer UI and keys. 0 disables auto-lock.</description>
     </key>
-    <key name="tor-socks" type="s">
-      <default>''</default>
-      <summary>Tor SOCKS proxy</summary>
-      <description>Socks proxy URI for Tor (optional), non-sensitive.</description>
-    </key>
+
     <key name="remember-approvals" type="b">
       <default>false</default>
       <summary>Remember approvals</summary>
       <description>Whether to remember app approvals according to ACL policies.</description>
     </key>
-    <key name="default-identity" type="s">
-      <default>''</default>
-      <summary>Default identity id</summary>
-      <description>Identifier for the default identity (non-sensitive).</description>
+
+    <key name="approval-ttl-hours" type="i">
+      <default>24</default>
+      <summary>Approval TTL hours</summary>
+      <description>Hours to remember an approval decision. 0 means forever.</description>
     </key>
+
+    <key name="require-confirmation-kinds" type="as">
+      <default>['4', '30023']</default>
+      <summary>Kinds requiring confirmation</summary>
+      <description>Event kinds that always require user confirmation (e.g., DMs, long-form).</description>
+    </key>
+
+    <!-- Network Settings -->
+    <key name="tor-socks" type="s">
+      <default>''</default>
+      <summary>Tor SOCKS proxy</summary>
+      <description>SOCKS5 proxy URI for Tor (e.g., socks5://127.0.0.1:9050).</description>
+    </key>
+
+    <key name="use-tor-for-relays" type="b">
+      <default>false</default>
+      <summary>Use Tor for relays</summary>
+      <description>Route all relay connections through Tor proxy.</description>
+    </key>
+
+    <key name="bootstrap-relays" type="as">
+      <default>['wss://relay.damus.io', 'wss://relay.nostr.band', 'wss://nos.lol']</default>
+      <summary>Bootstrap relays</summary>
+      <description>Initial relays to connect to before fetching user's relay list.</description>
+    </key>
+
+    <!-- NIP-46 Bunker Settings -->
     <key name="bunker-enabled" type="b">
       <default>false</default>
       <summary>Enable NIP-46 bunker</summary>
       <description>Expose remote signer interface as per NIP-46.</description>
     </key>
+
+    <key name="bunker-relays" type="as">
+      <default>[]</default>
+      <summary>Bunker relays</summary>
+      <description>Relays to listen on for NIP-46 bunker requests.</description>
+    </key>
+
+    <key name="bunker-allowed-pubkeys" type="as">
+      <default>[]</default>
+      <summary>Allowed bunker pubkeys</summary>
+      <description>Public keys allowed to connect to this bunker (empty = all).</description>
+    </key>
+
+    <key name="bunker-allowed-methods" type="as">
+      <default>['get_public_key', 'sign_event', 'nip04_encrypt', 'nip04_decrypt', 'nip44_encrypt', 'nip44_decrypt']</default>
+      <summary>Allowed bunker methods</summary>
+      <description>NIP-46 methods clients are allowed to call.</description>
+    </key>
+
+    <key name="bunker-auto-approve-kinds" type="as">
+      <default>['1', '6', '7']</default>
+      <summary>Auto-approve event kinds</summary>
+      <description>Event kinds to auto-approve without prompting (notes, reposts, reactions).</description>
+    </key>
+
+    <!-- Logging Settings -->
+    <key name="log-signing-requests" type="b">
+      <default>true</default>
+      <summary>Log signing requests</summary>
+      <description>Keep an audit log of signing requests.</description>
+    </key>
+
+    <key name="log-retention-days" type="i">
+      <default>30</default>
+      <summary>Log retention days</summary>
+      <description>Days to keep signing logs. 0 keeps forever.</description>
+    </key>
+
   </schema>
 </schemalist>

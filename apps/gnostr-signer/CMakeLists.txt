@@ -42,8 +42,22 @@ target_compile_definitions(${APP_SIGNER_BIN} PRIVATE
   APP_ID="${APP_SIGNER_FLATPAK_ID}" APP_NAME="${APP_SIGNER_NAME}" APP_RESOURCE_PATH="/org/gnostr/signer")
 # NIP-55L core headers for owner/key APIs used by the UI
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip55l/include)
+# NIP-46 core headers for bunker service
+target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip46/include)
+# NIP-19 for bech32 encoding
+target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip19/include)
+# libnostr core for keys.h
+target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/libnostr/include)
 # Link against core to resolve owner APIs
 target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA nostr_nip55l_core nip04)
+# Link NIP-46 core for bunker service
+if (TARGET nostr_nip46_core)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE nostr_nip46_core)
+endif()
+# Link NIP-19 for bech32 encoding
+if (TARGET nip19)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE nip19)
+endif()
 
 # Include project root so we can include gnome/seahorse/secret_store.h from the app
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR})

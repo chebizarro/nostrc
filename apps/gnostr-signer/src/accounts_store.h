@@ -1,28 +1,94 @@
+/* accounts_store.h - Multi-account management for gnostr-signer
+ *
+ * Manages identity metadata (npub, labels) with persistence via INI file.
+ * Actual secret keys are stored via secret_store (libsecret/Keychain).
+ *
+ * Features:
+ * - Multiple identities with labels
+ * - Active identity selection
+ * - Integration with GSettings for persistence
+ */
 #pragma once
 #include <glib.h>
+
+G_BEGIN_DECLS
 
 typedef struct _AccountsStore AccountsStore;
 
 typedef struct {
-  gchar *id;     /* identity selector: key_id or npub */
-  gchar *label;  /* optional display label */
+  gchar *id;           /* identity selector: npub */
+  gchar *label;        /* user-defined display label */
+  gboolean has_secret; /* whether secret key is available in secure storage */
 } AccountEntry;
 
+/* Create a new accounts store */
 AccountsStore *accounts_store_new(void);
+
+/* Free the accounts store */
 void accounts_store_free(AccountsStore *as);
+
+/* Load accounts from disk */
 void accounts_store_load(AccountsStore *as);
+
+/* Save accounts to disk */
 void accounts_store_save(AccountsStore *as);
 
-/* returns FALSE if id already exists */
+/* Add a new account. Returns FALSE if id already exists.
+ * @id: npub identifier
+ * @label: optional display label
+ */
 gboolean accounts_store_add(AccountsStore *as, const gchar *id, const gchar *label);
 
+/* Remove an account by id */
 gboolean accounts_store_remove(AccountsStore *as, const gchar *id);
 
-GPtrArray *accounts_store_list(AccountsStore *as); /* array of AccountEntry*; caller frees fields */
+/* List all accounts.
+ * Returns: GPtrArray of AccountEntry* (caller owns array; use accounts_store_entry_free)
+ */
+GPtrArray *accounts_store_list(AccountsStore *as);
 
+/* Free an account entry */
+void accounts_store_entry_free(AccountEntry *entry);
+
+/* Set the active identity */
 void accounts_store_set_active(AccountsStore *as, const gchar *id);
-/* returns FALSE if no active set; if out_id provided, it's newly allocated */
+
+/* Get the active identity.
+ * Returns FALSE if no active set; if out_id provided, it's newly allocated
+ */
 gboolean accounts_store_get_active(AccountsStore *as, gchar **out_id);
 
 /* Update label for an existing id. Returns FALSE if id not found. */
 gboolean accounts_store_set_label(AccountsStore *as, const gchar *id, const gchar *label);
+
+/* Get the number of accounts */
+guint accounts_store_count(AccountsStore *as);
+
+/* Check if an account exists */
+gboolean accounts_store_exists(AccountsStore *as, const gchar *id);
+
+/* Find account by partial match (for npub search) */
+AccountEntry *accounts_store_find(AccountsStore *as, const gchar *query);
+
+/* Sync with secret store - adds any keys found in secure storage that aren't tracked */
+void accounts_store_sync_with_secrets(AccountsStore *as);
+
+/* Import a key and add to accounts. Returns npub on success, NULL on failure.
+ * @key: nsec or hex private key
+ * @label: optional display label
+ * @out_npub: output npub (caller frees)
+ */
+gboolean accounts_store_import_key(AccountsStore *as, const gchar *key,
+                                   const gchar *label, gchar **out_npub);
+
+/* Generate a new keypair and add to accounts.
+ * @label: optional display label
+ * @out_npub: output npub (caller frees)
+ */
+gboolean accounts_store_generate_key(AccountsStore *as, const gchar *label,
+                                     gchar **out_npub);
+
+/* Get the display name for an account (label if set, else truncated npub) */
+gchar *accounts_store_get_display_name(AccountsStore *as, const gchar *id);
+
+G_END_DECLS

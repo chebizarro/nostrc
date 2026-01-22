@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="SheetUserList" parent="AdwDialog">
+    <property name="title" translatable="yes">User List</property>
+    <property name="content-width">480</property>
+    <property name="content-height">600</property>
+    <child>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="title-widget">
+              <object class="GtkLabel" id="lbl_title">
+                <property name="label" translatable="yes">Manage Users</property>
+              </object>
+            </property>
+            <child type="start">
+              <object class="GtkButton" id="btn_cancel">
+                <property name="label" translatable="yes">Cancel</property>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkButton" id="btn_publish">
+                <property name="label" translatable="yes">Save &amp; Publish</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="spacing">12</property>
+            <property name="margin-top">16</property>
+            <property name="margin-bottom">16</property>
+            <property name="margin-start">16</property>
+            <property name="margin-end">16</property>
+
+            <!-- Add user section -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">8</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">8</property>
+                    <child>
+                      <object class="GtkEntry" id="entry_pubkey">
+                        <property name="placeholder-text" translatable="yes">npub1... or 64-hex pubkey</property>
+                        <property name="hexpand">true</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_add">
+                        <property name="icon-name">list-add-symbolic</property>
+                        <style>
+                          <class name="suggested-action"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkEntry" id="entry_petname">
+                    <property name="placeholder-text" translatable="yes">Petname (optional)</property>
+                    <property name="hexpand">true</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Search and count -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="GtkSearchEntry" id="search_entry">
+                    <property name="placeholder-text" translatable="yes">Search...</property>
+                    <property name="hexpand">true</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_count">
+                    <property name="label">0 users</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- User list -->
+            <child>
+              <object class="GtkScrolledWindow">
+                <property name="vexpand">true</property>
+                <property name="hscrollbar-policy">never</property>
+                <child>
+                  <object class="GtkListBox" id="list_users">
+                    <property name="selection-mode">none</property>
+                    <style>
+                      <class name="boxed-list"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="SheetProfileEditor" parent="AdwDialog">
+    <property name="title" translatable="yes">Edit Profile</property>
+    <property name="content-width">480</property>
+    <property name="content-height">600</property>
+    <child>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="title-widget">
+              <object class="GtkLabel">
+                <property name="label" translatable="yes">Edit Profile</property>
+              </object>
+            </property>
+            <child type="start">
+              <object class="GtkButton" id="btn_cancel">
+                <property name="label" translatable="yes">Cancel</property>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkButton" id="btn_save">
+                <property name="label" translatable="yes">Save</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vexpand">true</property>
+            <child>
+              <object class="AdwClamp">
+                <property name="maximum-size">600</property>
+                <property name="margin-top">16</property>
+                <property name="margin-bottom">16</property>
+                <property name="margin-start">16</property>
+                <property name="margin-end">16</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">16</property>
+
+                    <!-- Identity info -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Public Key:</property>
+                            <style>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="lbl_npub">
+                            <property name="selectable">true</property>
+                            <property name="ellipsize">middle</property>
+                            <property name="hexpand">true</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="monospace"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Basic Info Group -->
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Basic Information</property>
+                        <child>
+                          <object class="AdwEntryRow" id="entry_name">
+                            <property name="title" translatable="yes">Display Name</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwEntryRow" id="entry_about">
+                            <property name="title" translatable="yes">About / Bio</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwEntryRow" id="entry_website">
+                            <property name="title" translatable="yes">Website</property>
+                            <property name="input-hints">GTK_INPUT_HINT_NO_SPELLCHECK</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Images Group -->
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Images</property>
+                        <property name="description" translatable="yes">URLs to your profile images</property>
+                        <child>
+                          <object class="AdwEntryRow" id="entry_picture">
+                            <property name="title" translatable="yes">Avatar URL</property>
+                            <property name="input-hints">GTK_INPUT_HINT_NO_SPELLCHECK</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwEntryRow" id="entry_banner">
+                            <property name="title" translatable="yes">Banner URL</property>
+                            <property name="input-hints">GTK_INPUT_HINT_NO_SPELLCHECK</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Verification Group -->
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Verification &amp; Payments</property>
+                        <child>
+                          <object class="AdwEntryRow" id="entry_nip05">
+                            <property name="title" translatable="yes">NIP-05 Identifier</property>
+                            <property name="input-hints">GTK_INPUT_HINT_NO_SPELLCHECK</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwEntryRow" id="entry_lud16">
+                            <property name="title" translatable="yes">Lightning Address</property>
+                            <property name="input-hints">GTK_INPUT_HINT_NO_SPELLCHECK</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

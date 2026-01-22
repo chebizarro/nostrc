@@ -1,8 +1,14 @@
+/* accounts_store.c - Multi-account management implementation
+ *
+ * Persists account metadata to ~/.config/gnostr-signer/accounts.ini
+ * Integrates with secret_store for secure key operations.
+ */
 #include "accounts_store.h"
+#include "secret_store.h"
 #include <string.h>
 
 struct _AccountsStore {
-  GHashTable *map; /* id -> label */
+  GHashTable *map;   /* id -> label */
   gchar *active;
   gchar *path;
 };
@@ -36,85 +42,133 @@ void accounts_store_free(AccountsStore *as) {
 
 void accounts_store_load(AccountsStore *as) {
   if (!as) return;
+
   GKeyFile *kf = g_key_file_new();
   GError *err = NULL;
+
   if (!g_key_file_load_from_file(kf, as->path, G_KEY_FILE_NONE, &err)) {
     if (err) g_clear_error(&err);
     g_key_file_unref(kf);
     return;
   }
-  /* accounts group */
-  gsize nkeys = 0; gchar **keys = g_key_file_get_keys(kf, "accounts", &nkeys, NULL);
+
+  /* Load accounts group */
+  gsize nkeys = 0;
+  gchar **keys = g_key_file_get_keys(kf, "accounts", &nkeys, NULL);
   for (gsize i = 0; i < nkeys; i++) {
     const gchar *id = keys[i];
     gchar *label = g_key_file_get_string(kf, "accounts", id, NULL);
     g_hash_table_replace(as->map, g_strdup(id), label ? label : g_strdup(""));
   }
   g_strfreev(keys);
+
+  /* Load active state */
   gchar *active = g_key_file_get_string(kf, "state", "active", NULL);
-  if (active) { g_free(as->active); as->active = active; }
+  if (active) {
+    g_free(as->active);
+    as->active = active;
+  }
+
   g_key_file_unref(kf);
 }
 
 void accounts_store_save(AccountsStore *as) {
   if (!as) return;
+
   GKeyFile *kf = g_key_file_new();
-  /* write accounts */
-  GHashTableIter it; gpointer key, val;
+
+  /* Write accounts */
+  GHashTableIter it;
+  gpointer key, val;
   g_hash_table_iter_init(&it, as->map);
   while (g_hash_table_iter_next(&it, &key, &val)) {
     g_key_file_set_string(kf, "accounts", (const gchar*)key, (const gchar*)val);
   }
-  if (as->active) g_key_file_set_string(kf, "state", "active", as->active);
-  gsize len = 0; gchar *data = g_key_file_to_data(kf, &len, NULL);
+
+  /* Write state */
+  if (as->active) {
+    g_key_file_set_string(kf, "state", "active", as->active);
+  }
+
+  /* Save to file */
+  gsize len = 0;
+  gchar *data = g_key_file_to_data(kf, &len, NULL);
   if (data) {
     GError *err = NULL;
     if (!g_file_set_contents(as->path, data, len, &err)) {
-      if (err) { g_warning("accounts_store: save failed: %s", err->message); g_clear_error(&err);}    
+      if (err) {
+        g_warning("accounts_store: save failed: %s", err->message);
+        g_clear_error(&err);
+      }
     }
     g_free(data);
   }
-  g_key_file_unref(kf);
-}
 
-static gboolean exists(AccountsStore *as, const gchar *id) {
-  return g_hash_table_contains(as->map, id);
+  g_key_file_unref(kf);
 }
 
 gboolean accounts_store_add(AccountsStore *as, const gchar *id, const gchar *label) {
   if (!as || !id || !*id) return FALSE;
-  if (exists(as, id)) return FALSE;
+  if (g_hash_table_contains(as->map, id)) return FALSE;
+
   g_hash_table_insert(as->map, g_strdup(id), g_strdup(label ? label : ""));
-  if (!as->active) as->active = g_strdup(id);
+
+  /* Set as active if this is the first account */
+  if (!as->active) {
+    as->active = g_strdup(id);
+  }
+
   return TRUE;
 }
 
 gboolean accounts_store_remove(AccountsStore *as, const gchar *id) {
   if (!as || !id) return FALSE;
+
   gboolean removed = g_hash_table_remove(as->map, id);
+
   if (removed && as->active && g_strcmp0(as->active, id) == 0) {
-    /* pick a new active if any remain */
+    /* Pick a new active if any remain */
     g_clear_pointer(&as->active, g_free);
-    GHashTableIter it; gpointer key=NULL, val=NULL;
+
+    GHashTableIter it;
+    gpointer key = NULL, val = NULL;
     g_hash_table_iter_init(&it, as->map);
     if (g_hash_table_iter_next(&it, &key, &val)) {
       as->active = g_strdup((const gchar*)key);
     }
   }
+
   return removed;
+}
+
+void accounts_store_entry_free(AccountEntry *entry) {
+  if (!entry) return;
+  g_free(entry->id);
+  g_free(entry->label);
+  g_free(entry);
 }
 
 GPtrArray *accounts_store_list(AccountsStore *as) {
   if (!as) return NULL;
-  GPtrArray *arr = g_ptr_array_new();
-  GHashTableIter it; gpointer key, val;
+
+  GPtrArray *arr = g_ptr_array_new_with_free_func((GDestroyNotify)accounts_store_entry_free);
+
+  GHashTableIter it;
+  gpointer key, val;
   g_hash_table_iter_init(&it, as->map);
   while (g_hash_table_iter_next(&it, &key, &val)) {
     AccountEntry *e = g_new0(AccountEntry, 1);
     e->id = g_strdup((const gchar*)key);
     e->label = g_strdup((const gchar*)val);
+
+    /* Check if secret exists */
+    gchar *nsec = NULL;
+    e->has_secret = (secret_store_get_secret(e->id, &nsec) == SECRET_STORE_OK);
+    g_free(nsec);
+
     g_ptr_array_add(arr, e);
   }
+
   return arr;
 }
 
@@ -132,9 +186,151 @@ gboolean accounts_store_get_active(AccountsStore *as, gchar **out_id) {
 
 gboolean accounts_store_set_label(AccountsStore *as, const gchar *id, const gchar *label) {
   if (!as || !id || !*id) return FALSE;
-  gpointer old_val = NULL;
-  if (!g_hash_table_lookup_extended(as->map, id, NULL, &old_val)) return FALSE;
-  /* Replace value with new label */
+
+  if (!g_hash_table_contains(as->map, id)) return FALSE;
+
   g_hash_table_replace(as->map, g_strdup(id), g_strdup(label ? label : ""));
+
+  /* Also update in secret store */
+  secret_store_set_label(id, label);
+
   return TRUE;
+}
+
+guint accounts_store_count(AccountsStore *as) {
+  if (!as) return 0;
+  return g_hash_table_size(as->map);
+}
+
+gboolean accounts_store_exists(AccountsStore *as, const gchar *id) {
+  if (!as || !id) return FALSE;
+  return g_hash_table_contains(as->map, id);
+}
+
+AccountEntry *accounts_store_find(AccountsStore *as, const gchar *query) {
+  if (!as || !query || !*query) return NULL;
+
+  GHashTableIter it;
+  gpointer key, val;
+  g_hash_table_iter_init(&it, as->map);
+  while (g_hash_table_iter_next(&it, &key, &val)) {
+    const gchar *id = (const gchar*)key;
+    const gchar *label = (const gchar*)val;
+
+    /* Match by exact id or partial match */
+    if (g_strcmp0(id, query) == 0 ||
+        (label && g_str_has_prefix(label, query)) ||
+        g_str_has_prefix(id, query)) {
+      AccountEntry *e = g_new0(AccountEntry, 1);
+      e->id = g_strdup(id);
+      e->label = g_strdup(label);
+
+      gchar *nsec = NULL;
+      e->has_secret = (secret_store_get_secret(id, &nsec) == SECRET_STORE_OK);
+      g_free(nsec);
+
+      return e;
+    }
+  }
+
+  return NULL;
+}
+
+void accounts_store_sync_with_secrets(AccountsStore *as) {
+  if (!as) return;
+
+  /* Get all identities from secret storage */
+  GPtrArray *secrets = secret_store_list();
+  if (!secrets) return;
+
+  for (guint i = 0; i < secrets->len; i++) {
+    SecretStoreEntry *se = g_ptr_array_index(secrets, i);
+    if (!se || !se->npub) continue;
+
+    /* Add if not already tracked */
+    if (!g_hash_table_contains(as->map, se->npub)) {
+      g_hash_table_insert(as->map, g_strdup(se->npub),
+                          g_strdup(se->label ? se->label : ""));
+
+      /* Set as active if first */
+      if (!as->active) {
+        as->active = g_strdup(se->npub);
+      }
+    }
+  }
+
+  g_ptr_array_unref(secrets);
+}
+
+gboolean accounts_store_import_key(AccountsStore *as, const gchar *key,
+                                   const gchar *label, gchar **out_npub) {
+  if (!as || !key || !*key) return FALSE;
+  if (out_npub) *out_npub = NULL;
+
+  /* Store in secure storage */
+  SecretStoreResult rc = secret_store_add(key, label, TRUE);
+  if (rc != SECRET_STORE_OK) {
+    g_warning("accounts_store_import_key: secret_store_add failed: %d", rc);
+    return FALSE;
+  }
+
+  /* Get the npub for this key */
+  gchar *npub = NULL;
+  rc = secret_store_get_public_key(NULL, &npub);
+  if (rc != SECRET_STORE_OK || !npub) {
+    g_warning("accounts_store_import_key: could not get npub");
+    return FALSE;
+  }
+
+  /* Add to our tracking */
+  accounts_store_add(as, npub, label);
+
+  if (out_npub) {
+    *out_npub = npub;
+  } else {
+    g_free(npub);
+  }
+
+  return TRUE;
+}
+
+gboolean accounts_store_generate_key(AccountsStore *as, const gchar *label,
+                                     gchar **out_npub) {
+  if (!as) return FALSE;
+  if (out_npub) *out_npub = NULL;
+
+  gchar *npub = NULL;
+  SecretStoreResult rc = secret_store_generate(label, TRUE, &npub);
+  if (rc != SECRET_STORE_OK || !npub) {
+    g_warning("accounts_store_generate_key: secret_store_generate failed: %d", rc);
+    return FALSE;
+  }
+
+  /* Add to our tracking */
+  accounts_store_add(as, npub, label);
+
+  if (out_npub) {
+    *out_npub = npub;
+  } else {
+    g_free(npub);
+  }
+
+  return TRUE;
+}
+
+gchar *accounts_store_get_display_name(AccountsStore *as, const gchar *id) {
+  if (!as || !id) return NULL;
+
+  gpointer label = g_hash_table_lookup(as->map, id);
+  if (label && *(const gchar*)label) {
+    return g_strdup((const gchar*)label);
+  }
+
+  /* Truncate npub for display */
+  gsize len = strlen(id);
+  if (len > 16) {
+    return g_strdup_printf("%.8s...%.4s", id, id + len - 4);
+  }
+
+  return g_strdup(id);
 }
