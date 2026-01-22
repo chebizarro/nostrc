@@ -25,9 +25,40 @@
   border: 1px solid alpha(@theme_fg_color, 0.06);
 }
 
+/* Circular avatar styles */
 .avatar {
   border-radius: 9999px;
   background: alpha(@theme_bg_color, 0.4);
+  overflow: hidden;
+}
+
+.avatar-circle {
+  border-radius: 50%;
+  min-width: 36px;
+  min-height: 36px;
+  overflow: hidden;
+}
+
+.avatar-circle picture,
+.avatar-circle image {
+  border-radius: 50%;
+}
+
+/* Note card avatar specific (36px) */
+.note-avatar {
+  border-radius: 50%;
+  min-width: 36px;
+  min-height: 36px;
+  background: alpha(@theme_bg_color, 0.4);
+  overflow: hidden;
+}
+
+.note-avatar picture {
+  border-radius: 50%;
+}
+
+.note-avatar-image {
+  border-radius: 50%;
 }
 
 /* Profile Pane Styles */
@@ -36,20 +67,73 @@
   border-left: 1px solid alpha(@theme_fg_color, 0.1);
 }
 
+/* Banner with gradient fallback */
 .profile-banner {
-  background: linear-gradient(135deg, alpha(@accent_bg_color, 0.3), alpha(@accent_bg_color, 0.5));
+  background: linear-gradient(
+    135deg,
+    alpha(@accent_bg_color, 0.4) 0%,
+    alpha(@accent_bg_color, 0.6) 50%,
+    alpha(shade(@accent_bg_color, 0.8), 0.5) 100%
+  );
+  min-height: 140px;
 }
 
-.profile-avatar {
-  border-radius: 9999px;
-  background: @theme_bg_color;
+/* Avatar frame with border and shadow */
+.profile-avatar-frame {
+  border-radius: 50%;
   border: 4px solid @theme_bg_color;
+  box-shadow: 0 2px 8px alpha(black, 0.15),
+              0 4px 16px alpha(black, 0.1);
+  background: @theme_bg_color;
+  overflow: hidden;
 }
 
+/* Profile pane avatar (large, 96px) */
+.profile-avatar {
+  border-radius: 50%;
+  background: @theme_bg_color;
+  overflow: hidden;
+}
+
+.profile-avatar picture {
+  border-radius: 50%;
+}
+
+/* Avatar image styling */
+.profile-avatar-image {
+  border-radius: 50%;
+}
+
+/* Avatar background for initials fallback */
+.profile-avatar-bg {
+  border-radius: 50%;
+  background: linear-gradient(
+    135deg,
+    alpha(@accent_bg_color, 0.2) 0%,
+    alpha(@accent_bg_color, 0.35) 100%
+  );
+  min-width: 88px;
+  min-height: 88px;
+}
+
+/* Large circular avatar (for profile) */
+.avatar-circle-large {
+  border-radius: 50%;
+  min-width: 80px;
+  min-height: 80px;
+  overflow: hidden;
+}
+
+.avatar-circle-large picture,
+.avatar-circle-large image {
+  border-radius: 50%;
+}
+
+/* Avatar initials text */
 .profile-avatar-initials {
-  font-size: 28px;
+  font-size: 32px;
   font-weight: 700;
-  color: alpha(@theme_fg_color, 0.7);
+  color: alpha(@theme_fg_color, 0.65);
 }
 
 .profile-name {
@@ -154,6 +238,15 @@
 .dm-avatar {
   border-radius: 9999px;
   background: alpha(@theme_bg_color, 0.4);
+  overflow: hidden;
+}
+
+.dm-avatar picture {
+  border-radius: 50%;
+}
+
+.dm-avatar-image {
+  border-radius: 50%;
 }
 
 .dm-name {
@@ -264,4 +357,24 @@
 .monospace {
   font-family: monospace;
   font-size: 12px;
+}
+
+/* NIP-10 Reply Indicator Styles */
+.reply-indicator {
+  padding: 4px 0;
+}
+
+.reply-to-text {
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* Thread button styling */
+.btn-thread {
+  opacity: 0.7;
+  transition: opacity 150ms ease;
+}
+
+.btn-thread:hover {
+  opacity: 1.0;
 }

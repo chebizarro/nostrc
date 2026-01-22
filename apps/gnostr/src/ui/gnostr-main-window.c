@@ -89,6 +89,8 @@ static void on_avatar_pair_remote_clicked(GtkButton *btn, gpointer user_data);
 static void on_avatar_sign_out_clicked(GtkButton *btn, gpointer user_data);
 static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey_hex, gpointer user_data);
 static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer user_data);
+/* Forward declaration for ESC key handler to close profile sidebar */
+static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data);
 /* Forward declarations for repost/quote signal handlers */
 static void on_note_card_repost_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
 static void on_note_card_quote_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
@@ -1260,21 +1262,26 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
   (void)row;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
-  
-  g_message("[UI] Opening profile pane for %.*s...", 8, pubkey_hex);
-  
+
+  g_message("[UI] Profile click for %.*s...", 8, pubkey_hex);
+
+  /* Check if profile pane is currently visible */
+  gboolean sidebar_visible = gtk_revealer_get_reveal_child(GTK_REVEALER(self->profile_revealer));
+
   /* Check if profile pane is already showing this profile */
   extern const char* gnostr_profile_pane_get_current_pubkey(GnostrProfilePane *pane);
   if (GNOSTR_IS_PROFILE_PANE(self->profile_pane)) {
     const char *current = gnostr_profile_pane_get_current_pubkey(GNOSTR_PROFILE_PANE(self->profile_pane));
-    if (current && strcmp(current, pubkey_hex) == 0) {
-      /* Already showing this profile, just ensure pane is visible */
-      gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), TRUE);
+    if (sidebar_visible && current && strcmp(current, pubkey_hex) == 0) {
+      /* Same profile clicked while sidebar is visible - toggle OFF (close sidebar) */
+      g_debug("[UI] Toggle: closing profile pane (same profile clicked)");
+      gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), FALSE);
       return;
     }
   }
-  
-  /* Show the profile pane */
+
+  /* Different profile or sidebar was closed - show the profile pane */
+  g_debug("[UI] Toggle: showing profile pane for %.*s...", 8, pubkey_hex);
   gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), TRUE);
   
   /* Set the pubkey on the profile pane */
@@ -1321,9 +1328,29 @@ static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer us
   (void)pane;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  
+
   g_debug("[UI] Closing profile pane");
   gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), FALSE);
+}
+
+/* ESC key handler to close profile sidebar */
+static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data) {
+  (void)controller;
+  (void)keycode;
+  (void)state;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return GDK_EVENT_PROPAGATE;
+
+  if (keyval == GDK_KEY_Escape) {
+    /* Close profile sidebar if it's open */
+    if (gtk_revealer_get_reveal_child(GTK_REVEALER(self->profile_revealer))) {
+      g_debug("[UI] ESC pressed: closing profile sidebar");
+      gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), FALSE);
+      return GDK_EVENT_STOP;
+    }
+  }
+
+  return GDK_EVENT_PROPAGATE;
 }
 
 /* Public wrapper for opening profile pane (called from timeline view) */
@@ -1489,6 +1516,32 @@ static void on_note_card_like_requested(GnostrNoteCardRow *row, const char *id_h
             id_hex ? id_hex : "(null)",
             pubkey_hex ? pubkey_hex : "(null)");
   show_toast(self, "Like functionality coming soon!");
+}
+
+/* Public wrapper for viewing a thread (called from timeline view) */
+void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id) {
+  if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  if (!root_event_id || strlen(root_event_id) != 64) {
+    g_warning("[THREAD] Invalid root event ID for thread view");
+    return;
+  }
+
+  g_message("[THREAD] View thread requested for root=%s", root_event_id);
+
+  /* For now, show a toast indicating this is being implemented.
+   * TODO: Implement full thread view in a separate pane or modal. */
+  char *msg = g_strdup_printf("Thread view coming soon! Root: %.8s...", root_event_id);
+  show_toast(self, msg);
+  g_free(msg);
+
+  /* Future implementation could:
+   * 1. Create a new GnNostrEventModel with thread_root set
+   * 2. Query nostrdb for events referencing this root
+   * 3. Show in a modal/popover with the full thread
+   */
 }
 
 /* Public wrappers so other UI components (e.g., timeline view) can request prefetch */
@@ -1982,9 +2035,16 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   }
   /* Connect profile pane signals */
   if (self->profile_pane && GNOSTR_IS_PROFILE_PANE(self->profile_pane)) {
-    g_signal_connect(self->profile_pane, "close-requested", 
+    g_signal_connect(self->profile_pane, "close-requested",
                      G_CALLBACK(on_profile_pane_close_requested), self);
     g_message("connected profile pane close-requested signal");
+  }
+  /* Add key event controller for ESC to close profile sidebar */
+  {
+    GtkEventController *key_controller = gtk_event_controller_key_new();
+    g_signal_connect(key_controller, "key-pressed", G_CALLBACK(on_key_pressed), self);
+    gtk_widget_add_controller(GTK_WIDGET(self), key_controller);
+    g_message("connected ESC key handler for profile sidebar");
   }
   if (self->btn_avatar) {
     /* Ensure avatar button is interactable */

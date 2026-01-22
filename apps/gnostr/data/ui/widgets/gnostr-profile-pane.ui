@@ -52,53 +52,102 @@
                 <property name="orientation">vertical</property>
                 <property name="spacing">0</property>
 
-                <!-- Banner image -->
+                <!-- Banner with extended height for avatar overlap area -->
                 <child>
                   <object class="GtkOverlay">
-                    <property name="height-request">150</property>
                     <property name="hexpand">true</property>
-                    <style>
-                      <class name="profile-banner"/>
-                    </style>
+                    <!-- Banner area: 140px banner + 48px for avatar overlap = 188px total -->
                     <child>
-                      <object class="GtkPicture" id="banner_image">
-                        <property name="height-request">150</property>
-                        <property name="hexpand">true</property>
-                        <property name="content-fit">cover</property>
-                        <property name="can-shrink">true</property>
-                        <property name="keep-aspect-ratio">false</property>
-                      </object>
-                    </child>
-                    <!-- Avatar overlapping banner -->
-                    <child type="overlay">
-                      <object class="GtkCenterBox">
+                      <object class="GtkBox">
                         <property name="orientation">vertical</property>
                         <property name="hexpand">true</property>
-                        <property name="margin-bottom">-40</property>
-                        <child type="center">
-                          <object class="GtkOverlay" id="avatar_box">
+                        <!-- Banner image with fallback gradient -->
+                        <child>
+                          <object class="GtkBox" id="banner_container">
+                            <property name="height-request">140</property>
+                            <property name="hexpand">true</property>
+                            <property name="orientation">vertical</property>
+                            <style>
+                              <class name="profile-banner"/>
+                            </style>
+                            <child>
+                              <object class="GtkPicture" id="banner_image">
+                                <property name="height-request">140</property>
+                                <property name="hexpand">true</property>
+                                <property name="vexpand">true</property>
+                                <property name="content-fit">cover</property>
+                                <property name="can-shrink">true</property>
+                                <property name="keep-aspect-ratio">false</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <!-- Spacer for avatar overflow (48px = half of 96px avatar) -->
+                        <child>
+                          <object class="GtkBox">
+                            <property name="height-request">48</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <!-- Avatar overlay positioned to overlap banner bottom edge -->
+                    <child type="overlay">
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="halign">start</property>
+                        <property name="valign">start</property>
+                        <property name="margin-start">16</property>
+                        <property name="margin-top">92</property>
+                        <child>
+                          <object class="GtkFrame" id="avatar_box">
                             <property name="width-request">96</property>
                             <property name="height-request">96</property>
                             <style>
                               <class name="profile-avatar"/>
+                              <class name="profile-avatar-frame"/>
                             </style>
                             <child>
-                              <object class="GtkPicture" id="avatar_image">
-                                <property name="visible">false</property>
-                                <property name="width-request">96</property>
-                                <property name="height-request">96</property>
-                                <property name="content-fit">contain</property>
-                                <property name="can-shrink">true</property>
-                              </object>
-                            </child>
-                            <child type="overlay">
-                              <object class="GtkLabel" id="avatar_initials">
-                                <property name="label">?</property>
-                                <property name="xalign">0.5</property>
-                                <property name="yalign">0.5</property>
-                                <style>
-                                  <class name="profile-avatar-initials"/>
-                                </style>
+                              <object class="GtkOverlay">
+                                <property name="width-request">88</property>
+                                <property name="height-request">88</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="halign">fill</property>
+                                    <property name="valign">fill</property>
+                                    <property name="hexpand">true</property>
+                                    <property name="vexpand">true</property>
+                                    <style>
+                                      <class name="profile-avatar-bg"/>
+                                    </style>
+                                    <child>
+                                      <object class="GtkLabel" id="avatar_initials">
+                                        <property name="label">?</property>
+                                        <property name="halign">center</property>
+                                        <property name="valign">center</property>
+                                        <property name="hexpand">true</property>
+                                        <property name="vexpand">true</property>
+                                        <style>
+                                          <class name="profile-avatar-initials"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child type="overlay">
+                                  <object class="GtkPicture" id="avatar_image">
+                                    <property name="visible">false</property>
+                                    <property name="width-request">88</property>
+                                    <property name="height-request">88</property>
+                                    <property name="content-fit">cover</property>
+                                    <property name="can-shrink">true</property>
+                                    <property name="halign">center</property>
+                                    <property name="valign">center</property>
+                                    <style>
+                                      <class name="profile-avatar-image"/>
+                                    </style>
+                                  </object>
+                                </child>
                               </object>
                             </child>
                           </object>
@@ -115,7 +164,7 @@
                     <property name="spacing">12</property>
                     <property name="margin-start">16</property>
                     <property name="margin-end">16</property>
-                    <property name="margin-top">48</property>
+                    <property name="margin-top">8</property>
                     <property name="margin-bottom">16</property>
 
                     <!-- Name and handle -->

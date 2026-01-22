@@ -34,6 +34,11 @@
                   <object class="GtkPicture" id="avatar_image">
                     <property name="visible">false</property>
                     <property name="content-fit">cover</property>
+                    <property name="width-request">48</property>
+                    <property name="height-request">48</property>
+                    <style>
+                      <class name="dm-avatar-image"/>
+                    </style>
                   </object>
                 </child>
                 <child type="overlay">
