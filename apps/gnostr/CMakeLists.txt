@@ -295,14 +295,17 @@ if (BUILD_TESTING)
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_SOURCE_DIR}/libnostr/include
     ${CMAKE_SOURCE_DIR}/nips/nip19/include
+    ${CMAKE_SOURCE_DIR}/libgo/include
     ${CMAKE_SOURCE_DIR}/gobject/include)
   target_sources(gnostr-test-blossom PRIVATE
     src/util/blossom.c
     src/util/blossom_settings.c
     src/util/relays.c
     src/ipc/signer_ipc.c
-    ${SIGNER_PROXY_C})
-  target_link_libraries(gnostr-test-blossom PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB nostr nip19)
+    ${SIGNER_PROXY_C}
+    ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c
+    ${CMAKE_SOURCE_DIR}/gobject/src/nostr_relay.c)
+  target_link_libraries(gnostr-test-blossom PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB nostr nip19 libgo)
   _gnostr_apply_sanitizers(gnostr-test-blossom)
   add_test(NAME gnostr-test-blossom COMMAND gnostr-test-blossom)
   set_tests_properties(gnostr-test-blossom PROPERTIES
