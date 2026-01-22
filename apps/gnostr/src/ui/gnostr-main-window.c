@@ -1765,6 +1765,47 @@ static void settings_dialog_setup_blossom_panel(SettingsDialogCtx *ctx) {
   settings_dialog_refresh_blossom_list(ctx);
 }
 
+/* Signal handlers for media settings switches */
+static void on_video_autoplay_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec; (void)user_data;
+  gboolean active = gtk_switch_get_active(sw);
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  g_settings_set_boolean(settings, "video-autoplay", active);
+  g_object_unref(settings);
+}
+
+static void on_video_loop_changed(GtkSwitch *sw, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec; (void)user_data;
+  gboolean active = gtk_switch_get_active(sw);
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  g_settings_set_boolean(settings, "video-loop", active);
+  g_object_unref(settings);
+}
+
+/* Setup media (playback) settings panel */
+static void settings_dialog_setup_media_panel(SettingsDialogCtx *ctx) {
+  if (!ctx || !ctx->builder) return;
+
+  GSettings *client_settings = g_settings_new("org.gnostr.Client");
+  if (!client_settings) return;
+
+  /* Video autoplay switch */
+  GtkSwitch *w_autoplay = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_video_autoplay"));
+  if (w_autoplay) {
+    gtk_switch_set_active(w_autoplay, g_settings_get_boolean(client_settings, "video-autoplay"));
+    g_signal_connect(w_autoplay, "notify::active", G_CALLBACK(on_video_autoplay_changed), NULL);
+  }
+
+  /* Video loop switch */
+  GtkSwitch *w_loop = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_video_loop"));
+  if (w_loop) {
+    gtk_switch_set_active(w_loop, g_settings_get_boolean(client_settings, "video-loop"));
+    g_signal_connect(w_loop, "notify::active", G_CALLBACK(on_video_loop_changed), NULL);
+  }
+
+  g_object_unref(client_settings);
+}
+
 static void on_settings_dialog_destroy(GtkWidget *widget, gpointer user_data) {
   (void)widget;
   SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
@@ -1817,6 +1858,7 @@ static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   settings_dialog_setup_display_panel(ctx);
   settings_dialog_setup_account_panel(ctx);
   settings_dialog_setup_blossom_panel(ctx);
+  settings_dialog_setup_media_panel(ctx);
 
   /* Context is freed when window is destroyed */
   g_signal_connect(win, "destroy", G_CALLBACK(on_settings_dialog_destroy), ctx);

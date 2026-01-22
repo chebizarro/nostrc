@@ -53,6 +53,7 @@ struct _GnostrVideoPlayer {
 
   /* Settings */
   GSettings *settings;
+  gulong settings_changed_handler;   /* Signal handler for GSettings changes */
 
   /* Motion controller for controls visibility */
   GtkEventController *motion_controller;
@@ -562,6 +563,12 @@ static void gnostr_video_player_dispose(GObject *obj) {
     self->scroll_vadjustment = NULL;
   }
 
+  /* Disconnect settings changed handler */
+  if (self->settings && self->settings_changed_handler > 0) {
+    g_signal_handler_disconnect(self->settings, self->settings_changed_handler);
+    self->settings_changed_handler = 0;
+  }
+
   /* Cancel timers */
   if (self->controls_hide_timer_id > 0) {
     g_source_remove(self->controls_hide_timer_id);
@@ -596,6 +603,20 @@ static void gnostr_video_player_finalize(GObject *obj) {
   G_OBJECT_CLASS(gnostr_video_player_parent_class)->finalize(obj);
 }
 
+/* Callback for GSettings changes to video-loop and video-autoplay */
+static void on_settings_changed(GSettings *settings, const gchar *key, gpointer user_data) {
+  GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(user_data);
+  if (!GNOSTR_IS_VIDEO_PLAYER(self)) return;
+
+  if (g_strcmp0(key, "video-loop") == 0) {
+    gboolean loop = g_settings_get_boolean(settings, "video-loop");
+    gnostr_video_player_set_loop(self, loop);
+  } else if (g_strcmp0(key, "video-autoplay") == 0) {
+    gboolean autoplay = g_settings_get_boolean(settings, "video-autoplay");
+    gnostr_video_player_set_autoplay(self, autoplay);
+  }
+}
+
 static void gnostr_video_player_class_init(GnostrVideoPlayerClass *klass) {
   GObjectClass *gclass = G_OBJECT_CLASS(klass);
   GtkWidgetClass *wclass = GTK_WIDGET_CLASS(klass);
@@ -615,6 +636,10 @@ static void gnostr_video_player_init(GnostrVideoPlayer *self) {
   self->volume = 1.0;
   self->muted = FALSE;
   self->controls_visible = TRUE;
+
+  /* Listen for settings changes */
+  self->settings_changed_handler = g_signal_connect(self->settings, "changed",
+                                                     G_CALLBACK(on_settings_changed), self);
 
   /* Create overlay container */
   self->overlay = gtk_overlay_new();

@@ -10,6 +10,7 @@
 #include <string.h>
 #include <glib.h>
 #include <json-glib/json-glib.h>
+#include <nostr/nip19/nip19.h>
 
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
@@ -202,6 +203,7 @@ typedef struct {
   gpointer user_data;
   GCancellable *cancellable;
   SoupSession *session;
+  char *auth_event_json;  /* Unsigned auth event for signing */
 } BlossomUploadContext;
 
 static void upload_ctx_free(BlossomUploadContext *ctx) {
@@ -210,6 +212,7 @@ static void upload_ctx_free(BlossomUploadContext *ctx) {
   g_free(ctx->file_path);
   g_free(ctx->mime_type);
   g_free(ctx->sha256);
+  g_free(ctx->auth_event_json);
   if (ctx->file_data) g_bytes_unref(ctx->file_data);
   if (ctx->cancellable) g_object_unref(ctx->cancellable);
   if (ctx->session) g_object_unref(ctx->session);
@@ -343,6 +346,220 @@ static void upload_with_auth(BlossomUploadContext *ctx, const char *auth_header)
   g_object_unref(msg);
 }
 
+/**
+ * Convert npub bech32 to hex pubkey string.
+ * Returns newly allocated hex string or NULL on failure.
+ */
+static char *npub_to_hex(const char *npub) {
+  if (!npub) return NULL;
+
+  /* If already hex (64 chars, no npub1 prefix), return a copy */
+  if (!g_str_has_prefix(npub, "npub1") && strlen(npub) == 64) {
+    return g_strdup(npub);
+  }
+
+  /* Decode npub bech32 to 32-byte pubkey */
+  uint8_t pubkey_bytes[32];
+  if (nostr_nip19_decode_npub(npub, pubkey_bytes) != 0) {
+    g_warning("Failed to decode npub: %s", npub);
+    return NULL;
+  }
+
+  /* Convert bytes to hex string */
+  GString *hex = g_string_sized_new(64);
+  for (int i = 0; i < 32; i++) {
+    g_string_append_printf(hex, "%02x", pubkey_bytes[i]);
+  }
+  return g_string_free(hex, FALSE);
+}
+
+/**
+ * Build the signed event JSON and auth header, then proceed with upload.
+ * Called after signing completes.
+ */
+static void finalize_upload_with_signature(BlossomUploadContext *ctx,
+                                            const char *signature,
+                                            const char *pubkey_hex) {
+  /* Build complete event with signature for Authorization header */
+  /* Per BUD-01, the header is "Nostr <base64-encoded-signed-event>" */
+  JsonBuilder *builder = json_builder_new();
+  json_builder_begin_object(builder);
+
+  /* Parse the original event to rebuild with pubkey and sig */
+  JsonParser *parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, ctx->auth_event_json, -1, NULL)) {
+    g_object_unref(parser);
+    g_object_unref(builder);
+    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
+                               GNOSTR_BLOSSOM_ERROR_SIGNING_FAILED,
+                               "Failed to parse auth event JSON");
+    if (ctx->callback) {
+      ctx->callback(NULL, err, ctx->user_data);
+    }
+    g_error_free(err);
+    upload_ctx_free(ctx);
+    return;
+  }
+
+  JsonObject *orig = json_node_get_object(json_parser_get_root(parser));
+
+  /* Add pubkey (hex format required by Blossom) */
+  json_builder_set_member_name(builder, "pubkey");
+  json_builder_add_string_value(builder, pubkey_hex);
+
+  json_builder_set_member_name(builder, "kind");
+  json_builder_add_int_value(builder, json_object_get_int_member(orig, "kind"));
+
+  json_builder_set_member_name(builder, "created_at");
+  json_builder_add_int_value(builder, json_object_get_int_member(orig, "created_at"));
+
+  json_builder_set_member_name(builder, "content");
+  json_builder_add_string_value(builder, json_object_get_string_member(orig, "content"));
+
+  json_builder_set_member_name(builder, "tags");
+  json_builder_add_value(builder, json_node_copy(json_object_get_member(orig, "tags")));
+
+  /* Add id (computed from the event) - signer may have computed this */
+  /* For now, add empty id - server should compute/verify */
+  json_builder_set_member_name(builder, "id");
+  json_builder_add_string_value(builder, "");
+
+  json_builder_set_member_name(builder, "sig");
+  json_builder_add_string_value(builder, signature);
+
+  json_builder_end_object(builder);
+
+  JsonGenerator *gen = json_generator_new();
+  json_generator_set_root(gen, json_builder_get_root(builder));
+  char *signed_event_json = json_generator_to_data(gen, NULL);
+
+  g_object_unref(gen);
+  g_object_unref(builder);
+  g_object_unref(parser);
+
+  /* Base64 encode the signed event */
+  gchar *base64 = g_base64_encode((const guchar *)signed_event_json, strlen(signed_event_json));
+  g_free(signed_event_json);
+
+  /* Build auth header */
+  char *auth_header = g_strdup_printf("Nostr %s", base64);
+  g_free(base64);
+
+  /* Now upload with the auth header */
+  upload_with_auth(ctx, auth_header);
+  g_free(auth_header);
+}
+
+/* Forward declaration */
+static void on_upload_get_pubkey_complete(GObject *source, GAsyncResult *res, gpointer user_data);
+
+/* Context for upload signing operation (to hold signature between callbacks) */
+typedef struct {
+  BlossomUploadContext *upload_ctx;
+  char *signature;
+} UploadSignContext;
+
+static void upload_sign_ctx_free(UploadSignContext *ctx) {
+  if (!ctx) return;
+  g_free(ctx->signature);
+  /* Note: upload_ctx is freed separately */
+  g_free(ctx);
+}
+
+/* Callback when signer returns signed event */
+static void on_upload_sign_complete_v2(GObject *source, GAsyncResult *res, gpointer user_data) {
+  UploadSignContext *sign_ctx = (UploadSignContext *)user_data;
+  if (!sign_ctx || !sign_ctx->upload_ctx) {
+    upload_sign_ctx_free(sign_ctx);
+    return;
+  }
+
+  BlossomUploadContext *ctx = sign_ctx->upload_ctx;
+  NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+
+  GError *error = NULL;
+  gchar *signature = NULL;
+  gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(proxy, &signature, res, &error);
+
+  if (!ok || !signature) {
+    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
+                               GNOSTR_BLOSSOM_ERROR_SIGNING_FAILED,
+                               "Failed to sign auth event: %s",
+                               error ? error->message : "unknown");
+    g_clear_error(&error);
+    if (ctx->callback) {
+      ctx->callback(NULL, err, ctx->user_data);
+    }
+    g_error_free(err);
+    upload_ctx_free(ctx);
+    upload_sign_ctx_free(sign_ctx);
+    return;
+  }
+
+  /* Store signature and get pubkey */
+  sign_ctx->signature = signature;
+
+  nostr_org_nostr_signer_call_get_public_key(
+    proxy,
+    ctx->cancellable,
+    on_upload_get_pubkey_complete,
+    sign_ctx
+  );
+}
+
+/* Callback when signer returns pubkey after signing */
+static void on_upload_get_pubkey_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
+  UploadSignContext *sign_ctx = (UploadSignContext *)user_data;
+  if (!sign_ctx || !sign_ctx->upload_ctx) {
+    upload_sign_ctx_free(sign_ctx);
+    return;
+  }
+
+  BlossomUploadContext *ctx = sign_ctx->upload_ctx;
+  NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+
+  GError *error = NULL;
+  gchar *npub = NULL;
+  gboolean ok = nostr_org_nostr_signer_call_get_public_key_finish(proxy, &npub, res, &error);
+
+  if (!ok || !npub || !*npub) {
+    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
+                               GNOSTR_BLOSSOM_ERROR_SIGNING_FAILED,
+                               "Failed to get pubkey: %s",
+                               error ? error->message : "unknown");
+    g_clear_error(&error);
+    if (ctx->callback) {
+      ctx->callback(NULL, err, ctx->user_data);
+    }
+    g_error_free(err);
+    upload_ctx_free(ctx);
+    upload_sign_ctx_free(sign_ctx);
+    return;
+  }
+
+  /* Convert npub to hex */
+  char *pubkey_hex = npub_to_hex(npub);
+  g_free(npub);
+
+  if (!pubkey_hex) {
+    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
+                               GNOSTR_BLOSSOM_ERROR_SIGNING_FAILED,
+                               "Failed to decode pubkey");
+    if (ctx->callback) {
+      ctx->callback(NULL, err, ctx->user_data);
+    }
+    g_error_free(err);
+    upload_ctx_free(ctx);
+    upload_sign_ctx_free(sign_ctx);
+    return;
+  }
+
+  /* Finalize the upload with signature and pubkey */
+  finalize_upload_with_signature(ctx, sign_ctx->signature, pubkey_hex);
+  g_free(pubkey_hex);
+  upload_sign_ctx_free(sign_ctx);
+}
+
 void gnostr_blossom_upload_async(const char *server_url,
                                   const char *file_path,
                                   const char *mime_type,
@@ -405,16 +622,15 @@ void gnostr_blossom_upload_async(const char *server_url,
   ctx->session = soup_session_new();
   soup_session_set_timeout(ctx->session, 60); /* 60 second timeout for uploads */
 
-  /* Build auth event */
-  char *auth_event_json = gnostr_blossom_build_auth_event("upload", sha256, server_url,
-                                                           ctx->file_size, ctx->mime_type);
+  /* Build auth event (unsigned) */
+  ctx->auth_event_json = gnostr_blossom_build_auth_event("upload", sha256, server_url,
+                                                          ctx->file_size, ctx->mime_type);
 
-  /* Get signer proxy and sign the event */
+  /* Get signer proxy */
   GError *signer_error = NULL;
   NostrSignerProxy *proxy = gnostr_signer_proxy_get(&signer_error);
 
   if (!proxy) {
-    g_free(auth_event_json);
     GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
                                GNOSTR_BLOSSOM_ERROR_SIGNING_FAILED,
                                "Failed to get signer: %s",
@@ -426,104 +642,21 @@ void gnostr_blossom_upload_async(const char *server_url,
     return;
   }
 
-  /* Sign event synchronously (TODO: make async) */
-  char *signature = NULL;
-  gboolean signed_ok = nostr_org_nostr_signer_call_sign_event_sync(
+  /* Create sign context for async callback chain */
+  UploadSignContext *sign_ctx = g_new0(UploadSignContext, 1);
+  sign_ctx->upload_ctx = ctx;
+  sign_ctx->signature = NULL;
+
+  /* Sign event asynchronously (non-blocking) */
+  nostr_org_nostr_signer_call_sign_event(
     proxy,
-    auth_event_json,
-    "", /* current_user - let signer pick */
+    ctx->auth_event_json,
+    "",  /* current_user - let signer pick */
     "org.gnostr.Client",
-    &signature,
-    NULL,
-    &signer_error
+    ctx->cancellable,
+    on_upload_sign_complete_v2,
+    sign_ctx
   );
-
-  if (!signed_ok || !signature) {
-    g_free(auth_event_json);
-    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
-                               GNOSTR_BLOSSOM_ERROR_SIGNING_FAILED,
-                               "Failed to sign auth event: %s",
-                               signer_error ? signer_error->message : "unknown");
-    g_clear_error(&signer_error);
-    if (callback) callback(NULL, err, user_data);
-    g_error_free(err);
-    upload_ctx_free(ctx);
-    return;
-  }
-
-  /* Build the complete signed event JSON by adding pubkey, id, and sig */
-  /* For now, we construct a simple version - the signer returns just the signature */
-  /* We need to get the pubkey from the signer */
-  char *npub = NULL;
-  nostr_org_nostr_signer_call_get_public_key_sync(proxy, &npub, NULL, NULL);
-
-  /* Build complete event with signature for Authorization header */
-  /* Per BUD-01, the header is "Nostr <base64-encoded-signed-event>" */
-  JsonBuilder *builder = json_builder_new();
-  json_builder_begin_object(builder);
-
-  /* Parse the original event to rebuild with pubkey and sig */
-  JsonParser *parser = json_parser_new();
-  if (json_parser_load_from_data(parser, auth_event_json, -1, NULL)) {
-    JsonObject *orig = json_node_get_object(json_parser_get_root(parser));
-
-    /* Add pubkey (convert npub to hex if needed) */
-    json_builder_set_member_name(builder, "pubkey");
-    /* Assuming npub is already hex or we need conversion */
-    /* For simplicity, if npub starts with "npub1", we'd need to decode it */
-    /* The signer should ideally return hex, but let's handle both */
-    if (npub && g_str_has_prefix(npub, "npub1")) {
-      /* TODO: proper bech32 decode - for now just use as-is or skip */
-      /* This is a simplification - real implementation needs nip19 decode */
-      json_builder_add_string_value(builder, npub);
-    } else {
-      json_builder_add_string_value(builder, npub ? npub : "");
-    }
-
-    json_builder_set_member_name(builder, "kind");
-    json_builder_add_int_value(builder, json_object_get_int_member(orig, "kind"));
-
-    json_builder_set_member_name(builder, "created_at");
-    json_builder_add_int_value(builder, json_object_get_int_member(orig, "created_at"));
-
-    json_builder_set_member_name(builder, "content");
-    json_builder_add_string_value(builder, json_object_get_string_member(orig, "content"));
-
-    json_builder_set_member_name(builder, "tags");
-    json_builder_add_value(builder, json_node_copy(json_object_get_member(orig, "tags")));
-
-    /* Add id (computed from the event) - signer may have computed this */
-    /* For now, add empty id - server should compute/verify */
-    json_builder_set_member_name(builder, "id");
-    json_builder_add_string_value(builder, "");
-
-    json_builder_set_member_name(builder, "sig");
-    json_builder_add_string_value(builder, signature);
-  }
-  json_builder_end_object(builder);
-
-  JsonGenerator *gen = json_generator_new();
-  json_generator_set_root(gen, json_builder_get_root(builder));
-  char *signed_event_json = json_generator_to_data(gen, NULL);
-
-  g_object_unref(gen);
-  g_object_unref(builder);
-  g_object_unref(parser);
-  g_free(auth_event_json);
-  g_free(signature);
-  g_free(npub);
-
-  /* Base64 encode the signed event */
-  gchar *base64 = g_base64_encode((const guchar *)signed_event_json, strlen(signed_event_json));
-  g_free(signed_event_json);
-
-  /* Build auth header */
-  char *auth_header = g_strdup_printf("Nostr %s", base64);
-  g_free(base64);
-
-  /* Now upload with the auth header */
-  upload_with_auth(ctx, auth_header);
-  g_free(auth_header);
 }
 
 /* List context */
@@ -679,6 +812,7 @@ void gnostr_blossom_list_async(const char *server_url,
 typedef struct {
   char *server_url;
   char *sha256;
+  char *auth_event_json;
   GnostrBlossomDeleteCallback callback;
   gpointer user_data;
   GCancellable *cancellable;
@@ -689,6 +823,7 @@ static void delete_ctx_free(BlossomDeleteContext *ctx) {
   if (!ctx) return;
   g_free(ctx->server_url);
   g_free(ctx->sha256);
+  g_free(ctx->auth_event_json);
   if (ctx->cancellable) g_object_unref(ctx->cancellable);
   if (ctx->session) g_object_unref(ctx->session);
   g_free(ctx);
@@ -759,6 +894,179 @@ static void delete_with_auth(BlossomDeleteContext *ctx, const char *auth_header)
   g_object_unref(msg);
 }
 
+/**
+ * Build the signed event JSON and auth header for delete, then proceed.
+ */
+static void finalize_delete_with_signature(BlossomDeleteContext *ctx,
+                                            const char *signature,
+                                            const char *pubkey_hex) {
+  JsonBuilder *builder = json_builder_new();
+  json_builder_begin_object(builder);
+
+  JsonParser *parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, ctx->auth_event_json, -1, NULL)) {
+    g_object_unref(parser);
+    g_object_unref(builder);
+    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
+                               GNOSTR_BLOSSOM_ERROR_SIGNING_FAILED,
+                               "Failed to parse auth event JSON");
+    if (ctx->callback) {
+      ctx->callback(FALSE, err, ctx->user_data);
+    }
+    g_error_free(err);
+    delete_ctx_free(ctx);
+    return;
+  }
+
+  JsonObject *orig = json_node_get_object(json_parser_get_root(parser));
+
+  json_builder_set_member_name(builder, "pubkey");
+  json_builder_add_string_value(builder, pubkey_hex);
+
+  json_builder_set_member_name(builder, "kind");
+  json_builder_add_int_value(builder, json_object_get_int_member(orig, "kind"));
+
+  json_builder_set_member_name(builder, "created_at");
+  json_builder_add_int_value(builder, json_object_get_int_member(orig, "created_at"));
+
+  json_builder_set_member_name(builder, "content");
+  json_builder_add_string_value(builder, json_object_get_string_member(orig, "content"));
+
+  json_builder_set_member_name(builder, "tags");
+  json_builder_add_value(builder, json_node_copy(json_object_get_member(orig, "tags")));
+
+  json_builder_set_member_name(builder, "id");
+  json_builder_add_string_value(builder, "");
+
+  json_builder_set_member_name(builder, "sig");
+  json_builder_add_string_value(builder, signature);
+
+  json_builder_end_object(builder);
+
+  JsonGenerator *gen = json_generator_new();
+  json_generator_set_root(gen, json_builder_get_root(builder));
+  char *signed_event_json = json_generator_to_data(gen, NULL);
+
+  g_object_unref(gen);
+  g_object_unref(builder);
+  g_object_unref(parser);
+
+  gchar *base64 = g_base64_encode((const guchar *)signed_event_json, strlen(signed_event_json));
+  g_free(signed_event_json);
+
+  char *auth_header = g_strdup_printf("Nostr %s", base64);
+  g_free(base64);
+
+  delete_with_auth(ctx, auth_header);
+  g_free(auth_header);
+}
+
+/* Forward declaration */
+static void on_delete_get_pubkey_complete(GObject *source, GAsyncResult *res, gpointer user_data);
+
+/* Context for delete signing operation */
+typedef struct {
+  BlossomDeleteContext *delete_ctx;
+  char *signature;
+} DeleteSignContext;
+
+static void delete_sign_ctx_free(DeleteSignContext *ctx) {
+  if (!ctx) return;
+  g_free(ctx->signature);
+  g_free(ctx);
+}
+
+/* Callback when signer returns signed event for delete */
+static void on_delete_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
+  DeleteSignContext *sign_ctx = (DeleteSignContext *)user_data;
+  if (!sign_ctx || !sign_ctx->delete_ctx) {
+    delete_sign_ctx_free(sign_ctx);
+    return;
+  }
+
+  BlossomDeleteContext *ctx = sign_ctx->delete_ctx;
+  NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+
+  GError *error = NULL;
+  gchar *signature = NULL;
+  gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(proxy, &signature, res, &error);
+
+  if (!ok || !signature) {
+    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
+                               GNOSTR_BLOSSOM_ERROR_SIGNING_FAILED,
+                               "Failed to sign auth event: %s",
+                               error ? error->message : "unknown");
+    g_clear_error(&error);
+    if (ctx->callback) {
+      ctx->callback(FALSE, err, ctx->user_data);
+    }
+    g_error_free(err);
+    delete_ctx_free(ctx);
+    delete_sign_ctx_free(sign_ctx);
+    return;
+  }
+
+  sign_ctx->signature = signature;
+
+  nostr_org_nostr_signer_call_get_public_key(
+    proxy,
+    ctx->cancellable,
+    on_delete_get_pubkey_complete,
+    sign_ctx
+  );
+}
+
+/* Callback when signer returns pubkey after signing for delete */
+static void on_delete_get_pubkey_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
+  DeleteSignContext *sign_ctx = (DeleteSignContext *)user_data;
+  if (!sign_ctx || !sign_ctx->delete_ctx) {
+    delete_sign_ctx_free(sign_ctx);
+    return;
+  }
+
+  BlossomDeleteContext *ctx = sign_ctx->delete_ctx;
+  NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+
+  GError *error = NULL;
+  gchar *npub = NULL;
+  gboolean ok = nostr_org_nostr_signer_call_get_public_key_finish(proxy, &npub, res, &error);
+
+  if (!ok || !npub || !*npub) {
+    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
+                               GNOSTR_BLOSSOM_ERROR_SIGNING_FAILED,
+                               "Failed to get pubkey: %s",
+                               error ? error->message : "unknown");
+    g_clear_error(&error);
+    if (ctx->callback) {
+      ctx->callback(FALSE, err, ctx->user_data);
+    }
+    g_error_free(err);
+    delete_ctx_free(ctx);
+    delete_sign_ctx_free(sign_ctx);
+    return;
+  }
+
+  char *pubkey_hex = npub_to_hex(npub);
+  g_free(npub);
+
+  if (!pubkey_hex) {
+    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
+                               GNOSTR_BLOSSOM_ERROR_SIGNING_FAILED,
+                               "Failed to decode pubkey");
+    if (ctx->callback) {
+      ctx->callback(FALSE, err, ctx->user_data);
+    }
+    g_error_free(err);
+    delete_ctx_free(ctx);
+    delete_sign_ctx_free(sign_ctx);
+    return;
+  }
+
+  finalize_delete_with_signature(ctx, sign_ctx->signature, pubkey_hex);
+  g_free(pubkey_hex);
+  delete_sign_ctx_free(sign_ctx);
+}
+
 void gnostr_blossom_delete_async(const char *server_url,
                                   const char *sha256,
                                   GnostrBlossomDeleteCallback callback,
@@ -782,15 +1090,14 @@ void gnostr_blossom_delete_async(const char *server_url,
   ctx->session = soup_session_new();
   soup_session_set_timeout(ctx->session, 30);
 
-  /* Build auth event for delete */
-  char *auth_event_json = gnostr_blossom_build_auth_event("delete", sha256, server_url, 0, NULL);
+  /* Build auth event for delete (unsigned) */
+  ctx->auth_event_json = gnostr_blossom_build_auth_event("delete", sha256, server_url, 0, NULL);
 
-  /* Get signer and sign */
+  /* Get signer proxy */
   GError *signer_error = NULL;
   NostrSignerProxy *proxy = gnostr_signer_proxy_get(&signer_error);
 
   if (!proxy) {
-    g_free(auth_event_json);
     GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
                                GNOSTR_BLOSSOM_ERROR_SIGNING_FAILED,
                                "Failed to get signer: %s",
@@ -802,83 +1109,21 @@ void gnostr_blossom_delete_async(const char *server_url,
     return;
   }
 
-  char *signature = NULL;
-  gboolean signed_ok = nostr_org_nostr_signer_call_sign_event_sync(
+  /* Create sign context for async callback chain */
+  DeleteSignContext *sign_ctx = g_new0(DeleteSignContext, 1);
+  sign_ctx->delete_ctx = ctx;
+  sign_ctx->signature = NULL;
+
+  /* Sign event asynchronously (non-blocking) */
+  nostr_org_nostr_signer_call_sign_event(
     proxy,
-    auth_event_json,
-    "",
+    ctx->auth_event_json,
+    "",  /* current_user - let signer pick */
     "org.gnostr.Client",
-    &signature,
-    NULL,
-    &signer_error
+    ctx->cancellable,
+    on_delete_sign_complete,
+    sign_ctx
   );
-
-  if (!signed_ok || !signature) {
-    g_free(auth_event_json);
-    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
-                               GNOSTR_BLOSSOM_ERROR_SIGNING_FAILED,
-                               "Failed to sign auth event: %s",
-                               signer_error ? signer_error->message : "unknown");
-    g_clear_error(&signer_error);
-    if (callback) callback(FALSE, err, user_data);
-    g_error_free(err);
-    delete_ctx_free(ctx);
-    return;
-  }
-
-  /* Build signed event and base64 encode for header */
-  char *npub = NULL;
-  nostr_org_nostr_signer_call_get_public_key_sync(proxy, &npub, NULL, NULL);
-
-  JsonBuilder *builder = json_builder_new();
-  json_builder_begin_object(builder);
-
-  JsonParser *parser = json_parser_new();
-  if (json_parser_load_from_data(parser, auth_event_json, -1, NULL)) {
-    JsonObject *orig = json_node_get_object(json_parser_get_root(parser));
-
-    json_builder_set_member_name(builder, "pubkey");
-    json_builder_add_string_value(builder, npub ? npub : "");
-
-    json_builder_set_member_name(builder, "kind");
-    json_builder_add_int_value(builder, json_object_get_int_member(orig, "kind"));
-
-    json_builder_set_member_name(builder, "created_at");
-    json_builder_add_int_value(builder, json_object_get_int_member(orig, "created_at"));
-
-    json_builder_set_member_name(builder, "content");
-    json_builder_add_string_value(builder, json_object_get_string_member(orig, "content"));
-
-    json_builder_set_member_name(builder, "tags");
-    json_builder_add_value(builder, json_node_copy(json_object_get_member(orig, "tags")));
-
-    json_builder_set_member_name(builder, "id");
-    json_builder_add_string_value(builder, "");
-
-    json_builder_set_member_name(builder, "sig");
-    json_builder_add_string_value(builder, signature);
-  }
-  json_builder_end_object(builder);
-
-  JsonGenerator *gen = json_generator_new();
-  json_generator_set_root(gen, json_builder_get_root(builder));
-  char *signed_event_json = json_generator_to_data(gen, NULL);
-
-  g_object_unref(gen);
-  g_object_unref(builder);
-  g_object_unref(parser);
-  g_free(auth_event_json);
-  g_free(signature);
-  g_free(npub);
-
-  gchar *base64 = g_base64_encode((const guchar *)signed_event_json, strlen(signed_event_json));
-  g_free(signed_event_json);
-
-  char *auth_header = g_strdup_printf("Nostr %s", base64);
-  g_free(base64);
-
-  delete_with_auth(ctx, auth_header);
-  g_free(auth_header);
 }
 
 /* ---- Upload with fallback ---- */
