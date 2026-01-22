@@ -7,6 +7,7 @@
 struct _RelayStore {
   GPtrArray *relays;    /* Array of RelayEntry* */
   gchar *config_path;
+  GHashTable *status_map; /* url -> RelayConnectionStatus */
 };
 
 static const gchar *config_path(void) {
@@ -31,6 +32,7 @@ RelayStore *relay_store_new(void) {
   RelayStore *rs = g_new0(RelayStore, 1);
   rs->relays = g_ptr_array_new_with_free_func((GDestroyNotify)relay_entry_free);
   rs->config_path = g_strdup(config_path());
+  rs->status_map = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   return rs;
 }
 
@@ -38,6 +40,7 @@ void relay_store_free(RelayStore *rs) {
   if (!rs) return;
   g_ptr_array_unref(rs->relays);
   g_free(rs->config_path);
+  if (rs->status_map) g_hash_table_destroy(rs->status_map);
   g_free(rs);
 }
 
@@ -410,4 +413,61 @@ GPtrArray *relay_store_get_write_relays(RelayStore *rs) {
   }
 
   return arr;
+}
+
+RelayConnectionStatus relay_store_get_status(RelayStore *rs, const gchar *url) {
+  if (!rs || !url || !rs->status_map) return RELAY_STATUS_UNKNOWN;
+  gpointer val = g_hash_table_lookup(rs->status_map, url);
+  if (!val) return RELAY_STATUS_UNKNOWN;
+  return GPOINTER_TO_INT(val);
+}
+
+void relay_store_set_status(RelayStore *rs, const gchar *url, RelayConnectionStatus status) {
+  if (!rs || !url || !rs->status_map) return;
+  g_hash_table_replace(rs->status_map, g_strdup(url), GINT_TO_POINTER(status));
+}
+
+/* Connection test data */
+typedef struct {
+  gchar *url;
+  RelayTestCallback cb;
+  gpointer user_data;
+} RelayTestData;
+
+static void relay_test_data_free(RelayTestData *data) {
+  if (!data) return;
+  g_free(data->url);
+  g_free(data);
+}
+
+static gboolean relay_test_timeout(gpointer user_data) {
+  RelayTestData *data = user_data;
+  if (data && data->cb) {
+    data->cb(data->url, RELAY_STATUS_ERROR, data->user_data);
+  }
+  relay_test_data_free(data);
+  return G_SOURCE_REMOVE;
+}
+
+void relay_store_test_connection(const gchar *url, RelayTestCallback cb, gpointer user_data) {
+  if (!url || !cb) return;
+
+  /* For now, simulate connection test with a timeout
+   * A real implementation would use GSocketClient to test WebSocket connection */
+  RelayTestData *data = g_new0(RelayTestData, 1);
+  data->url = g_strdup(url);
+  data->cb = cb;
+  data->user_data = user_data;
+
+  /* If URL looks valid, report connected after brief delay; otherwise error */
+  if (relay_store_validate_url(url)) {
+    /* Simulate successful connection after 500ms */
+    g_timeout_add(500, relay_test_timeout, data);
+    /* Update to connecting status immediately via callback */
+    cb(url, RELAY_STATUS_CONNECTING, user_data);
+  } else {
+    /* Invalid URL - report error immediately */
+    cb(url, RELAY_STATUS_ERROR, user_data);
+    relay_test_data_free(data);
+  }
 }

@@ -1,4 +1,5 @@
 #include "gnostr-composer.h"
+#include "gnostr-main-window.h"
 #include "../util/blossom.h"
 #include "../util/blossom_settings.h"
 
@@ -101,6 +102,23 @@ static void on_cancel_reply_clicked(GnostrComposer *self, GtkButton *button) {
   gnostr_composer_clear_reply_context(self);
 }
 
+/* Show toast notification via main window */
+static void composer_show_toast(GnostrComposer *self, const char *message) {
+  if (!GNOSTR_IS_COMPOSER(self) || !message) return;
+
+  /* Find the main window by walking up the widget tree */
+  GtkWidget *widget = GTK_WIDGET(self);
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
+      gnostr_main_window_show_toast(widget, message);
+      return;
+    }
+  }
+  /* Fallback: just log if no main window found */
+  g_warning("composer: could not find main window for toast: %s", message);
+}
+
 /* Blossom upload callback */
 static void on_blossom_upload_complete(GnostrBlossomBlob *blob, GError *error, gpointer user_data) {
   GnostrComposer *self = GNOSTR_COMPOSER(user_data);
@@ -126,18 +144,16 @@ static void on_blossom_upload_complete(GnostrBlossomBlob *blob, GError *error, g
 
   if (error) {
     g_warning("Blossom upload failed: %s", error->message);
-    /* Show error toast - for now just update status label briefly */
-    if (self->upload_status_label && GTK_IS_LABEL(self->upload_status_label)) {
-      gtk_label_set_text(GTK_LABEL(self->upload_status_label), "Upload failed");
-      gtk_widget_set_visible(self->upload_progress_box, TRUE);
-      /* Hide after 3 seconds */
-      /* TODO: Use GtkToast when available */
-    }
+    /* Show error toast via main window toast overlay */
+    char *toast_msg = g_strdup_printf("Upload failed: %s", error->message);
+    composer_show_toast(self, toast_msg);
+    g_free(toast_msg);
     return;
   }
 
   if (!blob || !blob->url) {
     g_warning("Blossom upload returned no URL");
+    composer_show_toast(self, "Upload completed but server returned no URL");
     return;
   }
 
@@ -188,6 +204,7 @@ static void on_file_chooser_response(GObject *source, GAsyncResult *res, gpointe
 
   if (!path) {
     g_warning("Could not get file path");
+    composer_show_toast(self, "Could not read selected file");
     return;
   }
 
@@ -200,6 +217,7 @@ static void on_file_chooser_response(GObject *source, GAsyncResult *res, gpointe
   const char *server_url = gnostr_blossom_settings_get_default_server();
   if (!server_url || !*server_url) {
     g_warning("No Blossom server configured");
+    composer_show_toast(self, "No media server configured. Add one in Settings.");
     g_free(path);
     return;
   }

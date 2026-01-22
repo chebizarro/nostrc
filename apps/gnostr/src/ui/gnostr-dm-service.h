@@ -75,6 +75,16 @@ void gnostr_dm_service_start(GnostrDmService *self,
                               const char **relay_urls);
 
 /**
+ * gnostr_dm_service_start_with_dm_relays:
+ * @self: the DM service
+ *
+ * Starts subscribing to gift wrap events from DM-specific relays (kind 10050).
+ * Falls back to general relays if no DM relays are configured.
+ * Convenience function that uses gnostr_get_dm_relays() internally.
+ */
+void gnostr_dm_service_start_with_dm_relays(GnostrDmService *self);
+
+/**
  * gnostr_dm_service_stop:
  * @self: the DM service
  *
@@ -113,6 +123,38 @@ guint gnostr_dm_service_get_conversation_count(GnostrDmService *self);
  */
 void gnostr_dm_service_mark_read(GnostrDmService *self,
                                   const char *peer_pubkey);
+
+/**
+ * GnostrDmRelaysCallback:
+ * @relays: (transfer full) (nullable): array of relay URLs to send DM to
+ * @user_data: user data passed to the async function
+ *
+ * Callback for gnostr_dm_service_get_recipient_relays_async().
+ * The relays array is owned by the callback and should be freed with
+ * g_ptr_array_unref() when done.
+ */
+typedef void (*GnostrDmRelaysCallback)(GPtrArray *relays, gpointer user_data);
+
+/**
+ * gnostr_dm_service_get_recipient_relays_async:
+ * @recipient_pubkey: the recipient's public key (hex)
+ * @cancellable: (nullable): a GCancellable
+ * @callback: callback when complete
+ * @user_data: user data for callback
+ *
+ * Fetches the recipient's inbox relays (kind 10050) for sending a DM.
+ * Falls back to their NIP-65 relays (kind 10002 read relays) if no
+ * kind 10050 is found, then to local DM relays.
+ *
+ * This implements the NIP-17 recommendation:
+ * "Clients SHOULD publish kind 10050 to advertise their inbox relays.
+ *  When sending a DM, clients should first try the recipient's 10050
+ *  relays, then fall back to their 10002 read relays."
+ */
+void gnostr_dm_service_get_recipient_relays_async(const char *recipient_pubkey,
+                                                   GCancellable *cancellable,
+                                                   GnostrDmRelaysCallback callback,
+                                                   gpointer user_data);
 
 G_END_DECLS
 

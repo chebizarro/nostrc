@@ -1313,15 +1313,10 @@ static void on_nip65_relays_fetched(GPtrArray *relays, gpointer user_data) {
 
   /* Fall back to configured relays if no NIP-65 write relays */
   if (relay_urls->len == 0) {
-    gnostr_load_relays_into(relay_urls);
+    gnostr_get_read_relay_urls_into(relay_urls);
   }
 
-  /* Add default relays if still empty */
-  if (relay_urls->len == 0) {
-    g_ptr_array_add(relay_urls, g_strdup("wss://relay.damus.io"));
-    g_ptr_array_add(relay_urls, g_strdup("wss://nos.lol"));
-    g_ptr_array_add(relay_urls, g_strdup("wss://relay.nostr.band"));
-  }
+  /* Relays come from GSettings with defaults configured in schema */
 
   load_posts_with_relays(self, relay_urls);
   g_ptr_array_unref(relay_urls);
@@ -1357,15 +1352,10 @@ static void load_posts(GnostrProfilePane *self) {
 
     /* Fall back to configured relays if no NIP-65 write relays */
     if (relay_urls->len == 0) {
-      gnostr_load_relays_into(relay_urls);
+      gnostr_get_read_relay_urls_into(relay_urls);
     }
 
-    /* Add default relays if still empty */
-    if (relay_urls->len == 0) {
-      g_ptr_array_add(relay_urls, g_strdup("wss://relay.damus.io"));
-      g_ptr_array_add(relay_urls, g_strdup("wss://nos.lol"));
-      g_ptr_array_add(relay_urls, g_strdup("wss://relay.nostr.band"));
-    }
+    /* Relays come from GSettings with defaults configured in schema */
 
     load_posts_with_relays(self, relay_urls);
     g_ptr_array_unref(relay_urls);
@@ -1678,14 +1668,10 @@ static void load_media(GnostrProfilePane *self) {
   }
 
   if (relay_urls->len == 0) {
-    gnostr_load_relays_into(relay_urls);
+    gnostr_get_read_relay_urls_into(relay_urls);
   }
 
-  if (relay_urls->len == 0) {
-    g_ptr_array_add(relay_urls, g_strdup("wss://relay.damus.io"));
-    g_ptr_array_add(relay_urls, g_strdup("wss://nos.lol"));
-    g_ptr_array_add(relay_urls, g_strdup("wss://relay.nostr.band"));
-  }
+  /* Relays come from GSettings with defaults configured in schema */
 
   /* Build URL array */
   const char **urls = g_new0(const char*, relay_urls->len);

@@ -70,9 +70,8 @@ static void build_urls_with_hints(const char *const *hints, size_t hints_count, 
     const char *u = hints[i]; if (!u || !*u) continue;
     if (g_hash_table_add(set, (gpointer)u)) g_ptr_array_add(arr, g_strdup(u));
   }
-  /* Add config relays */
-  GPtrArray *cfg = g_ptr_array_new_with_free_func(g_free);
-  gnostr_load_relays_into(cfg);
+  /* Add config relays (read-capable only for fetching, per NIP-65) */
+  GPtrArray *cfg = gnostr_get_read_relay_urls();
   for (guint i = 0; i < cfg->len; i++) {
     const char *u = (const char*)g_ptr_array_index(cfg, i);
     if (!u || !*u) continue;
@@ -80,7 +79,7 @@ static void build_urls_with_hints(const char *const *hints, size_t hints_count, 
     g_hash_table_add(set, (gpointer)u);
     g_ptr_array_add(arr, g_strdup(u));
   }
-  g_ptr_array_free(cfg, TRUE);
+  g_ptr_array_unref(cfg);
   g_hash_table_destroy(set);
   if (out_urls && out_count) {
     size_t n = arr->len;
@@ -809,9 +808,15 @@ static void on_note_card_zap_requested_relay(GnostrNoteCardRow *row, const char 
   /* Set the event being zapped */
   gnostr_zap_dialog_set_event(dialog, id_hex, 1);  /* kind 1 = text note */
 
-  /* TODO: Set relays from config */
-  const gchar *default_relays[] = {"wss://relay.damus.io", "wss://nos.lol", NULL};
-  gnostr_zap_dialog_set_relays(dialog, default_relays);
+  /* Get relays from config (GSettings defaults if none configured) */
+  GPtrArray *relay_arr = gnostr_get_write_relay_urls();
+  const gchar **relay_strs = g_new0(const gchar*, relay_arr->len + 1);
+  for (guint i = 0; i < relay_arr->len; i++) {
+    relay_strs[i] = g_ptr_array_index(relay_arr, i);
+  }
+  gnostr_zap_dialog_set_relays(dialog, relay_strs);
+  g_free(relay_strs);
+  g_ptr_array_unref(relay_arr);
 
   gtk_window_present(GTK_WINDOW(dialog));
 

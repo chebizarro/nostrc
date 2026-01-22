@@ -93,4 +93,24 @@ gboolean gnostr_simple_pool_is_relay_connected(GnostrSimplePool *self, const cha
 /* Get list of relay URLs currently in the pool */
 GPtrArray *gnostr_simple_pool_get_relay_urls(GnostrSimplePool *self);
 
+/* --- Live Relay Switching (nostrc-36y.4) --- */
+
+/* Remove a relay from the pool by URL. Disconnects and frees the relay.
+ * @param self  The pool
+ * @param url   The relay URL to remove
+ * @return TRUE if the relay was found and removed, FALSE otherwise */
+gboolean gnostr_simple_pool_remove_relay(GnostrSimplePool *self, const char *url);
+
+/* Disconnect all relays in the pool without removing them.
+ * Useful before reconfiguring the relay list.
+ * @param self  The pool */
+void gnostr_simple_pool_disconnect_all_relays(GnostrSimplePool *self);
+
+/* Synchronize pool relays with a new URL list.
+ * Removes relays not in the new list, adds new relays.
+ * @param self      The pool
+ * @param urls      Array of relay URLs
+ * @param url_count Number of URLs in array */
+void gnostr_simple_pool_sync_relays(GnostrSimplePool *self, const char **urls, size_t url_count);
+
 #endif // NOSTR_SIMPLE_POOL_H

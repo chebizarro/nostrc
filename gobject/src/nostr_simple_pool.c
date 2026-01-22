@@ -1549,22 +1549,92 @@ gboolean gnostr_simple_pool_is_relay_connected(GnostrSimplePool *self, const cha
 /* Get list of relay URLs currently in the pool */
 GPtrArray *gnostr_simple_pool_get_relay_urls(GnostrSimplePool *self) {
     g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), NULL);
-    
+
     GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
-    
+
     if (!self->pool) return urls;
-    
+
     /* Access the pool's relay list */
     NostrSimplePool *pool = self->pool;
     pthread_mutex_lock(&pool->pool_mutex);
-    
+
     for (size_t i = 0; i < pool->relay_count; i++) {
         if (pool->relays[i] && pool->relays[i]->url) {
             g_ptr_array_add(urls, g_strdup(pool->relays[i]->url));
         }
     }
-    
+
     pthread_mutex_unlock(&pool->pool_mutex);
-    
+
     return urls;
+}
+
+/* --- Live Relay Switching Implementation (nostrc-36y.4) --- */
+
+gboolean gnostr_simple_pool_remove_relay(GnostrSimplePool *self, const char *url) {
+    g_return_val_if_fail(GNOSTR_IS_SIMPLE_POOL(self), FALSE);
+    g_return_val_if_fail(url != NULL, FALSE);
+
+    if (!self->pool) return FALSE;
+
+    return nostr_simple_pool_remove_relay(self->pool, url);
+}
+
+void gnostr_simple_pool_disconnect_all_relays(GnostrSimplePool *self) {
+    g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
+
+    if (!self->pool) return;
+
+    nostr_simple_pool_disconnect_all(self->pool);
+}
+
+void gnostr_simple_pool_sync_relays(GnostrSimplePool *self, const char **urls, size_t url_count) {
+    g_return_if_fail(GNOSTR_IS_SIMPLE_POOL(self));
+
+    if (!self->pool) return;
+
+    g_message("[RELAY_SYNC] Syncing pool with %zu relay URLs", url_count);
+
+    /* Build set of new URLs for fast lookup */
+    GHashTable *new_urls = g_hash_table_new(g_str_hash, g_str_equal);
+    for (size_t i = 0; i < url_count; i++) {
+        if (urls[i] && *urls[i]) {
+            g_hash_table_add(new_urls, (gpointer)urls[i]);
+        }
+    }
+
+    /* Get current relay URLs */
+    GPtrArray *current = gnostr_simple_pool_get_relay_urls(self);
+
+    /* Remove relays not in new list */
+    for (guint i = 0; i < current->len; i++) {
+        const char *url = g_ptr_array_index(current, i);
+        if (!g_hash_table_contains(new_urls, url)) {
+            g_message("[RELAY_SYNC] Removing relay: %s", url);
+            gnostr_simple_pool_remove_relay(self, url);
+        }
+    }
+
+    /* Add new relays not currently in pool */
+    for (size_t i = 0; i < url_count; i++) {
+        if (!urls[i] || !*urls[i]) continue;
+
+        gboolean found = FALSE;
+        for (guint j = 0; j < current->len; j++) {
+            if (g_strcmp0(urls[i], g_ptr_array_index(current, j)) == 0) {
+                found = TRUE;
+                break;
+            }
+        }
+
+        if (!found) {
+            g_message("[RELAY_SYNC] Adding relay: %s", urls[i]);
+            nostr_simple_pool_ensure_relay(self->pool, urls[i]);
+        }
+    }
+
+    g_ptr_array_unref(current);
+    g_hash_table_destroy(new_urls);
+
+    g_message("[RELAY_SYNC] Sync complete, pool now has %zu relays", self->pool->relay_count);
 }

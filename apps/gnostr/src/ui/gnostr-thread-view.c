@@ -807,16 +807,10 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
 
   nostr_filter_set_limit(filter, MAX_THREAD_EVENTS);
 
-  /* Get relay URLs */
-  GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);
-  gnostr_load_relays_into(relay_arr);
+  /* Get read-capable relay URLs for fetching (NIP-65) */
+  GPtrArray *relay_arr = gnostr_get_read_relay_urls();
 
-  if (relay_arr->len == 0) {
-    /* Add default relays */
-    g_ptr_array_add(relay_arr, g_strdup("wss://relay.damus.io"));
-    g_ptr_array_add(relay_arr, g_strdup("wss://nos.lol"));
-    g_ptr_array_add(relay_arr, g_strdup("wss://relay.nostr.band"));
-  }
+  /* Relays come from GSettings with defaults configured in schema */
 
   const char **urls = g_new0(const char*, relay_arr->len);
   for (guint i = 0; i < relay_arr->len; i++) {

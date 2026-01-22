@@ -64,10 +64,120 @@ static void test_save_empty_list(void) {
   g_free(cfg);
 }
 
+/* Test DM relay save/load (NIP-17) */
+static void test_dm_relays_save_load(void) {
+  gchar *cfg = make_temp_config_path();
+  g_setenv("GNOSTR_CONFIG_PATH", cfg, TRUE);
+
+  /* Save DM relays */
+  GPtrArray *dm_arr = g_ptr_array_new_with_free_func(g_free);
+  g_ptr_array_add(dm_arr, g_strdup("wss://dm.relay1.com"));
+  g_ptr_array_add(dm_arr, g_strdup("wss://dm.relay2.com"));
+  gnostr_save_dm_relays_from(dm_arr);
+  g_ptr_array_free(dm_arr, TRUE);
+
+  /* Load DM relays */
+  GPtrArray *out = g_ptr_array_new_with_free_func(g_free);
+  gnostr_load_dm_relays_into(out);
+  g_assert_cmpuint(out->len, ==, 2);
+  g_assert_cmpstr((const char*)out->pdata[0], ==, "wss://dm.relay1.com");
+  g_assert_cmpstr((const char*)out->pdata[1], ==, "wss://dm.relay2.com");
+  g_ptr_array_free(out, TRUE);
+
+  /* Cleanup */
+  g_unlink(cfg);
+  gchar *parent = g_path_get_dirname(cfg);
+  g_rmdir(parent);
+  g_free(parent);
+  g_free(cfg);
+}
+
+/* Test gnostr_get_dm_relays fallback behavior */
+static void test_dm_relays_fallback(void) {
+  gchar *cfg = make_temp_config_path();
+  g_setenv("GNOSTR_CONFIG_PATH", cfg, TRUE);
+
+  /* Ensure no DM relays are set, but general relays are */
+  GPtrArray *dm_empty = g_ptr_array_new_with_free_func(g_free);
+  gnostr_save_dm_relays_from(dm_empty);
+  g_ptr_array_free(dm_empty, TRUE);
+
+  GPtrArray *gen_arr = g_ptr_array_new_with_free_func(g_free);
+  g_ptr_array_add(gen_arr, g_strdup("wss://general.relay.com"));
+  gnostr_save_relays_from(gen_arr);
+  g_ptr_array_free(gen_arr, TRUE);
+
+  /* gnostr_get_dm_relays should fall back to general relays */
+  GPtrArray *result = gnostr_get_dm_relays();
+  g_assert_cmpuint(result->len, >=, 1);
+  /* Should contain the general relay */
+  gboolean found = FALSE;
+  for (guint i = 0; i < result->len; i++) {
+    if (g_strcmp0(g_ptr_array_index(result, i), "wss://general.relay.com") == 0) {
+      found = TRUE;
+      break;
+    }
+  }
+  g_assert_true(found);
+  g_ptr_array_unref(result);
+
+  /* Cleanup */
+  g_unlink(cfg);
+  gchar *parent = g_path_get_dirname(cfg);
+  g_rmdir(parent);
+  g_free(parent);
+  g_free(cfg);
+}
+
+/* Test NIP-17 DM relay event parsing (kind 10050) */
+static void test_nip17_parse_dm_relays(void) {
+  /* Sample kind 10050 event JSON */
+  const char *event_json =
+    "{"
+    "\"kind\": 10050,"
+    "\"created_at\": 1700000000,"
+    "\"pubkey\": \"abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234\","
+    "\"tags\": ["
+    "  [\"relay\", \"wss://inbox1.example.com\"],"
+    "  [\"relay\", \"wss://inbox2.example.com\"],"
+    "  [\"other\", \"ignored\"]"
+    "],"
+    "\"content\": \"\","
+    "\"sig\": \"dummy\""
+    "}";
+
+  gint64 created_at = 0;
+  GPtrArray *relays = gnostr_nip17_parse_dm_relays_event(event_json, &created_at);
+
+  g_assert_nonnull(relays);
+  g_assert_cmpint(created_at, ==, 1700000000);
+  g_assert_cmpuint(relays->len, ==, 2);
+  g_assert_cmpstr((const char*)g_ptr_array_index(relays, 0), ==, "wss://inbox1.example.com");
+  g_assert_cmpstr((const char*)g_ptr_array_index(relays, 1), ==, "wss://inbox2.example.com");
+
+  g_ptr_array_unref(relays);
+}
+
+/* Test parsing wrong kind (should return NULL) */
+static void test_nip17_parse_wrong_kind(void) {
+  const char *event_json =
+    "{"
+    "\"kind\": 10002,"
+    "\"tags\": [[\"r\", \"wss://relay.example.com\"]]"
+    "}";
+
+  GPtrArray *relays = gnostr_nip17_parse_dm_relays_event(event_json, NULL);
+  g_assert_null(relays);
+}
+
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/relays/valid_url", test_valid_url);
   g_test_add_func("/relays/save_load_roundtrip", test_save_load_roundtrip);
   g_test_add_func("/relays/save_empty_list", test_save_empty_list);
+  g_test_add_func("/relays/dm_relays_save_load", test_dm_relays_save_load);
+  g_test_add_func("/relays/dm_relays_fallback", test_dm_relays_fallback);
+  g_test_add_func("/relays/nip17_parse_dm_relays", test_nip17_parse_dm_relays);
+  g_test_add_func("/relays/nip17_parse_wrong_kind", test_nip17_parse_wrong_kind);
   return g_test_run();
 }

@@ -61,15 +61,28 @@
               </object>
             </child>
 
-            <!-- Info label -->
+            <!-- Test connection button -->
             <child>
-              <object class="GtkLabel">
-                <property name="label" translatable="yes">Configure which relays to use for reading and writing events. This will be published as a kind:10002 event.</property>
-                <property name="wrap">true</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Configure which relays to use for reading and writing events. This will be published as a kind:10002 event.</property>
+                    <property name="wrap">true</property>
+                    <property name="xalign">0</property>
+                    <property name="hexpand">true</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_test_all">
+                    <property name="label" translatable="yes">Test All</property>
+                    <property name="tooltip-text" translatable="yes">Test connection to all relays</property>
+                  </object>
+                </child>
               </object>
             </child>
 

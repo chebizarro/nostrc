@@ -38,6 +38,55 @@
       </description>
     </key>
   </schema>
+  <!-- Display settings -->
+  <schema id="org.gnostr.Display" path="/org/gnostr/display/">
+    <key name="color-scheme" type="s">
+      <default>'system'</default>
+      <summary>Color scheme preference</summary>
+      <description>
+        The preferred color scheme: 'system' (follow system), 'light', or 'dark'.
+      </description>
+    </key>
+    <key name="font-scale" type="d">
+      <default>1.0</default>
+      <summary>Font scale factor</summary>
+      <description>
+        Multiplier for the base font size. Range: 0.8 to 1.5.
+        1.0 = normal, 1.2 = larger, 0.8 = smaller.
+      </description>
+    </key>
+    <key name="timeline-density" type="s">
+      <default>'normal'</default>
+      <summary>Timeline density</summary>
+      <description>
+        How compact to display timeline items: 'compact', 'normal', or 'comfortable'.
+      </description>
+    </key>
+    <key name="enable-animations" type="b">
+      <default>true</default>
+      <summary>Enable animations</summary>
+      <description>
+        Whether to show animations in the UI (note cards, transitions, etc.).
+        Disabling may improve performance on slower hardware.
+      </description>
+    </key>
+    <key name="show-avatars" type="b">
+      <default>true</default>
+      <summary>Show avatars</summary>
+      <description>
+        Whether to display profile avatars in timeline and conversations.
+        Disabling reduces network requests and memory usage.
+      </description>
+    </key>
+    <key name="show-media-previews" type="b">
+      <default>true</default>
+      <summary>Show media previews</summary>
+      <description>
+        Whether to show inline previews for images and videos in notes.
+        Disabling reduces bandwidth and may improve privacy.
+      </description>
+    </key>
+  </schema>
   <!-- Client identity and login-related settings -->
   <schema id="org.gnostr.Client" path="/org/gnostr/client/">
     <key name="current-npub" type="s">
@@ -93,6 +142,29 @@
       <description>
         Whether videos should loop continuously after reaching the end.
         When disabled, videos stop at the end of playback.
+      </description>
+    </key>
+    <key name="image-quality" type="s">
+      <default>'auto'</default>
+      <summary>Image quality preference</summary>
+      <description>
+        Preferred image quality: 'auto' (adaptive), 'high', 'medium', or 'low'.
+        Lower quality reduces bandwidth usage.
+      </description>
+    </key>
+    <key name="nip51-sync-enabled" type="b">
+      <default>true</default>
+      <summary>NIP-51 settings sync enabled</summary>
+      <description>
+        Whether to sync app settings with NIP-51 lists (kind 30078).
+        When enabled, settings are backed up to relays and restored on login.
+      </description>
+    </key>
+    <key name="nip51-last-sync" type="x">
+      <default>0</default>
+      <summary>NIP-51 last sync timestamp</summary>
+      <description>
+        Unix timestamp of the last successful NIP-51 settings sync.
       </description>
     </key>
   </schema>

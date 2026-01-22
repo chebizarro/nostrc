@@ -93,6 +93,17 @@ void settings_manager_set_log_requests(SettingsManager *sm, gboolean log);
 gint settings_manager_get_log_retention_days(SettingsManager *sm);
 void settings_manager_set_log_retention_days(SettingsManager *sm, gint days);
 
+/* Startup Settings */
+gboolean settings_manager_get_autostart(SettingsManager *sm);
+void settings_manager_set_autostart(SettingsManager *sm, gboolean autostart);
+
+gboolean settings_manager_get_start_minimized(SettingsManager *sm);
+void settings_manager_set_start_minimized(SettingsManager *sm, gboolean minimized);
+
+/* Account Settings */
+gchar **settings_manager_get_account_order(SettingsManager *sm);
+void settings_manager_set_account_order(SettingsManager *sm, const gchar *const *npubs);
+
 /* Change notification callback type */
 typedef void (*SettingsChangedCb)(const gchar *key, gpointer user_data);
 

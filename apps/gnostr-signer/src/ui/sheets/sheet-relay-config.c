@@ -10,6 +10,7 @@ struct _SheetRelayConfig {
   GtkButton *btn_cancel;
   GtkButton *btn_publish;
   GtkButton *btn_add;
+  GtkButton *btn_test_all;
   GtkEntry *entry_url;
   GtkListBox *list_relays;
 
@@ -26,6 +27,7 @@ typedef struct {
   gchar *url;
   GtkCheckButton *chk_read;
   GtkCheckButton *chk_write;
+  GtkImage *status_icon;
 } RelayRowData;
 
 static void relay_row_data_free(RelayRowData *data) {
@@ -85,10 +87,43 @@ static void on_row_remove(GtkButton *btn, gpointer user_data) {
   gtk_list_box_remove(list, GTK_WIDGET(row));
 }
 
+static void update_status_icon(GtkImage *icon, RelayConnectionStatus status) {
+  if (!icon) return;
+  switch (status) {
+    case RELAY_STATUS_CONNECTING:
+      gtk_image_set_from_icon_name(icon, "network-transmit-receive-symbolic");
+      gtk_widget_set_tooltip_text(GTK_WIDGET(icon), "Connecting...");
+      break;
+    case RELAY_STATUS_CONNECTED:
+      gtk_image_set_from_icon_name(icon, "emblem-ok-symbolic");
+      gtk_widget_set_tooltip_text(GTK_WIDGET(icon), "Connected");
+      gtk_widget_add_css_class(GTK_WIDGET(icon), "success");
+      break;
+    case RELAY_STATUS_DISCONNECTED:
+      gtk_image_set_from_icon_name(icon, "network-offline-symbolic");
+      gtk_widget_set_tooltip_text(GTK_WIDGET(icon), "Disconnected");
+      break;
+    case RELAY_STATUS_ERROR:
+      gtk_image_set_from_icon_name(icon, "dialog-error-symbolic");
+      gtk_widget_set_tooltip_text(GTK_WIDGET(icon), "Connection failed");
+      gtk_widget_add_css_class(GTK_WIDGET(icon), "error");
+      break;
+    default:
+      gtk_image_set_from_icon_name(icon, "network-wired-symbolic");
+      gtk_widget_set_tooltip_text(GTK_WIDGET(icon), "Unknown");
+      break;
+  }
+}
+
 static GtkWidget *create_relay_row(SheetRelayConfig *self, const gchar *url,
                                    gboolean read, gboolean write) {
   AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), url);
+
+  /* Status icon */
+  GtkImage *status_icon = GTK_IMAGE(gtk_image_new_from_icon_name("network-wired-symbolic"));
+  gtk_widget_set_valign(GTK_WIDGET(status_icon), GTK_ALIGN_CENTER);
+  gtk_widget_set_tooltip_text(GTK_WIDGET(status_icon), "Connection status unknown");
 
   /* Read checkbox */
   GtkCheckButton *chk_read = GTK_CHECK_BUTTON(gtk_check_button_new_with_label("Read"));
@@ -106,6 +141,7 @@ static GtkWidget *create_relay_row(SheetRelayConfig *self, const gchar *url,
   gtk_widget_add_css_class(GTK_WIDGET(btn_remove), "flat");
 
   /* Pack into row */
+  adw_action_row_add_prefix(row, GTK_WIDGET(status_icon));
   adw_action_row_add_suffix(row, GTK_WIDGET(chk_read));
   adw_action_row_add_suffix(row, GTK_WIDGET(chk_write));
   adw_action_row_add_suffix(row, GTK_WIDGET(btn_remove));
@@ -115,6 +151,7 @@ static GtkWidget *create_relay_row(SheetRelayConfig *self, const gchar *url,
   data->url = g_strdup(url);
   data->chk_read = chk_read;
   data->chk_write = chk_write;
+  data->status_icon = status_icon;
   g_object_set_data_full(G_OBJECT(row), "relay-data", data, (GDestroyNotify)relay_row_data_free);
 
   g_signal_connect(btn_remove, "clicked", G_CALLBACK(on_row_remove), row);
@@ -197,6 +234,59 @@ static void on_entry_activate(GtkEntry *entry, gpointer user_data) {
   on_add_relay(NULL, self);
 }
 
+typedef struct {
+  SheetRelayConfig *self;
+  gchar *url;
+} TestConnectionData;
+
+static void test_connection_cb(const gchar *url, RelayConnectionStatus status, gpointer user_data) {
+  TestConnectionData *data = user_data;
+  if (!data || !data->self) {
+    g_free(data->url);
+    g_free(data);
+    return;
+  }
+
+  /* Find the row and update its icon */
+  for (GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(data->self->list_relays));
+       child != NULL;
+       child = gtk_widget_get_next_sibling(child)) {
+    if (!ADW_IS_ACTION_ROW(child)) continue;
+
+    RelayRowData *row_data = g_object_get_data(G_OBJECT(child), "relay-data");
+    if (row_data && g_strcmp0(row_data->url, url) == 0) {
+      update_status_icon(row_data->status_icon, status);
+      break;
+    }
+  }
+
+  /* Only free if this is the final status (not CONNECTING) */
+  if (status != RELAY_STATUS_CONNECTING) {
+    g_free(data->url);
+    g_free(data);
+  }
+}
+
+static void on_test_all(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  SheetRelayConfig *self = user_data;
+
+  for (GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self->list_relays));
+       child != NULL;
+       child = gtk_widget_get_next_sibling(child)) {
+    if (!ADW_IS_ACTION_ROW(child)) continue;
+
+    RelayRowData *row_data = g_object_get_data(G_OBJECT(child), "relay-data");
+    if (!row_data) continue;
+
+    TestConnectionData *data = g_new0(TestConnectionData, 1);
+    data->self = self;
+    data->url = g_strdup(row_data->url);
+
+    relay_store_test_connection(row_data->url, test_connection_cb, data);
+  }
+}
+
 static void sheet_relay_config_finalize(GObject *obj) {
   SheetRelayConfig *self = SHEET_RELAY_CONFIG(obj);
   relay_store_free(self->store);
@@ -213,6 +303,7 @@ static void sheet_relay_config_class_init(SheetRelayConfigClass *klass) {
   gtk_widget_class_bind_template_child(wc, SheetRelayConfig, btn_cancel);
   gtk_widget_class_bind_template_child(wc, SheetRelayConfig, btn_publish);
   gtk_widget_class_bind_template_child(wc, SheetRelayConfig, btn_add);
+  gtk_widget_class_bind_template_child(wc, SheetRelayConfig, btn_test_all);
   gtk_widget_class_bind_template_child(wc, SheetRelayConfig, entry_url);
   gtk_widget_class_bind_template_child(wc, SheetRelayConfig, list_relays);
 }
@@ -226,6 +317,7 @@ static void sheet_relay_config_init(SheetRelayConfig *self) {
   g_signal_connect(self->btn_cancel, "clicked", G_CALLBACK(on_cancel), self);
   g_signal_connect(self->btn_publish, "clicked", G_CALLBACK(on_publish), self);
   g_signal_connect(self->btn_add, "clicked", G_CALLBACK(on_add_relay), self);
+  g_signal_connect(self->btn_test_all, "clicked", G_CALLBACK(on_test_all), self);
   g_signal_connect(self->entry_url, "activate", G_CALLBACK(on_entry_activate), self);
 
   populate_list(self);

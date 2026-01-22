@@ -128,5 +128,25 @@
       <description>Days to keep signing logs. 0 keeps forever.</description>
     </key>
 
+    <!-- Startup Settings -->
+    <key name="autostart" type="b">
+      <default>false</default>
+      <summary>Auto-start on login</summary>
+      <description>Start the signer daemon automatically on user login.</description>
+    </key>
+
+    <key name="start-minimized" type="b">
+      <default>false</default>
+      <summary>Start minimized</summary>
+      <description>Start the application minimized to system tray.</description>
+    </key>
+
+    <!-- Account List Settings -->
+    <key name="account-order" type="as">
+      <default>[]</default>
+      <summary>Account order</summary>
+      <description>Order of accounts in the account selector (npub list).</description>
+    </key>
+
   </schema>
 </schemalist>

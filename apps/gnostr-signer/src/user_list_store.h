@@ -79,4 +79,16 @@ void user_list_store_clear(UserListStore *store);
 /* Search entries by pubkey prefix or petname */
 GPtrArray *user_list_store_search(UserListStore *store, const gchar *query);
 
+/* Get the list type */
+UserListType user_list_store_get_type(UserListStore *store);
+
+/* Get last sync timestamp (0 if never synced) */
+gint64 user_list_store_get_last_sync(UserListStore *store);
+
+/* Set last sync timestamp */
+void user_list_store_set_last_sync(UserListStore *store, gint64 timestamp);
+
+/* Merge entries from an event (doesn't replace, just adds missing) */
+guint user_list_store_merge_event(UserListStore *store, const gchar *event_json);
+
 G_END_DECLS

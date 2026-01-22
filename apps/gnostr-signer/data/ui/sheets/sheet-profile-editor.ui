@@ -22,7 +22,8 @@
             </child>
             <child type="end">
               <object class="GtkButton" id="btn_save">
-                <property name="label" translatable="yes">Save</property>
+                <property name="label" translatable="yes">Save &amp; Publish</property>
+                <property name="tooltip-text" translatable="yes">Save locally and publish as kind:0 event</property>
                 <style>
                   <class name="suggested-action"/>
                 </style>

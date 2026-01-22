@@ -9,6 +9,7 @@
 #include "gnostr-dm-inbox-view.h"
 #include "gnostr-profile-provider.h"
 #include "../ipc/signer_ipc.h"
+#include "../util/relays.h"
 #include "nostr_simple_pool.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
@@ -716,4 +717,140 @@ gnostr_dm_service_mark_read(GnostrDmService *self,
             g_object_unref(inbox);
         }
     }
+}
+
+void
+gnostr_dm_service_start_with_dm_relays(GnostrDmService *self)
+{
+    g_return_if_fail(GNOSTR_IS_DM_SERVICE(self));
+
+    /* Get DM-specific relays (falls back to general if none configured) */
+    GPtrArray *dm_relays = gnostr_get_dm_relays();
+
+    if (dm_relays->len == 0) {
+        g_warning("[DM_SERVICE] No DM relays available");
+        g_ptr_array_unref(dm_relays);
+        return;
+    }
+
+    g_message("[DM_SERVICE] Starting with %u DM relays", dm_relays->len);
+
+    /* Build NULL-terminated array for gnostr_dm_service_start */
+    const char **urls = g_new0(const char*, dm_relays->len + 1);
+    for (guint i = 0; i < dm_relays->len; i++) {
+        urls[i] = (const char*)g_ptr_array_index(dm_relays, i);
+    }
+
+    gnostr_dm_service_start(self, urls);
+
+    g_free(urls);
+    g_ptr_array_unref(dm_relays);
+}
+
+/* ============== Recipient Relay Lookup for Sending DMs ============== */
+
+typedef struct {
+    char *recipient_pubkey;
+    GCancellable *cancellable;
+    GnostrDmRelaysCallback callback;
+    gpointer user_data;
+    gboolean tried_10050;  /* TRUE if we already tried kind 10050 */
+} RecipientRelayCtx;
+
+static void recipient_relay_ctx_free(RecipientRelayCtx *ctx) {
+    if (!ctx) return;
+    g_free(ctx->recipient_pubkey);
+    if (ctx->cancellable) g_object_unref(ctx->cancellable);
+    g_free(ctx);
+}
+
+/* Forward declarations */
+static void on_recipient_nip65_done(GPtrArray *relays, gpointer user_data);
+
+static void
+on_recipient_dm_relays_done(GPtrArray *dm_relays, gpointer user_data)
+{
+    RecipientRelayCtx *ctx = (RecipientRelayCtx*)user_data;
+    if (!ctx) return;
+
+    if (dm_relays && dm_relays->len > 0) {
+        /* Found kind 10050 relays, use them */
+        g_message("[DM_SERVICE] Found %u inbox relays (kind 10050) for recipient %.8s",
+                  dm_relays->len, ctx->recipient_pubkey);
+        if (ctx->callback) ctx->callback(dm_relays, ctx->user_data);
+        recipient_relay_ctx_free(ctx);
+        return;
+    }
+
+    /* No kind 10050, fall back to NIP-65 read relays */
+    g_debug("[DM_SERVICE] No kind 10050 for %.8s, trying NIP-65",
+            ctx->recipient_pubkey);
+
+    ctx->tried_10050 = TRUE;
+
+    /* Try fetching NIP-65 (kind 10002) for read relays */
+    gnostr_nip65_fetch_relays_async(
+        ctx->recipient_pubkey,
+        ctx->cancellable,
+        on_recipient_nip65_done,
+        ctx);
+}
+
+static void
+on_recipient_nip65_done(GPtrArray *relays, gpointer user_data)
+{
+    RecipientRelayCtx *ctx = (RecipientRelayCtx*)user_data;
+    if (!ctx) return;
+
+    if (relays && relays->len > 0) {
+        /* Get read relays from NIP-65 (where recipient reads from) */
+        GPtrArray *read_relays = gnostr_nip65_get_read_relays(relays);
+        g_ptr_array_unref(relays);
+
+        if (read_relays->len > 0) {
+            g_message("[DM_SERVICE] Found %u NIP-65 read relays for recipient %.8s",
+                      read_relays->len, ctx->recipient_pubkey);
+            if (ctx->callback) ctx->callback(read_relays, ctx->user_data);
+            recipient_relay_ctx_free(ctx);
+            return;
+        }
+        g_ptr_array_unref(read_relays);
+    }
+
+    /* No recipient relays found, fall back to local DM relays */
+    g_message("[DM_SERVICE] No remote relays for %.8s, using local DM relays",
+              ctx->recipient_pubkey);
+
+    GPtrArray *local_dm_relays = gnostr_get_dm_relays();
+    if (ctx->callback) ctx->callback(local_dm_relays, ctx->user_data);
+    recipient_relay_ctx_free(ctx);
+}
+
+void
+gnostr_dm_service_get_recipient_relays_async(const char *recipient_pubkey,
+                                              GCancellable *cancellable,
+                                              GnostrDmRelaysCallback callback,
+                                              gpointer user_data)
+{
+    if (!recipient_pubkey || !*recipient_pubkey) {
+        g_warning("[DM_SERVICE] Invalid recipient pubkey");
+        if (callback) callback(NULL, user_data);
+        return;
+    }
+
+    RecipientRelayCtx *ctx = g_new0(RecipientRelayCtx, 1);
+    ctx->recipient_pubkey = g_strdup(recipient_pubkey);
+    ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
+    ctx->callback = callback;
+    ctx->user_data = user_data;
+    ctx->tried_10050 = FALSE;
+
+    /* First try kind 10050 (NIP-17 DM relays) */
+    g_debug("[DM_SERVICE] Fetching inbox relays for %.8s", recipient_pubkey);
+
+    gnostr_nip17_fetch_dm_relays_async(
+        recipient_pubkey,
+        cancellable,
+        on_recipient_dm_relays_done,
+        ctx);
 }

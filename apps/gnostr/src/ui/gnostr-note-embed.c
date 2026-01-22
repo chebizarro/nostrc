@@ -897,6 +897,25 @@ static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer use
 /* Shared pool for embed queries - initialized lazily with pre-connected relays */
 static GnostrSimplePool *embed_pool = NULL;
 static gboolean embed_pool_initialized = FALSE;
+static gulong embed_relay_change_handler_id = 0;
+
+/* Relay change callback for embed pool (nostrc-36y.4: live relay switching) */
+static void on_embed_relay_config_changed(gpointer user_data) {
+  (void)user_data;
+  if (!embed_pool) return;
+
+  GPtrArray *read_relays = gnostr_get_read_relay_urls();
+  if (read_relays->len > 0) {
+    const char **urls = g_new0(const char*, read_relays->len);
+    for (guint i = 0; i < read_relays->len; i++) {
+      urls[i] = g_ptr_array_index(read_relays, i);
+    }
+    g_message("[EMBED_POOL] Syncing embed pool with %u read relays", read_relays->len);
+    gnostr_simple_pool_sync_relays(embed_pool, urls, read_relays->len);
+    g_free(urls);
+  }
+  g_ptr_array_unref(read_relays);
+}
 
 /* Initialize the shared embed pool with pre-connected relays */
 static void ensure_embed_pool_initialized(void) {
@@ -907,17 +926,22 @@ static void ensure_embed_pool_initialized(void) {
     embed_pool = gnostr_simple_pool_new();
   }
 
-  /* Pre-load configured relays into pool for faster first queries */
-  GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
-  gnostr_load_relays_into(urls);
+  /* Pre-load read-capable relays into pool for embed queries (NIP-65) */
+  GPtrArray *urls = gnostr_get_read_relay_urls();
 
   if (urls->len > 0) {
-    g_debug("embed_pool: Pre-connecting %u relays for embed queries", urls->len);
+    g_debug("embed_pool: Pre-connecting %u read relays for embed queries", urls->len);
     /* The pool's query_single will connect and add relays as needed,
      * but we can prime the process by logging the relay count */
   }
 
-  g_ptr_array_free(urls, TRUE);
+  g_ptr_array_unref(urls);
+
+  /* Register for relay configuration changes (nostrc-36y.4: live relay switching) */
+  if (embed_relay_change_handler_id == 0) {
+    embed_relay_change_handler_id = gnostr_relay_change_connect(on_embed_relay_config_changed, NULL);
+    g_debug("[EMBED_POOL] Registered relay change handler (id=%lu)", embed_relay_change_handler_id);
+  }
 }
 
 /* Fetch event from relays - try hints first, then main pool */
@@ -969,17 +993,11 @@ static void fetch_event_from_relays(GnostrNoteEmbed *self, const char *id_hex) {
 static void fetch_event_from_main_pool(GnostrNoteEmbed *self, const char *id_hex) {
   self->main_pool_attempted = TRUE;
 
-  GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
-  gnostr_load_relays_into(urls);
+  /* Get read-capable relays for fetching (NIP-65) */
+  GPtrArray *urls = gnostr_get_read_relay_urls();
 
-  if (urls->len == 0) {
-    /* Add default relays as last resort */
-    g_ptr_array_add(urls, g_strdup("wss://relay.damus.io"));
-    g_ptr_array_add(urls, g_strdup("wss://nos.lol"));
-    g_ptr_array_add(urls, g_strdup("wss://relay.nostr.band"));
-  }
-
-  g_debug("note_embed: trying %u main pool relays for %s", urls->len, id_hex);
+  /* Relays come from GSettings with defaults configured in schema */
+  g_debug("note_embed: trying %u read relays for %s", urls->len, id_hex);
 
   /* Build filter */
   NostrFilter *filter = nostr_filter_new();

@@ -96,6 +96,25 @@ void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url);
  * Adds an existing relay to the pool. The pool does not take ownership.
  */
 void nostr_simple_pool_add_relay(NostrSimplePool *pool, NostrRelay *relay);
+
+/**
+ * nostr_simple_pool_remove_relay:
+ * @pool: (transfer none): pool
+ * @url: (transfer none): relay URL to remove
+ *
+ * Removes a relay from the pool by URL. Disconnects and frees the relay.
+ * Returns: true if the relay was found and removed, false otherwise.
+ */
+bool nostr_simple_pool_remove_relay(NostrSimplePool *pool, const char *url);
+
+/**
+ * nostr_simple_pool_disconnect_all:
+ * @pool: (transfer none): pool
+ *
+ * Disconnects all relays in the pool without removing them.
+ * Useful before reconfiguring the relay list.
+ */
+void nostr_simple_pool_disconnect_all(NostrSimplePool *pool);
 /**
  * nostr_simple_pool_start:
  * @pool: (transfer none): pool

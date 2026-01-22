@@ -39,6 +39,8 @@
 #include "../util/relay_info.h"
 /* NIP-51 mute list */
 #include "../util/mute_list.h"
+/* NIP-51 settings sync */
+#include "../util/nip51_settings.h"
 #include "gnostr-login.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
@@ -73,6 +75,8 @@ static unsigned int getenv_uint_default(const char *name, unsigned int defval);
 static void start_pool_live(GnostrMainWindow *self);
 static void start_profile_subscription(GnostrMainWindow *self);
 static void start_bg_profile_prefetch(GnostrMainWindow *self);
+static void on_relay_config_changed(gpointer user_data);
+static gboolean on_relay_config_changed_restart(gpointer user_data);
 /* Gift wrap (NIP-59) subscription for private DMs */
 static void start_gift_wrap_subscription(GnostrMainWindow *self);
 static void stop_gift_wrap_subscription(GnostrMainWindow *self);
@@ -340,6 +344,9 @@ struct _GnostrMainWindow {
 
   /* NIP-17 DM Service for decryption and conversation management */
   GnostrDmService *dm_service;           /* owned; handles gift wrap decryption */
+
+  /* Live relay switching (nostrc-36y.4) */
+  gulong           relay_change_handler_id; /* relay config change handler */
 };
 
 /* Old LRU functions removed - now using profile provider */
@@ -469,6 +476,7 @@ struct _RelayManagerCtx {
   GCancellable *fetch_cancellable;
   gchar *selected_url;  /* Currently selected relay URL */
   gboolean modified;    /* Track if relays list was modified */
+  GHashTable *relay_types; /* URL -> GnostrRelayType (as GINT_TO_POINTER) */
 };
 
 static void relay_manager_ctx_free(RelayManagerCtx *ctx) {
@@ -476,6 +484,9 @@ static void relay_manager_ctx_free(RelayManagerCtx *ctx) {
   if (ctx->fetch_cancellable) {
     g_cancellable_cancel(ctx->fetch_cancellable);
     g_object_unref(ctx->fetch_cancellable);
+  }
+  if (ctx->relay_types) {
+    g_hash_table_destroy(ctx->relay_types);
   }
   g_free(ctx->selected_url);
   g_free(ctx);
@@ -864,6 +875,8 @@ static void relay_manager_on_add_clicked(GtkButton *btn, gpointer user_data) {
   }
 
   gtk_string_list_append(ctx->relay_model, normalized);
+  /* New relays default to read+write */
+  g_hash_table_insert(ctx->relay_types, g_strdup(normalized), GINT_TO_POINTER(GNOSTR_RELAY_READWRITE));
   gtk_editable_set_text(GTK_EDITABLE(entry), "");
   ctx->modified = TRUE;
   relay_manager_update_status(ctx);
@@ -896,20 +909,32 @@ static void relay_manager_on_save_clicked(GtkButton *btn, gpointer user_data) {
   RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
   if (!ctx) return;
 
-  /* Collect all relay URLs */
-  GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
+  /* Collect all relays with their types as NIP-65 entries */
+  GPtrArray *relays = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_nip65_relay_free);
   guint n = g_list_model_get_n_items(G_LIST_MODEL(ctx->relay_model));
   for (guint i = 0; i < n; i++) {
     GtkStringObject *obj = GTK_STRING_OBJECT(g_list_model_get_item(G_LIST_MODEL(ctx->relay_model), i));
     if (obj) {
       const gchar *url = gtk_string_object_get_string(obj);
-      if (url && *url) g_ptr_array_add(urls, g_strdup(url));
+      if (url && *url) {
+        GnostrNip65Relay *relay = g_new0(GnostrNip65Relay, 1);
+        relay->url = g_strdup(url);
+        /* Get type from hash table, default to READWRITE */
+        gpointer stored = g_hash_table_lookup(ctx->relay_types, url);
+        relay->type = stored ? GPOINTER_TO_INT(stored) : GNOSTR_RELAY_READWRITE;
+        g_ptr_array_add(relays, relay);
+      }
       g_object_unref(obj);
     }
   }
 
-  gnostr_save_relays_from(urls);
-  g_ptr_array_free(urls, TRUE);
+  gnostr_save_nip65_relays(relays);
+
+  /* Publish NIP-65 relay list event to relays */
+  g_message("[RELAYS] Publishing NIP-65 relay list with %u relays", relays->len);
+  gnostr_nip65_publish_async(relays, NULL, NULL);
+
+  g_ptr_array_unref(relays);
 
   ctx->modified = FALSE;
   relay_manager_update_status(ctx);
@@ -940,6 +965,8 @@ typedef struct {
   GtkWidget *status_icon;
   GtkWidget *nips_box;
   GtkWidget *warning_icon;
+  GtkWidget *type_dropdown;
+  GtkWidget *type_icon;
 } RelayRowWidgets;
 
 static void relay_manager_setup_factory_cb(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
@@ -982,6 +1009,20 @@ static void relay_manager_setup_factory_cb(GtkSignalListItemFactory *factory, Gt
 
   gtk_box_append(GTK_BOX(row), content);
 
+  /* Type indicator icon (shows R/W/RW) */
+  GtkWidget *type_icon = gtk_image_new_from_icon_name("network-transmit-receive-symbolic");
+  gtk_widget_set_size_request(type_icon, 16, 16);
+  gtk_widget_set_tooltip_text(type_icon, "Read + Write");
+  gtk_box_append(GTK_BOX(row), type_icon);
+
+  /* Type dropdown (Read/Write/Both) */
+  const char *type_options[] = {"R+W", "Read", "Write", NULL};
+  GtkWidget *type_dropdown = gtk_drop_down_new_from_strings(type_options);
+  gtk_widget_set_size_request(type_dropdown, 80, -1);
+  gtk_widget_set_valign(type_dropdown, GTK_ALIGN_CENTER);
+  gtk_widget_set_tooltip_text(type_dropdown, "Relay permission: Read+Write, Read-only, or Write-only");
+  gtk_box_append(GTK_BOX(row), type_dropdown);
+
   /* Warning icon (for auth/payment required) */
   GtkWidget *warning_icon = gtk_image_new_from_icon_name("dialog-warning-symbolic");
   gtk_widget_set_visible(warning_icon, FALSE);
@@ -995,6 +1036,8 @@ static void relay_manager_setup_factory_cb(GtkSignalListItemFactory *factory, Gt
   widgets->status_icon = status_icon;
   widgets->nips_box = nips_box;
   widgets->warning_icon = warning_icon;
+  widgets->type_dropdown = type_dropdown;
+  widgets->type_icon = type_icon;
   g_object_set_data_full(G_OBJECT(row), "widgets", widgets, g_free);
 
   gtk_list_item_set_child(list_item, row);
@@ -1039,8 +1082,78 @@ static void relay_manager_add_small_nip_badge(GtkWidget *box, gint nip) {
   gtk_box_append(GTK_BOX(box), badge);
 }
 
+/* Helper to convert dropdown index to GnostrRelayType */
+static GnostrRelayType relay_type_from_dropdown(guint index) {
+  switch (index) {
+    case 0: return GNOSTR_RELAY_READWRITE;
+    case 1: return GNOSTR_RELAY_READ;
+    case 2: return GNOSTR_RELAY_WRITE;
+    default: return GNOSTR_RELAY_READWRITE;
+  }
+}
+
+/* Helper to convert GnostrRelayType to dropdown index */
+static guint relay_type_to_dropdown(GnostrRelayType type) {
+  switch (type) {
+    case GNOSTR_RELAY_READ: return 1;
+    case GNOSTR_RELAY_WRITE: return 2;
+    case GNOSTR_RELAY_READWRITE:
+    default: return 0;
+  }
+}
+
+/* Helper to update type icon based on relay type */
+static void relay_manager_update_type_icon(GtkWidget *icon, GnostrRelayType type) {
+  const gchar *icon_name;
+  const gchar *tooltip;
+
+  switch (type) {
+    case GNOSTR_RELAY_READ:
+      icon_name = "go-down-symbolic";
+      tooltip = "Read-only (subscribe from this relay)";
+      break;
+    case GNOSTR_RELAY_WRITE:
+      icon_name = "go-up-symbolic";
+      tooltip = "Write-only (publish to this relay)";
+      break;
+    case GNOSTR_RELAY_READWRITE:
+    default:
+      icon_name = "network-transmit-receive-symbolic";
+      tooltip = "Read + Write (subscribe and publish)";
+      break;
+  }
+
+  gtk_image_set_from_icon_name(GTK_IMAGE(icon), icon_name);
+  gtk_widget_set_tooltip_text(icon, tooltip);
+}
+
+/* Callback for type dropdown change */
+static void on_relay_type_changed(GtkDropDown *dropdown, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
+  if (!ctx) return;
+
+  const gchar *url = g_object_get_data(G_OBJECT(dropdown), "relay_url");
+  if (!url) return;
+
+  guint selected = gtk_drop_down_get_selected(dropdown);
+  GnostrRelayType type = relay_type_from_dropdown(selected);
+
+  /* Store in hash table */
+  g_hash_table_replace(ctx->relay_types, g_strdup(url), GINT_TO_POINTER(type));
+  ctx->modified = TRUE;
+  relay_manager_update_status(ctx);
+
+  /* Update the type icon */
+  GtkWidget *type_icon = g_object_get_data(G_OBJECT(dropdown), "type_icon");
+  if (type_icon) {
+    relay_manager_update_type_icon(type_icon, type);
+  }
+}
+
 static void relay_manager_bind_factory_cb(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
-  (void)factory; (void)user_data;
+  (void)factory;
+  RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
   GtkWidget *row = gtk_list_item_get_child(list_item);
   GtkStringObject *obj = GTK_STRING_OBJECT(gtk_list_item_get_item(list_item));
 
@@ -1051,6 +1164,31 @@ static void relay_manager_bind_factory_cb(GtkSignalListItemFactory *factory, Gtk
 
   const gchar *url = gtk_string_object_get_string(obj);
   if (!url) return;
+
+  /* Setup type dropdown for this relay */
+  if (widgets->type_dropdown && ctx && ctx->relay_types) {
+    /* Disconnect any previous signal handler */
+    g_signal_handlers_disconnect_by_func(widgets->type_dropdown, G_CALLBACK(on_relay_type_changed), ctx);
+
+    /* Store URL and icon reference in dropdown */
+    g_object_set_data_full(G_OBJECT(widgets->type_dropdown), "relay_url", g_strdup(url), g_free);
+    g_object_set_data(G_OBJECT(widgets->type_dropdown), "type_icon", widgets->type_icon);
+
+    /* Get stored type, default to READWRITE */
+    gpointer stored = g_hash_table_lookup(ctx->relay_types, url);
+    GnostrRelayType type = stored ? GPOINTER_TO_INT(stored) : GNOSTR_RELAY_READWRITE;
+
+    /* Set dropdown selection without triggering signal */
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(widgets->type_dropdown), relay_type_to_dropdown(type));
+
+    /* Update type icon */
+    if (widgets->type_icon) {
+      relay_manager_update_type_icon(widgets->type_icon, type);
+    }
+
+    /* Connect change signal */
+    g_signal_connect(widgets->type_dropdown, "notify::selected", G_CALLBACK(on_relay_type_changed), ctx);
+  }
 
   /* Try to get cached relay info */
   GnostrRelayInfo *info = gnostr_relay_info_cache_get(url);
@@ -1155,18 +1293,21 @@ static void on_relays_clicked(GtkButton *btn, gpointer user_data) {
   ctx->window = win;
   ctx->builder = builder;
   ctx->modified = FALSE;
+  ctx->relay_types = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
   /* Create relay list model */
   ctx->relay_model = gtk_string_list_new(NULL);
 
-  /* Load saved relays */
-  GPtrArray *saved = g_ptr_array_new_with_free_func(g_free);
-  gnostr_load_relays_into(saved);
+  /* Load saved relays with their NIP-65 types */
+  GPtrArray *saved = gnostr_load_nip65_relays();
   for (guint i = 0; i < saved->len; i++) {
-    const gchar *url = g_ptr_array_index(saved, i);
-    if (url && *url) gtk_string_list_append(ctx->relay_model, url);
+    GnostrNip65Relay *relay = g_ptr_array_index(saved, i);
+    if (relay && relay->url && *relay->url) {
+      gtk_string_list_append(ctx->relay_model, relay->url);
+      g_hash_table_insert(ctx->relay_types, g_strdup(relay->url), GINT_TO_POINTER(relay->type));
+    }
   }
-  g_ptr_array_free(saved, TRUE);
+  g_ptr_array_unref(saved);
 
   /* Setup selection model */
   ctx->selection = gtk_single_selection_new(G_LIST_MODEL(ctx->relay_model));
@@ -1177,8 +1318,8 @@ static void on_relays_clicked(GtkButton *btn, gpointer user_data) {
   GtkListView *list_view = GTK_LIST_VIEW(gtk_builder_get_object(builder, "relay_list"));
   if (list_view) {
     GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
-    g_signal_connect(factory, "setup", G_CALLBACK(relay_manager_setup_factory_cb), NULL);
-    g_signal_connect(factory, "bind", G_CALLBACK(relay_manager_bind_factory_cb), NULL);
+    g_signal_connect(factory, "setup", G_CALLBACK(relay_manager_setup_factory_cb), ctx);
+    g_signal_connect(factory, "bind", G_CALLBACK(relay_manager_bind_factory_cb), ctx);
     gtk_list_view_set_factory(list_view, factory);
     gtk_list_view_set_model(list_view, GTK_SELECTION_MODEL(ctx->selection));
     g_object_unref(factory);
@@ -1209,6 +1350,185 @@ static void on_relays_clicked(GtkButton *btn, gpointer user_data) {
   gtk_window_present(win);
 }
 
+/* Settings dialog context for callbacks */
+typedef struct {
+  GtkWindow *win;
+  GtkBuilder *builder;
+  GnostrMainWindow *main_window;
+} SettingsDialogCtx;
+
+static void settings_dialog_ctx_free(SettingsDialogCtx *ctx) {
+  if (!ctx) return;
+  if (ctx->builder) g_object_unref(ctx->builder);
+  g_free(ctx);
+}
+
+/* Callback for NIP-51 backup button */
+static void on_nip51_backup_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
+  if (!ctx || !ctx->main_window) return;
+  show_toast(ctx->main_window, "Backing up settings to relays...");
+  gnostr_nip51_settings_backup_async(NULL, NULL);
+}
+
+/* Callback for NIP-51 restore button */
+static void on_nip51_restore_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
+  if (!ctx || !ctx->main_window) return;
+
+  const gchar *pubkey = ctx->main_window->user_pubkey_hex;
+  if (!pubkey || !*pubkey) {
+    show_toast(ctx->main_window, "Sign in to restore settings");
+    return;
+  }
+  show_toast(ctx->main_window, "Restoring settings from relays...");
+  gnostr_nip51_settings_load_async(pubkey, NULL, NULL);
+}
+
+/* Update Display settings panel from GSettings */
+static void settings_dialog_setup_display_panel(SettingsDialogCtx *ctx) {
+  if (!ctx || !ctx->builder) return;
+
+  GSettings *display_settings = g_settings_new("org.gnostr.Display");
+  if (!display_settings) return;
+
+  /* Color scheme dropdown (System=0, Light=1, Dark=2) */
+  GtkDropDown *w_color_scheme = GTK_DROP_DOWN(gtk_builder_get_object(ctx->builder, "w_color_scheme"));
+  if (w_color_scheme) {
+    g_autofree gchar *scheme = g_settings_get_string(display_settings, "color-scheme");
+    guint idx = 0;
+    if (g_strcmp0(scheme, "light") == 0) idx = 1;
+    else if (g_strcmp0(scheme, "dark") == 0) idx = 2;
+    gtk_drop_down_set_selected(w_color_scheme, idx);
+  }
+
+  /* Font scale slider */
+  GtkScale *w_font_scale = GTK_SCALE(gtk_builder_get_object(ctx->builder, "w_font_scale"));
+  if (w_font_scale) {
+    gdouble scale = g_settings_get_double(display_settings, "font-scale");
+    gtk_range_set_value(GTK_RANGE(w_font_scale), scale);
+  }
+
+  /* Timeline density dropdown (Compact=0, Normal=1, Comfortable=2) */
+  GtkDropDown *w_density = GTK_DROP_DOWN(gtk_builder_get_object(ctx->builder, "w_timeline_density"));
+  if (w_density) {
+    g_autofree gchar *density = g_settings_get_string(display_settings, "timeline-density");
+    guint idx = 1;
+    if (g_strcmp0(density, "compact") == 0) idx = 0;
+    else if (g_strcmp0(density, "comfortable") == 0) idx = 2;
+    gtk_drop_down_set_selected(w_density, idx);
+  }
+
+  /* Boolean switches */
+  GtkSwitch *w_avatars = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_show_avatars"));
+  if (w_avatars) gtk_switch_set_active(w_avatars, g_settings_get_boolean(display_settings, "show-avatars"));
+
+  GtkSwitch *w_media = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_show_media_previews"));
+  if (w_media) gtk_switch_set_active(w_media, g_settings_get_boolean(display_settings, "show-media-previews"));
+
+  GtkSwitch *w_anim = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_enable_animations"));
+  if (w_anim) gtk_switch_set_active(w_anim, g_settings_get_boolean(display_settings, "enable-animations"));
+
+  g_object_unref(display_settings);
+}
+
+/* Update Account settings panel */
+static void settings_dialog_setup_account_panel(SettingsDialogCtx *ctx) {
+  if (!ctx || !ctx->builder || !ctx->main_window) return;
+
+  gboolean is_logged_in = (ctx->main_window->user_pubkey_hex != NULL &&
+                           ctx->main_window->user_pubkey_hex[0] != '\0');
+
+  /* Toggle login required / account content visibility */
+  GtkWidget *account_login_required = GTK_WIDGET(gtk_builder_get_object(ctx->builder, "account_login_required"));
+  GtkWidget *account_content = GTK_WIDGET(gtk_builder_get_object(ctx->builder, "account_content"));
+  if (account_login_required) gtk_widget_set_visible(account_login_required, !is_logged_in);
+  if (account_content) gtk_widget_set_visible(account_content, is_logged_in);
+
+  /* NIP-51 sync enabled switch */
+  GtkSwitch *w_sync = GTK_SWITCH(gtk_builder_get_object(ctx->builder, "w_nip51_sync_enabled"));
+  if (w_sync) gtk_switch_set_active(w_sync, gnostr_nip51_settings_sync_enabled());
+
+  /* Last sync label */
+  GtkLabel *lbl_sync = GTK_LABEL(gtk_builder_get_object(ctx->builder, "lbl_nip51_last_sync"));
+  if (lbl_sync) {
+    gint64 last_sync = gnostr_nip51_settings_last_sync();
+    if (last_sync > 0) {
+      GDateTime *dt = g_date_time_new_from_unix_local(last_sync);
+      if (dt) {
+        gchar *formatted = g_date_time_format(dt, "%Y-%m-%d %H:%M");
+        gtk_label_set_text(lbl_sync, formatted);
+        g_free(formatted);
+        g_date_time_unref(dt);
+      }
+    } else {
+      gtk_label_set_text(lbl_sync, "Never");
+    }
+  }
+
+  /* Connect backup/restore buttons */
+  GtkButton *btn_backup = GTK_BUTTON(gtk_builder_get_object(ctx->builder, "btn_nip51_backup"));
+  GtkButton *btn_restore = GTK_BUTTON(gtk_builder_get_object(ctx->builder, "btn_nip51_restore"));
+  if (btn_backup) g_signal_connect(btn_backup, "clicked", G_CALLBACK(on_nip51_backup_clicked), ctx);
+  if (btn_restore) g_signal_connect(btn_restore, "clicked", G_CALLBACK(on_nip51_restore_clicked), ctx);
+}
+
+/* Populate the relay list in settings */
+static void settings_dialog_setup_relay_panel(SettingsDialogCtx *ctx) {
+  if (!ctx || !ctx->builder) return;
+
+  GtkListBox *list_relays = GTK_LIST_BOX(gtk_builder_get_object(ctx->builder, "list_relays"));
+  if (!list_relays) return;
+
+  /* Clear existing rows */
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(list_relays))) != NULL) {
+    gtk_list_box_remove(list_relays, child);
+  }
+
+  /* Load relays */
+  GPtrArray *relays = g_ptr_array_new_with_free_func(g_free);
+  gnostr_load_relays_into(relays);
+
+  for (guint i = 0; i < relays->len; i++) {
+    const gchar *url = g_ptr_array_index(relays, i);
+
+    /* Create row with relay URL */
+    GtkWidget *row = gtk_list_box_row_new();
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_widget_set_margin_start(box, 12);
+    gtk_widget_set_margin_end(box, 12);
+    gtk_widget_set_margin_top(box, 8);
+    gtk_widget_set_margin_bottom(box, 8);
+
+    /* URL label */
+    GtkWidget *label = gtk_label_new(url);
+    gtk_label_set_xalign(GTK_LABEL(label), 0);
+    gtk_widget_set_hexpand(label, TRUE);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_MIDDLE);
+    gtk_box_append(GTK_BOX(box), label);
+
+    /* Type dropdown (R+W, Read, Write) */
+    const gchar *types[] = {"R+W", "Read", "Write", NULL};
+    GtkWidget *type_dd = gtk_drop_down_new_from_strings(types);
+    gtk_widget_set_valign(type_dd, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(box), type_dd);
+
+    gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
+    gtk_list_box_append(list_relays, row);
+  }
+
+  g_ptr_array_unref(relays);
+}
+
+static void on_settings_dialog_destroy(GtkWidget *widget, gpointer user_data) {
+  (void)widget;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
+  settings_dialog_ctx_free(ctx);
+}
+
 static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
@@ -1220,6 +1540,12 @@ static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   gtk_window_set_transient_for(win, GTK_WINDOW(self));
   gtk_window_set_modal(win, TRUE);
 
+  /* Create context for the dialog */
+  SettingsDialogCtx *ctx = g_new0(SettingsDialogCtx, 1);
+  ctx->win = win;
+  ctx->builder = builder;
+  ctx->main_window = self;
+
   /* Check if user is logged in and update mute list visibility */
   gboolean is_logged_in = (self->user_pubkey_hex != NULL && self->user_pubkey_hex[0] != '\0');
   GtkWidget *mute_login_required = GTK_WIDGET(gtk_builder_get_object(builder, "mute_login_required"));
@@ -1227,7 +1553,7 @@ static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   if (mute_login_required) gtk_widget_set_visible(mute_login_required, !is_logged_in);
   if (mute_content) gtk_widget_set_visible(mute_content, is_logged_in);
 
-  /* Load current settings values */
+  /* Load current settings values (General panel) */
   GtkSpinButton *w_limit = GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "w_limit"));
   GtkSpinButton *w_batch = GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "w_batch"));
   GtkSpinButton *w_interval = GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "w_interval"));
@@ -1244,8 +1570,13 @@ static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   if (w_since) gtk_spin_button_set_value(w_since, self->since_seconds);
   if (w_backfill) gtk_spin_button_set_value(w_backfill, self->backfill_interval_sec);
 
-  /* Auto-unref builder when window is destroyed */
-  g_signal_connect(win, "destroy", G_CALLBACK(g_object_unref), builder);
+  /* Setup new panels */
+  settings_dialog_setup_relay_panel(ctx);
+  settings_dialog_setup_display_panel(ctx);
+  settings_dialog_setup_account_panel(ctx);
+
+  /* Context is freed when window is destroyed */
+  g_signal_connect(win, "destroy", G_CALLBACK(on_settings_dialog_destroy), ctx);
   gtk_window_present(win);
 }
 
@@ -1274,6 +1605,15 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
 
   /* Start gift wrap subscription for encrypted DMs */
   start_gift_wrap_subscription(self);
+
+  /* Load NIP-65 relay list for the user */
+  if (self->user_pubkey_hex) {
+    g_message("[AUTH] Loading NIP-65 relay list for user %.*s...", 8, self->user_pubkey_hex);
+    gnostr_nip65_load_on_login_async(self->user_pubkey_hex, NULL, NULL);
+
+    /* Auto-sync NIP-51 settings if enabled */
+    gnostr_nip51_settings_auto_sync_on_login(self->user_pubkey_hex);
+  }
 
   /* Close the avatar popover */
   if (self->avatar_popover && GTK_IS_POPOVER(self->avatar_popover)) {
@@ -2274,6 +2614,10 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   /* Load persisted settings (overrides env defaults) */
   gnostr_load_settings(self);
   self->backfill_source_id = 0;
+
+  /* Register for relay configuration changes (live relay switching, nostrc-36y.4) */
+  self->relay_change_handler_id = gnostr_relay_change_connect(on_relay_config_changed, self);
+  g_message("[LIVE_RELAY] Registered relay change handler (id=%lu)", self->relay_change_handler_id);
   /* Build app menu for header button */
   if (self->btn_menu) {
     GMenu *menu = g_menu_new();
@@ -2529,7 +2873,13 @@ static void gnostr_main_window_dispose(GObject *object) {
 
   /* Shutdown profile provider */
   gnostr_profile_provider_shutdown();
-  
+
+  /* Disconnect relay change handler (live relay switching) */
+  if (self->relay_change_handler_id) {
+    gnostr_relay_change_disconnect(self->relay_change_handler_id);
+    self->relay_change_handler_id = 0;
+  }
+
   G_OBJECT_CLASS(gnostr_main_window_parent_class)->dispose(object);
 }
 
@@ -2657,17 +3007,10 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
     return;
   }
 
-  /* Get relay URLs from config */
-  GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
-  gnostr_load_relays_into(relay_urls);
-  if (relay_urls->len == 0) {
-    /* Fallback defaults */
-    g_ptr_array_add(relay_urls, g_strdup("wss://relay.primal.net/"));
-    g_ptr_array_add(relay_urls, g_strdup("wss://relay.damus.io/"));
-    g_ptr_array_add(relay_urls, g_strdup("wss://nos.lol/"));
-  }
+  /* Get write-capable relay URLs from config (NIP-65: write-only or read+write) */
+  GPtrArray *relay_urls = gnostr_get_write_relay_urls();
 
-  /* Publish to each relay */
+  /* Publish to each write relay */
   guint success_count = 0;
   guint fail_count = 0;
   for (guint i = 0; i < relay_urls->len; i++) {
@@ -2961,19 +3304,8 @@ static void build_urls_and_filters_for_kinds(GnostrMainWindow *self,
   if (out_count) *out_count = 0;
   if (out_filters) *out_filters = NULL;
 
-  /* Load relays from config */
-  GPtrArray *arr = g_ptr_array_new_with_free_func(g_free);
-  gnostr_load_relays_into(arr);
-  if (arr->len == 0) {
-    /* Provide a sensible default if none configured */
-    g_ptr_array_add(arr, g_strdup("wss://relay.primal.net/"));
-    g_ptr_array_add(arr, g_strdup("wss://relay.damus.io/"));
-    g_ptr_array_add(arr, g_strdup("wss://relay.sharegap.net/"));
-    g_ptr_array_add(arr, g_strdup("wss://nos.lol/"));
-    g_ptr_array_add(arr, g_strdup("wss://purplepag.es/"));
-    g_ptr_array_add(arr, g_strdup("wss://relay.nostr.band/"));
-    g_ptr_array_add(arr, g_strdup("wss://indexer.coracle.social/"));
-  }
+  /* Load read-capable relays from config (NIP-65: read-only or read+write) */
+  GPtrArray *arr = gnostr_get_read_relay_urls();
 
   const char **urls = NULL;
   size_t n = arr->len;
@@ -3153,6 +3485,83 @@ static gboolean profile_dispatch_next(gpointer data) {
 }
 
 static gboolean periodic_backfill_cb(gpointer data) { (void)data; return G_SOURCE_CONTINUE; }
+
+/* Live relay switching callback (nostrc-36y.4) */
+static void on_relay_config_changed(gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  g_message("[LIVE_RELAY] Relay configuration changed, syncing pool...");
+
+  /* Get updated relay URLs */
+  GPtrArray *read_relays = gnostr_get_read_relay_urls();
+
+  if (read_relays->len == 0) {
+    g_warning("[LIVE_RELAY] No read relays configured");
+    g_ptr_array_unref(read_relays);
+    return;
+  }
+
+  /* Sync pool with new relay list */
+  if (self->pool) {
+    const char **urls = g_new0(const char*, read_relays->len);
+    for (guint i = 0; i < read_relays->len; i++) {
+      urls[i] = g_ptr_array_index(read_relays, i);
+    }
+
+    gnostr_simple_pool_sync_relays(self->pool, urls, read_relays->len);
+    g_free(urls);
+  }
+
+  /* Update cached live URLs */
+  if (self->live_urls) {
+    free_urls_owned(self->live_urls, self->live_url_count);
+    self->live_urls = NULL;
+    self->live_url_count = 0;
+  }
+
+  /* Build new live URL list */
+  self->live_urls = g_new0(const char*, read_relays->len);
+  self->live_url_count = read_relays->len;
+  for (guint i = 0; i < read_relays->len; i++) {
+    self->live_urls[i] = g_strdup(g_ptr_array_index(read_relays, i));
+  }
+
+  g_ptr_array_unref(read_relays);
+
+  /* If we have an active subscription, restart it to use new relays */
+  if (self->pool_cancellable) {
+    g_message("[LIVE_RELAY] Restarting live subscription with updated relays");
+    g_cancellable_cancel(self->pool_cancellable);
+    g_object_unref(self->pool_cancellable);
+    self->pool_cancellable = NULL;
+
+    /* Schedule restart after a brief delay to allow cancellation to complete */
+    g_timeout_add(100, (GSourceFunc)on_relay_config_changed_restart, self);
+  }
+
+  /* Restart DM service to pick up new DM relays (nostrc-36y.4) */
+  if (self->dm_service) {
+    g_message("[LIVE_RELAY] Restarting DM service with updated DM relays");
+    gnostr_dm_service_stop(self->dm_service);
+    gnostr_dm_service_start_with_dm_relays(self->dm_service);
+  }
+
+  g_message("[LIVE_RELAY] Relay sync complete");
+}
+
+/* Helper to restart live subscription after relay change */
+static gboolean on_relay_config_changed_restart(gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return G_SOURCE_REMOVE;
+
+  /* Only restart if we're not already reconnecting */
+  if (!self->reconnection_in_progress && !self->pool_cancellable) {
+    start_pool_live(self);
+  }
+
+  return G_SOURCE_REMOVE;
+}
 
 static void start_pool_live(GnostrMainWindow *self) {
   /* Removed noisy debug */

@@ -3,37 +3,104 @@
   <requires lib="gtk" version="4.12"/>
   <requires lib="adwaita" version="1.4"/>
   <template class="SheetSelectAccount" parent="AdwDialog">
+    <property name="title" translatable="yes">Select Account</property>
+    <property name="content-width">400</property>
+    <property name="content-height">480</property>
     <child>
-      <object class="GtkBox">
-        <property name="orientation">vertical</property>
-        <property name="spacing">12</property>
-        <property name="margin-start">12</property>
-        <property name="margin-end">12</property>
-        <property name="margin-top">12</property>
-        <property name="margin-bottom">12</property>
-        <child>
-          <object class="GtkLabel">
-            <property name="label" translatable="yes">Select Account</property>
-            <attributes><attribute name="weight" value="bold"/></attributes>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="title-widget">
+              <object class="GtkLabel">
+                <property name="label" translatable="yes">Accounts</property>
+              </object>
+            </property>
+            <child type="start">
+              <object class="GtkButton" id="btn_cancel">
+                <property name="label" translatable="yes">Close</property>
+              </object>
+            </child>
           </object>
         </child>
         <child>
-          <object class="GtkListView" id="list_identities">
-            <property name="tooltip-text" translatable="yes">Choose an account, then press Enter</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkButton" id="btn_add_new">
-            <property name="label" translatable="yes">Add _New Account</property>
-            <property name="use-underline">true</property>
-            <property name="tooltip-text" translatable="yes">Create a new account</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkButton" id="btn_cancel">
-            <property name="label" translatable="yes">_Cancel</property>
-            <property name="use-underline">true</property>
-            <property name="tooltip-text" translatable="yes">Close without changes</property>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="spacing">12</property>
+            <property name="margin-top">16</property>
+            <property name="margin-bottom">16</property>
+            <property name="margin-start">16</property>
+            <property name="margin-end">16</property>
+
+            <!-- Description -->
+            <child>
+              <object class="GtkLabel">
+                <property name="label" translatable="yes">Select an account to switch to, or add a new one.</property>
+                <property name="wrap">true</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+
+            <!-- Account list -->
+            <child>
+              <object class="GtkScrolledWindow">
+                <property name="vexpand">true</property>
+                <property name="hscrollbar-policy">never</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">8</property>
+                    <child>
+                      <object class="GtkListBox" id="list_accounts">
+                        <property name="selection-mode">none</property>
+                        <style>
+                          <class name="boxed-list"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="lbl_empty">
+                        <property name="label" translatable="yes">No accounts yet. Create or import one to get started.</property>
+                        <property name="wrap">true</property>
+                        <property name="visible">false</property>
+                        <property name="margin-top">24</property>
+                        <property name="margin-bottom">24</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Action buttons -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <property name="halign">center</property>
+                <child>
+                  <object class="GtkButton" id="btn_add_new">
+                    <property name="label" translatable="yes">Generate New</property>
+                    <property name="tooltip-text" translatable="yes">Generate a new keypair</property>
+                    <style>
+                      <class name="suggested-action"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_import">
+                    <property name="label" translatable="yes">Import Key</property>
+                    <property name="tooltip-text" translatable="yes">Import an existing nsec key</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+
           </object>
         </child>
       </object>

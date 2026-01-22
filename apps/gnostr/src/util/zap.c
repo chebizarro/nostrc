@@ -5,6 +5,7 @@
  */
 
 #include "zap.h"
+#include "relays.h"
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
@@ -527,9 +528,12 @@ gchar *gnostr_zap_create_request_event(const GnostrZapRequest *req,
       json_array_append_new(relays_tag, json_string(req->relays[i]));
     }
   } else {
-    /* Default relays if none specified */
-    json_array_append_new(relays_tag, json_string("wss://relay.damus.io"));
-    json_array_append_new(relays_tag, json_string("wss://nos.lol"));
+    /* Get relays from config (GSettings defaults if none configured) */
+    GPtrArray *cfg_relays = gnostr_get_write_relay_urls();
+    for (guint i = 0; i < cfg_relays->len; i++) {
+      json_array_append_new(relays_tag, json_string(g_ptr_array_index(cfg_relays, i)));
+    }
+    g_ptr_array_unref(cfg_relays);
   }
   json_array_append_new(tags, relays_tag);
 

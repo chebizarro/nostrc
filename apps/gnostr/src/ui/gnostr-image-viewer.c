@@ -126,7 +126,7 @@ static void gnostr_image_viewer_class_init(GnostrImageViewerClass *klass) {
 }
 
 static void gnostr_image_viewer_init(GnostrImageViewer *self) {
-  /* Window setup - make it fullscreen-like */
+  /* Window setup - modal overlay style (no decorations, contained within parent) */
   gtk_window_set_decorated(GTK_WINDOW(self), FALSE);
   gtk_window_set_modal(GTK_WINDOW(self), TRUE);
 
@@ -864,8 +864,21 @@ gboolean gnostr_image_viewer_navigate(GnostrImageViewer *self, int delta) {
 void gnostr_image_viewer_present(GnostrImageViewer *self) {
   g_return_if_fail(GNOSTR_IS_IMAGE_VIEWER(self));
 
-  /* Maximize the window to fill the screen */
-  gtk_window_maximize(GTK_WINDOW(self));
+  /* Size the viewer to fit within the parent window bounds */
+  GtkWindow *parent = gtk_window_get_transient_for(GTK_WINDOW(self));
+  if (parent) {
+    int parent_width = gtk_widget_get_width(GTK_WIDGET(parent));
+    int parent_height = gtk_widget_get_height(GTK_WIDGET(parent));
+
+    /* Use 90% of parent window size, with reasonable minimums */
+    int viewer_width = MAX(600, (int)(parent_width * 0.9));
+    int viewer_height = MAX(400, (int)(parent_height * 0.9));
+
+    gtk_window_set_default_size(GTK_WINDOW(self), viewer_width, viewer_height);
+  } else {
+    /* Fallback: use a reasonable default size if no parent */
+    gtk_window_set_default_size(GTK_WINDOW(self), 900, 700);
+  }
 
   /* Present the window */
   gtk_window_present(GTK_WINDOW(self));

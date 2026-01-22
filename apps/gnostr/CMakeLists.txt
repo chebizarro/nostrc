@@ -74,6 +74,8 @@ target_compile_features(${APP_CLIENT_BIN} PRIVATE c_std_11)
 target_compile_definitions(${APP_CLIENT_BIN} PRIVATE APP_ID="${APP_CLIENT_FLATPAK_ID}" APP_NAME="${APP_CLIENT_NAME}")
 # Enable real SimplePool-backed timeline fetching in the UI
 target_compile_definitions(${APP_CLIENT_BIN} PRIVATE GNOSTR_ENABLE_REAL_SIMPLEPOOL)
+# Find secp256k1 for key derivation in identity.c
+pkg_check_modules(SECP256K1 QUIET libsecp256k1)
 # Include GI wrapper and core headers for SimplePool and nostr models
 target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src/util
@@ -84,7 +86,8 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${CMAKE_SOURCE_DIR}/nips/nip47/include
   ${CMAKE_SOURCE_DIR}/nips/nip19/include
   ${CMAKE_SOURCE_DIR}/nips/nip10/include
-  ${CMAKE_SOURCE_DIR}/nips/nip17/include)
+  ${CMAKE_SOURCE_DIR}/nips/nip17/include
+  ${SECP256K1_INCLUDE_DIRS})
 # Compile the GI wrapper implementation into the app (no separate gobject lib target)
 # NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
 target_sources(${APP_CLIENT_BIN} PRIVATE
@@ -110,6 +113,10 @@ if (TARGET nostr_nip47_core)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip47_core)
 endif()
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::JSON_GLIB)
+# Link secp256k1 for identity/key derivation
+if (SECP256K1_FOUND)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE ${SECP256K1_LIBRARIES})
+endif()
 # Link math library on Linux
 if (UNIX AND NOT APPLE)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE m)
@@ -124,6 +131,29 @@ endif()
 if (QRENCODE_FOUND)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::QRENCODE)
   target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_QRENCODE=1)
+endif()
+
+# ---- Secure Key Storage (platform-native) ----
+# Linux: libsecret (GNOME Keyring / KDE Wallet)
+# macOS: Security.framework (Keychain Services)
+if (APPLE)
+  # macOS Keychain - Security framework is always available
+  target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_MACOS_KEYCHAIN=1)
+  # Security framework already linked for nostrdb, but ensure it's available
+  find_library(SECURITY_FRAMEWORK Security REQUIRED)
+  find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
+  message(STATUS "Secure key storage: macOS Keychain (Security.framework)")
+else()
+  # Linux: try to find libsecret
+  pkg_check_modules(LIBSECRET QUIET IMPORTED_TARGET libsecret-1)
+  if (LIBSECRET_FOUND)
+    target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::LIBSECRET)
+    target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_LIBSECRET=1)
+    message(STATUS "Secure key storage: libsecret (GNOME Keyring / KDE Wallet)")
+  else()
+    message(STATUS "Secure key storage: NOT AVAILABLE (install libsecret-1-dev)")
+  endif()
 endif()
 
 # Link nostrdb_storage for local database support
@@ -285,6 +315,33 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "blossom;settings;unit;gnostr"
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}")
+
+  # Secure keystore unit tests
+  add_executable(gnostr-test-keystore tests/test_keystore.c)
+  target_compile_features(gnostr-test-keystore PRIVATE c_std_11)
+  target_include_directories(gnostr-test-keystore PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  # Include the appropriate keystore implementation based on platform
+  if (APPLE)
+    target_sources(gnostr-test-keystore PRIVATE
+      src/util/keystore_macos.c
+      src/util/keystore_stub.c)
+    target_compile_definitions(gnostr-test-keystore PRIVATE HAVE_MACOS_KEYCHAIN=1)
+    target_link_libraries(gnostr-test-keystore PRIVATE ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
+  elseif (LIBSECRET_FOUND)
+    target_sources(gnostr-test-keystore PRIVATE
+      src/util/keystore_libsecret.c
+      src/util/keystore_stub.c)
+    target_compile_definitions(gnostr-test-keystore PRIVATE HAVE_LIBSECRET=1)
+    target_link_libraries(gnostr-test-keystore PRIVATE PkgConfig::LIBSECRET)
+  else()
+    target_sources(gnostr-test-keystore PRIVATE src/util/keystore_stub.c)
+  endif()
+  target_link_libraries(gnostr-test-keystore PRIVATE PkgConfig::GLIB PkgConfig::GIO)
+  _gnostr_apply_sanitizers(gnostr-test-keystore)
+  add_test(NAME gnostr-test-keystore COMMAND gnostr-test-keystore)
+  set_tests_properties(gnostr-test-keystore PROPERTIES
+    TIMEOUT 30
+    LABELS "keystore;security;unit;gnostr")
 
   # NIP-46 E2E tests
   add_executable(gnostr-test-nip46-e2e tests/test_nip46_e2e.c)

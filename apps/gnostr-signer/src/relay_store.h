@@ -64,6 +64,25 @@ GPtrArray *relay_store_get_defaults(void);
 /* Validate relay URL format */
 gboolean relay_store_validate_url(const gchar *url);
 
+/* Connection status */
+typedef enum {
+  RELAY_STATUS_UNKNOWN,
+  RELAY_STATUS_CONNECTING,
+  RELAY_STATUS_CONNECTED,
+  RELAY_STATUS_DISCONNECTED,
+  RELAY_STATUS_ERROR
+} RelayConnectionStatus;
+
+/* Get connection status for a relay (async check) */
+RelayConnectionStatus relay_store_get_status(RelayStore *rs, const gchar *url);
+
+/* Set connection status (called by connection manager) */
+void relay_store_set_status(RelayStore *rs, const gchar *url, RelayConnectionStatus status);
+
+/* Test relay connection (async callback) */
+typedef void (*RelayTestCallback)(const gchar *url, RelayConnectionStatus status, gpointer user_data);
+void relay_store_test_connection(const gchar *url, RelayTestCallback cb, gpointer user_data);
+
 /* Get read-only relays */
 GPtrArray *relay_store_get_read_relays(RelayStore *rs);
 

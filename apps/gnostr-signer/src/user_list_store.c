@@ -8,6 +8,7 @@ struct _UserListStore {
   UserListType type;
   GPtrArray *entries;   /* Array of UserListEntry* */
   gchar *config_path;
+  gint64 last_sync;     /* Timestamp of last sync with relays */
 };
 
 static gchar *get_config_path(UserListType type) {
@@ -423,4 +424,104 @@ GPtrArray *user_list_store_search(UserListStore *store, const gchar *query) {
 
   g_free(query_lower);
   return arr;
+}
+
+UserListType user_list_store_get_type(UserListStore *store) {
+  return store ? store->type : USER_LIST_FOLLOWS;
+}
+
+gint64 user_list_store_get_last_sync(UserListStore *store) {
+  return store ? store->last_sync : 0;
+}
+
+void user_list_store_set_last_sync(UserListStore *store, gint64 timestamp) {
+  if (store) store->last_sync = timestamp;
+}
+
+guint user_list_store_merge_event(UserListStore *store, const gchar *event_json) {
+  if (!store || !event_json) return 0;
+
+  JsonParser *parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, event_json, -1, NULL)) {
+    g_object_unref(parser);
+    return 0;
+  }
+
+  JsonNode *root_node = json_parser_get_root(parser);
+  if (!JSON_NODE_HOLDS_OBJECT(root_node)) {
+    g_object_unref(parser);
+    return 0;
+  }
+
+  JsonObject *root = json_node_get_object(root_node);
+
+  /* Verify kind */
+  if (!json_object_has_member(root, "kind")) {
+    g_object_unref(parser);
+    return 0;
+  }
+
+  gint kind = (gint)json_object_get_int_member(root, "kind");
+  gint expected_kind = user_list_store_get_kind(store);
+  if (kind != expected_kind) {
+    g_object_unref(parser);
+    return 0;
+  }
+
+  if (!json_object_has_member(root, "tags")) {
+    g_object_unref(parser);
+    return 0;
+  }
+
+  JsonNode *tags_node = json_object_get_member(root, "tags");
+  if (!JSON_NODE_HOLDS_ARRAY(tags_node)) {
+    g_object_unref(parser);
+    return 0;
+  }
+
+  JsonArray *tags = json_node_get_array(tags_node);
+  guint added = 0;
+
+  guint n = json_array_get_length(tags);
+  for (guint i = 0; i < n; i++) {
+    JsonNode *tag_node = json_array_get_element(tags, i);
+    if (!JSON_NODE_HOLDS_ARRAY(tag_node)) continue;
+
+    JsonArray *tag = json_node_get_array(tag_node);
+    guint tag_len = json_array_get_length(tag);
+    if (tag_len < 2) continue;
+
+    const gchar *tag_type = json_array_get_string_element(tag, 0);
+    if (g_strcmp0(tag_type, "p") != 0) continue;
+
+    const gchar *pubkey = json_array_get_string_element(tag, 1);
+    if (!pubkey || !*pubkey) continue;
+
+    /* Skip if already exists */
+    if (user_list_store_contains(store, pubkey)) continue;
+
+    gchar *relay_hint = NULL;
+    gchar *petname = NULL;
+
+    if (tag_len >= 3) {
+      const gchar *r = json_array_get_string_element(tag, 2);
+      if (r && *r) relay_hint = g_strdup(r);
+    }
+
+    if (tag_len >= 4 && store->type == USER_LIST_FOLLOWS) {
+      const gchar *p = json_array_get_string_element(tag, 3);
+      if (p && *p) petname = g_strdup(p);
+    }
+
+    UserListEntry *entry = g_new0(UserListEntry, 1);
+    entry->pubkey = g_strdup(pubkey);
+    entry->relay_hint = relay_hint;
+    entry->petname = petname;
+
+    g_ptr_array_add(store->entries, entry);
+    added++;
+  }
+
+  g_object_unref(parser);
+  return added;
 }

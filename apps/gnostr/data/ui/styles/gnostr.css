@@ -519,6 +519,29 @@ gnostr-video-player {
   font-size: 12px;
 }
 
+/* Relay permission type indicators (NIP-65) */
+.relay-type-icon {
+  min-width: 16px;
+  min-height: 16px;
+}
+
+.relay-type-readwrite {
+  color: @accent_bg_color;
+}
+
+.relay-type-read {
+  color: #2e7d32;  /* Green for read/subscribe */
+}
+
+.relay-type-write {
+  color: #1565c0;  /* Blue for write/publish */
+}
+
+/* Relay type dropdown in relay manager */
+.relay-row dropdown {
+  min-width: 70px;
+}
+
 /* NIP-10 Reply Indicator Styles */
 .reply-indicator {
   padding: 4px 0;

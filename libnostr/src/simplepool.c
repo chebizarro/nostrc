@@ -442,22 +442,80 @@ void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url) {
 // Function to add an existing relay to the pool
 void nostr_simple_pool_add_relay(NostrSimplePool *pool, NostrRelay *relay) {
     if (!pool || !relay) return;
-    
+
     pthread_mutex_lock(&pool->pool_mutex);
-    
+
     // Check if relay already exists (by URL)
     for (size_t i = 0; i < pool->relay_count; i++) {
-        if (pool->relays[i] == relay || 
+        if (pool->relays[i] == relay ||
             (pool->relays[i]->url && relay->url && strcmp(pool->relays[i]->url, relay->url) == 0)) {
             pthread_mutex_unlock(&pool->pool_mutex);
             return; // Already in pool
         }
     }
-    
+
     // Add relay to pool
     pool->relays = (NostrRelay **)realloc(pool->relays, (pool->relay_count + 1) * sizeof(NostrRelay *));
     pool->relays[pool->relay_count++] = relay;
-    
+
+    pthread_mutex_unlock(&pool->pool_mutex);
+}
+
+// Function to remove a relay from the pool by URL (live relay switching)
+bool nostr_simple_pool_remove_relay(NostrSimplePool *pool, const char *url) {
+    if (!pool || !url || !*url) return false;
+
+    pthread_mutex_lock(&pool->pool_mutex);
+
+    for (size_t i = 0; i < pool->relay_count; i++) {
+        if (pool->relays[i] && pool->relays[i]->url &&
+            strcmp(pool->relays[i]->url, url) == 0) {
+            NostrRelay *relay = pool->relays[i];
+
+            // Shift remaining relays down
+            for (size_t j = i + 1; j < pool->relay_count; j++) {
+                pool->relays[j - 1] = pool->relays[j];
+            }
+            pool->relay_count--;
+
+            // Resize array (or set to NULL if empty)
+            if (pool->relay_count == 0) {
+                free(pool->relays);
+                pool->relays = NULL;
+            } else {
+                pool->relays = (NostrRelay **)realloc(pool->relays,
+                    pool->relay_count * sizeof(NostrRelay *));
+            }
+
+            pthread_mutex_unlock(&pool->pool_mutex);
+
+            // Disconnect and free relay outside of lock
+            fprintf(stderr, "[pool] Removing relay: %s\n", url);
+            nostr_relay_disconnect(relay);
+            nostr_relay_free(relay);
+
+            return true;
+        }
+    }
+
+    pthread_mutex_unlock(&pool->pool_mutex);
+    return false;
+}
+
+// Function to disconnect all relays in the pool (live relay switching)
+void nostr_simple_pool_disconnect_all(NostrSimplePool *pool) {
+    if (!pool) return;
+
+    pthread_mutex_lock(&pool->pool_mutex);
+
+    fprintf(stderr, "[pool] Disconnecting all %zu relays\n", pool->relay_count);
+
+    for (size_t i = 0; i < pool->relay_count; i++) {
+        if (pool->relays[i]) {
+            nostr_relay_disconnect(pool->relays[i]);
+        }
+    }
+
     pthread_mutex_unlock(&pool->pool_mutex);
 }
 
