@@ -95,6 +95,8 @@ struct _GnNostrEventModel {
   guint emit_added;               /* Number of items added in batched emission */
   gboolean in_batch;              /* TRUE while processing a batch - suppress emissions */
   guint batch_start_len;          /* Length of notes array when batch started */
+  gboolean pending_refresh;       /* TRUE if model needs full refresh emission */
+  guint last_emitted_len;         /* Length at last emission (for calculating diff) */
 };
 
 typedef struct {
@@ -170,6 +172,7 @@ static gint64 get_current_time_ms(void);
 /* nostrc-apq: Idle-scheduled emission to prevent GTK4 re-entrancy */
 static gboolean emit_items_changed_idle(gpointer user_data);
 static void schedule_items_changed(GnNostrEventModel *self, guint position, guint added);
+static void schedule_model_refresh(GnNostrEventModel *self);
 static void begin_batch(GnNostrEventModel *self);
 static void end_batch(GnNostrEventModel *self);
 
@@ -561,11 +564,12 @@ static gboolean flush_deferred_notes_cb(gpointer user_data) {
   /* Clear deferred queue */
   g_array_set_size(self->deferred_notes, 0);
 
-  /* Update timestamp and emit batch signal */
+  /* Update timestamp and schedule model refresh */
   self->last_update_time_ms = now_ms;
   if (inserted > 0) {
-    /* Emit a single items-changed for all insertions (position 0, added inserted) */
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, inserted);
+    /* nostrc-h40: Use idle-scheduled refresh instead of direct emission.
+     * Items were inserted at various positions, so full refresh is appropriate. */
+    schedule_model_refresh(self);
   }
 
   /* Clear pending count and notify */
@@ -592,10 +596,25 @@ static gboolean emit_items_changed_idle(gpointer user_data) {
 
   self->emit_idle_id = 0;
 
+  /* nostrc-h40: Handle full refresh for model changes (additions + removals) */
+  if (self->pending_refresh) {
+    guint old_len = self->last_emitted_len;
+    guint new_len = self->notes->len;
+    self->pending_refresh = FALSE;
+    self->last_emitted_len = new_len;
+    self->emit_added = 0;
+    if (old_len != new_len || old_len > 0) {
+      g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
+    }
+    self->last_update_time_ms = get_current_time_ms();
+    return G_SOURCE_REMOVE;
+  }
+
   if (self->emit_added > 0) {
     /* Emit a single batched signal for all items added since last emit */
     g_list_model_items_changed(G_LIST_MODEL(self), self->emit_start, 0, self->emit_added);
     self->emit_added = 0;
+    self->last_emitted_len = self->notes->len;
     self->last_update_time_ms = get_current_time_ms();
   }
 
@@ -620,6 +639,22 @@ static void schedule_items_changed(GnNostrEventModel *self, guint position, guin
     guint new_end = MAX(old_end, position + added);
     self->emit_start = new_start;
     self->emit_added = new_end - new_start;
+  }
+}
+
+/* nostrc-h40: Schedule a full model refresh via idle handler.
+ * Used when items are removed or model changes in ways that can't be
+ * expressed as simple insertions. Always safe - emits full refresh. */
+static void schedule_model_refresh(GnNostrEventModel *self) {
+  if (!self) return;
+
+  /* In batch mode, end_batch will handle emission */
+  if (self->in_batch) return;
+
+  self->pending_refresh = TRUE;
+
+  if (self->emit_idle_id == 0) {
+    self->emit_idle_id = g_idle_add(emit_items_changed_idle, self);
   }
 }
 
@@ -746,10 +781,10 @@ static void enforce_window(GnNostrEventModel *self) {
 
   g_array_set_size(self->notes, cap);
 
-  /* In batch mode, end_batch will handle emission */
-  if (!self->in_batch) {
-    g_list_model_items_changed(G_LIST_MODEL(self), cap, to_remove, 0);
-  }
+  /* nostrc-h40: Always use idle-scheduled refresh to prevent GTK4 crashes.
+   * enforce_window can be called from various code paths (batch processing,
+   * profile updates, etc.) and direct emission causes segfaults. */
+  schedule_model_refresh(self);
 }
 
 /* Pending queue: pubkey -> array of PendingEntry. Returns TRUE if this pubkey had no pending queue before. */
@@ -841,9 +876,10 @@ static gboolean remove_note_by_key(GnNostrEventModel *self, uint64_t note_key) {
     g_hash_table_remove(self->thread_info, &note_key);
     g_hash_table_remove(self->item_cache, &note_key);
 
-    /* Remove visible entry and emit change */
+    /* Remove visible entry and schedule model refresh */
     g_array_remove_index(self->notes, i);
-    g_list_model_items_changed(G_LIST_MODEL(self), i, 1, 0);
+    /* nostrc-h40: Use idle-scheduled refresh instead of direct emission */
+    schedule_model_refresh(self);
 
     return TRUE;
   }
@@ -1244,6 +1280,8 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
   self->emit_added = 0;
   self->in_batch = FALSE;
   self->batch_start_len = 0;
+  self->pending_refresh = FALSE;
+  self->last_emitted_len = 0;
 
   /* Install lifetime subscriptions via dispatcher (marshals to main loop) */
   self->sub_profiles = gn_ndb_subscribe(FILTER_PROFILES, on_sub_profiles_batch, self, NULL);
@@ -1496,7 +1534,8 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
   g_hash_table_remove_all(self->thread_info);
   g_hash_table_remove_all(self->pending_by_author);
 
-  g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, 0);
+  /* nostrc-h40: Use idle-scheduled refresh instead of direct emission */
+  schedule_model_refresh(self);
 
   g_debug("[MODEL] Cleared %u items", old_size);
 }
@@ -1626,7 +1665,8 @@ void gn_nostr_event_model_trim_newer(GnNostrEventModel *self, guint keep_count) 
 
   /* Remove from front of array */
   g_array_remove_range(self->notes, 0, to_remove);
-  g_list_model_items_changed(G_LIST_MODEL(self), 0, to_remove, 0);
+  /* nostrc-h40: Use idle-scheduled refresh instead of direct emission */
+  schedule_model_refresh(self);
 
   g_debug("[MODEL] Trimmed %u newer items, %u remaining", to_remove, self->notes->len);
 }
@@ -1798,7 +1838,8 @@ void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count) 
 
   /* Remove from end of array */
   g_array_remove_range(self->notes, start_idx, to_remove);
-  g_list_model_items_changed(G_LIST_MODEL(self), start_idx, to_remove, 0);
+  /* nostrc-h40: Use idle-scheduled refresh instead of direct emission */
+  schedule_model_refresh(self);
 
   g_debug("[MODEL] Trimmed %u older items, %u remaining", to_remove, self->notes->len);
 }

@@ -26,4 +26,7 @@
     <file>ui/dialogs/gnostr-about-dialog.ui</file>
     <file>ui/styles/gnostr.css</file>
   </gresource>
+  <gresource prefix="/org/gnostr/assets">
+    <file>assets/background.png</file>
+  </gresource>
 </gresources>

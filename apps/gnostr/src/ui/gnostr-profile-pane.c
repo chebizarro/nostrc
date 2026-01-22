@@ -18,6 +18,24 @@
 #endif
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-profile-pane.ui"
+#define DEFAULT_BANNER_RESOURCE "/org/gnostr/assets/assets/background.png"
+
+/* Default banner texture loaded from GResource */
+static GdkTexture *default_banner_texture = NULL;
+
+/* Lazy-load the default banner texture from GResource */
+static GdkTexture *get_default_banner_texture(void) {
+  if (default_banner_texture == NULL) {
+    GError *error = NULL;
+    default_banner_texture = gdk_texture_new_from_resource(DEFAULT_BANNER_RESOURCE);
+    if (!default_banner_texture) {
+      g_warning("Failed to load default banner from resource: %s",
+                error ? error->message : "unknown error");
+      g_clear_error(&error);
+    }
+  }
+  return default_banner_texture;
+}
 
 /* Maximum posts to fetch per page */
 #define POSTS_PAGE_SIZE 20
@@ -648,6 +666,13 @@ static void gnostr_profile_pane_init(GnostrProfilePane *self) {
 
   /* Create SimplePool for fetching posts */
   self->simple_pool = gnostr_simple_pool_new();
+
+  /* Show default banner from GResource */
+  GdkTexture *default_banner = get_default_banner_texture();
+  if (default_banner && self->banner_image) {
+    gtk_picture_set_paintable(GTK_PICTURE(self->banner_image), GDK_PAINTABLE(default_banner));
+    gtk_widget_set_visible(self->banner_image, TRUE);
+  }
 }
 
 /* Helper to update action button visibility based on whether viewing own profile */
@@ -682,10 +707,17 @@ void gnostr_profile_pane_clear(GnostrProfilePane *self) {
   gtk_widget_set_visible(self->lbl_bio, FALSE);
   gtk_widget_set_visible(self->metadata_box, FALSE);
   
-  /* Clear images and show initials */
+  /* Clear images and show initials; restore default banner */
   gtk_widget_set_visible(self->avatar_image, FALSE);
   gtk_widget_set_visible(self->avatar_initials, TRUE);
-  gtk_widget_set_visible(self->banner_image, FALSE);
+  /* Show default banner instead of hiding */
+  GdkTexture *default_banner = get_default_banner_texture();
+  if (default_banner && self->banner_image) {
+    gtk_picture_set_paintable(GTK_PICTURE(self->banner_image), GDK_PAINTABLE(default_banner));
+    gtk_widget_set_visible(self->banner_image, TRUE);
+  } else {
+    gtk_widget_set_visible(self->banner_image, FALSE);
+  }
   
 #ifdef HAVE_SOUP3
   /* Cancel any pending loads */
@@ -708,7 +740,7 @@ void gnostr_profile_pane_clear(GnostrProfilePane *self) {
   gtk_label_set_text(GTK_LABEL(self->avatar_initials), "?");
   gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), NULL);
   gtk_widget_set_visible(self->avatar_image, FALSE);
-  gtk_picture_set_paintable(GTK_PICTURE(self->banner_image), NULL);
+  /* Banner already set to default above, don't clear it */
   
   /* Clear metadata box children */
   GtkWidget *child = gtk_widget_get_first_child(self->metadata_box);
