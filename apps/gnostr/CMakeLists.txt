@@ -31,11 +31,15 @@ add_custom_command(
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/note-card-row.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-thread-view.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-note-embed.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-inbox-view.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-row.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-settings-dialog.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-manager.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-profile-edit.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-nwc-connect.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-mute-list.ui
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
   VERBATIM)
 
@@ -74,6 +78,7 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${CMAKE_SOURCE_DIR}/libnostr/include
   ${CMAKE_SOURCE_DIR}/libgo/include
   ${CMAKE_SOURCE_DIR}/nips/nip46/include
+  ${CMAKE_SOURCE_DIR}/nips/nip47/include
   ${CMAKE_SOURCE_DIR}/nips/nip19/include
   ${CMAKE_SOURCE_DIR}/nips/nip10/include
   ${CMAKE_SOURCE_DIR}/nips/nip17/include)
@@ -97,6 +102,9 @@ if (TARGET nostr_nip46_core)
 endif()
 if (TARGET nostr_nip17_core)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip17_core)
+endif()
+if (TARGET nostr_nip47_core)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip47_core)
 endif()
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::JSON_GLIB)
 if (SOUP3_FOUND)

@@ -1,0 +1,270 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnostrMuteListDialog" parent="GtkWindow">
+    <property name="modal">true</property>
+    <property name="title">Mute List</property>
+    <property name="default-width">500</property>
+    <property name="default-height">600</property>
+    <property name="resizable">true</property>
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">0</property>
+
+        <!-- Header bar -->
+        <child>
+          <object class="GtkHeaderBar">
+            <property name="show-title-buttons">false</property>
+            <child type="start">
+              <object class="GtkButton" id="btn_close">
+                <property name="label">Close</property>
+                <signal name="clicked" handler="on_close_clicked"/>
+              </object>
+            </child>
+            <child type="title">
+              <object class="GtkLabel">
+                <property name="label">Mute List</property>
+                <style>
+                  <class name="title"/>
+                </style>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkButton" id="btn_save">
+                <property name="label">Save</property>
+                <property name="sensitive">false</property>
+                <signal name="clicked" handler="on_save_clicked"/>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkSpinner" id="spinner">
+                <property name="visible">false</property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Toast revealer -->
+        <child>
+          <object class="GtkRevealer" id="toast_revealer">
+            <property name="reveal-child">false</property>
+            <property name="transition-type">slide-down</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <property name="margin-top">8</property>
+                <property name="margin-bottom">8</property>
+                <style>
+                  <class name="app-notification"/>
+                </style>
+                <child>
+                  <object class="GtkLabel" id="toast_label">
+                    <property name="label"></property>
+                    <property name="hexpand">true</property>
+                    <property name="xalign">0</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Main content with notebook tabs -->
+        <child>
+          <object class="GtkNotebook" id="notebook">
+            <property name="vexpand">true</property>
+
+            <!-- Users Tab -->
+            <child>
+              <object class="GtkNotebookPage">
+                <property name="tab-expand">true</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">8</property>
+                    <property name="margin-start">12</property>
+                    <property name="margin-end">12</property>
+                    <property name="margin-top">12</property>
+                    <property name="margin-bottom">12</property>
+
+                    <!-- Add user section -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <child>
+                          <object class="GtkEntry" id="entry_add_user">
+                            <property name="hexpand">true</property>
+                            <property name="placeholder-text">npub or hex pubkey</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="btn_add_user">
+                            <property name="icon-name">list-add-symbolic</property>
+                            <property name="tooltip-text">Add user to mute list</property>
+                            <signal name="clicked" handler="on_add_user_clicked"/>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Users list -->
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="vexpand">true</property>
+                        <property name="hscrollbar-policy">never</property>
+                        <child>
+                          <object class="GtkListBox" id="list_users">
+                            <property name="selection-mode">none</property>
+                            <property name="show-separators">true</property>
+                            <style>
+                              <class name="boxed-list"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+                <property name="tab">
+                  <object class="GtkLabel">
+                    <property name="label">Users</property>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Words Tab -->
+            <child>
+              <object class="GtkNotebookPage">
+                <property name="tab-expand">true</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">8</property>
+                    <property name="margin-start">12</property>
+                    <property name="margin-end">12</property>
+                    <property name="margin-top">12</property>
+                    <property name="margin-bottom">12</property>
+
+                    <!-- Add word section -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <child>
+                          <object class="GtkEntry" id="entry_add_word">
+                            <property name="hexpand">true</property>
+                            <property name="placeholder-text">Word or phrase to mute</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="btn_add_word">
+                            <property name="icon-name">list-add-symbolic</property>
+                            <property name="tooltip-text">Add word to mute list</property>
+                            <signal name="clicked" handler="on_add_word_clicked"/>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Words list -->
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="vexpand">true</property>
+                        <property name="hscrollbar-policy">never</property>
+                        <child>
+                          <object class="GtkListBox" id="list_words">
+                            <property name="selection-mode">none</property>
+                            <property name="show-separators">true</property>
+                            <style>
+                              <class name="boxed-list"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+                <property name="tab">
+                  <object class="GtkLabel">
+                    <property name="label">Words</property>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Hashtags Tab -->
+            <child>
+              <object class="GtkNotebookPage">
+                <property name="tab-expand">true</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">8</property>
+                    <property name="margin-start">12</property>
+                    <property name="margin-end">12</property>
+                    <property name="margin-top">12</property>
+                    <property name="margin-bottom">12</property>
+
+                    <!-- Add hashtag section -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <child>
+                          <object class="GtkEntry" id="entry_add_hashtag">
+                            <property name="hexpand">true</property>
+                            <property name="placeholder-text">Hashtag (without #)</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="btn_add_hashtag">
+                            <property name="icon-name">list-add-symbolic</property>
+                            <property name="tooltip-text">Add hashtag to mute list</property>
+                            <signal name="clicked" handler="on_add_hashtag_clicked"/>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Hashtags list -->
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="vexpand">true</property>
+                        <property name="hscrollbar-policy">never</property>
+                        <child>
+                          <object class="GtkListBox" id="list_hashtags">
+                            <property name="selection-mode">none</property>
+                            <property name="show-separators">true</property>
+                            <style>
+                              <class name="boxed-list"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+                <property name="tab">
+                  <object class="GtkLabel">
+                    <property name="label">Hashtags</property>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+          </object>
+        </child>
+
+      </object>
+    </child>
+  </template>
+</interface>

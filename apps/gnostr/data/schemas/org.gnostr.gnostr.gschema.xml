@@ -36,5 +36,46 @@
         Maximum time to wait for remote signer pairing response before aborting.
       </description>
     </key>
+    <key name="nwc-connection-uri" type="s">
+      <default>''</default>
+      <summary>NWC Connection URI</summary>
+      <description>
+        NIP-47 Nostr Wallet Connect URI (nostr+walletconnect://...).
+        Contains wallet pubkey, secret, relay URL, and optional lud16.
+        Empty string means no wallet connected.
+      </description>
+    </key>
+    <key name="blossom-server" type="s">
+      <default>'https://blossom.primal.net'</default>
+      <summary>Default Blossom Server</summary>
+      <description>
+        Default Blossom media server URL for file uploads.
+        Used when uploading images, videos, or other media to notes.
+      </description>
+    </key>
+    <key name="blossom-servers" type="as">
+      <default>['https://blossom.primal.net']</default>
+      <summary>Blossom Server List</summary>
+      <description>
+        List of Blossom media server URLs (kind 10063).
+        The first server in the list is used as the default for uploads.
+      </description>
+    </key>
+    <key name="video-autoplay" type="b">
+      <default>false</default>
+      <summary>Video Autoplay</summary>
+      <description>
+        Whether videos should automatically start playing when they appear in the timeline.
+        When disabled, user must click to start playback.
+      </description>
+    </key>
+    <key name="video-loop" type="b">
+      <default>false</default>
+      <summary>Video Loop</summary>
+      <description>
+        Whether videos should loop continuously after reaching the end.
+        When disabled, videos stop at the end of playback.
+      </description>
+    </key>
   </schema>
 </schemalist>

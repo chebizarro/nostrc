@@ -427,3 +427,44 @@ void storage_ndb_hex_encode(const unsigned char *bin32, char *hex65)
   }
   hex65[64] = '\0';
 }
+
+/* Serialize note tags to JSON array string (for NIP-92 imeta parsing).
+ * Returns newly allocated JSON string or NULL if no tags.
+ * Caller must g_free() the result. */
+char *storage_ndb_note_tags_json(storage_ndb_note *note)
+{
+  if (!note) return NULL;
+
+  struct ndb_tags *tags = ndb_note_tags(note);
+  if (!tags || ndb_tags_count(tags) == 0) return NULL;
+
+  GString *json = g_string_new("[");
+  struct ndb_iterator iter;
+  ndb_tags_iterate_start(note, &iter);
+
+  gboolean first_tag = TRUE;
+  while (ndb_tags_iterate_next(&iter)) {
+    if (!first_tag) g_string_append_c(json, ',');
+    first_tag = FALSE;
+
+    g_string_append_c(json, '[');
+    struct ndb_tag *tag = iter.tag;
+    int nelem = ndb_tag_count(tag);
+    for (int i = 0; i < nelem; i++) {
+      if (i > 0) g_string_append_c(json, ',');
+      struct ndb_str str = ndb_tag_str(note, tag, i);
+      if (str.str) {
+        /* Escape and quote the string */
+        gchar *escaped = g_strescape(str.str, NULL);
+        g_string_append_printf(json, "\"%s\"", escaped);
+        g_free(escaped);
+      } else {
+        g_string_append(json, "\"\"");
+      }
+    }
+    g_string_append_c(json, ']');
+  }
+
+  g_string_append_c(json, ']');
+  return g_string_free(json, FALSE);
+}

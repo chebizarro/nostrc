@@ -1,0 +1,424 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnostrNwcConnect" parent="GtkWindow">
+    <property name="modal">true</property>
+    <property name="title">Wallet Connect</property>
+    <property name="default-width">420</property>
+    <property name="default-height">400</property>
+    <property name="resizable">true</property>
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">0</property>
+
+        <!-- Header bar -->
+        <child>
+          <object class="GtkHeaderBar">
+            <property name="show-title-buttons">false</property>
+            <child type="start">
+              <object class="GtkButton" id="btn_close">
+                <property name="label">Close</property>
+                <signal name="clicked" handler="on_close_clicked"/>
+              </object>
+            </child>
+            <child type="title">
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">wallet-symbolic</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">Wallet Connect</property>
+                    <style>
+                      <class name="title"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Toast revealer -->
+        <child>
+          <object class="GtkRevealer" id="toast_revealer">
+            <property name="reveal-child">false</property>
+            <property name="transition-type">slide-down</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <property name="margin-top">8</property>
+                <property name="margin-bottom">8</property>
+                <style>
+                  <class name="app-notification"/>
+                </style>
+                <child>
+                  <object class="GtkLabel" id="toast_label">
+                    <property name="label"></property>
+                    <property name="hexpand">true</property>
+                    <property name="xalign">0</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Stack for connected/disconnected states -->
+        <child>
+          <object class="GtkStack" id="stack">
+            <property name="vexpand">true</property>
+            <property name="transition-type">crossfade</property>
+
+            <!-- Disconnected page -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">disconnected</property>
+                <property name="child">
+                  <object class="GtkBox" id="page_disconnected">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">16</property>
+                    <property name="margin-start">24</property>
+                    <property name="margin-end">24</property>
+                    <property name="margin-top">24</property>
+                    <property name="margin-bottom">24</property>
+                    <property name="valign">center</property>
+
+                    <!-- Icon and description -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">12</property>
+                        <property name="halign">center</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">lightning-symbolic</property>
+                            <property name="pixel-size">64</property>
+                            <style>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">Connect Lightning Wallet</property>
+                            <style>
+                              <class name="title-2"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">Paste your NWC connection string to connect your wallet. Get one from your wallet app (e.g., Alby, Zeus, Mutiny).</property>
+                            <property name="wrap">true</property>
+                            <property name="max-width-chars">40</property>
+                            <property name="justify">center</property>
+                            <style>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Connection URI entry -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">8</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">Connection String</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">8</property>
+                            <child>
+                              <object class="GtkEntry" id="entry_connection_uri">
+                                <property name="placeholder-text">nostr+walletconnect://...</property>
+                                <property name="hexpand">true</property>
+                                <property name="input-purpose">url</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkButton" id="btn_paste">
+                                <property name="icon-name">edit-paste-symbolic</property>
+                                <property name="tooltip-text">Paste from clipboard</property>
+                                <signal name="clicked" handler="on_paste_clicked"/>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">Starts with nostr+walletconnect://</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="caption"/>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Connect button -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <property name="halign">center</property>
+                        <child>
+                          <object class="GtkButton" id="btn_connect">
+                            <property name="label">Connect Wallet</property>
+                            <signal name="clicked" handler="on_connect_clicked"/>
+                            <style>
+                              <class name="suggested-action"/>
+                              <class name="pill"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkSpinner" id="spinner_connect">
+                            <property name="visible">false</property>
+                            <property name="spinning">true</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Connected page -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">connected</property>
+                <property name="child">
+                  <object class="GtkBox" id="page_connected">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">16</property>
+                    <property name="margin-start">24</property>
+                    <property name="margin-end">24</property>
+                    <property name="margin-top">24</property>
+                    <property name="margin-bottom">24</property>
+
+                    <!-- Connected header -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">12</property>
+                        <property name="halign">center</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">emblem-ok-symbolic</property>
+                            <property name="pixel-size">24</property>
+                            <style>
+                              <class name="success"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">Wallet Connected</property>
+                            <style>
+                              <class name="title-2"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Wallet info card -->
+                    <child>
+                      <object class="GtkFrame">
+                        <style>
+                          <class name="view"/>
+                        </style>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">12</property>
+                            <property name="margin-start">16</property>
+                            <property name="margin-end">16</property>
+                            <property name="margin-top">16</property>
+                            <property name="margin-bottom">16</property>
+
+                            <!-- Wallet pubkey -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">4</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Wallet</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="dim-label"/>
+                                      <class name="caption"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="lbl_wallet_pubkey">
+                                    <property name="label">-</property>
+                                    <property name="xalign">0</property>
+                                    <property name="selectable">true</property>
+                                    <style>
+                                      <class name="monospace"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Relay -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">4</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Relay</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="dim-label"/>
+                                      <class name="caption"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="lbl_relay">
+                                    <property name="label">-</property>
+                                    <property name="xalign">0</property>
+                                    <property name="selectable">true</property>
+                                    <property name="ellipsize">end</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Lightning Address (optional) -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">4</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Lightning Address</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="dim-label"/>
+                                      <class name="caption"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="lbl_lud16">
+                                    <property name="label">-</property>
+                                    <property name="xalign">0</property>
+                                    <property name="selectable">true</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Balance section -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">8</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">8</property>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label">Balance</property>
+                                <property name="xalign">0</property>
+                                <property name="hexpand">true</property>
+                                <style>
+                                  <class name="heading"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkButton" id="btn_refresh_balance">
+                                <property name="icon-name">view-refresh-symbolic</property>
+                                <property name="tooltip-text">Refresh balance</property>
+                                <signal name="clicked" handler="on_refresh_balance_clicked"/>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkSpinner" id="spinner_balance">
+                                <property name="visible">false</property>
+                                <property name="spinning">true</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="lbl_balance">
+                            <property name="label">Click refresh to fetch</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="title-1"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Spacer -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="vexpand">true</property>
+                      </object>
+                    </child>
+
+                    <!-- Disconnect button -->
+                    <child>
+                      <object class="GtkButton" id="btn_disconnect">
+                        <property name="label">Disconnect Wallet</property>
+                        <property name="halign">center</property>
+                        <signal name="clicked" handler="on_disconnect_clicked"/>
+                        <style>
+                          <class name="destructive-action"/>
+                          <class name="pill"/>
+                        </style>
+                      </object>
+                    </child>
+
+                  </object>
+                </property>
+              </object>
+            </child>
+
+          </object>
+        </child>
+
+      </object>
+    </child>
+  </template>
+</interface>

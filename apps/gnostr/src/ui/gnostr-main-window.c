@@ -2,6 +2,7 @@
 #include "gnostr-composer.h"
 #include "gnostr-timeline-view.h"
 #include "gnostr-profile-pane.h"
+#include "gnostr-thread-view.h"
 #include "gnostr-profile-provider.h"
 #include "gnostr-dm-inbox-view.h"
 #include "gnostr-dm-row.h"
@@ -36,6 +37,9 @@
 #include "../util/relays.h"
 /* NIP-11 relay information */
 #include "../util/relay_info.h"
+/* NIP-51 mute list */
+#include "../util/mute_list.h"
+#include "gnostr-mute-list.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -84,6 +88,7 @@ static void on_refresh_clicked(GtkButton *btn, gpointer user_data);
 static void on_composer_post_requested(GnostrComposer *composer, const char *text, gpointer user_data);
 static void on_relays_clicked(GtkButton *btn, gpointer user_data);
 static void on_settings_clicked(GtkButton *btn, gpointer user_data);
+static void on_show_mute_list_activated(GSimpleAction *action, GVariant *param, gpointer user_data);
 static void on_avatar_login_local_clicked(GtkButton *btn, gpointer user_data);
 static void on_avatar_pair_remote_clicked(GtkButton *btn, gpointer user_data);
 static void on_avatar_sign_out_clicked(GtkButton *btn, gpointer user_data);
@@ -248,6 +253,8 @@ struct _GnostrMainWindow {
   GtkWidget *timeline_overlay;
   GtkWidget *profile_revealer;
   GtkWidget *profile_pane;
+  GtkWidget *thread_revealer;
+  GtkWidget *thread_view;
   GtkWidget *btn_settings;
   GtkWidget *btn_relays;
   GtkWidget *btn_menu;
@@ -1222,6 +1229,17 @@ static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   gtk_window_present(win);
 }
 
+/* Handler for "Mute List" menu action */
+static void on_show_mute_list_activated(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  /* Create and show the mute list dialog */
+  GnostrMuteListDialog *dialog = gnostr_mute_list_dialog_new(GTK_WINDOW(self));
+  gtk_window_present(GTK_WINDOW(dialog));
+}
+
 static void on_avatar_login_local_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
@@ -1342,8 +1360,19 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, 
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return GDK_EVENT_PROPAGATE;
 
   if (keyval == GDK_KEY_Escape) {
+    /* Close thread view if it's open (takes priority) */
+    if (self->thread_revealer && GTK_IS_REVEALER(self->thread_revealer) &&
+        gtk_revealer_get_reveal_child(GTK_REVEALER(self->thread_revealer))) {
+      g_debug("[UI] ESC pressed: closing thread view");
+      gtk_revealer_set_reveal_child(GTK_REVEALER(self->thread_revealer), FALSE);
+      if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
+        gnostr_thread_view_clear(GNOSTR_THREAD_VIEW(self->thread_view));
+      }
+      return GDK_EVENT_STOP;
+    }
     /* Close profile sidebar if it's open */
-    if (gtk_revealer_get_reveal_child(GTK_REVEALER(self->profile_revealer))) {
+    if (self->profile_revealer && GTK_IS_REVEALER(self->profile_revealer) &&
+        gtk_revealer_get_reveal_child(GTK_REVEALER(self->profile_revealer))) {
       g_debug("[UI] ESC pressed: closing profile sidebar");
       gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), FALSE);
       return GDK_EVENT_STOP;
@@ -1518,6 +1547,10 @@ static void on_note_card_like_requested(GnostrNoteCardRow *row, const char *id_h
   show_toast(self, "Like functionality coming soon!");
 }
 
+/* Forward declaration for thread view close handler */
+static void on_thread_view_close_requested(GnostrThreadView *view, gpointer user_data);
+static void on_thread_view_open_profile(GnostrThreadView *view, const char *pubkey_hex, gpointer user_data);
+
 /* Public wrapper for viewing a thread (called from timeline view) */
 void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id) {
   if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
@@ -1531,17 +1564,116 @@ void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id
 
   g_message("[THREAD] View thread requested for root=%s", root_event_id);
 
-  /* For now, show a toast indicating this is being implemented.
-   * TODO: Implement full thread view in a separate pane or modal. */
-  char *msg = g_strdup_printf("Thread view coming soon! Root: %.8s...", root_event_id);
-  show_toast(self, msg);
-  g_free(msg);
+  /* Show thread view panel */
+  if (!self->thread_view || !GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
+    g_warning("[THREAD] Thread view widget not available");
+    show_toast(self, "Thread view not available");
+    return;
+  }
 
-  /* Future implementation could:
-   * 1. Create a new GnNostrEventModel with thread_root set
-   * 2. Query nostrdb for events referencing this root
-   * 3. Show in a modal/popover with the full thread
-   */
+  /* Set the thread root and load the thread */
+  gnostr_thread_view_set_thread_root(GNOSTR_THREAD_VIEW(self->thread_view), root_event_id);
+
+  /* Reveal the thread panel */
+  if (self->thread_revealer && GTK_IS_REVEALER(self->thread_revealer)) {
+    gtk_revealer_set_reveal_child(GTK_REVEALER(self->thread_revealer), TRUE);
+  }
+
+  /* Hide profile pane if visible to avoid overlap */
+  if (self->profile_revealer && GTK_IS_REVEALER(self->profile_revealer)) {
+    gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), FALSE);
+  }
+}
+
+/* Handler for thread view close button */
+static void on_thread_view_close_requested(GnostrThreadView *view, gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  (void)view;
+
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  /* Hide thread panel */
+  if (self->thread_revealer && GTK_IS_REVEALER(self->thread_revealer)) {
+    gtk_revealer_set_reveal_child(GTK_REVEALER(self->thread_revealer), FALSE);
+  }
+
+  /* Clear thread view to free resources */
+  if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
+    gnostr_thread_view_clear(GNOSTR_THREAD_VIEW(self->thread_view));
+  }
+}
+
+/* Handler for open profile from thread view */
+static void on_thread_view_open_profile(GnostrThreadView *view, const char *pubkey_hex, gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  (void)view;
+
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  /* Close thread view first */
+  on_thread_view_close_requested(GNOSTR_THREAD_VIEW(self->thread_view), self);
+
+  /* Open profile pane */
+  gnostr_main_window_open_profile(GTK_WIDGET(self), pubkey_hex);
+}
+
+/* Public: Mute a user (adds to mute list and refreshes timeline) */
+void gnostr_main_window_mute_user(GtkWidget *window, const char *pubkey_hex) {
+  if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  if (!pubkey_hex || strlen(pubkey_hex) != 64) {
+    g_warning("[MUTE] Invalid pubkey hex for mute user");
+    return;
+  }
+
+  g_message("[MUTE] Mute user requested for pubkey=%.16s...", pubkey_hex);
+
+  /* Add to mute list */
+  GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+  gnostr_mute_list_add_pubkey(mute_list, pubkey_hex, FALSE);
+
+  /* Refresh the timeline to filter out the muted user */
+  if (self->event_model) {
+    gn_nostr_event_model_refresh(GN_NOSTR_EVENT_MODEL(self->event_model));
+  }
+
+  show_toast(self, "User muted");
+}
+
+/* Public: Mute a thread (adds root event to mute list and refreshes timeline) */
+void gnostr_main_window_mute_thread(GtkWidget *window, const char *event_id_hex) {
+  if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  if (!event_id_hex || strlen(event_id_hex) != 64) {
+    g_warning("[MUTE] Invalid event ID hex for mute thread");
+    return;
+  }
+
+  g_message("[MUTE] Mute thread requested for event=%.16s...", event_id_hex);
+
+  /* Add to mute list (events) */
+  GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+  gnostr_mute_list_add_event(mute_list, event_id_hex, FALSE);
+
+  /* Refresh the timeline to filter out the muted thread */
+  if (self->event_model) {
+    gn_nostr_event_model_refresh(GN_NOSTR_EVENT_MODEL(self->event_model));
+  }
+
+  show_toast(self, "Thread muted");
+}
+
+/* Public: Show a toast message in the main window */
+void gnostr_main_window_show_toast(GtkWidget *window, const char *message) {
+  if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  show_toast(self, message);
 }
 
 /* Public wrappers so other UI components (e.g., timeline view) can request prefetch */
@@ -2023,9 +2155,15 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   /* Build app menu for header button */
   if (self->btn_menu) {
     GMenu *menu = g_menu_new();
+    g_menu_append(menu, "Mute List", "win.show-mute-list");
     g_menu_append(menu, "Quit", "app.quit");
     gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(self->btn_menu), G_MENU_MODEL(menu));
     g_object_unref(menu);
+
+    /* Register action for showing mute list */
+    GSimpleAction *mute_list_action = g_simple_action_new("show-mute-list", NULL);
+    g_signal_connect(mute_list_action, "activate", G_CALLBACK(on_show_mute_list_activated), self);
+    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(mute_list_action));
   }
   g_message("connecting post-requested handler on composer=%p", (void*)self->composer);
   g_signal_connect(self->composer, "post-requested",
@@ -2038,6 +2176,14 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     g_signal_connect(self->profile_pane, "close-requested",
                      G_CALLBACK(on_profile_pane_close_requested), self);
     g_message("connected profile pane close-requested signal");
+  }
+  /* Connect thread view signals */
+  if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
+    g_signal_connect(self->thread_view, "close-requested",
+                     G_CALLBACK(on_thread_view_close_requested), self);
+    g_signal_connect(self->thread_view, "open-profile",
+                     G_CALLBACK(on_thread_view_open_profile), self);
+    g_message("connected thread view signals");
   }
   /* Add key event controller for ESC to close profile sidebar */
   {
@@ -2285,6 +2431,8 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, timeline_overlay);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, profile_revealer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, profile_pane);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, thread_revealer);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, thread_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_settings);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_relays);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_menu);
@@ -2908,7 +3056,8 @@ static void start_pool_live(GnostrMainWindow *self) {
   }
   self->pool_cancellable = g_cancellable_new();
 
-  /* Build live URLs and filters: subscribe to all required kinds for persistence-first operation. */
+  /* Build live URLs and filters: subscribe to all required kinds for persistence-first operation.
+   * No limit on subscription since all events go into nostrdb - UI models handle their own windowing. */
   const char **urls = NULL; size_t url_count = 0; NostrFilters *filters = NULL;
 
   const int live_kinds[] = {0, 1, 5, 6, 7, 16, 1111};
@@ -2918,7 +3067,7 @@ static void start_pool_live(GnostrMainWindow *self) {
                                   &urls,
                                   &url_count,
                                   &filters,
-                                  (int)self->default_limit);
+                                  0);  /* No limit - nostrdb handles storage */
   if (!urls || url_count == 0 || !filters) {
     g_warning("[RELAY] No relay URLs configured, skipping live subscription");
     if (filters) nostr_filters_free(filters);

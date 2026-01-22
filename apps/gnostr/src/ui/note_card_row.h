@@ -19,6 +19,10 @@ G_DECLARE_FINAL_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GNOSTR, NOTE_CARD_
  * "quote-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data)
  * "like-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data)
  * "view-thread-requested" (gchar* root_event_id, gpointer user_data)
+ * "mute-user-requested" (gchar* pubkey_hex, gpointer user_data)
+ * "mute-thread-requested" (gchar* event_id_hex, gpointer user_data) - mutes the thread root event
+ * "show-toast" (gchar* message, gpointer user_data) - requests toast notification display
+ * "bookmark-toggled" (gchar* id_hex, gboolean is_bookmarked, gpointer user_data)
  */
 
 typedef struct _GnostrNoteCardRow GnostrNoteCardRow;
@@ -28,6 +32,19 @@ GnostrNoteCardRow *gnostr_note_card_row_new(void);
 void gnostr_note_card_row_set_author(GnostrNoteCardRow *self, const char *display_name, const char *handle, const char *avatar_url);
 void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_at, const char *fallback_ts);
 void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *content);
+
+/**
+ * gnostr_note_card_row_set_content_with_imeta:
+ * @self: note card row
+ * @content: text content of the note
+ * @tags_json: (nullable): JSON array string of event tags for NIP-92 imeta parsing
+ *
+ * Sets the note content and parses imeta tags for enhanced media display.
+ * When tags_json is provided, media URLs in content will use metadata from
+ * matching imeta tags (dimensions, alt text, blurhash placeholder, etc.).
+ */
+void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const char *content, const char *tags_json);
+
 void gnostr_note_card_row_set_depth(GnostrNoteCardRow *self, guint depth);
 void gnostr_note_card_row_set_ids(GnostrNoteCardRow *self, const char *id_hex, const char *root_id, const char *pubkey_hex);
 void gnostr_note_card_row_set_embed(GnostrNoteCardRow *self, const char *title, const char *snippet);
@@ -43,6 +60,9 @@ void gnostr_note_card_row_set_thread_info(GnostrNoteCardRow *self,
                                            const char *parent_id,
                                            const char *parent_author_name,
                                            gboolean is_reply);
+
+/* Bookmark state: update the bookmark button icon based on state */
+void gnostr_note_card_row_set_bookmarked(GnostrNoteCardRow *self, gboolean is_bookmarked);
 
 G_END_DECLS
 

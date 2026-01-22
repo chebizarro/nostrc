@@ -5,6 +5,18 @@
   padding: 10px;
   background: alpha(@theme_bg_color, 0.6);
   border: 1px solid alpha(@theme_fg_color, 0.08);
+  animation: note-fade-in 300ms ease-out;
+}
+
+@keyframes note-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .note-author {
@@ -19,6 +31,24 @@
   line-height: 1.3;
 }
 
+/* Clickable links in note content */
+.note-content a,
+label a {
+  color: @accent_bg_color;
+  text-decoration: none;
+}
+
+.note-content a:hover,
+label a:hover {
+  text-decoration: underline;
+  color: shade(@accent_bg_color, 0.9);
+}
+
+.note-content a:visited,
+label a:visited {
+  color: shade(@accent_bg_color, 0.85);
+}
+
 .note-embed {
   border-radius: 8px;
   background: alpha(@theme_bg_color, 0.5);
@@ -29,14 +59,12 @@
 .avatar {
   border-radius: 9999px;
   background: alpha(@theme_bg_color, 0.4);
-  overflow: hidden;
 }
 
 .avatar-circle {
   border-radius: 50%;
   min-width: 36px;
   min-height: 36px;
-  overflow: hidden;
 }
 
 .avatar-circle picture,
@@ -50,15 +78,18 @@
   min-width: 36px;
   min-height: 36px;
   background: alpha(@theme_bg_color, 0.4);
-  overflow: hidden;
 }
 
 .note-avatar picture {
   border-radius: 50%;
+  min-width: 36px;
+  min-height: 36px;
 }
 
 .note-avatar-image {
   border-radius: 50%;
+  min-width: 36px;
+  min-height: 36px;
 }
 
 /* Profile Pane Styles */
@@ -85,23 +116,25 @@
   box-shadow: 0 2px 8px alpha(black, 0.15),
               0 4px 16px alpha(black, 0.1);
   background: @theme_bg_color;
-  overflow: hidden;
 }
 
-/* Profile pane avatar (large, 96px) */
+/* Profile pane avatar (large, 144px with 132px image) */
 .profile-avatar {
   border-radius: 50%;
   background: @theme_bg_color;
-  overflow: hidden;
 }
 
 .profile-avatar picture {
   border-radius: 50%;
+  min-width: 132px;
+  min-height: 132px;
 }
 
 /* Avatar image styling */
 .profile-avatar-image {
   border-radius: 50%;
+  min-width: 132px;
+  min-height: 132px;
 }
 
 /* Avatar background for initials fallback */
@@ -112,8 +145,8 @@
     alpha(@accent_bg_color, 0.2) 0%,
     alpha(@accent_bg_color, 0.35) 100%
   );
-  min-width: 88px;
-  min-height: 88px;
+  min-width: 132px;
+  min-height: 132px;
 }
 
 /* Large circular avatar (for profile) */
@@ -121,7 +154,6 @@
   border-radius: 50%;
   min-width: 80px;
   min-height: 80px;
-  overflow: hidden;
 }
 
 .avatar-circle-large picture,
@@ -131,7 +163,7 @@
 
 /* Avatar initials text */
 .profile-avatar-initials {
-  font-size: 32px;
+  font-size: 48px;
   font-weight: 700;
   color: alpha(@theme_fg_color, 0.65);
 }
@@ -212,6 +244,135 @@
   margin-bottom: 8px;
 }
 
+/* Enhanced Video Player Styles */
+gnostr-video-player {
+  border-radius: 8px;
+  background: #000;
+}
+
+.video-content {
+  background: #000;
+}
+
+.video-content-fullscreen {
+  background: #000;
+}
+
+/* Video Controls Overlay */
+.video-controls {
+  background: linear-gradient(
+    to top,
+    alpha(black, 0.8) 0%,
+    alpha(black, 0.6) 50%,
+    alpha(black, 0.0) 100%
+  );
+  padding: 12px 16px;
+  border-radius: 0 0 8px 8px;
+  opacity: 1;
+  transition: opacity 300ms ease;
+}
+
+/* Controls visibility states */
+.video-controls:not(.controls-visible) {
+  opacity: 0;
+}
+
+.video-controls.controls-visible {
+  opacity: 1;
+}
+
+/* Seek bar row */
+.video-seek-row {
+  margin-bottom: 8px;
+}
+
+/* Time labels */
+.video-time {
+  font-size: 12px;
+  color: white;
+  min-width: 45px;
+}
+
+/* Seek slider */
+.video-seek {
+  min-height: 6px;
+}
+
+.video-seek trough {
+  background: alpha(white, 0.3);
+  border-radius: 3px;
+  min-height: 6px;
+}
+
+.video-seek highlight {
+  background: @accent_bg_color;
+  border-radius: 3px;
+}
+
+.video-seek slider {
+  background: white;
+  border-radius: 50%;
+  min-width: 14px;
+  min-height: 14px;
+  margin: -4px;
+  border: none;
+  box-shadow: 0 1px 3px alpha(black, 0.3);
+}
+
+/* Button row */
+.video-button-row {
+  margin-top: 4px;
+}
+
+/* Control buttons */
+.video-control-btn {
+  color: white;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 8px;
+  border-radius: 50%;
+  transition: background 150ms ease;
+}
+
+.video-control-btn:hover {
+  background: alpha(white, 0.15);
+}
+
+.video-control-btn:active {
+  background: alpha(white, 0.25);
+}
+
+/* Volume slider */
+.video-volume {
+  min-height: 4px;
+}
+
+.video-volume trough {
+  background: alpha(white, 0.3);
+  border-radius: 2px;
+  min-height: 4px;
+}
+
+.video-volume highlight {
+  background: white;
+  border-radius: 2px;
+}
+
+.video-volume slider {
+  background: white;
+  border-radius: 50%;
+  min-width: 12px;
+  min-height: 12px;
+  margin: -4px;
+  border: none;
+}
+
+/* Fullscreen specific styles */
+.video-content-fullscreen + .video-controls {
+  border-radius: 0;
+  padding: 16px 24px;
+}
+
 /* DM Inbox Styles */
 .dm-list {
   background: transparent;
@@ -238,7 +399,6 @@
 .dm-avatar {
   border-radius: 9999px;
   background: alpha(@theme_bg_color, 0.4);
-  overflow: hidden;
 }
 
 .dm-avatar picture {
@@ -439,4 +599,320 @@ button.pill {
 
 button.pill:hover {
   background: alpha(@accent_bg_color, 0.18);
+}
+
+/* ============================================
+   Image Viewer Modal Styles
+   ============================================ */
+
+/* Main image viewer window */
+.image-viewer {
+  background: alpha(black, 0.92);
+}
+
+/* Overlay container with dark background */
+.image-viewer-overlay {
+  background: transparent;
+}
+
+/* Scrolled window for pan support */
+.image-viewer scrolledwindow {
+  background: transparent;
+}
+
+/* The image itself */
+.image-viewer picture {
+  background: transparent;
+}
+
+/* Close button styling (top-right corner) */
+.image-viewer-close {
+  background: alpha(black, 0.5);
+  color: white;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 8px;
+  border: none;
+  transition: all 150ms ease;
+}
+
+.image-viewer-close:hover {
+  background: alpha(black, 0.7);
+}
+
+/* Zoom indicator (bottom-right corner) */
+.image-viewer-zoom {
+  background: alpha(black, 0.5);
+  color: white;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Clickable image in note cards */
+.clickable-image {
+  transition: all 150ms ease;
+}
+
+.clickable-image:hover {
+  opacity: 0.9;
+  box-shadow: 0 2px 8px alpha(black, 0.15);
+}
+
+/* ============================================
+   Thread View Styles
+   ============================================ */
+
+/* Main thread view container */
+.thread-view {
+  background: @theme_bg_color;
+  border-left: 1px solid alpha(@theme_fg_color, 0.1);
+}
+
+/* Thread header bar */
+.thread-header {
+  background: alpha(@theme_bg_color, 0.95);
+  border-bottom: 1px solid alpha(@theme_fg_color, 0.08);
+  padding: 8px 12px;
+}
+
+/* Thread title */
+.thread-title {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+/* Thread list container */
+.thread-list {
+  background: transparent;
+  padding: 4px 8px;
+}
+
+/* Thread depth indentation (via note card classes) */
+.thread-depth-0 {
+  margin-left: 0;
+}
+
+.thread-depth-1 {
+  margin-left: 24px;
+  border-left: 2px solid alpha(@accent_bg_color, 0.3);
+  padding-left: 12px;
+}
+
+.thread-depth-2 {
+  margin-left: 48px;
+  border-left: 2px solid alpha(@accent_bg_color, 0.25);
+  padding-left: 12px;
+}
+
+.thread-depth-3 {
+  margin-left: 72px;
+  border-left: 2px solid alpha(@accent_bg_color, 0.2);
+  padding-left: 12px;
+}
+
+.thread-depth-4 {
+  margin-left: 96px;
+  border-left: 2px solid alpha(@accent_bg_color, 0.15);
+  padding-left: 12px;
+}
+
+/* Note cards in thread - connecting lines */
+.thread-list .note-card {
+  margin-bottom: 4px;
+}
+
+/* Focus note highlight - the note that was clicked */
+.thread-focus-note {
+  border: 2px solid @accent_bg_color;
+  background: alpha(@accent_bg_color, 0.08);
+  box-shadow: 0 2px 8px alpha(@accent_bg_color, 0.15);
+}
+
+.thread-focus-note .note-card {
+  background: alpha(@accent_bg_color, 0.06);
+}
+
+/* Root note style - slightly emphasized */
+.thread-root-note {
+  margin-bottom: 8px;
+}
+
+.thread-root-note .note-card {
+  border-left: 3px solid @accent_bg_color;
+}
+
+/* Reply note style - slightly dimmed */
+.thread-reply-note {
+  opacity: 0.95;
+}
+
+/* Thread connector lines (vertical) */
+.thread-connector {
+  min-width: 2px;
+  background: alpha(@theme_fg_color, 0.15);
+  margin-left: 18px; /* Align with avatar center */
+}
+
+/* Thread connector branch point (horizontal) */
+.thread-branch {
+  min-height: 2px;
+  min-width: 16px;
+  background: alpha(@theme_fg_color, 0.15);
+  margin-top: 18px; /* Align with avatar center */
+}
+
+/* Thread continuation indicator */
+.thread-continuation {
+  font-size: 12px;
+  color: alpha(@theme_fg_color, 0.5);
+  padding: 8px 16px;
+}
+
+/* Loading state */
+.thread-view .loading-box {
+  padding: 32px;
+}
+
+/* Empty state */
+.thread-view .empty-box {
+  padding: 48px;
+}
+
+/* Smooth reveal animation */
+.thread-view-entering {
+  animation: thread-slide-in 250ms ease-out;
+}
+
+@keyframes thread-slide-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Parent chain (notes above focus) styling */
+.thread-ancestor {
+  opacity: 0.85;
+}
+
+.thread-ancestor .note-card {
+  border-left: 3px solid alpha(@theme_fg_color, 0.2);
+}
+
+/* Descendant chain (replies below focus) styling */
+.thread-descendant {
+  /* Slightly smaller for visual hierarchy */
+}
+
+.thread-descendant .note-card {
+  padding: 8px;
+}
+
+/* More replies collapsed indicator */
+.thread-more-replies {
+  padding: 12px 16px;
+  margin-left: 24px;
+  color: @accent_bg_color;
+  font-weight: 500;
+  border-radius: 8px;
+  transition: background 150ms ease;
+}
+
+.thread-more-replies:hover {
+  background: alpha(@accent_bg_color, 0.1);
+}
+
+/* ============================================
+   NIP-21 Embedded Note/Profile Styles
+   ============================================ */
+
+/* Embed frame container */
+.note-embed-frame {
+  border-radius: 10px;
+  background: alpha(@theme_bg_color, 0.5);
+  border: 1px solid alpha(@theme_fg_color, 0.1);
+  margin-top: 8px;
+  margin-bottom: 4px;
+  transition: all 150ms ease;
+}
+
+.note-embed-frame:hover {
+  background: alpha(@theme_bg_color, 0.7);
+  border-color: alpha(@theme_fg_color, 0.15);
+  box-shadow: 0 2px 8px alpha(@theme_fg_color, 0.08);
+}
+
+/* Embed avatar (smaller than main note avatar) */
+.embed-avatar {
+  border-radius: 50%;
+  min-width: 24px;
+  min-height: 24px;
+  background: alpha(@theme_bg_color, 0.4);
+}
+
+.embed-avatar picture {
+  border-radius: 50%;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.embed-avatar-image {
+  border-radius: 50%;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.embed-avatar-initials {
+  font-size: 11px;
+  font-weight: 600;
+  color: alpha(@theme_fg_color, 0.55);
+}
+
+/* Embed author name */
+.embed-author {
+  font-weight: 600;
+  font-size: 13px;
+  color: @theme_fg_color;
+}
+
+/* Embed handle */
+.embed-handle {
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+/* Embed timestamp */
+.embed-timestamp {
+  font-size: 12px;
+  opacity: 0.5;
+}
+
+/* Embed content preview */
+.embed-content {
+  font-size: 13px;
+  line-height: 1.35;
+  color: alpha(@theme_fg_color, 0.85);
+}
+
+/* Embed profile about (for profile embeds) */
+.embed-about {
+  font-size: 13px;
+  line-height: 1.35;
+  font-style: italic;
+}
+
+/* Embed loading spinner */
+.note-embed spinner {
+  min-width: 20px;
+  min-height: 20px;
+}
+
+/* Embed error state */
+.note-embed .error {
+  font-size: 12px;
+  opacity: 0.7;
 }

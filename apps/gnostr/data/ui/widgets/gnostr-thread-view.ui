@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <template class="GnostrThreadView" parent="GtkWidget">
+    <child>
+      <object class="GtkBox" id="root_box">
+        <property name="orientation">vertical</property>
+        <property name="hexpand">true</property>
+        <property name="vexpand">true</property>
+        <style>
+          <class name="thread-view"/>
+        </style>
+
+        <!-- Header with close button and title -->
+        <child>
+          <object class="GtkBox" id="header_box">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">12</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">8</property>
+            <property name="margin-bottom">8</property>
+            <style>
+              <class name="thread-header"/>
+            </style>
+
+            <child>
+              <object class="GtkButton" id="btn_close">
+                <property name="icon-name">go-previous-symbolic</property>
+                <property name="tooltip-text">Close thread</property>
+                <property name="valign">center</property>
+                <style>
+                  <class name="flat"/>
+                </style>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkLabel" id="title_label">
+                <property name="label">Thread</property>
+                <property name="hexpand">true</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="title-3"/>
+                  <class name="thread-title"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Separator -->
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">horizontal</property>
+          </object>
+        </child>
+
+        <!-- Loading state -->
+        <child>
+          <object class="GtkBox" id="loading_box">
+            <property name="orientation">vertical</property>
+            <property name="halign">center</property>
+            <property name="valign">center</property>
+            <property name="vexpand">true</property>
+            <property name="spacing">12</property>
+            <property name="visible">false</property>
+
+            <child>
+              <object class="GtkSpinner" id="loading_spinner">
+                <property name="width-request">32</property>
+                <property name="height-request">32</property>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Loading thread...</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Empty state -->
+        <child>
+          <object class="GtkBox" id="empty_box">
+            <property name="orientation">vertical</property>
+            <property name="halign">center</property>
+            <property name="valign">center</property>
+            <property name="vexpand">true</property>
+            <property name="spacing">12</property>
+            <property name="visible">false</property>
+
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">dialog-information-symbolic</property>
+                <property name="pixel-size">48</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkLabel" id="empty_label">
+                <property name="label">No thread found</property>
+                <style>
+                  <class name="dim-label"/>
+                  <class name="title-4"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Thread content scroll window -->
+        <child>
+          <object class="GtkScrolledWindow" id="scroll_window">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="hexpand">true</property>
+            <property name="vexpand">true</property>
+            <property name="visible">true</property>
+
+            <child>
+              <object class="GtkBox" id="thread_list_box">
+                <property name="orientation">vertical</property>
+                <property name="spacing">0</property>
+                <property name="margin-start">0</property>
+                <property name="margin-end">0</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">4</property>
+                <style>
+                  <class name="thread-list"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

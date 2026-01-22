@@ -38,6 +38,10 @@ const char *gnostr_composer_get_quote_id(GnostrComposer *self);
 const char *gnostr_composer_get_quote_pubkey(GnostrComposer *self);
 const char *gnostr_composer_get_quote_nostr_uri(GnostrComposer *self);
 
+/* Media upload state (Blossom) */
+gboolean gnostr_composer_is_uploading(GnostrComposer *self);
+void gnostr_composer_cancel_upload(GnostrComposer *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_COMPOSER_H */

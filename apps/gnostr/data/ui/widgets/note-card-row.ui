@@ -206,6 +206,12 @@
                   </object>
                 </child>
                 <child>
+                  <object class="GtkButton" id="btn_bookmark">
+                    <property name="icon-name">bookmark-new-symbolic</property>
+                    <property name="tooltip-text">Bookmark</property>
+                  </object>
+                </child>
+                <child>
                   <object class="GtkButton" id="btn_thread">
                     <property name="icon-name">view-list-symbolic</property>
                     <property name="tooltip-text">View thread</property>

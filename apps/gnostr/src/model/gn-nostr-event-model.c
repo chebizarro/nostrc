@@ -1,6 +1,7 @@
 #include "gn-nostr-event-model.h"
 #include "gn-ndb-sub-dispatcher.h"
 #include "../storage_ndb.h"
+#include "../util/mute_list.h"
 #include <nostr.h>
 #include <string.h>
 
@@ -373,6 +374,12 @@ static void notify_cached_items_for_pubkey(GnNostrEventModel *self, const char *
 
 static gboolean note_matches_query(GnNostrEventModel *self, int kind, const char *pubkey_hex, gint64 created_at) {
   if (!self) return FALSE;
+
+  /* NIP-51 Mute list filter: check if author is muted */
+  GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+  if (mute_list && pubkey_hex && gnostr_mute_list_is_pubkey_muted(mute_list, pubkey_hex)) {
+    return FALSE;
+  }
 
   /* Kind filter */
   if (self->n_kinds > 0) {

@@ -1,6 +1,7 @@
 #include "gnostr-timeline-view.h"
 #include "gnostr-main-window.h"
 #include "note_card_row.h"
+#include "../model/gn-nostr-event-item.h"
 #include "../storage_ndb.h"
 #include "nostr-event.h"
 #include "nostr-json.h"
@@ -788,6 +789,54 @@ static void on_note_card_view_thread_requested_relay(GnostrNoteCardRow *row, con
   (void)user_data;
 }
 
+/* Handler for mute-user button - relay to main window */
+static void on_note_card_mute_user_requested_relay(GnostrNoteCardRow *row, const char *pubkey_hex, gpointer user_data) {
+  /* Relay the signal up to the main window */
+  GtkWidget *widget = GTK_WIDGET(row);
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
+      /* Found the main window, call method to mute user */
+      extern void gnostr_main_window_mute_user(GtkWidget *window, const char *pubkey_hex);
+      gnostr_main_window_mute_user(widget, pubkey_hex);
+      break;
+    }
+  }
+  (void)user_data;
+}
+
+/* Handler for mute-thread button - relay to main window */
+static void on_note_card_mute_thread_requested_relay(GnostrNoteCardRow *row, const char *event_id_hex, gpointer user_data) {
+  /* Relay the signal up to the main window */
+  GtkWidget *widget = GTK_WIDGET(row);
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
+      /* Found the main window, call method to mute thread */
+      extern void gnostr_main_window_mute_thread(GtkWidget *window, const char *event_id_hex);
+      gnostr_main_window_mute_thread(widget, event_id_hex);
+      break;
+    }
+  }
+  (void)user_data;
+}
+
+/* Handler for show-toast signal - relay to main window */
+static void on_note_card_show_toast_relay(GnostrNoteCardRow *row, const char *message, gpointer user_data) {
+  /* Relay the signal up to the main window */
+  GtkWidget *widget = GTK_WIDGET(row);
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
+      /* Found the main window, call method to show toast */
+      extern void gnostr_main_window_show_toast(GtkWidget *window, const char *message);
+      gnostr_main_window_show_toast(widget, message);
+      break;
+    }
+  }
+  (void)user_data;
+}
+
 /* Callback when profile is loaded for an event item - show the row */
 static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
@@ -844,6 +893,12 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
   g_signal_connect(row, "like-requested", G_CALLBACK(on_note_card_like_requested_relay), NULL);
   /* Connect the view-thread-requested signal */
   g_signal_connect(row, "view-thread-requested", G_CALLBACK(on_note_card_view_thread_requested_relay), NULL);
+  /* Connect the mute-user-requested signal */
+  g_signal_connect(row, "mute-user-requested", G_CALLBACK(on_note_card_mute_user_requested_relay), NULL);
+  /* Connect the mute-thread-requested signal */
+  g_signal_connect(row, "mute-thread-requested", G_CALLBACK(on_note_card_mute_thread_requested_relay), NULL);
+  /* Connect the show-toast signal */
+  g_signal_connect(row, "show-toast", G_CALLBACK(on_note_card_show_toast_relay), NULL);
 
   gtk_list_item_set_child(item, row);
 }
@@ -1091,7 +1146,17 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                                      display ? display : display_fallback,
                                      handle, avatar_url);
     gnostr_note_card_row_set_timestamp(GNOSTR_NOTE_CARD_ROW(row), created_at, ts);
-    gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
+
+    /* NIP-92: Use imeta-aware setter if this is a GnNostrEventItem */
+    const char *tags_json = NULL;
+    if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
+      tags_json = gn_nostr_event_item_get_tags_json(GN_NOSTR_EVENT_ITEM(obj));
+    }
+    if (tags_json) {
+      gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
+    } else {
+      gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
+    }
     gnostr_note_card_row_set_depth(GNOSTR_NOTE_CARD_ROW(row), depth);
     gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), id_hex, root_id, pubkey);
 

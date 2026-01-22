@@ -1,4 +1,6 @@
 #include "gnostr-composer.h"
+#include "../util/blossom.h"
+#include "../util/blossom_settings.h"
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-composer.ui"
 
@@ -7,9 +9,13 @@ struct _GnostrComposer {
   GtkWidget *root;
   GtkWidget *text_view; /* bound as widget; cast to GtkTextView when used */
   GtkWidget *btn_post;
-  GtkWidget *reply_indicator_box; /* container for reply indicator */
-  GtkWidget *reply_indicator;     /* label showing "Replying to @user" */
-  GtkWidget *btn_cancel_reply;    /* button to cancel reply mode */
+  GtkWidget *btn_attach;              /* attachment/upload button */
+  GtkWidget *reply_indicator_box;     /* container for reply indicator */
+  GtkWidget *reply_indicator;         /* label showing "Replying to @user" */
+  GtkWidget *btn_cancel_reply;        /* button to cancel reply mode */
+  GtkWidget *upload_progress_box;     /* container for upload progress */
+  GtkWidget *upload_spinner;          /* spinner during upload */
+  GtkWidget *upload_status_label;     /* upload status text */
   /* Reply context for NIP-10 threading */
   char *reply_to_id;       /* event ID being replied to (hex) */
   char *root_id;           /* thread root event ID (hex), may equal reply_to_id */
@@ -18,6 +24,9 @@ struct _GnostrComposer {
   char *quote_id;          /* event ID being quoted (hex) */
   char *quote_pubkey;      /* pubkey of author being quoted (hex) */
   char *quote_nostr_uri;   /* nostr:note1... URI for the quoted note */
+  /* Upload state */
+  GCancellable *upload_cancellable;   /* cancellable for ongoing upload */
+  gboolean upload_in_progress;        /* TRUE while uploading */
 };
 
 G_DEFINE_TYPE(GnostrComposer, gnostr_composer, GTK_TYPE_WIDGET)
@@ -36,9 +45,13 @@ static void gnostr_composer_dispose(GObject *obj) {
   self->root = NULL;
   self->text_view = NULL;
   self->btn_post = NULL;
+  self->btn_attach = NULL;
   self->reply_indicator_box = NULL;
   self->reply_indicator = NULL;
   self->btn_cancel_reply = NULL;
+  self->upload_progress_box = NULL;
+  self->upload_spinner = NULL;
+  self->upload_status_label = NULL;
   G_OBJECT_CLASS(gnostr_composer_parent_class)->dispose(obj);
 }
 
@@ -50,6 +63,11 @@ static void gnostr_composer_finalize(GObject *obj) {
   g_clear_pointer(&self->quote_id, g_free);
   g_clear_pointer(&self->quote_pubkey, g_free);
   g_clear_pointer(&self->quote_nostr_uri, g_free);
+  if (self->upload_cancellable) {
+    g_cancellable_cancel(self->upload_cancellable);
+    g_object_unref(self->upload_cancellable);
+    self->upload_cancellable = NULL;
+  }
   G_OBJECT_CLASS(gnostr_composer_parent_class)->finalize(obj);
 }
 
@@ -83,6 +101,199 @@ static void on_cancel_reply_clicked(GnostrComposer *self, GtkButton *button) {
   gnostr_composer_clear_reply_context(self);
 }
 
+/* Blossom upload callback */
+static void on_blossom_upload_complete(GnostrBlossomBlob *blob, GError *error, gpointer user_data) {
+  GnostrComposer *self = GNOSTR_COMPOSER(user_data);
+  if (!GNOSTR_IS_COMPOSER(self)) {
+    if (blob) gnostr_blossom_blob_free(blob);
+    return;
+  }
+
+  self->upload_in_progress = FALSE;
+
+  /* Hide progress indicator */
+  if (self->upload_progress_box && GTK_IS_WIDGET(self->upload_progress_box)) {
+    gtk_widget_set_visible(self->upload_progress_box, FALSE);
+  }
+  if (self->upload_spinner && GTK_IS_SPINNER(self->upload_spinner)) {
+    gtk_spinner_set_spinning(GTK_SPINNER(self->upload_spinner), FALSE);
+  }
+
+  /* Re-enable attach button */
+  if (self->btn_attach && GTK_IS_WIDGET(self->btn_attach)) {
+    gtk_widget_set_sensitive(self->btn_attach, TRUE);
+  }
+
+  if (error) {
+    g_warning("Blossom upload failed: %s", error->message);
+    /* Show error toast - for now just update status label briefly */
+    if (self->upload_status_label && GTK_IS_LABEL(self->upload_status_label)) {
+      gtk_label_set_text(GTK_LABEL(self->upload_status_label), "Upload failed");
+      gtk_widget_set_visible(self->upload_progress_box, TRUE);
+      /* Hide after 3 seconds */
+      /* TODO: Use GtkToast when available */
+    }
+    return;
+  }
+
+  if (!blob || !blob->url) {
+    g_warning("Blossom upload returned no URL");
+    return;
+  }
+
+  /* Insert the URL into the text view at cursor position */
+  if (self->text_view && GTK_IS_TEXT_VIEW(self->text_view)) {
+    GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));
+    GtkTextIter cursor;
+    gtk_text_buffer_get_iter_at_mark(buf, &cursor, gtk_text_buffer_get_insert(buf));
+
+    /* Add newline before URL if not at start of line */
+    GtkTextIter line_start = cursor;
+    gtk_text_iter_set_line_offset(&line_start, 0);
+    if (!gtk_text_iter_equal(&cursor, &line_start)) {
+      gtk_text_buffer_insert(buf, &cursor, "\n", 1);
+    }
+
+    /* Insert the URL */
+    gtk_text_buffer_insert(buf, &cursor, blob->url, -1);
+    gtk_text_buffer_insert(buf, &cursor, "\n", 1);
+
+    g_message("composer: inserted uploaded media URL: %s", blob->url);
+  }
+
+  gnostr_blossom_blob_free(blob);
+}
+
+/* File chooser response callback */
+static void on_file_chooser_response(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GnostrComposer *self = GNOSTR_COMPOSER(user_data);
+  GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
+  GError *error = NULL;
+
+  GFile *file = gtk_file_dialog_open_finish(dialog, res, &error);
+
+  if (error) {
+    if (!g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED) &&
+        !g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED)) {
+      g_warning("File chooser error: %s", error->message);
+    }
+    g_error_free(error);
+    return;
+  }
+
+  if (!file) return;
+
+  char *path = g_file_get_path(file);
+  g_object_unref(file);
+
+  if (!path) {
+    g_warning("Could not get file path");
+    return;
+  }
+
+  if (!GNOSTR_IS_COMPOSER(self)) {
+    g_free(path);
+    return;
+  }
+
+  /* Get Blossom server URL from settings */
+  const char *server_url = gnostr_blossom_settings_get_default_server();
+  if (!server_url || !*server_url) {
+    g_warning("No Blossom server configured");
+    g_free(path);
+    return;
+  }
+
+  /* Show upload progress */
+  self->upload_in_progress = TRUE;
+  if (self->upload_progress_box && GTK_IS_WIDGET(self->upload_progress_box)) {
+    gtk_widget_set_visible(self->upload_progress_box, TRUE);
+  }
+  if (self->upload_spinner && GTK_IS_SPINNER(self->upload_spinner)) {
+    gtk_spinner_set_spinning(GTK_SPINNER(self->upload_spinner), TRUE);
+  }
+  if (self->upload_status_label && GTK_IS_LABEL(self->upload_status_label)) {
+    gtk_label_set_text(GTK_LABEL(self->upload_status_label), "Uploading...");
+  }
+
+  /* Disable attach button during upload */
+  if (self->btn_attach && GTK_IS_WIDGET(self->btn_attach)) {
+    gtk_widget_set_sensitive(self->btn_attach, FALSE);
+  }
+
+  /* Create cancellable for this upload */
+  if (self->upload_cancellable) {
+    g_object_unref(self->upload_cancellable);
+  }
+  self->upload_cancellable = g_cancellable_new();
+
+  /* Start async upload */
+  g_message("composer: starting upload of %s to %s", path, server_url);
+  gnostr_blossom_upload_async(server_url, path, NULL,
+                               on_blossom_upload_complete, self,
+                               self->upload_cancellable);
+  g_free(path);
+}
+
+/* Attach button clicked - open file chooser */
+static void on_attach_clicked(GnostrComposer *self, GtkButton *button) {
+  (void)button;
+  if (!GNOSTR_IS_COMPOSER(self)) return;
+
+  /* Don't allow another upload while one is in progress */
+  if (self->upload_in_progress) {
+    g_message("composer: upload already in progress");
+    return;
+  }
+
+  GtkFileDialog *dialog = gtk_file_dialog_new();
+  gtk_file_dialog_set_title(dialog, "Select Media to Upload");
+  gtk_file_dialog_set_modal(dialog, TRUE);
+
+  /* Set up file filters for images and videos */
+  GtkFileFilter *filter_images = gtk_file_filter_new();
+  gtk_file_filter_set_name(filter_images, "Images");
+  gtk_file_filter_add_mime_type(filter_images, "image/png");
+  gtk_file_filter_add_mime_type(filter_images, "image/jpeg");
+  gtk_file_filter_add_mime_type(filter_images, "image/gif");
+  gtk_file_filter_add_mime_type(filter_images, "image/webp");
+  gtk_file_filter_add_mime_type(filter_images, "image/avif");
+
+  GtkFileFilter *filter_video = gtk_file_filter_new();
+  gtk_file_filter_set_name(filter_video, "Videos");
+  gtk_file_filter_add_mime_type(filter_video, "video/mp4");
+  gtk_file_filter_add_mime_type(filter_video, "video/webm");
+  gtk_file_filter_add_mime_type(filter_video, "video/quicktime");
+
+  GtkFileFilter *filter_all_media = gtk_file_filter_new();
+  gtk_file_filter_set_name(filter_all_media, "All Media");
+  gtk_file_filter_add_mime_type(filter_all_media, "image/*");
+  gtk_file_filter_add_mime_type(filter_all_media, "video/*");
+
+  GListStore *filters = g_list_store_new(GTK_TYPE_FILE_FILTER);
+  g_list_store_append(filters, filter_all_media);
+  g_list_store_append(filters, filter_images);
+  g_list_store_append(filters, filter_video);
+
+  gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters));
+  gtk_file_dialog_set_default_filter(dialog, filter_all_media);
+
+  /* Get the window for the dialog */
+  GtkWidget *toplevel = GTK_WIDGET(self);
+  while (toplevel && !GTK_IS_WINDOW(toplevel)) {
+    toplevel = gtk_widget_get_parent(toplevel);
+  }
+
+  gtk_file_dialog_open(dialog, GTK_WINDOW(toplevel), NULL,
+                       on_file_chooser_response, self);
+
+  g_object_unref(filters);
+  g_object_unref(filter_images);
+  g_object_unref(filter_video);
+  g_object_unref(filter_all_media);
+  g_object_unref(dialog);
+}
+
 static void gnostr_composer_class_init(GnostrComposerClass *klass) {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
   GObjectClass *gobj_class = G_OBJECT_CLASS(klass);
@@ -93,11 +304,16 @@ static void gnostr_composer_class_init(GnostrComposerClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrComposer, root);
   gtk_widget_class_bind_template_child(widget_class, GnostrComposer, text_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrComposer, btn_post);
+  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, btn_attach);
   gtk_widget_class_bind_template_child(widget_class, GnostrComposer, reply_indicator_box);
   gtk_widget_class_bind_template_child(widget_class, GnostrComposer, reply_indicator);
   gtk_widget_class_bind_template_child(widget_class, GnostrComposer, btn_cancel_reply);
+  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, upload_progress_box);
+  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, upload_spinner);
+  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, upload_status_label);
   gtk_widget_class_bind_template_callback(widget_class, on_post_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_cancel_reply_clicked);
+  gtk_widget_class_bind_template_callback(widget_class, on_attach_clicked);
 
   signals[SIGNAL_POST_REQUESTED] =
       g_signal_new("post-requested",
@@ -117,11 +333,18 @@ static void gnostr_composer_init(GnostrComposer *self) {
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Composer Post", -1);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_cancel_reply),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Composer Cancel Reply", -1);
-  g_message("composer init: self=%p root=%p text_view=%p btn_post=%p",
+  if (self->btn_attach) {
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_attach),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Composer Attach Media", -1);
+  }
+  self->upload_in_progress = FALSE;
+  self->upload_cancellable = NULL;
+  g_message("composer init: self=%p root=%p text_view=%p btn_post=%p btn_attach=%p",
             (void*)self,
             (void*)self->root,
             (void*)self->text_view,
-            (void*)self->btn_post);
+            (void*)self->btn_post,
+            (void*)self->btn_attach);
 }
 
 GtkWidget *gnostr_composer_new(void) {
@@ -308,4 +531,35 @@ const char *gnostr_composer_get_quote_pubkey(GnostrComposer *self) {
 const char *gnostr_composer_get_quote_nostr_uri(GnostrComposer *self) {
   g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
   return self->quote_nostr_uri;
+}
+
+/* Media upload state */
+gboolean gnostr_composer_is_uploading(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), FALSE);
+  return self->upload_in_progress;
+}
+
+void gnostr_composer_cancel_upload(GnostrComposer *self) {
+  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+
+  if (!self->upload_in_progress) return;
+
+  if (self->upload_cancellable) {
+    g_cancellable_cancel(self->upload_cancellable);
+  }
+
+  self->upload_in_progress = FALSE;
+
+  /* Hide progress indicator */
+  if (self->upload_progress_box && GTK_IS_WIDGET(self->upload_progress_box)) {
+    gtk_widget_set_visible(self->upload_progress_box, FALSE);
+  }
+  if (self->upload_spinner && GTK_IS_SPINNER(self->upload_spinner)) {
+    gtk_spinner_set_spinning(GTK_SPINNER(self->upload_spinner), FALSE);
+  }
+
+  /* Re-enable attach button */
+  if (self->btn_attach && GTK_IS_WIDGET(self->btn_attach)) {
+    gtk_widget_set_sensitive(self->btn_attach, TRUE);
+  }
 }

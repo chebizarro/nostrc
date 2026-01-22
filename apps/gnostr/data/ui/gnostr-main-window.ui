@@ -147,6 +147,23 @@
                             </child>
                           </object>
                         </child>
+
+                        <!-- Overlay: Thread View (slides in from right, over profile pane) -->
+                        <child type="overlay">
+                          <object class="GtkRevealer" id="thread_revealer">
+                            <property name="transition-type">slide-left</property>
+                            <property name="reveal-child">false</property>
+                            <property name="transition-duration">250</property>
+                            <property name="halign">end</property>
+                            <property name="valign">fill</property>
+                            <child>
+                              <object class="GnostrThreadView" id="thread_view">
+                                <property name="vexpand">true</property>
+                                <property name="width-request">450</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
                       </object>
                     </property>
                   </object>

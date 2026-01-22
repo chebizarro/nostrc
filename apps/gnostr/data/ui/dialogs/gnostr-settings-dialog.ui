@@ -198,6 +198,45 @@
               </object>
             </child>
 
+            <!-- Blossom Media Server Settings -->
+            <child>
+              <object class="GtkSeparator">
+                <property name="orientation">horizontal</property>
+                <property name="margin-top">8</property>
+                <property name="margin-bottom">8</property>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Media Upload (Blossom)</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="heading"/>
+                </style>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">Blossom Server URL</property>
+                    <property name="hexpand">true</property>
+                    <property name="xalign">0</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkEntry" id="w_blossom_server">
+                    <property name="placeholder-text">https://blossom.primal.net</property>
+                    <property name="width-chars">30</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+
           </object>
         </child>
         <child>

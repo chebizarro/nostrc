@@ -16,6 +16,7 @@ struct _GnNostrEventItem {
   char *cached_event_id;
   char *cached_pubkey;
   char *cached_content;
+  char *cached_tags_json;  /* NIP-92 imeta support */
 
   /* Profile object */
   GnNostrProfile *profile;
@@ -89,6 +90,9 @@ static gboolean ensure_note_loaded(GnNostrEventItem *self)
     self->kind = (gint)storage_ndb_note_kind(note);
     self->created_at = (gint64)storage_ndb_note_created_at(note);
     self->is_repost = (self->kind == 6);
+
+    /* Cache tags JSON for NIP-92 imeta support */
+    self->cached_tags_json = storage_ndb_note_tags_json(note);
   }
 
   storage_ndb_end_query(txn);
@@ -101,6 +105,7 @@ static void gn_nostr_event_item_finalize(GObject *object) {
   g_free(self->cached_event_id);
   g_free(self->cached_pubkey);
   g_free(self->cached_content);
+  g_free(self->cached_tags_json);
   g_free(self->thread_root_id);
   g_free(self->parent_id);
 
@@ -256,6 +261,12 @@ const char *gn_nostr_event_item_get_content(GnNostrEventItem *self) {
   g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
   ensure_note_loaded(self);
   return self->cached_content;
+}
+
+const char *gn_nostr_event_item_get_tags_json(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
+  ensure_note_loaded(self);
+  return self->cached_tags_json;
 }
 
 gint gn_nostr_event_item_get_kind(GnNostrEventItem *self) {

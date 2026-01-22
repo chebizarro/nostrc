@@ -1,11 +1,16 @@
 #include "note_card_row.h"
 #include "og-preview-widget.h"
+#include "gnostr-image-viewer.h"
+#include "gnostr-video-player.h"
+#include "gnostr-note-embed.h"
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
 #include "gnostr-avatar-cache.h"
 #include "../util/nip05.h"
+#include "../util/imeta.h"
 #include "../storage_ndb.h"
+#include <nostr/nip19/nip19.h>
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -24,6 +29,7 @@ struct _GnostrNoteCardRow {
   GtkWidget *btn_reply;
   GtkWidget *btn_repost;
   GtkWidget *btn_like;
+  GtkWidget *btn_bookmark;
   GtkWidget *btn_thread;
   GtkWidget *avatar_box;
   GtkWidget *avatar_initials;
@@ -37,6 +43,7 @@ struct _GnostrNoteCardRow {
   GtkWidget *og_preview_container;
   GtkWidget *actions_box;
   GtkWidget *repost_popover;  /* popover menu for repost/quote options */
+  GtkWidget *menu_popover;    /* popover menu for more options (JSON, mute, etc.) */
   /* Reply indicator widgets */
   GtkWidget *reply_indicator_box;
   GtkWidget *reply_indicator_label;
@@ -56,6 +63,8 @@ struct _GnostrNoteCardRow {
   gint64 created_at;
   guint timestamp_timer_id;
   OgPreviewWidget *og_preview;
+  /* NIP-21 embedded note widget */
+  GnostrNoteEmbed *note_embed;
   /* NIP-05 verification state */
   char *nip05;
   GtkWidget *nip05_badge;
@@ -63,6 +72,8 @@ struct _GnostrNoteCardRow {
   /* Reply state */
   gboolean is_reply;
   gboolean is_thread_root;
+  /* Bookmark state */
+  gboolean is_bookmarked;
 };
 
 G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
@@ -77,6 +88,10 @@ enum {
   SIGNAL_QUOTE_REQUESTED,
   SIGNAL_LIKE_REQUESTED,
   SIGNAL_VIEW_THREAD_REQUESTED,
+  SIGNAL_MUTE_USER_REQUESTED,
+  SIGNAL_MUTE_THREAD_REQUESTED,
+  SIGNAL_SHOW_TOAST,
+  SIGNAL_BOOKMARK_TOGGLED,
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -119,11 +134,16 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
     gtk_widget_unparent(self->repost_popover);
     self->repost_popover = NULL;
   }
+  /* Clean up the menu popover before disposing template */
+  if (self->menu_popover) {
+    gtk_widget_unparent(self->menu_popover);
+    self->menu_popover = NULL;
+  }
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_CARD_ROW);
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
   self->lbl_display = NULL; self->lbl_handle = NULL; self->lbl_timestamp = NULL; self->content_label = NULL;
   self->media_box = NULL; self->embed_box = NULL; self->og_preview_container = NULL; self->actions_box = NULL;
-  self->btn_repost = NULL; self->btn_like = NULL; self->btn_thread = NULL;
+  self->btn_repost = NULL; self->btn_like = NULL; self->btn_bookmark = NULL; self->btn_thread = NULL;
   self->reply_indicator_box = NULL; self->reply_indicator_label = NULL;
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->dispose(obj);
 }
@@ -156,6 +176,15 @@ static void on_display_name_clicked(GtkButton *btn, gpointer user_data) {
   }
 }
 
+/* Callback for embedded profile click (NIP-21) */
+static void on_embed_profile_clicked(GnostrNoteEmbed *embed, const char *pubkey_hex, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)embed;
+  if (self && pubkey_hex && *pubkey_hex) {
+    g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, pubkey_hex);
+  }
+}
+
 static gboolean on_content_activate_link(GtkLabel *label, const char *uri, gpointer user_data) {
   GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
   (void)label;
@@ -167,6 +196,12 @@ static gboolean on_content_activate_link(GtkLabel *label, const char *uri, gpoin
     return TRUE;
   }
   if (g_str_has_prefix(uri, "http://") || g_str_has_prefix(uri, "https://")) {
+    /* Open URL in the default browser using GtkUriLauncher */
+    GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+    GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
+    GtkUriLauncher *launcher = gtk_uri_launcher_new(uri);
+    gtk_uri_launcher_launch(launcher, parent, NULL, NULL, NULL);
+    g_object_unref(launcher);
     g_signal_emit(self, signals[SIGNAL_OPEN_URL], 0, uri);
     return TRUE;
   }
@@ -255,10 +290,212 @@ static void show_json_viewer(GnostrNoteCardRow *self) {
   gtk_window_present(GTK_WINDOW(dialog));
 }
 
+static void on_view_json_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  /* Hide popover first */
+  if (self->menu_popover && GTK_IS_POPOVER(self->menu_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
+  }
+  show_json_viewer(self);
+}
+
+static void on_mute_user_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (!self || !self->pubkey_hex) return;
+
+  /* Hide popover first */
+  if (self->menu_popover && GTK_IS_POPOVER(self->menu_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
+  }
+
+  /* Emit signal to mute this user */
+  g_signal_emit(self, signals[SIGNAL_MUTE_USER_REQUESTED], 0, self->pubkey_hex);
+}
+
+static void on_mute_thread_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (!self) return;
+
+  /* Hide popover first */
+  if (self->menu_popover && GTK_IS_POPOVER(self->menu_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
+  }
+
+  /* Mute the root event of this thread (or self if it's the root) */
+  const char *event_to_mute = self->root_id ? self->root_id : self->id_hex;
+  if (event_to_mute) {
+    g_signal_emit(self, signals[SIGNAL_MUTE_THREAD_REQUESTED], 0, event_to_mute);
+  }
+}
+
+static void copy_to_clipboard(GnostrNoteCardRow *self, const char *text) {
+  if (!text || !*text) return;
+
+  GtkWidget *widget = GTK_WIDGET(self);
+  GdkDisplay *display = gtk_widget_get_display(widget);
+  if (display) {
+    GdkClipboard *clipboard = gdk_display_get_clipboard(display);
+    if (clipboard) {
+      gdk_clipboard_set_text(clipboard, text);
+      g_signal_emit(self, signals[SIGNAL_SHOW_TOAST], 0, "Copied to clipboard");
+    }
+  }
+}
+
+static void on_copy_note_id_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (!self || !self->id_hex || strlen(self->id_hex) != 64) return;
+
+  /* Hide popover first */
+  if (self->menu_popover && GTK_IS_POPOVER(self->menu_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
+  }
+
+  /* Encode as nevent with relay hints if available, otherwise as note1 */
+  char *encoded = NULL;
+
+  /* Try nevent first (includes more metadata) */
+  NostrNEventConfig cfg = {
+    .id = self->id_hex,
+    .author = self->pubkey_hex,
+    .kind = 1,  /* text note */
+    .relays = NULL,
+    .relays_count = 0
+  };
+
+  NostrPointer *ptr = NULL;
+  if (nostr_pointer_from_nevent_config(&cfg, &ptr) == 0 && ptr) {
+    nostr_pointer_to_bech32(ptr, &encoded);
+    nostr_pointer_free(ptr);
+  }
+
+  /* Fallback to simple note1 if nevent encoding failed */
+  if (!encoded) {
+    uint8_t id_bytes[32];
+    if (hex_to_bytes_32(self->id_hex, id_bytes)) {
+      nostr_nip19_encode_note(id_bytes, &encoded);
+    }
+  }
+
+  if (encoded) {
+    copy_to_clipboard(self, encoded);
+    free(encoded);
+  }
+}
+
+static void on_copy_pubkey_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (!self || !self->pubkey_hex || strlen(self->pubkey_hex) != 64) return;
+
+  /* Hide popover first */
+  if (self->menu_popover && GTK_IS_POPOVER(self->menu_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
+  }
+
+  /* Encode as npub1 */
+  uint8_t pubkey_bytes[32];
+  if (hex_to_bytes_32(self->pubkey_hex, pubkey_bytes)) {
+    char *npub = NULL;
+    if (nostr_nip19_encode_npub(pubkey_bytes, &npub) == 0 && npub) {
+      copy_to_clipboard(self, npub);
+      free(npub);
+    }
+  }
+}
+
 static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
   GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
   (void)btn;
-  show_json_viewer(self);
+  if (!self) return;
+
+  /* Create popover if not already created */
+  if (!self->menu_popover) {
+    self->menu_popover = gtk_popover_new();
+    gtk_widget_set_parent(self->menu_popover, GTK_WIDGET(self->btn_menu));
+
+    /* Create a vertical box for the menu items */
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    gtk_widget_set_margin_start(box, 6);
+    gtk_widget_set_margin_end(box, 6);
+    gtk_widget_set_margin_top(box, 6);
+    gtk_widget_set_margin_bottom(box, 6);
+
+    /* View JSON button */
+    GtkWidget *json_btn = gtk_button_new();
+    GtkWidget *json_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *json_icon = gtk_image_new_from_icon_name("text-x-generic-symbolic");
+    GtkWidget *json_label = gtk_label_new("View Raw JSON");
+    gtk_box_append(GTK_BOX(json_box), json_icon);
+    gtk_box_append(GTK_BOX(json_box), json_label);
+    gtk_button_set_child(GTK_BUTTON(json_btn), json_box);
+    gtk_button_set_has_frame(GTK_BUTTON(json_btn), FALSE);
+    g_signal_connect(json_btn, "clicked", G_CALLBACK(on_view_json_clicked), self);
+    gtk_box_append(GTK_BOX(box), json_btn);
+
+    /* Copy Note ID button */
+    GtkWidget *copy_note_btn = gtk_button_new();
+    GtkWidget *copy_note_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *copy_note_icon = gtk_image_new_from_icon_name("edit-copy-symbolic");
+    GtkWidget *copy_note_label = gtk_label_new("Copy Note ID");
+    gtk_box_append(GTK_BOX(copy_note_box), copy_note_icon);
+    gtk_box_append(GTK_BOX(copy_note_box), copy_note_label);
+    gtk_button_set_child(GTK_BUTTON(copy_note_btn), copy_note_box);
+    gtk_button_set_has_frame(GTK_BUTTON(copy_note_btn), FALSE);
+    g_signal_connect(copy_note_btn, "clicked", G_CALLBACK(on_copy_note_id_clicked), self);
+    gtk_box_append(GTK_BOX(box), copy_note_btn);
+
+    /* Copy User Pubkey button */
+    GtkWidget *copy_pubkey_btn = gtk_button_new();
+    GtkWidget *copy_pubkey_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *copy_pubkey_icon = gtk_image_new_from_icon_name("avatar-default-symbolic");
+    GtkWidget *copy_pubkey_label = gtk_label_new("Copy User Pubkey");
+    gtk_box_append(GTK_BOX(copy_pubkey_box), copy_pubkey_icon);
+    gtk_box_append(GTK_BOX(copy_pubkey_box), copy_pubkey_label);
+    gtk_button_set_child(GTK_BUTTON(copy_pubkey_btn), copy_pubkey_box);
+    gtk_button_set_has_frame(GTK_BUTTON(copy_pubkey_btn), FALSE);
+    g_signal_connect(copy_pubkey_btn, "clicked", G_CALLBACK(on_copy_pubkey_clicked), self);
+    gtk_box_append(GTK_BOX(box), copy_pubkey_btn);
+
+    /* Separator */
+    GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_widget_set_margin_top(sep, 4);
+    gtk_widget_set_margin_bottom(sep, 4);
+    gtk_box_append(GTK_BOX(box), sep);
+
+    /* Mute User button */
+    GtkWidget *mute_btn = gtk_button_new();
+    GtkWidget *mute_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *mute_icon = gtk_image_new_from_icon_name("action-unavailable-symbolic");
+    GtkWidget *mute_label = gtk_label_new("Mute User");
+    gtk_box_append(GTK_BOX(mute_box), mute_icon);
+    gtk_box_append(GTK_BOX(mute_box), mute_label);
+    gtk_button_set_child(GTK_BUTTON(mute_btn), mute_box);
+    gtk_button_set_has_frame(GTK_BUTTON(mute_btn), FALSE);
+    g_signal_connect(mute_btn, "clicked", G_CALLBACK(on_mute_user_clicked), self);
+    gtk_box_append(GTK_BOX(box), mute_btn);
+
+    /* Mute Thread button */
+    GtkWidget *mute_thread_btn = gtk_button_new();
+    GtkWidget *mute_thread_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *mute_thread_icon = gtk_image_new_from_icon_name("mail-mark-junk-symbolic");
+    GtkWidget *mute_thread_label = gtk_label_new("Mute Thread");
+    gtk_box_append(GTK_BOX(mute_thread_box), mute_thread_icon);
+    gtk_box_append(GTK_BOX(mute_thread_box), mute_thread_label);
+    gtk_button_set_child(GTK_BUTTON(mute_thread_btn), mute_thread_box);
+    gtk_button_set_has_frame(GTK_BUTTON(mute_thread_btn), FALSE);
+    g_signal_connect(mute_thread_btn, "clicked", G_CALLBACK(on_mute_thread_clicked), self);
+    gtk_box_append(GTK_BOX(box), mute_thread_btn);
+
+    gtk_popover_set_child(GTK_POPOVER(self->menu_popover), box);
+  }
+
+  /* Show the popover */
+  gtk_popover_popup(GTK_POPOVER(self->menu_popover));
 }
 
 static void on_reply_clicked(GtkButton *btn, gpointer user_data) {
@@ -353,6 +590,25 @@ static void on_like_clicked(GtkButton *btn, gpointer user_data) {
   }
 }
 
+static void on_bookmark_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (self && self->id_hex) {
+    /* Toggle bookmark state */
+    self->is_bookmarked = !self->is_bookmarked;
+
+    /* Update button icon */
+    if (GTK_IS_BUTTON(self->btn_bookmark)) {
+      gtk_button_set_icon_name(GTK_BUTTON(self->btn_bookmark),
+        self->is_bookmarked ? "user-bookmarks-symbolic" : "bookmark-new-symbolic");
+    }
+
+    /* Emit signal so main window can handle NIP-51 storage */
+    g_signal_emit(self, signals[SIGNAL_BOOKMARK_TOGGLED], 0,
+                  self->id_hex, self->is_bookmarked);
+  }
+}
+
 static void on_thread_clicked(GtkButton *btn, gpointer user_data) {
   GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
   (void)btn;
@@ -380,6 +636,7 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_reply);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_repost);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_like);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_bookmark);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_thread);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, reply_indicator_box);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, reply_indicator_label);
@@ -422,6 +679,18 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   signals[SIGNAL_VIEW_THREAD_REQUESTED] = g_signal_new("view-thread-requested",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIGNAL_MUTE_USER_REQUESTED] = g_signal_new("mute-user-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIGNAL_MUTE_THREAD_REQUESTED] = g_signal_new("mute-thread-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIGNAL_SHOW_TOAST] = g_signal_new("show-toast",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIGNAL_BOOKMARK_TOGGLED] = g_signal_new("bookmark-toggled",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_BOOLEAN);
 }
 
 static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
@@ -467,6 +736,12 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
     g_signal_connect(self->btn_like, "clicked", G_CALLBACK(on_like_clicked), self);
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_like),
                                    GTK_ACCESSIBLE_PROPERTY_LABEL, "Like Note", -1);
+  }
+  /* Connect bookmark button */
+  if (GTK_IS_BUTTON(self->btn_bookmark)) {
+    g_signal_connect(self->btn_bookmark, "clicked", G_CALLBACK(on_bookmark_clicked), self);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_bookmark),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Bookmark Note", -1);
   }
   /* Connect view thread button */
   if (GTK_IS_BUTTON(self->btn_thread)) {
@@ -720,31 +995,136 @@ static gboolean is_video_url(const char *u) {
   return result;
 }
 
+/* Image click handler - opens full-size image viewer */
+static void on_media_image_clicked(GtkGestureClick *gesture,
+                                    int n_press,
+                                    double x, double y,
+                                    gpointer user_data) {
+  (void)gesture;
+  (void)n_press;
+  (void)x;
+  (void)y;
+
+  const char *url = (const char *)user_data;
+  if (!url || !*url) return;
+
+  /* Get the widget to find parent window */
+  GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+  if (!widget) return;
+
+  GtkRoot *root = gtk_widget_get_root(widget);
+  GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
+
+  /* Create and show the image viewer */
+  GnostrImageViewer *viewer = gnostr_image_viewer_new(parent);
+  gnostr_image_viewer_set_image_url(viewer, url);
+  gnostr_image_viewer_present(viewer);
+}
+
 static gboolean is_media_url(const char *u) {
   return is_image_url(u) || is_video_url(u);
 }
 
+/* Extract clean URL from token, stripping trailing punctuation.
+ * Handles: trailing periods, commas, semicolons, unbalanced parens/brackets.
+ * Returns newly allocated clean URL and sets suffix to trailing characters.
+ */
+static gchar *extract_clean_url(const char *token, gchar **suffix) {
+  if (!token || !*token) {
+    if (suffix) *suffix = g_strdup("");
+    return NULL;
+  }
+  size_t len = strlen(token);
+  if (len == 0) {
+    if (suffix) *suffix = g_strdup("");
+    return NULL;
+  }
+  size_t end = len;
+  int paren_balance = 0, bracket_balance = 0;
+  /* Count balanced parens/brackets */
+  for (size_t i = 0; i < len; i++) {
+    if (token[i] == '(') paren_balance++;
+    else if (token[i] == ')') paren_balance--;
+    else if (token[i] == '[') bracket_balance++;
+    else if (token[i] == ']') bracket_balance--;
+  }
+  /* Trim trailing punctuation */
+  while (end > 0) {
+    char c = token[end - 1];
+    if (c == ',' || c == ';' || c == '!' || c == '\'' || c == '"' || c == '.') {
+      end--;
+      continue;
+    }
+    if (c == ':' && end > 1 && !g_ascii_isdigit(token[end - 2])) {
+      end--;
+      continue;
+    }
+    if (c == ')' && paren_balance < 0) {
+      paren_balance++;
+      end--;
+      continue;
+    }
+    if (c == ']' && bracket_balance < 0) {
+      bracket_balance++;
+      end--;
+      continue;
+    }
+    break;
+  }
+  if (suffix) *suffix = g_strdup(token + end);
+  return (end > 0) ? g_strndup(token, end) : NULL;
+}
+
+/* Check if token starts with URL prefix */
+static gboolean token_is_url(const char *t) {
+  return t && (g_str_has_prefix(t, "http://") || g_str_has_prefix(t, "https://") || g_str_has_prefix(t, "www."));
+}
+
+/* Check if token is a nostr entity */
+static gboolean token_is_nostr(const char *t) {
+  return t && (g_str_has_prefix(t, "nostr:") || g_str_has_prefix(t, "note1") || g_str_has_prefix(t, "npub1") ||
+               g_str_has_prefix(t, "nevent1") || g_str_has_prefix(t, "nprofile1") || g_str_has_prefix(t, "naddr1"));
+}
+
 void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *content) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
-  /* naive parse: split by space and wrap URLs and nostr ids as links */
+  /* Parse content: detect URLs and nostr entities, handle trailing punctuation */
   GString *out = g_string_new("");
   if (content && *content) {
     gchar **tokens = g_strsplit_set(content, " \n\t", -1);
     for (guint i=0; tokens && tokens[i]; i++) {
       const char *t = tokens[i];
       if (t[0]=='\0') { g_string_append(out, " "); continue; }
-      gboolean link = FALSE;
-      if (g_str_has_prefix(t, "http://") || g_str_has_prefix(t, "https://") ||
-          g_str_has_prefix(t, "nostr:") || g_str_has_prefix(t, "note1") || g_str_has_prefix(t, "npub1") ||
-          g_str_has_prefix(t, "nevent1") || g_str_has_prefix(t, "nprofile1") || g_str_has_prefix(t, "naddr1"))
-        link = TRUE;
-      if (link) {
-        gchar *esc = g_markup_escape_text(t, -1);
-        g_string_append_printf(out, "<a href=\"%s\">%s</a>", esc, esc);
-        g_free(esc);
+      gboolean is_url = token_is_url(t);
+      gboolean is_nostr = token_is_nostr(t);
+      if (is_url || is_nostr) {
+        gchar *suffix = NULL;
+        gchar *clean = extract_clean_url(t, &suffix);
+        if (clean && *clean) {
+          /* For www. URLs, use https:// in href */
+          gchar *href = g_str_has_prefix(clean, "www.") ? g_strdup_printf("https://%s", clean) : g_strdup(clean);
+          gchar *esc_href = g_markup_escape_text(href, -1);
+          gchar *esc_display = g_markup_escape_text(clean, -1);
+          g_string_append_printf(out, "<a href=\"%s\">%s</a>", esc_href, esc_display);
+          g_free(esc_href);
+          g_free(esc_display);
+          g_free(href);
+          if (suffix && *suffix) {
+            gchar *esc_suffix = g_markup_escape_text(suffix, -1);
+            g_string_append(out, esc_suffix);
+            g_free(esc_suffix);
+          }
+        } else {
+          gchar *esc = g_markup_escape_text(t, -1);
+          g_string_append(out, esc);
+          g_free(esc);
+        }
+        g_free(clean);
+        g_free(suffix);
       } else {
         gchar *esc = g_markup_escape_text(t, -1);
-        g_string_append(out, esc); g_free(esc);
+        g_string_append(out, esc);
+        g_free(esc);
       }
       g_string_append_c(out, ' ');
     }
@@ -780,35 +1160,43 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
           if (is_image_url(url)) {
             GtkWidget *pic = gtk_picture_new();
             gtk_widget_add_css_class(pic, "note-media-image");
+            gtk_widget_add_css_class(pic, "clickable-image");
             gtk_picture_set_can_shrink(GTK_PICTURE(pic), TRUE);
             gtk_picture_set_content_fit(GTK_PICTURE(pic), GTK_CONTENT_FIT_CONTAIN);
             gtk_widget_set_size_request(pic, -1, 300);
             gtk_widget_set_hexpand(pic, TRUE);
             gtk_widget_set_vexpand(pic, FALSE);
+            gtk_widget_set_cursor_from_name(pic, "pointer");
+
+            /* Add click gesture to open image viewer */
+            GtkGesture *click_gesture = gtk_gesture_click_new();
+            gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture), GDK_BUTTON_PRIMARY);
+            /* Store URL in widget data for the click handler */
+            g_object_set_data_full(G_OBJECT(pic), "image-url", g_strdup(url), g_free);
+            g_signal_connect(click_gesture, "pressed", G_CALLBACK(on_media_image_clicked),
+                             g_object_get_data(G_OBJECT(pic), "image-url"));
+            gtk_widget_add_controller(pic, GTK_EVENT_CONTROLLER(click_gesture));
+
             gtk_box_append(GTK_BOX(self->media_box), pic);
             gtk_widget_set_visible(self->media_box, TRUE);
-            
+
 #ifdef HAVE_SOUP3
             /* Load image asynchronously */
             load_media_image(self, url, GTK_PICTURE(pic));
 #endif
           }
-          /* Handle videos */
+          /* Handle videos - use enhanced video player with controls overlay */
           else if (is_video_url(url)) {
-            GtkWidget *video = gtk_video_new();
-            gtk_widget_add_css_class(video, "note-media-video");
-            gtk_video_set_autoplay(GTK_VIDEO(video), FALSE);
-            gtk_video_set_loop(GTK_VIDEO(video), TRUE);
-            gtk_widget_set_size_request(video, -1, 300);
-            gtk_widget_set_hexpand(video, TRUE);
-            gtk_widget_set_vexpand(video, FALSE);
-            
-            /* Set video file */
-            GFile *file = g_file_new_for_uri(url);
-            gtk_video_set_file(GTK_VIDEO(video), file);
-            g_object_unref(file);
-            
-            gtk_box_append(GTK_BOX(self->media_box), video);
+            GnostrVideoPlayer *player = gnostr_video_player_new();
+            gtk_widget_add_css_class(GTK_WIDGET(player), "note-media-video");
+            gtk_widget_set_size_request(GTK_WIDGET(player), -1, 300);
+            gtk_widget_set_hexpand(GTK_WIDGET(player), TRUE);
+            gtk_widget_set_vexpand(GTK_WIDGET(player), FALSE);
+
+            /* Set video URI - settings (autoplay/loop) are read from GSettings */
+            gnostr_video_player_set_uri(player, url);
+
+            gtk_box_append(GTK_BOX(self->media_box), GTK_WIDGET(player));
             gtk_widget_set_visible(self->media_box, TRUE);
           }
         }
@@ -817,33 +1205,59 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
     }
   }
 
-  /* Detect first NIP-19/21 reference and request an embed */
+  /* Detect NIP-19/21 nostr: references and create embedded note widgets */
   if (self->embed_box && GTK_IS_WIDGET(self->embed_box)) {
-    gtk_widget_set_visible(self->embed_box, FALSE);
-    const char *p = content;
-    const char *found = NULL;
-    if (p && *p) {
-      /* naive token scan */
-      gchar **tokens = g_strsplit_set(p, " \n\t", -1);
-      for (guint i=0; tokens && tokens[i]; i++) {
-        const char *t = tokens[i]; if (!t || !*t) continue;
-        if (g_str_has_prefix(t, "nostr:") || g_str_has_prefix(t, "note1") || g_str_has_prefix(t, "nevent1") || g_str_has_prefix(t, "naddr1")) { found = t; break; }
-      }
-      if (tokens) g_strfreev(tokens);
+    /* Clear existing embeds from the embed_box */
+    if (GTK_IS_FRAME(self->embed_box)) {
+      gtk_frame_set_child(GTK_FRAME(self->embed_box), NULL);
     }
-    if (found) {
-      /* show skeleton */
-      GtkWidget *sk = gtk_label_new("Loading embed…");
-      gtk_widget_set_halign(sk, GTK_ALIGN_START);
-      gtk_widget_set_valign(sk, GTK_ALIGN_START);
-      gtk_widget_set_margin_start(sk, 6);
-      gtk_widget_set_margin_end(sk, 6);
-      gtk_widget_set_margin_top(sk, 4);
-      gtk_widget_set_margin_bottom(sk, 4);
-      /* Replace child of frame */
-      if (GTK_IS_FRAME(self->embed_box)) gtk_frame_set_child(GTK_FRAME(self->embed_box), sk);
-      gtk_widget_set_visible(self->embed_box, TRUE);
-      g_signal_emit(self, signals[SIGNAL_REQUEST_EMBED], 0, found);
+    gtk_widget_set_visible(self->embed_box, FALSE);
+    self->note_embed = NULL;
+
+    const char *p = content;
+    if (p && *p) {
+      /* Scan for nostr: URIs and bech32 references */
+      gchar **tokens = g_strsplit_set(p, " \n\t", -1);
+      const char *first_nostr_ref = NULL;
+
+      for (guint i = 0; tokens && tokens[i]; i++) {
+        const char *t = tokens[i];
+        if (!t || !*t) continue;
+
+        /* Check for nostr: URI or bare bech32 (NIP-21) */
+        if (g_str_has_prefix(t, "nostr:") ||
+            g_str_has_prefix(t, "note1") ||
+            g_str_has_prefix(t, "nevent1") ||
+            g_str_has_prefix(t, "naddr1") ||
+            g_str_has_prefix(t, "npub1") ||
+            g_str_has_prefix(t, "nprofile1")) {
+          first_nostr_ref = t;
+          break;
+        }
+      }
+
+      if (first_nostr_ref) {
+        /* Create the NIP-21 embed widget */
+        self->note_embed = gnostr_note_embed_new();
+
+        /* Connect profile-clicked signal to relay to main window */
+        g_signal_connect(self->note_embed, "profile-clicked",
+                        G_CALLBACK(on_embed_profile_clicked), self);
+
+        /* Set the nostr URI - this triggers async loading via NIP-19 decoding */
+        gnostr_note_embed_set_nostr_uri(self->note_embed, first_nostr_ref);
+
+        /* Add embed widget to the embed_box frame */
+        if (GTK_IS_FRAME(self->embed_box)) {
+          gtk_frame_set_child(GTK_FRAME(self->embed_box), GTK_WIDGET(self->note_embed));
+        }
+        gtk_widget_set_visible(self->embed_box, TRUE);
+
+        /* Also emit the signal for timeline-level handling (backwards compatibility) */
+        g_signal_emit(self, signals[SIGNAL_REQUEST_EMBED], 0, first_nostr_ref);
+      }
+
+      if (tokens) g_strfreev(tokens);
     }
   }
 
@@ -888,14 +1302,192 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
   }
 }
 
+/* NIP-92 imeta-aware content setter */
+void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const char *content, const char *tags_json) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
+
+  GnostrImetaList *imeta_list = NULL;
+  if (tags_json && *tags_json) {
+    imeta_list = gnostr_imeta_parse_tags_json(tags_json);
+    if (imeta_list) {
+      g_debug("note_card: Parsed %zu imeta tags from event", imeta_list->count);
+    }
+  }
+
+  GString *out = g_string_new("");
+  if (content && *content) {
+    gchar **tokens = g_strsplit_set(content, " \n\t", -1);
+    for (guint i = 0; tokens && tokens[i]; i++) {
+      const char *t = tokens[i];
+      if (t[0] == '\0') { g_string_append(out, " "); continue; }
+      gboolean link = FALSE;
+      if (g_str_has_prefix(t, "http://") || g_str_has_prefix(t, "https://") ||
+          g_str_has_prefix(t, "nostr:") || g_str_has_prefix(t, "note1") || g_str_has_prefix(t, "npub1") ||
+          g_str_has_prefix(t, "nevent1") || g_str_has_prefix(t, "nprofile1") || g_str_has_prefix(t, "naddr1"))
+        link = TRUE;
+      if (link) {
+        gchar *esc = g_markup_escape_text(t, -1);
+        g_string_append_printf(out, "<a href=\"%s\">%s</a>", esc, esc);
+        g_free(esc);
+      } else {
+        gchar *esc = g_markup_escape_text(t, -1);
+        g_string_append(out, esc); g_free(esc);
+      }
+      g_string_append_c(out, ' ');
+    }
+    g_strfreev(tokens);
+  }
+  gchar *markup = out->len ? g_string_free(out, FALSE) : g_string_free(out, TRUE);
+  gboolean markup_allocated = (markup != NULL);
+  if (!markup) markup = escape_markup(content);
+  gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
+  gtk_label_set_markup(GTK_LABEL(self->content_label), markup ? markup : "");
+  if (markup_allocated || markup) g_free(markup);
+
+  if (self->media_box && GTK_IS_BOX(self->media_box)) {
+    GtkWidget *child = gtk_widget_get_first_child(self->media_box);
+    while (child) {
+      GtkWidget *next = gtk_widget_get_next_sibling(child);
+      gtk_box_remove(GTK_BOX(self->media_box), child);
+      child = next;
+    }
+    gtk_widget_set_visible(self->media_box, FALSE);
+
+    if (content) {
+      gchar **tokens = g_strsplit_set(content, " \n\t", -1);
+      for (guint i = 0; tokens && tokens[i]; i++) {
+        const char *url = tokens[i];
+        if (!url || !*url) continue;
+        if (g_str_has_prefix(url, "http://") || g_str_has_prefix(url, "https://")) {
+          GnostrImeta *imeta = imeta_list ? gnostr_imeta_find_by_url(imeta_list, url) : NULL;
+          GnostrMediaType media_type = GNOSTR_MEDIA_TYPE_UNKNOWN;
+          if (imeta) {
+            media_type = imeta->media_type;
+            g_debug("note_card: imeta for %s: type=%d dim=%dx%d alt=%s",
+                    url, media_type, imeta->width, imeta->height,
+                    imeta->alt ? imeta->alt : "(none)");
+          }
+          if (media_type == GNOSTR_MEDIA_TYPE_UNKNOWN) {
+            if (is_image_url(url)) media_type = GNOSTR_MEDIA_TYPE_IMAGE;
+            else if (is_video_url(url)) media_type = GNOSTR_MEDIA_TYPE_VIDEO;
+          }
+
+          if (media_type == GNOSTR_MEDIA_TYPE_IMAGE) {
+            GtkWidget *pic = gtk_picture_new();
+            gtk_widget_add_css_class(pic, "note-media-image");
+            gtk_picture_set_can_shrink(GTK_PICTURE(pic), TRUE);
+            gtk_picture_set_content_fit(GTK_PICTURE(pic), GTK_CONTENT_FIT_CONTAIN);
+            int height = 300;
+            if (imeta && imeta->width > 0 && imeta->height > 0) {
+              int cw = 400;
+              height = imeta->width <= cw ? imeta->height : (int)((double)imeta->height * cw / imeta->width);
+              if (height > 400) height = 400;
+              if (height < 100) height = 100;
+            }
+            gtk_widget_set_size_request(pic, -1, height);
+            if (imeta && imeta->alt && *imeta->alt) gtk_widget_set_tooltip_text(pic, imeta->alt);
+            gtk_widget_set_hexpand(pic, TRUE);
+            gtk_widget_set_vexpand(pic, FALSE);
+            gtk_box_append(GTK_BOX(self->media_box), pic);
+            gtk_widget_set_visible(self->media_box, TRUE);
+#ifdef HAVE_SOUP3
+            load_media_image(self, url, GTK_PICTURE(pic));
+#endif
+          } else if (media_type == GNOSTR_MEDIA_TYPE_VIDEO) {
+            GtkWidget *video = gtk_video_new();
+            gtk_widget_add_css_class(video, "note-media-video");
+            gtk_video_set_autoplay(GTK_VIDEO(video), FALSE);
+            gtk_video_set_loop(GTK_VIDEO(video), TRUE);
+            int height = 300;
+            if (imeta && imeta->width > 0 && imeta->height > 0) {
+              int cw = 400;
+              height = imeta->width <= cw ? imeta->height : (int)((double)imeta->height * cw / imeta->width);
+              if (height > 400) height = 400;
+              if (height < 100) height = 100;
+            }
+            gtk_widget_set_size_request(video, -1, height);
+            if (imeta && imeta->alt && *imeta->alt) gtk_widget_set_tooltip_text(video, imeta->alt);
+            gtk_widget_set_hexpand(video, TRUE);
+            gtk_widget_set_vexpand(video, FALSE);
+            GFile *file = g_file_new_for_uri(url);
+            gtk_video_set_file(GTK_VIDEO(video), file);
+            g_object_unref(file);
+            gtk_box_append(GTK_BOX(self->media_box), video);
+            gtk_widget_set_visible(self->media_box, TRUE);
+          }
+        }
+      }
+      g_strfreev(tokens);
+    }
+  }
+
+  gnostr_imeta_list_free(imeta_list);
+
+  if (self->embed_box && GTK_IS_WIDGET(self->embed_box)) {
+    gtk_widget_set_visible(self->embed_box, FALSE);
+    const char *p = content;
+    const char *found = NULL;
+    if (p && *p) {
+      gchar **tokens = g_strsplit_set(p, " \n\t", -1);
+      for (guint i = 0; tokens && tokens[i]; i++) {
+        const char *t = tokens[i]; if (!t || !*t) continue;
+        if (g_str_has_prefix(t, "nostr:") || g_str_has_prefix(t, "note1") ||
+            g_str_has_prefix(t, "nevent1") || g_str_has_prefix(t, "naddr1")) {
+          found = t; break;
+        }
+      }
+      if (tokens) g_strfreev(tokens);
+    }
+    if (found) {
+      GtkWidget *sk = gtk_label_new("Loading embed...");
+      gtk_widget_set_halign(sk, GTK_ALIGN_START);
+      gtk_widget_set_valign(sk, GTK_ALIGN_START);
+      gtk_widget_set_margin_start(sk, 6);
+      gtk_widget_set_margin_end(sk, 6);
+      gtk_widget_set_margin_top(sk, 4);
+      gtk_widget_set_margin_bottom(sk, 4);
+      if (GTK_IS_FRAME(self->embed_box)) gtk_frame_set_child(GTK_FRAME(self->embed_box), sk);
+      gtk_widget_set_visible(self->embed_box, TRUE);
+      g_signal_emit(self, signals[SIGNAL_REQUEST_EMBED], 0, found);
+    }
+  }
+
+  if (self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
+    if (self->og_preview) {
+      gtk_box_remove(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
+      self->og_preview = NULL;
+    }
+    gtk_widget_set_visible(self->og_preview_container, FALSE);
+    const char *p = content;
+    const char *url_start = NULL;
+    if (p && *p) {
+      gchar **tokens = g_strsplit_set(p, " \n\t", -1);
+      for (guint i = 0; tokens && tokens[i]; i++) {
+        const char *t = tokens[i];
+        if (!t || !*t) continue;
+        if (g_str_has_prefix(t, "http://") || g_str_has_prefix(t, "https://")) {
+          if (!is_media_url(t)) { url_start = t; break; }
+        }
+      }
+      if (url_start) {
+        self->og_preview = og_preview_widget_new();
+        gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
+        gtk_widget_set_visible(self->og_preview_container, TRUE);
+        og_preview_widget_set_url(self->og_preview, url_start);
+      }
+      if (tokens) g_strfreev(tokens);
+    }
+  }
+}
+
 void gnostr_note_card_row_set_depth(GnostrNoteCardRow *self, guint depth) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
   self->depth = depth;
   gtk_widget_set_margin_start(GTK_WIDGET(self), depth * 16);
-  
+
   /* Apply CSS class for depth styling using GTK4 API */
   GtkWidget *widget = GTK_WIDGET(self);
-  
+
   /* Remove existing depth classes */
   for (guint i = 1; i <= 4; i++) {
     gchar *class_name = g_strdup_printf("thread-depth-%u", i);
@@ -1078,4 +1670,17 @@ void gnostr_note_card_row_set_nip05(GnostrNoteCardRow *self, const char *nip05, 
   /* Verify async */
   self->nip05_cancellable = g_cancellable_new();
   gnostr_nip05_verify_async(nip05, pubkey_hex, on_note_nip05_verified, self, self->nip05_cancellable);
+}
+
+/* Set bookmark state and update button icon */
+void gnostr_note_card_row_set_bookmarked(GnostrNoteCardRow *self, gboolean is_bookmarked) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  self->is_bookmarked = is_bookmarked;
+
+  /* Update button icon */
+  if (GTK_IS_BUTTON(self->btn_bookmark)) {
+    gtk_button_set_icon_name(GTK_BUTTON(self->btn_bookmark),
+      is_bookmarked ? "user-bookmarks-symbolic" : "bookmark-new-symbolic");
+  }
 }

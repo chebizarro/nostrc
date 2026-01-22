@@ -50,10 +50,52 @@
         <child>
           <object class="GtkTextView" id="text_view"/>
         </child>
+        <!-- Upload progress indicator (hidden by default) -->
+        <child>
+          <object class="GtkBox" id="upload_progress_box">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">6</property>
+            <property name="visible">false</property>
+            <style>
+              <class name="composer-upload-progress"/>
+            </style>
+            <child>
+              <object class="GtkSpinner" id="upload_spinner">
+                <property name="spinning">false</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="upload_status_label">
+                <property name="label">Uploading...</property>
+                <property name="xalign">0</property>
+                <property name="hexpand">true</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
         <child>
           <object class="GtkBox">
             <property name="orientation">horizontal</property>
-            <property name="halign">end</property>
+            <property name="spacing">6</property>
+            <child>
+              <object class="GtkButton" id="btn_attach">
+                <property name="icon-name">mail-attachment-symbolic</property>
+                <property name="tooltip-text">Attach image or file</property>
+                <property name="has-frame">false</property>
+                <signal name="clicked" handler="on_attach_clicked" swapped="yes"/>
+                <style>
+                  <class name="flat"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="hexpand">true</property>
+              </object>
+            </child>
             <child>
               <object class="GtkButton" id="btn_post">
                 <property name="label">Post</property>

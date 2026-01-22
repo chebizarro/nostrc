@@ -67,15 +67,14 @@
                         <property name="vexpand">true</property>
                         <property name="content-fit">cover</property>
                         <property name="can-shrink">true</property>
-                        <property name="keep-aspect-ratio">false</property>
                       </object>
                     </child>
                   </object>
                 </child>
-                <!-- Spacer for avatar overflow (48px = half of 96px avatar) -->
+                <!-- Spacer for avatar overflow (72px = half of 144px avatar) -->
                 <child>
                   <object class="GtkBox">
-                    <property name="height-request">48</property>
+                    <property name="height-request">72</property>
                   </object>
                 </child>
               </object>
@@ -87,19 +86,19 @@
                 <property name="halign">start</property>
                 <property name="valign">start</property>
                 <property name="margin-start">16</property>
-                <property name="margin-top">92</property>
+                <property name="margin-top">68</property>
                 <child>
                   <object class="GtkFrame" id="avatar_box">
-                    <property name="width-request">96</property>
-                    <property name="height-request">96</property>
+                    <property name="width-request">144</property>
+                    <property name="height-request">144</property>
                     <style>
                       <class name="profile-avatar"/>
                       <class name="profile-avatar-frame"/>
                     </style>
                     <child>
                       <object class="GtkOverlay">
-                        <property name="width-request">88</property>
-                        <property name="height-request">88</property>
+                        <property name="width-request">132</property>
+                        <property name="height-request">132</property>
                         <child>
                           <object class="GtkBox">
                             <property name="orientation">vertical</property>
@@ -127,8 +126,8 @@
                         <child type="overlay">
                           <object class="GtkPicture" id="avatar_image">
                             <property name="visible">false</property>
-                            <property name="width-request">88</property>
-                            <property name="height-request">88</property>
+                            <property name="width-request">132</property>
+                            <property name="height-request">132</property>
                             <property name="content-fit">cover</property>
                             <property name="can-shrink">true</property>
                             <property name="halign">center</property>
@@ -428,6 +427,7 @@
                         <property name="halign">center</property>
                         <property name="valign">center</property>
                         <property name="vexpand">true</property>
+                        <property name="margin-bottom">32</property>
                         <property name="visible">false</property>
                         <child>
                           <object class="GtkSpinner" id="posts_spinner">

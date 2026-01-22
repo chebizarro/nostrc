@@ -104,6 +104,11 @@ uint32_t storage_ndb_note_kind(storage_ndb_note *note);
 /* Convert 32-byte binary to hex string. Caller provides 65-byte buffer. */
 void storage_ndb_hex_encode(const unsigned char *bin32, char *hex65);
 
+/* Serialize note tags to JSON array string (for NIP-92 imeta parsing).
+ * Returns newly allocated JSON string or NULL if no tags.
+ * Caller must g_free() the result. */
+char *storage_ndb_note_tags_json(storage_ndb_note *note);
+
 #ifdef __cplusplus
 }
 #endif
