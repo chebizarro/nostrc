@@ -2,11 +2,20 @@
 <schemalist>
   <schema id="org.gnostr.gnostr" path="/org/gnostr/gnostr/">
     <key name="relays" type="as">
-      <default>[]</default>
+      <default>['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band', 'wss://relay.primal.net', 'wss://purplepag.es']</default>
       <summary>Relay URLs</summary>
       <description>
         List of Nostr relay URLs (ws:// or wss://). Values should be normalized
         (lowercase scheme/host, no trailing slash) for canonical storage.
+      </description>
+    </key>
+    <key name="relay-types" type="as">
+      <default>[]</default>
+      <summary>Relay Types (NIP-65)</summary>
+      <description>
+        List of relay types corresponding to relays in the same order.
+        Values: "rw" (read+write, default), "r" (read-only), "w" (write-only).
+        Used for NIP-65 relay list metadata (kind 10002).
       </description>
     </key>
     <key name="relays-window-width" type="i">
@@ -18,6 +27,15 @@
       <default>420</default>
       <summary>Relay Manager window height</summary>
       <description>Last used height for the Relay Manager dialog.</description>
+    </key>
+    <key name="dm-relays" type="as">
+      <default>['wss://relay.damus.io', 'wss://nos.lol', 'wss://auth.nostr1.com']</default>
+      <summary>DM Relay URLs (NIP-17)</summary>
+      <description>
+        List of Nostr relay URLs specifically for direct messages (NIP-17).
+        These are the user's "inbox" relays where they receive gift-wrapped DMs.
+        If empty, falls back to regular relays. Published in kind 10050 events.
+      </description>
     </key>
   </schema>
   <!-- Client identity and login-related settings -->
