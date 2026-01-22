@@ -378,3 +378,65 @@
 .btn-thread:hover {
   opacity: 1.0;
 }
+
+/* Profile Tabs Styles */
+.profile-tabs {
+  margin: 0 16px;
+}
+
+.profile-tabs > button {
+  border-radius: 8px;
+  padding: 8px 16px;
+  margin: 0 4px;
+  font-weight: 500;
+  transition: all 150ms ease;
+}
+
+.profile-tabs > button:not(:checked) {
+  background: transparent;
+  color: alpha(@theme_fg_color, 0.7);
+}
+
+.profile-tabs > button:checked {
+  background: alpha(@accent_bg_color, 0.12);
+  color: @accent_bg_color;
+}
+
+.profile-tabs > button:hover:not(:checked) {
+  background: alpha(@theme_fg_color, 0.06);
+}
+
+/* Profile Posts List */
+.profile-posts-list {
+  background: transparent;
+}
+
+.profile-posts-list > row {
+  padding: 4px 8px;
+  margin: 4px 0;
+}
+
+.profile-posts-list > row:hover {
+  background: alpha(@theme_fg_color, 0.03);
+}
+
+/* Compact note cards for profile posts */
+.profile-posts-list .note-card {
+  padding: 8px;
+  margin: 2px 0;
+}
+
+/* Load more button */
+.profile-posts-list + button.pill,
+button.pill {
+  border-radius: 9999px;
+  padding: 8px 24px;
+  font-weight: 500;
+  background: alpha(@accent_bg_color, 0.12);
+  color: @accent_bg_color;
+  transition: all 150ms ease;
+}
+
+button.pill:hover {
+  background: alpha(@accent_bg_color, 0.18);
+}

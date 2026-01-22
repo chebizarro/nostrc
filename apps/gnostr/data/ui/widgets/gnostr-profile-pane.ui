@@ -42,156 +42,404 @@
           </object>
         </child>
 
-        <!-- Scrollable content -->
+        <!-- Banner with extended height for avatar overlap area -->
         <child>
-          <object class="GtkScrolledWindow">
-            <property name="vexpand">true</property>
-            <property name="hscrollbar-policy">never</property>
+          <object class="GtkOverlay">
+            <property name="hexpand">true</property>
+            <!-- Banner area: 140px banner + 48px for avatar overlap = 188px total -->
             <child>
               <object class="GtkBox">
                 <property name="orientation">vertical</property>
-                <property name="spacing">0</property>
-
-                <!-- Banner with extended height for avatar overlap area -->
+                <property name="hexpand">true</property>
+                <!-- Banner image with fallback gradient -->
                 <child>
-                  <object class="GtkOverlay">
+                  <object class="GtkBox" id="banner_container">
+                    <property name="height-request">140</property>
                     <property name="hexpand">true</property>
-                    <!-- Banner area: 140px banner + 48px for avatar overlap = 188px total -->
+                    <property name="orientation">vertical</property>
+                    <style>
+                      <class name="profile-banner"/>
+                    </style>
                     <child>
-                      <object class="GtkBox">
-                        <property name="orientation">vertical</property>
+                      <object class="GtkPicture" id="banner_image">
+                        <property name="height-request">140</property>
                         <property name="hexpand">true</property>
-                        <!-- Banner image with fallback gradient -->
-                        <child>
-                          <object class="GtkBox" id="banner_container">
-                            <property name="height-request">140</property>
-                            <property name="hexpand">true</property>
-                            <property name="orientation">vertical</property>
-                            <style>
-                              <class name="profile-banner"/>
-                            </style>
-                            <child>
-                              <object class="GtkPicture" id="banner_image">
-                                <property name="height-request">140</property>
-                                <property name="hexpand">true</property>
-                                <property name="vexpand">true</property>
-                                <property name="content-fit">cover</property>
-                                <property name="can-shrink">true</property>
-                                <property name="keep-aspect-ratio">false</property>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                        <!-- Spacer for avatar overflow (48px = half of 96px avatar) -->
-                        <child>
-                          <object class="GtkBox">
-                            <property name="height-request">48</property>
-                          </object>
-                        </child>
+                        <property name="vexpand">true</property>
+                        <property name="content-fit">cover</property>
+                        <property name="can-shrink">true</property>
+                        <property name="keep-aspect-ratio">false</property>
                       </object>
                     </child>
-                    <!-- Avatar overlay positioned to overlap banner bottom edge -->
-                    <child type="overlay">
-                      <object class="GtkBox">
-                        <property name="orientation">vertical</property>
-                        <property name="halign">start</property>
-                        <property name="valign">start</property>
-                        <property name="margin-start">16</property>
-                        <property name="margin-top">92</property>
+                  </object>
+                </child>
+                <!-- Spacer for avatar overflow (48px = half of 96px avatar) -->
+                <child>
+                  <object class="GtkBox">
+                    <property name="height-request">48</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <!-- Avatar overlay positioned to overlap banner bottom edge -->
+            <child type="overlay">
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="halign">start</property>
+                <property name="valign">start</property>
+                <property name="margin-start">16</property>
+                <property name="margin-top">92</property>
+                <child>
+                  <object class="GtkFrame" id="avatar_box">
+                    <property name="width-request">96</property>
+                    <property name="height-request">96</property>
+                    <style>
+                      <class name="profile-avatar"/>
+                      <class name="profile-avatar-frame"/>
+                    </style>
+                    <child>
+                      <object class="GtkOverlay">
+                        <property name="width-request">88</property>
+                        <property name="height-request">88</property>
                         <child>
-                          <object class="GtkFrame" id="avatar_box">
-                            <property name="width-request">96</property>
-                            <property name="height-request">96</property>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="halign">fill</property>
+                            <property name="valign">fill</property>
+                            <property name="hexpand">true</property>
+                            <property name="vexpand">true</property>
                             <style>
-                              <class name="profile-avatar"/>
-                              <class name="profile-avatar-frame"/>
+                              <class name="profile-avatar-bg"/>
                             </style>
                             <child>
-                              <object class="GtkOverlay">
-                                <property name="width-request">88</property>
-                                <property name="height-request">88</property>
-                                <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">vertical</property>
-                                    <property name="halign">fill</property>
-                                    <property name="valign">fill</property>
-                                    <property name="hexpand">true</property>
-                                    <property name="vexpand">true</property>
-                                    <style>
-                                      <class name="profile-avatar-bg"/>
-                                    </style>
-                                    <child>
-                                      <object class="GtkLabel" id="avatar_initials">
-                                        <property name="label">?</property>
-                                        <property name="halign">center</property>
-                                        <property name="valign">center</property>
-                                        <property name="hexpand">true</property>
-                                        <property name="vexpand">true</property>
-                                        <style>
-                                          <class name="profile-avatar-initials"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                                <child type="overlay">
-                                  <object class="GtkPicture" id="avatar_image">
-                                    <property name="visible">false</property>
-                                    <property name="width-request">88</property>
-                                    <property name="height-request">88</property>
-                                    <property name="content-fit">cover</property>
-                                    <property name="can-shrink">true</property>
-                                    <property name="halign">center</property>
-                                    <property name="valign">center</property>
-                                    <style>
-                                      <class name="profile-avatar-image"/>
-                                    </style>
-                                  </object>
-                                </child>
+                              <object class="GtkLabel" id="avatar_initials">
+                                <property name="label">?</property>
+                                <property name="halign">center</property>
+                                <property name="valign">center</property>
+                                <property name="hexpand">true</property>
+                                <property name="vexpand">true</property>
+                                <style>
+                                  <class name="profile-avatar-initials"/>
+                                </style>
                               </object>
                             </child>
+                          </object>
+                        </child>
+                        <child type="overlay">
+                          <object class="GtkPicture" id="avatar_image">
+                            <property name="visible">false</property>
+                            <property name="width-request">88</property>
+                            <property name="height-request">88</property>
+                            <property name="content-fit">cover</property>
+                            <property name="can-shrink">true</property>
+                            <property name="halign">center</property>
+                            <property name="valign">center</property>
+                            <style>
+                              <class name="profile-avatar-image"/>
+                            </style>
                           </object>
                         </child>
                       </object>
                     </child>
                   </object>
                 </child>
+              </object>
+            </child>
+          </object>
+        </child>
 
-                <!-- Profile info section -->
+        <!-- Profile info section (name, handle) -->
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="spacing">4</property>
+            <property name="margin-start">16</property>
+            <property name="margin-end">16</property>
+            <property name="margin-top">8</property>
+            <property name="margin-bottom">8</property>
+            <child>
+              <object class="GtkLabel" id="lbl_display_name">
+                <property name="label">Loading...</property>
+                <property name="xalign">0.0</property>
+                <property name="wrap">true</property>
+                <property name="wrap-mode">word-char</property>
+                <style>
+                  <class name="profile-name"/>
+                  <class name="title-2"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="lbl_handle">
+                <property name="label">@loading</property>
+                <property name="xalign">0.0</property>
+                <property name="wrap">true</property>
+                <property name="wrap-mode">word-char</property>
+                <style>
+                  <class name="profile-handle"/>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Action buttons for other profiles -->
+        <child>
+          <object class="GtkBox" id="other_profile_actions">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">8</property>
+            <property name="homogeneous">true</property>
+            <property name="margin-start">16</property>
+            <property name="margin-end">16</property>
+            <property name="margin-bottom">12</property>
+            <child>
+              <object class="GtkButton" id="btn_follow">
+                <property name="label">Follow</property>
+                <property name="sensitive">false</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_message">
+                <property name="label">Message</property>
+                <property name="sensitive">false</property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Edit Profile button for own profile -->
+        <child>
+          <object class="GtkBox" id="own_profile_actions">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">8</property>
+            <property name="margin-start">16</property>
+            <property name="margin-end">16</property>
+            <property name="margin-bottom">12</property>
+            <property name="visible">false</property>
+            <child>
+              <object class="GtkButton" id="btn_edit_profile">
+                <property name="hexpand">true</property>
+                <signal name="clicked" handler="on_edit_profile_clicked"/>
                 <child>
                   <object class="GtkBox">
-                    <property name="orientation">vertical</property>
-                    <property name="spacing">12</property>
-                    <property name="margin-start">16</property>
-                    <property name="margin-end">16</property>
-                    <property name="margin-top">8</property>
-                    <property name="margin-bottom">16</property>
-
-                    <!-- Name and handle -->
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">8</property>
+                    <property name="halign">center</property>
                     <child>
-                      <object class="GtkBox">
+                      <object class="GtkImage">
+                        <property name="icon-name">document-edit-symbolic</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Edit Profile</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Tab Switcher -->
+        <child>
+          <object class="GtkStackSwitcher" id="tab_switcher">
+            <property name="stack">content_stack</property>
+            <property name="halign">center</property>
+            <property name="margin-bottom">8</property>
+            <style>
+              <class name="profile-tabs"/>
+            </style>
+          </object>
+        </child>
+
+        <!-- Tabbed Content -->
+        <child>
+          <object class="GtkStack" id="content_stack">
+            <property name="vexpand">true</property>
+            <property name="transition-type">crossfade</property>
+            <property name="transition-duration">200</property>
+
+            <!-- About Tab -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">about</property>
+                <property name="title">About</property>
+                <property name="child">
+                  <object class="GtkScrolledWindow" id="about_scroll">
+                    <property name="vexpand">true</property>
+                    <property name="hscrollbar-policy">never</property>
+                    <child>
+                      <object class="GtkBox" id="about_content">
                         <property name="orientation">vertical</property>
-                        <property name="spacing">4</property>
+                        <property name="spacing">12</property>
+                        <property name="margin-start">16</property>
+                        <property name="margin-end">16</property>
+                        <property name="margin-top">8</property>
+                        <property name="margin-bottom">16</property>
+
+                        <!-- Bio -->
                         <child>
-                          <object class="GtkLabel" id="lbl_display_name">
-                            <property name="label">Loading...</property>
+                          <object class="GtkLabel" id="lbl_bio">
+                            <property name="label"></property>
                             <property name="xalign">0.0</property>
                             <property name="wrap">true</property>
                             <property name="wrap-mode">word-char</property>
+                            <property name="selectable">true</property>
+                            <property name="visible">false</property>
                             <style>
-                              <class name="profile-name"/>
-                              <class name="title-2"/>
+                              <class name="profile-bio"/>
                             </style>
                           </object>
                         </child>
+
+                        <!-- Metadata rows -->
                         <child>
-                          <object class="GtkLabel" id="lbl_handle">
-                            <property name="label">@loading</property>
-                            <property name="xalign">0.0</property>
-                            <property name="wrap">true</property>
-                            <property name="wrap-mode">word-char</property>
+                          <object class="GtkBox" id="metadata_box">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">8</property>
+                            <property name="visible">false</property>
                             <style>
-                              <class name="profile-handle"/>
+                              <class name="profile-metadata"/>
+                            </style>
+                          </object>
+                        </child>
+
+                        <!-- Stats (placeholder) -->
+                        <child>
+                          <object class="GtkBox" id="stats_box">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">16</property>
+                            <property name="visible">false</property>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">4</property>
+                                <child>
+                                  <object class="GtkLabel" id="lbl_notes_count">
+                                    <property name="label">0</property>
+                                    <style>
+                                      <class name="bold"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Notes</property>
+                                    <style>
+                                      <class name="dim-label"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">4</property>
+                                <child>
+                                  <object class="GtkLabel" id="lbl_followers_count">
+                                    <property name="label">0</property>
+                                    <style>
+                                      <class name="bold"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Followers</property>
+                                    <style>
+                                      <class name="dim-label"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">4</property>
+                                <child>
+                                  <object class="GtkLabel" id="lbl_following_count">
+                                    <property name="label">0</property>
+                                    <style>
+                                      <class name="bold"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Following</property>
+                                    <style>
+                                      <class name="dim-label"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Posts Tab -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">posts</property>
+                <property name="title">Posts</property>
+                <property name="child">
+                  <object class="GtkBox" id="posts_container">
+                    <property name="orientation">vertical</property>
+                    <property name="vexpand">true</property>
+
+                    <!-- Posts List -->
+                    <child>
+                      <object class="GtkScrolledWindow" id="posts_scroll">
+                        <property name="vexpand">true</property>
+                        <property name="hscrollbar-policy">never</property>
+                        <child>
+                          <object class="GtkListView" id="posts_list">
+                            <property name="single-click-activate">true</property>
+                            <style>
+                              <class name="profile-posts-list"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Loading indicator -->
+                    <child>
+                      <object class="GtkBox" id="posts_loading_box">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">8</property>
+                        <property name="halign">center</property>
+                        <property name="valign">center</property>
+                        <property name="vexpand">true</property>
+                        <property name="visible">false</property>
+                        <child>
+                          <object class="GtkSpinner" id="posts_spinner">
+                            <property name="spinning">true</property>
+                            <property name="width-request">32</property>
+                            <property name="height-request">32</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">Loading posts...</property>
+                            <style>
                               <class name="dim-label"/>
                             </style>
                           </object>
@@ -199,137 +447,54 @@
                       </object>
                     </child>
 
-                    <!-- Bio -->
+                    <!-- Empty state -->
                     <child>
-                      <object class="GtkLabel" id="lbl_bio">
-                        <property name="label"></property>
-                        <property name="xalign">0.0</property>
-                        <property name="wrap">true</property>
-                        <property name="wrap-mode">word-char</property>
-                        <property name="selectable">true</property>
-                        <property name="visible">false</property>
-                        <style>
-                          <class name="profile-bio"/>
-                        </style>
-                      </object>
-                    </child>
-
-                    <!-- Metadata rows -->
-                    <child>
-                      <object class="GtkBox" id="metadata_box">
+                      <object class="GtkBox" id="posts_empty_box">
                         <property name="orientation">vertical</property>
                         <property name="spacing">8</property>
-                        <property name="visible">false</property>
-                        <style>
-                          <class name="profile-metadata"/>
-                        </style>
-                      </object>
-                    </child>
-
-                    <!-- Stats (placeholder) -->
-                    <child>
-                      <object class="GtkBox" id="stats_box">
-                        <property name="orientation">horizontal</property>
-                        <property name="spacing">16</property>
+                        <property name="halign">center</property>
+                        <property name="valign">center</property>
+                        <property name="vexpand">true</property>
                         <property name="visible">false</property>
                         <child>
-                          <object class="GtkBox">
-                            <property name="orientation">horizontal</property>
-                            <property name="spacing">4</property>
-                            <child>
-                              <object class="GtkLabel" id="lbl_notes_count">
-                                <property name="label">0</property>
-                                <style>
-                                  <class name="bold"/>
-                                </style>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="label">Notes</property>
-                                <style>
-                                  <class name="dim-label"/>
-                                </style>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkBox">
-                            <property name="orientation">horizontal</property>
-                            <property name="spacing">4</property>
-                            <child>
-                              <object class="GtkLabel" id="lbl_followers_count">
-                                <property name="label">0</property>
-                                <style>
-                                  <class name="bold"/>
-                                </style>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="label">Followers</property>
-                                <style>
-                                  <class name="dim-label"/>
-                                </style>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkBox">
-                            <property name="orientation">horizontal</property>
-                            <property name="spacing">4</property>
-                            <child>
-                              <object class="GtkLabel" id="lbl_following_count">
-                                <property name="label">0</property>
-                                <style>
-                                  <class name="bold"/>
-                                </style>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="label">Following</property>
-                                <style>
-                                  <class name="dim-label"/>
-                                </style>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-
-                    <!-- Action buttons (placeholder) -->
-                    <child>
-                      <object class="GtkBox">
-                        <property name="orientation">horizontal</property>
-                        <property name="spacing">8</property>
-                        <property name="homogeneous">true</property>
-                        <child>
-                          <object class="GtkButton" id="btn_follow">
-                            <property name="label">Follow</property>
-                            <property name="sensitive">false</property>
+                          <object class="GtkImage">
+                            <property name="icon-name">text-x-generic-symbolic</property>
+                            <property name="pixel-size">48</property>
                             <style>
-                              <class name="suggested-action"/>
+                              <class name="dim-label"/>
                             </style>
                           </object>
                         </child>
                         <child>
-                          <object class="GtkButton" id="btn_message">
-                            <property name="label">Message</property>
-                            <property name="sensitive">false</property>
+                          <object class="GtkLabel" id="posts_empty_label">
+                            <property name="label">No posts yet</property>
+                            <style>
+                              <class name="dim-label"/>
+                            </style>
                           </object>
                         </child>
                       </object>
                     </child>
 
-                  </object>
-                </child>
+                    <!-- Load more button -->
+                    <child>
+                      <object class="GtkButton" id="btn_load_more">
+                        <property name="label">Load More</property>
+                        <property name="halign">center</property>
+                        <property name="margin-top">8</property>
+                        <property name="margin-bottom">16</property>
+                        <property name="visible">false</property>
+                        <style>
+                          <class name="pill"/>
+                        </style>
+                      </object>
+                    </child>
 
+                  </object>
+                </property>
               </object>
             </child>
+
           </object>
         </child>
 

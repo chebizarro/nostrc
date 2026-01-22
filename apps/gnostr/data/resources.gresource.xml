@@ -11,6 +11,7 @@
     <file>ui/widgets/gnostr-profile-pane.ui</file>
     <file>ui/dialogs/gnostr-settings-dialog.ui</file>
     <file>ui/dialogs/gnostr-relay-manager.ui</file>
+    <file>ui/dialogs/gnostr-profile-edit.ui</file>
     <file>ui/styles/gnostr.css</file>
   </gresource>
 </gresources>

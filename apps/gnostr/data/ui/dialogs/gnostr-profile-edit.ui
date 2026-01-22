@@ -1,0 +1,323 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnostrProfileEdit" parent="GtkWindow">
+    <property name="modal">true</property>
+    <property name="title">Edit Profile</property>
+    <property name="default-width">480</property>
+    <property name="default-height">600</property>
+    <property name="resizable">true</property>
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">0</property>
+
+        <!-- Header bar -->
+        <child>
+          <object class="GtkHeaderBar">
+            <property name="show-title-buttons">false</property>
+            <child type="start">
+              <object class="GtkButton" id="btn_cancel">
+                <property name="label">Cancel</property>
+                <signal name="clicked" handler="on_cancel_clicked"/>
+              </object>
+            </child>
+            <child type="title">
+              <object class="GtkLabel">
+                <property name="label">Edit Profile</property>
+                <style>
+                  <class name="title"/>
+                </style>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkButton" id="btn_save">
+                <property name="label">Save</property>
+                <signal name="clicked" handler="on_save_clicked"/>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkSpinner" id="spinner">
+                <property name="visible">false</property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Toast revealer -->
+        <child>
+          <object class="GtkRevealer" id="toast_revealer">
+            <property name="reveal-child">false</property>
+            <property name="transition-type">slide-down</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <property name="margin-top">8</property>
+                <property name="margin-bottom">8</property>
+                <style>
+                  <class name="app-notification"/>
+                </style>
+                <child>
+                  <object class="GtkLabel" id="toast_label">
+                    <property name="label"></property>
+                    <property name="hexpand">true</property>
+                    <property name="xalign">0</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Scrollable form -->
+        <child>
+          <object class="GtkScrolledWindow">
+            <property name="vexpand">true</property>
+            <property name="hscrollbar-policy">never</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">16</property>
+                <property name="margin-start">16</property>
+                <property name="margin-end">16</property>
+                <property name="margin-top">16</property>
+                <property name="margin-bottom">16</property>
+
+                <!-- Display Name -->
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">4</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Display Name</property>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkEntry" id="entry_display_name">
+                        <property name="placeholder-text">Your display name</property>
+                        <property name="hexpand">true</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Username (name field) -->
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">4</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Username</property>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkEntry" id="entry_name">
+                        <property name="placeholder-text">username (without @)</property>
+                        <property name="hexpand">true</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Bio/About -->
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">4</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Bio</property>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkFrame">
+                        <style>
+                          <class name="view"/>
+                        </style>
+                        <child>
+                          <object class="GtkTextView" id="text_about">
+                            <property name="wrap-mode">word-char</property>
+                            <property name="accepts-tab">false</property>
+                            <property name="height-request">100</property>
+                            <property name="top-margin">8</property>
+                            <property name="bottom-margin">8</property>
+                            <property name="left-margin">8</property>
+                            <property name="right-margin">8</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Avatar URL -->
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">4</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Avatar URL</property>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkEntry" id="entry_picture">
+                        <property name="placeholder-text">https://example.com/avatar.jpg</property>
+                        <property name="hexpand">true</property>
+                        <property name="input-purpose">url</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Banner URL -->
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">4</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Banner URL</property>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkEntry" id="entry_banner">
+                        <property name="placeholder-text">https://example.com/banner.jpg</property>
+                        <property name="hexpand">true</property>
+                        <property name="input-purpose">url</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- NIP-05 Identifier -->
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">4</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">NIP-05 Identifier</property>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkEntry" id="entry_nip05">
+                        <property name="placeholder-text">user@domain.com</property>
+                        <property name="hexpand">true</property>
+                        <property name="input-purpose">email</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Your verifiable nostr address</property>
+                        <property name="xalign">0</property>
+                        <property name="wrap">true</property>
+                        <style>
+                          <class name="caption"/>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Website -->
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">4</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Website</property>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkEntry" id="entry_website">
+                        <property name="placeholder-text">https://yourwebsite.com</property>
+                        <property name="hexpand">true</property>
+                        <property name="input-purpose">url</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Lightning Address -->
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">4</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Lightning Address</property>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkEntry" id="entry_lud16">
+                        <property name="placeholder-text">user@wallet.com</property>
+                        <property name="hexpand">true</property>
+                        <property name="input-purpose">email</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">For receiving lightning tips</property>
+                        <property name="xalign">0</property>
+                        <property name="wrap">true</property>
+                        <style>
+                          <class name="caption"/>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+              </object>
+            </child>
+          </object>
+        </child>
+
+      </object>
+    </child>
+  </template>
+</interface>
