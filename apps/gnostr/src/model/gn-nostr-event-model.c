@@ -617,16 +617,49 @@ static gboolean emit_items_changed_idle(gpointer user_data) {
 
   self->emit_idle_id = 0;
 
-  /* nostrc-h40: Handle full refresh for model changes (additions + removals) */
+  /* nostrc-h40: Handle full refresh for model changes (additions + removals)
+   *
+   * CRITICAL: When items are removed from the model array BEFORE this idle
+   * callback runs, last_emitted_len can exceed notes->len. GTK4's ListView
+   * will crash if we emit items_changed(0, old_len, new_len) where old_len
+   * exceeds the actual array length, because it tries to access all "removed"
+   * items during its internal cleanup.
+   *
+   * Strategy: Emit changes in a safe order that keeps GTK's internal state
+   * consistent with our array:
+   * 1. If model shrunk (old_len > new_len): first tell GTK items were removed
+   *    from the END (position new_len, count old_len - new_len). This is safe
+   *    because GTK won't try to access the removed items.
+   * 2. Then refresh remaining items if needed.
+   * 3. If model grew (new_len > old_len): emit add at end. */
   if (self->pending_refresh) {
-    guint old_len = self->last_emitted_len;
     guint new_len = self->notes->len;
+    guint old_len = self->last_emitted_len;
     self->pending_refresh = FALSE;
     self->last_emitted_len = new_len;
     self->emit_added = 0;
-    if (old_len != new_len || old_len > 0) {
+
+    if (old_len > new_len) {
+      /* Model shrunk: emit removal from the end first (safe - no item access) */
+      guint removed = old_len - new_len;
+      g_list_model_items_changed(G_LIST_MODEL(self), new_len, removed, 0);
+      /* Then refresh the remaining items */
+      if (new_len > 0) {
+        g_list_model_items_changed(G_LIST_MODEL(self), 0, new_len, new_len);
+      }
+    } else if (new_len > old_len) {
+      /* Model grew: emit addition at the end */
+      guint added = new_len - old_len;
+      g_list_model_items_changed(G_LIST_MODEL(self), old_len, 0, added);
+      /* Refresh existing items too */
+      if (old_len > 0) {
+        g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, old_len);
+      }
+    } else if (old_len > 0) {
+      /* Same size: just refresh */
       g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
     }
+
     self->last_update_time_ms = get_current_time_ms();
     return G_SOURCE_REMOVE;
   }
