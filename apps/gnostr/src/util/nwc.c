@@ -2,12 +2,29 @@
  * gnostr NWC (Nostr Wallet Connect) Service
  *
  * NIP-47 implementation for the gnostr GTK app.
+ * Implements NIP-47 wallet connect protocol with:
+ * - NIP-04 encryption for request/response messages
+ * - Relay communication via SimplePool
+ * - Async request/response handling
  */
 
 #include "nwc.h"
 #include <nostr/nip47/nwc.h>
+#include <nostr/nip47/nwc_client.h>
+#include <nostr/nip47/nwc_envelope.h>
+#include <nostr/nip04.h>
+#include <nostr-event.h>
+#include <nostr-filter.h>
+#include <nostr-relay.h>
+#include <nostr-subscription.h>
+#include <nostr-simple-pool.h>
+#include <json.h>
+#include <channel.h>
+#include <context.h>
+#include <error.h>
 #include <jansson.h>
 #include <string.h>
+#include <time.h>
 
 /* GSettings schema for NWC */
 #define NWC_GSETTINGS_SCHEMA "org.gnostr.Client"
@@ -270,25 +287,64 @@ const gchar *gnostr_nwc_service_get_lud16(GnostrNwcService *self) {
   return self->lud16;
 }
 
+/* NWC response timeout in milliseconds */
+#define NWC_RESPONSE_TIMEOUT_MS 30000
+
 /* Async request context */
 typedef struct {
   GnostrNwcService *service;
   GTask *task;
   gchar *method;
   gchar *params_json;
+  gchar *request_event_id;
+  NostrRelay *relay;
+  NostrSubscription *sub;
+  guint timeout_id;
+  GCancellable *cancellable;
 } NwcRequestContext;
 
 static void nwc_request_context_free(NwcRequestContext *ctx) {
+  if (!ctx) return;
+
+  if (ctx->timeout_id > 0) {
+    g_source_remove(ctx->timeout_id);
+    ctx->timeout_id = 0;
+  }
+
+  if (ctx->sub) {
+    nostr_subscription_close(ctx->sub, NULL);
+    nostr_subscription_free(ctx->sub);
+    ctx->sub = NULL;
+  }
+
+  if (ctx->relay) {
+    nostr_relay_disconnect(ctx->relay);
+    nostr_relay_free(ctx->relay);
+    ctx->relay = NULL;
+  }
+
   g_clear_pointer(&ctx->method, g_free);
   g_clear_pointer(&ctx->params_json, g_free);
+  g_clear_pointer(&ctx->request_event_id, g_free);
+  g_clear_object(&ctx->cancellable);
   g_free(ctx);
 }
 
-/* Build a signed NWC request event */
-static gchar *build_nwc_request_json(GnostrNwcService *self,
-                                     const gchar *method,
-                                     const gchar *params_json,
-                                     GError **error) {
+/* Derive client public key from secret */
+static gchar *derive_client_pubkey(const gchar *secret_hex) {
+  if (!secret_hex || strlen(secret_hex) != 64) return NULL;
+
+  /* Use nostr_key_get_public from libnostr */
+  extern char *nostr_key_get_public(const char *sk);
+  return nostr_key_get_public(secret_hex);
+}
+
+/* Build and sign a NWC request event with proper encryption */
+static NostrEvent *build_signed_nwc_request(GnostrNwcService *self,
+                                             const gchar *method,
+                                             const gchar *params_json,
+                                             gchar **out_event_id,
+                                             GError **error) {
   if (!self->secret_hex || !self->wallet_pubkey_hex) {
     g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_CONNECTION_FAILED,
                 "NWC connection not initialized");
@@ -313,39 +369,298 @@ static gchar *build_nwc_request_json(GnostrNwcService *self,
   gchar *body_str = json_dumps(body, JSON_COMPACT);
   json_decref(body);
 
-  /* TODO: NIP-04/NIP-44 encryption of body_str is required for proper NWC.
-   * For now, we send unencrypted content - this needs signer integration
-   * to encrypt with the shared secret between client and wallet. */
+  if (!body_str) {
+    g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
+                "Failed to serialize request body");
+    return NULL;
+  }
 
-  /* Build the unsigned event */
-  json_t *event = json_object();
-  json_object_set_new(event, "kind", json_integer(NOSTR_EVENT_KIND_NWC_REQUEST));
-  json_object_set_new(event, "content", json_string(body_str));
+  /* Encrypt content with NIP-04 */
+  char *encrypted_content = NULL;
+  char *encrypt_error = NULL;
+
+  int enc_result = nostr_nip04_encrypt(
+    body_str,
+    self->wallet_pubkey_hex,
+    self->secret_hex,
+    &encrypted_content,
+    &encrypt_error);
+
   g_free(body_str);
 
+  if (enc_result != 0 || !encrypted_content) {
+    g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
+                "NIP-04 encryption failed: %s", encrypt_error ? encrypt_error : "unknown error");
+    if (encrypt_error) free(encrypt_error);
+    return NULL;
+  }
+
+  /* Build the event */
+  NostrEvent *event = nostr_event_new();
+  if (!event) {
+    free(encrypted_content);
+    g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
+                "Failed to create event");
+    return NULL;
+  }
+
+  nostr_event_set_kind(event, NOSTR_EVENT_KIND_NWC_REQUEST);
+  nostr_event_set_content(event, encrypted_content);
+  nostr_event_set_created_at(event, (int64_t)time(NULL));
+  free(encrypted_content);
+
+  /* Derive client pubkey from secret and set as event pubkey */
+  gchar *client_pubkey = derive_client_pubkey(self->secret_hex);
+  if (client_pubkey) {
+    nostr_event_set_pubkey(event, client_pubkey);
+    g_free(client_pubkey);
+  }
+
   /* Tags: [["p", wallet_pubkey]] */
-  json_t *tags = json_array();
-  json_t *p_tag = json_array();
-  json_array_append_new(p_tag, json_string("p"));
-  json_array_append_new(p_tag, json_string(self->wallet_pubkey_hex));
-  json_array_append_new(tags, p_tag);
-  json_object_set_new(event, "tags", tags);
+  NostrTags *tags = nostr_tags_new(1);
+  NostrTag *p_tag = nostr_tag_new("p", self->wallet_pubkey_hex, NULL);
+  nostr_tags_set(tags, 0, p_tag);
+  nostr_event_set_tags(event, tags);
 
-  json_object_set_new(event, "created_at", json_integer((json_int_t)g_get_real_time() / G_USEC_PER_SEC));
+  /* Sign the event with the client secret */
+  if (nostr_event_sign(event, self->secret_hex) != 0) {
+    nostr_event_free(event);
+    g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
+                "Failed to sign event");
+    return NULL;
+  }
 
-  gchar *event_json = json_dumps(event, JSON_COMPACT);
-  json_decref(event);
+  /* Get event ID */
+  if (out_event_id) {
+    char *eid = nostr_event_get_id(event);
+    if (eid) {
+      *out_event_id = g_strdup(eid);
+      free(eid);
+    }
+  }
 
-  return event_json;
+  return event;
 }
 
-/* Balance request implementation */
-void gnostr_nwc_service_get_balance_async(GnostrNwcService *self,
-                                          GCancellable *cancellable,
-                                          GAsyncReadyCallback callback,
-                                          gpointer user_data) {
-  g_return_if_fail(GNOSTR_IS_NWC_SERVICE(self));
+/* Parse and decrypt a NWC response */
+static gboolean parse_nwc_response(GnostrNwcService *self,
+                                   NostrEvent *event,
+                                   const gchar *expected_request_id,
+                                   json_t **out_result,
+                                   GError **error) {
+  if (!event || !self->secret_hex || !self->wallet_pubkey_hex) {
+    g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
+                "Invalid response or connection state");
+    return FALSE;
+  }
 
+  /* Verify this is a response event */
+  if (nostr_event_get_kind(event) != NOSTR_EVENT_KIND_NWC_RESPONSE) {
+    g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
+                "Unexpected event kind: %d", nostr_event_get_kind(event));
+    return FALSE;
+  }
+
+  /* Check if response matches our request via e tag */
+  NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
+  gboolean found_request_ref = FALSE;
+  if (tags && expected_request_id) {
+    for (size_t i = 0; i < nostr_tags_size(tags); i++) {
+      NostrTag *tag = nostr_tags_get(tags, i);
+      const char *key = nostr_tag_get_key(tag);
+      if (key && strcmp(key, "e") == 0 && nostr_tag_size(tag) >= 2) {
+        const char *ref_id = nostr_tag_get_value(tag);
+        if (ref_id && g_strcmp0(ref_id, expected_request_id) == 0) {
+          found_request_ref = TRUE;
+          break;
+        }
+      }
+    }
+  }
+
+  if (expected_request_id && !found_request_ref) {
+    /* Not our response, skip */
+    return FALSE;
+  }
+
+  /* Decrypt content */
+  const char *encrypted_content = nostr_event_get_content(event);
+  if (!encrypted_content || !*encrypted_content) {
+    g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
+                "Empty response content");
+    return FALSE;
+  }
+
+  char *decrypted = NULL;
+  char *decrypt_error = NULL;
+
+  /* Get wallet pubkey from event pubkey (sender) */
+  const char *sender_pubkey = nostr_event_get_pubkey(event);
+  if (!sender_pubkey) sender_pubkey = self->wallet_pubkey_hex;
+
+  int dec_result = nostr_nip04_decrypt(
+    encrypted_content,
+    sender_pubkey,
+    self->secret_hex,
+    &decrypted,
+    &decrypt_error);
+
+  if (dec_result != 0 || !decrypted) {
+    g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
+                "NIP-04 decryption failed: %s", decrypt_error ? decrypt_error : "unknown error");
+    if (decrypt_error) free(decrypt_error);
+    return FALSE;
+  }
+
+  /* Parse decrypted JSON */
+  json_error_t jerr;
+  json_t *response = json_loads(decrypted, 0, &jerr);
+  free(decrypted);
+
+  if (!response) {
+    g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
+                "Failed to parse response JSON: %s", jerr.text);
+    return FALSE;
+  }
+
+  /* Check for error in response */
+  json_t *err_obj = json_object_get(response, "error");
+  if (err_obj && json_is_object(err_obj)) {
+    const char *err_code = json_string_value(json_object_get(err_obj, "code"));
+    const char *err_msg = json_string_value(json_object_get(err_obj, "message"));
+    g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_WALLET_ERROR,
+                "Wallet error [%s]: %s",
+                err_code ? err_code : "UNKNOWN",
+                err_msg ? err_msg : "Unknown error");
+    json_decref(response);
+    return FALSE;
+  }
+
+  /* Extract result */
+  json_t *result = json_object_get(response, "result");
+  if (out_result && result) {
+    *out_result = json_incref(result);
+  }
+
+  json_decref(response);
+  return TRUE;
+}
+
+/* Common async response handler context */
+typedef struct {
+  NwcRequestContext *req_ctx;
+  GSourceFunc complete_callback;
+  gpointer complete_data;
+} NwcAsyncHandler;
+
+/* Timeout callback for NWC requests */
+static gboolean nwc_request_timeout(gpointer user_data) {
+  NwcRequestContext *ctx = (NwcRequestContext *)user_data;
+  ctx->timeout_id = 0;
+
+  g_task_return_new_error(ctx->task, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_TIMEOUT,
+                          "NWC request timed out after %d ms", NWC_RESPONSE_TIMEOUT_MS);
+  g_object_unref(ctx->task);
+  nwc_request_context_free(ctx);
+
+  return G_SOURCE_REMOVE;
+}
+
+/* Send NWC request and wait for response */
+static void nwc_send_request_async(GnostrNwcService *self,
+                                   const gchar *method,
+                                   const gchar *params_json,
+                                   GCancellable *cancellable,
+                                   GAsyncReadyCallback callback,
+                                   gpointer user_data);
+
+/* Poll relay for NWC response - runs in background thread */
+static gpointer nwc_response_poll_thread(gpointer user_data) {
+  NwcRequestContext *ctx = (NwcRequestContext *)user_data;
+  GnostrNwcService *self = ctx->service;
+
+  if (!ctx->relay || !ctx->sub) {
+    g_main_context_invoke(NULL, (GSourceFunc)g_task_return_new_error,
+                          ctx->task);
+    return NULL;
+  }
+
+  /* Poll for events until we get our response or timeout */
+  GoChannel *ch_events = nostr_subscription_get_events_channel(ctx->sub);
+  GoChannel *ch_eose = nostr_subscription_get_eose_channel(ctx->sub);
+
+  guint64 start_time = g_get_monotonic_time();
+  const guint64 timeout_us = NWC_RESPONSE_TIMEOUT_MS * 1000;
+
+  while (TRUE) {
+    /* Check cancellation */
+    if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) {
+      g_task_return_new_error(ctx->task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                              "NWC request cancelled");
+      g_object_unref(ctx->task);
+      nwc_request_context_free(ctx);
+      return NULL;
+    }
+
+    /* Check timeout */
+    if ((g_get_monotonic_time() - start_time) > timeout_us) {
+      g_task_return_new_error(ctx->task, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_TIMEOUT,
+                              "NWC request timed out");
+      g_object_unref(ctx->task);
+      nwc_request_context_free(ctx);
+      return NULL;
+    }
+
+    /* Try to receive event */
+    void *msg = NULL;
+    if (ch_events && go_channel_try_receive(ch_events, &msg) == 0 && msg) {
+      NostrEvent *event = (NostrEvent *)msg;
+
+      /* Check if this is a response to our request */
+      json_t *result = NULL;
+      GError *error = NULL;
+
+      if (parse_nwc_response(self, event, ctx->request_event_id, &result, &error)) {
+        /* Success - return result */
+        g_task_return_pointer(ctx->task, result, (GDestroyNotify)json_decref);
+        g_object_unref(ctx->task);
+        nostr_event_free(event);
+        nwc_request_context_free(ctx);
+        return NULL;
+      }
+
+      if (error) {
+        /* Error parsing response */
+        g_task_return_error(ctx->task, error);
+        g_object_unref(ctx->task);
+        nostr_event_free(event);
+        nwc_request_context_free(ctx);
+        return NULL;
+      }
+
+      /* Not our response, continue waiting */
+      nostr_event_free(event);
+    }
+
+    /* Check for EOSE (no more historical events) */
+    if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+      /* EOSE received, continue waiting for live events */
+    }
+
+    /* Small sleep to prevent busy waiting */
+    g_usleep(10000); /* 10ms */
+  }
+
+  return NULL;
+}
+
+/* Send NWC request to relay and subscribe for response */
+static void nwc_execute_request_async(GnostrNwcService *self,
+                                      const gchar *method,
+                                      const gchar *params_json,
+                                      GCancellable *cancellable,
+                                      GAsyncReadyCallback callback,
+                                      gpointer user_data) {
   GTask *task = g_task_new(self, cancellable, callback, user_data);
 
   if (!gnostr_nwc_service_is_connected(self)) {
@@ -355,27 +670,141 @@ void gnostr_nwc_service_get_balance_async(GnostrNwcService *self,
     return;
   }
 
+  if (!self->relays || !self->relays[0]) {
+    g_task_return_new_error(task, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_CONNECTION_FAILED,
+                            "No relay configured");
+    g_object_unref(task);
+    return;
+  }
+
+  /* Build and sign the request event */
   GError *error = NULL;
-  gchar *event_json = build_nwc_request_json(self, "get_balance", NULL, &error);
-  if (!event_json) {
+  gchar *request_event_id = NULL;
+  NostrEvent *request_event = build_signed_nwc_request(self, method, params_json,
+                                                        &request_event_id, &error);
+  if (!request_event) {
     g_task_return_error(task, error);
     g_object_unref(task);
     return;
   }
 
-  /* Store the request JSON for the caller to send via relay */
-  g_task_set_task_data(task, event_json, g_free);
+  /* Create request context */
+  NwcRequestContext *ctx = g_new0(NwcRequestContext, 1);
+  ctx->service = self;
+  ctx->task = task;
+  ctx->method = g_strdup(method);
+  ctx->params_json = params_json ? g_strdup(params_json) : NULL;
+  ctx->request_event_id = request_event_id;
+  ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
 
-  /* For now, return the unsigned event - actual relay communication
-   * would be handled by the caller integrating with SimplePool */
-  g_message("[NWC] get_balance request built: %.80s...", event_json);
+  /* Connect to relay */
+  const char *relay_url = self->relays[0];
+  GoContext *bg = go_context_background();
+  Error *relay_err = NULL;
 
-  /* TODO: Integrate with SimplePool for actual relay communication.
-   * For now, we just return successfully to indicate the request was built. */
-  gint64 *balance = g_new0(gint64, 1);
-  *balance = 0; /* Placeholder - actual balance comes from relay response */
-  g_task_return_pointer(task, balance, g_free);
-  g_object_unref(task);
+  ctx->relay = nostr_relay_new(bg, relay_url, &relay_err);
+  if (!ctx->relay) {
+    g_task_return_new_error(task, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_CONNECTION_FAILED,
+                            "Failed to create relay: %s",
+                            relay_err ? relay_err->message : "unknown error");
+    if (relay_err) free_error(relay_err);
+    nostr_event_free(request_event);
+    g_object_unref(task);
+    nwc_request_context_free(ctx);
+    return;
+  }
+
+  if (!nostr_relay_connect(ctx->relay, &relay_err)) {
+    g_task_return_new_error(task, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_CONNECTION_FAILED,
+                            "Failed to connect to relay: %s",
+                            relay_err ? relay_err->message : "unknown error");
+    if (relay_err) free_error(relay_err);
+    nostr_event_free(request_event);
+    g_object_unref(task);
+    nwc_request_context_free(ctx);
+    return;
+  }
+
+  /* Derive client pubkey for the subscription filter */
+  gchar *client_pubkey = derive_client_pubkey(self->secret_hex);
+  if (!client_pubkey) {
+    g_task_return_new_error(task, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
+                            "Failed to derive client pubkey");
+    nostr_event_free(request_event);
+    g_object_unref(task);
+    nwc_request_context_free(ctx);
+    return;
+  }
+
+  /* Create subscription filter for NWC responses */
+  NostrFilters *filters = nostr_filters_new();
+  NostrFilter *filter = nostr_filter_new();
+
+  /* Filter: kind 23195 (NWC response), addressed to our pubkey, referencing our request */
+  int kinds[] = { NOSTR_EVENT_KIND_NWC_RESPONSE };
+  nostr_filter_set_kinds(filter, kinds, 1);
+
+  /* Filter by wallet pubkey (author of response) */
+  const char *authors[] = { self->wallet_pubkey_hex };
+  nostr_filter_set_authors(filter, authors, 1);
+
+  /* Filter by p-tag (response is to us) */
+  nostr_filter_tags_append(filter, "p", client_pubkey, NULL);
+
+  /* Filter by e-tag (references our request) */
+  nostr_filter_tags_append(filter, "e", request_event_id, NULL);
+
+  /* Set since to slightly before now to catch response */
+  nostr_filter_set_since_i64(filter, (int64_t)(time(NULL) - 10));
+
+  nostr_filters_add(filters, filter);
+  g_free(client_pubkey);
+
+  /* Prepare subscription */
+  ctx->sub = nostr_relay_prepare_subscription(ctx->relay, bg, filters);
+  if (!ctx->sub) {
+    g_task_return_new_error(task, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
+                            "Failed to prepare subscription");
+    nostr_event_free(request_event);
+    nostr_filters_free(filters);
+    g_object_unref(task);
+    nwc_request_context_free(ctx);
+    return;
+  }
+
+  /* Fire subscription */
+  Error *sub_err = NULL;
+  if (!nostr_subscription_fire(ctx->sub, &sub_err)) {
+    g_task_return_new_error(task, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
+                            "Failed to fire subscription: %s",
+                            sub_err ? sub_err->message : "unknown error");
+    if (sub_err) free_error(sub_err);
+    nostr_event_free(request_event);
+    g_object_unref(task);
+    nwc_request_context_free(ctx);
+    return;
+  }
+
+  /* Publish the request event */
+  nostr_relay_publish(ctx->relay, request_event);
+  g_message("[NWC] Published %s request (event_id=%.16s...)", method, request_event_id);
+
+  /* nostr_relay_publish doesn't take ownership, so we free here */
+  nostr_event_free(request_event);
+
+  /* Start background thread to poll for response */
+  GThread *thread = g_thread_new("nwc-response-poll", nwc_response_poll_thread, ctx);
+  g_thread_unref(thread);
+}
+
+/* Balance request implementation */
+void gnostr_nwc_service_get_balance_async(GnostrNwcService *self,
+                                          GCancellable *cancellable,
+                                          GAsyncReadyCallback callback,
+                                          gpointer user_data) {
+  g_return_if_fail(GNOSTR_IS_NWC_SERVICE(self));
+
+  nwc_execute_request_async(self, "get_balance", NULL, cancellable, callback, user_data);
 }
 
 gboolean gnostr_nwc_service_get_balance_finish(GnostrNwcService *self,
@@ -385,11 +814,23 @@ gboolean gnostr_nwc_service_get_balance_finish(GnostrNwcService *self,
   g_return_val_if_fail(GNOSTR_IS_NWC_SERVICE(self), FALSE);
   g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
 
-  gint64 *balance = g_task_propagate_pointer(G_TASK(result), error);
-  if (!balance) return FALSE;
+  json_t *response = g_task_propagate_pointer(G_TASK(result), error);
+  if (!response) return FALSE;
 
-  if (balance_msat) *balance_msat = *balance;
-  g_free(balance);
+  /* Extract balance from response: {"balance": <msats>} */
+  if (balance_msat) {
+    json_t *balance_val = json_object_get(response, "balance");
+    if (json_is_integer(balance_val)) {
+      *balance_msat = json_integer_value(balance_val);
+    } else {
+      *balance_msat = 0;
+    }
+
+    /* Emit signal for balance update */
+    g_signal_emit(self, signals[SIGNAL_BALANCE_UPDATED], 0, *balance_msat);
+  }
+
+  json_decref(response);
   return TRUE;
 }
 
@@ -403,15 +844,6 @@ void gnostr_nwc_service_pay_invoice_async(GnostrNwcService *self,
   g_return_if_fail(GNOSTR_IS_NWC_SERVICE(self));
   g_return_if_fail(bolt11 != NULL);
 
-  GTask *task = g_task_new(self, cancellable, callback, user_data);
-
-  if (!gnostr_nwc_service_is_connected(self)) {
-    g_task_return_new_error(task, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_CONNECTION_FAILED,
-                            "Not connected to wallet");
-    g_object_unref(task);
-    return;
-  }
-
   /* Build params JSON */
   json_t *params = json_object();
   json_object_set_new(params, "invoice", json_string(bolt11));
@@ -421,22 +853,10 @@ void gnostr_nwc_service_pay_invoice_async(GnostrNwcService *self,
   gchar *params_json = json_dumps(params, JSON_COMPACT);
   json_decref(params);
 
-  GError *error = NULL;
-  gchar *event_json = build_nwc_request_json(self, "pay_invoice", params_json, &error);
+  g_message("[NWC] Initiating pay_invoice for: %.40s...", bolt11);
+
+  nwc_execute_request_async(self, "pay_invoice", params_json, cancellable, callback, user_data);
   g_free(params_json);
-
-  if (!event_json) {
-    g_task_return_error(task, error);
-    g_object_unref(task);
-    return;
-  }
-
-  g_task_set_task_data(task, event_json, g_free);
-  g_message("[NWC] pay_invoice request built for: %.40s...", bolt11);
-
-  /* TODO: Integrate with relay for actual payment */
-  g_task_return_pointer(task, g_strdup(""), g_free);
-  g_object_unref(task);
 }
 
 gboolean gnostr_nwc_service_pay_invoice_finish(GnostrNwcService *self,
@@ -446,11 +866,20 @@ gboolean gnostr_nwc_service_pay_invoice_finish(GnostrNwcService *self,
   g_return_val_if_fail(GNOSTR_IS_NWC_SERVICE(self), FALSE);
   g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
 
-  gchar *result_preimage = g_task_propagate_pointer(G_TASK(result), error);
-  if (!result_preimage) return FALSE;
+  json_t *response = g_task_propagate_pointer(G_TASK(result), error);
+  if (!response) return FALSE;
 
-  if (preimage) *preimage = result_preimage;
-  else g_free(result_preimage);
+  /* Extract preimage from response: {"preimage": "..."} */
+  if (preimage) {
+    json_t *preimage_val = json_object_get(response, "preimage");
+    if (json_is_string(preimage_val)) {
+      *preimage = g_strdup(json_string_value(preimage_val));
+    } else {
+      *preimage = NULL;
+    }
+  }
+
+  json_decref(response);
   return TRUE;
 }
 
@@ -464,15 +893,6 @@ void gnostr_nwc_service_make_invoice_async(GnostrNwcService *self,
                                            gpointer user_data) {
   g_return_if_fail(GNOSTR_IS_NWC_SERVICE(self));
 
-  GTask *task = g_task_new(self, cancellable, callback, user_data);
-
-  if (!gnostr_nwc_service_is_connected(self)) {
-    g_task_return_new_error(task, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_CONNECTION_FAILED,
-                            "Not connected to wallet");
-    g_object_unref(task);
-    return;
-  }
-
   /* Build params JSON */
   json_t *params = json_object();
   json_object_set_new(params, "amount", json_integer(amount_msat));
@@ -485,22 +905,10 @@ void gnostr_nwc_service_make_invoice_async(GnostrNwcService *self,
   gchar *params_json = json_dumps(params, JSON_COMPACT);
   json_decref(params);
 
-  GError *error = NULL;
-  gchar *event_json = build_nwc_request_json(self, "make_invoice", params_json, &error);
+  g_message("[NWC] Initiating make_invoice for %ld msat", (long)amount_msat);
+
+  nwc_execute_request_async(self, "make_invoice", params_json, cancellable, callback, user_data);
   g_free(params_json);
-
-  if (!event_json) {
-    g_task_return_error(task, error);
-    g_object_unref(task);
-    return;
-  }
-
-  g_task_set_task_data(task, event_json, g_free);
-  g_message("[NWC] make_invoice request built for %ld msat", (long)amount_msat);
-
-  /* TODO: Integrate with relay for actual invoice creation */
-  g_task_return_pointer(task, g_strdup(""), g_free);
-  g_object_unref(task);
 }
 
 gboolean gnostr_nwc_service_make_invoice_finish(GnostrNwcService *self,
@@ -511,13 +919,29 @@ gboolean gnostr_nwc_service_make_invoice_finish(GnostrNwcService *self,
   g_return_val_if_fail(GNOSTR_IS_NWC_SERVICE(self), FALSE);
   g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
 
-  gchar *result_bolt11 = g_task_propagate_pointer(G_TASK(result), error);
-  if (!result_bolt11) return FALSE;
+  json_t *response = g_task_propagate_pointer(G_TASK(result), error);
+  if (!response) return FALSE;
 
-  if (bolt11) *bolt11 = result_bolt11;
-  else g_free(result_bolt11);
+  /* Extract invoice from response: {"invoice": "...", "payment_hash": "..."} */
+  if (bolt11) {
+    json_t *invoice_val = json_object_get(response, "invoice");
+    if (json_is_string(invoice_val)) {
+      *bolt11 = g_strdup(json_string_value(invoice_val));
+    } else {
+      *bolt11 = NULL;
+    }
+  }
 
-  if (payment_hash) *payment_hash = NULL;
+  if (payment_hash) {
+    json_t *hash_val = json_object_get(response, "payment_hash");
+    if (json_is_string(hash_val)) {
+      *payment_hash = g_strdup(json_string_value(hash_val));
+    } else {
+      *payment_hash = NULL;
+    }
+  }
+
+  json_decref(response);
   return TRUE;
 }
 

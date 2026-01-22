@@ -7,7 +7,10 @@
 #include "gnostr-zap-dialog.h"
 #include "../util/zap.h"
 #include "../util/nwc.h"
+#include "../ipc/signer_ipc.h"
 #include <glib/gi18n.h>
+#include <jansson.h>
+#include <nostr/nip19/nip19.h>
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/dialogs/gnostr-zap-dialog.ui"
 
@@ -444,6 +447,195 @@ static void on_invoice_received(const gchar *bolt11_invoice, GError *error, gpoi
   /* Note: self reference transferred to callback */
 }
 
+/* Context for async zap signing operation */
+typedef struct {
+  GnostrZapDialog *dialog;
+  gint64 amount_msat;
+} ZapSignContext;
+
+static void zap_sign_context_free(ZapSignContext *ctx) {
+  if (!ctx) return;
+  g_free(ctx);
+}
+
+/* Callback when signer returns signed zap request */
+static void on_zap_request_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
+  ZapSignContext *ctx = (ZapSignContext *)user_data;
+  if (!ctx) return;
+
+  GnostrZapDialog *self = ctx->dialog;
+  if (!GNOSTR_IS_ZAP_DIALOG(self)) {
+    zap_sign_context_free(ctx);
+    return;
+  }
+
+  NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+
+  GError *error = NULL;
+  gchar *signed_event_json = NULL;
+  gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(proxy, &signed_event_json, res, &error);
+
+  if (!ok || !signed_event_json) {
+    set_processing(self, FALSE, NULL);
+    gchar *msg = g_strdup_printf("Signing failed: %s", error ? error->message : "unknown error");
+    show_toast(self, msg);
+    g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, msg);
+    g_free(msg);
+    g_clear_error(&error);
+    g_object_unref(self);
+    zap_sign_context_free(ctx);
+    return;
+  }
+
+  g_debug("[ZAP] Signed zap request: %.100s...", signed_event_json);
+
+  /* Now request the invoice with the signed zap request */
+  set_processing(self, TRUE, "Requesting invoice...");
+
+  gnostr_zap_request_invoice_async(self->lnurl_info, signed_event_json, ctx->amount_msat,
+                                   on_invoice_received, self, self->cancellable);
+
+  g_free(signed_event_json);
+  zap_sign_context_free(ctx);
+  /* Note: self reference transferred to invoice callback */
+}
+
+/* Callback when signer returns sender pubkey */
+static void on_get_pubkey_for_zap(GObject *source, GAsyncResult *res, gpointer user_data);
+
+/* Forward declaration for helper that initiates signing after pubkey retrieval */
+static void initiate_zap_signing(GnostrZapDialog *self, const gchar *sender_pubkey, gint64 amount_msat);
+
+/**
+ * initiate_zap_signing:
+ * @self: the zap dialog
+ * @sender_pubkey: sender's public key (hex)
+ * @amount_msat: amount in millisatoshis
+ *
+ * Creates an unsigned zap request and sends it to the signer for signing.
+ */
+static void initiate_zap_signing(GnostrZapDialog *self, const gchar *sender_pubkey, gint64 amount_msat) {
+  /* Get signer proxy */
+  GError *proxy_err = NULL;
+  NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
+  if (!proxy) {
+    set_processing(self, FALSE, NULL);
+    gchar *msg = g_strdup_printf("Signer not available: %s", proxy_err ? proxy_err->message : "not connected");
+    show_toast(self, msg);
+    g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, msg);
+    g_free(msg);
+    g_clear_error(&proxy_err);
+    g_object_unref(self);
+    return;
+  }
+
+  /* Create zap request */
+  const gchar *comment = gtk_editable_get_text(GTK_EDITABLE(self->entry_comment));
+
+  GnostrZapRequest req = {
+    .recipient_pubkey = self->recipient_pubkey,
+    .event_id = self->event_id,
+    .lnurl = NULL,  /* bech32-encoding lud16 would require additional library */
+    .lud16 = self->lud16,
+    .amount_msat = amount_msat,
+    .comment = (gchar *)(comment && *comment ? comment : NULL),
+    .relays = self->relays,
+    .event_kind = self->event_kind
+  };
+
+  gchar *unsigned_event_json = gnostr_zap_create_request_event(&req, sender_pubkey);
+
+  if (!unsigned_event_json) {
+    set_processing(self, FALSE, NULL);
+    show_toast(self, "Failed to create zap request");
+    g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, "Failed to create zap request");
+    g_object_unref(self);
+    return;
+  }
+
+  g_debug("[ZAP] Unsigned zap request: %s", unsigned_event_json);
+
+  set_processing(self, TRUE, "Signing zap request...");
+
+  /* Create async context */
+  ZapSignContext *ctx = g_new0(ZapSignContext, 1);
+  ctx->dialog = self;
+  ctx->amount_msat = amount_msat;
+
+  /* Call signer asynchronously */
+  nostr_org_nostr_signer_call_sign_event(
+    proxy,
+    unsigned_event_json,
+    "",        /* current_user: empty = use default */
+    "gnostr",  /* app_id */
+    self->cancellable,
+    on_zap_request_sign_complete,
+    ctx
+  );
+
+  g_free(unsigned_event_json);
+  /* Note: self reference transferred to callback */
+}
+
+/* Callback when signer returns sender pubkey */
+static void on_get_pubkey_for_zap(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GnostrZapDialog *self = GNOSTR_ZAP_DIALOG(user_data);
+  if (!GNOSTR_IS_ZAP_DIALOG(self)) {
+    return;
+  }
+
+  NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+
+  GError *error = NULL;
+  gchar *npub = NULL;
+  gboolean ok = nostr_org_nostr_signer_call_get_public_key_finish(proxy, &npub, res, &error);
+
+  if (!ok || !npub || !*npub) {
+    set_processing(self, FALSE, NULL);
+    gchar *msg = g_strdup_printf("Failed to get pubkey: %s", error ? error->message : "unknown error");
+    show_toast(self, msg);
+    g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, msg);
+    g_free(msg);
+    g_clear_error(&error);
+    g_object_unref(self);
+    return;
+  }
+
+  /* The signer returns npub (bech32) or hex pubkey - we need hex.
+   * If it starts with "npub1", decode it using NIP-19; otherwise assume hex. */
+  gchar *sender_pubkey_hex = NULL;
+  if (g_str_has_prefix(npub, "npub1")) {
+    /* Decode npub to 32-byte pubkey, then convert to hex */
+    uint8_t pubkey_bytes[32];
+    if (nostr_nip19_decode_npub(npub, pubkey_bytes) == 0) {
+      /* Convert bytes to hex string */
+      GString *hex = g_string_sized_new(64);
+      for (int i = 0; i < 32; i++) {
+        g_string_append_printf(hex, "%02x", pubkey_bytes[i]);
+      }
+      sender_pubkey_hex = g_string_free(hex, FALSE);
+      g_debug("[ZAP] Decoded npub to hex: %s", sender_pubkey_hex);
+    } else {
+      set_processing(self, FALSE, NULL);
+      show_toast(self, "Failed to decode signer public key");
+      g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, "Failed to decode signer public key");
+      g_free(npub);
+      g_object_unref(self);
+      return;
+    }
+  } else {
+    /* Assume hex */
+    sender_pubkey_hex = g_strdup(npub);
+  }
+  g_free(npub);
+
+  gint64 amount_msat = gnostr_zap_sats_to_msat(get_selected_amount_sats(self));
+
+  /* Now initiate signing with the pubkey */
+  initiate_zap_signing(self, sender_pubkey_hex, amount_msat);
+  g_free(sender_pubkey_hex);
+}
+
 /* LNURL info callback */
 static void on_lnurl_info_received(GnostrLnurlPayInfo *info, GError *error, gpointer user_data) {
   GnostrZapDialog *self = GNOSTR_ZAP_DIALOG(user_data);
@@ -486,54 +678,29 @@ static void on_lnurl_info_received(GnostrLnurlPayInfo *info, GError *error, gpoi
     return;
   }
 
-  set_processing(self, TRUE, "Creating zap request...");
+  set_processing(self, TRUE, "Getting sender identity...");
 
-  /* Get the sender's pubkey from NWC service (or we'd need signer integration) */
-  GnostrNwcService *nwc = gnostr_nwc_service_get_default();
-  const gchar *sender_pubkey = gnostr_nwc_service_get_wallet_pubkey(nwc);
-
-  if (!sender_pubkey) {
+  /* Get the sender's pubkey from the signer via D-Bus IPC */
+  GError *proxy_err = NULL;
+  NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
+  if (!proxy) {
     set_processing(self, FALSE, NULL);
-    show_toast(self, "Wallet not connected");
-    g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, "Wallet not connected");
+    gchar *msg = g_strdup_printf("Signer not available: %s", proxy_err ? proxy_err->message : "not connected");
+    show_toast(self, msg);
+    g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, msg);
+    g_free(msg);
+    g_clear_error(&proxy_err);
     g_object_unref(self);
     return;
   }
 
-  /* Create zap request */
-  const gchar *comment = gtk_editable_get_text(GTK_EDITABLE(self->entry_comment));
-
-  GnostrZapRequest req = {
-    .recipient_pubkey = self->recipient_pubkey,
-    .event_id = self->event_id,
-    .lnurl = NULL,  /* We'd need to bech32-encode lud16 for full compliance */
-    .lud16 = self->lud16,
-    .amount_msat = amount_msat,
-    .comment = (gchar *)(comment && *comment ? comment : NULL),
-    .relays = self->relays,
-    .event_kind = self->event_kind
-  };
-
-  gchar *zap_request_json = gnostr_zap_create_request_event(&req, sender_pubkey);
-
-  if (!zap_request_json) {
-    set_processing(self, FALSE, NULL);
-    show_toast(self, "Failed to create zap request");
-    g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, "Failed to create zap request");
-    g_object_unref(self);
-    return;
-  }
-
-  /* TODO: Sign the zap request via signer IPC */
-  /* For now, we'll use the unsigned event - this won't work with real LNURL servers */
-  /* but shows the flow. Real implementation needs NIP-46 signer integration. */
-
-  set_processing(self, TRUE, "Requesting invoice...");
-
-  gnostr_zap_request_invoice_async(self->lnurl_info, zap_request_json, amount_msat,
-                                   on_invoice_received, self, self->cancellable);
-
-  g_free(zap_request_json);
+  /* Request pubkey asynchronously */
+  nostr_org_nostr_signer_call_get_public_key(
+    proxy,
+    self->cancellable,
+    on_get_pubkey_for_zap,
+    self
+  );
   /* Note: self reference transferred to callback */
 }
 
