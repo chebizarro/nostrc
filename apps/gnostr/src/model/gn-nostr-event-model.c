@@ -534,7 +534,12 @@ static gboolean flush_deferred_notes_cb(gpointer user_data) {
 
   self->debounce_source_id = 0;  /* Mark as not pending */
 
-  if (!self->deferred_notes || self->deferred_notes->len == 0) {
+  /* Defensive: ensure both arrays are valid */
+  if (!self->deferred_notes || !self->notes) {
+    return G_SOURCE_REMOVE;
+  }
+
+  if (self->deferred_notes->len == 0) {
     return G_SOURCE_REMOVE;
   }
 
@@ -639,24 +644,14 @@ static gboolean emit_items_changed_idle(gpointer user_data) {
     self->last_emitted_len = new_len;
     self->emit_added = 0;
 
-    if (old_len > new_len) {
-      /* Model shrunk: emit removal from the end first (safe - no item access) */
-      guint removed = old_len - new_len;
-      g_list_model_items_changed(G_LIST_MODEL(self), new_len, removed, 0);
-      /* Then refresh the remaining items */
-      if (new_len > 0) {
-        g_list_model_items_changed(G_LIST_MODEL(self), 0, new_len, new_len);
-      }
-    } else if (new_len > old_len) {
-      /* Model grew: emit addition at the end */
-      guint added = new_len - old_len;
-      g_list_model_items_changed(G_LIST_MODEL(self), old_len, 0, added);
-      /* Refresh existing items too */
-      if (old_len > 0) {
-        g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, old_len);
-      }
-    } else if (old_len > 0) {
-      /* Same size: just refresh */
+    /* CRITICAL FIX: Always emit a single "replace all" signal.
+     * When the model shrinks, GTK ListView tries to access removed items
+     * during its internal cleanup, causing SIGSEGV if those items no longer
+     * exist in our array. Emitting a single signal at position 0 that
+     * replaces old_len items with new_len items is always safe because
+     * GTK treats this as a complete model replacement without trying to
+     * access individual old items. */
+    if (old_len > 0 || new_len > 0) {
       g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
     }
 

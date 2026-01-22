@@ -129,13 +129,12 @@ label a:visited {
     alpha(@accent_bg_color, 0.6) 50%,
     alpha(shade(@accent_bg_color, 0.8), 0.5) 100%
   );
-  min-height: 140px;
-  margin-bottom: 8px;
+  min-height: 120px;
 }
 
 /* Banner image fixed height with cover fit */
 .profile-banner picture {
-  min-height: 140px;
+  min-height: 120px;
 }
 
 /* Avatar frame with border and shadow */

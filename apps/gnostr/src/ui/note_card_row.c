@@ -1549,7 +1549,7 @@ static GtkWidget *create_image_container(const char *url, int height, const char
   gtk_widget_set_hexpand(container, TRUE);
   gtk_widget_set_vexpand(container, FALSE);
 
-  /* Create picture widget (hidden initially, shown when loaded) */
+  /* Create picture widget (visible but empty initially - needed for lazy loading map signal) */
   GtkWidget *pic = gtk_picture_new();
   gtk_widget_add_css_class(pic, "note-media-image");
   gtk_widget_add_css_class(pic, "clickable-image");
@@ -1558,7 +1558,9 @@ static GtkWidget *create_image_container(const char *url, int height, const char
   gtk_widget_set_size_request(pic, -1, height);
   gtk_widget_set_hexpand(pic, TRUE);
   gtk_widget_set_vexpand(pic, FALSE);
-  gtk_widget_set_visible(pic, FALSE);  /* Hidden until loaded */
+  /* Picture must be visible for lazy loading to work (map signal won't fire otherwise).
+   * The spinner overlay covers it until loading completes. */
+  gtk_widget_set_visible(pic, TRUE);
   gtk_widget_set_cursor_from_name(pic, "pointer");
   if (alt_text && *alt_text) {
     gtk_widget_set_tooltip_text(pic, alt_text);

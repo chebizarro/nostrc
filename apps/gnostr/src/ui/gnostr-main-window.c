@@ -3702,18 +3702,25 @@ static void on_event_model_new_items_pending(GnNostrEventModel *model, guint cou
 
 /* nostrc-9f4: Idle callback to scroll timeline to top after model changes complete */
 static gboolean scroll_to_top_idle(gpointer user_data) {
-  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!GNOSTR_IS_MAIN_WINDOW(self)) return G_SOURCE_REMOVE;
+  GnostrMainWindow *self = user_data;
 
-  if (self->timeline && G_TYPE_CHECK_INSTANCE_TYPE(self->timeline, GNOSTR_TYPE_TIMELINE_VIEW)) {
+  /* Defensive: ensure window is still valid */
+  if (!self || !GNOSTR_IS_MAIN_WINDOW(self)) {
+    return G_SOURCE_REMOVE;
+  }
+
+  if (self->timeline && GNOSTR_IS_TIMELINE_VIEW(self->timeline)) {
     GtkWidget *scroller = gnostr_timeline_view_get_scrolled_window(GNOSTR_TIMELINE_VIEW(self->timeline));
     if (scroller && GTK_IS_SCROLLED_WINDOW(scroller)) {
       GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
-      if (vadj) {
+      if (vadj && GTK_IS_ADJUSTMENT(vadj)) {
         gtk_adjustment_set_value(vadj, gtk_adjustment_get_lower(vadj));
       }
     }
   }
+
+  /* Unref the window we ref'd when scheduling this idle */
+  g_object_unref(self);
   return G_SOURCE_REMOVE;
 }
 
@@ -3721,16 +3728,19 @@ static gboolean scroll_to_top_idle(gpointer user_data) {
 static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->event_model) return;
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
   /* Flush pending notes - this schedules model changes via idle */
-  gn_nostr_event_model_flush_pending(self->event_model);
+  if (self->event_model && GN_IS_NOSTR_EVENT_MODEL(self->event_model)) {
+    gn_nostr_event_model_flush_pending(self->event_model);
+  }
 
   /* nostrc-9f4: Defer scroll to idle to avoid GTK4 ListView crash.
    * The model flush schedules items_changed via g_idle_add, so we need to
    * scroll AFTER that emission completes. Using g_idle_add_full with lower
-   * priority ensures our scroll runs after the model's default-priority idle. */
-  g_idle_add_full(G_PRIORITY_LOW, scroll_to_top_idle, self, NULL);
+   * priority ensures our scroll runs after the model's default-priority idle.
+   * We ref the window to ensure it stays valid until the idle runs. */
+  g_idle_add_full(G_PRIORITY_LOW, scroll_to_top_idle, g_object_ref(self), NULL);
 
   /* Hide indicator */
   if (self->new_notes_revealer && GTK_IS_REVEALER(self->new_notes_revealer)) {
