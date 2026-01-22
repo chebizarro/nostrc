@@ -14,6 +14,7 @@ pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
 pkg_check_modules(JSON_GLIB REQUIRED IMPORTED_TARGET json-glib-1.0)
 pkg_check_modules(SQLITE3 QUIET IMPORTED_TARGET sqlite3)
 pkg_check_modules(SOUP3 QUIET IMPORTED_TARGET libsoup-3.0)
+pkg_check_modules(QRENCODE QUIET IMPORTED_TARGET libqrencode)
 
 # Compile Gtk resources
 set(GRESOURCE_XML ${CMAKE_CURRENT_SOURCE_DIR}/data/resources.gresource.xml)
@@ -40,6 +41,7 @@ add_custom_command(
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-profile-edit.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-nwc-connect.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-mute-list.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-login.ui
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
   VERBATIM)
 
@@ -107,12 +109,20 @@ if (TARGET nostr_nip47_core)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip47_core)
 endif()
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::JSON_GLIB)
+# Link math library on Linux
+if (UNIX AND NOT APPLE)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE m)
+endif()
 if (SOUP3_FOUND)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::SOUP3)
   target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_SOUP3=1)
 endif()
 if (SQLITE3_FOUND)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::SQLITE3)
+endif()
+if (QRENCODE_FOUND)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::QRENCODE)
+  target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_QRENCODE=1)
 endif()
 
 # Link nostrdb_storage for local database support

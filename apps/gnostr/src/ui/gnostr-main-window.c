@@ -40,6 +40,7 @@
 /* NIP-51 mute list */
 #include "../util/mute_list.h"
 #include "gnostr-mute-list.h"
+#include "gnostr-login.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -1240,23 +1241,69 @@ static void on_show_mute_list_activated(GSimpleAction *action, GVariant *param, 
   gtk_window_present(GTK_WINDOW(dialog));
 }
 
+/* Forward declaration for updating login UI state */
+static void update_login_ui_state(GnostrMainWindow *self);
+
+/* Signal handler for when user successfully signs in via login dialog */
+static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer user_data) {
+  (void)login;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  g_message("[AUTH] User signed in: %s", npub ? npub : "(null)");
+
+  /* Update user_pubkey_hex from npub */
+  if (npub && g_str_has_prefix(npub, "npub1")) {
+    uint8_t pubkey_bytes[32];
+    if (nostr_nip19_decode_npub(npub, pubkey_bytes) == 0) {
+      g_free(self->user_pubkey_hex);
+      self->user_pubkey_hex = hex_encode_lower(pubkey_bytes, 32);
+    }
+  }
+
+  /* Update UI to show signed-in state */
+  update_login_ui_state(self);
+
+  /* Start gift wrap subscription for encrypted DMs */
+  start_gift_wrap_subscription(self);
+
+  /* Close the avatar popover */
+  if (self->avatar_popover && GTK_IS_POPOVER(self->avatar_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->avatar_popover));
+  }
+
+  show_toast(self, "Signed in successfully");
+}
+
+/* Opens the login dialog */
+static void open_login_dialog(GnostrMainWindow *self) {
+  GnostrLogin *login = gnostr_login_new(GTK_WINDOW(self));
+  g_signal_connect(login, "signed-in", G_CALLBACK(on_login_signed_in), self);
+  gtk_window_present(GTK_WINDOW(login));
+}
+
 static void on_avatar_login_local_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  show_toast(self, "Login with Local Signer (stub)");
-  /* TODO: When full login is implemented:
-   * 1. Save npub to GSettings (current-npub)
-   * 2. Update UI (buttons, labels)
-   * 3. Call start_gift_wrap_subscription(self) to receive encrypted DMs
-   */
+
+  /* Close popover and open login dialog */
+  if (self->avatar_popover && GTK_IS_POPOVER(self->avatar_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->avatar_popover));
+  }
+  open_login_dialog(self);
 }
 
 static void on_avatar_pair_remote_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  show_toast(self, "Pair Remote Signer (stub)");
+
+  /* Close popover and open login dialog (it has both options) */
+  if (self->avatar_popover && GTK_IS_POPOVER(self->avatar_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->avatar_popover));
+  }
+  open_login_dialog(self);
 }
 
 static void on_avatar_sign_out_clicked(GtkButton *btn, gpointer user_data) {
@@ -1267,12 +1314,79 @@ static void on_avatar_sign_out_clicked(GtkButton *btn, gpointer user_data) {
   /* Stop gift wrap subscription when user signs out */
   stop_gift_wrap_subscription(self);
 
-  show_toast(self, "Signed out (stub)");
-  /* TODO: When full sign-out is implemented:
-   * 1. Clear current-npub from GSettings
-   * 2. Update UI (buttons, labels)
-   * 3. Clear gift_wrap_queue
-   */
+  /* Clear the current npub from settings */
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  if (settings) {
+    g_settings_set_string(settings, "current-npub", "");
+    g_object_unref(settings);
+  }
+
+  /* Clear user pubkey */
+  g_free(self->user_pubkey_hex);
+  self->user_pubkey_hex = NULL;
+
+  /* Clear NIP-46 session if any */
+  if (self->nip46_session) {
+    nostr_nip46_session_free(self->nip46_session);
+    self->nip46_session = NULL;
+  }
+
+  /* Update UI */
+  update_login_ui_state(self);
+
+  /* Clear gift wrap queue */
+  if (self->gift_wrap_queue) {
+    g_ptr_array_set_size(self->gift_wrap_queue, 0);
+  }
+
+  /* Close popover */
+  if (self->avatar_popover && GTK_IS_POPOVER(self->avatar_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->avatar_popover));
+  }
+
+  show_toast(self, "Signed out");
+}
+
+/* Update the avatar popover UI based on sign-in state */
+static void update_login_ui_state(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  if (!settings) return;
+
+  char *npub = g_settings_get_string(settings, "current-npub");
+  g_object_unref(settings);
+
+  gboolean signed_in = npub && *npub;
+
+  if (self->lbl_signin_status && GTK_IS_LABEL(self->lbl_signin_status)) {
+    gtk_label_set_text(GTK_LABEL(self->lbl_signin_status),
+                       signed_in ? "Signed in" : "Not signed in");
+  }
+
+  if (self->lbl_profile_name && GTK_IS_LABEL(self->lbl_profile_name)) {
+    if (signed_in && npub) {
+      /* Show truncated npub */
+      char *display = g_strdup_printf("%.16s...", npub);
+      gtk_label_set_text(GTK_LABEL(self->lbl_profile_name), display);
+      g_free(display);
+    } else {
+      gtk_label_set_text(GTK_LABEL(self->lbl_profile_name), "");
+    }
+  }
+
+  /* Show/hide buttons based on state */
+  if (self->btn_login_local && GTK_IS_WIDGET(self->btn_login_local)) {
+    gtk_widget_set_visible(self->btn_login_local, !signed_in);
+  }
+  if (self->btn_pair_remote && GTK_IS_WIDGET(self->btn_pair_remote)) {
+    gtk_widget_set_visible(self->btn_pair_remote, !signed_in);
+  }
+  if (self->btn_sign_out && GTK_IS_WIDGET(self->btn_sign_out)) {
+    gtk_widget_set_visible(self->btn_sign_out, signed_in);
+  }
+
+  g_free(npub);
 }
 
 /* Profile pane signal handlers */
@@ -2197,6 +2311,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     gtk_widget_set_sensitive(self->btn_avatar, TRUE);
     gtk_widget_set_tooltip_text(self->btn_avatar, "Login / Account");
   }
+  /* Initialize login UI state from saved settings */
+  update_login_ui_state(self);
   /* Ensure Timeline page is visible initially */
   if (self->stack && self->timeline && GTK_IS_STACK(self->stack)) {
     gtk_stack_set_visible_child(GTK_STACK(self->stack), self->timeline);
@@ -2424,6 +2540,7 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   g_type_ensure(GNOSTR_TYPE_COMPOSER);
   g_type_ensure(GNOSTR_TYPE_PROFILE_PANE);
   g_type_ensure(GNOSTR_TYPE_DM_INBOX_VIEW);
+  g_type_ensure(GNOSTR_TYPE_THREAD_VIEW);
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
   /* Bind expected template children (IDs must match the UI file) */
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, stack);

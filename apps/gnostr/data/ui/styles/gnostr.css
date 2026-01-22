@@ -5,7 +5,7 @@
   padding: 10px;
   background: alpha(@theme_bg_color, 0.6);
   border: 1px solid alpha(@theme_fg_color, 0.08);
-  animation: note-fade-in 300ms ease-out;
+  animation: note-fade-in 600ms ease-out;
 }
 
 @keyframes note-fade-in {
