@@ -93,6 +93,8 @@ struct _GnNostrEventModel {
   guint emit_idle_id;             /* Pending g_idle_add source for items_changed */
   guint emit_start;               /* Start position for batched emission */
   guint emit_added;               /* Number of items added in batched emission */
+  gboolean in_batch;              /* TRUE while processing a batch - suppress emissions */
+  guint batch_start_len;          /* Length of notes array when batch started */
 };
 
 typedef struct {
@@ -168,6 +170,8 @@ static gint64 get_current_time_ms(void);
 /* nostrc-apq: Idle-scheduled emission to prevent GTK4 re-entrancy */
 static gboolean emit_items_changed_idle(gpointer user_data);
 static void schedule_items_changed(GnNostrEventModel *self, guint position, guint added);
+static void begin_batch(GnNostrEventModel *self);
+static void end_batch(GnNostrEventModel *self);
 
 /* Subscription callbacks */
 static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
@@ -601,6 +605,9 @@ static gboolean emit_items_changed_idle(gpointer user_data) {
 /* Schedule an items_changed emission for the next idle iteration.
  * Coalesces multiple rapid insertions into a single signal. */
 static void schedule_items_changed(GnNostrEventModel *self, guint position, guint added) {
+  /* In batch mode, don't schedule - end_batch will handle emission */
+  if (self->in_batch) return;
+
   if (self->emit_idle_id == 0) {
     /* First item in this batch - record position */
     self->emit_start = position;
@@ -613,6 +620,41 @@ static void schedule_items_changed(GnNostrEventModel *self, guint position, guin
     guint new_end = MAX(old_end, position + added);
     self->emit_start = new_start;
     self->emit_added = new_end - new_start;
+  }
+}
+
+/* Begin batch mode - suppress all emissions until end_batch is called.
+ * This prevents GTK4 ListView re-entrancy crashes during rapid updates. */
+static void begin_batch(GnNostrEventModel *self) {
+  if (!self) return;
+  self->in_batch = TRUE;
+  self->batch_start_len = self->notes->len;
+  /* Cancel any pending idle emission - we'll emit at end of batch */
+  if (self->emit_idle_id > 0) {
+    g_source_remove(self->emit_idle_id);
+    self->emit_idle_id = 0;
+  }
+  self->emit_added = 0;
+}
+
+/* End batch mode and emit a single comprehensive items-changed signal.
+ * Uses idle scheduling to prevent re-entrancy issues. */
+static void end_batch(GnNostrEventModel *self) {
+  if (!self || !self->in_batch) return;
+  self->in_batch = FALSE;
+
+  guint new_len = self->notes->len;
+  guint old_len = self->batch_start_len;
+
+  if (new_len != old_len) {
+    /* Schedule a single emission covering all changes */
+    if (new_len > old_len) {
+      /* Items were added */
+      schedule_items_changed(self, 0, new_len - old_len);
+    } else {
+      /* Items were removed - emit directly since removal is less problematic */
+      g_list_model_items_changed(G_LIST_MODEL(self), new_len, old_len - new_len, 0);
+    }
   }
 }
 
@@ -707,7 +749,11 @@ static void enforce_window(GnNostrEventModel *self) {
   }
 
   g_array_set_size(self->notes, cap);
-  g_list_model_items_changed(G_LIST_MODEL(self), cap, to_remove, 0);
+
+  /* In batch mode, end_batch will handle emission */
+  if (!self->in_batch) {
+    g_list_model_items_changed(G_LIST_MODEL(self), cap, to_remove, 0);
+  }
 }
 
 /* Pending queue: pubkey -> array of PendingEntry. Returns TRUE if this pubkey had no pending queue before. */
@@ -960,10 +1006,13 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
   if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
 
+  /* Begin batch mode to suppress emissions during processing */
+  begin_batch(self);
 
   void *txn = NULL;
   if (storage_ndb_begin_query(&txn) != 0 || !txn) {
     g_warning("[TIMELINE] failed to begin query");
+    end_batch(self);
     return;
   }
 
@@ -1014,8 +1063,10 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
 
   storage_ndb_end_query(txn);
 
-
   enforce_window(self);
+
+  /* End batch mode and emit single comprehensive signal */
+  end_batch(self);
 }
 
 static void on_sub_deletes_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
@@ -1195,6 +1246,8 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
   self->emit_idle_id = 0;
   self->emit_start = 0;
   self->emit_added = 0;
+  self->in_batch = FALSE;
+  self->batch_start_len = 0;
 
   /* Install lifetime subscriptions via dispatcher (marshals to main loop) */
   self->sub_profiles = gn_ndb_subscribe(FILTER_PROFILES, on_sub_profiles_batch, self, NULL);
