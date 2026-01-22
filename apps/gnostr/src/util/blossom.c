@@ -5,6 +5,7 @@
  */
 
 #include "blossom.h"
+#include "blossom_settings.h"
 #include "../ipc/signer_ipc.h"
 #include <string.h>
 #include <glib.h>
@@ -880,6 +881,152 @@ void gnostr_blossom_delete_async(const char *server_url,
   g_free(auth_header);
 }
 
+/* ---- Upload with fallback ---- */
+
+typedef struct {
+  char *file_path;
+  char *mime_type;
+  const char **server_urls;  /* owned array of borrowed strings */
+  gsize n_servers;
+  gsize current_index;
+  GnostrBlossomUploadCallback callback;
+  gpointer user_data;
+  GCancellable *cancellable;
+  GPtrArray *errors;         /* Accumulated error messages */
+} FallbackUploadContext;
+
+static void fallback_ctx_free(FallbackUploadContext *ctx) {
+  if (!ctx) return;
+  g_free(ctx->file_path);
+  g_free(ctx->mime_type);
+  g_free(ctx->server_urls);
+  if (ctx->errors) {
+    g_ptr_array_free(ctx->errors, TRUE);
+  }
+  if (ctx->cancellable) {
+    g_object_unref(ctx->cancellable);
+  }
+  g_free(ctx);
+}
+
+static void try_next_server(FallbackUploadContext *ctx);
+
+static void on_fallback_upload_complete(GnostrBlossomBlob *blob, GError *error, gpointer user_data) {
+  FallbackUploadContext *ctx = (FallbackUploadContext *)user_data;
+
+  if (blob && !error) {
+    /* Success! Return the blob */
+    if (ctx->callback) {
+      ctx->callback(blob, NULL, ctx->user_data);
+    } else {
+      gnostr_blossom_blob_free(blob);
+    }
+    fallback_ctx_free(ctx);
+    return;
+  }
+
+  /* Upload failed - record error and try next server */
+  if (error) {
+    char *err_msg = g_strdup_printf("Server %s: %s",
+                                     ctx->server_urls[ctx->current_index],
+                                     error->message);
+    g_ptr_array_add(ctx->errors, err_msg);
+    g_message("Blossom upload to %s failed: %s",
+              ctx->server_urls[ctx->current_index], error->message);
+  }
+
+  ctx->current_index++;
+
+  if (ctx->current_index < ctx->n_servers) {
+    /* Try next server */
+    try_next_server(ctx);
+  } else {
+    /* All servers failed */
+    GString *combined = g_string_new("All Blossom servers failed:\n");
+    for (guint i = 0; i < ctx->errors->len; i++) {
+      g_string_append_printf(combined, "  - %s\n", (char *)g_ptr_array_index(ctx->errors, i));
+    }
+
+    GError *final_err = g_error_new(GNOSTR_BLOSSOM_ERROR,
+                                     GNOSTR_BLOSSOM_ERROR_ALL_SERVERS_FAILED,
+                                     "%s", combined->str);
+    g_string_free(combined, TRUE);
+
+    if (ctx->callback) {
+      ctx->callback(NULL, final_err, ctx->user_data);
+    }
+    g_error_free(final_err);
+    fallback_ctx_free(ctx);
+  }
+}
+
+static void try_next_server(FallbackUploadContext *ctx) {
+  if (ctx->current_index >= ctx->n_servers) {
+    /* Should not happen, but handle gracefully */
+    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
+                               GNOSTR_BLOSSOM_ERROR_NO_SERVERS,
+                               "No more servers to try");
+    if (ctx->callback) {
+      ctx->callback(NULL, err, ctx->user_data);
+    }
+    g_error_free(err);
+    fallback_ctx_free(ctx);
+    return;
+  }
+
+  const char *server_url = ctx->server_urls[ctx->current_index];
+  g_message("Blossom: trying upload to server %zu/%zu: %s",
+            ctx->current_index + 1, ctx->n_servers, server_url);
+
+  gnostr_blossom_upload_async(server_url, ctx->file_path, ctx->mime_type,
+                               on_fallback_upload_complete, ctx,
+                               ctx->cancellable);
+}
+
+void gnostr_blossom_upload_with_fallback_async(const char *file_path,
+                                                 const char *mime_type,
+                                                 GnostrBlossomUploadCallback callback,
+                                                 gpointer user_data,
+                                                 GCancellable *cancellable) {
+  if (!file_path) {
+    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
+                               GNOSTR_BLOSSOM_ERROR_FILE_NOT_FOUND,
+                               "No file path provided");
+    if (callback) callback(NULL, err, user_data);
+    g_error_free(err);
+    return;
+  }
+
+  /* Get server list from settings */
+  gsize n_servers = 0;
+  const char **server_urls = gnostr_blossom_settings_get_enabled_urls(&n_servers);
+
+  if (!server_urls || n_servers == 0) {
+    g_free(server_urls);
+    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
+                               GNOSTR_BLOSSOM_ERROR_NO_SERVERS,
+                               "No Blossom servers configured");
+    if (callback) callback(NULL, err, user_data);
+    g_error_free(err);
+    return;
+  }
+
+  /* Create fallback context */
+  FallbackUploadContext *ctx = g_new0(FallbackUploadContext, 1);
+  ctx->file_path = g_strdup(file_path);
+  ctx->mime_type = mime_type ? g_strdup(mime_type) : NULL;
+  ctx->server_urls = server_urls;
+  ctx->n_servers = n_servers;
+  ctx->current_index = 0;
+  ctx->callback = callback;
+  ctx->user_data = user_data;
+  ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
+  ctx->errors = g_ptr_array_new_with_free_func(g_free);
+
+  /* Start with first server */
+  try_next_server(ctx);
+}
+
 #else /* !HAVE_SOUP3 */
 
 /* Stub implementations when libsoup is not available */
@@ -921,6 +1068,19 @@ void gnostr_blossom_delete_async(const char *server_url,
                              GNOSTR_BLOSSOM_ERROR_SERVER_ERROR,
                              "Blossom delete requires libsoup3");
   if (callback) callback(FALSE, err, user_data);
+  g_error_free(err);
+}
+
+void gnostr_blossom_upload_with_fallback_async(const char *file_path,
+                                                 const char *mime_type,
+                                                 GnostrBlossomUploadCallback callback,
+                                                 gpointer user_data,
+                                                 GCancellable *cancellable) {
+  (void)file_path; (void)mime_type; (void)cancellable;
+  GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
+                             GNOSTR_BLOSSOM_ERROR_UPLOAD_FAILED,
+                             "Blossom upload requires libsoup3");
+  if (callback) callback(NULL, err, user_data);
   g_error_free(err);
 }
 

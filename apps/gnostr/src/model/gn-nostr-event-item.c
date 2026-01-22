@@ -30,6 +30,9 @@ struct _GnNostrEventItem {
   gboolean is_reply;
   gboolean is_repost;
   gboolean is_muted;
+
+  /* nostrc-7o7: Skip animation for notes added outside visible viewport */
+  gboolean skip_animation;
 };
 
 G_DEFINE_TYPE(GnNostrEventItem, gn_nostr_event_item, G_TYPE_OBJECT)
@@ -49,6 +52,7 @@ enum {
   PROP_IS_REPLY,
   PROP_IS_REPOST,
   PROP_IS_MUTED,
+  PROP_SKIP_ANIMATION,
   N_PROPS
 };
 
@@ -163,6 +167,9 @@ static void gn_nostr_event_item_get_property(GObject *object, guint prop_id, GVa
     case PROP_IS_MUTED:
       g_value_set_boolean(value, self->is_muted);
       break;
+    case PROP_SKIP_ANIMATION:
+      g_value_set_boolean(value, self->skip_animation);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
   }
@@ -175,6 +182,9 @@ static void gn_nostr_event_item_set_property(GObject *object, guint prop_id, con
     case PROP_EVENT_ID:
       g_free(self->cached_event_id);
       self->cached_event_id = g_value_dup_string(value);
+      break;
+    case PROP_SKIP_ANIMATION:
+      self->skip_animation = g_value_get_boolean(value);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -214,6 +224,9 @@ static void gn_nostr_event_item_class_init(GnNostrEventItemClass *klass) {
                                                      G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
   properties[PROP_IS_MUTED] = g_param_spec_boolean("is-muted", "Is Muted", "Is muted", FALSE,
                                                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_SKIP_ANIMATION] = g_param_spec_boolean("skip-animation", "Skip Animation",
+                                                          "Skip fade-in animation (nostrc-7o7)", FALSE,
+                                                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
   g_object_class_install_properties(object_class, N_PROPS, properties);
 }
@@ -416,5 +429,19 @@ void gn_nostr_event_item_update_from_event(GnNostrEventItem *self,
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_CONTENT]);
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_KIND]);
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_IS_REPOST]);
+  }
+}
+
+/* nostrc-7o7: Animation control for notes added outside visible viewport */
+gboolean gn_nostr_event_item_get_skip_animation(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), FALSE);
+  return self->skip_animation;
+}
+
+void gn_nostr_event_item_set_skip_animation(GnNostrEventItem *self, gboolean skip) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
+  if (self->skip_animation != skip) {
+    self->skip_animation = skip;
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_SKIP_ANIMATION]);
   }
 }

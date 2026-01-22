@@ -8,6 +8,11 @@
   animation: note-fade-in 600ms ease-out;
 }
 
+/* nostrc-7o7: Skip animation for notes added outside visible viewport */
+.note-card.no-animation {
+  animation: none;
+}
+
 @keyframes note-fade-in {
   from {
     opacity: 0;
@@ -107,6 +112,14 @@ label a:visited {
     alpha(shade(@accent_bg_color, 0.8), 0.5) 100%
   );
   min-height: 140px;
+  max-height: 140px;
+  margin-bottom: 8px;
+}
+
+/* Banner image fixed height with cover fit */
+.profile-banner picture {
+  min-height: 140px;
+  max-height: 140px;
 }
 
 /* Avatar frame with border and shadow */
@@ -1048,4 +1061,22 @@ button.pill:hover {
   font-size: 11px;
   font-weight: 500;
   color: #f7931a;
+}
+
+/* ===== NIP-25 Like/Reaction Styles ===== */
+
+/* Like button in liked state */
+#btn_like.liked image,
+button.liked image {
+  color: #e91e63;  /* Pink/red heart color */
+}
+
+/* Hover effect on like button */
+#btn_like:hover image {
+  color: alpha(#e91e63, 0.8);
+}
+
+/* Liked state styling */
+.note-liked #btn_like image {
+  color: #e91e63;
 }

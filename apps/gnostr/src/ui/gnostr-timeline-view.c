@@ -1259,6 +1259,16 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       }
     }
 
+    /* nostrc-7o7: Apply no-animation class if item was added outside visible viewport */
+    if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
+      gboolean skip_anim = gn_nostr_event_item_get_skip_animation(GN_NOSTR_EVENT_ITEM(obj));
+      if (skip_anim) {
+        gtk_widget_add_css_class(row, "no-animation");
+      } else {
+        gtk_widget_remove_css_class(row, "no-animation");
+      }
+    }
+
     /* Always show row - use fallback display if no profile */
     gtk_widget_set_visible(row, TRUE);
 

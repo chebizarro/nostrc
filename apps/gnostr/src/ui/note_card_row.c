@@ -77,6 +77,8 @@ struct _GnostrNoteCardRow {
   gboolean is_thread_root;
   /* Bookmark state */
   gboolean is_bookmarked;
+  /* Like state (NIP-25 reactions) */
+  gboolean is_liked;
   /* Zap state */
   gint64 zap_total_msat;
   guint zap_count;
@@ -2143,6 +2145,29 @@ void gnostr_note_card_row_set_bookmarked(GnostrNoteCardRow *self, gboolean is_bo
   if (GTK_IS_BUTTON(self->btn_bookmark)) {
     gtk_button_set_icon_name(GTK_BUTTON(self->btn_bookmark),
       is_bookmarked ? "user-bookmarks-symbolic" : "bookmark-new-symbolic");
+  }
+}
+
+/* Set like state and update button icon (NIP-25 reactions) */
+void gnostr_note_card_row_set_liked(GnostrNoteCardRow *self, gboolean is_liked) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  self->is_liked = is_liked;
+
+  /* Update button visual state */
+  if (GTK_IS_BUTTON(self->btn_like)) {
+    /* Use CSS class for visual differentiation - more reliable than icon switching.
+     * CSS can style the "liked" class with different color (e.g., red/pink).
+     * We also try to use filled variant icon if available. */
+    if (is_liked) {
+      gtk_widget_add_css_class(GTK_WIDGET(self->btn_like), "liked");
+      /* Try emblem-favorite (filled) for liked state */
+      gtk_button_set_icon_name(GTK_BUTTON(self->btn_like), "emblem-favorite-symbolic");
+    } else {
+      gtk_widget_remove_css_class(GTK_WIDGET(self->btn_like), "liked");
+      /* Keep the default favorite icon for unliked state */
+      gtk_button_set_icon_name(GTK_BUTTON(self->btn_like), "emblem-favorite-symbolic");
+    }
   }
 }
 

@@ -34,6 +34,10 @@ gboolean gn_nostr_event_item_get_is_reply(GnNostrEventItem *self);
 gboolean gn_nostr_event_item_get_is_repost(GnNostrEventItem *self);
 gboolean gn_nostr_event_item_get_is_muted(GnNostrEventItem *self);
 
+/* nostrc-7o7: Animation control for notes added outside visible viewport */
+gboolean gn_nostr_event_item_get_skip_animation(GnNostrEventItem *self);
+void gn_nostr_event_item_set_skip_animation(GnNostrEventItem *self, gboolean skip);
+
 void gn_nostr_event_item_set_profile(GnNostrEventItem *self, GnNostrProfile *profile);
 void gn_nostr_event_item_set_thread_info(GnNostrEventItem *self,
 					 const char *root_id,

@@ -74,6 +74,10 @@ void gn_nostr_event_model_trim_newer(GnNostrEventModel *self, guint keep_count);
  * Called automatically when scrolling up and loading newer events. */
 void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count);
 
+/* nostrc-7o7: Update visible range for animation skip tracking.
+ * Items added outside the visible range will skip their fade-in animation. */
+void gn_nostr_event_model_set_visible_range(GnNostrEventModel *self, guint start, guint end);
+
 G_END_DECLS
 
 #endif

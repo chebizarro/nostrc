@@ -213,11 +213,11 @@ static void on_file_chooser_response(GObject *source, GAsyncResult *res, gpointe
     return;
   }
 
-  /* Get Blossom server URL from settings */
-  const char *server_url = gnostr_blossom_settings_get_default_server();
-  if (!server_url || !*server_url) {
-    g_warning("No Blossom server configured");
-    composer_show_toast(self, "No media server configured. Add one in Settings.");
+  /* Check if any Blossom servers are configured */
+  gsize n_servers = gnostr_blossom_settings_get_server_count();
+  if (n_servers == 0) {
+    g_warning("No Blossom servers configured");
+    composer_show_toast(self, "No media servers configured. Add one in Settings.");
     g_free(path);
     return;
   }
@@ -245,11 +245,11 @@ static void on_file_chooser_response(GObject *source, GAsyncResult *res, gpointe
   }
   self->upload_cancellable = g_cancellable_new();
 
-  /* Start async upload */
-  g_message("composer: starting upload of %s to %s", path, server_url);
-  gnostr_blossom_upload_async(server_url, path, NULL,
-                               on_blossom_upload_complete, self,
-                               self->upload_cancellable);
+  /* Start async upload with automatic fallback to next server on failure */
+  g_message("composer: starting upload of %s (trying %zu servers with fallback)", path, n_servers);
+  gnostr_blossom_upload_with_fallback_async(path, NULL,
+                                             on_blossom_upload_complete, self,
+                                             self->upload_cancellable);
   g_free(path);
 }
 

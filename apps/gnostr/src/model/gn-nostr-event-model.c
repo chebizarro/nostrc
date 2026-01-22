@@ -69,6 +69,11 @@ struct _GnNostrEventModel {
 
   /* Thread info cache - note_key -> ThreadInfo */
   GHashTable *thread_info;
+
+  /* nostrc-7o7: Animation control - track which items should skip animation */
+  guint visible_start;  /* First visible position in the list */
+  guint visible_end;    /* Last visible position in the list */
+  GHashTable *skip_animation_keys;  /* key: uint64_t*, value: GINT_TO_POINTER(1) */
 };
 
 typedef struct {
@@ -481,6 +486,13 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
   /* Find insertion position */
   guint pos = find_sorted_position(self, created_at);
 
+  /* nostrc-7o7: Mark items added outside visible viewport to skip animation */
+  if (pos < self->visible_start || pos > self->visible_end) {
+    uint64_t *key_copy = g_new(uint64_t, 1);
+    *key_copy = note_key;
+    g_hash_table_insert(self->skip_animation_keys, key_copy, GINT_TO_POINTER(1));
+  }
+
   /* Insert note entry */
   NoteEntry entry = { .note_key = note_key, .created_at = created_at };
   g_array_insert_val(self->notes, pos, entry);
@@ -684,11 +696,18 @@ static gpointer gn_nostr_event_model_get_item(GListModel *list, guint position) 
   GnNostrEventItem *item = g_hash_table_lookup(self->item_cache, &key);
   if (item) {
     cache_touch(self, key);
+    /* nostrc-7o7: Check if this item should skip animation */
+    gboolean skip_anim = g_hash_table_contains(self->skip_animation_keys, &key);
+    gn_nostr_event_item_set_skip_animation(item, skip_anim);
     return g_object_ref(item);
   }
 
   /* Create new item from nostrdb */
   item = gn_nostr_event_item_new_from_key(key, entry->created_at);
+
+  /* nostrc-7o7: Set skip_animation flag based on whether item was added outside viewport */
+  gboolean skip_anim = g_hash_table_contains(self->skip_animation_keys, &key);
+  gn_nostr_event_item_set_skip_animation(item, skip_anim);
 
   /* Apply thread info if available */
   ThreadInfo *tinfo = g_hash_table_lookup(self->thread_info, &key);
@@ -885,6 +904,9 @@ static void gn_nostr_event_model_finalize(GObject *object) {
   if (self->pending_by_author) g_hash_table_unref(self->pending_by_author);
   if (self->thread_info) g_hash_table_unref(self->thread_info);
 
+  /* nostrc-7o7: Clean up animation skip tracking */
+  if (self->skip_animation_keys) g_hash_table_unref(self->skip_animation_keys);
+
   G_OBJECT_CLASS(gn_nostr_event_model_parent_class)->finalize(object);
 }
 
@@ -950,6 +972,11 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
 
   self->limit = MODEL_MAX_ITEMS;
   self->window_size = MODEL_MAX_ITEMS;
+
+  /* nostrc-7o7: Initialize animation skip tracking */
+  self->visible_start = 0;
+  self->visible_end = 10;  /* Default to showing first 10 items as "visible" */
+  self->skip_animation_keys = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
 
   /* Install lifetime subscriptions via dispatcher (marshals to main loop) */
   self->sub_profiles = gn_ndb_subscribe(FILTER_PROFILES, on_sub_profiles_batch, self, NULL);
@@ -1660,4 +1687,11 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
 
 
   return added;
+}
+
+/* nostrc-7o7: Update visible range for animation skip tracking */
+void gn_nostr_event_model_set_visible_range(GnNostrEventModel *self, guint start, guint end) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
+  self->visible_start = start;
+  self->visible_end = end;
 }

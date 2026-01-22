@@ -128,6 +128,53 @@ void gnostr_blossom_settings_publish_async(GnostrBlossomSettingsPublishCallback 
                                              gpointer user_data);
 
 /**
+ * Reorder a server in the list (move from one position to another).
+ *
+ * @param from_index Current index of the server
+ * @param to_index Destination index for the server
+ * @return TRUE if reorder succeeded, FALSE if indices are invalid
+ */
+gboolean gnostr_blossom_settings_reorder_server(gsize from_index, gsize to_index);
+
+/**
+ * Set the enabled state of a server at a given index.
+ *
+ * @param index Server index
+ * @param enabled Whether the server should be enabled
+ * @return TRUE if successful, FALSE if index is invalid
+ */
+gboolean gnostr_blossom_settings_set_server_enabled(gsize index, gboolean enabled);
+
+/**
+ * Get the count of configured servers.
+ *
+ * @return Number of servers in the list
+ */
+gsize gnostr_blossom_settings_get_server_count(void);
+
+/**
+ * Get a server URL by index.
+ *
+ * @param index Server index
+ * @return Server URL (static, do not free) or NULL if invalid index
+ */
+const char *gnostr_blossom_settings_get_server_url(gsize index);
+
+/**
+ * Get the list of enabled server URLs in priority order.
+ * This is useful for upload fallback - try servers in order until one succeeds.
+ *
+ * @param out_count Output: number of URLs returned
+ * @return Array of URLs (caller must free array with g_free, but not strings)
+ */
+const char **gnostr_blossom_settings_get_enabled_urls(gsize *out_count);
+
+/**
+ * Clear all servers from the list.
+ */
+void gnostr_blossom_settings_clear_servers(void);
+
+/**
  * Default public Blossom servers (fallback if none configured)
  */
 #define GNOSTR_BLOSSOM_DEFAULT_SERVER "https://blossom.primal.net"

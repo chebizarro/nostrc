@@ -68,6 +68,9 @@ void gnostr_note_card_row_set_thread_info(GnostrNoteCardRow *self,
 /* Bookmark state: update the bookmark button icon based on state */
 void gnostr_note_card_row_set_bookmarked(GnostrNoteCardRow *self, gboolean is_bookmarked);
 
+/* NIP-25 Reactions: update the like button icon based on state */
+void gnostr_note_card_row_set_liked(GnostrNoteCardRow *self, gboolean is_liked);
+
 /* NIP-57 Zaps: set author's lightning address for zapping */
 void gnostr_note_card_row_set_author_lud16(GnostrNoteCardRow *self, const char *lud16);
 

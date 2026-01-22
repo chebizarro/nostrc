@@ -425,52 +425,84 @@
                             <property name="margin-top">24</property>
                             <property name="margin-bottom">24</property>
 
-                            <!-- Blossom Settings -->
+                            <!-- Blossom Settings (Multi-Server) -->
                             <child>
                               <object class="GtkBox">
                                 <property name="orientation">vertical</property>
                                 <property name="spacing">8</property>
                                 <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">8</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label">Media Servers (Blossom)</property>
+                                        <property name="xalign">0</property>
+                                        <property name="hexpand">true</property>
+                                        <style>
+                                          <class name="heading"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="btn_blossom_publish">
+                                        <property name="icon-name">send-to-symbolic</property>
+                                        <property name="tooltip-text">Publish server list to relays (kind 10063)</property>
+                                        <style>
+                                          <class name="flat"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
                                   <object class="GtkLabel">
-                                    <property name="label">Media Upload (Blossom)</property>
+                                    <property name="label">Servers are tried in order during upload. Drag to reorder.</property>
                                     <property name="xalign">0</property>
                                     <style>
-                                      <class name="heading"/>
+                                      <class name="dim-label"/>
+                                      <class name="caption"/>
                                     </style>
                                   </object>
                                 </child>
                                 <child>
-                                  <object class="GtkListBox">
-                                    <property name="selection-mode">none</property>
-                                    <style>
-                                      <class name="boxed-list"/>
-                                    </style>
+                                  <object class="GtkFrame">
+                                    <property name="margin-top">4</property>
                                     <child>
-                                      <object class="GtkListBoxRow">
-                                        <property name="activatable">false</property>
+                                      <object class="GtkScrolledWindow">
+                                        <property name="min-content-height">120</property>
+                                        <property name="max-content-height">200</property>
+                                        <property name="hscrollbar-policy">never</property>
                                         <child>
-                                          <object class="GtkBox">
-                                            <property name="orientation">horizontal</property>
-                                            <property name="spacing">12</property>
-                                            <property name="margin-start">12</property>
-                                            <property name="margin-end">12</property>
-                                            <property name="margin-top">8</property>
-                                            <property name="margin-bottom">8</property>
-                                            <child>
-                                              <object class="GtkLabel">
-                                                <property name="label">Blossom Server URL</property>
-                                                <property name="hexpand">true</property>
-                                                <property name="xalign">0</property>
-                                              </object>
-                                            </child>
-                                            <child>
-                                              <object class="GtkEntry" id="w_blossom_server">
-                                                <property name="placeholder-text">https://blossom.primal.net</property>
-                                                <property name="width-chars">25</property>
-                                              </object>
-                                            </child>
+                                          <object class="GtkListBox" id="blossom_server_list">
+                                            <property name="selection-mode">none</property>
+                                            <style>
+                                              <class name="boxed-list"/>
+                                            </style>
                                           </object>
                                         </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin-top">4</property>
+                                    <child>
+                                      <object class="GtkEntry" id="w_blossom_server">
+                                        <property name="placeholder-text">https://blossom.example.com</property>
+                                        <property name="hexpand">true</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="btn_blossom_add">
+                                        <property name="icon-name">list-add-symbolic</property>
+                                        <property name="tooltip-text">Add server</property>
+                                        <style>
+                                          <class name="suggested-action"/>
+                                        </style>
                                       </object>
                                     </child>
                                   </object>

@@ -147,6 +147,25 @@ char *gnostr_blossom_build_auth_event(const char *action,
                                        const char *mime_type);
 
 /**
+ * Upload a file to Blossom servers with automatic fallback.
+ *
+ * Tries each server from the user's configured list in priority order.
+ * If upload to a server fails, automatically tries the next server.
+ * Uses the server list from gnostr_blossom_settings_get_enabled_urls().
+ *
+ * @param file_path Path to the file to upload
+ * @param mime_type MIME type of the file (e.g., "image/png"), or NULL to auto-detect
+ * @param callback Callback when upload completes (with success or all servers failed)
+ * @param user_data User data for callback
+ * @param cancellable Optional GCancellable
+ */
+void gnostr_blossom_upload_with_fallback_async(const char *file_path,
+                                                 const char *mime_type,
+                                                 GnostrBlossomUploadCallback callback,
+                                                 gpointer user_data,
+                                                 GCancellable *cancellable);
+
+/**
  * Error domain for Blossom operations
  */
 #define GNOSTR_BLOSSOM_ERROR (gnostr_blossom_error_quark())
@@ -161,7 +180,9 @@ typedef enum {
   GNOSTR_BLOSSOM_ERROR_PARSE_ERROR,
   GNOSTR_BLOSSOM_ERROR_AUTH_FAILED,
   GNOSTR_BLOSSOM_ERROR_NOT_FOUND,
-  GNOSTR_BLOSSOM_ERROR_CANCELLED
+  GNOSTR_BLOSSOM_ERROR_CANCELLED,
+  GNOSTR_BLOSSOM_ERROR_NO_SERVERS,
+  GNOSTR_BLOSSOM_ERROR_ALL_SERVERS_FAILED
 } GnostrBlossomError;
 
 G_END_DECLS

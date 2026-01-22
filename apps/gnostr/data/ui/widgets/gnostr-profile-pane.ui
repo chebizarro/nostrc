@@ -64,7 +64,7 @@
                       <object class="GtkPicture" id="banner_image">
                         <property name="height-request">140</property>
                         <property name="hexpand">true</property>
-                        <property name="vexpand">true</property>
+                        <property name="vexpand">false</property>
                         <property name="content-fit">cover</property>
                         <property name="can-shrink">true</property>
                       </object>

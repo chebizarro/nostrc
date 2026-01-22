@@ -6,9 +6,18 @@
  */
 
 #include "blossom_settings.h"
+#include "../ipc/signer_ipc.h"
+#include "relays.h"
 #include <string.h>
+#include <time.h>
 #include <json-glib/json-glib.h>
 #include <nostr-kinds.h>
+#include "nostr-event.h"
+/* GObject relay wrapper for publishing (includes nostr-relay.h internally) */
+#include "nostr_relay.h"
+/* GObject simple pool wrapper for fetching */
+#include "nostr_simple_pool.h"
+#include "nostr-filter.h"
 
 /* GSettings schema IDs */
 #define BLOSSOM_SCHEMA_ID "org.gnostr.Client"
@@ -314,30 +323,444 @@ char *gnostr_blossom_settings_to_event(void) {
   return json_str;
 }
 
-/* Async load/publish stubs - these would integrate with SimplePool for relay queries */
+/* Async load/publish implementation */
+
+/* Context for async publish operation */
+typedef struct {
+  GnostrBlossomSettingsPublishCallback callback;
+  gpointer user_data;
+  gchar *event_json;
+} BlossomPublishCtx;
+
+static void blossom_publish_ctx_free(BlossomPublishCtx *ctx) {
+  if (!ctx) return;
+  g_free(ctx->event_json);
+  g_free(ctx);
+}
+
+static void on_blossom_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
+  BlossomPublishCtx *ctx = (BlossomPublishCtx*)user_data;
+  if (!ctx) return;
+
+  NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+  GError *error = NULL;
+  gchar *signed_event_json = NULL;
+
+  gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(proxy, &signed_event_json, res, &error);
+
+  if (!ok || !signed_event_json) {
+    g_warning("blossom: signing failed: %s", error ? error->message : "unknown error");
+    if (ctx->callback) {
+      GError *err = g_error_new(g_quark_from_static_string("blossom-settings"), 1,
+                                 "Signing failed: %s", error ? error->message : "unknown");
+      ctx->callback(FALSE, err, ctx->user_data);
+      g_error_free(err);
+    }
+    g_clear_error(&error);
+    blossom_publish_ctx_free(ctx);
+    return;
+  }
+
+  g_message("blossom: signed event successfully");
+
+  /* Parse the signed event JSON into a NostrEvent */
+  NostrEvent *event = nostr_event_new();
+  int parse_rc = nostr_event_deserialize_compact(event, signed_event_json);
+  if (parse_rc != 1) {
+    g_warning("blossom: failed to parse signed event");
+    if (ctx->callback) {
+      GError *err = g_error_new_literal(g_quark_from_static_string("blossom-settings"), 1,
+                                         "Failed to parse signed event");
+      ctx->callback(FALSE, err, ctx->user_data);
+      g_error_free(err);
+    }
+    nostr_event_free(event);
+    g_free(signed_event_json);
+    blossom_publish_ctx_free(ctx);
+    return;
+  }
+
+  /* Get relay URLs from config */
+  GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
+  gnostr_load_relays_into(relay_urls);
+
+  /* Publish to each relay */
+  guint success_count = 0;
+  guint fail_count = 0;
+  for (guint i = 0; i < relay_urls->len; i++) {
+    const gchar *url = (const gchar*)g_ptr_array_index(relay_urls, i);
+    GNostrRelay *relay = gnostr_relay_new(url);
+    if (!relay) {
+      fail_count++;
+      continue;
+    }
+
+    GError *conn_err = NULL;
+    if (!gnostr_relay_connect(relay, &conn_err)) {
+      g_debug("blossom: failed to connect to %s: %s", url, conn_err ? conn_err->message : "unknown");
+      g_clear_error(&conn_err);
+      g_object_unref(relay);
+      fail_count++;
+      continue;
+    }
+
+    GError *pub_err = NULL;
+    if (gnostr_relay_publish(relay, event, &pub_err)) {
+      g_message("blossom: published kind 10063 to %s", url);
+      success_count++;
+    } else {
+      g_debug("blossom: publish failed to %s: %s", url, pub_err ? pub_err->message : "unknown");
+      g_clear_error(&pub_err);
+      fail_count++;
+    }
+    g_object_unref(relay);
+  }
+
+  /* Cleanup */
+  nostr_event_free(event);
+  g_free(signed_event_json);
+  g_ptr_array_free(relay_urls, TRUE);
+
+  /* Notify callback */
+  if (ctx->callback) {
+    if (success_count > 0) {
+      ctx->callback(TRUE, NULL, ctx->user_data);
+    } else {
+      GError *err = g_error_new_literal(g_quark_from_static_string("blossom-settings"), 1,
+                                         "Failed to publish to any relay");
+      ctx->callback(FALSE, err, ctx->user_data);
+      g_error_free(err);
+    }
+  }
+
+  g_message("blossom: published to %u relays, failed %u", success_count, fail_count);
+  blossom_publish_ctx_free(ctx);
+}
+
+/* Context for async load operation */
+typedef struct {
+  gchar *pubkey_hex;
+  GCancellable *cancellable;
+  GnostrBlossomSettingsLoadCallback callback;
+  gpointer user_data;
+} BlossomLoadCtx;
+
+static void blossom_load_ctx_free(BlossomLoadCtx *ctx) {
+  if (!ctx) return;
+  g_free(ctx->pubkey_hex);
+  if (ctx->cancellable) g_object_unref(ctx->cancellable);
+  g_free(ctx);
+}
+
+#ifndef GNOSTR_RELAY_TEST_ONLY
+
+static void on_blossom_fetch_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
+  BlossomLoadCtx *ctx = (BlossomLoadCtx*)user_data;
+  if (!ctx) return;
+
+  GError *err = NULL;
+  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+
+  if (err) {
+    g_warning("blossom: fetch failed: %s", err->message);
+    if (ctx->callback) {
+      ctx->callback(FALSE, err, ctx->user_data);
+    }
+    g_error_free(err);
+    blossom_load_ctx_free(ctx);
+    return;
+  }
+
+  gboolean found = FALSE;
+  gint64 newest_created_at = 0;
+  const gchar *newest_event_json = NULL;
+
+  /* Find the newest kind 10063 event */
+  if (results && results->len > 0) {
+    for (guint i = 0; i < results->len; i++) {
+      const gchar *json = g_ptr_array_index(results, i);
+      if (!json) continue;
+
+      /* Parse to check kind and created_at */
+      JsonParser *parser = json_parser_new();
+      if (json_parser_load_from_data(parser, json, -1, NULL)) {
+        JsonNode *root = json_parser_get_root(parser);
+        if (root && JSON_NODE_HOLDS_OBJECT(root)) {
+          JsonObject *obj = json_node_get_object(root);
+          if (json_object_has_member(obj, "kind")) {
+            gint64 kind = json_object_get_int_member(obj, "kind");
+            if (kind == NOSTR_KIND_USER_SERVER_LIST) {
+              gint64 created_at = 0;
+              if (json_object_has_member(obj, "created_at")) {
+                created_at = json_object_get_int_member(obj, "created_at");
+              }
+              if (created_at > newest_created_at) {
+                newest_created_at = created_at;
+                newest_event_json = json;
+              }
+            }
+          }
+        }
+      }
+      g_object_unref(parser);
+    }
+  }
+
+  if (newest_event_json) {
+    if (gnostr_blossom_settings_from_event(newest_event_json)) {
+      g_message("blossom: loaded server list from relay (created_at: %" G_GINT64_FORMAT ")",
+                newest_created_at);
+      found = TRUE;
+    }
+  }
+
+  if (results) g_ptr_array_unref(results);
+
+  if (!found) {
+    g_message("blossom: no server list found on network for user %.*s, using local config",
+              8, ctx->pubkey_hex ? ctx->pubkey_hex : "");
+    load_servers_from_gsettings();
+  }
+
+  if (ctx->callback) {
+    ctx->callback(TRUE, NULL, ctx->user_data);
+  }
+
+  blossom_load_ctx_free(ctx);
+}
+
 void gnostr_blossom_settings_load_from_relays_async(const char *pubkey_hex,
                                                       GnostrBlossomSettingsLoadCallback callback,
                                                       gpointer user_data) {
-  /* TODO: Implement relay query for kind 10063 */
-  /* For now, just load from local GSettings */
-  (void)pubkey_hex;
-
-  load_servers_from_gsettings();
-
-  if (callback) {
-    callback(TRUE, NULL, user_data);
+  if (!pubkey_hex || !*pubkey_hex) {
+    load_servers_from_gsettings();
+    if (callback) callback(TRUE, NULL, user_data);
+    return;
   }
+
+  BlossomLoadCtx *ctx = g_new0(BlossomLoadCtx, 1);
+  ctx->pubkey_hex = g_strdup(pubkey_hex);
+  ctx->callback = callback;
+  ctx->user_data = user_data;
+
+  /* Build filter for kind 10063 */
+  NostrFilter *filter = nostr_filter_new();
+  int kinds[1] = { NOSTR_KIND_USER_SERVER_LIST };
+  nostr_filter_set_kinds(filter, kinds, 1);
+  const char *authors[1] = { pubkey_hex };
+  nostr_filter_set_authors(filter, authors, 1);
+  nostr_filter_set_limit(filter, 1);
+
+  /* Get configured relays */
+  GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);
+  gnostr_load_relays_into(relay_arr);
+
+  /* Build URL array for SimplePool */
+  const char **urls = g_new0(const char*, relay_arr->len + 1);
+  for (guint i = 0; i < relay_arr->len; i++) {
+    urls[i] = g_ptr_array_index(relay_arr, i);
+  }
+
+  /* Create pool and query */
+  GnostrSimplePool *pool = gnostr_simple_pool_new();
+
+  gnostr_simple_pool_query_single_async(pool, urls, relay_arr->len, filter, NULL,
+                                         on_blossom_fetch_complete, ctx);
+
+  g_ptr_array_unref(relay_arr);
+  g_free(urls);
+  g_object_unref(pool);
+  nostr_filter_free(filter);
 }
+
+#else
+
+void gnostr_blossom_settings_load_from_relays_async(const char *pubkey_hex,
+                                                      GnostrBlossomSettingsLoadCallback callback,
+                                                      gpointer user_data) {
+  /* Stub when SimplePool is not available */
+  (void)pubkey_hex;
+  load_servers_from_gsettings();
+  if (callback) callback(TRUE, NULL, user_data);
+}
+
+#endif /* GNOSTR_RELAY_TEST_ONLY */
 
 void gnostr_blossom_settings_publish_async(GnostrBlossomSettingsPublishCallback callback,
                                              gpointer user_data) {
-  /* TODO: Implement publishing to relays */
-  /* This requires signer IPC to sign the event first */
-
-  if (callback) {
-    GError *err = g_error_new_literal(g_quark_from_static_string("blossom-settings"),
-                                       1, "Publishing not yet implemented");
-    callback(FALSE, err, user_data);
-    g_error_free(err);
+  /* Get signer proxy */
+  GError *proxy_err = NULL;
+  NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
+  if (!proxy) {
+    gchar *msg = g_strdup_printf("Signer not available: %s",
+                                  proxy_err ? proxy_err->message : "not connected");
+    if (callback) {
+      GError *err = g_error_new_literal(g_quark_from_static_string("blossom-settings"), 1, msg);
+      callback(FALSE, err, user_data);
+      g_error_free(err);
+    }
+    g_free(msg);
+    g_clear_error(&proxy_err);
+    return;
   }
+
+  /* Build unsigned event JSON from current settings */
+  gchar *event_json = gnostr_blossom_settings_to_event();
+  if (!event_json) {
+    if (callback) {
+      GError *err = g_error_new_literal(g_quark_from_static_string("blossom-settings"), 1,
+                                         "Failed to build event JSON");
+      callback(FALSE, err, user_data);
+      g_error_free(err);
+    }
+    return;
+  }
+
+  g_message("blossom: requesting signature for server list event (kind 10063)");
+
+  /* Create publish context */
+  BlossomPublishCtx *ctx = g_new0(BlossomPublishCtx, 1);
+  ctx->callback = callback;
+  ctx->user_data = user_data;
+  ctx->event_json = event_json;
+
+  /* Call signer asynchronously */
+  nostr_org_nostr_signer_call_sign_event(
+    proxy,
+    event_json,
+    "",        /* current_user: empty = use default */
+    "gnostr",  /* app_id */
+    NULL,      /* cancellable */
+    on_blossom_sign_complete,
+    ctx
+  );
+}
+
+gboolean gnostr_blossom_settings_reorder_server(gsize from_index, gsize to_index) {
+  if (!cached_servers) {
+    load_servers_from_gsettings();
+  }
+
+  if (from_index >= cached_servers->len || to_index >= cached_servers->len) {
+    return FALSE;
+  }
+
+  if (from_index == to_index) {
+    return TRUE; /* No-op */
+  }
+
+  /* Remove from old position and insert at new position */
+  GnostrBlossomServer *server = g_ptr_array_index(cached_servers, from_index);
+  g_ptr_array_remove_index(cached_servers, from_index);
+
+  /* Adjust target index if we removed before it */
+  if (from_index < to_index) {
+    to_index--;
+  }
+
+  g_ptr_array_insert(cached_servers, to_index, server);
+
+  /* Update default server to first enabled one */
+  for (guint i = 0; i < cached_servers->len; i++) {
+    GnostrBlossomServer *s = g_ptr_array_index(cached_servers, i);
+    if (s->enabled) {
+      gnostr_blossom_settings_set_default_server(s->url);
+      break;
+    }
+  }
+
+  save_servers_to_gsettings();
+  return TRUE;
+}
+
+gboolean gnostr_blossom_settings_set_server_enabled(gsize index, gboolean enabled) {
+  if (!cached_servers) {
+    load_servers_from_gsettings();
+  }
+
+  if (index >= cached_servers->len) {
+    return FALSE;
+  }
+
+  GnostrBlossomServer *server = g_ptr_array_index(cached_servers, index);
+  server->enabled = enabled;
+
+  /* Update default server if this was the primary and is now disabled */
+  if (!enabled && index == 0) {
+    for (guint i = 1; i < cached_servers->len; i++) {
+      GnostrBlossomServer *s = g_ptr_array_index(cached_servers, i);
+      if (s->enabled) {
+        gnostr_blossom_settings_set_default_server(s->url);
+        break;
+      }
+    }
+  }
+
+  save_servers_to_gsettings();
+  return TRUE;
+}
+
+gsize gnostr_blossom_settings_get_server_count(void) {
+  if (!cached_servers) {
+    load_servers_from_gsettings();
+  }
+  return cached_servers->len;
+}
+
+const char *gnostr_blossom_settings_get_server_url(gsize index) {
+  if (!cached_servers) {
+    load_servers_from_gsettings();
+  }
+
+  if (index >= cached_servers->len) {
+    return NULL;
+  }
+
+  GnostrBlossomServer *server = g_ptr_array_index(cached_servers, index);
+  return server->url;
+}
+
+const char **gnostr_blossom_settings_get_enabled_urls(gsize *out_count) {
+  if (!cached_servers) {
+    load_servers_from_gsettings();
+  }
+
+  /* Count enabled servers */
+  gsize count = 0;
+  for (guint i = 0; i < cached_servers->len; i++) {
+    GnostrBlossomServer *server = g_ptr_array_index(cached_servers, i);
+    if (server->enabled) {
+      count++;
+    }
+  }
+
+  if (out_count) {
+    *out_count = count;
+  }
+
+  if (count == 0) {
+    return NULL;
+  }
+
+  /* Build array of URLs */
+  const char **urls = g_new0(const char *, count + 1);
+  gsize idx = 0;
+  for (guint i = 0; i < cached_servers->len && idx < count; i++) {
+    GnostrBlossomServer *server = g_ptr_array_index(cached_servers, i);
+    if (server->enabled) {
+      urls[idx++] = server->url;
+    }
+  }
+  urls[count] = NULL;
+
+  return urls;
+}
+
+void gnostr_blossom_settings_clear_servers(void) {
+  if (!cached_servers) {
+    cached_servers = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_blossom_server_free);
+  } else {
+    g_ptr_array_set_size(cached_servers, 0);
+  }
+  save_servers_to_gsettings();
 }

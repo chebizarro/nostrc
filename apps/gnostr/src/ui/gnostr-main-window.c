@@ -41,6 +41,8 @@
 #include "../util/mute_list.h"
 /* NIP-51 settings sync */
 #include "../util/nip51_settings.h"
+/* Blossom server settings (kind 10063) */
+#include "../util/blossom_settings.h"
 #include "gnostr-login.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
@@ -100,16 +102,20 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
 static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer user_data);
 /* Forward declaration for ESC key handler to close profile sidebar */
 static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data);
-/* Forward declarations for repost/quote signal handlers */
+/* Forward declarations for repost/quote/like signal handlers */
 static void on_note_card_repost_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
 static void on_note_card_quote_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
 static void on_note_card_like_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
 /* Forward declarations for publish context (needed by repost function) */
 typedef struct _PublishContext PublishContext;
 static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer user_data);
-/* Forward declarations for public repost/quote functions (defined after PublishContext) */
+/* Forward declarations for like context and callback (NIP-25) */
+typedef struct _LikeContext LikeContext;
+static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpointer user_data);
+/* Forward declarations for public repost/quote/like functions (defined after PublishContext) */
 void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
 void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
+void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, const char *pubkey_hex, GnostrNoteCardRow *row);
 static void user_meta_free(gpointer p);
 static void show_toast(GnostrMainWindow *self, const char *msg);
 /* Pre-populate profile from local DB */
@@ -347,6 +353,9 @@ struct _GnostrMainWindow {
 
   /* Live relay switching (nostrc-36y.4) */
   gulong           relay_change_handler_id; /* relay config change handler */
+
+  /* Liked events cache (NIP-25 reactions) */
+  GHashTable      *liked_events;  /* owned; key=event_id_hex (char*), value=unused (GINT_TO_POINTER(1)) */
 };
 
 /* Old LRU functions removed - now using profile provider */
@@ -1523,6 +1532,239 @@ static void settings_dialog_setup_relay_panel(SettingsDialogCtx *ctx) {
   g_ptr_array_unref(relays);
 }
 
+/* ---- Blossom Server Panel ---- */
+
+/* Context for blossom server row */
+typedef struct {
+  SettingsDialogCtx *dialog_ctx;
+  gsize server_index;
+  char *server_url;
+} BlossomServerRowCtx;
+
+static void blossom_server_row_ctx_free(gpointer data) {
+  BlossomServerRowCtx *ctx = (BlossomServerRowCtx *)data;
+  if (!ctx) return;
+  g_free(ctx->server_url);
+  g_free(ctx);
+}
+
+/* Refresh the blossom server list */
+static void settings_dialog_refresh_blossom_list(SettingsDialogCtx *ctx);
+
+/* Callback for remove button on a blossom server row */
+static void on_blossom_server_remove(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  BlossomServerRowCtx *row_ctx = (BlossomServerRowCtx *)user_data;
+  if (!row_ctx || !row_ctx->dialog_ctx) return;
+
+  gnostr_blossom_settings_remove_server(row_ctx->server_url);
+  settings_dialog_refresh_blossom_list(row_ctx->dialog_ctx);
+
+  if (row_ctx->dialog_ctx->main_window) {
+    show_toast(row_ctx->dialog_ctx->main_window, "Server removed");
+  }
+}
+
+/* Callback for move up button on a blossom server row */
+static void on_blossom_server_move_up(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  BlossomServerRowCtx *row_ctx = (BlossomServerRowCtx *)user_data;
+  if (!row_ctx || !row_ctx->dialog_ctx || row_ctx->server_index == 0) return;
+
+  gnostr_blossom_settings_reorder_server(row_ctx->server_index, row_ctx->server_index - 1);
+  settings_dialog_refresh_blossom_list(row_ctx->dialog_ctx);
+}
+
+/* Callback for move down button on a blossom server row */
+static void on_blossom_server_move_down(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  BlossomServerRowCtx *row_ctx = (BlossomServerRowCtx *)user_data;
+  if (!row_ctx || !row_ctx->dialog_ctx) return;
+
+  gsize count = gnostr_blossom_settings_get_server_count();
+  if (row_ctx->server_index >= count - 1) return;
+
+  gnostr_blossom_settings_reorder_server(row_ctx->server_index, row_ctx->server_index + 1);
+  settings_dialog_refresh_blossom_list(row_ctx->dialog_ctx);
+}
+
+/* Callback for add server button */
+static void on_blossom_add_server(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx *)user_data;
+  if (!ctx || !ctx->builder) return;
+
+  GtkEntry *entry = GTK_ENTRY(gtk_builder_get_object(ctx->builder, "w_blossom_server"));
+  if (!entry) return;
+
+  GtkEntryBuffer *buffer = gtk_entry_get_buffer(entry);
+  const char *url = gtk_entry_buffer_get_text(buffer);
+  if (!url || !*url) {
+    if (ctx->main_window) show_toast(ctx->main_window, "Enter a server URL");
+    return;
+  }
+
+  /* Validate URL starts with https:// */
+  if (!g_str_has_prefix(url, "https://") && !g_str_has_prefix(url, "http://")) {
+    if (ctx->main_window) show_toast(ctx->main_window, "URL must start with https://");
+    return;
+  }
+
+  if (gnostr_blossom_settings_add_server(url)) {
+    gtk_entry_buffer_set_text(buffer, "", 0);
+    settings_dialog_refresh_blossom_list(ctx);
+    if (ctx->main_window) show_toast(ctx->main_window, "Server added");
+  } else {
+    if (ctx->main_window) show_toast(ctx->main_window, "Server already exists");
+  }
+}
+
+/* Callback for publish button (kind 10063) */
+static void on_blossom_publish_complete(gboolean success, GError *error, gpointer user_data) {
+  SettingsDialogCtx *ctx = (SettingsDialogCtx *)user_data;
+  if (!ctx || !ctx->main_window) return;
+
+  if (success) {
+    show_toast(ctx->main_window, "Server list published to relays");
+  } else {
+    char *msg = g_strdup_printf("Publish failed: %s",
+                                 error ? error->message : "unknown error");
+    show_toast(ctx->main_window, msg);
+    g_free(msg);
+  }
+}
+
+static void on_blossom_publish_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  SettingsDialogCtx *ctx = (SettingsDialogCtx *)user_data;
+  if (!ctx || !ctx->main_window) return;
+
+  /* Check if logged in */
+  if (!ctx->main_window->user_pubkey_hex || !ctx->main_window->user_pubkey_hex[0]) {
+    show_toast(ctx->main_window, "Sign in to publish server list");
+    return;
+  }
+
+  show_toast(ctx->main_window, "Publishing server list...");
+  gnostr_blossom_settings_publish_async(on_blossom_publish_complete, ctx);
+}
+
+/* Refresh the blossom server list in settings */
+static void settings_dialog_refresh_blossom_list(SettingsDialogCtx *ctx) {
+  if (!ctx || !ctx->builder) return;
+
+  GtkListBox *list = GTK_LIST_BOX(gtk_builder_get_object(ctx->builder, "blossom_server_list"));
+  if (!list) return;
+
+  /* Clear existing rows */
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(list))) != NULL) {
+    gtk_list_box_remove(list, child);
+  }
+
+  /* Load servers */
+  gsize count = 0;
+  GnostrBlossomServer **servers = gnostr_blossom_settings_get_servers(&count);
+
+  for (gsize i = 0; i < count; i++) {
+    GnostrBlossomServer *server = servers[i];
+
+    /* Create row context */
+    BlossomServerRowCtx *row_ctx = g_new0(BlossomServerRowCtx, 1);
+    row_ctx->dialog_ctx = ctx;
+    row_ctx->server_index = i;
+    row_ctx->server_url = g_strdup(server->url);
+
+    /* Create row widget */
+    GtkWidget *row = gtk_list_box_row_new();
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_margin_start(box, 12);
+    gtk_widget_set_margin_end(box, 8);
+    gtk_widget_set_margin_top(box, 6);
+    gtk_widget_set_margin_bottom(box, 6);
+
+    /* Priority indicator (first is default) */
+    GtkWidget *priority = gtk_label_new(i == 0 ? "1" : NULL);
+    if (i == 0) {
+      gtk_widget_set_size_request(priority, 20, -1);
+      gtk_widget_add_css_class(priority, "accent");
+      gtk_widget_set_tooltip_text(priority, "Primary server");
+    } else {
+      char num[8];
+      g_snprintf(num, sizeof(num), "%zu", i + 1);
+      gtk_label_set_text(GTK_LABEL(priority), num);
+      gtk_widget_set_size_request(priority, 20, -1);
+      gtk_widget_add_css_class(priority, "dim-label");
+    }
+    gtk_box_append(GTK_BOX(box), priority);
+
+    /* URL label */
+    GtkWidget *label = gtk_label_new(server->url);
+    gtk_label_set_xalign(GTK_LABEL(label), 0);
+    gtk_widget_set_hexpand(label, TRUE);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_MIDDLE);
+    gtk_box_append(GTK_BOX(box), label);
+
+    /* Move up button */
+    GtkWidget *btn_up = gtk_button_new_from_icon_name("go-up-symbolic");
+    gtk_widget_add_css_class(btn_up, "flat");
+    gtk_widget_set_sensitive(btn_up, i > 0);
+    gtk_widget_set_tooltip_text(btn_up, "Move up (higher priority)");
+    g_signal_connect(btn_up, "clicked", G_CALLBACK(on_blossom_server_move_up), row_ctx);
+    gtk_box_append(GTK_BOX(box), btn_up);
+
+    /* Move down button */
+    GtkWidget *btn_down = gtk_button_new_from_icon_name("go-down-symbolic");
+    gtk_widget_add_css_class(btn_down, "flat");
+    gtk_widget_set_sensitive(btn_down, i < count - 1);
+    gtk_widget_set_tooltip_text(btn_down, "Move down (lower priority)");
+    g_signal_connect(btn_down, "clicked", G_CALLBACK(on_blossom_server_move_down), row_ctx);
+    gtk_box_append(GTK_BOX(box), btn_down);
+
+    /* Remove button */
+    GtkWidget *btn_remove = gtk_button_new_from_icon_name("user-trash-symbolic");
+    gtk_widget_add_css_class(btn_remove, "flat");
+    gtk_widget_add_css_class(btn_remove, "error");
+    gtk_widget_set_tooltip_text(btn_remove, "Remove server");
+    g_signal_connect(btn_remove, "clicked", G_CALLBACK(on_blossom_server_remove), row_ctx);
+    gtk_box_append(GTK_BOX(box), btn_remove);
+
+    gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
+    gtk_list_box_append(list, row);
+
+    /* Free row context when row is destroyed */
+    g_object_set_data_full(G_OBJECT(row), "row-ctx", row_ctx, blossom_server_row_ctx_free);
+  }
+
+  gnostr_blossom_servers_free(servers, count);
+}
+
+/* Setup blossom server panel */
+static void settings_dialog_setup_blossom_panel(SettingsDialogCtx *ctx) {
+  if (!ctx || !ctx->builder) return;
+
+  /* Connect add button */
+  GtkButton *btn_add = GTK_BUTTON(gtk_builder_get_object(ctx->builder, "btn_blossom_add"));
+  if (btn_add) {
+    g_signal_connect(btn_add, "clicked", G_CALLBACK(on_blossom_add_server), ctx);
+  }
+
+  /* Connect publish button */
+  GtkButton *btn_publish = GTK_BUTTON(gtk_builder_get_object(ctx->builder, "btn_blossom_publish"));
+  if (btn_publish) {
+    g_signal_connect(btn_publish, "clicked", G_CALLBACK(on_blossom_publish_clicked), ctx);
+  }
+
+  /* Allow Enter key in entry to add server */
+  GtkEntry *entry = GTK_ENTRY(gtk_builder_get_object(ctx->builder, "w_blossom_server"));
+  if (entry) {
+    g_signal_connect_swapped(entry, "activate", G_CALLBACK(on_blossom_add_server), ctx);
+  }
+
+  /* Populate server list */
+  settings_dialog_refresh_blossom_list(ctx);
+}
+
 static void on_settings_dialog_destroy(GtkWidget *widget, gpointer user_data) {
   (void)widget;
   SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
@@ -1574,6 +1816,7 @@ static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   settings_dialog_setup_relay_panel(ctx);
   settings_dialog_setup_display_panel(ctx);
   settings_dialog_setup_account_panel(ctx);
+  settings_dialog_setup_blossom_panel(ctx);
 
   /* Context is freed when window is destroyed */
   g_signal_connect(win, "destroy", G_CALLBACK(on_settings_dialog_destroy), ctx);
@@ -1610,6 +1853,10 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
   if (self->user_pubkey_hex) {
     g_message("[AUTH] Loading NIP-65 relay list for user %.*s...", 8, self->user_pubkey_hex);
     gnostr_nip65_load_on_login_async(self->user_pubkey_hex, NULL, NULL);
+
+    /* Load Blossom server list (kind 10063) */
+    g_message("[AUTH] Loading Blossom server list (kind 10063) for user %.*s...", 8, self->user_pubkey_hex);
+    gnostr_blossom_settings_load_from_relays_async(self->user_pubkey_hex, NULL, NULL);
 
     /* Auto-sync NIP-51 settings if enabled */
     gnostr_nip51_settings_auto_sync_on_login(self->user_pubkey_hex);
@@ -1998,15 +2245,11 @@ static void on_note_card_quote_requested(GnostrNoteCardRow *row, const char *id_
   gnostr_main_window_request_quote(GTK_WIDGET(self), id_hex, pubkey_hex);
 }
 
-/* Signal handler for like-requested from note card (stub for now) */
+/* Signal handler for like-requested from note card (NIP-25) */
 static void on_note_card_like_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
-  (void)row;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  g_message("[LIKE] Like requested for id=%s pubkey=%.8s... (not yet implemented)",
-            id_hex ? id_hex : "(null)",
-            pubkey_hex ? pubkey_hex : "(null)");
-  show_toast(self, "Like functionality coming soon!");
+  gnostr_main_window_request_like(GTK_WIDGET(self), id_hex, pubkey_hex, row);
 }
 
 /* Forward declaration for thread view close handler */
@@ -2597,6 +2840,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   g_timeout_add_seconds(60, memory_stats_cb, self);
   /* Initialize avatar texture cache */
   self->avatar_tex_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_object_unref);
+  /* Initialize liked events cache (NIP-25 reactions) */
+  self->liked_events = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   /* Initialize reconnection flag */
   self->reconnection_in_progress = FALSE;
   /* Pre-populate/apply cached profiles here */
@@ -2785,6 +3030,21 @@ static void on_timeline_scroll_value_changed(GtkAdjustment *adj, gpointer user_d
   gdouble page_size = gtk_adjustment_get_page_size(adj);
   gdouble lower = gtk_adjustment_get_lower(adj);
 
+  /* nostrc-7o7: Estimate visible range based on scroll position
+   * Assume ~100px per row (approximate). This doesn't need to be exact,
+   * just needs to include items that could plausibly be visible. */
+  guint n_items = g_list_model_get_n_items(G_LIST_MODEL(self->event_model));
+  if (n_items > 0 && upper > lower) {
+    gdouble row_height_estimate = (upper - lower) / (gdouble)n_items;
+    if (row_height_estimate > 0) {
+      guint visible_start = (guint)(value / row_height_estimate);
+      guint visible_count = (guint)(page_size / row_height_estimate) + 2; /* +2 for partial rows */
+      guint visible_end = visible_start + visible_count;
+      if (visible_end >= n_items) visible_end = n_items - 1;
+      gn_nostr_event_model_set_visible_range(self->event_model, visible_start, visible_end);
+    }
+  }
+
   guint batch = self->load_older_batch_size > 0 ? self->load_older_batch_size : 30;
   guint max_items = 200; /* Keep at most 200 items in memory */
 
@@ -2871,6 +3131,7 @@ static void gnostr_main_window_dispose(GObject *object) {
   if (self->seen_texts) { g_hash_table_unref(self->seen_texts); self->seen_texts = NULL; }
   if (self->event_model) { g_object_unref(self->event_model); self->event_model = NULL; }
   if (self->avatar_tex_cache) { g_hash_table_unref(self->avatar_tex_cache); self->avatar_tex_cache = NULL; }
+  if (self->liked_events) { g_hash_table_unref(self->liked_events); self->liked_events = NULL; }
 
   /* Stop gift wrap subscription */
   stop_gift_wrap_subscription(self);
@@ -3161,6 +3422,215 @@ void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, co
     "gnostr",        /* app_id */
     NULL,            /* cancellable */
     on_sign_event_complete,
+    ctx
+  );
+  g_free(event_json);
+}
+
+/* ================= NIP-25 Like/Reaction Implementation ================= */
+
+/* Context for async like/reaction operation */
+struct _LikeContext {
+  GnostrMainWindow *self;       /* weak ref */
+  char *event_id_hex;           /* owned; event being liked */
+  GnostrNoteCardRow *row;       /* weak ref; row to update on success */
+};
+
+static void like_context_free(LikeContext *ctx) {
+  if (!ctx) return;
+  g_free(ctx->event_id_hex);
+  g_free(ctx);
+}
+
+/* Callback when DBus sign_event completes for like/reaction */
+static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
+  LikeContext *ctx = (LikeContext*)user_data;
+  if (!ctx || !GNOSTR_IS_MAIN_WINDOW(ctx->self)) {
+    like_context_free(ctx);
+    return;
+  }
+  GnostrMainWindow *self = ctx->self;
+  NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+
+  GError *error = NULL;
+  char *signed_event_json = NULL;
+  gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(proxy, &signed_event_json, res, &error);
+
+  if (!ok || !signed_event_json) {
+    char *msg = g_strdup_printf("Like signing failed: %s", error ? error->message : "unknown error");
+    show_toast(self, msg);
+    g_free(msg);
+    g_clear_error(&error);
+    like_context_free(ctx);
+    return;
+  }
+
+  g_message("[LIKE] Signed reaction event: %.100s...", signed_event_json);
+
+  /* Parse the signed event JSON into a NostrEvent */
+  NostrEvent *event = nostr_event_new();
+  int parse_rc = nostr_event_deserialize_compact(event, signed_event_json);
+  if (parse_rc != 1) {
+    show_toast(self, "Failed to parse signed reaction event");
+    nostr_event_free(event);
+    g_free(signed_event_json);
+    like_context_free(ctx);
+    return;
+  }
+
+  /* Get write-capable relay URLs from config (NIP-65: write-only or read+write) */
+  GPtrArray *relay_urls = gnostr_get_write_relay_urls();
+
+  /* Publish to each write relay */
+  guint success_count = 0;
+  guint fail_count = 0;
+  for (guint i = 0; i < relay_urls->len; i++) {
+    const char *url = (const char*)g_ptr_array_index(relay_urls, i);
+    GNostrRelay *relay = gnostr_relay_new(url);
+    if (!relay) {
+      fail_count++;
+      continue;
+    }
+
+    GError *conn_err = NULL;
+    if (!gnostr_relay_connect(relay, &conn_err)) {
+      g_message("[LIKE] Failed to connect to %s: %s", url, conn_err ? conn_err->message : "unknown");
+      g_clear_error(&conn_err);
+      g_object_unref(relay);
+      fail_count++;
+      continue;
+    }
+
+    GError *pub_err = NULL;
+    if (gnostr_relay_publish(relay, event, &pub_err)) {
+      g_message("[LIKE] Published reaction to %s", url);
+      success_count++;
+    } else {
+      g_message("[LIKE] Publish failed to %s: %s", url, pub_err ? pub_err->message : "unknown");
+      g_clear_error(&pub_err);
+      fail_count++;
+    }
+    g_object_unref(relay);
+  }
+
+  /* Show result toast and update UI */
+  if (success_count > 0) {
+    show_toast(self, "Liked!");
+
+    /* Mark event as liked in local cache */
+    if (ctx->event_id_hex && self->liked_events) {
+      g_hash_table_insert(self->liked_events, g_strdup(ctx->event_id_hex), GINT_TO_POINTER(1));
+    }
+
+    /* Update note card row to show liked state */
+    if (ctx->row && GNOSTR_IS_NOTE_CARD_ROW(ctx->row)) {
+      gnostr_note_card_row_set_liked(ctx->row, TRUE);
+    }
+
+    /* Store reaction in local NostrdB cache */
+    if (signed_event_json) {
+      int ingest_rc = storage_ndb_ingest_event_json(signed_event_json, NULL);
+      if (ingest_rc != 0) {
+        g_warning("[LIKE] Failed to ingest reaction event to local cache");
+      } else {
+        g_debug("[LIKE] Reaction event stored in local cache");
+      }
+    }
+  } else {
+    show_toast(self, "Failed to publish reaction");
+  }
+
+  /* Cleanup */
+  nostr_event_free(event);
+  g_free(signed_event_json);
+  g_ptr_array_free(relay_urls, TRUE);
+  like_context_free(ctx);
+}
+
+/* Public function to request a like/reaction (kind 7) - NIP-25 */
+void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, const char *pubkey_hex, GnostrNoteCardRow *row) {
+  if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  g_message("[LIKE] Request like of id=%s pubkey=%.8s...",
+            id_hex ? id_hex : "(null)",
+            pubkey_hex ? pubkey_hex : "(null)");
+
+  if (!id_hex || strlen(id_hex) != 64) {
+    show_toast(self, "Invalid event ID for like");
+    return;
+  }
+
+  /* Check if already liked */
+  if (self->liked_events && g_hash_table_contains(self->liked_events, id_hex)) {
+    show_toast(self, "Already liked!");
+    return;
+  }
+
+  /* Get signer proxy */
+  GError *proxy_err = NULL;
+  NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
+  if (!proxy) {
+    char *msg = g_strdup_printf("Signer not available: %s", proxy_err ? proxy_err->message : "not connected");
+    show_toast(self, msg);
+    g_free(msg);
+    g_clear_error(&proxy_err);
+    return;
+  }
+
+  show_toast(self, "Liking...");
+
+  /* Build unsigned kind 7 reaction event JSON (NIP-25) */
+  json_t *event_obj = json_object();
+  json_object_set_new(event_obj, "kind", json_integer(NOSTR_KIND_REACTION));
+  json_object_set_new(event_obj, "created_at", json_integer((json_int_t)time(NULL)));
+  json_object_set_new(event_obj, "content", json_string("+")); /* "+" = like reaction */
+
+  /* Build tags array: e-tag and p-tag per NIP-25 */
+  json_t *tags = json_array();
+
+  /* e-tag: ["e", "<event-id-being-reacted-to>"] */
+  json_t *e_tag = json_array();
+  json_array_append_new(e_tag, json_string("e"));
+  json_array_append_new(e_tag, json_string(id_hex));
+  json_array_append_new(tags, e_tag);
+
+  /* p-tag: ["p", "<pubkey-of-event-author>"] */
+  if (pubkey_hex && strlen(pubkey_hex) == 64) {
+    json_t *p_tag = json_array();
+    json_array_append_new(p_tag, json_string("p"));
+    json_array_append_new(p_tag, json_string(pubkey_hex));
+    json_array_append_new(tags, p_tag);
+  }
+
+  json_object_set_new(event_obj, "tags", tags);
+
+  /* Serialize and sign via signer proxy */
+  char *event_json = json_dumps(event_obj, JSON_COMPACT);
+  json_decref(event_obj);
+
+  if (!event_json) {
+    show_toast(self, "Failed to serialize reaction event");
+    return;
+  }
+
+  g_message("[LIKE] Unsigned reaction event: %s", event_json);
+
+  /* Create async context */
+  LikeContext *ctx = g_new0(LikeContext, 1);
+  ctx->self = self;
+  ctx->event_id_hex = g_strdup(id_hex);
+  ctx->row = row; /* weak ref - may be invalid by callback time */
+
+  /* Call signer asynchronously */
+  nostr_org_nostr_signer_call_sign_event(
+    proxy,
+    event_json,
+    "",              /* current_user: empty = use default */
+    "gnostr",        /* app_id */
+    NULL,            /* cancellable */
+    on_sign_like_event_complete,
     ctx
   );
   g_free(event_json);
