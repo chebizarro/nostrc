@@ -5,7 +5,6 @@
 
 /* Storage (app-local header path) */
 #include "storage_ndb.h"
-#include "util/relays.h"
 /* GObject SimplePool wrapper */
 #include "nostr_simple_pool.h"
 /* Canonical nostr headers used in the app */
@@ -94,8 +93,10 @@ static void build_defaults(const char ***out_urls, size_t *out_count) {
     g_strfreev(tok);
   }
   if (arr->len == 0) {
-    /* Fall back to relays from config (GSettings defaults if none configured) */
-    gnostr_load_relays_into(arr);
+    /* Default relays for CLI tool (standalone, no GSettings dependency) */
+    g_ptr_array_add(arr, g_strdup("wss://relay.damus.io"));
+    g_ptr_array_add(arr, g_strdup("wss://nos.lol"));
+    g_ptr_array_add(arr, g_strdup("wss://relay.nostr.band"));
   }
   const char **urls = g_new0(const char*, arr->len);
   for (guint i = 0; i < arr->len; i++) urls[i] = (const char*)g_ptr_array_index(arr, i);
