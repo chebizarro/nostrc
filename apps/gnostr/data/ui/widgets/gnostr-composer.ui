@@ -99,6 +99,7 @@
             <child>
               <object class="GtkButton" id="btn_post">
                 <property name="label">Post</property>
+                <property name="tooltip-text">Publish note</property>
                 <signal name="clicked" handler="on_post_clicked" swapped="yes"/>
               </object>
             </child>

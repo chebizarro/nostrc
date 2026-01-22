@@ -14,7 +14,7 @@
         <child>
           <object class="GtkOverlay">
             <property name="hexpand">true</property>
-            <!-- Banner area: 120px banner (3:1 aspect ratio per NIP-24) + 72px for avatar overlap = 192px total -->
+            <!-- Banner area: 120px banner (3:1 aspect ratio per NIP-24) + 72px for avatar overlap (half of 144px avatar) = 192px total -->
             <child>
               <object class="GtkBox">
                 <property name="orientation">vertical</property>
@@ -39,10 +39,10 @@
                     </child>
                   </object>
                 </child>
-                <!-- Spacer for avatar overflow (reduced to 8px for tighter layout) -->
+                <!-- Spacer for avatar overflow: avatar is 144px, half (72px) extends below banner -->
                 <child>
                   <object class="GtkBox">
-                    <property name="height-request">8</property>
+                    <property name="height-request">72</property>
                   </object>
                 </child>
               </object>
@@ -178,6 +178,7 @@
               <object class="GtkButton" id="btn_follow">
                 <property name="label">Follow</property>
                 <property name="sensitive">false</property>
+                <property name="tooltip-text">Follow this user</property>
                 <style>
                   <class name="suggested-action"/>
                 </style>
@@ -187,6 +188,7 @@
               <object class="GtkButton" id="btn_message">
                 <property name="label">Message</property>
                 <property name="sensitive">false</property>
+                <property name="tooltip-text">Send direct message</property>
               </object>
             </child>
           </object>
@@ -204,6 +206,7 @@
             <child>
               <object class="GtkButton" id="btn_edit_profile">
                 <property name="hexpand">true</property>
+                <property name="tooltip-text">Edit your profile</property>
                 <signal name="clicked" handler="on_edit_profile_clicked"/>
                 <child>
                   <object class="GtkBox">
@@ -467,6 +470,7 @@
                         <property name="margin-top">8</property>
                         <property name="margin-bottom">16</property>
                         <property name="visible">false</property>
+                        <property name="tooltip-text">Load more posts</property>
                         <style>
                           <class name="pill"/>
                         </style>
@@ -571,6 +575,7 @@
                         <property name="margin-top">8</property>
                         <property name="margin-bottom">16</property>
                         <property name="visible">false</property>
+                        <property name="tooltip-text">Load more media</property>
                         <style>
                           <class name="pill"/>
                         </style>

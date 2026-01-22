@@ -14,6 +14,7 @@
         <child type="start">
           <object class="GtkButton" id="btn_close">
             <property name="label">Close</property>
+            <property name="tooltip-text">Close dialog</property>
             <signal name="clicked" handler="on_close_clicked"/>
           </object>
         </child>
@@ -184,6 +185,7 @@
                         <child>
                           <object class="GtkButton" id="btn_connect">
                             <property name="label">Connect Wallet</property>
+                            <property name="tooltip-text">Connect to wallet using NWC</property>
                             <signal name="clicked" handler="on_connect_clicked"/>
                             <style>
                               <class name="suggested-action"/>
@@ -401,6 +403,7 @@
                       <object class="GtkButton" id="btn_disconnect">
                         <property name="label">Disconnect Wallet</property>
                         <property name="halign">center</property>
+                        <property name="tooltip-text">Disconnect from wallet</property>
                         <signal name="clicked" handler="on_disconnect_clicked"/>
                         <style>
                           <class name="destructive-action"/>

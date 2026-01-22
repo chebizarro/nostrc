@@ -14,6 +14,7 @@
         <child type="start">
           <object class="GtkButton" id="btn_close">
             <property name="label">Close</property>
+            <property name="tooltip-text">Close dialog</property>
             <signal name="clicked" handler="on_close_clicked"/>
           </object>
         </child>
@@ -29,6 +30,7 @@
           <object class="GtkButton" id="btn_save">
             <property name="label">Save</property>
             <property name="sensitive">false</property>
+            <property name="tooltip-text">Save mute list changes</property>
             <signal name="clicked" handler="on_save_clicked"/>
             <style>
               <class name="suggested-action"/>

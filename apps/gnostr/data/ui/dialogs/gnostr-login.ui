@@ -14,6 +14,7 @@
         <child type="start">
           <object class="GtkButton" id="btn_close">
             <property name="label">Close</property>
+            <property name="tooltip-text">Close dialog</property>
             <signal name="clicked" handler="on_close_clicked"/>
           </object>
         </child>
@@ -199,6 +200,7 @@
                                   <object class="GtkButton" id="btn_local_signer">
                                     <property name="label">Sign with Local Signer</property>
                                     <property name="sensitive">false</property>
+                                    <property name="tooltip-text">Sign in using local signer (NIP-55L)</property>
                                     <signal name="clicked" handler="on_local_signer_clicked"/>
                                     <style>
                                       <class name="suggested-action"/>
@@ -272,6 +274,7 @@
                               <object class="GtkButton" id="btn_remote_signer">
                                 <property name="label">Connect Remote Signer</property>
                                 <property name="halign">end</property>
+                                <property name="tooltip-text">Connect to remote signer (NIP-46)</property>
                                 <signal name="clicked" handler="on_remote_signer_clicked"/>
                               </object>
                             </child>
@@ -302,6 +305,7 @@
                     <child>
                       <object class="GtkButton" id="btn_back_bunker">
                         <property name="halign">start</property>
+                        <property name="tooltip-text">Go back to sign-in options</property>
                         <signal name="clicked" handler="on_back_clicked"/>
                         <child>
                           <object class="GtkBox">
@@ -426,6 +430,7 @@
                         <child>
                           <object class="GtkButton" id="btn_connect_bunker">
                             <property name="label">Connect</property>
+                            <property name="tooltip-text">Connect to remote signer</property>
                             <signal name="clicked" handler="on_connect_bunker_clicked"/>
                             <style>
                               <class name="suggested-action"/>
@@ -506,6 +511,7 @@
                     <child>
                       <object class="GtkButton" id="btn_done">
                         <property name="label">Done</property>
+                        <property name="tooltip-text">Close and continue</property>
                         <signal name="clicked" handler="on_done_clicked"/>
                         <style>
                           <class name="suggested-action"/>

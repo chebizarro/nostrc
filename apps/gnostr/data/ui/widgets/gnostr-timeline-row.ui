@@ -110,16 +110,19 @@
         <child>
           <object class="GtkButton" id="reply_button">
             <property name="label">Reply</property>
+            <property name="tooltip-text">Reply to this note</property>
           </object>
         </child>
         <child>
           <object class="GtkButton" id="like_button">
             <property name="label">Like</property>
+            <property name="tooltip-text">Like this note</property>
           </object>
         </child>
         <child>
           <object class="GtkButton" id="share_button">
             <property name="label">Share</property>
+            <property name="tooltip-text">Share this note</property>
           </object>
         </child>
       </object>

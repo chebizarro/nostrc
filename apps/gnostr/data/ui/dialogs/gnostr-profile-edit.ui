@@ -14,6 +14,7 @@
         <child type="start">
           <object class="GtkButton" id="btn_cancel">
             <property name="label">Cancel</property>
+            <property name="tooltip-text">Cancel changes</property>
             <signal name="clicked" handler="on_cancel_clicked"/>
           </object>
         </child>
@@ -28,6 +29,7 @@
         <child type="end">
           <object class="GtkButton" id="btn_save">
             <property name="label">Save</property>
+            <property name="tooltip-text">Save profile changes</property>
             <signal name="clicked" handler="on_save_clicked"/>
             <style>
               <class name="suggested-action"/>

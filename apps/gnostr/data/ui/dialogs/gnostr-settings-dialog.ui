@@ -2329,6 +2329,7 @@
                                 <child>
                                   <object class="GtkButton" id="btn_mute_save">
                                     <property name="label">Save</property>
+                                    <property name="tooltip-text">Save mute list changes</property>
                                     <style>
                                       <class name="suggested-action"/>
                                     </style>

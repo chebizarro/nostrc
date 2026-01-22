@@ -7,6 +7,7 @@
 #include "storage_ndb.h"
 #include "util/gnostr_paths.h"
 #include "util/gnostr_e2e.h"
+#include "util/cache_prune.h"
 
 /* Global tray icon instance (Linux only) */
 static GnostrTrayIcon *g_tray_icon = NULL;
@@ -63,6 +64,9 @@ int main(int argc, char **argv) {
 
   /* Initialize subscription dispatcher BEFORE storage to register callback */
   gn_ndb_dispatcher_init();
+
+  /* Initialize cache pruning system (runs before storage init to free space) */
+  gnostr_cache_prune_init();
 
   /* Initialize NostrdB-backed storage in user cache directory */
   gchar *dbdir = gnostr_get_db_dir();

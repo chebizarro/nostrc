@@ -26,19 +26,16 @@
                   </object>
                 </child>
                 <child type="start">
-                  <object class="GtkButton" id="btn_refresh">
-                    <property name="icon-name">view-refresh-symbolic</property>
-                  </object>
-                </child>
-                <child type="start">
                   <object class="GtkButton" id="btn_relays">
                     <property name="label">Relays</property>
+                    <property name="tooltip-text">Manage relay connections</property>
                     <signal name="clicked" handler="on_relays_clicked" swapped="no"/>
                   </object>
                 </child>
                 <child type="start">
                   <object class="GtkButton" id="btn_settings">
                     <property name="icon-name">emblem-system-symbolic</property>
+                    <property name="tooltip-text">Open settings</property>
                     <signal name="clicked" handler="on_settings_clicked" swapped="no"/>
                   </object>
                 </child>
@@ -79,21 +76,17 @@
                               </object>
                             </child>
                             <child>
-                              <object class="GtkButton" id="btn_login_local">
-                                <property name="label">Log in</property>
-                                <signal name="clicked" handler="on_avatar_login_local_clicked" swapped="no"/>
+                              <object class="GtkButton" id="btn_login">
+                                <property name="label">Log In</property>
+                                <property name="tooltip-text">Sign in to your account</property>
+                                <signal name="clicked" handler="on_avatar_login_clicked" swapped="no"/>
                               </object>
                             </child>
                             <child>
-                              <object class="GtkButton" id="btn_pair_remote">
-                                <property name="label">Pair Remote Signer</property>
-                                <signal name="clicked" handler="on_avatar_pair_remote_clicked" swapped="no"/>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkButton" id="btn_sign_out">
-                                <property name="label">Log out</property>
-                                <signal name="clicked" handler="on_avatar_sign_out_clicked" swapped="no"/>
+                              <object class="GtkButton" id="btn_logout">
+                                <property name="label">Log Out</property>
+                                <property name="tooltip-text">Sign out of your account</property>
+                                <signal name="clicked" handler="on_avatar_logout_clicked" swapped="no"/>
                               </object>
                             </child>
                           </object>
@@ -105,6 +98,7 @@
                 <child type="start">
                   <object class="GtkMenuButton" id="btn_menu">
                     <property name="icon-name">open-menu-symbolic</property>
+                    <property name="tooltip-text">Main menu</property>
                   </object>
                 </child>
               </object>
@@ -145,6 +139,7 @@
                               <object class="GtkButton" id="btn_new_notes">
                                 <property name="css-classes">new-notes-indicator</property>
                                 <property name="focusable">true</property>
+                                <property name="tooltip-text">Scroll to new notes</property>
                                 <child>
                                   <object class="GtkBox">
                                     <property name="orientation">horizontal</property>

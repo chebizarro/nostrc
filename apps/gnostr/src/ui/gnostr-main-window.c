@@ -98,14 +98,13 @@ typedef struct UiEventRow UiEventRow;
 static void ui_event_row_free(gpointer p);
 static void schedule_apply_events(GnostrMainWindow *self, GPtrArray *rows /* UiEventRow* */);
 static gboolean periodic_backfill_cb(gpointer data);
-static void on_refresh_clicked(GtkButton *btn, gpointer user_data);
 static void on_composer_post_requested(GnostrComposer *composer, const char *text, gpointer user_data);
 static void on_relays_clicked(GtkButton *btn, gpointer user_data);
 static void on_settings_clicked(GtkButton *btn, gpointer user_data);
 static void on_show_mute_list_activated(GSimpleAction *action, GVariant *param, gpointer user_data);
-static void on_avatar_login_local_clicked(GtkButton *btn, gpointer user_data);
-static void on_avatar_pair_remote_clicked(GtkButton *btn, gpointer user_data);
-static void on_avatar_sign_out_clicked(GtkButton *btn, gpointer user_data);
+static void on_show_about_activated(GSimpleAction *action, GVariant *param, gpointer user_data);
+static void on_avatar_login_clicked(GtkButton *btn, gpointer user_data);
+static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data);
 static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey_hex, gpointer user_data);
 static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer user_data);
 /* Forward declarations for discover page signal handlers */
@@ -285,14 +284,12 @@ struct _GnostrMainWindow {
   GtkWidget *avatar_popover;
   GtkWidget *lbl_signin_status;
   GtkWidget *lbl_profile_name;
-  GtkWidget *btn_login_local;
-  GtkWidget *btn_pair_remote;
-  GtkWidget *btn_sign_out;
+  GtkWidget *btn_login;
+  GtkWidget *btn_logout;
   GtkWidget *composer;
   GtkWidget *dm_inbox;
   GtkWidget *notifications_view;
   GtkWidget *page_discover;
-  GtkWidget *btn_refresh;
   GtkWidget *toast_revealer;
   GtkWidget *toast_label;
   /* nostrc-yi2: Calm timeline - new notes indicator */
@@ -2284,6 +2281,35 @@ static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   gtk_window_present(win);
 }
 
+/* Handler for the "About" menu action - opens the About dialog */
+static void on_show_about_activated(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action;
+  (void)param;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  GtkBuilder *builder = gtk_builder_new_from_resource("/org/gnostr/ui/ui/dialogs/gnostr-about-dialog.ui");
+  if (!builder) {
+    show_toast(self, "About dialog UI missing");
+    return;
+  }
+
+  GtkWindow *win = GTK_WINDOW(gtk_builder_get_object(builder, "about_window"));
+  if (!win) {
+    g_object_unref(builder);
+    show_toast(self, "About window missing");
+    return;
+  }
+
+  gtk_window_set_transient_for(win, GTK_WINDOW(self));
+  gtk_window_set_modal(win, TRUE);
+
+  /* Builder is unref'd when window closes - store reference */
+  g_object_set_data_full(G_OBJECT(win), "builder", builder, g_object_unref);
+
+  gtk_window_present(win);
+}
+
 /* Forward declaration for updating login UI state */
 static void update_login_ui_state(GnostrMainWindow *self);
 
@@ -2338,7 +2364,7 @@ static void open_login_dialog(GnostrMainWindow *self) {
   gtk_window_present(GTK_WINDOW(login));
 }
 
-static void on_avatar_login_local_clicked(GtkButton *btn, gpointer user_data) {
+static void on_avatar_login_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
@@ -2350,19 +2376,7 @@ static void on_avatar_login_local_clicked(GtkButton *btn, gpointer user_data) {
   open_login_dialog(self);
 }
 
-static void on_avatar_pair_remote_clicked(GtkButton *btn, gpointer user_data) {
-  (void)btn;
-  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-
-  /* Close popover and open login dialog (it has both options) */
-  if (self->avatar_popover && GTK_IS_POPOVER(self->avatar_popover)) {
-    gtk_popover_popdown(GTK_POPOVER(self->avatar_popover));
-  }
-  open_login_dialog(self);
-}
-
-static void on_avatar_sign_out_clicked(GtkButton *btn, gpointer user_data) {
+static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
@@ -2431,15 +2445,12 @@ static void update_login_ui_state(GnostrMainWindow *self) {
     }
   }
 
-  /* Show/hide buttons based on state */
-  if (self->btn_login_local && GTK_IS_WIDGET(self->btn_login_local)) {
-    gtk_widget_set_visible(self->btn_login_local, !signed_in);
+  /* Show/hide buttons based on state - single Log In/Log Out toggle */
+  if (self->btn_login && GTK_IS_WIDGET(self->btn_login)) {
+    gtk_widget_set_visible(self->btn_login, !signed_in);
   }
-  if (self->btn_pair_remote && GTK_IS_WIDGET(self->btn_pair_remote)) {
-    gtk_widget_set_visible(self->btn_pair_remote, !signed_in);
-  }
-  if (self->btn_sign_out && GTK_IS_WIDGET(self->btn_sign_out)) {
-    gtk_widget_set_visible(self->btn_sign_out, signed_in);
+  if (self->btn_logout && GTK_IS_WIDGET(self->btn_logout)) {
+    gtk_widget_set_visible(self->btn_logout, signed_in);
   }
 
   /* nostrc-x3m: Disable Notifications and Messages tabs when logged out.
@@ -3308,8 +3319,6 @@ static void prepopulate_text_notes_from_cache(GnostrMainWindow *self, guint limi
 
 static void gnostr_main_window_init(GnostrMainWindow *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
-  gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_refresh),
-                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Refresh Timeline", -1);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_relays),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Manage Relays", -1);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_settings),
@@ -3414,16 +3423,20 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   /* Build app menu for header button */
   if (self->btn_menu) {
     GMenu *menu = g_menu_new();
+    g_menu_append(menu, "About", "win.show-about");
     g_menu_append(menu, "Quit", "app.quit");
     gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(self->btn_menu), G_MENU_MODEL(menu));
     g_object_unref(menu);
+
+    /* Register window action for About dialog */
+    GSimpleAction *about_action = g_simple_action_new("show-about", NULL);
+    g_signal_connect(about_action, "activate", G_CALLBACK(on_show_about_activated), self);
+    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(about_action));
+    g_object_unref(about_action);
   }
   g_debug("connecting post-requested handler on composer=%p", (void*)self->composer);
   g_signal_connect(self->composer, "post-requested",
                    G_CALLBACK(on_composer_post_requested), self);
-  if (self->btn_refresh) {
-    g_signal_connect(self->btn_refresh, "clicked", G_CALLBACK(on_refresh_clicked), self);
-  }
   /* nostrc-yi2: Calm timeline - connect new notes button click */
   if (self->btn_new_notes) {
     g_signal_connect(self->btn_new_notes, "clicked", G_CALLBACK(on_new_notes_clicked), self);
@@ -3566,12 +3579,11 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     if (self->lbl_signin_status && GTK_IS_LABEL(self->lbl_signin_status)) {
       gtk_label_set_text(GTK_LABEL(self->lbl_signin_status), signed_in ? "Signed in" : "Not signed in");
     }
-    if (self->btn_login_local && GTK_IS_WIDGET(self->btn_login_local))
-      gtk_widget_set_sensitive(self->btn_login_local, !signed_in);
-    if (self->btn_pair_remote && GTK_IS_WIDGET(self->btn_pair_remote))
-      gtk_widget_set_sensitive(self->btn_pair_remote, !signed_in);
-    if (self->btn_sign_out && GTK_IS_WIDGET(self->btn_sign_out))
-      gtk_widget_set_sensitive(self->btn_sign_out, signed_in);
+    /* nostrc-swm: Single Log In/Log Out toggle - set initial visibility */
+    if (self->btn_login && GTK_IS_WIDGET(self->btn_login))
+      gtk_widget_set_visible(self->btn_login, !signed_in);
+    if (self->btn_logout && GTK_IS_WIDGET(self->btn_logout))
+      gtk_widget_set_visible(self->btn_logout, signed_in);
     /* nostrc-x3m: Initialize Notifications and Messages tabs sensitivity */
     if (self->notifications_view && GTK_IS_WIDGET(self->notifications_view)) {
       gtk_widget_set_sensitive(self->notifications_view, signed_in);
@@ -3834,14 +3846,12 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, avatar_popover);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, lbl_signin_status);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, lbl_profile_name);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_login_local);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_pair_remote);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_sign_out);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_login);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_logout);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, composer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, dm_inbox);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, notifications_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, page_discover);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_refresh);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_revealer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_label);
   /* nostrc-yi2: Calm timeline - new notes indicator */
@@ -3851,9 +3861,8 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   /* Bind template callbacks referenced by the UI file */
   gtk_widget_class_bind_template_callback(widget_class, on_relays_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_settings_clicked);
-  gtk_widget_class_bind_template_callback(widget_class, on_avatar_login_local_clicked);
-  gtk_widget_class_bind_template_callback(widget_class, on_avatar_pair_remote_clicked);
-  gtk_widget_class_bind_template_callback(widget_class, on_avatar_sign_out_clicked);
+  gtk_widget_class_bind_template_callback(widget_class, on_avatar_login_clicked);
+  gtk_widget_class_bind_template_callback(widget_class, on_avatar_logout_clicked);
 }
 
 /* ---- Minimal stub implementations to satisfy build and support cached profiles path ---- */
@@ -3900,13 +3909,6 @@ static void gnostr_load_settings(GnostrMainWindow *self) {
     }
     g_object_unref(client_settings);
   }
-}
-
-static void on_refresh_clicked(GtkButton *btn, gpointer user_data) {
-  (void)btn;
-  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  show_toast(self, "Refreshing…");
 }
 
 /* Context for async sign-and-publish operation */

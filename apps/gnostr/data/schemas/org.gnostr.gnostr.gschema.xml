@@ -177,6 +177,33 @@
         Unix timestamp of the last successful NIP-51 settings sync.
       </description>
     </key>
+    <!-- Cache size limits -->
+    <key name="image-cache-max-mb" type="i">
+      <default>500</default>
+      <summary>Image cache maximum size (MB)</summary>
+      <description>
+        Maximum size in megabytes for the image/avatar cache.
+        When exceeded, oldest files are pruned on startup.
+        Set to 0 to disable automatic pruning.
+      </description>
+    </key>
+    <key name="ndb-cache-max-mb" type="i">
+      <default>1024</default>
+      <summary>Nostrdb cache maximum size (MB)</summary>
+      <description>
+        Maximum size in megabytes for the nostrdb event cache.
+        When exceeded, oldest events are pruned on startup.
+        Set to 0 to disable automatic pruning.
+      </description>
+    </key>
+    <key name="cache-prune-on-startup" type="b">
+      <default>true</default>
+      <summary>Prune cache on startup</summary>
+      <description>
+        Whether to automatically prune caches when the app starts.
+        Pruning removes oldest entries when cache exceeds size limits.
+      </description>
+    </key>
     <key name="background-mode" type="b">
       <default>false</default>
       <summary>Background mode enabled</summary>

@@ -1136,46 +1136,105 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
   g_object_unref(tex);
 }
 
+/* Helper to show broken image fallback in container */
+static void show_broken_image_fallback(GtkWidget *container) {
+  if (!GTK_IS_OVERLAY(container)) return;
+
+  /* Hide spinner if present */
+  GtkWidget *spinner = g_object_get_data(G_OBJECT(container), "loading-spinner");
+  if (GTK_IS_SPINNER(spinner)) {
+    gtk_spinner_stop(GTK_SPINNER(spinner));
+    gtk_widget_set_visible(spinner, FALSE);
+  }
+
+  /* Show error image */
+  GtkWidget *error_image = g_object_get_data(G_OBJECT(container), "error-image");
+  if (GTK_IS_IMAGE(error_image)) {
+    gtk_widget_set_visible(error_image, TRUE);
+  }
+
+  /* Hide picture */
+  GtkWidget *picture = g_object_get_data(G_OBJECT(container), "media-picture");
+  if (GTK_IS_PICTURE(picture)) {
+    gtk_widget_set_visible(picture, FALSE);
+  }
+}
+
+/* Helper to show loaded image in container */
+static void show_loaded_image(GtkWidget *container) {
+  if (!GTK_IS_OVERLAY(container)) return;
+
+  /* Hide spinner */
+  GtkWidget *spinner = g_object_get_data(G_OBJECT(container), "loading-spinner");
+  if (GTK_IS_SPINNER(spinner)) {
+    gtk_spinner_stop(GTK_SPINNER(spinner));
+    gtk_widget_set_visible(spinner, FALSE);
+  }
+
+  /* Hide error image */
+  GtkWidget *error_image = g_object_get_data(G_OBJECT(container), "error-image");
+  if (GTK_IS_IMAGE(error_image)) {
+    gtk_widget_set_visible(error_image, FALSE);
+  }
+
+  /* Show picture */
+  GtkWidget *picture = g_object_get_data(G_OBJECT(container), "media-picture");
+  if (GTK_IS_PICTURE(picture)) {
+    gtk_widget_set_visible(picture, TRUE);
+  }
+}
+
 /* Callback for media image loading */
 static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
   GtkPicture *picture = GTK_PICTURE(user_data);
   GError *error = NULL;
-  
+
+  /* Get the parent container (GtkOverlay) for spinner/error handling */
+  GtkWidget *container = GTK_IS_WIDGET(picture) ? gtk_widget_get_parent(picture) : NULL;
+
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_debug("Media: Failed to load image: %s", error->message);
+      /* Show broken image fallback */
+      if (container) show_broken_image_fallback(container);
     }
     g_error_free(error);
     /* Release the reference we took in load_media_image */
     g_object_unref(picture);
     return;
   }
-  
+
   if (!bytes || g_bytes_get_size(bytes) == 0) {
     if (bytes) g_bytes_unref(bytes);
+    /* Show broken image fallback for empty response */
+    if (container) show_broken_image_fallback(container);
     /* Release the reference we took in load_media_image */
     g_object_unref(picture);
     return;
   }
-  
+
   /* Create texture from bytes */
   GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
   g_bytes_unref(bytes);
-  
+
   if (error) {
     g_debug("Media: Failed to create texture: %s", error->message);
     g_error_free(error);
+    /* Show broken image fallback for decode error */
+    if (container) show_broken_image_fallback(container);
     /* Release the reference we took in load_media_image */
     g_object_unref(picture);
     return;
   }
-  
+
   /* Update picture widget - check if still valid */
   if (GTK_IS_PICTURE(picture)) {
     gtk_picture_set_paintable(picture, GDK_PAINTABLE(texture));
+    /* Show the loaded image and hide spinner */
+    if (container) show_loaded_image(container);
   }
-  
+
   g_object_unref(texture);
   /* Release the reference we took in load_media_image */
   g_object_unref(picture);
@@ -1389,10 +1448,10 @@ static gboolean update_timestamp_tick(gpointer user_data) {
 
 void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_at, const char *fallback_ts) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->lbl_timestamp)) return;
-  
+
   /* Store the created_at timestamp */
   self->created_at = created_at;
-  
+
   /* Update the display immediately */
   if (created_at > 0) {
     time_t now = time(NULL);
@@ -1404,12 +1463,23 @@ void gnostr_note_card_row_set_timestamp(GnostrNoteCardRow *self, gint64 created_
     else if (diff < 86400) g_snprintf(buf, sizeof(buf), "%ldh", diff/3600);
     else g_snprintf(buf, sizeof(buf), "%ldd", diff/86400);
     gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), buf);
-    
+
+    /* Set tooltip with full date/time */
+    GDateTime *dt = g_date_time_new_from_unix_local(created_at);
+    if (dt) {
+      gchar *full_date = g_date_time_format(dt, "%B %d, %Y at %l:%M %p");
+      if (full_date) {
+        gtk_widget_set_tooltip_text(GTK_WIDGET(self->lbl_timestamp), full_date);
+        g_free(full_date);
+      }
+      g_date_time_unref(dt);
+    }
+
     /* Remove old timer if exists */
     if (self->timestamp_timer_id > 0) {
       g_source_remove(self->timestamp_timer_id);
     }
-    
+
     /* Add timer to update every 60 seconds */
     self->timestamp_timer_id = g_timeout_add_seconds(60, update_timestamp_tick, self);
   } else {
@@ -1452,6 +1522,80 @@ static gboolean is_video_url(const char *u) {
   return result;
 }
 
+/**
+ * create_image_container:
+ * @url: the image URL
+ * @height: the preferred height for the image
+ * @alt_text: (nullable): alt text for accessibility tooltip
+ *
+ * Creates a GtkOverlay container containing:
+ * - GtkPicture for the image (hidden initially)
+ * - GtkSpinner for loading state (visible and spinning initially)
+ * - GtkImage for broken image fallback (hidden initially)
+ *
+ * The container stores references to its children via g_object_set_data():
+ * - "media-picture": the GtkPicture widget
+ * - "loading-spinner": the GtkSpinner widget
+ * - "error-image": the broken image GtkImage widget
+ * - "image-url": the URL string (for click handler)
+ *
+ * Returns: (transfer full): the GtkOverlay container widget
+ */
+static GtkWidget *create_image_container(const char *url, int height, const char *alt_text) {
+  /* Create overlay container */
+  GtkWidget *container = gtk_overlay_new();
+  gtk_widget_add_css_class(container, "media-image-container");
+  gtk_widget_set_size_request(container, -1, height);
+  gtk_widget_set_hexpand(container, TRUE);
+  gtk_widget_set_vexpand(container, FALSE);
+
+  /* Create picture widget (hidden initially, shown when loaded) */
+  GtkWidget *pic = gtk_picture_new();
+  gtk_widget_add_css_class(pic, "note-media-image");
+  gtk_widget_add_css_class(pic, "clickable-image");
+  gtk_picture_set_can_shrink(GTK_PICTURE(pic), TRUE);
+  gtk_picture_set_content_fit(GTK_PICTURE(pic), GTK_CONTENT_FIT_CONTAIN);
+  gtk_widget_set_size_request(pic, -1, height);
+  gtk_widget_set_hexpand(pic, TRUE);
+  gtk_widget_set_vexpand(pic, FALSE);
+  gtk_widget_set_visible(pic, FALSE);  /* Hidden until loaded */
+  gtk_widget_set_cursor_from_name(pic, "pointer");
+  if (alt_text && *alt_text) {
+    gtk_widget_set_tooltip_text(pic, alt_text);
+  }
+  gtk_overlay_set_child(GTK_OVERLAY(container), pic);
+
+  /* Create loading spinner (visible and active initially) */
+  GtkWidget *spinner = gtk_spinner_new();
+  gtk_widget_add_css_class(spinner, "media-loading-spinner");
+  gtk_widget_set_halign(spinner, GTK_ALIGN_CENTER);
+  gtk_widget_set_valign(spinner, GTK_ALIGN_CENTER);
+  gtk_widget_set_size_request(spinner, 32, 32);
+  gtk_spinner_start(GTK_SPINNER(spinner));
+  gtk_widget_set_visible(spinner, TRUE);
+  gtk_overlay_add_overlay(GTK_OVERLAY(container), spinner);
+
+  /* Create error image (hidden initially, shown on load failure) */
+  GtkWidget *error_image = gtk_image_new_from_icon_name("image-missing-symbolic");
+  gtk_widget_add_css_class(error_image, "media-error-image");
+  gtk_image_set_pixel_size(GTK_IMAGE(error_image), 48);
+  gtk_widget_set_halign(error_image, GTK_ALIGN_CENTER);
+  gtk_widget_set_valign(error_image, GTK_ALIGN_CENTER);
+  gtk_widget_set_visible(error_image, FALSE);
+  gtk_widget_set_tooltip_text(error_image, "Failed to load image");
+  gtk_overlay_add_overlay(GTK_OVERLAY(container), error_image);
+
+  /* Store references for access in callbacks */
+  g_object_set_data(G_OBJECT(container), "media-picture", pic);
+  g_object_set_data(G_OBJECT(container), "loading-spinner", spinner);
+  g_object_set_data(G_OBJECT(container), "error-image", error_image);
+  g_object_set_data_full(G_OBJECT(container), "image-url", g_strdup(url), g_free);
+  /* Also store URL on picture for on_media_image_clicked compatibility */
+  g_object_set_data_full(G_OBJECT(pic), "image-url", g_strdup(url), g_free);
+
+  return container;
+}
+
 /* Image click handler - opens full-size image viewer with gallery support */
 static void on_media_image_clicked(GtkGestureClick *gesture,
                                     int n_press,
@@ -1470,8 +1614,21 @@ static void on_media_image_clicked(GtkGestureClick *gesture,
   const char *clicked_url = g_object_get_data(G_OBJECT(pic), "image-url");
   if (!clicked_url || !*clicked_url) return;
 
-  /* Get the parent media_box to find all images */
-  GtkWidget *media_box = gtk_widget_get_parent(pic);
+  /* Navigate up to find the media_box:
+   * New structure: picture -> overlay (container) -> media_box
+   * Old structure: picture -> media_box (for backwards compat) */
+  GtkWidget *container = gtk_widget_get_parent(pic);
+  GtkWidget *media_box = NULL;
+
+  if (GTK_IS_OVERLAY(container)) {
+    /* New container structure */
+    media_box = gtk_widget_get_parent(container);
+  } else if (GTK_IS_BOX(container)) {
+    /* Old/fallback structure - picture directly in media_box */
+    media_box = container;
+    container = NULL;
+  }
+
   if (!media_box || !GTK_IS_BOX(media_box)) {
     /* Fallback: single image mode */
     GtkRoot *root = gtk_widget_get_root(pic);
@@ -1487,14 +1644,25 @@ static void on_media_image_clicked(GtkGestureClick *gesture,
   guint clicked_index = 0;
   GtkWidget *child = gtk_widget_get_first_child(media_box);
   while (child) {
-    if (GTK_IS_PICTURE(child)) {
-      const char *url = g_object_get_data(G_OBJECT(child), "image-url");
-      if (url && *url) {
-        if (child == pic) {
-          clicked_index = urls->len;
-        }
-        g_ptr_array_add(urls, (gpointer)url);
+    /* Check for new container structure (GtkOverlay) or old structure (GtkPicture) */
+    const char *url = NULL;
+    GtkWidget *check_pic = NULL;
+
+    if (GTK_IS_OVERLAY(child)) {
+      /* New structure: get URL from container's data */
+      url = g_object_get_data(G_OBJECT(child), "image-url");
+      check_pic = g_object_get_data(G_OBJECT(child), "media-picture");
+    } else if (GTK_IS_PICTURE(child)) {
+      /* Old structure: picture directly in media_box */
+      url = g_object_get_data(G_OBJECT(child), "image-url");
+      check_pic = child;
+    }
+
+    if (url && *url) {
+      if (check_pic == pic || (container && child == container)) {
+        clicked_index = urls->len;
       }
+      g_ptr_array_add(urls, (gpointer)url);
     }
     child = gtk_widget_get_next_sibling(child);
   }
@@ -1706,26 +1874,17 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
         if (g_str_has_prefix(url, "http://") || g_str_has_prefix(url, "https://")) {
           /* Handle images */
           if (is_image_url(url)) {
-            GtkWidget *pic = gtk_picture_new();
-            gtk_widget_add_css_class(pic, "note-media-image");
-            gtk_widget_add_css_class(pic, "clickable-image");
-            gtk_picture_set_can_shrink(GTK_PICTURE(pic), TRUE);
-            gtk_picture_set_content_fit(GTK_PICTURE(pic), GTK_CONTENT_FIT_CONTAIN);
-            gtk_widget_set_size_request(pic, -1, 300);
-            gtk_widget_set_hexpand(pic, TRUE);
-            gtk_widget_set_vexpand(pic, FALSE);
-            gtk_widget_set_cursor_from_name(pic, "pointer");
+            /* Create image container with spinner and error fallback */
+            GtkWidget *container = create_image_container(url, 300, NULL);
+            GtkWidget *pic = g_object_get_data(G_OBJECT(container), "media-picture");
 
-            /* Add click gesture to open image viewer */
+            /* Add click gesture to the picture to open image viewer */
             GtkGesture *click_gesture = gtk_gesture_click_new();
             gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture), GDK_BUTTON_PRIMARY);
-            /* Store URL in widget data for the click handler */
-            g_object_set_data_full(G_OBJECT(pic), "image-url", g_strdup(url), g_free);
-            g_signal_connect(click_gesture, "pressed", G_CALLBACK(on_media_image_clicked),
-                             g_object_get_data(G_OBJECT(pic), "image-url"));
+            g_signal_connect(click_gesture, "pressed", G_CALLBACK(on_media_image_clicked), NULL);
             gtk_widget_add_controller(pic, GTK_EVENT_CONTROLLER(click_gesture));
 
-            gtk_box_append(GTK_BOX(self->media_box), pic);
+            gtk_box_append(GTK_BOX(self->media_box), container);
             gtk_widget_set_visible(self->media_box, TRUE);
 
 #ifdef HAVE_SOUP3
@@ -1942,11 +2101,7 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
           }
 
           if (media_type == GNOSTR_MEDIA_TYPE_IMAGE) {
-            GtkWidget *pic = gtk_picture_new();
-            gtk_widget_add_css_class(pic, "note-media-image");
-            gtk_widget_add_css_class(pic, "clickable-image");
-            gtk_picture_set_can_shrink(GTK_PICTURE(pic), TRUE);
-            gtk_picture_set_content_fit(GTK_PICTURE(pic), GTK_CONTENT_FIT_CONTAIN);
+            /* Calculate height from imeta dimensions if available */
             int height = 300;
             if (imeta && imeta->width > 0 && imeta->height > 0) {
               int cw = 400;
@@ -1954,22 +2109,19 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
               if (height > 400) height = 400;
               if (height < 100) height = 100;
             }
-            gtk_widget_set_size_request(pic, -1, height);
-            if (imeta && imeta->alt && *imeta->alt) gtk_widget_set_tooltip_text(pic, imeta->alt);
-            gtk_widget_set_hexpand(pic, TRUE);
-            gtk_widget_set_vexpand(pic, FALSE);
-            gtk_widget_set_cursor_from_name(pic, "pointer");
 
-            /* Add click gesture to open image viewer */
+            /* Create image container with spinner and error fallback */
+            const char *alt_text = (imeta && imeta->alt && *imeta->alt) ? imeta->alt : NULL;
+            GtkWidget *container = create_image_container(url, height, alt_text);
+            GtkWidget *pic = g_object_get_data(G_OBJECT(container), "media-picture");
+
+            /* Add click gesture to the picture to open image viewer */
             GtkGesture *click_gesture = gtk_gesture_click_new();
             gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture), GDK_BUTTON_PRIMARY);
-            /* Store URL in widget data for the click handler */
-            g_object_set_data_full(G_OBJECT(pic), "image-url", g_strdup(url), g_free);
-            g_signal_connect(click_gesture, "pressed", G_CALLBACK(on_media_image_clicked),
-                             g_object_get_data(G_OBJECT(pic), "image-url"));
+            g_signal_connect(click_gesture, "pressed", G_CALLBACK(on_media_image_clicked), NULL);
             gtk_widget_add_controller(pic, GTK_EVENT_CONTROLLER(click_gesture));
 
-            gtk_box_append(GTK_BOX(self->media_box), pic);
+            gtk_box_append(GTK_BOX(self->media_box), container);
             gtk_widget_set_visible(self->media_box, TRUE);
 #ifdef HAVE_SOUP3
             load_media_image(self, url, GTK_PICTURE(pic));

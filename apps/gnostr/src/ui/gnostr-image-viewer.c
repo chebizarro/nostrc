@@ -5,6 +5,7 @@
  */
 
 #include "gnostr-image-viewer.h"
+#include "gnostr-main-window.h"
 #include <glib/gi18n.h>
 #include <math.h>
 
@@ -29,6 +30,7 @@ struct _GnostrImageViewer {
   GtkWidget *zoom_label;
   GtkWidget *spinner;
   GtkWidget *save_button;
+  GtkWidget *copy_link_button;
   GtkWidget *prev_button;
   GtkWidget *next_button;
   GtkWidget *nav_label;    /* Shows "1 / 5" style indicator */
@@ -98,6 +100,7 @@ static void on_zoom_scale_changed(GtkGestureZoom *gesture,
 static void on_prev_clicked(GtkButton *button, gpointer user_data);
 static void on_next_clicked(GtkButton *button, gpointer user_data);
 static void on_save_clicked(GtkButton *button, gpointer user_data);
+static void on_copy_link_clicked(GtkButton *button, gpointer user_data);
 static void update_nav_display(GnostrImageViewer *self);
 
 static void gnostr_image_viewer_dispose(GObject *obj) {
@@ -214,6 +217,15 @@ static void gnostr_image_viewer_init(GnostrImageViewer *self) {
   gtk_widget_set_tooltip_text(self->save_button, "Save image (Ctrl+S)");
   g_signal_connect(self->save_button, "clicked", G_CALLBACK(on_save_clicked), self);
   gtk_box_append(GTK_BOX(toolbar_box), self->save_button);
+
+  /* Copy link button */
+  self->copy_link_button = gtk_button_new_from_icon_name("edit-copy-symbolic");
+  gtk_widget_add_css_class(self->copy_link_button, "image-viewer-button");
+  gtk_widget_add_css_class(self->copy_link_button, "circular");
+  gtk_widget_add_css_class(self->copy_link_button, "osd");
+  gtk_widget_set_tooltip_text(self->copy_link_button, "Copy link (Ctrl+C)");
+  g_signal_connect(self->copy_link_button, "clicked", G_CALLBACK(on_copy_link_clicked), self);
+  gtk_box_append(GTK_BOX(toolbar_box), self->copy_link_button);
 
   /* Create navigation box in bottom center */
   GtkWidget *nav_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
@@ -399,6 +411,14 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
       /* Ctrl+S to save */
       if (state & GDK_CONTROL_MASK) {
         on_save_clicked(NULL, self);
+        return TRUE;
+      }
+      break;
+
+    case GDK_KEY_c:
+      /* Ctrl+C to copy link */
+      if (state & GDK_CONTROL_MASK) {
+        on_copy_link_clicked(NULL, self);
         return TRUE;
       }
       break;
@@ -806,6 +826,27 @@ static void on_save_response(GObject *source, GAsyncResult *result, gpointer use
   }
 
   g_object_unref(file);
+}
+
+static void on_copy_link_clicked(GtkButton *button, gpointer user_data) {
+  (void)button;
+  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
+
+  if (!self->image_url || !*self->image_url) {
+    g_warning("ImageViewer: No image URL to copy");
+    return;
+  }
+
+  /* Get the clipboard and set the URL */
+  GdkDisplay *display = gtk_widget_get_display(GTK_WIDGET(self));
+  GdkClipboard *clipboard = gdk_display_get_clipboard(display);
+  gdk_clipboard_set_text(clipboard, self->image_url);
+
+  /* Show toast via the main window */
+  GtkWindow *parent = gtk_window_get_transient_for(GTK_WINDOW(self));
+  if (parent) {
+    gnostr_main_window_show_toast(GTK_WIDGET(parent), "Link copied");
+  }
 }
 
 void gnostr_image_viewer_set_gallery(GnostrImageViewer *self,

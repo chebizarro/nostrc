@@ -277,6 +277,17 @@ gnostr_dm_row_set_timestamp(GnostrDmRow *self,
     char *ts = NULL;
     if (created_at > 0) {
         ts = format_relative_time(created_at);
+
+        /* Set tooltip with full date/time */
+        GDateTime *dt = g_date_time_new_from_unix_local(created_at);
+        if (dt) {
+            gchar *full_date = g_date_time_format(dt, "%B %d, %Y at %l:%M %p");
+            if (full_date) {
+                gtk_widget_set_tooltip_text(GTK_WIDGET(self->lbl_timestamp), full_date);
+                g_free(full_date);
+            }
+            g_date_time_unref(dt);
+        }
     } else if (fallback_ts) {
         ts = g_strdup(fallback_ts);
     }

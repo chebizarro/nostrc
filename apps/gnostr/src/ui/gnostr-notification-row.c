@@ -326,6 +326,19 @@ gnostr_notification_row_set_notification(GnostrNotificationRow *self,
     gtk_label_set_text(self->lbl_timestamp, ts);
     g_free(ts);
 
+    /* Set tooltip with full date/time */
+    if (notif->created_at > 0) {
+        GDateTime *dt = g_date_time_new_from_unix_local(notif->created_at);
+        if (dt) {
+            gchar *full_date = g_date_time_format(dt, "%B %d, %Y at %l:%M %p");
+            if (full_date) {
+                gtk_widget_set_tooltip_text(GTK_WIDGET(self->lbl_timestamp), full_date);
+                g_free(full_date);
+            }
+            g_date_time_unref(dt);
+        }
+    }
+
     /* Set avatar initials */
     char *initials = get_initials(name);
     gtk_label_set_text(self->avatar_initials, initials);
