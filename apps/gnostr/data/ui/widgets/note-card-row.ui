@@ -214,7 +214,7 @@
                         <property name="spacing">4</property>
                         <child>
                           <object class="GtkImage" id="zap_icon">
-                            <property name="icon-name">weather-storm-symbolic</property>
+                            <property name="icon-name">camera-flash-symbolic</property>
                           </object>
                         </child>
                         <child>
