@@ -66,6 +66,15 @@
     </key>
 
     <!-- Network Settings -->
+    <key name="relays" type="as">
+      <default>['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band', 'wss://relay.primal.net']</default>
+      <summary>Relay URLs</summary>
+      <description>
+        List of Nostr relay URLs (ws:// or wss://) for bunker and signing operations.
+        Values should be normalized (lowercase scheme/host, no trailing slash).
+      </description>
+    </key>
+
     <key name="tor-socks" type="s">
       <default>''</default>
       <summary>Tor SOCKS proxy</summary>
