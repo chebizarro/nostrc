@@ -47,9 +47,9 @@
 
                 <child>
                   <object class="GtkToggleButton" id="btn_local">
-                    <property name="label">Local</property>
+                    <property name="label">Local Cache</property>
                     <property name="active">true</property>
-                    <property name="tooltip-text">Search notes cached locally (fast, offline)</property>
+                    <property name="tooltip-text">Search notes stored in local database. Fast and works offline.</property>
                     <style>
                       <class name="pill"/>
                     </style>
@@ -58,8 +58,8 @@
 
                 <child>
                   <object class="GtkToggleButton" id="btn_relay">
-                    <property name="label">Relay (NIP-50)</property>
-                    <property name="tooltip-text">Search on relays that support NIP-50 search</property>
+                    <property name="label">Search Relays</property>
+                    <property name="tooltip-text">Search notes on remote relays (NIP-50). Results are fetched from relays and saved locally.</property>
                     <style>
                       <class name="pill"/>
                     </style>
