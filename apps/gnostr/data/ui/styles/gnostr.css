@@ -1147,29 +1147,43 @@ button.liked image {
 }
 
 /* ===== nostrc-yi2: Calm Timeline Styles ===== */
+/* ===== nostrc-92l: Fixed transparency and shadow for floating indicator ===== */
 
-/* "N new notes" floating indicator */
+/* "N new notes" floating indicator - FAB-style pill button */
 .new-notes-indicator {
-  background: @accent_bg_color;
+  /* Solid opaque background - no transparency issues */
+  background-color: @accent_bg_color;
   color: @accent_fg_color;
-  border-radius: 9999px;
+  /* Pill shape */
+  border-radius: 999px;
   padding: 8px 16px;
+  /* Typography */
   font-weight: 600;
   font-size: 13px;
-  box-shadow: 0 2px 8px alpha(black, 0.25),
-              0 4px 16px alpha(black, 0.15);
+  /* Strong drop shadow for elevation - visible on any background */
+  box-shadow: 0 2px 4px alpha(black, 0.2),
+              0 4px 12px alpha(black, 0.3),
+              0 8px 24px alpha(black, 0.15);
+  /* Ensure solid rendering */
+  opacity: 1;
+  /* Smooth transitions */
   transition: all 200ms ease;
 }
 
 .new-notes-indicator:hover {
-  background: shade(@accent_bg_color, 0.9);
-  box-shadow: 0 4px 12px alpha(black, 0.3),
-              0 6px 20px alpha(black, 0.2);
-  transform: translateY(-1px);
+  background-color: shade(@accent_bg_color, 0.9);
+  /* Enhanced shadow on hover for lift effect */
+  box-shadow: 0 4px 8px alpha(black, 0.25),
+              0 8px 16px alpha(black, 0.35),
+              0 12px 32px alpha(black, 0.2);
+  transform: translateY(-2px);
 }
 
 .new-notes-indicator:active {
-  background: shade(@accent_bg_color, 0.85);
+  background-color: shade(@accent_bg_color, 0.85);
+  /* Pressed state - reduced shadow */
+  box-shadow: 0 1px 2px alpha(black, 0.2),
+              0 2px 8px alpha(black, 0.25);
   transform: translateY(0);
 }
 
