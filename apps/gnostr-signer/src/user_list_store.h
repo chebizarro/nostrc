@@ -25,6 +25,10 @@ typedef struct {
   gchar *pubkey;        /* Hex public key */
   gchar *relay_hint;    /* Optional relay hint */
   gchar *petname;       /* Optional petname (follows only) */
+  /* Cached profile info (populated via profile_store lookup) */
+  gchar *display_name;  /* Cached display name from profile */
+  gchar *avatar_url;    /* Cached avatar URL from profile */
+  gchar *nip05;         /* Cached NIP-05 identifier */
 } UserListEntry;
 
 /* Create a new user list store */
@@ -90,5 +94,62 @@ void user_list_store_set_last_sync(UserListStore *store, gint64 timestamp);
 
 /* Merge entries from an event (doesn't replace, just adds missing) */
 guint user_list_store_merge_event(UserListStore *store, const gchar *event_json);
+
+/* Update cached profile info for a user entry.
+ * Call this after fetching profile from relay or cache.
+ */
+gboolean user_list_store_update_profile(UserListStore *store, const gchar *pubkey,
+                                        const gchar *display_name,
+                                        const gchar *avatar_url,
+                                        const gchar *nip05);
+
+/* Get entry by pubkey (returns internal pointer, do not free) */
+const UserListEntry *user_list_store_get_entry(UserListStore *store, const gchar *pubkey);
+
+/* Get display name for a user (returns petname if set, else display_name, else truncated pubkey) */
+gchar *user_list_store_get_display_name(UserListStore *store, const gchar *pubkey);
+
+/* Callback type for profile fetch requests */
+typedef void (*UserListProfileFetchCb)(const gchar *pubkey,
+                                       const gchar *display_name,
+                                       const gchar *avatar_url,
+                                       const gchar *nip05,
+                                       gpointer user_data);
+
+/* Request profile info for all users in the list (calls callback for each) */
+void user_list_store_request_profiles(UserListStore *store,
+                                      UserListProfileFetchCb callback,
+                                      gpointer user_data);
+
+/* Set the owner pubkey (for generating signed events) */
+void user_list_store_set_owner(UserListStore *store, const gchar *owner_pubkey);
+
+/* Get the owner pubkey */
+const gchar *user_list_store_get_owner(UserListStore *store);
+
+/* Relay sync status */
+typedef enum {
+  USER_LIST_SYNC_IDLE,
+  USER_LIST_SYNC_FETCHING,
+  USER_LIST_SYNC_PUBLISHING,
+  USER_LIST_SYNC_SUCCESS,
+  USER_LIST_SYNC_ERROR
+} UserListSyncStatus;
+
+/* Sync status callback */
+typedef void (*UserListSyncCb)(UserListSyncStatus status,
+                               const gchar *message,
+                               gpointer user_data);
+
+/* Build a subscription filter for fetching user list from relay
+ * Returns JSON filter string (caller frees)
+ */
+gchar *user_list_store_build_fetch_filter(UserListStore *store, const gchar *pubkey);
+
+/* Mark store as synced with current timestamp */
+void user_list_store_mark_synced(UserListStore *store);
+
+/* Check if store needs sync (based on last_sync time and threshold) */
+gboolean user_list_store_needs_sync(UserListStore *store, gint64 threshold_seconds);
 
 G_END_DECLS

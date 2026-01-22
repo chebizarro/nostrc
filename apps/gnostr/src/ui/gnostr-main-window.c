@@ -2830,6 +2830,21 @@ G_DEFINE_FINAL_TYPE(GnostrMainWindow, gnostr_main_window, GTK_TYPE_APPLICATION_W
 static void gnostr_main_window_dispose(GObject *object) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(object);
   g_debug("main-window: dispose");
+
+  /* Remove pending timeout/idle sources to prevent callbacks after dispose */
+  if (self->profile_fetch_source_id) {
+    g_source_remove(self->profile_fetch_source_id);
+    self->profile_fetch_source_id = 0;
+  }
+  if (self->backfill_source_id) {
+    g_source_remove(self->backfill_source_id);
+    self->backfill_source_id = 0;
+  }
+  if (self->health_check_source_id) {
+    g_source_remove(self->health_check_source_id);
+    self->health_check_source_id = 0;
+  }
+
   if (self->profile_fetch_cancellable) { g_object_unref(self->profile_fetch_cancellable); self->profile_fetch_cancellable = NULL; }
   if (self->bg_prefetch_cancellable) { g_object_unref(self->bg_prefetch_cancellable); self->bg_prefetch_cancellable = NULL; }
   if (self->pool_cancellable) { g_object_unref(self->pool_cancellable); self->pool_cancellable = NULL; }

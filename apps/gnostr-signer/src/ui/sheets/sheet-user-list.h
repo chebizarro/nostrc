@@ -22,4 +22,17 @@ void sheet_user_list_set_on_publish(SheetUserList *self,
                                     SheetUserListSaveCb cb,
                                     gpointer user_data);
 
+/* Get the underlying user list store */
+UserListStore *sheet_user_list_get_store(SheetUserList *self);
+
+/* Refresh the list from the store */
+void sheet_user_list_refresh(SheetUserList *self);
+
+/* Set profile info for a user (updates display) */
+void sheet_user_list_update_user_profile(SheetUserList *self,
+                                         const gchar *pubkey,
+                                         const gchar *display_name,
+                                         const gchar *avatar_url,
+                                         const gchar *nip05);
+
 G_END_DECLS

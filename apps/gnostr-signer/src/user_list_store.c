@@ -9,6 +9,7 @@ struct _UserListStore {
   GPtrArray *entries;   /* Array of UserListEntry* */
   gchar *config_path;
   gint64 last_sync;     /* Timestamp of last sync with relays */
+  gchar *owner_pubkey;  /* Owner's pubkey for signing events */
 };
 
 static gchar *get_config_path(UserListType type) {
@@ -27,6 +28,9 @@ void user_list_entry_free(UserListEntry *entry) {
   g_free(entry->pubkey);
   g_free(entry->relay_hint);
   g_free(entry->petname);
+  g_free(entry->display_name);
+  g_free(entry->avatar_url);
+  g_free(entry->nip05);
   g_free(entry);
 }
 
@@ -36,6 +40,9 @@ static UserListEntry *user_list_entry_copy(const UserListEntry *entry) {
   copy->pubkey = g_strdup(entry->pubkey);
   copy->relay_hint = g_strdup(entry->relay_hint);
   copy->petname = g_strdup(entry->petname);
+  copy->display_name = g_strdup(entry->display_name);
+  copy->avatar_url = g_strdup(entry->avatar_url);
+  copy->nip05 = g_strdup(entry->nip05);
   return copy;
 }
 
@@ -51,6 +58,7 @@ void user_list_store_free(UserListStore *store) {
   if (!store) return;
   g_ptr_array_unref(store->entries);
   g_free(store->config_path);
+  g_free(store->owner_pubkey);
   g_free(store);
 }
 
@@ -524,4 +532,128 @@ guint user_list_store_merge_event(UserListStore *store, const gchar *event_json)
 
   g_object_unref(parser);
   return added;
+}
+
+gboolean user_list_store_update_profile(UserListStore *store, const gchar *pubkey,
+                                        const gchar *display_name,
+                                        const gchar *avatar_url,
+                                        const gchar *nip05) {
+  if (!store || !pubkey) return FALSE;
+
+  gint idx = find_entry_by_pubkey(store, pubkey);
+  if (idx < 0) return FALSE;
+
+  UserListEntry *entry = g_ptr_array_index(store->entries, (guint)idx);
+
+  g_free(entry->display_name);
+  entry->display_name = g_strdup(display_name);
+
+  g_free(entry->avatar_url);
+  entry->avatar_url = g_strdup(avatar_url);
+
+  g_free(entry->nip05);
+  entry->nip05 = g_strdup(nip05);
+
+  return TRUE;
+}
+
+const UserListEntry *user_list_store_get_entry(UserListStore *store, const gchar *pubkey) {
+  if (!store || !pubkey) return NULL;
+
+  gint idx = find_entry_by_pubkey(store, pubkey);
+  if (idx < 0) return NULL;
+
+  return g_ptr_array_index(store->entries, (guint)idx);
+}
+
+gchar *user_list_store_get_display_name(UserListStore *store, const gchar *pubkey) {
+  if (!store || !pubkey) return NULL;
+
+  const UserListEntry *entry = user_list_store_get_entry(store, pubkey);
+  if (!entry) return NULL;
+
+  /* Priority: petname > display_name > truncated pubkey */
+  if (entry->petname && *entry->petname) {
+    return g_strdup(entry->petname);
+  }
+  if (entry->display_name && *entry->display_name) {
+    return g_strdup(entry->display_name);
+  }
+  /* Return truncated pubkey */
+  return g_strdup_printf("%.12s...", pubkey);
+}
+
+void user_list_store_request_profiles(UserListStore *store,
+                                      UserListProfileFetchCb callback,
+                                      gpointer user_data) {
+  if (!store || !callback) return;
+
+  for (guint i = 0; i < store->entries->len; i++) {
+    UserListEntry *entry = g_ptr_array_index(store->entries, i);
+    /* Call the callback with current cached info (may be NULL) */
+    callback(entry->pubkey, entry->display_name, entry->avatar_url,
+             entry->nip05, user_data);
+  }
+}
+
+void user_list_store_set_owner(UserListStore *store, const gchar *owner_pubkey) {
+  if (!store) return;
+  g_free(store->owner_pubkey);
+  store->owner_pubkey = g_strdup(owner_pubkey);
+}
+
+const gchar *user_list_store_get_owner(UserListStore *store) {
+  return store ? store->owner_pubkey : NULL;
+}
+
+gchar *user_list_store_build_fetch_filter(UserListStore *store, const gchar *pubkey) {
+  if (!store || !pubkey) return NULL;
+
+  gint kind = user_list_store_get_kind(store);
+
+  /* Build REQ filter for fetching user's list from relay:
+   * {"kinds":[<kind>],"authors":["<pubkey>"],"limit":1}
+   */
+  JsonBuilder *builder = json_builder_new();
+  json_builder_begin_object(builder);
+
+  json_builder_set_member_name(builder, "kinds");
+  json_builder_begin_array(builder);
+  json_builder_add_int_value(builder, kind);
+  json_builder_end_array(builder);
+
+  json_builder_set_member_name(builder, "authors");
+  json_builder_begin_array(builder);
+  json_builder_add_string_value(builder, pubkey);
+  json_builder_end_array(builder);
+
+  json_builder_set_member_name(builder, "limit");
+  json_builder_add_int_value(builder, 1);
+
+  json_builder_end_object(builder);
+
+  JsonNode *root = json_builder_get_root(builder);
+  JsonGenerator *gen = json_generator_new();
+  json_generator_set_root(gen, root);
+  gchar *result = json_generator_to_data(gen, NULL);
+
+  g_object_unref(gen);
+  json_node_unref(root);
+  g_object_unref(builder);
+
+  return result;
+}
+
+void user_list_store_mark_synced(UserListStore *store) {
+  if (store) {
+    store->last_sync = (gint64)time(NULL);
+  }
+}
+
+gboolean user_list_store_needs_sync(UserListStore *store, gint64 threshold_seconds) {
+  if (!store) return FALSE;
+  if (store->last_sync == 0) return TRUE;
+
+  gint64 now = (gint64)time(NULL);
+  return (now - store->last_sync) > threshold_seconds;
 }

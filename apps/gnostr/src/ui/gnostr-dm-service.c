@@ -70,6 +70,8 @@ G_DEFINE_TYPE(GnostrDmService, gnostr_dm_service, G_TYPE_OBJECT)
 /* Forward declarations */
 static void on_pool_gift_wrap_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data);
 static void decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap);
+typedef struct _DecryptContext DecryptContext;
+static void decrypt_ctx_free(DecryptContext *ctx);
 
 static void
 gnostr_dm_service_dispose(GObject *object)
@@ -112,7 +114,7 @@ gnostr_dm_service_init(GnostrDmService *self)
     self->conversations = g_hash_table_new_full(
         g_str_hash, g_str_equal, g_free, (GDestroyNotify)dm_conversation_free);
     self->pending_decrypts = g_hash_table_new_full(
-        g_str_hash, g_str_equal, g_free, NULL);
+        g_str_hash, g_str_equal, g_free, (GDestroyNotify)decrypt_ctx_free);
     self->pool = NULL;
     self->cancellable = NULL;
     self->events_handler = 0;
@@ -388,7 +390,7 @@ update_conversation(GnostrDmService *self,
 }
 
 /* Context for async decryption */
-typedef struct {
+struct _DecryptContext {
     GnostrDmService *service;   /* weak ref */
     char *gift_wrap_id;
     char *ephemeral_pubkey;     /* Gift wrap sender (ephemeral key) */
@@ -396,7 +398,7 @@ typedef struct {
     /* After first decrypt: */
     char *seal_pubkey;          /* Seal sender (real sender) */
     char *encrypted_rumor;      /* Encrypted rumor content */
-} DecryptContext;
+};
 
 static void decrypt_ctx_free(DecryptContext *ctx) {
     if (!ctx) return;

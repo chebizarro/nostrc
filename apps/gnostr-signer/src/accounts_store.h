@@ -91,4 +91,27 @@ gboolean accounts_store_generate_key(AccountsStore *as, const gchar *label,
 /* Get the display name for an account (label if set, else truncated npub) */
 gchar *accounts_store_get_display_name(AccountsStore *as, const gchar *id);
 
+/* Change notification callback types */
+typedef enum {
+  ACCOUNTS_CHANGE_ADDED,
+  ACCOUNTS_CHANGE_REMOVED,
+  ACCOUNTS_CHANGE_ACTIVE,
+  ACCOUNTS_CHANGE_LABEL
+} AccountsChangeType;
+
+typedef void (*AccountsChangedCb)(AccountsStore *as, AccountsChangeType change,
+                                   const gchar *id, gpointer user_data);
+
+/* Register a change notification callback.
+ * Returns a handler ID that can be used to unregister.
+ */
+guint accounts_store_connect_changed(AccountsStore *as, AccountsChangedCb cb,
+                                     gpointer user_data);
+
+/* Unregister a change notification callback */
+void accounts_store_disconnect_changed(AccountsStore *as, guint handler_id);
+
+/* Get singleton instance for global access */
+AccountsStore *accounts_store_get_default(void);
+
 G_END_DECLS

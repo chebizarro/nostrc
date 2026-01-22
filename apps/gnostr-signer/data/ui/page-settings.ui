@@ -24,6 +24,13 @@
             <child type="suffix"><object class="GtkButton" id="btn_backup_keys"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
           </object>
         </child>
+        <child>
+          <object class="AdwActionRow">
+            <property name="title" translatable="yes">Edit Profile</property>
+            <property name="subtitle" translatable="yes">Name, bio, avatar, NIP-05, lightning address</property>
+            <child type="suffix"><object class="GtkButton" id="btn_edit_profile"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+          </object>
+        </child>
       </object>
     </child>
     <child>
@@ -45,6 +52,26 @@
           <object class="AdwActionRow">
             <property name="title" translatable="yes">Listen for new connections</property>
             <child type="suffix"><object class="GtkSwitch" id="switch_listen"><property name="valign">center</property><property name="vexpand">false</property></object></child>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="AdwPreferencesGroup" id="group_social">
+        <property name="title" translatable="yes">Social</property>
+        <property name="description" translatable="yes">Manage your follow and mute lists</property>
+        <child>
+          <object class="AdwActionRow">
+            <property name="title" translatable="yes">Following</property>
+            <property name="subtitle" translatable="yes">Manage accounts you follow (kind:3)</property>
+            <child type="suffix"><object class="GtkButton" id="btn_follows"><property name="label" translatable="yes">Manage</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwActionRow">
+            <property name="title" translatable="yes">Muted</property>
+            <property name="subtitle" translatable="yes">Manage muted accounts (kind:10000)</property>
+            <child type="suffix"><object class="GtkButton" id="btn_mutes"><property name="label" translatable="yes">Manage</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
           </object>
         </child>
       </object>

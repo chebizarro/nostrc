@@ -1,17 +1,44 @@
 /* accounts_store.c - Multi-account management implementation
  *
- * Persists account metadata to ~/.config/gnostr-signer/accounts.ini
+ * Persists account metadata to:
+ * - ~/.config/gnostr-signer/accounts.ini (primary storage)
+ * - GSettings for default-identity and account-order (integration)
  * Integrates with secret_store for secure key operations.
  */
 #include "accounts_store.h"
 #include "secret_store.h"
+#include "settings_manager.h"
 #include <string.h>
+
+/* Change callback entry */
+typedef struct {
+  guint id;
+  AccountsChangedCb cb;
+  gpointer user_data;
+} ChangeHandler;
 
 struct _AccountsStore {
   GHashTable *map;   /* id -> label */
   gchar *active;
   gchar *path;
+  SettingsManager *settings;  /* GSettings integration */
+  GPtrArray *handlers;        /* Change notification handlers */
+  guint next_handler_id;
 };
+
+/* Singleton instance */
+static AccountsStore *default_instance = NULL;
+
+/* Emit change notification */
+static void emit_change(AccountsStore *as, AccountsChangeType change, const gchar *id) {
+  if (!as || !as->handlers) return;
+  for (guint i = 0; i < as->handlers->len; i++) {
+    ChangeHandler *h = g_ptr_array_index(as->handlers, i);
+    if (h && h->cb) {
+      h->cb(as, change, id, h->user_data);
+    }
+  }
+}
 
 static const char *config_path(void) {
   static gchar *p = NULL;
@@ -25,18 +52,37 @@ static const char *config_path(void) {
   return p;
 }
 
+static void change_handler_free(gpointer data) {
+  g_free(data);
+}
+
 AccountsStore *accounts_store_new(void) {
   AccountsStore *as = g_new0(AccountsStore, 1);
   as->map = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   as->path = g_strdup(config_path());
+  as->settings = settings_manager_get_default();
+  as->handlers = g_ptr_array_new_with_free_func(change_handler_free);
+  as->next_handler_id = 1;
   return as;
+}
+
+AccountsStore *accounts_store_get_default(void) {
+  if (!default_instance) {
+    default_instance = accounts_store_new();
+    accounts_store_load(default_instance);
+    accounts_store_sync_with_secrets(default_instance);
+  }
+  return default_instance;
 }
 
 void accounts_store_free(AccountsStore *as) {
   if (!as) return;
   if (as->map) g_hash_table_destroy(as->map);
+  if (as->handlers) g_ptr_array_unref(as->handlers);
   g_free(as->active);
   g_free(as->path);
+  /* settings is singleton, don't free */
+  if (as == default_instance) default_instance = NULL;
   g_free(as);
 }
 
@@ -49,6 +95,27 @@ void accounts_store_load(AccountsStore *as) {
   if (!g_key_file_load_from_file(kf, as->path, G_KEY_FILE_NONE, &err)) {
     if (err) g_clear_error(&err);
     g_key_file_unref(kf);
+
+    /* Try loading from GSettings if INI file doesn't exist */
+    if (as->settings) {
+      gchar **order = settings_manager_get_account_order(as->settings);
+      if (order) {
+        for (gsize i = 0; order[i]; i++) {
+          const gchar *npub = order[i];
+          if (npub && *npub && !g_hash_table_contains(as->map, npub)) {
+            gchar *label = settings_manager_get_identity_label(as->settings, npub);
+            g_hash_table_replace(as->map, g_strdup(npub), label ? label : g_strdup(""));
+          }
+        }
+        g_strfreev(order);
+      }
+
+      /* Load active from GSettings */
+      const gchar *default_id = settings_manager_get_default_identity(as->settings);
+      if (default_id && *default_id && !as->active) {
+        as->active = g_strdup(default_id);
+      }
+    }
     return;
   }
 
@@ -70,6 +137,22 @@ void accounts_store_load(AccountsStore *as) {
   }
 
   g_key_file_unref(kf);
+
+  /* Sync labels from GSettings (GSettings may have newer labels) */
+  if (as->settings) {
+    GHashTableIter it;
+    gpointer key;
+    g_hash_table_iter_init(&it, as->map);
+    while (g_hash_table_iter_next(&it, &key, NULL)) {
+      const gchar *npub = (const gchar*)key;
+      gchar *gs_label = settings_manager_get_identity_label(as->settings, npub);
+      if (gs_label && *gs_label) {
+        g_hash_table_replace(as->map, g_strdup(npub), gs_label);
+      } else {
+        g_free(gs_label);
+      }
+    }
+  }
 }
 
 void accounts_store_save(AccountsStore *as) {
@@ -77,12 +160,16 @@ void accounts_store_save(AccountsStore *as) {
 
   GKeyFile *kf = g_key_file_new();
 
+  /* Build account order array for GSettings */
+  GPtrArray *order_arr = g_ptr_array_new();
+
   /* Write accounts */
   GHashTableIter it;
   gpointer key, val;
   g_hash_table_iter_init(&it, as->map);
   while (g_hash_table_iter_next(&it, &key, &val)) {
     g_key_file_set_string(kf, "accounts", (const gchar*)key, (const gchar*)val);
+    g_ptr_array_add(order_arr, (gpointer)key);
   }
 
   /* Write state */
@@ -105,6 +192,30 @@ void accounts_store_save(AccountsStore *as) {
   }
 
   g_key_file_unref(kf);
+
+  /* Sync to GSettings */
+  if (as->settings) {
+    /* Update account order */
+    g_ptr_array_add(order_arr, NULL);  /* NULL terminate */
+    settings_manager_set_account_order(as->settings, (const gchar *const *)order_arr->pdata);
+
+    /* Update default identity */
+    if (as->active) {
+      settings_manager_set_default_identity(as->settings, as->active);
+    }
+
+    /* Update identity labels */
+    g_hash_table_iter_init(&it, as->map);
+    while (g_hash_table_iter_next(&it, &key, &val)) {
+      const gchar *npub = (const gchar*)key;
+      const gchar *label = (const gchar*)val;
+      if (label && *label) {
+        settings_manager_set_identity_label(as->settings, npub, label);
+      }
+    }
+  }
+
+  g_ptr_array_free(order_arr, TRUE);
 }
 
 gboolean accounts_store_add(AccountsStore *as, const gchar *id, const gchar *label) {
@@ -114,8 +225,15 @@ gboolean accounts_store_add(AccountsStore *as, const gchar *id, const gchar *lab
   g_hash_table_insert(as->map, g_strdup(id), g_strdup(label ? label : ""));
 
   /* Set as active if this is the first account */
-  if (!as->active) {
+  gboolean was_first = !as->active;
+  if (was_first) {
     as->active = g_strdup(id);
+  }
+
+  /* Emit change notification */
+  emit_change(as, ACCOUNTS_CHANGE_ADDED, id);
+  if (was_first) {
+    emit_change(as, ACCOUNTS_CHANGE_ACTIVE, id);
   }
 
   return TRUE;
@@ -126,15 +244,20 @@ gboolean accounts_store_remove(AccountsStore *as, const gchar *id) {
 
   gboolean removed = g_hash_table_remove(as->map, id);
 
-  if (removed && as->active && g_strcmp0(as->active, id) == 0) {
-    /* Pick a new active if any remain */
-    g_clear_pointer(&as->active, g_free);
+  if (removed) {
+    emit_change(as, ACCOUNTS_CHANGE_REMOVED, id);
 
-    GHashTableIter it;
-    gpointer key = NULL, val = NULL;
-    g_hash_table_iter_init(&it, as->map);
-    if (g_hash_table_iter_next(&it, &key, &val)) {
-      as->active = g_strdup((const gchar*)key);
+    if (as->active && g_strcmp0(as->active, id) == 0) {
+      /* Pick a new active if any remain */
+      g_clear_pointer(&as->active, g_free);
+
+      GHashTableIter it;
+      gpointer key = NULL, val = NULL;
+      g_hash_table_iter_init(&it, as->map);
+      if (g_hash_table_iter_next(&it, &key, &val)) {
+        as->active = g_strdup((const gchar*)key);
+        emit_change(as, ACCOUNTS_CHANGE_ACTIVE, as->active);
+      }
     }
   }
 
@@ -174,8 +297,22 @@ GPtrArray *accounts_store_list(AccountsStore *as) {
 
 void accounts_store_set_active(AccountsStore *as, const gchar *id) {
   if (!as) return;
+
+  /* Check if actually changing */
+  gboolean changed = (g_strcmp0(as->active, id) != 0);
+
   g_free(as->active);
   as->active = id ? g_strdup(id) : NULL;
+
+  /* Also update GSettings immediately */
+  if (as->settings && id) {
+    settings_manager_set_default_identity(as->settings, id);
+  }
+
+  /* Emit change notification */
+  if (changed) {
+    emit_change(as, ACCOUNTS_CHANGE_ACTIVE, id);
+  }
 }
 
 gboolean accounts_store_get_active(AccountsStore *as, gchar **out_id) {
@@ -193,6 +330,14 @@ gboolean accounts_store_set_label(AccountsStore *as, const gchar *id, const gcha
 
   /* Also update in secret store */
   secret_store_set_label(id, label);
+
+  /* Also update in GSettings */
+  if (as->settings) {
+    settings_manager_set_identity_label(as->settings, id, label);
+  }
+
+  /* Emit change notification */
+  emit_change(as, ACCOUNTS_CHANGE_LABEL, id);
 
   return TRUE;
 }
@@ -333,4 +478,29 @@ gchar *accounts_store_get_display_name(AccountsStore *as, const gchar *id) {
   }
 
   return g_strdup(id);
+}
+
+guint accounts_store_connect_changed(AccountsStore *as, AccountsChangedCb cb,
+                                     gpointer user_data) {
+  if (!as || !cb) return 0;
+
+  ChangeHandler *h = g_new0(ChangeHandler, 1);
+  h->id = as->next_handler_id++;
+  h->cb = cb;
+  h->user_data = user_data;
+
+  g_ptr_array_add(as->handlers, h);
+  return h->id;
+}
+
+void accounts_store_disconnect_changed(AccountsStore *as, guint handler_id) {
+  if (!as || handler_id == 0) return;
+
+  for (guint i = 0; i < as->handlers->len; i++) {
+    ChangeHandler *h = g_ptr_array_index(as->handlers, i);
+    if (h && h->id == handler_id) {
+      g_ptr_array_remove_index(as->handlers, i);
+      return;
+    }
+  }
 }

@@ -1,8 +1,10 @@
 /* sheet-select-account.c - Account selection and management dialog implementation */
 #include "sheet-select-account.h"
+#include "sheet-import-key.h"
 #include "../app-resources.h"
 #include "../../accounts_store.h"
 #include "../../secret_store.h"
+#include "../../settings_manager.h"
 
 struct _SheetSelectAccount {
   AdwDialog parent_instance;
@@ -206,13 +208,43 @@ static void on_add_new(GtkButton *btn, gpointer user_data) {
   g_free(npub);
 }
 
+/* Callback when import succeeds */
+static void on_import_success(const char *npub, const char *label, gpointer user_data) {
+  SheetSelectAccount *self = (SheetSelectAccount*)user_data;
+  if (!self) return;
+
+  /* Add to accounts store if not already present */
+  if (npub && *npub) {
+    if (!accounts_store_exists(self->accounts, npub)) {
+      accounts_store_add(self->accounts, npub, label);
+    } else if (label && *label) {
+      accounts_store_set_label(self->accounts, npub, label);
+    }
+    accounts_store_set_active(self->accounts, npub);
+    accounts_store_save(self->accounts);
+
+    /* Refresh the list */
+    populate_list(self);
+
+    /* Notify callback */
+    if (self->on_select) {
+      self->on_select(npub, self->on_select_ud);
+    }
+  }
+}
+
 static void on_import(GtkButton *btn, gpointer user_data) {
   (void)btn;
   SheetSelectAccount *self = user_data;
+  if (!self) return;
 
-  /* For now, just close - the import dialog should be opened from main window */
-  /* TODO: Open import key dialog */
-  (void)self;
+  /* Open import key dialog */
+  SheetImportKey *import_dlg = sheet_import_key_new();
+  sheet_import_key_set_on_success(import_dlg, on_import_success, self);
+
+  GtkWidget *parent = GTK_WIDGET(self);
+  GtkRoot *root = gtk_widget_get_root(parent);
+  adw_dialog_present(ADW_DIALOG(import_dlg), root ? GTK_WIDGET(root) : parent);
 }
 
 static void sheet_select_account_finalize(GObject *obj) {
