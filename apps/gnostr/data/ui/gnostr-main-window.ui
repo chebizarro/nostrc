@@ -81,7 +81,7 @@
                             <child>
                               <object class="GtkButton" id="btn_login">
                                 <property name="label">Log in</property>
-                                <signal name="clicked" handler="on_avatar_login_clicked" swapped="no"/>
+                                <signal name="clicked" handler="on_avatar_login_local_clicked" swapped="no"/>
                               </object>
                             </child>
                             <child>
