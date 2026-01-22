@@ -33,6 +33,9 @@ void gnostr_note_card_row_set_embed(GnostrNoteCardRow *self, const char *title, 
 /* Rich embed variant: title (e.g., Note), meta (e.g., author · time), snippet (content excerpt) */
 void gnostr_note_card_row_set_embed_rich(GnostrNoteCardRow *self, const char *title, const char *meta, const char *snippet);
 
+/* NIP-05 verification: set identifier and trigger async verification */
+void gnostr_note_card_row_set_nip05(GnostrNoteCardRow *self, const char *nip05, const char *pubkey_hex);
+
 G_END_DECLS
 
 #endif /* GNOSTR_NOTE_CARD_ROW_H */

@@ -3,6 +3,7 @@
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
 #include "gnostr-avatar-cache.h"
+#include "../util/nip05.h"
 #include <jansson.h>
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
@@ -33,6 +34,10 @@ struct _GnostrProfilePane {
   
   /* State */
   char *current_pubkey;
+  char *current_nip05;           /* NIP-05 identifier from profile */
+  GtkWidget *nip05_badge;        /* Verification badge widget */
+  GtkWidget *nip05_row;          /* NIP-05 metadata row */
+  GCancellable *nip05_cancellable;
 #ifdef HAVE_SOUP3
   SoupSession *soup_session;
   GCancellable *banner_cancellable;
@@ -57,6 +62,11 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json);
 
 static void gnostr_profile_pane_dispose(GObject *obj) {
   GnostrProfilePane *self = GNOSTR_PROFILE_PANE(obj);
+  /* Cancel NIP-05 verification if in progress */
+  if (self->nip05_cancellable) {
+    g_cancellable_cancel(self->nip05_cancellable);
+    g_clear_object(&self->nip05_cancellable);
+  }
 #ifdef HAVE_SOUP3
   if (self->banner_cancellable) {
     g_cancellable_cancel(self->banner_cancellable);
@@ -76,6 +86,7 @@ static void gnostr_profile_pane_dispose(GObject *obj) {
 static void gnostr_profile_pane_finalize(GObject *obj) {
   GnostrProfilePane *self = GNOSTR_PROFILE_PANE(obj);
   g_clear_pointer(&self->current_pubkey, g_free);
+  g_clear_pointer(&self->current_nip05, g_free);
   G_OBJECT_CLASS(gnostr_profile_pane_parent_class)->finalize(obj);
 }
 
@@ -185,7 +196,16 @@ void gnostr_profile_pane_clear(GnostrProfilePane *self) {
     gtk_box_remove(GTK_BOX(self->metadata_box), child);
     child = next;
   }
-  
+
+  /* Clear NIP-05 state */
+  self->nip05_row = NULL;
+  self->nip05_badge = NULL;
+  g_clear_pointer(&self->current_nip05, g_free);
+  if (self->nip05_cancellable) {
+    g_cancellable_cancel(self->nip05_cancellable);
+    g_clear_object(&self->nip05_cancellable);
+  }
+
   g_clear_pointer(&self->current_pubkey, g_free);
 }
 
@@ -194,18 +214,18 @@ static void add_metadata_row(GnostrProfilePane *self, const char *icon_name, con
   GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
   gtk_widget_set_margin_top(row, 4);
   gtk_widget_set_margin_bottom(row, 4);
-  
+
   /* Icon */
   GtkWidget *icon = gtk_image_new_from_icon_name(icon_name);
   gtk_widget_add_css_class(icon, "dim-label");
   gtk_box_append(GTK_BOX(row), icon);
-  
+
   /* Label */
   GtkWidget *lbl = gtk_label_new(label);
   gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
   gtk_widget_add_css_class(lbl, "dim-label");
   gtk_box_append(GTK_BOX(row), lbl);
-  
+
   /* Value */
   if (is_link) {
     char *markup = g_markup_printf_escaped("<a href=\"%s\">%s</a>", value, value);
@@ -224,9 +244,99 @@ static void add_metadata_row(GnostrProfilePane *self, const char *icon_name, con
     gtk_widget_set_hexpand(val, TRUE);
     gtk_box_append(GTK_BOX(row), val);
   }
-  
+
   gtk_box_append(GTK_BOX(self->metadata_box), row);
   gtk_widget_set_visible(self->metadata_box, TRUE);
+}
+
+/* NIP-05 verification callback */
+static void on_nip05_verified(GnostrNip05Result *result, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+
+  if (!GNOSTR_IS_PROFILE_PANE(self) || !result) {
+    if (result) gnostr_nip05_result_free(result);
+    return;
+  }
+
+  g_debug("profile_pane: NIP-05 verification result for %s: %s",
+          result->identifier, gnostr_nip05_status_to_string(result->status));
+
+  /* Show badge if verified */
+  if (result->status == GNOSTR_NIP05_STATUS_VERIFIED && self->nip05_badge) {
+    gtk_widget_set_visible(self->nip05_badge, TRUE);
+    g_debug("profile_pane: showing NIP-05 verified badge for %s", result->identifier);
+  }
+
+  gnostr_nip05_result_free(result);
+}
+
+/* Helper to add NIP-05 row with verification badge */
+static void add_nip05_row(GnostrProfilePane *self, const char *nip05, const char *pubkey_hex) {
+  GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_margin_top(row, 4);
+  gtk_widget_set_margin_bottom(row, 4);
+
+  /* Icon */
+  GtkWidget *icon = gtk_image_new_from_icon_name("mail-unread-symbolic");
+  gtk_widget_add_css_class(icon, "dim-label");
+  gtk_box_append(GTK_BOX(row), icon);
+
+  /* Label */
+  GtkWidget *lbl = gtk_label_new("NIP-05");
+  gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+  gtk_widget_add_css_class(lbl, "dim-label");
+  gtk_box_append(GTK_BOX(row), lbl);
+
+  /* NIP-05 value with display formatting */
+  char *display = gnostr_nip05_get_display(nip05);
+  GtkWidget *val = gtk_label_new(display ? display : nip05);
+  g_free(display);
+  gtk_label_set_xalign(GTK_LABEL(val), 0.0);
+  gtk_label_set_ellipsize(GTK_LABEL(val), PANGO_ELLIPSIZE_END);
+  gtk_label_set_selectable(GTK_LABEL(val), TRUE);
+  gtk_widget_set_hexpand(val, TRUE);
+  gtk_box_append(GTK_BOX(row), val);
+
+  /* Verification badge (hidden initially) */
+  GtkWidget *badge = gnostr_nip05_create_badge();
+  gtk_widget_set_visible(badge, FALSE);
+  gtk_box_append(GTK_BOX(row), badge);
+
+  /* Store references */
+  self->nip05_row = row;
+  self->nip05_badge = badge;
+
+  gtk_box_append(GTK_BOX(self->metadata_box), row);
+  gtk_widget_set_visible(self->metadata_box, TRUE);
+
+  /* Store NIP-05 identifier */
+  g_free(self->current_nip05);
+  self->current_nip05 = g_strdup(nip05);
+
+  /* Start async verification if we have pubkey */
+  if (pubkey_hex && strlen(pubkey_hex) == 64) {
+    /* Cancel any previous verification */
+    if (self->nip05_cancellable) {
+      g_cancellable_cancel(self->nip05_cancellable);
+      g_object_unref(self->nip05_cancellable);
+    }
+    self->nip05_cancellable = g_cancellable_new();
+
+    /* Check cache first for immediate display */
+    GnostrNip05Result *cached = gnostr_nip05_cache_get(nip05);
+    if (cached) {
+      if (cached->status == GNOSTR_NIP05_STATUS_VERIFIED &&
+          cached->pubkey_hex &&
+          g_ascii_strcasecmp(cached->pubkey_hex, pubkey_hex) == 0) {
+        gtk_widget_set_visible(badge, TRUE);
+        g_debug("profile_pane: NIP-05 verified from cache for %s", nip05);
+      }
+      gnostr_nip05_result_free(cached);
+    } else {
+      /* Verify async */
+      gnostr_nip05_verify_async(nip05, pubkey_hex, on_nip05_verified, self, self->nip05_cancellable);
+    }
+  }
 }
 
 #ifdef HAVE_SOUP3
@@ -417,7 +527,8 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
     add_metadata_row(self, "web-browser-symbolic", "Website", website, TRUE);
   }
   if (nip05 && *nip05) {
-    add_metadata_row(self, "mail-unread-symbolic", "NIP-05", nip05, FALSE);
+    /* Use special NIP-05 row with verification badge */
+    add_nip05_row(self, nip05, self->current_pubkey);
   }
   if (lud16 && *lud16) {
     add_metadata_row(self, "network-wireless-symbolic", "Lightning", lud16, FALSE);

@@ -4,6 +4,7 @@
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
 #include "gnostr-avatar-cache.h"
+#include "../util/nip05.h"
 #include "../storage_ndb.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
@@ -49,6 +50,10 @@ struct _GnostrNoteCardRow {
   gint64 created_at;
   guint timestamp_timer_id;
   OgPreviewWidget *og_preview;
+  /* NIP-05 verification state */
+  char *nip05;
+  GtkWidget *nip05_badge;
+  GCancellable *nip05_cancellable;
 };
 
 G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
@@ -68,13 +73,19 @@ static guint signals[N_SIGNALS];
 
 static void gnostr_note_card_row_dispose(GObject *obj) {
   GnostrNoteCardRow *self = (GnostrNoteCardRow*)obj;
-  
+
   /* Remove timestamp timer */
   if (self->timestamp_timer_id > 0) {
     g_source_remove(self->timestamp_timer_id);
     self->timestamp_timer_id = 0;
   }
-  
+
+  /* Cancel NIP-05 verification */
+  if (self->nip05_cancellable) {
+    g_cancellable_cancel(self->nip05_cancellable);
+    g_clear_object(&self->nip05_cancellable);
+  }
+
 #ifdef HAVE_SOUP3
   if (self->avatar_cancellable) { g_cancellable_cancel(self->avatar_cancellable); g_clear_object(&self->avatar_cancellable); }
   /* Cancel all media fetches */
@@ -112,6 +123,7 @@ static void gnostr_note_card_row_finalize(GObject *obj) {
   g_clear_pointer(&self->id_hex, g_free);
   g_clear_pointer(&self->root_id, g_free);
   g_clear_pointer(&self->pubkey_hex, g_free);
+  g_clear_pointer(&self->nip05, g_free);
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->finalize(obj);
 }
 
@@ -910,4 +922,87 @@ void gnostr_note_card_row_set_embed_rich(GnostrNoteCardRow *self, const char *ti
   gtk_box_append(GTK_BOX(box), lbl_snip);
   gtk_frame_set_child(GTK_FRAME(self->embed_box), box);
   gtk_widget_set_visible(self->embed_box, TRUE);
+}
+
+/* NIP-05 verification callback for note card */
+static void on_note_nip05_verified(GnostrNip05Result *result, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !result) {
+    if (result) gnostr_nip05_result_free(result);
+    return;
+  }
+
+  g_debug("note_card: NIP-05 verification result for %s: %s",
+          result->identifier, gnostr_nip05_status_to_string(result->status));
+
+  /* Show badge if verified */
+  if (result->status == GNOSTR_NIP05_STATUS_VERIFIED && self->nip05_badge) {
+    gtk_widget_set_visible(self->nip05_badge, TRUE);
+    g_debug("note_card: showing NIP-05 verified badge for %s", result->identifier);
+  }
+
+  gnostr_nip05_result_free(result);
+}
+
+/* Set NIP-05 and trigger async verification */
+void gnostr_note_card_row_set_nip05(GnostrNoteCardRow *self, const char *nip05, const char *pubkey_hex) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  /* Clear previous state */
+  if (self->nip05_cancellable) {
+    g_cancellable_cancel(self->nip05_cancellable);
+    g_clear_object(&self->nip05_cancellable);
+  }
+  g_clear_pointer(&self->nip05, g_free);
+
+  /* Hide/remove previous badge */
+  if (self->nip05_badge) {
+    gtk_widget_set_visible(self->nip05_badge, FALSE);
+  }
+
+  if (!nip05 || !*nip05 || !pubkey_hex || strlen(pubkey_hex) != 64) {
+    return;
+  }
+
+  /* Store NIP-05 identifier */
+  self->nip05 = g_strdup(nip05);
+
+  /* Create badge widget if needed (add next to handle label) */
+  if (!self->nip05_badge && GTK_IS_LABEL(self->lbl_handle)) {
+    /* Get parent of handle label */
+    GtkWidget *parent = gtk_widget_get_parent(self->lbl_handle);
+    if (GTK_IS_BOX(parent)) {
+      /* Create the badge */
+      self->nip05_badge = gnostr_nip05_create_badge();
+      gtk_widget_set_visible(self->nip05_badge, FALSE);
+
+      /* Insert badge after handle label */
+      GtkWidget *next_sibling = gtk_widget_get_next_sibling(self->lbl_handle);
+      if (next_sibling) {
+        gtk_box_insert_child_after(GTK_BOX(parent), self->nip05_badge, self->lbl_handle);
+      } else {
+        gtk_box_append(GTK_BOX(parent), self->nip05_badge);
+      }
+    }
+  }
+
+  /* Check cache first for immediate display */
+  GnostrNip05Result *cached = gnostr_nip05_cache_get(nip05);
+  if (cached) {
+    if (cached->status == GNOSTR_NIP05_STATUS_VERIFIED &&
+        cached->pubkey_hex &&
+        g_ascii_strcasecmp(cached->pubkey_hex, pubkey_hex) == 0) {
+      if (self->nip05_badge) {
+        gtk_widget_set_visible(self->nip05_badge, TRUE);
+      }
+      g_debug("note_card: NIP-05 verified from cache for %s", nip05);
+    }
+    gnostr_nip05_result_free(cached);
+    return;
+  }
+
+  /* Verify async */
+  self->nip05_cancellable = g_cancellable_new();
+  gnostr_nip05_verify_async(nip05, pubkey_hex, on_note_nip05_verified, self, self->nip05_cancellable);
 }
