@@ -1190,7 +1190,7 @@ static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer u
   GError *error = NULL;
 
   /* Get the parent container (GtkOverlay) for spinner/error handling */
-  GtkWidget *container = GTK_IS_WIDGET(picture) ? gtk_widget_get_parent(picture) : NULL;
+  GtkWidget *container = GTK_IS_WIDGET(picture) ? gtk_widget_get_parent(GTK_WIDGET(picture)) : NULL;
 
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
   if (error) {
