@@ -46,15 +46,15 @@
         <child>
           <object class="GtkOverlay">
             <property name="hexpand">true</property>
-            <!-- Banner area: 140px banner + 48px for avatar overlap = 188px total -->
+            <!-- Banner area: 120px banner (3:1 aspect ratio per NIP-24) + 72px for avatar overlap = 192px total -->
             <child>
               <object class="GtkBox">
                 <property name="orientation">vertical</property>
                 <property name="hexpand">true</property>
-                <!-- Banner image with fallback gradient -->
+                <!-- Banner image with fallback gradient - NIP-24 specifies 3:1 aspect ratio (1500x500) -->
                 <child>
                   <object class="GtkBox" id="banner_container">
-                    <property name="height-request">140</property>
+                    <property name="height-request">120</property>
                     <property name="hexpand">true</property>
                     <property name="orientation">vertical</property>
                     <style>
@@ -62,7 +62,7 @@
                     </style>
                     <child>
                       <object class="GtkPicture" id="banner_image">
-                        <property name="height-request">140</property>
+                        <property name="height-request">120</property>
                         <property name="hexpand">true</property>
                         <property name="vexpand">false</property>
                         <property name="content-fit">cover</property>
@@ -71,10 +71,10 @@
                     </child>
                   </object>
                 </child>
-                <!-- Spacer for avatar overflow (72px = half of 144px avatar) -->
+                <!-- Spacer for avatar overflow (reduced to 8px for tighter layout) -->
                 <child>
                   <object class="GtkBox">
-                    <property name="height-request">72</property>
+                    <property name="height-request">8</property>
                   </object>
                 </child>
               </object>
@@ -86,7 +86,7 @@
                 <property name="halign">start</property>
                 <property name="valign">start</property>
                 <property name="margin-start">16</property>
-                <property name="margin-top">68</property>
+                <property name="margin-top">48</property>
                 <child>
                   <object class="GtkFrame" id="avatar_box">
                     <property name="width-request">144</property>

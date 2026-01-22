@@ -95,6 +95,7 @@ static void load_thread(GnostrThreadView *self);
 static void rebuild_thread_ui(GnostrThreadView *self);
 static void set_loading_state(GnostrThreadView *self, gboolean loading);
 static void fetch_thread_from_relays(GnostrThreadView *self);
+static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data);
 
 /* Helper: convert hex string to 32-byte binary */
 static gboolean hex_to_bytes_32(const char *hex, unsigned char out[32]) {
@@ -784,6 +785,43 @@ static void on_thread_query_done(GObject *source, GAsyncResult *res, gpointer us
   rebuild_thread_ui(self);
 }
 
+/* Callback for root event fetch completion */
+static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+
+  if (!GNOSTR_IS_THREAD_VIEW(self)) return;
+
+  GError *error = NULL;
+  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_debug("[THREAD_VIEW] Root fetch failed: %s", error->message);
+    }
+    g_error_free(error);
+    return;
+  }
+
+  if (results && results->len > 0) {
+    g_debug("[THREAD_VIEW] Received %u root/ancestor events from relays", results->len);
+
+    /* Add events to our collection */
+    for (guint i = 0; i < results->len; i++) {
+      const char *json = g_ptr_array_index(results, i);
+      if (json) {
+        /* Ingest into nostrdb for future use */
+        storage_ndb_ingest_event_json(json, NULL);
+        add_event_from_json(self, json);
+      }
+    }
+
+    /* Rebuild UI with new events */
+    rebuild_thread_ui(self);
+  }
+
+  if (results) g_ptr_array_unref(results);
+}
+
 /* Internal: fetch thread from relays */
 static void fetch_thread_from_relays(GnostrThreadView *self) {
   if (!self->thread_root_id && !self->focus_event_id) return;
@@ -795,42 +833,123 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
   }
   self->fetch_cancellable = g_cancellable_new();
 
-  /* Build filter for events referencing this thread root */
-  NostrFilter *filter = nostr_filter_new();
-
-  int kinds[1] = { 1 }; /* Text notes */
-  nostr_filter_set_kinds(filter, kinds, 1);
-
-  /* Query by #e tag (references to root event) */
   const char *root = self->thread_root_id ? self->thread_root_id : self->focus_event_id;
-  nostr_filter_tags_append(filter, "e", root, NULL);
-
-  nostr_filter_set_limit(filter, MAX_THREAD_EVENTS);
+  const char *focus = self->focus_event_id;
 
   /* Get read-capable relay URLs for fetching (NIP-65) */
   GPtrArray *relay_arr = gnostr_get_read_relay_urls();
-
-  /* Relays come from GSettings with defaults configured in schema */
 
   const char **urls = g_new0(const char*, relay_arr->len);
   for (guint i = 0; i < relay_arr->len; i++) {
     urls[i] = g_ptr_array_index(relay_arr, i);
   }
 
-  /* Start query */
+  /* Query 1: Fetch all replies (events with #e tag referencing root) */
+  NostrFilter *filter_replies = nostr_filter_new();
+  int kinds[1] = { 1 }; /* Text notes */
+  nostr_filter_set_kinds(filter_replies, kinds, 1);
+  nostr_filter_tags_append(filter_replies, "e", root, NULL);
+  nostr_filter_set_limit(filter_replies, MAX_THREAD_EVENTS);
+
   gnostr_simple_pool_query_single_async(
     self->simple_pool,
     urls,
     relay_arr->len,
-    filter,
+    filter_replies,
     self->fetch_cancellable,
     on_thread_query_done,
     self
   );
 
+  nostr_filter_free(filter_replies);
+
+  /* Query 2: Fetch root event and focus event by ID (they may not reference themselves) */
+  NostrFilter *filter_ids = nostr_filter_new();
+  nostr_filter_set_kinds(filter_ids, kinds, 1);
+
+  /* Add root ID */
+  nostr_filter_add_id(filter_ids, root);
+
+  /* Add focus ID if different from root */
+  if (focus && g_strcmp0(focus, root) != 0) {
+    nostr_filter_add_id(filter_ids, focus);
+  }
+
+  /* Also fetch any parent IDs we know about from loaded events */
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->events_by_id);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    ThreadEventItem *item = (ThreadEventItem *)value;
+    if (item->parent_id && !g_hash_table_contains(self->events_by_id, item->parent_id)) {
+      nostr_filter_add_id(filter_ids, item->parent_id);
+    }
+    if (item->root_id && !g_hash_table_contains(self->events_by_id, item->root_id)) {
+      nostr_filter_add_id(filter_ids, item->root_id);
+    }
+  }
+
+  nostr_filter_set_limit(filter_ids, MAX_THREAD_EVENTS);
+
+  gnostr_simple_pool_query_single_async(
+    self->simple_pool,
+    urls,
+    relay_arr->len,
+    filter_ids,
+    self->fetch_cancellable,
+    on_root_fetch_done,
+    self
+  );
+
+  nostr_filter_free(filter_ids);
   g_free(urls);
   g_ptr_array_unref(relay_arr);
-  nostr_filter_free(filter);
+}
+
+/* Internal: load a single event by ID from nostrdb and add to collection.
+ * Returns the ThreadEventItem if found, NULL otherwise. */
+static ThreadEventItem *load_event_by_id(GnostrThreadView *self, const char *id_hex) {
+  if (!id_hex || strlen(id_hex) != 64) return NULL;
+
+  /* Check if already loaded */
+  ThreadEventItem *existing = g_hash_table_lookup(self->events_by_id, id_hex);
+  if (existing) return existing;
+
+  unsigned char id32[32];
+  if (!hex_to_bytes_32(id_hex, id32)) return NULL;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return NULL;
+
+  ThreadEventItem *item = NULL;
+  char *json = NULL;
+  int len = 0;
+  if (storage_ndb_get_note_by_id(txn, id32, &json, &len) == 0 && json) {
+    item = add_event_from_json(self, json);
+  }
+  storage_ndb_end_query(txn);
+
+  return item;
+}
+
+/* Internal: recursively load parent chain from nostrdb (NIP-10).
+ * Walks up parent_id or root_id references to load all ancestor events. */
+static void load_parent_chain(GnostrThreadView *self, ThreadEventItem *item, int depth) {
+  if (!item || depth > MAX_THREAD_DEPTH) return;
+
+  /* Load parent event (reply marker takes precedence) */
+  const char *parent_id = item->parent_id ? item->parent_id : item->root_id;
+  if (parent_id && strlen(parent_id) == 64) {
+    ThreadEventItem *parent = load_event_by_id(self, parent_id);
+    if (parent) {
+      load_parent_chain(self, parent, depth + 1);
+    }
+  }
+
+  /* Also ensure root is loaded if different from parent */
+  if (item->root_id && (!parent_id || g_strcmp0(item->root_id, parent_id) != 0)) {
+    load_event_by_id(self, item->root_id);
+  }
 }
 
 /* Internal: load thread from nostrdb and relays */
@@ -846,48 +965,33 @@ static void load_thread(GnostrThreadView *self) {
   set_loading_state(self, TRUE);
 
   /* First, try to load focus event from nostrdb */
+  ThreadEventItem *focus_item = NULL;
   if (focus_id) {
-    unsigned char id32[32];
-    if (hex_to_bytes_32(focus_id, id32)) {
-      void *txn = NULL;
-      if (storage_ndb_begin_query(&txn) == 0 && txn) {
-        char *json = NULL;
-        int len = 0;
-        if (storage_ndb_get_note_by_id(txn, id32, &json, &len) == 0 && json) {
-          ThreadEventItem *item = add_event_from_json(self, json);
+    focus_item = load_event_by_id(self, focus_id);
 
-          /* If we found the focus event, extract root_id from it */
-          if (item && item->root_id && !self->thread_root_id) {
-            self->thread_root_id = g_strdup(item->root_id);
-          }
-        }
-        storage_ndb_end_query(txn);
-      }
+    /* If we found the focus event, extract root_id from it */
+    if (focus_item && focus_item->root_id && !self->thread_root_id) {
+      self->thread_root_id = g_strdup(focus_item->root_id);
     }
   }
 
-  /* Try to load root event if different from focus */
+  /* Load the root event if we know it */
+  root_id = self->thread_root_id;
   if (root_id && (!focus_id || g_strcmp0(root_id, focus_id) != 0)) {
-    unsigned char id32[32];
-    if (hex_to_bytes_32(root_id, id32)) {
-      void *txn = NULL;
-      if (storage_ndb_begin_query(&txn) == 0 && txn) {
-        char *json = NULL;
-        int len = 0;
-        if (storage_ndb_get_note_by_id(txn, id32, &json, &len) == 0 && json) {
-          add_event_from_json(self, json);
-        }
-        storage_ndb_end_query(txn);
-      }
-    }
+    load_event_by_id(self, root_id);
   }
 
-  /* Query nostrdb for events referencing this thread */
+  /* Load parent chain from focus event to find all ancestors (NIP-10) */
+  if (focus_item) {
+    load_parent_chain(self, focus_item, 0);
+  }
+
+  /* Query nostrdb for events referencing this thread root */
   void *txn = NULL;
   if (storage_ndb_begin_query(&txn) == 0 && txn) {
     const char *query_root = self->thread_root_id ? self->thread_root_id : focus_id;
 
-    /* Build filter JSON */
+    /* Build filter JSON to find all replies to the root */
     char filter_json[512];
     snprintf(filter_json, sizeof(filter_json),
              "[{\"kinds\":[1],\"#e\":[\"%s\"],\"limit\":%d}]",
@@ -903,6 +1007,26 @@ static void load_thread(GnostrThreadView *self) {
       }
       storage_ndb_free_results(results, count);
     }
+
+    /* Also query for events referencing the focus event specifically
+     * (in case it's a mid-thread note with its own replies) */
+    if (focus_id && g_strcmp0(focus_id, query_root) != 0) {
+      snprintf(filter_json, sizeof(filter_json),
+               "[{\"kinds\":[1],\"#e\":[\"%s\"],\"limit\":%d}]",
+               focus_id, MAX_THREAD_EVENTS);
+
+      results = NULL;
+      count = 0;
+      if (storage_ndb_query(txn, filter_json, &results, &count) == 0 && results) {
+        for (int i = 0; i < count; i++) {
+          if (results[i]) {
+            add_event_from_json(self, results[i]);
+          }
+        }
+        storage_ndb_free_results(results, count);
+      }
+    }
+
     storage_ndb_end_query(txn);
   }
 

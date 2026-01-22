@@ -2000,32 +2000,59 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
 
   gnostr_imeta_list_free(imeta_list);
 
+  /* Detect NIP-19/21 nostr: references and create embedded note widgets */
   if (self->embed_box && GTK_IS_WIDGET(self->embed_box)) {
+    /* Clear existing embeds from the embed_box */
+    if (GTK_IS_FRAME(self->embed_box)) {
+      gtk_frame_set_child(GTK_FRAME(self->embed_box), NULL);
+    }
     gtk_widget_set_visible(self->embed_box, FALSE);
+    self->note_embed = NULL;
+
     const char *p = content;
-    const char *found = NULL;
     if (p && *p) {
+      /* Scan for nostr: URIs and bech32 references */
       gchar **tokens = g_strsplit_set(p, " \n\t", -1);
+      const char *first_nostr_ref = NULL;
+
       for (guint i = 0; tokens && tokens[i]; i++) {
-        const char *t = tokens[i]; if (!t || !*t) continue;
-        if (g_str_has_prefix(t, "nostr:") || g_str_has_prefix(t, "note1") ||
-            g_str_has_prefix(t, "nevent1") || g_str_has_prefix(t, "naddr1")) {
-          found = t; break;
+        const char *t = tokens[i];
+        if (!t || !*t) continue;
+
+        /* Check for nostr: URI or bare bech32 (NIP-21) */
+        if (g_str_has_prefix(t, "nostr:") ||
+            g_str_has_prefix(t, "note1") ||
+            g_str_has_prefix(t, "nevent1") ||
+            g_str_has_prefix(t, "naddr1") ||
+            g_str_has_prefix(t, "npub1") ||
+            g_str_has_prefix(t, "nprofile1")) {
+          first_nostr_ref = t;
+          break;
         }
       }
+
+      if (first_nostr_ref) {
+        /* Create the NIP-21 embed widget */
+        self->note_embed = gnostr_note_embed_new();
+
+        /* Connect profile-clicked signal to relay to main window */
+        g_signal_connect(self->note_embed, "profile-clicked",
+                        G_CALLBACK(on_embed_profile_clicked), self);
+
+        /* Set the nostr URI - this triggers async loading via NIP-19 decoding */
+        gnostr_note_embed_set_nostr_uri(self->note_embed, first_nostr_ref);
+
+        /* Add embed widget to the embed_box frame */
+        if (GTK_IS_FRAME(self->embed_box)) {
+          gtk_frame_set_child(GTK_FRAME(self->embed_box), GTK_WIDGET(self->note_embed));
+        }
+        gtk_widget_set_visible(self->embed_box, TRUE);
+
+        /* Also emit the signal for timeline-level handling (backwards compatibility) */
+        g_signal_emit(self, signals[SIGNAL_REQUEST_EMBED], 0, first_nostr_ref);
+      }
+
       if (tokens) g_strfreev(tokens);
-    }
-    if (found) {
-      GtkWidget *sk = gtk_label_new("Loading embed...");
-      gtk_widget_set_halign(sk, GTK_ALIGN_START);
-      gtk_widget_set_valign(sk, GTK_ALIGN_START);
-      gtk_widget_set_margin_start(sk, 6);
-      gtk_widget_set_margin_end(sk, 6);
-      gtk_widget_set_margin_top(sk, 4);
-      gtk_widget_set_margin_bottom(sk, 4);
-      if (GTK_IS_FRAME(self->embed_box)) gtk_frame_set_child(GTK_FRAME(self->embed_box), sk);
-      gtk_widget_set_visible(self->embed_box, TRUE);
-      g_signal_emit(self, signals[SIGNAL_REQUEST_EMBED], 0, found);
     }
   }
 

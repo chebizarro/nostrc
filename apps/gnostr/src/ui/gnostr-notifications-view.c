@@ -8,6 +8,9 @@
 #include "gnostr-notifications-view.h"
 #include "gnostr-notification-row.h"
 
+/* Maximum notifications to keep in memory to prevent unbounded growth */
+#define NOTIFICATIONS_MAX 500
+
 struct _GnostrNotificationsView {
     GtkWidget parent_instance;
 
@@ -206,6 +209,27 @@ gnostr_notifications_view_add_notification(GnostrNotificationsView *self,
     /* Add to list (prepend for newest first) */
     gtk_list_box_prepend(self->list_box, GTK_WIDGET(row));
     g_hash_table_insert(self->notifications, g_strdup(notif->id), row);
+
+    /* Prune oldest notifications if exceeding limit to prevent unbounded memory growth */
+    while (g_hash_table_size(self->notifications) > NOTIFICATIONS_MAX) {
+        /* Remove last (oldest) row from list box */
+        GtkWidget *last_child = NULL;
+        for (GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self->list_box));
+             child != NULL;
+             child = gtk_widget_get_next_sibling(child)) {
+            last_child = child;
+        }
+        if (last_child && GNOSTR_IS_NOTIFICATION_ROW(last_child)) {
+            GnostrNotificationRow *old_row = GNOSTR_NOTIFICATION_ROW(last_child);
+            const char *old_id = gnostr_notification_row_get_id(old_row);
+            if (old_id) {
+                g_hash_table_remove(self->notifications, old_id);
+            }
+            gtk_list_box_remove(self->list_box, last_child);
+        } else {
+            break;  /* Safety: avoid infinite loop */
+        }
+    }
 
     /* Update unread count */
     if (!notif->is_read) {

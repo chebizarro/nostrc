@@ -3,6 +3,9 @@
 #include <string.h>
 #include <ctype.h>
 
+/* Maximum OG metadata entries to cache per widget to prevent unbounded memory growth */
+#define OG_CACHE_MAX 100
+
 /* Open Graph metadata structure */
 typedef struct {
   char *title;
@@ -327,8 +330,12 @@ static void on_html_fetched(GObject *source, GAsyncResult *res, gpointer user_da
   
   OgMetadata *meta = parse_og_metadata(html, self->current_url);
   
-  /* Cache result */
+  /* Cache result with size limit to prevent unbounded memory growth */
   if (meta && self->current_url) {
+    /* Clear cache if it exceeds limit */
+    if (g_hash_table_size(self->cache) >= OG_CACHE_MAX) {
+      g_hash_table_remove_all(self->cache);
+    }
     g_hash_table_insert(self->cache, g_strdup(self->current_url), meta);
   }
   

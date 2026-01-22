@@ -40,6 +40,9 @@ static GdkTexture *get_default_banner_texture(void) {
 /* Maximum posts to fetch per page */
 #define POSTS_PAGE_SIZE 20
 
+/* Maximum cached images per profile pane to prevent unbounded memory growth */
+#define IMAGE_CACHE_MAX 50
+
 /* Post item for the list model */
 typedef struct _ProfilePostItem {
   GObject parent_instance;
@@ -311,6 +314,7 @@ struct _GnostrProfilePane {
   GCancellable *banner_cancellable;
   GCancellable *avatar_cancellable;
   GHashTable *image_cache; /* URL -> GdkTexture */
+  GQueue *image_cache_lru; /* LRU queue of URL keys (head=oldest) */
 #endif
 
   /* SimplePool for fetching posts */
@@ -333,6 +337,7 @@ static guint signals[N_SIGNALS];
 /* Forward declarations */
 #ifdef HAVE_SOUP3
 static void load_image_async(GnostrProfilePane *self, const char *url, GtkPicture *picture, GCancellable **cancellable_slot);
+static void load_banner_async(GnostrProfilePane *self, const char *url);
 #endif
 static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json);
 static void load_posts(GnostrProfilePane *self);
@@ -376,6 +381,10 @@ static void gnostr_profile_pane_dispose(GObject *obj) {
   }
   g_clear_object(&self->soup_session);
   g_clear_pointer(&self->image_cache, g_hash_table_unref);
+  if (self->image_cache_lru) {
+    g_queue_free_full(self->image_cache_lru, g_free);
+    self->image_cache_lru = NULL;
+  }
 #endif
   /* Clear posts model */
   if (self->posts_list && GTK_IS_LIST_VIEW(self->posts_list)) {
@@ -662,6 +671,7 @@ static void gnostr_profile_pane_init(GnostrProfilePane *self) {
     "max-conns-per-host", 1,
     NULL);
   self->image_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
+  self->image_cache_lru = g_queue_new();
 #endif
 
   /* Create SimplePool for fetching posts */
@@ -964,6 +974,32 @@ static void add_nip05_row(GnostrProfilePane *self, const char *nip05, const char
 }
 
 #ifdef HAVE_SOUP3
+/* Helper: Insert into image_cache with LRU eviction */
+static void image_cache_insert(GnostrProfilePane *self, const char *url, GdkTexture *texture) {
+  if (!self || !url || !texture) return;
+  if (!self->image_cache || !self->image_cache_lru) return;
+
+  /* Check if already in cache - just update */
+  if (g_hash_table_contains(self->image_cache, url)) {
+    g_hash_table_replace(self->image_cache, g_strdup(url), g_object_ref(texture));
+    return;
+  }
+
+  /* Evict oldest entries if over limit */
+  while (g_hash_table_size(self->image_cache) >= IMAGE_CACHE_MAX &&
+         !g_queue_is_empty(self->image_cache_lru)) {
+    char *oldest_url = g_queue_pop_head(self->image_cache_lru);
+    if (oldest_url) {
+      g_hash_table_remove(self->image_cache, oldest_url);
+      g_free(oldest_url);
+    }
+  }
+
+  /* Insert new entry */
+  g_hash_table_insert(self->image_cache, g_strdup(url), g_object_ref(texture));
+  g_queue_push_tail(self->image_cache_lru, g_strdup(url));
+}
+
 /* Async image loading callback */
 static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
   SoupSession *session = SOUP_SESSION(source);
@@ -1010,10 +1046,10 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
       gtk_widget_set_visible(self->avatar_initials, FALSE);
     }
     
-    /* Cache the texture */
+    /* Cache the texture with LRU eviction */
     const char *url = g_task_get_task_data(task);
-    if (url && self->image_cache) {
-      g_hash_table_insert(self->image_cache, g_strdup(url), g_object_ref(texture));
+    if (url) {
+      image_cache_insert(self, url, texture);
     }
   }
   
@@ -1038,10 +1074,8 @@ static void load_image_async(GnostrProfilePane *self, const char *url, GtkPictur
       gtk_widget_set_visible(self->avatar_initials, FALSE);
     }
     
-    /* Also cache in local hash table for faster subsequent lookups */
-    if (self->image_cache) {
-      g_hash_table_insert(self->image_cache, g_strdup(url), g_object_ref(cached));
-    }
+    /* Also cache in local hash table for faster subsequent lookups (with LRU eviction) */
+    image_cache_insert(self, url, cached);
     
     g_object_unref(cached);
     g_debug("profile_pane: avatar cache HIT for url=%s", url);
@@ -1060,6 +1094,111 @@ static void load_image_async(GnostrProfilePane *self, const char *url, GtkPictur
   /* Use global download function which validates and caches properly */
   GtkWidget *initials_widget = (picture == GTK_PICTURE(self->avatar_image)) ? self->avatar_initials : NULL;
   gnostr_avatar_download_async(url, GTK_WIDGET(picture), initials_widget);
+}
+
+/* Context for banner async loading */
+typedef struct _BannerLoadCtx {
+  GnostrProfilePane *self;  /* weak ref */
+  char *url;                /* owned */
+} BannerLoadCtx;
+
+static void banner_load_ctx_free(BannerLoadCtx *ctx) {
+  if (!ctx) return;
+  g_free(ctx->url);
+  g_free(ctx);
+}
+
+/* Async banner loading callback - loads at full resolution for quality */
+static void on_banner_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
+  BannerLoadCtx *ctx = (BannerLoadCtx*)user_data;
+  GError *error = NULL;
+
+  GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_debug("Failed to load banner: %s", error->message);
+    }
+    g_clear_error(&error);
+    banner_load_ctx_free(ctx);
+    return;
+  }
+
+  if (!bytes || g_bytes_get_size(bytes) == 0) {
+    g_debug("Empty banner response");
+    if (bytes) g_bytes_unref(bytes);
+    banner_load_ctx_free(ctx);
+    return;
+  }
+
+  /* Create texture from bytes at FULL RESOLUTION for banner quality */
+  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
+  g_bytes_unref(bytes);
+
+  if (error) {
+    g_debug("Failed to create banner texture: %s", error->message);
+    g_clear_error(&error);
+    banner_load_ctx_free(ctx);
+    return;
+  }
+
+  /* Update UI - banner uses full resolution for crisp display */
+  if (GNOSTR_IS_PROFILE_PANE(ctx->self) && GTK_IS_PICTURE(ctx->self->banner_image)) {
+    gtk_picture_set_paintable(GTK_PICTURE(ctx->self->banner_image), GDK_PAINTABLE(texture));
+    gtk_widget_set_visible(ctx->self->banner_image, TRUE);
+    g_debug("profile_pane: banner loaded at full resolution for url=%s", ctx->url);
+
+    /* Cache the banner texture locally with LRU eviction */
+    image_cache_insert(ctx->self, ctx->url, texture);
+  }
+
+  g_object_unref(texture);
+  banner_load_ctx_free(ctx);
+}
+
+/* Load banner image at full resolution (not using avatar cache which downscales to 96px) */
+static void load_banner_async(GnostrProfilePane *self, const char *url) {
+  if (!url || !*url) return;
+
+  /* Check local cache first */
+  if (self->image_cache) {
+    GdkTexture *cached = g_hash_table_lookup(self->image_cache, url);
+    if (cached) {
+      gtk_picture_set_paintable(GTK_PICTURE(self->banner_image), GDK_PAINTABLE(cached));
+      gtk_widget_set_visible(self->banner_image, TRUE);
+      g_debug("profile_pane: banner cache HIT for url=%s", url);
+      return;
+    }
+  }
+
+  /* Cancel previous banner load if any */
+  if (self->banner_cancellable) {
+    g_cancellable_cancel(self->banner_cancellable);
+    g_clear_object(&self->banner_cancellable);
+  }
+  self->banner_cancellable = g_cancellable_new();
+
+  /* Create soup session if needed */
+  if (!self->soup_session) {
+    self->soup_session = soup_session_new();
+  }
+
+  /* Setup context */
+  BannerLoadCtx *ctx = g_new0(BannerLoadCtx, 1);
+  ctx->self = self;
+  ctx->url = g_strdup(url);
+
+  /* Fetch banner at full resolution */
+  SoupMessage *msg = soup_message_new("GET", url);
+  if (!msg) {
+    g_debug("profile_pane: invalid banner URL: %s", url);
+    banner_load_ctx_free(ctx);
+    return;
+  }
+
+  g_debug("profile_pane: loading banner at full resolution url=%s", url);
+  soup_session_send_and_read_async(self->soup_session, msg, G_PRIORITY_DEFAULT,
+                                    self->banner_cancellable, on_banner_loaded, ctx);
+  g_object_unref(msg);
 }
 #endif
 
@@ -1153,7 +1292,8 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
     load_image_async(self, picture, GTK_PICTURE(self->avatar_image), &self->avatar_cancellable);
   }
   if (banner && *banner) {
-    load_image_async(self, banner, GTK_PICTURE(self->banner_image), &self->banner_cancellable);
+    /* Use dedicated banner loader for full resolution (avatar cache downscales to 96px) */
+    load_banner_async(self, banner);
   }
 #endif
   

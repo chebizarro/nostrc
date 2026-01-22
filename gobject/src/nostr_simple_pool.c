@@ -744,37 +744,39 @@ static gpointer query_single_thread(gpointer user_data) {
             continue;
         }
 
-        // Wait for first event or EOSE with timeout
-        bool got_event = false;
+        // Wait for events until EOSE with timeout
+        bool got_eose = false;
         guint64 start_time = g_get_monotonic_time();
         const guint64 timeout_us = 10000000;  // 10 seconds timeout
 
-        while (!got_event) {
+        while (!got_eose) {
             if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) {
                 break;
             }
 
             // Check timeout
             if ((g_get_monotonic_time() - start_time) > timeout_us) {
-                g_debug("query_single: Timeout waiting for event from %s", url);
+                g_debug("query_single: Timeout waiting for EOSE from %s", url);
                 break;
             }
 
-            // Check for event
+            // Check for events (collect all until EOSE)
             NostrEvent *evt = NULL;
             GoChannel *ch_events = nostr_subscription_get_events_channel(sub);
             if (ch_events && go_channel_try_receive(ch_events, (void**)&evt) == 0) {
                 char *json = nostr_event_serialize(evt);
                 if (json) {
                     g_ptr_array_add(ctx->results, json);
-                    got_event = true;
                 }
                 nostr_event_free(evt);
+                // Don't break - keep collecting until EOSE
+                continue;
             }
 
             // Check for EOSE
             GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
             if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+                got_eose = true;
                 break;
             }
 
@@ -786,8 +788,8 @@ static gpointer query_single_thread(gpointer user_data) {
         nostr_subscription_close(sub, NULL);
         nostr_subscription_free(sub);
 
-        if (got_event) {
-            break;  // Got our event, no need to try other relays
+        if (got_eose && ctx->results->len > 0) {
+            break;  // Got results from this relay, no need to try other relays
         }
     }
 

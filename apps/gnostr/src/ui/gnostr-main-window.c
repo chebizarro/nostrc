@@ -383,6 +383,7 @@ struct _GnostrMainWindow {
 /* Cache size limits to prevent unbounded memory growth */
 #define AVATAR_CACHE_MAX 1000
 #define SEEN_TEXTS_MAX 10000
+#define LIKED_EVENTS_MAX 5000
 
 static gboolean memory_stats_cb(gpointer data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
@@ -392,9 +393,10 @@ static gboolean memory_stats_cb(gpointer data) {
   guint profile_queue = self->profile_fetch_queue ? self->profile_fetch_queue->len : 0;
   guint avatar_size = self->avatar_tex_cache ? g_hash_table_size(self->avatar_tex_cache) : 0;
   guint model_items = self->event_model ? g_list_model_get_n_items(G_LIST_MODEL(self->event_model)) : 0;
-  
-  g_debug("[MEMORY] model=%u seen_texts=%u avatars=%u profile_q=%u",
-          model_items, seen_texts_size, avatar_size, profile_queue);
+  guint liked_events_size = self->liked_events ? g_hash_table_size(self->liked_events) : 0;
+
+  g_debug("[MEMORY] model=%u seen_texts=%u avatars=%u profile_q=%u liked=%u",
+          model_items, seen_texts_size, avatar_size, profile_queue, liked_events_size);
   
   /* Prune caches if they exceed limits to prevent unbounded memory growth */
   gboolean pruned = FALSE;
@@ -412,7 +414,15 @@ static gboolean memory_stats_cb(gpointer data) {
     g_hash_table_remove_all(self->seen_texts);
     pruned = TRUE;
   }
-  
+
+  /* Prune liked_events - clear if too large */
+  guint liked_size = self->liked_events ? g_hash_table_size(self->liked_events) : 0;
+  if (liked_size > LIKED_EVENTS_MAX) {
+    g_debug("[MEMORY] Pruning liked_events: %u -> 0", liked_size);
+    g_hash_table_remove_all(self->liked_events);
+    pruned = TRUE;
+  }
+
   if (pruned) {
     g_debug("[MEMORY] Cache pruning complete");
   }
