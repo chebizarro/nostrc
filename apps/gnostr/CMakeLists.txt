@@ -40,6 +40,7 @@ add_custom_command(
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-manager.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-profile-edit.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-nwc-connect.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-zap-dialog.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-mute-list.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-login.ui
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
@@ -248,9 +249,37 @@ if (BUILD_TESTING)
   target_compile_features(gnostr-test-relays PRIVATE c_std_11)
   target_include_directories(gnostr-test-relays PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   target_sources(gnostr-test-relays PRIVATE src/util/relays.c)
-  target_link_libraries(gnostr-test-relays PRIVATE PkgConfig::GLIB PkgConfig::GIO)
+  # Disable NIP-65 async functionality for this test (avoids nostr_simple_pool dependency)
+  target_compile_definitions(gnostr-test-relays PRIVATE GNOSTR_RELAY_TEST_ONLY=1)
+  target_link_libraries(gnostr-test-relays PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB)
   _gnostr_apply_sanitizers(gnostr-test-relays)
   add_test(NAME gnostr-test-relays COMMAND gnostr-test-relays)
+
+  # NIP-46 E2E tests
+  add_executable(gnostr-test-nip46-e2e tests/test_nip46_e2e.c)
+  target_compile_features(gnostr-test-nip46-e2e PRIVATE c_std_11)
+  target_include_directories(gnostr-test-nip46-e2e PRIVATE
+    ${CMAKE_SOURCE_DIR}/nips/nip46/include
+    ${CMAKE_SOURCE_DIR}/nips/nip04/include
+    ${CMAKE_SOURCE_DIR}/libnostr/include
+    ${CMAKE_SOURCE_DIR}/libjson/include)
+  if (TARGET nostr_nip46_core)
+    target_link_libraries(gnostr-test-nip46-e2e PRIVATE nostr_nip46_core)
+  endif()
+  if (TARGET libnostr)
+    target_link_libraries(gnostr-test-nip46-e2e PRIVATE libnostr)
+  endif()
+  if (TARGET nostr_json)
+    target_link_libraries(gnostr-test-nip46-e2e PRIVATE nostr_json)
+  endif()
+  if (TARGET nip04)
+    target_link_libraries(gnostr-test-nip46-e2e PRIVATE nip04)
+  endif()
+  _gnostr_apply_sanitizers(gnostr-test-nip46-e2e)
+  add_test(NAME gnostr-test-nip46-e2e COMMAND gnostr-test-nip46-e2e)
+  set_tests_properties(gnostr-test-nip46-e2e PROPERTIES
+    TIMEOUT 60
+    LABELS "nip46;e2e;gnostr")
 
   find_program(NODE_EXECUTABLE node)
   find_program(NPM_EXECUTABLE npm)

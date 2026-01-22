@@ -194,9 +194,13 @@ void gnostr_save_relays_from(GPtrArray *list) {
 /* --- NIP-65 Relay List Metadata --- */
 
 #include <json-glib/json-glib.h>
+
+#ifndef GNOSTR_RELAY_TEST_ONLY
+/* Full NIP-65 async support requires SimplePool */
 #include "nostr_simple_pool.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
+#endif
 
 void gnostr_nip65_relay_free(GnostrNip65Relay *relay) {
   if (!relay) return;
@@ -321,7 +325,8 @@ GPtrArray *gnostr_nip65_get_read_relays(GPtrArray *nip65_relays) {
   return result;
 }
 
-/* Async NIP-65 fetch context */
+#ifndef GNOSTR_RELAY_TEST_ONLY
+/* Async NIP-65 fetch context - requires SimplePool */
 typedef struct {
   gchar *pubkey_hex;
   GCancellable *cancellable;
@@ -438,3 +443,4 @@ void gnostr_nip65_fetch_relays_async(const gchar *pubkey_hex,
   g_ptr_array_unref(relay_arr);
   nostr_filter_free(filter);
 }
+#endif /* GNOSTR_RELAY_TEST_ONLY */
