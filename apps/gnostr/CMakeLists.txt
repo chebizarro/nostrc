@@ -260,6 +260,29 @@ if (BUILD_TESTING)
   endif()
 endif()
 
+# ---- GSettings schema compilation (development builds) ----
+# Compile schemas into the build directory so the app can run without system-wide install
+set(GNOSTR_SCHEMA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/data/schemas)
+set(GNOSTR_SCHEMA_FILE ${GNOSTR_SCHEMA_DIR}/org.gnostr.gnostr.gschema.xml)
+set(GNOSTR_SCHEMA_OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/gschemas.compiled)
+
+find_program(GLIB_COMPILE_SCHEMAS glib-compile-schemas)
+if(GLIB_COMPILE_SCHEMAS)
+  add_custom_command(
+    OUTPUT ${GNOSTR_SCHEMA_OUTPUT}
+    COMMAND ${GLIB_COMPILE_SCHEMAS}
+            ${GNOSTR_SCHEMA_DIR}
+            --targetdir=${CMAKE_CURRENT_BINARY_DIR}
+    DEPENDS ${GNOSTR_SCHEMA_FILE}
+    COMMENT "Compiling GSettings schemas for gnostr"
+    VERBATIM
+  )
+  add_custom_target(gnostr-schemas ALL DEPENDS ${GNOSTR_SCHEMA_OUTPUT})
+  add_dependencies(${APP_CLIENT_BIN} gnostr-schemas)
+else()
+  message(WARNING "glib-compile-schemas not found - GSettings schemas will not be compiled")
+endif()
+
 # ---- GSettings schema install ----
 install(FILES data/schemas/org.gnostr.gnostr.gschema.xml
         DESTINATION ${CMAKE_INSTALL_DATADIR}/glib-2.0/schemas)
