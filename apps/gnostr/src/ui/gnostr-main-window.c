@@ -11,6 +11,7 @@
 #include "gnostr-dm-service.h"
 #include "gnostr-notifications-view.h"
 #include "gnostr-notification-row.h"
+#include "page-discover.h"
 #include "note_card_row.h"
 #include "../ipc/signer_ipc.h"
 #include "../model/gn-nostr-event-model.h"
@@ -3700,6 +3701,7 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   g_type_ensure(GNOSTR_TYPE_THREAD_VIEW);
   g_type_ensure(GNOSTR_TYPE_NOTIFICATIONS_VIEW);
   g_type_ensure(GNOSTR_TYPE_NOTIFICATION_ROW);
+  g_type_ensure(GNOSTR_TYPE_PAGE_DISCOVER);
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
   /* Bind expected template children (IDs must match the UI file) */
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, stack);
