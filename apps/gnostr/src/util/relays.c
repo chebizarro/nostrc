@@ -792,12 +792,17 @@ GPtrArray *gnostr_load_nip65_relays(void) {
 
   /* Load types from GSettings */
   gchar **types = NULL;
+  gsize types_len = 0;
   GSettingsSchemaSource *src = g_settings_schema_source_get_default();
   if (src) {
     GSettingsSchema *schema = g_settings_schema_source_lookup(src, "org.gnostr.gnostr", TRUE);
     if (schema) {
       GSettings *settings = g_settings_new("org.gnostr.gnostr");
       types = g_settings_get_strv(settings, "relay-types");
+      /* Count types array length (NULL-terminated) */
+      if (types) {
+        while (types[types_len] != NULL) types_len++;
+      }
       g_settings_schema_unref(schema);
       g_object_unref(settings);
     }
@@ -809,8 +814,8 @@ GPtrArray *gnostr_load_nip65_relays(void) {
     GnostrNip65Relay *relay = g_new0(GnostrNip65Relay, 1);
     relay->url = g_strdup(url);
 
-    /* Get type if available, default to read+write */
-    if (types && types[i]) {
+    /* Get type if available (check bounds), default to read+write */
+    if (types && i < types_len && types[i]) {
       relay->type = relay_type_from_string(types[i]);
     } else {
       relay->type = GNOSTR_RELAY_READWRITE;

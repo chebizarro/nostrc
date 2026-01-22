@@ -4141,17 +4141,11 @@ static void start_pool_live(GnostrMainWindow *self) {
 
   /* CRITICAL: Initialize relays in the pool so profile fetches can find them.
    * Profile fetch code skips relays not in pool (to avoid blocking main thread).
-   * We call ensure_relay() here BEFORE starting subscriptions to populate the pool.
+   * We call sync_relays() here BEFORE starting subscriptions to populate the pool.
    * This is acceptable because start_pool_live() runs early at startup, not on main loop yet. */
-  NostrSimplePool *c_pool = GNOSTR_SIMPLE_POOL(self->pool)->pool;
-  g_message("[RELAY] Initializing %zu relays in pool (pool=%p)", self->live_url_count, (void*)c_pool);
-  for (size_t i = 0; i < self->live_url_count; i++) {
-    if (self->live_urls[i] && *self->live_urls[i]) {
-      nostr_simple_pool_ensure_relay(c_pool, self->live_urls[i]);
-      g_debug("[RELAY] Added relay %s to pool", self->live_urls[i]);
-    }
-  }
-  g_message("[RELAY] ✓ All relays initialized (pool now has %zu relays)", c_pool->relay_count);
+  g_message("[RELAY] Initializing %zu relays in pool", self->live_url_count);
+  gnostr_simple_pool_sync_relays(self->pool, self->live_urls, self->live_url_count);
+  g_message("[RELAY] ✓ All relays initialized");
   /* Hook up events signal exactly once */
   if (self->pool_events_handler == 0) {
     self->pool_events_handler = g_signal_connect(self->pool, "events", G_CALLBACK(on_pool_events), self);
@@ -4253,16 +4247,14 @@ static gboolean check_relay_health(gpointer user_data) {
     }
   }
   
-  /* Also log the underlying C pool relay count and goroutine count to detect growth */
-  NostrSimplePool *c_pool = GNOSTR_SIMPLE_POOL(self->pool)->pool;
-  size_t c_pool_count = c_pool ? c_pool->relay_count : 0;
+  /* Log relay health and goroutine count to detect growth */
   int goroutine_count = go_get_active_count();
   /* Get ingest stats for memory diagnostics */
   guint64 ingest_count = storage_ndb_get_ingest_count();
   guint64 ingest_mb = storage_ndb_get_ingest_bytes() / (1024 * 1024);
-  
-  g_message("relay_health: status - %u connected, %u disconnected (total %u, c_pool=%zu, goroutines=%d, ingested=%" G_GUINT64_FORMAT ", ingest_mb=%" G_GUINT64_FORMAT ")",
-          connected_count, disconnected_count, relay_urls->len, c_pool_count, goroutine_count, ingest_count, ingest_mb);
+
+  g_message("relay_health: status - %u connected, %u disconnected (total %u, goroutines=%d, ingested=%" G_GUINT64_FORMAT ", ingest_mb=%" G_GUINT64_FORMAT ")",
+          connected_count, disconnected_count, relay_urls->len, goroutine_count, ingest_count, ingest_mb);
   
   /* If ALL relays are disconnected, trigger reconnection (not just any) */
   if (disconnected_count > 0 && connected_count == 0) {
