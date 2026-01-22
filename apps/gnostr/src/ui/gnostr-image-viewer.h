@@ -8,6 +8,8 @@
  *   - Double-click to toggle fit/100%
  *   - Escape or click outside to close
  *   - Dark semi-transparent background
+ *   - Gallery navigation with Left/Right arrow keys
+ *   - Download/save image option
  */
 
 #ifndef GNOSTR_IMAGE_VIEWER_H
@@ -55,6 +57,29 @@ void gnostr_image_viewer_set_texture(GnostrImageViewer *self, GdkTexture *textur
  * Present the image viewer window.
  */
 void gnostr_image_viewer_present(GnostrImageViewer *self);
+
+/**
+ * gnostr_image_viewer_set_gallery:
+ * @self: the image viewer
+ * @urls: (array zero-terminated=1): NULL-terminated array of image URLs
+ * @current_index: index of the currently displayed image (0-based)
+ *
+ * Set a gallery of images for navigation with arrow keys.
+ * Use Left/Right arrow keys to navigate between images.
+ */
+void gnostr_image_viewer_set_gallery(GnostrImageViewer *self,
+                                     const char * const *urls,
+                                     guint current_index);
+
+/**
+ * gnostr_image_viewer_navigate:
+ * @self: the image viewer
+ * @delta: direction to navigate (-1 for previous, +1 for next)
+ *
+ * Navigate to previous or next image in the gallery.
+ * Returns: TRUE if navigation occurred, FALSE if at boundary
+ */
+gboolean gnostr_image_viewer_navigate(GnostrImageViewer *self, int delta);
 
 G_END_DECLS
 

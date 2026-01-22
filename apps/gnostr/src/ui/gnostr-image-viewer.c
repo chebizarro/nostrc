@@ -28,6 +28,10 @@ struct _GnostrImageViewer {
   GtkWidget *close_button;
   GtkWidget *zoom_label;
   GtkWidget *spinner;
+  GtkWidget *save_button;
+  GtkWidget *prev_button;
+  GtkWidget *next_button;
+  GtkWidget *nav_label;    /* Shows "1 / 5" style indicator */
 
   /* State */
   GdkTexture *texture;
@@ -39,6 +43,11 @@ struct _GnostrImageViewer {
   double scroll_start_h;
   double scroll_start_v;
   char *image_url;
+
+  /* Gallery state */
+  char **gallery_urls;    /* NULL-terminated array of URLs */
+  guint gallery_count;    /* Number of images in gallery */
+  guint gallery_index;    /* Current image index */
 
 #ifdef HAVE_SOUP3
   SoupSession *session;
@@ -85,6 +94,12 @@ static void on_zoom_scale_changed(GtkGestureZoom *gesture,
                                   gdouble scale,
                                   gpointer user_data);
 
+/* Navigation handlers */
+static void on_prev_clicked(GtkButton *button, gpointer user_data);
+static void on_next_clicked(GtkButton *button, gpointer user_data);
+static void on_save_clicked(GtkButton *button, gpointer user_data);
+static void update_nav_display(GnostrImageViewer *self);
+
 static void gnostr_image_viewer_dispose(GObject *obj) {
   GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(obj);
 
@@ -98,6 +113,9 @@ static void gnostr_image_viewer_dispose(GObject *obj) {
 
   g_clear_object(&self->texture);
   g_clear_pointer(&self->image_url, g_free);
+  g_strfreev(self->gallery_urls);
+  self->gallery_urls = NULL;
+  self->gallery_count = 0;
 
   G_OBJECT_CLASS(gnostr_image_viewer_parent_class)->dispose(obj);
 }
@@ -176,6 +194,57 @@ static void gnostr_image_viewer_init(GnostrImageViewer *self) {
   gtk_widget_set_size_request(self->spinner, 48, 48);
   gtk_widget_set_visible(self->spinner, FALSE);
   gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->spinner);
+
+  /* Create toolbar box for buttons in top-left */
+  GtkWidget *toolbar_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_halign(toolbar_box, GTK_ALIGN_START);
+  gtk_widget_set_valign(toolbar_box, GTK_ALIGN_START);
+  gtk_widget_set_margin_top(toolbar_box, 16);
+  gtk_widget_set_margin_start(toolbar_box, 16);
+  gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), toolbar_box);
+
+  /* Save button */
+  self->save_button = gtk_button_new_from_icon_name("document-save-symbolic");
+  gtk_widget_add_css_class(self->save_button, "image-viewer-button");
+  gtk_widget_add_css_class(self->save_button, "circular");
+  gtk_widget_add_css_class(self->save_button, "osd");
+  gtk_widget_set_tooltip_text(self->save_button, "Save image (Ctrl+S)");
+  g_signal_connect(self->save_button, "clicked", G_CALLBACK(on_save_clicked), self);
+  gtk_box_append(GTK_BOX(toolbar_box), self->save_button);
+
+  /* Create navigation box in bottom center */
+  GtkWidget *nav_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+  gtk_widget_add_css_class(nav_box, "image-viewer-nav");
+  gtk_widget_add_css_class(nav_box, "osd");
+  gtk_widget_set_halign(nav_box, GTK_ALIGN_CENTER);
+  gtk_widget_set_valign(nav_box, GTK_ALIGN_END);
+  gtk_widget_set_margin_bottom(nav_box, 16);
+  gtk_widget_set_visible(nav_box, FALSE);  /* Hidden until gallery is set */
+  gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), nav_box);
+
+  /* Previous button */
+  self->prev_button = gtk_button_new_from_icon_name("go-previous-symbolic");
+  gtk_widget_add_css_class(self->prev_button, "image-viewer-nav-button");
+  gtk_widget_add_css_class(self->prev_button, "circular");
+  gtk_widget_set_tooltip_text(self->prev_button, "Previous image (Left arrow)");
+  g_signal_connect(self->prev_button, "clicked", G_CALLBACK(on_prev_clicked), self);
+  gtk_box_append(GTK_BOX(nav_box), self->prev_button);
+
+  /* Navigation label (e.g., "1 / 5") */
+  self->nav_label = gtk_label_new("");
+  gtk_widget_add_css_class(self->nav_label, "image-viewer-nav-label");
+  gtk_box_append(GTK_BOX(nav_box), self->nav_label);
+
+  /* Next button */
+  self->next_button = gtk_button_new_from_icon_name("go-next-symbolic");
+  gtk_widget_add_css_class(self->next_button, "image-viewer-nav-button");
+  gtk_widget_add_css_class(self->next_button, "circular");
+  gtk_widget_set_tooltip_text(self->next_button, "Next image (Right arrow)");
+  g_signal_connect(self->next_button, "clicked", G_CALLBACK(on_next_clicked), self);
+  gtk_box_append(GTK_BOX(nav_box), self->next_button);
+
+  /* Store nav_box reference on overlay for visibility toggling */
+  g_object_set_data(G_OBJECT(self->overlay), "nav-box", nav_box);
 
   /* Add keyboard controller */
   GtkEventController *key_controller = gtk_event_controller_key_new();
@@ -323,23 +392,44 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
       zoom_to_actual(self);
       return TRUE;
 
+    case GDK_KEY_s:
+      /* Ctrl+S to save */
+      if (state & GDK_CONTROL_MASK) {
+        on_save_clicked(NULL, self);
+        return TRUE;
+      }
+      break;
+
     case GDK_KEY_Left:
-    case GDK_KEY_Right:
+    case GDK_KEY_Right: {
+      /* Left/Right for gallery navigation when not zoomed, or pan when zoomed */
+      if (self->zoom_level != FIT_ZOOM && self->zoom_level > 1.0) {
+        /* Pan mode */
+        GtkAdjustment *hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(self->scrolled_window));
+        double step = 50.0;
+        if (keyval == GDK_KEY_Left) {
+          gtk_adjustment_set_value(hadj, gtk_adjustment_get_value(hadj) - step);
+        } else {
+          gtk_adjustment_set_value(hadj, gtk_adjustment_get_value(hadj) + step);
+        }
+        return TRUE;
+      } else if (self->gallery_count > 1) {
+        /* Gallery navigation mode */
+        gnostr_image_viewer_navigate(self, (keyval == GDK_KEY_Left) ? -1 : 1);
+        return TRUE;
+      }
+      break;
+    }
+
     case GDK_KEY_Up:
     case GDK_KEY_Down: {
       /* Pan with arrow keys when zoomed in */
       if (self->zoom_level != FIT_ZOOM && self->zoom_level > 1.0) {
-        GtkAdjustment *hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(self->scrolled_window));
         GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(self->scrolled_window));
         double step = 50.0;
-
-        if (keyval == GDK_KEY_Left) {
-          gtk_adjustment_set_value(hadj, gtk_adjustment_get_value(hadj) - step);
-        } else if (keyval == GDK_KEY_Right) {
-          gtk_adjustment_set_value(hadj, gtk_adjustment_get_value(hadj) + step);
-        } else if (keyval == GDK_KEY_Up) {
+        if (keyval == GDK_KEY_Up) {
           gtk_adjustment_set_value(vadj, gtk_adjustment_get_value(vadj) - step);
-        } else if (keyval == GDK_KEY_Down) {
+        } else {
           gtk_adjustment_set_value(vadj, gtk_adjustment_get_value(vadj) + step);
         }
         return TRUE;
@@ -591,6 +681,186 @@ void gnostr_image_viewer_set_texture(GnostrImageViewer *self, GdkTexture *textur
   zoom_to_fit(self);
 }
 
+static void update_nav_display(GnostrImageViewer *self) {
+  GtkWidget *nav_box = g_object_get_data(G_OBJECT(self->overlay), "nav-box");
+
+  if (self->gallery_count <= 1) {
+    /* Hide navigation for single images */
+    if (nav_box) gtk_widget_set_visible(nav_box, FALSE);
+    return;
+  }
+
+  /* Show navigation */
+  if (nav_box) gtk_widget_set_visible(nav_box, TRUE);
+
+  /* Update label */
+  char *text = g_strdup_printf("%u / %u", self->gallery_index + 1, self->gallery_count);
+  gtk_label_set_text(GTK_LABEL(self->nav_label), text);
+  g_free(text);
+
+  /* Update button sensitivity */
+  gtk_widget_set_sensitive(self->prev_button, self->gallery_index > 0);
+  gtk_widget_set_sensitive(self->next_button, self->gallery_index < self->gallery_count - 1);
+}
+
+static void on_prev_clicked(GtkButton *button, gpointer user_data) {
+  (void)button;
+  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
+  gnostr_image_viewer_navigate(self, -1);
+}
+
+static void on_next_clicked(GtkButton *button, gpointer user_data) {
+  (void)button;
+  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
+  gnostr_image_viewer_navigate(self, 1);
+}
+
+/* Extract filename from URL for save dialog */
+static char *get_filename_from_url(const char *url) {
+  if (!url || !*url) return g_strdup("image.jpg");
+
+  const char *last_slash = strrchr(url, '/');
+  if (last_slash && *(last_slash + 1)) {
+    const char *filename = last_slash + 1;
+    /* Remove query string if present */
+    const char *query = strchr(filename, '?');
+    if (query) {
+      return g_strndup(filename, query - filename);
+    }
+    return g_strdup(filename);
+  }
+  return g_strdup("image.jpg");
+}
+
+#ifdef HAVE_SOUP3
+static void on_save_response(GObject *source, GAsyncResult *result, gpointer user_data);
+#endif
+
+static void on_save_clicked(GtkButton *button, gpointer user_data) {
+  (void)button;
+  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
+
+  if (!self->texture && !self->image_url) {
+    g_warning("ImageViewer: No image to save");
+    return;
+  }
+
+  /* Get parent window for dialog */
+  GtkWindow *parent = GTK_WINDOW(self);
+
+  /* Create file chooser dialog */
+  GtkFileDialog *dialog = gtk_file_dialog_new();
+  gtk_file_dialog_set_title(dialog, "Save Image");
+
+  /* Suggest filename based on URL */
+  char *suggested_name = get_filename_from_url(self->image_url);
+  gtk_file_dialog_set_initial_name(dialog, suggested_name);
+  g_free(suggested_name);
+
+  /* If we have a texture, save it directly */
+  if (self->texture) {
+    gtk_file_dialog_save(dialog, parent, NULL,
+                         (GAsyncReadyCallback)on_save_response, self);
+  }
+#ifdef HAVE_SOUP3
+  else if (self->image_url) {
+    /* Download and save */
+    gtk_file_dialog_save(dialog, parent, NULL,
+                         (GAsyncReadyCallback)on_save_response, self);
+  }
+#endif
+
+  g_object_unref(dialog);
+}
+
+static void on_save_response(GObject *source, GAsyncResult *result, gpointer user_data) {
+  GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
+  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
+
+  GError *error = NULL;
+  GFile *file = gtk_file_dialog_save_finish(dialog, result, &error);
+
+  if (error) {
+    if (!g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED)) {
+      g_warning("ImageViewer: Save dialog error: %s", error->message);
+    }
+    g_error_free(error);
+    return;
+  }
+
+  if (!file) return;
+
+  /* Save the texture to file */
+  if (self->texture) {
+    char *path = g_file_get_path(file);
+    if (path) {
+      gboolean saved = gdk_texture_save_to_png(self->texture, path);
+      if (!saved) {
+        g_warning("ImageViewer: Failed to save image to %s", path);
+      }
+      g_free(path);
+    }
+  }
+
+  g_object_unref(file);
+}
+
+void gnostr_image_viewer_set_gallery(GnostrImageViewer *self,
+                                     const char * const *urls,
+                                     guint current_index) {
+  g_return_if_fail(GNOSTR_IS_IMAGE_VIEWER(self));
+
+  /* Free old gallery */
+  g_strfreev(self->gallery_urls);
+  self->gallery_urls = NULL;
+  self->gallery_count = 0;
+  self->gallery_index = 0;
+
+  if (!urls || !urls[0]) {
+    update_nav_display(self);
+    return;
+  }
+
+  /* Count URLs */
+  guint count = 0;
+  while (urls[count]) count++;
+
+  /* Copy URLs */
+  self->gallery_urls = g_strdupv((char **)urls);
+  self->gallery_count = count;
+  self->gallery_index = (current_index < count) ? current_index : 0;
+
+  /* Load the current image */
+  gnostr_image_viewer_set_image_url(self, self->gallery_urls[self->gallery_index]);
+
+  /* Update navigation display */
+  update_nav_display(self);
+}
+
+gboolean gnostr_image_viewer_navigate(GnostrImageViewer *self, int delta) {
+  g_return_val_if_fail(GNOSTR_IS_IMAGE_VIEWER(self), FALSE);
+
+  if (self->gallery_count <= 1) return FALSE;
+
+  int new_index = (int)self->gallery_index + delta;
+  if (new_index < 0 || new_index >= (int)self->gallery_count) {
+    return FALSE;
+  }
+
+  self->gallery_index = (guint)new_index;
+
+  /* Load the new image */
+  gnostr_image_viewer_set_image_url(self, self->gallery_urls[self->gallery_index]);
+
+  /* Update navigation display */
+  update_nav_display(self);
+
+  /* Reset zoom to fit */
+  zoom_to_fit(self);
+
+  return TRUE;
+}
+
 void gnostr_image_viewer_present(GnostrImageViewer *self) {
   g_return_if_fail(GNOSTR_IS_IMAGE_VIEWER(self));
 
@@ -604,4 +874,7 @@ void gnostr_image_viewer_present(GnostrImageViewer *self) {
   if (self->texture) {
     apply_zoom(self);
   }
+
+  /* Update navigation display */
+  update_nav_display(self);
 }

@@ -29,6 +29,7 @@ struct _GnostrVideoPlayer {
   GtkWidget *lbl_time_duration;
   GtkWidget *btn_mute;
   GtkWidget *volume_scale;
+  GtkWidget *btn_loop;
   GtkWidget *btn_fullscreen;
 
   /* State */
@@ -55,6 +56,12 @@ struct _GnostrVideoPlayer {
 
   /* Motion controller for controls visibility */
   GtkEventController *motion_controller;
+
+  /* Auto-pause when scrolled out of view */
+  gboolean was_playing_before_scroll;  /* Track if video was playing before scroll-out */
+  gboolean is_visible_in_viewport;     /* Whether currently visible in scrolled parent */
+  gulong scroll_adj_changed_handler;   /* Signal handler for scroll adjustment changes */
+  GtkAdjustment *scroll_vadjustment;   /* Vertical adjustment of parent scroll */
 };
 
 G_DEFINE_TYPE(GnostrVideoPlayer, gnostr_video_player, GTK_TYPE_WIDGET)
@@ -101,6 +108,12 @@ static void on_fullscreen_clicked(GtkButton *btn, gpointer user_data) {
   GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(user_data);
   (void)btn;
   gnostr_video_player_set_fullscreen(self, !self->is_fullscreen);
+}
+
+static void on_loop_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(user_data);
+  (void)btn;
+  gnostr_video_player_set_loop(self, !self->loop);
 }
 
 static void on_seek_value_changed(GtkRange *range, gpointer user_data) {
@@ -306,6 +319,14 @@ static void update_mute_icon(GnostrVideoPlayer *self) {
   gtk_widget_set_tooltip_text(self->btn_mute, self->muted ? _("Unmute") : _("Mute"));
 }
 
+static void update_loop_icon(GnostrVideoPlayer *self) {
+  if (!GTK_IS_BUTTON(self->btn_loop)) return;
+
+  const char *icon_name = self->loop ? "media-playlist-repeat-symbolic" : "media-playlist-consecutive-symbolic";
+  gtk_button_set_icon_name(GTK_BUTTON(self->btn_loop), icon_name);
+  gtk_widget_set_tooltip_text(self->btn_loop, self->loop ? _("Loop enabled") : _("Loop disabled"));
+}
+
 static void create_controls_overlay(GnostrVideoPlayer *self, GtkWidget *parent_overlay, GtkWidget **controls_box_out) {
   /* Controls container - positioned at bottom */
   GtkWidget *controls_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
@@ -381,6 +402,14 @@ static void create_controls_overlay(GnostrVideoPlayer *self, GtkWidget *parent_o
   gtk_range_set_value(GTK_RANGE(vol_scale), 1.0);
   g_signal_connect(vol_scale, "value-changed", G_CALLBACK(on_volume_value_changed), self);
 
+  /* Loop button */
+  const char *loop_icon = self->loop ? "media-playlist-repeat-symbolic" : "media-playlist-consecutive-symbolic";
+  GtkWidget *btn_loop = gtk_button_new_from_icon_name(loop_icon);
+  gtk_widget_add_css_class(btn_loop, "video-control-btn");
+  gtk_button_set_has_frame(GTK_BUTTON(btn_loop), FALSE);
+  gtk_widget_set_tooltip_text(btn_loop, self->loop ? _("Loop enabled") : _("Loop disabled"));
+  g_signal_connect(btn_loop, "clicked", G_CALLBACK(on_loop_clicked), self);
+
   /* Fullscreen button */
   GtkWidget *btn_fs = gtk_button_new_from_icon_name("view-fullscreen-symbolic");
   gtk_widget_add_css_class(btn_fs, "video-control-btn");
@@ -391,6 +420,7 @@ static void create_controls_overlay(GnostrVideoPlayer *self, GtkWidget *parent_o
   gtk_box_append(GTK_BOX(btn_row), btn_play);
   gtk_box_append(GTK_BOX(btn_row), btn_mute);
   gtk_box_append(GTK_BOX(btn_row), vol_scale);
+  gtk_box_append(GTK_BOX(btn_row), btn_loop);
   gtk_box_append(GTK_BOX(btn_row), btn_fs);
 
   gtk_box_append(GTK_BOX(controls_box), seek_row);
@@ -408,14 +438,129 @@ static void create_controls_overlay(GnostrVideoPlayer *self, GtkWidget *parent_o
     self->lbl_time_duration = lbl_duration;
     self->btn_mute = btn_mute;
     self->volume_scale = vol_scale;
+    self->btn_loop = btn_loop;
     self->btn_fullscreen = btn_fs;
   }
 
   *controls_box_out = controls_box;
 }
 
+/* Check if the video player is visible within its scrolled parent viewport */
+static gboolean check_visibility_in_viewport(GnostrVideoPlayer *self) {
+  if (!GTK_IS_WIDGET(self)) return FALSE;
+
+  GtkWidget *widget = GTK_WIDGET(self);
+  if (!gtk_widget_get_realized(widget)) return FALSE;
+
+  /* Find the nearest GtkScrolledWindow ancestor */
+  GtkWidget *scrolled = gtk_widget_get_ancestor(widget, GTK_TYPE_SCROLLED_WINDOW);
+  if (!scrolled) return TRUE;  /* No scrolled parent, consider visible */
+
+  /* Get the vertical adjustment */
+  GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scrolled));
+  if (!vadj) return TRUE;
+
+  /* Get scroll position and viewport size */
+  double scroll_pos = gtk_adjustment_get_value(vadj);
+  double viewport_height = gtk_adjustment_get_page_size(vadj);
+
+  /* Get widget position relative to scrolled window content */
+  graphene_point_t point = GRAPHENE_POINT_INIT(0, 0);
+  graphene_point_t result;
+  GtkWidget *viewport_child = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(scrolled));
+  if (!viewport_child) return TRUE;
+
+  /* Compute the widget's position relative to the scrollable content */
+  if (!gtk_widget_compute_point(widget, viewport_child, &point, &result)) {
+    return TRUE;  /* Can't compute, assume visible */
+  }
+
+  double widget_top = result.y;
+  double widget_height = gtk_widget_get_height(widget);
+  double widget_bottom = widget_top + widget_height;
+
+  /* Check if widget overlaps with visible viewport area */
+  double viewport_top = scroll_pos;
+  double viewport_bottom = scroll_pos + viewport_height;
+
+  /* Consider visible if at least 30% of the video is in view */
+  double visible_top = MAX(widget_top, viewport_top);
+  double visible_bottom = MIN(widget_bottom, viewport_bottom);
+  double visible_height = visible_bottom - visible_top;
+
+  if (visible_height <= 0) return FALSE;  /* Completely out of view */
+
+  double visible_fraction = visible_height / widget_height;
+  return visible_fraction >= 0.3;  /* At least 30% visible */
+}
+
+static void on_scroll_value_changed(GtkAdjustment *adjustment, gpointer user_data) {
+  GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(user_data);
+  (void)adjustment;
+
+  if (!GNOSTR_IS_VIDEO_PLAYER(self)) return;
+
+  gboolean is_visible = check_visibility_in_viewport(self);
+
+  if (is_visible != self->is_visible_in_viewport) {
+    self->is_visible_in_viewport = is_visible;
+
+    GtkMediaStream *stream = gtk_video_get_media_stream(GTK_VIDEO(self->video));
+    if (!stream) return;
+
+    if (!is_visible) {
+      /* Scrolled out of view - pause if playing */
+      if (gtk_media_stream_get_playing(stream)) {
+        self->was_playing_before_scroll = TRUE;
+        gtk_media_stream_pause(stream);
+        update_play_pause_icon(self);
+      }
+    } else {
+      /* Scrolled back into view - resume if was playing */
+      if (self->was_playing_before_scroll) {
+        self->was_playing_before_scroll = FALSE;
+        gtk_media_stream_play(stream);
+        update_play_pause_icon(self);
+      }
+    }
+  }
+}
+
+static void setup_scroll_visibility_tracking(GnostrVideoPlayer *self) {
+  /* Already set up? */
+  if (self->scroll_vadjustment) return;
+
+  /* Find the nearest GtkScrolledWindow ancestor */
+  GtkWidget *scrolled = gtk_widget_get_ancestor(GTK_WIDGET(self), GTK_TYPE_SCROLLED_WINDOW);
+  if (!scrolled) return;
+
+  /* Get the vertical adjustment */
+  GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scrolled));
+  if (!vadj) return;
+
+  /* Store reference and connect signal */
+  self->scroll_vadjustment = vadj;
+  self->scroll_adj_changed_handler = g_signal_connect(vadj, "value-changed",
+                                                       G_CALLBACK(on_scroll_value_changed), self);
+  self->is_visible_in_viewport = TRUE;
+  self->was_playing_before_scroll = FALSE;
+}
+
+static void on_video_player_realize(GtkWidget *widget, gpointer user_data) {
+  GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(user_data);
+  (void)widget;
+  setup_scroll_visibility_tracking(self);
+}
+
 static void gnostr_video_player_dispose(GObject *obj) {
   GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(obj);
+
+  /* Disconnect scroll adjustment handler */
+  if (self->scroll_vadjustment && self->scroll_adj_changed_handler > 0) {
+    g_signal_handler_disconnect(self->scroll_vadjustment, self->scroll_adj_changed_handler);
+    self->scroll_adj_changed_handler = 0;
+    self->scroll_vadjustment = NULL;
+  }
 
   /* Cancel timers */
   if (self->controls_hide_timer_id > 0) {
@@ -502,6 +647,13 @@ static void gnostr_video_player_init(GnostrVideoPlayer *self) {
 
   /* Make focusable for keyboard events */
   gtk_widget_set_focusable(GTK_WIDGET(self), TRUE);
+
+  /* Auto-pause initialization */
+  self->is_visible_in_viewport = TRUE;
+  self->was_playing_before_scroll = FALSE;
+
+  /* Set up scroll visibility tracking when realized */
+  g_signal_connect(GTK_WIDGET(self), "realize", G_CALLBACK(on_video_player_realize), self);
 }
 
 GnostrVideoPlayer *gnostr_video_player_new(void) {
@@ -680,6 +832,7 @@ void gnostr_video_player_set_loop(GnostrVideoPlayer *self, gboolean loop) {
       gtk_media_stream_set_loop(stream, loop);
     }
   }
+  update_loop_icon(self);
 }
 
 gboolean gnostr_video_player_get_loop(GnostrVideoPlayer *self) {

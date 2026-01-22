@@ -81,6 +81,8 @@ struct _GnostrNoteCardRow {
   gint64 zap_total_msat;
   guint zap_count;
   gchar *author_lud16;  /* Author's lightning address from profile */
+  /* Content state (plain text for clipboard) */
+  gchar *content_text;
 };
 
 G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
@@ -100,6 +102,8 @@ enum {
   SIGNAL_MUTE_THREAD_REQUESTED,
   SIGNAL_SHOW_TOAST,
   SIGNAL_BOOKMARK_TOGGLED,
+  SIGNAL_REPORT_NOTE_REQUESTED,
+  SIGNAL_SHARE_NOTE_REQUESTED,
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -166,6 +170,7 @@ static void gnostr_note_card_row_finalize(GObject *obj) {
   g_clear_pointer(&self->parent_pubkey, g_free);
   g_clear_pointer(&self->nip05, g_free);
   g_clear_pointer(&self->author_lud16, g_free);
+  g_clear_pointer(&self->content_text, g_free);
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->finalize(obj);
 }
 
@@ -417,6 +422,84 @@ static void on_copy_pubkey_clicked(GtkButton *btn, gpointer user_data) {
   }
 }
 
+static void on_copy_note_text_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (!self || !self->content_text) return;
+
+  /* Hide popover first */
+  if (self->menu_popover && GTK_IS_POPOVER(self->menu_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
+  }
+
+  copy_to_clipboard(self, self->content_text);
+}
+
+static void on_report_note_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (!self || !self->id_hex || !self->pubkey_hex) return;
+
+  /* Hide popover first */
+  if (self->menu_popover && GTK_IS_POPOVER(self->menu_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
+  }
+
+  /* Emit signal to report this note (NIP-56) */
+  g_signal_emit(self, signals[SIGNAL_REPORT_NOTE_REQUESTED], 0, self->id_hex, self->pubkey_hex);
+}
+
+static void on_share_note_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (!self || !self->id_hex) return;
+
+  /* Hide popover first */
+  if (self->menu_popover && GTK_IS_POPOVER(self->menu_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
+  }
+
+  /* Build nostr: URI for sharing */
+  char *encoded = NULL;
+  NostrNEventConfig cfg = {
+    .id = self->id_hex,
+    .author = self->pubkey_hex,
+    .kind = 1,
+    .relays = NULL,
+    .relays_count = 0
+  };
+
+  NostrPointer *ptr = NULL;
+  if (nostr_pointer_from_nevent_config(&cfg, &ptr) == 0 && ptr) {
+    nostr_pointer_to_bech32(ptr, &encoded);
+    nostr_pointer_free(ptr);
+  }
+
+  /* Fallback to simple note1 */
+  if (!encoded) {
+    uint8_t id_bytes[32];
+    if (hex_to_bytes_32(self->id_hex, id_bytes)) {
+      nostr_nip19_encode_note(id_bytes, &encoded);
+    }
+  }
+
+  if (encoded) {
+    /* Create nostr: URI */
+    char *uri = g_strdup_printf("nostr:%s", encoded);
+
+    /* Use GtkUriLauncher or system share if available */
+    GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+    GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
+
+    /* Copy to clipboard as fallback and show toast */
+    copy_to_clipboard(self, uri);
+    g_signal_emit(self, signals[SIGNAL_SHARE_NOTE_REQUESTED], 0, uri);
+
+    g_free(uri);
+    free(encoded);
+  }
+}
+
 static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
   GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
   (void)btn;
@@ -458,11 +541,23 @@ static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
     g_signal_connect(copy_note_btn, "clicked", G_CALLBACK(on_copy_note_id_clicked), self);
     gtk_box_append(GTK_BOX(box), copy_note_btn);
 
-    /* Copy User Pubkey button */
+    /* Copy Note Text button */
+    GtkWidget *copy_text_btn = gtk_button_new();
+    GtkWidget *copy_text_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *copy_text_icon = gtk_image_new_from_icon_name("edit-copy-symbolic");
+    GtkWidget *copy_text_label = gtk_label_new("Copy Note Text");
+    gtk_box_append(GTK_BOX(copy_text_box), copy_text_icon);
+    gtk_box_append(GTK_BOX(copy_text_box), copy_text_label);
+    gtk_button_set_child(GTK_BUTTON(copy_text_btn), copy_text_box);
+    gtk_button_set_has_frame(GTK_BUTTON(copy_text_btn), FALSE);
+    g_signal_connect(copy_text_btn, "clicked", G_CALLBACK(on_copy_note_text_clicked), self);
+    gtk_box_append(GTK_BOX(box), copy_text_btn);
+
+    /* Copy Author Pubkey button */
     GtkWidget *copy_pubkey_btn = gtk_button_new();
     GtkWidget *copy_pubkey_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     GtkWidget *copy_pubkey_icon = gtk_image_new_from_icon_name("avatar-default-symbolic");
-    GtkWidget *copy_pubkey_label = gtk_label_new("Copy User Pubkey");
+    GtkWidget *copy_pubkey_label = gtk_label_new("Copy Author Pubkey");
     gtk_box_append(GTK_BOX(copy_pubkey_box), copy_pubkey_icon);
     gtk_box_append(GTK_BOX(copy_pubkey_box), copy_pubkey_label);
     gtk_button_set_child(GTK_BUTTON(copy_pubkey_btn), copy_pubkey_box);
@@ -470,17 +565,35 @@ static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
     g_signal_connect(copy_pubkey_btn, "clicked", G_CALLBACK(on_copy_pubkey_clicked), self);
     gtk_box_append(GTK_BOX(box), copy_pubkey_btn);
 
-    /* Separator */
-    GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_widget_set_margin_top(sep, 4);
-    gtk_widget_set_margin_bottom(sep, 4);
-    gtk_box_append(GTK_BOX(box), sep);
+    /* Separator - Share section */
+    GtkWidget *sep1 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_widget_set_margin_top(sep1, 4);
+    gtk_widget_set_margin_bottom(sep1, 4);
+    gtk_box_append(GTK_BOX(box), sep1);
 
-    /* Mute User button */
+    /* Share Note button */
+    GtkWidget *share_btn = gtk_button_new();
+    GtkWidget *share_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *share_icon = gtk_image_new_from_icon_name("emblem-shared-symbolic");
+    GtkWidget *share_label = gtk_label_new("Share Note");
+    gtk_box_append(GTK_BOX(share_box), share_icon);
+    gtk_box_append(GTK_BOX(share_box), share_label);
+    gtk_button_set_child(GTK_BUTTON(share_btn), share_box);
+    gtk_button_set_has_frame(GTK_BUTTON(share_btn), FALSE);
+    g_signal_connect(share_btn, "clicked", G_CALLBACK(on_share_note_clicked), self);
+    gtk_box_append(GTK_BOX(box), share_btn);
+
+    /* Separator - Moderation section */
+    GtkWidget *sep2 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_widget_set_margin_top(sep2, 4);
+    gtk_widget_set_margin_bottom(sep2, 4);
+    gtk_box_append(GTK_BOX(box), sep2);
+
+    /* Mute Author button */
     GtkWidget *mute_btn = gtk_button_new();
     GtkWidget *mute_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     GtkWidget *mute_icon = gtk_image_new_from_icon_name("action-unavailable-symbolic");
-    GtkWidget *mute_label = gtk_label_new("Mute User");
+    GtkWidget *mute_label = gtk_label_new("Mute Author");
     gtk_box_append(GTK_BOX(mute_box), mute_icon);
     gtk_box_append(GTK_BOX(mute_box), mute_label);
     gtk_button_set_child(GTK_BUTTON(mute_btn), mute_box);
@@ -500,11 +613,65 @@ static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
     g_signal_connect(mute_thread_btn, "clicked", G_CALLBACK(on_mute_thread_clicked), self);
     gtk_box_append(GTK_BOX(box), mute_thread_btn);
 
+    /* Report Note button */
+    GtkWidget *report_btn = gtk_button_new();
+    GtkWidget *report_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *report_icon = gtk_image_new_from_icon_name("dialog-warning-symbolic");
+    GtkWidget *report_label = gtk_label_new("Report Note");
+    gtk_box_append(GTK_BOX(report_box), report_icon);
+    gtk_box_append(GTK_BOX(report_box), report_label);
+    gtk_button_set_child(GTK_BUTTON(report_btn), report_box);
+    gtk_button_set_has_frame(GTK_BUTTON(report_btn), FALSE);
+    g_signal_connect(report_btn, "clicked", G_CALLBACK(on_report_note_clicked), self);
+    gtk_box_append(GTK_BOX(box), report_btn);
+
     gtk_popover_set_child(GTK_POPOVER(self->menu_popover), box);
   }
 
   /* Show the popover */
   gtk_popover_popup(GTK_POPOVER(self->menu_popover));
+}
+
+/* Helper function to show context menu at a specific position */
+static void show_context_menu_at_point(GnostrNoteCardRow *self, double x, double y) {
+  if (!self) return;
+
+  /* Create popover if needed (reuse the menu popover code) */
+  if (!self->menu_popover) {
+    /* Trigger creation by simulating a button click on the menu button */
+    on_menu_clicked(GTK_BUTTON(self->btn_menu), self);
+    /* Hide it immediately as we want to position it differently */
+    gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
+  }
+
+  /* Position the popover at the click point */
+  GdkRectangle rect = { (int)x, (int)y, 1, 1 };
+  gtk_popover_set_pointing_to(GTK_POPOVER(self->menu_popover), &rect);
+
+  /* Re-parent to the note card widget for proper positioning */
+  if (gtk_widget_get_parent(self->menu_popover) != GTK_WIDGET(self)) {
+    gtk_widget_unparent(self->menu_popover);
+    gtk_widget_set_parent(self->menu_popover, GTK_WIDGET(self));
+  }
+
+  gtk_popover_popup(GTK_POPOVER(self->menu_popover));
+}
+
+/* Right-click gesture handler */
+static void on_right_click_pressed(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)gesture;
+  (void)n_press;
+
+  show_context_menu_at_point(self, x, y);
+}
+
+/* Long-press gesture handler (for touch devices) */
+static void on_long_press(GtkGestureLongPress *gesture, gdouble x, gdouble y, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)gesture;
+
+  show_context_menu_at_point(self, x, y);
 }
 
 static void on_reply_clicked(GtkButton *btn, gpointer user_data) {
@@ -715,6 +882,12 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   signals[SIGNAL_BOOKMARK_TOGGLED] = g_signal_new("bookmark-toggled",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_BOOLEAN);
+  signals[SIGNAL_REPORT_NOTE_REQUESTED] = g_signal_new("report-note-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
+  signals[SIGNAL_SHARE_NOTE_REQUESTED] = g_signal_new("share-note-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 1, G_TYPE_STRING);
 }
 
 static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
@@ -779,6 +952,19 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_thread),
                                    GTK_ACCESSIBLE_PROPERTY_LABEL, "View Thread", -1);
   }
+
+  /* Add right-click gesture for context menu */
+  GtkGesture *right_click = gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(right_click), GDK_BUTTON_SECONDARY);
+  g_signal_connect(right_click, "pressed", G_CALLBACK(on_right_click_pressed), self);
+  gtk_widget_add_controller(GTK_WIDGET(self), GTK_EVENT_CONTROLLER(right_click));
+
+  /* Add long-press gesture for touch devices */
+  GtkGesture *long_press = gtk_gesture_long_press_new();
+  gtk_gesture_single_set_touch_only(GTK_GESTURE_SINGLE(long_press), TRUE);
+  g_signal_connect(long_press, "pressed", G_CALLBACK(on_long_press), self);
+  gtk_widget_add_controller(GTK_WIDGET(self), GTK_EVENT_CONTROLLER(long_press));
+
 #ifdef HAVE_SOUP3
   self->avatar_cancellable = g_cancellable_new();
   self->media_session = soup_session_new();
@@ -865,24 +1051,24 @@ static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer u
   g_object_unref(picture);
 }
 
-/* Load media image asynchronously */
-static void load_media_image(GnostrNoteCardRow *self, const char *url, GtkPicture *picture) {
+/* Load media image asynchronously - internal function that starts the actual fetch */
+static void load_media_image_internal(GnostrNoteCardRow *self, const char *url, GtkPicture *picture) {
   if (!url || !*url || !GTK_IS_PICTURE(picture)) return;
-  
+
   /* Create cancellable for this request */
   GCancellable *cancellable = g_cancellable_new();
   g_hash_table_insert(self->media_cancellables, g_strdup(url), cancellable);
-  
+
   /* Create HTTP request */
   SoupMessage *msg = soup_message_new("GET", url);
   if (!msg) {
     g_debug("Media: Invalid image URL: %s", url);
     return;
   }
-  
+
   /* Take a reference to the picture to keep it alive during async operation */
   g_object_ref(picture);
-  
+
   /* Start async fetch */
   soup_session_send_and_read_async(
     self->media_session,
@@ -892,8 +1078,119 @@ static void load_media_image(GnostrNoteCardRow *self, const char *url, GtkPictur
     on_media_image_loaded,
     picture
   );
-  
+
   g_object_unref(msg);
+}
+
+/* Lazy loading context for deferred media loading */
+typedef struct {
+  GnostrNoteCardRow *self;
+  GtkPicture *picture;
+  char *url;
+  guint timeout_id;
+  gulong map_handler_id;
+  gulong unmap_handler_id;
+  gboolean loaded;
+} LazyLoadContext;
+
+static void lazy_load_context_free(LazyLoadContext *ctx) {
+  if (!ctx) return;
+  if (ctx->timeout_id > 0) {
+    g_source_remove(ctx->timeout_id);
+    ctx->timeout_id = 0;
+  }
+  g_free(ctx->url);
+  g_free(ctx);
+}
+
+/* Timeout callback - actually load the image after delay */
+static gboolean on_lazy_load_timeout(gpointer user_data) {
+  LazyLoadContext *ctx = (LazyLoadContext *)user_data;
+
+  if (!ctx || ctx->loaded) return G_SOURCE_REMOVE;
+
+  /* Check if widgets are still valid */
+  if (!GNOSTR_IS_NOTE_CARD_ROW(ctx->self) || !GTK_IS_PICTURE(ctx->picture)) {
+    ctx->timeout_id = 0;
+    return G_SOURCE_REMOVE;
+  }
+
+  /* Check if widget is still mapped (visible) */
+  if (!gtk_widget_get_mapped(GTK_WIDGET(ctx->picture))) {
+    ctx->timeout_id = 0;
+    return G_SOURCE_REMOVE;
+  }
+
+  g_debug("Media: Lazy loading image: %s", ctx->url);
+  ctx->loaded = TRUE;
+  load_media_image_internal(ctx->self, ctx->url, ctx->picture);
+
+  ctx->timeout_id = 0;
+  return G_SOURCE_REMOVE;
+}
+
+/* Called when the picture widget becomes visible */
+static void on_picture_mapped(GtkWidget *widget, gpointer user_data) {
+  LazyLoadContext *ctx = (LazyLoadContext *)user_data;
+  (void)widget;
+
+  if (!ctx || ctx->loaded) return;
+
+  /* Cancel any pending timeout */
+  if (ctx->timeout_id > 0) {
+    g_source_remove(ctx->timeout_id);
+    ctx->timeout_id = 0;
+  }
+
+  /* Schedule load after a short delay (150ms) to avoid loading during fast scrolling */
+  ctx->timeout_id = g_timeout_add(150, on_lazy_load_timeout, ctx);
+}
+
+/* Called when the picture widget becomes hidden */
+static void on_picture_unmapped(GtkWidget *widget, gpointer user_data) {
+  LazyLoadContext *ctx = (LazyLoadContext *)user_data;
+  (void)widget;
+
+  if (!ctx || ctx->loaded) return;
+
+  /* Cancel pending load if user scrolled past */
+  if (ctx->timeout_id > 0) {
+    g_source_remove(ctx->timeout_id);
+    ctx->timeout_id = 0;
+    g_debug("Media: Cancelled lazy load (scrolled past): %s", ctx->url);
+  }
+}
+
+/* Called when the picture widget is destroyed */
+static void on_lazy_load_picture_destroyed(gpointer user_data, GObject *where_the_object_was) {
+  LazyLoadContext *ctx = (LazyLoadContext *)user_data;
+  (void)where_the_object_was;
+  lazy_load_context_free(ctx);
+}
+
+/* Load media image with lazy loading - defers actual loading until widget is visible */
+static void load_media_image(GnostrNoteCardRow *self, const char *url, GtkPicture *picture) {
+  if (!url || !*url || !GTK_IS_PICTURE(picture)) return;
+
+  /* Create lazy loading context */
+  LazyLoadContext *ctx = g_new0(LazyLoadContext, 1);
+  ctx->self = self;
+  ctx->picture = picture;
+  ctx->url = g_strdup(url);
+  ctx->loaded = FALSE;
+  ctx->timeout_id = 0;
+
+  /* Connect to map/unmap signals for visibility tracking */
+  ctx->map_handler_id = g_signal_connect(picture, "map", G_CALLBACK(on_picture_mapped), ctx);
+  ctx->unmap_handler_id = g_signal_connect(picture, "unmap", G_CALLBACK(on_picture_unmapped), ctx);
+
+  /* Track widget destruction to free context */
+  g_object_weak_ref(G_OBJECT(picture), on_lazy_load_picture_destroyed, ctx);
+
+  /* If already mapped, start loading immediately */
+  if (gtk_widget_get_mapped(GTK_WIDGET(picture))) {
+    on_picture_mapped(GTK_WIDGET(picture), ctx);
+  }
 }
 #endif
 
@@ -1025,30 +1322,68 @@ static gboolean is_video_url(const char *u) {
   return result;
 }
 
-/* Image click handler - opens full-size image viewer */
+/* Image click handler - opens full-size image viewer with gallery support */
 static void on_media_image_clicked(GtkGestureClick *gesture,
                                     int n_press,
                                     double x, double y,
                                     gpointer user_data) {
-  (void)gesture;
   (void)n_press;
   (void)x;
   (void)y;
+  (void)user_data;
 
-  const char *url = (const char *)user_data;
-  if (!url || !*url) return;
+  /* Get the clicked picture widget */
+  GtkWidget *pic = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+  if (!pic) return;
 
-  /* Get the widget to find parent window */
-  GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
-  if (!widget) return;
+  /* Get the URL of this image */
+  const char *clicked_url = g_object_get_data(G_OBJECT(pic), "image-url");
+  if (!clicked_url || !*clicked_url) return;
 
-  GtkRoot *root = gtk_widget_get_root(widget);
+  /* Get the parent media_box to find all images */
+  GtkWidget *media_box = gtk_widget_get_parent(pic);
+  if (!media_box || !GTK_IS_BOX(media_box)) {
+    /* Fallback: single image mode */
+    GtkRoot *root = gtk_widget_get_root(pic);
+    GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
+    GnostrImageViewer *viewer = gnostr_image_viewer_new(parent);
+    gnostr_image_viewer_set_image_url(viewer, clicked_url);
+    gnostr_image_viewer_present(viewer);
+    return;
+  }
+
+  /* Collect all image URLs from media_box */
+  GPtrArray *urls = g_ptr_array_new();
+  guint clicked_index = 0;
+  GtkWidget *child = gtk_widget_get_first_child(media_box);
+  while (child) {
+    if (GTK_IS_PICTURE(child)) {
+      const char *url = g_object_get_data(G_OBJECT(child), "image-url");
+      if (url && *url) {
+        if (child == pic) {
+          clicked_index = urls->len;
+        }
+        g_ptr_array_add(urls, (gpointer)url);
+      }
+    }
+    child = gtk_widget_get_next_sibling(child);
+  }
+  g_ptr_array_add(urls, NULL);  /* NULL terminate */
+
+  /* Get parent window */
+  GtkRoot *root = gtk_widget_get_root(pic);
   GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
 
-  /* Create and show the image viewer */
+  /* Create and show the image viewer with gallery */
   GnostrImageViewer *viewer = gnostr_image_viewer_new(parent);
-  gnostr_image_viewer_set_image_url(viewer, url);
+  if (urls->len > 2) {  /* More than just clicked + NULL terminator */
+    gnostr_image_viewer_set_gallery(viewer, (const char * const *)urls->pdata, clicked_index);
+  } else {
+    gnostr_image_viewer_set_image_url(viewer, clicked_url);
+  }
   gnostr_image_viewer_present(viewer);
+
+  g_ptr_array_free(urls, TRUE);
 }
 
 static gboolean is_media_url(const char *u) {
@@ -1118,6 +1453,11 @@ static gboolean token_is_nostr(const char *t) {
 
 void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *content) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
+
+  /* Store plain text content for clipboard operations */
+  g_clear_pointer(&self->content_text, g_free);
+  self->content_text = g_strdup(content);
+
   /* Parse content: detect URLs and nostr entities, handle trailing punctuation */
   GString *out = g_string_new("");
   if (content && *content) {
@@ -1336,6 +1676,10 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
 void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const char *content, const char *tags_json) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
 
+  /* Store plain text content for clipboard operations */
+  g_clear_pointer(&self->content_text, g_free);
+  self->content_text = g_strdup(content);
+
   GnostrImetaList *imeta_list = NULL;
   if (tags_json && *tags_json) {
     imeta_list = gnostr_imeta_parse_tags_json(tags_json);
@@ -1405,6 +1749,7 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
           if (media_type == GNOSTR_MEDIA_TYPE_IMAGE) {
             GtkWidget *pic = gtk_picture_new();
             gtk_widget_add_css_class(pic, "note-media-image");
+            gtk_widget_add_css_class(pic, "clickable-image");
             gtk_picture_set_can_shrink(GTK_PICTURE(pic), TRUE);
             gtk_picture_set_content_fit(GTK_PICTURE(pic), GTK_CONTENT_FIT_CONTAIN);
             int height = 300;
@@ -1418,16 +1763,26 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
             if (imeta && imeta->alt && *imeta->alt) gtk_widget_set_tooltip_text(pic, imeta->alt);
             gtk_widget_set_hexpand(pic, TRUE);
             gtk_widget_set_vexpand(pic, FALSE);
+            gtk_widget_set_cursor_from_name(pic, "pointer");
+
+            /* Add click gesture to open image viewer */
+            GtkGesture *click_gesture = gtk_gesture_click_new();
+            gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture), GDK_BUTTON_PRIMARY);
+            /* Store URL in widget data for the click handler */
+            g_object_set_data_full(G_OBJECT(pic), "image-url", g_strdup(url), g_free);
+            g_signal_connect(click_gesture, "pressed", G_CALLBACK(on_media_image_clicked),
+                             g_object_get_data(G_OBJECT(pic), "image-url"));
+            gtk_widget_add_controller(pic, GTK_EVENT_CONTROLLER(click_gesture));
+
             gtk_box_append(GTK_BOX(self->media_box), pic);
             gtk_widget_set_visible(self->media_box, TRUE);
 #ifdef HAVE_SOUP3
             load_media_image(self, url, GTK_PICTURE(pic));
 #endif
           } else if (media_type == GNOSTR_MEDIA_TYPE_VIDEO) {
-            GtkWidget *video = gtk_video_new();
-            gtk_widget_add_css_class(video, "note-media-video");
-            gtk_video_set_autoplay(GTK_VIDEO(video), FALSE);
-            gtk_video_set_loop(GTK_VIDEO(video), TRUE);
+            /* Use enhanced video player with controls overlay */
+            GnostrVideoPlayer *player = gnostr_video_player_new();
+            gtk_widget_add_css_class(GTK_WIDGET(player), "note-media-video");
             int height = 300;
             if (imeta && imeta->width > 0 && imeta->height > 0) {
               int cw = 400;
@@ -1435,14 +1790,13 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
               if (height > 400) height = 400;
               if (height < 100) height = 100;
             }
-            gtk_widget_set_size_request(video, -1, height);
-            if (imeta && imeta->alt && *imeta->alt) gtk_widget_set_tooltip_text(video, imeta->alt);
-            gtk_widget_set_hexpand(video, TRUE);
-            gtk_widget_set_vexpand(video, FALSE);
-            GFile *file = g_file_new_for_uri(url);
-            gtk_video_set_file(GTK_VIDEO(video), file);
-            g_object_unref(file);
-            gtk_box_append(GTK_BOX(self->media_box), video);
+            gtk_widget_set_size_request(GTK_WIDGET(player), -1, height);
+            if (imeta && imeta->alt && *imeta->alt) gtk_widget_set_tooltip_text(GTK_WIDGET(player), imeta->alt);
+            gtk_widget_set_hexpand(GTK_WIDGET(player), TRUE);
+            gtk_widget_set_vexpand(GTK_WIDGET(player), FALSE);
+            /* Set video URI - settings (autoplay/loop) are read from GSettings */
+            gnostr_video_player_set_uri(player, url);
+            gtk_box_append(GTK_BOX(self->media_box), GTK_WIDGET(player));
             gtk_widget_set_visible(self->media_box, TRUE);
           }
         }

@@ -11,6 +11,7 @@
 #include <nostr-event.h>
 #include <nostr-filter.h>
 #include <json.h>
+#include <jansson.h>
 #include <nostr_simple_pool.h>
 #include "../util/relays.h"
 #include <string.h>
@@ -751,13 +752,44 @@ static void fetch_event_from_local(GnostrNoteEmbed *self, const unsigned char id
       char *avatar_url = NULL;
 
       if (author_hex && hex_to_bytes_32(author_hex, author_pk)) {
-        char *profile_json = NULL;
-        int profile_len = 0;
-        if (storage_ndb_get_profile_by_pubkey(txn, author_pk, &profile_json, &profile_len) == 0 && profile_json) {
-          /* Parse profile JSON to extract name/picture */
-          /* Simple JSON extraction - could use json-glib for robustness */
-          /* For now, just use author hex prefix */
-          g_free(profile_json);
+        char *profile_event_json = NULL;
+        int profile_event_len = 0;
+        if (storage_ndb_get_profile_by_pubkey(txn, author_pk, &profile_event_json, &profile_event_len) == 0 && profile_event_json) {
+          /* Parse kind-0 event to get profile content JSON */
+          NostrEvent *profile_evt = nostr_event_new();
+          if (profile_evt && nostr_event_deserialize(profile_evt, profile_event_json) == 0) {
+            const char *profile_content = nostr_event_get_content(profile_evt);
+            if (profile_content && *profile_content) {
+              /* Parse the profile content JSON using jansson */
+              json_error_t jerr;
+              json_t *profile_root = json_loads(profile_content, 0, &jerr);
+              if (profile_root) {
+                json_t *val;
+                /* Try display_name first, then name */
+                if ((val = json_object_get(profile_root, "display_name")) && json_is_string(val)) {
+                  const char *dn = json_string_value(val);
+                  if (dn && *dn) author_display = g_strdup(dn);
+                }
+                if (!author_display && (val = json_object_get(profile_root, "name")) && json_is_string(val)) {
+                  const char *nm = json_string_value(val);
+                  if (nm && *nm) author_display = g_strdup(nm);
+                }
+                /* Get handle/name */
+                if ((val = json_object_get(profile_root, "name")) && json_is_string(val)) {
+                  const char *nm = json_string_value(val);
+                  if (nm && *nm) author_handle = g_strdup(nm);
+                }
+                /* Get picture URL */
+                if ((val = json_object_get(profile_root, "picture")) && json_is_string(val)) {
+                  const char *pic = json_string_value(val);
+                  if (pic && *pic) avatar_url = g_strdup(pic);
+                }
+                json_decref(profile_root);
+              }
+            }
+          }
+          if (profile_evt) nostr_event_free(profile_evt);
+          g_free(profile_event_json);
         }
       }
 
@@ -977,16 +1009,63 @@ static void fetch_profile_from_local(GnostrNoteEmbed *self, const unsigned char 
     return;
   }
 
-  char *json = NULL;
-  int json_len = 0;
-  if (storage_ndb_get_profile_by_pubkey(txn, pk32, &json, &json_len) == 0 && json) {
-    /* Parse profile - this is kind 0 content JSON */
-    /* For now, just show as loaded with pubkey */
-    /* TODO: Parse JSON to extract name, about, picture */
-    gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
-    g_free(json);
+  char *event_json = NULL;
+  int event_json_len = 0;
+  if (storage_ndb_get_profile_by_pubkey(txn, pk32, &event_json, &event_json_len) == 0 && event_json) {
+    /* Parse kind-0 event to get profile content JSON */
+    char *display_name = NULL;
+    char *handle = NULL;
+    char *about = NULL;
+    char *picture = NULL;
+
+    NostrEvent *evt = nostr_event_new();
+    if (evt && nostr_event_deserialize(evt, event_json) == 0) {
+      const char *content = nostr_event_get_content(evt);
+      if (content && *content) {
+        /* Parse the profile content JSON */
+        json_error_t jerr;
+        json_t *root = json_loads(content, 0, &jerr);
+        if (root) {
+          json_t *val;
+          /* Try display_name first, then name */
+          if ((val = json_object_get(root, "display_name")) && json_is_string(val)) {
+            const char *dn = json_string_value(val);
+            if (dn && *dn) display_name = g_strdup(dn);
+          }
+          if (!display_name && (val = json_object_get(root, "name")) && json_is_string(val)) {
+            const char *nm = json_string_value(val);
+            if (nm && *nm) display_name = g_strdup(nm);
+          }
+          /* Get handle/name */
+          if ((val = json_object_get(root, "name")) && json_is_string(val)) {
+            const char *nm = json_string_value(val);
+            if (nm && *nm) handle = g_strdup(nm);
+          }
+          /* Get about text */
+          if ((val = json_object_get(root, "about")) && json_is_string(val)) {
+            const char *ab = json_string_value(val);
+            if (ab && *ab) about = g_strdup(ab);
+          }
+          /* Get picture URL */
+          if ((val = json_object_get(root, "picture")) && json_is_string(val)) {
+            const char *pic = json_string_value(val);
+            if (pic && *pic) picture = g_strdup(pic);
+          }
+          json_decref(root);
+        }
+      }
+    }
+    if (evt) nostr_event_free(evt);
+    g_free(event_json);
+
+    gnostr_note_embed_set_profile(self, display_name, handle, about, picture, self->target_id);
+
+    g_free(display_name);
+    g_free(handle);
+    g_free(about);
+    g_free(picture);
   } else {
-    /* Not in cache, show basic profile */
+    /* Not in cache, show basic profile with just pubkey */
     gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
   }
 

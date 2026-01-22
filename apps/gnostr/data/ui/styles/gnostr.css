@@ -650,6 +650,56 @@ button.pill:hover {
   font-weight: 500;
 }
 
+/* Toolbar button styling (save, etc.) */
+.image-viewer-button {
+  background: alpha(black, 0.5);
+  color: white;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 8px;
+  border: none;
+  transition: all 150ms ease;
+}
+
+.image-viewer-button:hover {
+  background: alpha(black, 0.7);
+}
+
+/* Gallery navigation container (bottom center) */
+.image-viewer-nav {
+  background: alpha(black, 0.5);
+  padding: 8px 16px;
+  border-radius: 24px;
+}
+
+/* Navigation buttons (prev/next) */
+.image-viewer-nav-button {
+  background: transparent;
+  color: white;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 6px;
+  border: none;
+  transition: all 150ms ease;
+}
+
+.image-viewer-nav-button:hover {
+  background: alpha(white, 0.15);
+}
+
+.image-viewer-nav-button:disabled {
+  opacity: 0.3;
+}
+
+/* Navigation label (e.g., "1 / 5") */
+.image-viewer-nav-label {
+  color: white;
+  font-size: 14px;
+  font-weight: 500;
+  min-width: 60px;
+  text-align: center;
+}
+
 /* Clickable image in note cards */
 .clickable-image {
   transition: all 150ms ease;

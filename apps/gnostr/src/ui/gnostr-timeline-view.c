@@ -10,6 +10,7 @@
 #include "nostr_simple_pool.h"
 #include "../util/relays.h"
 #include "../util/utils.h"
+#include "../util/bookmarks.h"
 #include "nostr-filter.h"
 #include <string.h>
 #include <time.h>
@@ -881,6 +882,35 @@ static void on_note_card_show_toast_relay(GnostrNoteCardRow *row, const char *me
   (void)user_data;
 }
 
+/* Handler for bookmark-toggled signal - update NIP-51 bookmark list */
+static void on_note_card_bookmark_toggled_cb(GnostrNoteCardRow *row, const char *event_id, gboolean is_bookmarked, gpointer user_data) {
+  (void)user_data;
+  (void)row;
+
+  if (!event_id || strlen(event_id) != 64) {
+    g_warning("[BOOKMARK] Invalid event ID for bookmark toggle");
+    return;
+  }
+
+  GnostrBookmarks *bookmarks = gnostr_bookmarks_get_default();
+  if (!bookmarks) {
+    g_warning("[BOOKMARK] Failed to get bookmarks instance");
+    return;
+  }
+
+  /* Update the bookmark list */
+  if (is_bookmarked) {
+    gnostr_bookmarks_add(bookmarks, event_id, NULL, FALSE);
+  } else {
+    gnostr_bookmarks_remove(bookmarks, event_id);
+  }
+
+  /* Save the updated bookmark list to relays asynchronously */
+  gnostr_bookmarks_save_async(bookmarks, NULL, NULL);
+
+  g_message("[BOOKMARK] Bookmark %s for event %s", is_bookmarked ? "added" : "removed", event_id);
+}
+
 /* Callback when profile is loaded for an event item - show the row */
 static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
@@ -945,6 +975,8 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
   g_signal_connect(row, "mute-thread-requested", G_CALLBACK(on_note_card_mute_thread_requested_relay), NULL);
   /* Connect the show-toast signal */
   g_signal_connect(row, "show-toast", G_CALLBACK(on_note_card_show_toast_relay), NULL);
+  /* Connect the bookmark-toggled signal */
+  g_signal_connect(row, "bookmark-toggled", G_CALLBACK(on_note_card_bookmark_toggled_cb), NULL);
 
   gtk_list_item_set_child(item, row);
 }
@@ -1212,6 +1244,15 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                                           parent_id,
                                           NULL, /* parent_author_name - will be resolved asynchronously if needed */
                                           is_reply);
+
+    /* NIP-51: Set bookmark state from local cache */
+    if (id_hex && strlen(id_hex) == 64) {
+      GnostrBookmarks *bookmarks = gnostr_bookmarks_get_default();
+      if (bookmarks) {
+        gboolean is_bookmarked = gnostr_bookmarks_is_bookmarked(bookmarks, id_hex);
+        gnostr_note_card_row_set_bookmarked(GNOSTR_NOTE_CARD_ROW(row), is_bookmarked);
+      }
+    }
 
     /* Always show row - use fallback display if no profile */
     gtk_widget_set_visible(row, TRUE);
