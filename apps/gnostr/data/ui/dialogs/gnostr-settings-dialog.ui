@@ -4,257 +4,863 @@
   <object class="GtkWindow" id="settings_window">
     <property name="modal">true</property>
     <property name="title">Settings</property>
+    <property name="default-width">700</property>
+    <property name="default-height">500</property>
+    <property name="resizable">true</property>
     <child>
       <object class="GtkBox">
         <property name="orientation">vertical</property>
-        <property name="spacing">8</property>
-        <property name="margin-top">12</property>
-        <property name="margin-bottom">12</property>
-        <property name="margin-start">12</property>
-        <property name="margin-end">12</property>
+        <property name="spacing">0</property>
+
+        <!-- Header bar -->
         <child>
-          <object class="GtkBox" id="rows">
-            <property name="orientation">vertical</property>
-            <property name="spacing">8</property>
-
-            <child>
-              <object class="GtkBox">
-                <property name="orientation">horizontal</property>
-                <property name="spacing">12</property>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label">Default Limit</property>
-                    <property name="hexpand">true</property>
-                    <property name="xalign">0</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkSpinButton" id="w_limit">
-                    <property name="adjustment">
-                      <object class="GtkAdjustment">
-                        <property name="lower">1</property>
-                        <property name="upper">200</property>
-                        <property name="step-increment">1</property>
-                      </object>
-                    </property>
-                  </object>
-                </child>
-              </object>
-            </child>
-
-            <child>
-              <object class="GtkBox">
-                <property name="orientation">horizontal</property>
-                <property name="spacing">12</property>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label">Batch Max</property>
-                    <property name="hexpand">true</property>
-                    <property name="xalign">0</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkSpinButton" id="w_batch">
-                    <property name="adjustment">
-                      <object class="GtkAdjustment">
-                        <property name="lower">1</property>
-                        <property name="upper">100</property>
-                        <property name="step-increment">1</property>
-                      </object>
-                    </property>
-                  </object>
-                </child>
-              </object>
-            </child>
-
-            <child>
-              <object class="GtkBox">
-                <property name="orientation">horizontal</property>
-                <property name="spacing">12</property>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label">Post Interval (ms)</property>
-                    <property name="hexpand">true</property>
-                    <property name="xalign">0</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkSpinButton" id="w_interval">
-                    <property name="adjustment">
-                      <object class="GtkAdjustment">
-                        <property name="lower">10</property>
-                        <property name="upper">5000</property>
-                        <property name="step-increment">10</property>
-                      </object>
-                    </property>
-                  </object>
-                </child>
-              </object>
-            </child>
-
-            <child>
-              <object class="GtkBox">
-                <property name="orientation">horizontal</property>
-                <property name="spacing">12</property>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label">EOSE Quiet (ms)</property>
-                    <property name="hexpand">true</property>
-                    <property name="xalign">0</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkSpinButton" id="w_quiet">
-                    <property name="adjustment">
-                      <object class="GtkAdjustment">
-                        <property name="lower">50</property>
-                        <property name="upper">5000</property>
-                        <property name="step-increment">50</property>
-                      </object>
-                    </property>
-                  </object>
-                </child>
-              </object>
-            </child>
-
-            <child>
-              <object class="GtkBox">
-                <property name="orientation">horizontal</property>
-                <property name="spacing">12</property>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label">Per-relay Hard Timeout (ms)</property>
-                    <property name="hexpand">true</property>
-                    <property name="xalign">0</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkSpinButton" id="w_hard">
-                    <property name="adjustment">
-                      <object class="GtkAdjustment">
-                        <property name="lower">100</property>
-                        <property name="upper">60000</property>
-                        <property name="step-increment">50</property>
-                      </object>
-                    </property>
-                  </object>
-                </child>
-              </object>
-            </child>
-
-            <child>
-              <object class="GtkCheckButton" id="w_use_since">
-                <property name="label">Use Since Window</property>
-              </object>
-            </child>
-
-            <child>
-              <object class="GtkBox">
-                <property name="orientation">horizontal</property>
-                <property name="spacing">12</property>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label">Since Seconds</property>
-                    <property name="hexpand">true</property>
-                    <property name="xalign">0</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkSpinButton" id="w_since">
-                    <property name="adjustment">
-                      <object class="GtkAdjustment">
-                        <property name="lower">60</property>
-                        <property name="upper">604800</property>
-                        <property name="step-increment">60</property>
-                      </object>
-                    </property>
-                  </object>
-                </child>
-              </object>
-            </child>
-
-            <child>
-              <object class="GtkBox">
-                <property name="orientation">horizontal</property>
-                <property name="spacing">12</property>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label">Backfill interval (sec, 0=off)</property>
-                    <property name="hexpand">true</property>
-                    <property name="xalign">0</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkSpinButton" id="w_backfill">
-                    <property name="adjustment">
-                      <object class="GtkAdjustment">
-                        <property name="lower">0</property>
-                        <property name="upper">3600</property>
-                        <property name="step-increment">1</property>
-                      </object>
-                    </property>
-                  </object>
-                </child>
-              </object>
-            </child>
-
-            <!-- Blossom Media Server Settings -->
-            <child>
-              <object class="GtkSeparator">
-                <property name="orientation">horizontal</property>
-                <property name="margin-top">8</property>
-                <property name="margin-bottom">8</property>
-              </object>
-            </child>
-
-            <child>
+          <object class="GtkHeaderBar">
+            <property name="show-title-buttons">true</property>
+            <child type="title">
               <object class="GtkLabel">
-                <property name="label">Media Upload (Blossom)</property>
-                <property name="xalign">0</property>
+                <property name="label">Settings</property>
                 <style>
-                  <class name="heading"/>
+                  <class name="title"/>
                 </style>
               </object>
             </child>
-
-            <child>
-              <object class="GtkBox">
-                <property name="orientation">horizontal</property>
-                <property name="spacing">12</property>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label">Blossom Server URL</property>
-                    <property name="hexpand">true</property>
-                    <property name="xalign">0</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkEntry" id="w_blossom_server">
-                    <property name="placeholder-text">https://blossom.primal.net</property>
-                    <property name="width-chars">30</property>
-                  </object>
-                </child>
-              </object>
-            </child>
-
           </object>
         </child>
+
+        <!-- Main content with sidebar -->
         <child>
           <object class="GtkBox">
             <property name="orientation">horizontal</property>
-            <property name="spacing">8</property>
-            <property name="halign">end</property>
+            <property name="vexpand">true</property>
+
+            <!-- Sidebar -->
             <child>
-              <object class="GtkButton" id="btn_cancel">
-                <property name="label">Cancel</property>
+              <object class="GtkStackSidebar" id="sidebar">
+                <property name="stack">settings_stack</property>
+                <property name="width-request">180</property>
+                <style>
+                  <class name="background"/>
+                </style>
               </object>
             </child>
+
+            <!-- Separator -->
             <child>
-              <object class="GtkButton" id="btn_save">
-                <property name="label">Save</property>
-                <style>
-                  <class name="suggested-action"/>
-                </style>
+              <object class="GtkSeparator">
+                <property name="orientation">vertical</property>
+              </object>
+            </child>
+
+            <!-- Stack with pages -->
+            <child>
+              <object class="GtkStack" id="settings_stack">
+                <property name="hexpand">true</property>
+                <property name="vexpand">true</property>
+                <property name="transition-type">crossfade</property>
+                <property name="transition-duration">200</property>
+
+                <!-- General Settings Page -->
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="name">general</property>
+                    <property name="title">General</property>
+                    <property name="icon-name">preferences-system-symbolic</property>
+                    <property name="child">
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">16</property>
+                            <property name="margin-start">24</property>
+                            <property name="margin-end">24</property>
+                            <property name="margin-top">24</property>
+                            <property name="margin-bottom">24</property>
+
+                            <!-- Timeline Settings -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">8</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Timeline</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkListBox">
+                                    <property name="selection-mode">none</property>
+                                    <style>
+                                      <class name="boxed-list"/>
+                                    </style>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label">Default Limit</property>
+                                                <property name="hexpand">true</property>
+                                                <property name="xalign">0</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSpinButton" id="w_limit">
+                                                <property name="adjustment">
+                                                  <object class="GtkAdjustment">
+                                                    <property name="lower">1</property>
+                                                    <property name="upper">200</property>
+                                                    <property name="step-increment">1</property>
+                                                  </object>
+                                                </property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label">Batch Max</property>
+                                                <property name="hexpand">true</property>
+                                                <property name="xalign">0</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSpinButton" id="w_batch">
+                                                <property name="adjustment">
+                                                  <object class="GtkAdjustment">
+                                                    <property name="lower">1</property>
+                                                    <property name="upper">100</property>
+                                                    <property name="step-increment">1</property>
+                                                  </object>
+                                                </property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label">Post Interval (ms)</property>
+                                                <property name="hexpand">true</property>
+                                                <property name="xalign">0</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSpinButton" id="w_interval">
+                                                <property name="adjustment">
+                                                  <object class="GtkAdjustment">
+                                                    <property name="lower">10</property>
+                                                    <property name="upper">5000</property>
+                                                    <property name="step-increment">10</property>
+                                                  </object>
+                                                </property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Network Settings -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">8</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Network</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkListBox">
+                                    <property name="selection-mode">none</property>
+                                    <style>
+                                      <class name="boxed-list"/>
+                                    </style>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label">EOSE Quiet (ms)</property>
+                                                <property name="hexpand">true</property>
+                                                <property name="xalign">0</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSpinButton" id="w_quiet">
+                                                <property name="adjustment">
+                                                  <object class="GtkAdjustment">
+                                                    <property name="lower">50</property>
+                                                    <property name="upper">5000</property>
+                                                    <property name="step-increment">50</property>
+                                                  </object>
+                                                </property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label">Hard Timeout (ms)</property>
+                                                <property name="hexpand">true</property>
+                                                <property name="xalign">0</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSpinButton" id="w_hard">
+                                                <property name="adjustment">
+                                                  <object class="GtkAdjustment">
+                                                    <property name="lower">100</property>
+                                                    <property name="upper">60000</property>
+                                                    <property name="step-increment">50</property>
+                                                  </object>
+                                                </property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
+                                                <property name="hexpand">true</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Use Since Window</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Filter events by time window</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSwitch" id="w_use_since">
+                                                <property name="valign">center</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label">Since Seconds</property>
+                                                <property name="hexpand">true</property>
+                                                <property name="xalign">0</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSpinButton" id="w_since">
+                                                <property name="adjustment">
+                                                  <object class="GtkAdjustment">
+                                                    <property name="lower">60</property>
+                                                    <property name="upper">604800</property>
+                                                    <property name="step-increment">60</property>
+                                                  </object>
+                                                </property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label">Backfill interval (sec, 0=off)</property>
+                                                <property name="hexpand">true</property>
+                                                <property name="xalign">0</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSpinButton" id="w_backfill">
+                                                <property name="adjustment">
+                                                  <object class="GtkAdjustment">
+                                                    <property name="lower">0</property>
+                                                    <property name="upper">3600</property>
+                                                    <property name="step-increment">1</property>
+                                                  </object>
+                                                </property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+
+                <!-- Media Settings Page -->
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="name">media</property>
+                    <property name="title">Media</property>
+                    <property name="icon-name">folder-pictures-symbolic</property>
+                    <property name="child">
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">16</property>
+                            <property name="margin-start">24</property>
+                            <property name="margin-end">24</property>
+                            <property name="margin-top">24</property>
+                            <property name="margin-bottom">24</property>
+
+                            <!-- Blossom Settings -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">8</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Media Upload (Blossom)</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkListBox">
+                                    <property name="selection-mode">none</property>
+                                    <style>
+                                      <class name="boxed-list"/>
+                                    </style>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label">Blossom Server URL</property>
+                                                <property name="hexpand">true</property>
+                                                <property name="xalign">0</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkEntry" id="w_blossom_server">
+                                                <property name="placeholder-text">https://blossom.primal.net</property>
+                                                <property name="width-chars">25</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Video Settings -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">8</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Video Playback</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkListBox">
+                                    <property name="selection-mode">none</property>
+                                    <style>
+                                      <class name="boxed-list"/>
+                                    </style>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
+                                                <property name="hexpand">true</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Autoplay Videos</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Automatically start playing videos</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSwitch" id="w_video_autoplay">
+                                                <property name="valign">center</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
+                                                <property name="hexpand">true</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Loop Videos</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Repeat videos after they finish</property>
+                                                    <property name="xalign">0</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkSwitch" id="w_video_loop">
+                                                <property name="valign">center</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+
+                <!-- Mute List Page -->
+                <child>
+                  <object class="GtkStackPage">
+                    <property name="name">mute</property>
+                    <property name="title">Mute List</property>
+                    <property name="icon-name">action-unavailable-symbolic</property>
+                    <property name="child">
+                      <object class="GtkBox" id="mute_page">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">0</property>
+
+                        <!-- Login required overlay -->
+                        <child>
+                          <object class="GtkBox" id="mute_login_required">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">12</property>
+                            <property name="valign">center</property>
+                            <property name="halign">center</property>
+                            <property name="vexpand">true</property>
+                            <property name="visible">true</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">system-lock-screen-symbolic</property>
+                                <property name="pixel-size">64</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label">Sign in Required</property>
+                                <style>
+                                  <class name="title-2"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label">You need to sign in to manage your mute list</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                        <!-- Mute list content (hidden when not logged in) -->
+                        <child>
+                          <object class="GtkBox" id="mute_content">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">0</property>
+                            <property name="vexpand">true</property>
+                            <property name="visible">false</property>
+
+                            <!-- Save status bar -->
+                            <child>
+                              <object class="GtkBox" id="mute_status_bar">
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">8</property>
+                                <property name="margin-start">12</property>
+                                <property name="margin-end">12</property>
+                                <property name="margin-top">8</property>
+                                <property name="margin-bottom">8</property>
+                                <property name="visible">false</property>
+                                <style>
+                                  <class name="app-notification"/>
+                                </style>
+                                <child>
+                                  <object class="GtkLabel" id="mute_status_label">
+                                    <property name="label"></property>
+                                    <property name="hexpand">true</property>
+                                    <property name="xalign">0</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkButton" id="btn_mute_save">
+                                    <property name="label">Save</property>
+                                    <style>
+                                      <class name="suggested-action"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Mute list tabs -->
+                            <child>
+                              <object class="GtkNotebook" id="mute_notebook">
+                                <property name="vexpand">true</property>
+
+                                <!-- Users Tab -->
+                                <child>
+                                  <object class="GtkNotebookPage">
+                                    <property name="tab-expand">true</property>
+                                    <property name="child">
+                                      <object class="GtkBox">
+                                        <property name="orientation">vertical</property>
+                                        <property name="spacing">8</property>
+                                        <property name="margin-start">12</property>
+                                        <property name="margin-end">12</property>
+                                        <property name="margin-top">12</property>
+                                        <property name="margin-bottom">12</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">8</property>
+                                            <child>
+                                              <object class="GtkEntry" id="entry_mute_user">
+                                                <property name="hexpand">true</property>
+                                                <property name="placeholder-text">npub or hex pubkey</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkButton" id="btn_mute_add_user">
+                                                <property name="icon-name">list-add-symbolic</property>
+                                                <property name="tooltip-text">Add user to mute list</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkScrolledWindow">
+                                            <property name="vexpand">true</property>
+                                            <property name="hscrollbar-policy">never</property>
+                                            <child>
+                                              <object class="GtkListBox" id="list_mute_users">
+                                                <property name="selection-mode">none</property>
+                                                <property name="show-separators">true</property>
+                                                <style>
+                                                  <class name="boxed-list"/>
+                                                </style>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </property>
+                                    <property name="tab">
+                                      <object class="GtkLabel">
+                                        <property name="label">Users</property>
+                                      </object>
+                                    </property>
+                                  </object>
+                                </child>
+
+                                <!-- Words Tab -->
+                                <child>
+                                  <object class="GtkNotebookPage">
+                                    <property name="tab-expand">true</property>
+                                    <property name="child">
+                                      <object class="GtkBox">
+                                        <property name="orientation">vertical</property>
+                                        <property name="spacing">8</property>
+                                        <property name="margin-start">12</property>
+                                        <property name="margin-end">12</property>
+                                        <property name="margin-top">12</property>
+                                        <property name="margin-bottom">12</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">8</property>
+                                            <child>
+                                              <object class="GtkEntry" id="entry_mute_word">
+                                                <property name="hexpand">true</property>
+                                                <property name="placeholder-text">Word or phrase to mute</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkButton" id="btn_mute_add_word">
+                                                <property name="icon-name">list-add-symbolic</property>
+                                                <property name="tooltip-text">Add word to mute list</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkScrolledWindow">
+                                            <property name="vexpand">true</property>
+                                            <property name="hscrollbar-policy">never</property>
+                                            <child>
+                                              <object class="GtkListBox" id="list_mute_words">
+                                                <property name="selection-mode">none</property>
+                                                <property name="show-separators">true</property>
+                                                <style>
+                                                  <class name="boxed-list"/>
+                                                </style>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </property>
+                                    <property name="tab">
+                                      <object class="GtkLabel">
+                                        <property name="label">Words</property>
+                                      </object>
+                                    </property>
+                                  </object>
+                                </child>
+
+                                <!-- Hashtags Tab -->
+                                <child>
+                                  <object class="GtkNotebookPage">
+                                    <property name="tab-expand">true</property>
+                                    <property name="child">
+                                      <object class="GtkBox">
+                                        <property name="orientation">vertical</property>
+                                        <property name="spacing">8</property>
+                                        <property name="margin-start">12</property>
+                                        <property name="margin-end">12</property>
+                                        <property name="margin-top">12</property>
+                                        <property name="margin-bottom">12</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">8</property>
+                                            <child>
+                                              <object class="GtkEntry" id="entry_mute_hashtag">
+                                                <property name="hexpand">true</property>
+                                                <property name="placeholder-text">Hashtag (without #)</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkButton" id="btn_mute_add_hashtag">
+                                                <property name="icon-name">list-add-symbolic</property>
+                                                <property name="tooltip-text">Add hashtag to mute list</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkScrolledWindow">
+                                            <property name="vexpand">true</property>
+                                            <property name="hscrollbar-policy">never</property>
+                                            <child>
+                                              <object class="GtkListBox" id="list_mute_hashtags">
+                                                <property name="selection-mode">none</property>
+                                                <property name="show-separators">true</property>
+                                                <style>
+                                                  <class name="boxed-list"/>
+                                                </style>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </property>
+                                    <property name="tab">
+                                      <object class="GtkLabel">
+                                        <property name="label">Hashtags</property>
+                                      </object>
+                                    </property>
+                                  </object>
+                                </child>
+
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                      </object>
+                    </property>
+                  </object>
+                </child>
+
               </object>
             </child>
           </object>

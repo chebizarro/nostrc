@@ -1220,11 +1220,31 @@ static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   if (!win) { g_object_unref(builder); show_toast(self, "Settings window missing"); return; }
   gtk_window_set_transient_for(win, GTK_WINDOW(self));
   gtk_window_set_modal(win, TRUE);
-  /* Wire buttons */
-  GtkWidget *btn_cancel = GTK_WIDGET(gtk_builder_get_object(builder, "btn_cancel"));
-  if (btn_cancel) g_signal_connect(btn_cancel, "clicked", G_CALLBACK(settings_on_close_clicked), win);
-  GtkWidget *btn_save = GTK_WIDGET(gtk_builder_get_object(builder, "btn_save"));
-  if (btn_save) g_signal_connect(btn_save, "clicked", G_CALLBACK(settings_on_close_clicked), win);
+
+  /* Check if user is logged in and update mute list visibility */
+  gboolean is_logged_in = (self->user_pubkey_hex != NULL && self->user_pubkey_hex[0] != '\0');
+  GtkWidget *mute_login_required = GTK_WIDGET(gtk_builder_get_object(builder, "mute_login_required"));
+  GtkWidget *mute_content = GTK_WIDGET(gtk_builder_get_object(builder, "mute_content"));
+  if (mute_login_required) gtk_widget_set_visible(mute_login_required, !is_logged_in);
+  if (mute_content) gtk_widget_set_visible(mute_content, is_logged_in);
+
+  /* Load current settings values */
+  GtkSpinButton *w_limit = GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "w_limit"));
+  GtkSpinButton *w_batch = GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "w_batch"));
+  GtkSpinButton *w_interval = GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "w_interval"));
+  GtkSpinButton *w_quiet = GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "w_quiet"));
+  GtkSwitch *w_use_since = GTK_SWITCH(gtk_builder_get_object(builder, "w_use_since"));
+  GtkSpinButton *w_since = GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "w_since"));
+  GtkSpinButton *w_backfill = GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "w_backfill"));
+
+  if (w_limit) gtk_spin_button_set_value(w_limit, self->default_limit);
+  if (w_batch) gtk_spin_button_set_value(w_batch, self->batch_max);
+  if (w_interval) gtk_spin_button_set_value(w_interval, self->post_interval_ms);
+  if (w_quiet) gtk_spin_button_set_value(w_quiet, self->eose_quiet_ms);
+  if (w_use_since) gtk_switch_set_active(w_use_since, self->use_since);
+  if (w_since) gtk_spin_button_set_value(w_since, self->since_seconds);
+  if (w_backfill) gtk_spin_button_set_value(w_backfill, self->backfill_interval_sec);
+
   /* Auto-unref builder when window is destroyed */
   g_signal_connect(win, "destroy", G_CALLBACK(g_object_unref), builder);
   gtk_window_present(win);
