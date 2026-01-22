@@ -305,10 +305,20 @@ if (BUILD_TESTING)
   target_compile_features(gnostr-test-blossom-settings PRIVATE c_std_11)
   target_include_directories(gnostr-test-blossom-settings PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/libnostr/include)
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_SOURCE_DIR}/libnostr/include
+    ${CMAKE_SOURCE_DIR}/libgo/include
+    ${CMAKE_SOURCE_DIR}/gobject/include)
   target_sources(gnostr-test-blossom-settings PRIVATE
-    src/util/blossom_settings.c)
-  target_link_libraries(gnostr-test-blossom-settings PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB)
+    src/util/blossom_settings.c
+    src/util/relays.c
+    src/ipc/signer_ipc.c
+    ${SIGNER_PROXY_C}
+    ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c
+    ${CMAKE_SOURCE_DIR}/gobject/src/nostr_relay.c)
+  target_link_libraries(gnostr-test-blossom-settings PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB
+    nostr libgo)
   _gnostr_apply_sanitizers(gnostr-test-blossom-settings)
   add_test(NAME gnostr-test-blossom-settings COMMAND gnostr-test-blossom-settings)
   set_tests_properties(gnostr-test-blossom-settings PROPERTIES
