@@ -114,16 +114,32 @@
           </object>
         </child>
 
-        <!-- Follow status indicator -->
+        <!-- Status indicators -->
         <child>
-          <object class="GtkImage" id="follow_indicator">
-            <property name="icon-name">emblem-favorite-symbolic</property>
-            <property name="visible">false</property>
+          <object class="GtkBox" id="status_box">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">4</property>
             <property name="valign">center</property>
-            <property name="tooltip-text">Following</property>
-            <style>
-              <class name="follow-indicator"/>
-            </style>
+            <child>
+              <object class="GtkImage" id="follow_indicator">
+                <property name="icon-name">emblem-favorite-symbolic</property>
+                <property name="visible">false</property>
+                <property name="tooltip-text">Following</property>
+                <style>
+                  <class name="follow-indicator"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkImage" id="muted_indicator">
+                <property name="icon-name">audio-volume-muted-symbolic</property>
+                <property name="visible">false</property>
+                <property name="tooltip-text">Muted</property>
+                <style>
+                  <class name="muted-indicator"/>
+                </style>
+              </object>
+            </child>
           </object>
         </child>
 

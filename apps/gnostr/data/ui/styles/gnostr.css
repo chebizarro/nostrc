@@ -1238,3 +1238,88 @@ button.liked image {
   min-width: 20px;
   min-height: 20px;
 }
+
+/* ===== Profile Row Styles (nostrc-dr3: Discover) ===== */
+
+/* Profile row container */
+.profile-row {
+  transition: opacity 200ms ease;
+}
+
+/* Profile row name */
+.profile-row-name {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+/* Profile row NIP-05 identifier */
+.profile-row-nip05 {
+  font-size: 13px;
+  color: alpha(@theme_fg_color, 0.6);
+}
+
+/* Profile row bio preview */
+.profile-row-bio {
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+/* Profile row avatar */
+.profile-row-avatar {
+  border-radius: 50%;
+  background: linear-gradient(
+    135deg,
+    alpha(@accent_bg_color, 0.2) 0%,
+    alpha(@accent_bg_color, 0.35) 100%
+  );
+}
+
+.profile-row-avatar picture {
+  border-radius: 50%;
+}
+
+.profile-row-avatar-image {
+  border-radius: 50%;
+}
+
+/* NIP-05 verification badge */
+.nip05-badge {
+  color: #2e7d32;
+  min-width: 16px;
+  min-height: 16px;
+}
+
+/* Follow indicator */
+.follow-indicator {
+  color: @accent_bg_color;
+  min-width: 20px;
+  min-height: 20px;
+}
+
+/* Muted indicator (NIP-51) */
+.muted-indicator {
+  color: alpha(@theme_fg_color, 0.5);
+  min-width: 20px;
+  min-height: 20px;
+}
+
+/* Muted profile row - grayed out appearance */
+profile-row.muted {
+  opacity: 0.5;
+}
+
+profile-row.muted .profile-row-name,
+profile-row.muted .profile-row-nip05,
+profile-row.muted .profile-row-bio {
+  color: alpha(@theme_fg_color, 0.5);
+}
+
+profile-row.muted .profile-row-avatar {
+  filter: grayscale(50%);
+}
+
+/* Actions button */
+.profile-row-actions {
+  min-width: 32px;
+  min-height: 32px;
+}

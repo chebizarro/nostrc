@@ -21,6 +21,7 @@ typedef struct {
     GnNostrProfile *profile;
     gint64 created_at;       /* Timestamp of kind:0 event */
     gboolean is_following;   /* Whether current user follows this profile */
+    gboolean is_muted;       /* Whether this profile is muted (NIP-51) */
 } ProfileEntry;
 
 static void profile_entry_free(ProfileEntry *entry) {
@@ -43,6 +44,8 @@ struct _GnProfileListModel {
     GnProfileSortMode sort_mode;
     char *filter_text;
     GHashTable *following_set;   /* pubkey hex -> GINT_TO_POINTER(1) */
+    GHashTable *muted_set;       /* pubkey hex -> GINT_TO_POINTER(1) */
+    GHashTable *blocked_set;     /* pubkey hex -> GINT_TO_POINTER(1) */
     gboolean is_loading;
     guint total_count;
 };
@@ -224,9 +227,16 @@ rebuild_filtered_list(GnProfileListModel *self)
         self->filtered_profiles = g_ptr_array_new();
     }
 
-    /* Build filtered list */
+    /* Build filtered list - exclude blocked profiles */
     for (guint i = 0; i < self->all_profiles->len; i++) {
         ProfileEntry *entry = g_ptr_array_index(self->all_profiles, i);
+        const char *pubkey = gn_nostr_profile_get_pubkey(entry->profile);
+
+        /* Skip blocked profiles entirely */
+        if (pubkey && g_hash_table_contains(self->blocked_set, pubkey)) {
+            continue;
+        }
+
         if (profile_matches_filter(entry, self->filter_text)) {
             g_ptr_array_add(self->filtered_profiles, entry);
         }
@@ -273,6 +283,12 @@ gn_profile_list_model_finalize(GObject *object)
     if (self->following_set) {
         g_hash_table_destroy(self->following_set);
     }
+    if (self->muted_set) {
+        g_hash_table_destroy(self->muted_set);
+    }
+    if (self->blocked_set) {
+        g_hash_table_destroy(self->blocked_set);
+    }
     g_free(self->filter_text);
 
     G_OBJECT_CLASS(gn_profile_list_model_parent_class)->finalize(object);
@@ -303,6 +319,8 @@ gn_profile_list_model_init(GnProfileListModel *self)
     self->all_profiles = g_ptr_array_new_with_free_func((GDestroyNotify)profile_entry_free);
     self->filtered_profiles = g_ptr_array_new();
     self->following_set = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    self->muted_set = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    self->blocked_set = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     self->sort_mode = GN_PROFILE_SORT_RECENT;
     self->filter_text = NULL;
     self->is_loading = FALSE;
@@ -459,10 +477,15 @@ load_profiles_complete(GObject *source, GAsyncResult *result, gpointer user_data
         for (guint i = 0; i < data->loaded_profiles->len; i++) {
             ProfileEntry *entry = g_ptr_array_index(data->loaded_profiles, i);
 
-            /* Update following status */
+            /* Update following and muted status */
             const char *pubkey = gn_nostr_profile_get_pubkey(entry->profile);
-            if (pubkey && g_hash_table_contains(self->following_set, pubkey)) {
-                entry->is_following = TRUE;
+            if (pubkey) {
+                if (g_hash_table_contains(self->following_set, pubkey)) {
+                    entry->is_following = TRUE;
+                }
+                if (g_hash_table_contains(self->muted_set, pubkey)) {
+                    entry->is_muted = TRUE;
+                }
             }
 
             g_ptr_array_add(self->all_profiles, entry);
@@ -572,6 +595,59 @@ gn_profile_list_model_set_following_set(GnProfileListModel *self, const char **p
             g_list_model_items_changed(G_LIST_MODEL(self), 0, len, len);
         }
     }
+}
+
+void
+gn_profile_list_model_set_muted_set(GnProfileListModel *self, const char **pubkeys)
+{
+    g_return_if_fail(GN_IS_PROFILE_LIST_MODEL(self));
+
+    /* Clear existing set */
+    g_hash_table_remove_all(self->muted_set);
+
+    /* Add new pubkeys */
+    if (pubkeys) {
+        for (const char **p = pubkeys; *p; p++) {
+            g_hash_table_insert(self->muted_set, g_strdup(*p), GINT_TO_POINTER(1));
+        }
+    }
+
+    /* Update muted status on all entries */
+    for (guint i = 0; i < self->all_profiles->len; i++) {
+        ProfileEntry *entry = g_ptr_array_index(self->all_profiles, i);
+        const char *pubkey = gn_nostr_profile_get_pubkey(entry->profile);
+        entry->is_muted = pubkey && g_hash_table_contains(self->muted_set, pubkey);
+    }
+
+    /* Rebuild to update display */
+    rebuild_filtered_list(self);
+}
+
+void
+gn_profile_list_model_set_blocked_set(GnProfileListModel *self, const char **pubkeys)
+{
+    g_return_if_fail(GN_IS_PROFILE_LIST_MODEL(self));
+
+    /* Clear existing set */
+    g_hash_table_remove_all(self->blocked_set);
+
+    /* Add new pubkeys */
+    if (pubkeys) {
+        for (const char **p = pubkeys; *p; p++) {
+            g_hash_table_insert(self->blocked_set, g_strdup(*p), GINT_TO_POINTER(1));
+        }
+    }
+
+    /* Rebuild to filter out blocked profiles */
+    rebuild_filtered_list(self);
+}
+
+gboolean
+gn_profile_list_model_is_pubkey_muted(GnProfileListModel *self, const char *pubkey)
+{
+    g_return_val_if_fail(GN_IS_PROFILE_LIST_MODEL(self), FALSE);
+    if (!pubkey) return FALSE;
+    return g_hash_table_contains(self->muted_set, pubkey);
 }
 
 gboolean

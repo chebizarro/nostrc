@@ -203,6 +203,10 @@ bind_local_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer use
 
     gnostr_profile_row_set_profile(row, pubkey, display_name, name, nip05, about, picture);
 
+    /* Set follow and muted status */
+    gboolean is_muted = gn_profile_list_model_is_pubkey_muted(self->profile_model, pubkey);
+    gnostr_profile_row_set_muted(row, is_muted);
+
     /* Disconnect all previous signal handlers */
     g_signal_handlers_disconnect_by_func(row, on_local_row_open_profile, self);
     g_signal_handlers_disconnect_by_func(row, on_row_follow_requested, self);
@@ -838,6 +842,20 @@ gnostr_page_discover_set_following(GnostrPageDiscover *self, const char **pubkey
 {
     g_return_if_fail(GNOSTR_IS_PAGE_DISCOVER(self));
     gn_profile_list_model_set_following_set(self->profile_model, pubkeys);
+}
+
+void
+gnostr_page_discover_set_muted(GnostrPageDiscover *self, const char **pubkeys)
+{
+    g_return_if_fail(GNOSTR_IS_PAGE_DISCOVER(self));
+    gn_profile_list_model_set_muted_set(self->profile_model, pubkeys);
+}
+
+void
+gnostr_page_discover_set_blocked(GnostrPageDiscover *self, const char **pubkeys)
+{
+    g_return_if_fail(GNOSTR_IS_PAGE_DISCOVER(self));
+    gn_profile_list_model_set_blocked_set(self->profile_model, pubkeys);
 }
 
 void

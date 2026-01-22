@@ -20,6 +20,7 @@ struct _GnostrProfileRow {
     GtkLabel *lbl_nip05;
     GtkLabel *lbl_bio;
     GtkImage *follow_indicator;
+    GtkImage *muted_indicator;
     GtkMenuButton *btn_actions;
 
     /* Actions popover (created on demand) */
@@ -31,6 +32,7 @@ struct _GnostrProfileRow {
     char *pubkey;
     char *avatar_url;
     gboolean is_following;
+    gboolean is_muted;
 };
 
 G_DEFINE_TYPE(GnostrProfileRow, gnostr_profile_row, GTK_TYPE_WIDGET)
@@ -231,6 +233,7 @@ gnostr_profile_row_class_init(GnostrProfileRowClass *klass)
     gtk_widget_class_bind_template_child(widget_class, GnostrProfileRow, lbl_nip05);
     gtk_widget_class_bind_template_child(widget_class, GnostrProfileRow, lbl_bio);
     gtk_widget_class_bind_template_child(widget_class, GnostrProfileRow, follow_indicator);
+    gtk_widget_class_bind_template_child(widget_class, GnostrProfileRow, muted_indicator);
     gtk_widget_class_bind_template_child(widget_class, GnostrProfileRow, btn_actions);
 
     /* Signals */
@@ -284,6 +287,7 @@ gnostr_profile_row_init(GnostrProfileRow *self)
     self->pubkey = NULL;
     self->avatar_url = NULL;
     self->is_following = FALSE;
+    self->is_muted = FALSE;
     self->actions_popover = NULL;
     self->btn_follow = NULL;
     self->follow_label = NULL;
@@ -414,4 +418,26 @@ gnostr_profile_row_get_is_following(GnostrProfileRow *self)
 {
     g_return_val_if_fail(GNOSTR_IS_PROFILE_ROW(self), FALSE);
     return self->is_following;
+}
+
+void
+gnostr_profile_row_set_muted(GnostrProfileRow *self, gboolean is_muted)
+{
+    g_return_if_fail(GNOSTR_IS_PROFILE_ROW(self));
+    self->is_muted = is_muted;
+    gtk_widget_set_visible(GTK_WIDGET(self->muted_indicator), is_muted);
+
+    /* Apply grayed-out styling when muted */
+    if (is_muted) {
+        gtk_widget_add_css_class(GTK_WIDGET(self), "muted");
+    } else {
+        gtk_widget_remove_css_class(GTK_WIDGET(self), "muted");
+    }
+}
+
+gboolean
+gnostr_profile_row_get_is_muted(GnostrProfileRow *self)
+{
+    g_return_val_if_fail(GNOSTR_IS_PROFILE_ROW(self), FALSE);
+    return self->is_muted;
 }

@@ -81,6 +81,25 @@ const char *gnostr_profile_row_get_pubkey(GnostrProfileRow *self);
  */
 gboolean gnostr_profile_row_get_is_following(GnostrProfileRow *self);
 
+/**
+ * gnostr_profile_row_set_muted:
+ * @self: the profile row
+ * @is_muted: whether this profile is muted
+ *
+ * Update the muted status indicator and apply grayed-out styling.
+ */
+void gnostr_profile_row_set_muted(GnostrProfileRow *self, gboolean is_muted);
+
+/**
+ * gnostr_profile_row_get_is_muted:
+ * @self: the profile row
+ *
+ * Get whether this profile is muted.
+ *
+ * Returns: TRUE if muted
+ */
+gboolean gnostr_profile_row_get_is_muted(GnostrProfileRow *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_PROFILE_ROW_H */

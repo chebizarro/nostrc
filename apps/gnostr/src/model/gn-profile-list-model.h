@@ -77,6 +77,33 @@ GnProfileSortMode gn_profile_list_model_get_sort_mode(GnProfileListModel *self);
 void gn_profile_list_model_set_following_set(GnProfileListModel *self, const char **pubkeys);
 
 /**
+ * gn_profile_list_model_set_muted_set:
+ * @self: the profile list model
+ * @pubkeys: (nullable): NULL-terminated array of pubkey hex strings that are muted
+ *
+ * Set the list of pubkeys that are muted. Muted profiles will be shown grayed out with a badge.
+ */
+void gn_profile_list_model_set_muted_set(GnProfileListModel *self, const char **pubkeys);
+
+/**
+ * gn_profile_list_model_set_blocked_set:
+ * @self: the profile list model
+ * @pubkeys: (nullable): NULL-terminated array of pubkey hex strings that are blocked
+ *
+ * Set the list of pubkeys that are blocked. Blocked profiles will be filtered out entirely.
+ */
+void gn_profile_list_model_set_blocked_set(GnProfileListModel *self, const char **pubkeys);
+
+/**
+ * gn_profile_list_model_is_pubkey_muted:
+ * @self: the profile list model
+ * @pubkey: pubkey hex string to check
+ *
+ * Returns: TRUE if the pubkey is muted.
+ */
+gboolean gn_profile_list_model_is_pubkey_muted(GnProfileListModel *self, const char *pubkey);
+
+/**
  * gn_profile_list_model_is_loading:
  * @self: the profile list model
  *

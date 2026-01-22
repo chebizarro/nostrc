@@ -107,6 +107,24 @@ void gnostr_page_discover_load_profiles(GnostrPageDiscover *self);
 void gnostr_page_discover_set_following(GnostrPageDiscover *self, const char **pubkeys);
 
 /**
+ * gnostr_page_discover_set_muted:
+ * @self: the discover page
+ * @pubkeys: NULL-terminated array of pubkey hex strings that are muted (NIP-51)
+ *
+ * Set the list of pubkeys that are muted. Muted profiles will be shown grayed out with a badge.
+ */
+void gnostr_page_discover_set_muted(GnostrPageDiscover *self, const char **pubkeys);
+
+/**
+ * gnostr_page_discover_set_blocked:
+ * @self: the discover page
+ * @pubkeys: NULL-terminated array of pubkey hex strings that are blocked
+ *
+ * Set the list of pubkeys that are blocked. Blocked profiles will be filtered out entirely.
+ */
+void gnostr_page_discover_set_blocked(GnostrPageDiscover *self, const char **pubkeys);
+
+/**
  * gnostr_page_discover_refresh:
  * @self: the discover page
  *
