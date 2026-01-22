@@ -177,12 +177,14 @@ static GdkTexture *texture_new_from_pixbuf(GdkPixbuf *pixbuf) {
 static GdkTexture *avatar_texture_from_file_scaled(const char *path, GError **error) {
   g_return_val_if_fail(path != NULL, NULL);
 
-  /* Load and scale using GdkPixbuf */
+  /* Load and scale using GdkPixbuf.
+   * IMPORTANT: preserve_aspect_ratio=FALSE ensures square output for circular avatars.
+   * With TRUE, non-square source images would produce ovals instead of circles. */
   GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file_at_scale(
     path,
     s_avatar_size,  /* width */
     s_avatar_size,  /* height */
-    TRUE,           /* preserve aspect ratio */
+    FALSE,          /* preserve aspect ratio - FALSE for square avatars */
     error
   );
 
@@ -208,12 +210,14 @@ static GdkTexture *avatar_texture_from_bytes_scaled(GBytes *bytes, GError **erro
     return NULL;
   }
   
-  /* Load and scale using GdkPixbuf */
+  /* Load and scale using GdkPixbuf.
+   * IMPORTANT: preserve_aspect_ratio=FALSE ensures square output for circular avatars.
+   * With TRUE, non-square source images would produce ovals instead of circles. */
   GdkPixbuf *pixbuf = gdk_pixbuf_new_from_stream_at_scale(
     stream,
     s_avatar_size,  /* width */
     s_avatar_size,  /* height */
-    TRUE,           /* preserve aspect ratio */
+    FALSE,          /* preserve aspect ratio - FALSE for square avatars */
     NULL,           /* cancellable */
     error
   );
