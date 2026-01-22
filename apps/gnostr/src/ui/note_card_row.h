@@ -88,6 +88,9 @@ void gnostr_note_card_row_set_reply_count(GnostrNoteCardRow *self, guint count);
 /* NIP-09 Deletion: set whether this is the current user's own note (enables delete option) */
 void gnostr_note_card_row_set_is_own_note(GnostrNoteCardRow *self, gboolean is_own);
 
+/* Login state: set whether user is logged in (disables auth-required buttons when logged out) */
+void gnostr_note_card_row_set_logged_in(GnostrNoteCardRow *self, gboolean logged_in);
+
 G_END_DECLS
 
 #endif /* GNOSTR_NOTE_CARD_ROW_H */

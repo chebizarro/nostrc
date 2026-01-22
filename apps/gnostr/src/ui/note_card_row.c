@@ -94,6 +94,8 @@ struct _GnostrNoteCardRow {
   /* NIP-09: Track if this is the current user's own note (for delete option) */
   gboolean is_own_note;
   GtkWidget *delete_btn;  /* Reference to delete button for visibility toggle */
+  /* Login state: track whether user is logged in (affects button sensitivity) */
+  gboolean is_logged_in;
 };
 
 G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
@@ -2408,5 +2410,44 @@ void gnostr_note_card_row_set_is_own_note(GnostrNoteCardRow *self, gboolean is_o
     if (GTK_IS_WIDGET(sep)) {
       gtk_widget_set_visible(sep, is_own);
     }
+  }
+}
+
+/* Set login state: disables authentication-required buttons when logged out */
+void gnostr_note_card_row_set_logged_in(GnostrNoteCardRow *self, gboolean logged_in) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  self->is_logged_in = logged_in;
+
+  const char *logged_out_tooltip = "Sign in to use this feature";
+
+  /* Reply button requires signing */
+  if (GTK_IS_WIDGET(self->btn_reply)) {
+    gtk_widget_set_sensitive(self->btn_reply, logged_in);
+    gtk_widget_set_tooltip_text(self->btn_reply, logged_in ? "Reply" : logged_out_tooltip);
+  }
+
+  /* Repost button requires signing */
+  if (GTK_IS_WIDGET(self->btn_repost)) {
+    gtk_widget_set_sensitive(self->btn_repost, logged_in);
+    gtk_widget_set_tooltip_text(self->btn_repost, logged_in ? "Repost" : logged_out_tooltip);
+  }
+
+  /* Like button requires signing */
+  if (GTK_IS_WIDGET(self->btn_like)) {
+    gtk_widget_set_sensitive(self->btn_like, logged_in);
+    gtk_widget_set_tooltip_text(self->btn_like, logged_in ? "Like" : logged_out_tooltip);
+  }
+
+  /* Zap button requires signing */
+  if (GTK_IS_WIDGET(self->btn_zap)) {
+    gtk_widget_set_sensitive(self->btn_zap, logged_in);
+    gtk_widget_set_tooltip_text(self->btn_zap, logged_in ? "Zap" : logged_out_tooltip);
+  }
+
+  /* Bookmark button requires signing (NIP-51 list management) */
+  if (GTK_IS_WIDGET(self->btn_bookmark)) {
+    gtk_widget_set_sensitive(self->btn_bookmark, logged_in);
+    gtk_widget_set_tooltip_text(self->btn_bookmark, logged_in ? "Bookmark" : logged_out_tooltip);
   }
 }

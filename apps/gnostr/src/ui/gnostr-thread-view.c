@@ -8,13 +8,27 @@
 #include "nostr-json.h"
 #include "nostr-filter.h"
 #include "nostr_simple_pool.h"
+#include <nostr/nip19/nip19.h>
 #include <glib.h>
 #include <glib/gi18n.h>
+#include <gio/gio.h>
 #include <string.h>
 #include <time.h>
 #include <jansson.h>
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-thread-view.ui"
+
+/* Check if user is logged in by checking GSettings current-npub.
+ * Returns TRUE if logged in, FALSE otherwise. */
+static gboolean is_user_logged_in(void) {
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  if (!settings) return FALSE;
+  char *npub = g_settings_get_string(settings, "current-npub");
+  g_object_unref(settings);
+  gboolean logged_in = (npub && *npub);
+  g_free(npub);
+  return logged_in;
+}
 
 /* Maximum thread depth to display */
 #define MAX_THREAD_DEPTH 10
@@ -665,6 +679,9 @@ static GtkWidget *create_note_card_for_item(GnostrThreadView *self, ThreadEventI
   if (item->nip05 && item->pubkey_hex) {
     gnostr_note_card_row_set_nip05(row, item->nip05, item->pubkey_hex);
   }
+
+  /* Set login state for authentication-required buttons */
+  gnostr_note_card_row_set_logged_in(row, is_user_logged_in());
 
   /* Connect signals */
   g_signal_connect(row, "open-profile", G_CALLBACK(on_note_open_profile), self);

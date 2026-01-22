@@ -1355,16 +1355,17 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     }
 
     /* NIP-09: Check if this is the current user's own note (enables delete option) */
-    if (pubkey && strlen(pubkey) == 64) {
-      gchar *user_pubkey = get_current_user_pubkey_hex();
-      if (user_pubkey) {
-        gboolean is_own = (g_ascii_strcasecmp(pubkey, user_pubkey) == 0);
-        gnostr_note_card_row_set_is_own_note(GNOSTR_NOTE_CARD_ROW(row), is_own);
-        g_free(user_pubkey);
-      } else {
-        gnostr_note_card_row_set_is_own_note(GNOSTR_NOTE_CARD_ROW(row), FALSE);
-      }
+    /* Also set login state for authentication-required buttons */
+    gchar *user_pubkey = get_current_user_pubkey_hex();
+    gboolean is_logged_in = (user_pubkey != NULL);
+    gnostr_note_card_row_set_logged_in(GNOSTR_NOTE_CARD_ROW(row), is_logged_in);
+    if (pubkey && strlen(pubkey) == 64 && user_pubkey) {
+      gboolean is_own = (g_ascii_strcasecmp(pubkey, user_pubkey) == 0);
+      gnostr_note_card_row_set_is_own_note(GNOSTR_NOTE_CARD_ROW(row), is_own);
+    } else {
+      gnostr_note_card_row_set_is_own_note(GNOSTR_NOTE_CARD_ROW(row), FALSE);
     }
+    g_free(user_pubkey);
 
     /* nostrc-7o7: Apply no-animation class if item was added outside visible viewport */
     if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {

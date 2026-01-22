@@ -3,6 +3,7 @@
 #include "note_card_row.h"
 #include <glib.h>
 #include <glib/gi18n.h>
+#include <gio/gio.h>
 #include <gtk/gtk.h>
 #include "gnostr-avatar-cache.h"
 #include "../util/nip05.h"
@@ -19,6 +20,18 @@
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-profile-pane.ui"
 #define DEFAULT_BANNER_RESOURCE "/org/gnostr/assets/assets/background.png"
+
+/* Check if user is logged in by checking GSettings current-npub.
+ * Returns TRUE if logged in, FALSE otherwise. */
+static gboolean is_user_logged_in(void) {
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  if (!settings) return FALSE;
+  char *npub = g_settings_get_string(settings, "current-npub");
+  g_object_unref(settings);
+  gboolean logged_in = (npub && *npub);
+  g_free(npub);
+  return logged_in;
+}
 
 /* Default banner texture loaded from GResource */
 static GdkTexture *default_banner_texture = NULL;
@@ -513,6 +526,9 @@ static void posts_factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item
 
   /* Set depth to 0 (top-level posts) */
   gnostr_note_card_row_set_depth(GNOSTR_NOTE_CARD_ROW(row), 0);
+
+  /* Set login state for authentication-required buttons */
+  gnostr_note_card_row_set_logged_in(GNOSTR_NOTE_CARD_ROW(row), is_user_logged_in());
 
   gtk_widget_set_visible(row, TRUE);
 }

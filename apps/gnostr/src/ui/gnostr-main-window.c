@@ -2252,7 +2252,7 @@ static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   if (mute_login_required) gtk_widget_set_visible(mute_login_required, !is_logged_in);
   if (mute_content) gtk_widget_set_visible(mute_content, is_logged_in);
 
-  /* Load current settings values (General panel) */
+  /* Load current settings values (Advanced panel - technical options) */
   GtkSpinButton *w_limit = GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "w_limit"));
   GtkSpinButton *w_batch = GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "w_batch"));
   GtkSpinButton *w_interval = GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "w_interval"));

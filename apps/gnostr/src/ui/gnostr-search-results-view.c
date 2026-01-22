@@ -18,9 +18,22 @@
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr-json.h"
+#include <gio/gio.h>
 #include <string.h>
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-search-results-view.ui"
+
+/* Check if user is logged in by checking GSettings current-npub.
+ * Returns TRUE if logged in, FALSE otherwise. */
+static gboolean is_user_logged_in(void) {
+  GSettings *settings = g_settings_new("org.gnostr.Client");
+  if (!settings) return FALSE;
+  char *npub = g_settings_get_string(settings, "current-npub");
+  g_object_unref(settings);
+  gboolean logged_in = (npub && *npub);
+  g_free(npub);
+  return logged_in;
+}
 
 /* Maximum results to display */
 #define MAX_LOCAL_RESULTS 100
@@ -251,6 +264,9 @@ bind_result_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer us
 
     /* Set IDs */
     gnostr_note_card_row_set_ids(row, item->event_id_hex, NULL, item->pubkey_hex);
+
+    /* Set login state for authentication-required buttons */
+    gnostr_note_card_row_set_logged_in(row, is_user_logged_in());
 
     g_object_unref(item);
 }
