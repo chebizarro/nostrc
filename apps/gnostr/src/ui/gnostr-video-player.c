@@ -17,13 +17,15 @@ struct _GnostrVideoPlayer {
 
   /* Main container */
   GtkWidget *overlay;
-  GtkWidget *video;           /* GtkVideo widget */
+  GtkWidget *picture;         /* GtkPicture widget (displays media as paintable, no controls) */
+  GtkMediaFile *media_file;   /* GtkMediaFile for video playback */
   GtkWidget *controls_box;    /* Controls overlay */
 
   /* Control buttons */
   GtkWidget *btn_play_pause;
   GtkWidget *play_icon;
   GtkWidget *pause_icon;
+  GtkWidget *btn_stop;        /* Stop button */
   GtkWidget *seek_scale;
   GtkWidget *lbl_time_current;
   GtkWidget *lbl_time_duration;
@@ -99,6 +101,12 @@ static void on_play_pause_clicked(GtkButton *btn, gpointer user_data) {
   gnostr_video_player_toggle_playback(self);
 }
 
+static void on_stop_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(user_data);
+  (void)btn;
+  gnostr_video_player_stop(self);
+}
+
 static void on_mute_clicked(GtkButton *btn, gpointer user_data) {
   GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(user_data);
   (void)btn;
@@ -122,7 +130,7 @@ static void on_seek_value_changed(GtkRange *range, gpointer user_data) {
 
   if (!self->seeking) return;
 
-  GtkMediaStream *stream = gtk_video_get_media_stream(GTK_VIDEO(self->video));
+  GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
   if (!stream) return;
 
   double value = gtk_range_get_value(range);
@@ -248,12 +256,12 @@ static void schedule_hide_controls(GnostrVideoPlayer *self) {
 static gboolean position_update_tick(gpointer user_data) {
   GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(user_data);
 
-  if (!GTK_IS_VIDEO(self->video)) {
+  if (!self->media_file) {
     self->position_update_timer_id = 0;
     return G_SOURCE_REMOVE;
   }
 
-  GtkMediaStream *stream = gtk_video_get_media_stream(GTK_VIDEO(self->video));
+  GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
   if (!stream) return G_SOURCE_CONTINUE;
 
   update_time_labels(self);
@@ -277,7 +285,7 @@ static gboolean position_update_tick(gpointer user_data) {
 }
 
 static void update_time_labels(GnostrVideoPlayer *self) {
-  GtkMediaStream *stream = gtk_video_get_media_stream(GTK_VIDEO(self->video));
+  GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
   if (!stream) return;
 
   gint64 position = gtk_media_stream_get_timestamp(stream);
@@ -298,7 +306,7 @@ static void update_time_labels(GnostrVideoPlayer *self) {
 }
 
 static void update_play_pause_icon(GnostrVideoPlayer *self) {
-  GtkMediaStream *stream = gtk_video_get_media_stream(GTK_VIDEO(self->video));
+  GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
   gboolean playing = stream && gtk_media_stream_get_playing(stream);
 
   if (GTK_IS_WIDGET(self->play_icon) && GTK_IS_WIDGET(self->pause_icon)) {
@@ -390,6 +398,13 @@ static void create_controls_overlay(GnostrVideoPlayer *self, GtkWidget *parent_o
 
   g_signal_connect(btn_play, "clicked", G_CALLBACK(on_play_pause_clicked), self);
 
+  /* Stop button */
+  GtkWidget *btn_stop = gtk_button_new_from_icon_name("media-playback-stop-symbolic");
+  gtk_widget_add_css_class(btn_stop, "video-control-btn");
+  gtk_button_set_has_frame(GTK_BUTTON(btn_stop), FALSE);
+  gtk_widget_set_tooltip_text(btn_stop, _("Stop"));
+  g_signal_connect(btn_stop, "clicked", G_CALLBACK(on_stop_clicked), self);
+
   /* Volume controls */
   GtkWidget *btn_mute = gtk_button_new_from_icon_name("audio-volume-high-symbolic");
   gtk_widget_add_css_class(btn_mute, "video-control-btn");
@@ -419,6 +434,7 @@ static void create_controls_overlay(GnostrVideoPlayer *self, GtkWidget *parent_o
   g_signal_connect(btn_fs, "clicked", G_CALLBACK(on_fullscreen_clicked), self);
 
   gtk_box_append(GTK_BOX(btn_row), btn_play);
+  gtk_box_append(GTK_BOX(btn_row), btn_stop);
   gtk_box_append(GTK_BOX(btn_row), btn_mute);
   gtk_box_append(GTK_BOX(btn_row), vol_scale);
   gtk_box_append(GTK_BOX(btn_row), btn_loop);
@@ -434,6 +450,7 @@ static void create_controls_overlay(GnostrVideoPlayer *self, GtkWidget *parent_o
     self->btn_play_pause = btn_play;
     self->play_icon = play_icon;
     self->pause_icon = pause_icon;
+    self->btn_stop = btn_stop;
     self->seek_scale = seek;
     self->lbl_time_current = lbl_current;
     self->lbl_time_duration = lbl_duration;
@@ -506,7 +523,7 @@ static void on_scroll_value_changed(GtkAdjustment *adjustment, gpointer user_dat
   if (is_visible != self->is_visible_in_viewport) {
     self->is_visible_in_viewport = is_visible;
 
-    GtkMediaStream *stream = gtk_video_get_media_stream(GTK_VIDEO(self->video));
+    GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
     if (!stream) return;
 
     if (!is_visible) {
@@ -588,7 +605,10 @@ static void gnostr_video_player_dispose(GObject *obj) {
   /* Clear settings */
   g_clear_object(&self->settings);
 
-  /* Unparent the overlay (which contains video and controls) */
+  /* Clear media file */
+  g_clear_object(&self->media_file);
+
+  /* Unparent the overlay (which contains picture and controls) */
   if (self->overlay) {
     gtk_widget_unparent(self->overlay);
     self->overlay = NULL;
@@ -645,12 +665,15 @@ static void gnostr_video_player_init(GnostrVideoPlayer *self) {
   self->overlay = gtk_overlay_new();
   gtk_widget_set_parent(self->overlay, GTK_WIDGET(self));
 
-  /* Create video widget */
-  self->video = gtk_video_new();
-  gtk_widget_add_css_class(self->video, "video-content");
-  gtk_video_set_autoplay(GTK_VIDEO(self->video), self->autoplay);
-  gtk_video_set_loop(GTK_VIDEO(self->video), self->loop);
-  gtk_overlay_set_child(GTK_OVERLAY(self->overlay), self->video);
+  /* Create media file for video playback (no built-in controls) */
+  self->media_file = GTK_MEDIA_FILE(gtk_media_file_new());
+  gtk_media_stream_set_loop(GTK_MEDIA_STREAM(self->media_file), self->loop);
+
+  /* Create picture widget to display the media (no controls, unlike GtkVideo) */
+  self->picture = gtk_picture_new_for_paintable(GDK_PAINTABLE(self->media_file));
+  gtk_widget_add_css_class(self->picture, "video-content");
+  gtk_picture_set_content_fit(GTK_PICTURE(self->picture), GTK_CONTENT_FIT_CONTAIN);
+  gtk_overlay_set_child(GTK_OVERLAY(self->overlay), self->picture);
 
   /* Create controls overlay */
   create_controls_overlay(self, self->overlay, &self->controls_box);
@@ -691,17 +714,20 @@ void gnostr_video_player_set_uri(GnostrVideoPlayer *self, const char *uri) {
   g_free(self->uri);
   self->uri = g_strdup(uri);
 
-  if (GTK_IS_VIDEO(self->video) && uri) {
+  if (self->media_file && uri) {
     GFile *file = g_file_new_for_uri(uri);
-    gtk_video_set_file(GTK_VIDEO(self->video), file);
+    gtk_media_file_set_file(self->media_file, file);
     g_object_unref(file);
 
-    /* Apply settings to media stream when it becomes available */
-    GtkMediaStream *stream = gtk_video_get_media_stream(GTK_VIDEO(self->video));
-    if (stream) {
-      gtk_media_stream_set_loop(stream, self->loop);
-      gtk_media_stream_set_muted(stream, self->muted);
-      gtk_media_stream_set_volume(stream, self->volume);
+    /* Apply settings to media stream */
+    GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
+    gtk_media_stream_set_loop(stream, self->loop);
+    gtk_media_stream_set_muted(stream, self->muted);
+    gtk_media_stream_set_volume(stream, self->volume);
+
+    /* Start playback if autoplay is enabled */
+    if (self->autoplay) {
+      gtk_media_stream_play(stream);
     }
   }
 }
@@ -714,7 +740,7 @@ const char *gnostr_video_player_get_uri(GnostrVideoPlayer *self) {
 void gnostr_video_player_play(GnostrVideoPlayer *self) {
   g_return_if_fail(GNOSTR_IS_VIDEO_PLAYER(self));
 
-  GtkMediaStream *stream = gtk_video_get_media_stream(GTK_VIDEO(self->video));
+  GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
   if (stream) {
     gtk_media_stream_play(stream);
   }
@@ -724,7 +750,7 @@ void gnostr_video_player_play(GnostrVideoPlayer *self) {
 void gnostr_video_player_pause(GnostrVideoPlayer *self) {
   g_return_if_fail(GNOSTR_IS_VIDEO_PLAYER(self));
 
-  GtkMediaStream *stream = gtk_video_get_media_stream(GTK_VIDEO(self->video));
+  GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
   if (stream) {
     gtk_media_stream_pause(stream);
   }
@@ -734,7 +760,7 @@ void gnostr_video_player_pause(GnostrVideoPlayer *self) {
 void gnostr_video_player_toggle_playback(GnostrVideoPlayer *self) {
   g_return_if_fail(GNOSTR_IS_VIDEO_PLAYER(self));
 
-  GtkMediaStream *stream = gtk_video_get_media_stream(GTK_VIDEO(self->video));
+  GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
   if (!stream) return;
 
   if (gtk_media_stream_get_playing(stream)) {
@@ -743,6 +769,29 @@ void gnostr_video_player_toggle_playback(GnostrVideoPlayer *self) {
     gtk_media_stream_play(stream);
   }
   update_play_pause_icon(self);
+}
+
+void gnostr_video_player_stop(GnostrVideoPlayer *self) {
+  g_return_if_fail(GNOSTR_IS_VIDEO_PLAYER(self));
+
+  GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
+  if (!stream) return;
+
+  /* Pause playback */
+  gtk_media_stream_pause(stream);
+
+  /* Seek to beginning to show thumbnail/poster */
+  gtk_media_stream_seek(stream, 0);
+
+  update_play_pause_icon(self);
+  update_time_labels(self);
+
+  /* Reset seek bar to beginning */
+  if (GTK_IS_RANGE(self->seek_scale)) {
+    g_signal_handlers_block_by_func(self->seek_scale, on_seek_value_changed, self);
+    gtk_range_set_value(GTK_RANGE(self->seek_scale), 0.0);
+    g_signal_handlers_unblock_by_func(self->seek_scale, on_seek_value_changed, self);
+  }
 }
 
 void gnostr_video_player_set_fullscreen(GnostrVideoPlayer *self, gboolean fullscreen) {
@@ -768,21 +817,12 @@ void gnostr_video_player_set_fullscreen(GnostrVideoPlayer *self, gboolean fullsc
     /* Create overlay for fullscreen */
     self->fullscreen_overlay = gtk_overlay_new();
 
-    /* Create a new video widget for fullscreen that shares the media stream */
-    GtkWidget *fs_video = gtk_video_new();
-    gtk_widget_add_css_class(fs_video, "video-content-fullscreen");
+    /* Create a new picture widget for fullscreen that shares the media file (no controls) */
+    GtkWidget *fs_picture = gtk_picture_new_for_paintable(GDK_PAINTABLE(self->media_file));
+    gtk_widget_add_css_class(fs_picture, "video-content-fullscreen");
+    gtk_picture_set_content_fit(GTK_PICTURE(fs_picture), GTK_CONTENT_FIT_CONTAIN);
 
-    /* Share the media stream from the original video */
-    GtkMediaStream *stream = gtk_video_get_media_stream(GTK_VIDEO(self->video));
-    if (stream) {
-      gtk_video_set_media_stream(GTK_VIDEO(fs_video), stream);
-    } else if (self->uri) {
-      GFile *file = g_file_new_for_uri(self->uri);
-      gtk_video_set_file(GTK_VIDEO(fs_video), file);
-      g_object_unref(file);
-    }
-
-    gtk_overlay_set_child(GTK_OVERLAY(self->fullscreen_overlay), fs_video);
+    gtk_overlay_set_child(GTK_OVERLAY(self->fullscreen_overlay), fs_picture);
 
     /* Create controls for fullscreen */
     create_controls_overlay(self, self->fullscreen_overlay, &self->fullscreen_controls_box);
@@ -837,9 +877,7 @@ gboolean gnostr_video_player_get_fullscreen(GnostrVideoPlayer *self) {
 void gnostr_video_player_set_autoplay(GnostrVideoPlayer *self, gboolean autoplay) {
   g_return_if_fail(GNOSTR_IS_VIDEO_PLAYER(self));
   self->autoplay = autoplay;
-  if (GTK_IS_VIDEO(self->video)) {
-    gtk_video_set_autoplay(GTK_VIDEO(self->video), autoplay);
-  }
+  /* Autoplay is handled in set_uri when media file is set */
 }
 
 gboolean gnostr_video_player_get_autoplay(GnostrVideoPlayer *self) {
@@ -850,12 +888,8 @@ gboolean gnostr_video_player_get_autoplay(GnostrVideoPlayer *self) {
 void gnostr_video_player_set_loop(GnostrVideoPlayer *self, gboolean loop) {
   g_return_if_fail(GNOSTR_IS_VIDEO_PLAYER(self));
   self->loop = loop;
-  if (GTK_IS_VIDEO(self->video)) {
-    gtk_video_set_loop(GTK_VIDEO(self->video), loop);
-    GtkMediaStream *stream = gtk_video_get_media_stream(GTK_VIDEO(self->video));
-    if (stream) {
-      gtk_media_stream_set_loop(stream, loop);
-    }
+  if (self->media_file) {
+    gtk_media_stream_set_loop(GTK_MEDIA_STREAM(self->media_file), loop);
   }
   update_loop_icon(self);
 }
@@ -869,9 +903,8 @@ void gnostr_video_player_set_muted(GnostrVideoPlayer *self, gboolean muted) {
   g_return_if_fail(GNOSTR_IS_VIDEO_PLAYER(self));
   self->muted = muted;
 
-  GtkMediaStream *stream = gtk_video_get_media_stream(GTK_VIDEO(self->video));
-  if (stream) {
-    gtk_media_stream_set_muted(stream, muted);
+  if (self->media_file) {
+    gtk_media_stream_set_muted(GTK_MEDIA_STREAM(self->media_file), muted);
   }
   update_mute_icon(self);
 }
@@ -885,9 +918,8 @@ void gnostr_video_player_set_volume(GnostrVideoPlayer *self, double volume) {
   g_return_if_fail(GNOSTR_IS_VIDEO_PLAYER(self));
   self->volume = CLAMP(volume, 0.0, 1.0);
 
-  GtkMediaStream *stream = gtk_video_get_media_stream(GTK_VIDEO(self->video));
-  if (stream) {
-    gtk_media_stream_set_volume(stream, self->volume);
+  if (self->media_file) {
+    gtk_media_stream_set_volume(GTK_MEDIA_STREAM(self->media_file), self->volume);
   }
 
   /* Update volume slider */

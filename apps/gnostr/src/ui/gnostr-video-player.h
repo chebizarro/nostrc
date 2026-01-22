@@ -70,6 +70,15 @@ void gnostr_video_player_pause(GnostrVideoPlayer *self);
 void gnostr_video_player_toggle_playback(GnostrVideoPlayer *self);
 
 /**
+ * gnostr_video_player_stop:
+ * @self: A #GnostrVideoPlayer
+ *
+ * Stops video playback, resets position to beginning, and shows
+ * the first frame as a thumbnail/poster.
+ */
+void gnostr_video_player_stop(GnostrVideoPlayer *self);
+
+/**
  * gnostr_video_player_set_fullscreen:
  * @self: A #GnostrVideoPlayer
  * @fullscreen: Whether to enter fullscreen mode
