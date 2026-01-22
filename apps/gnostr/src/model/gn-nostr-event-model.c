@@ -88,6 +88,11 @@ struct _GnNostrEventModel {
   guint debounce_source_id;       /* Pending debounce timeout */
   gint64 last_update_time_ms;     /* Timestamp of last items-changed emission */
   guint pending_new_count;        /* Count of new items waiting (for indicator) */
+
+  /* nostrc-apq: Idle-scheduled emission to prevent GTK4 ListView re-entrancy crashes */
+  guint emit_idle_id;             /* Pending g_idle_add source for items_changed */
+  guint emit_start;               /* Start position for batched emission */
+  guint emit_added;               /* Number of items added in batched emission */
 };
 
 typedef struct {
@@ -159,6 +164,10 @@ static void defer_note_insertion(GnNostrEventModel *self, uint64_t note_key, gin
 static gboolean flush_deferred_notes_cb(gpointer user_data);
 static void schedule_deferred_flush(GnNostrEventModel *self);
 static gint64 get_current_time_ms(void);
+
+/* nostrc-apq: Idle-scheduled emission to prevent GTK4 re-entrancy */
+static gboolean emit_items_changed_idle(gpointer user_data);
+static void schedule_items_changed(GnNostrEventModel *self, guint position, guint added);
 
 /* Subscription callbacks */
 static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
@@ -570,6 +579,43 @@ static void schedule_deferred_flush(GnNostrEventModel *self) {
   self->debounce_source_id = g_timeout_add(DEBOUNCE_INTERVAL_MS, flush_deferred_notes_cb, self);
 }
 
+/* nostrc-apq: Emit items_changed from idle handler to prevent GTK4 re-entrancy crashes.
+ * GTK4's ListView can crash if items_changed is emitted while it's still processing
+ * a previous change. By deferring to idle, we ensure GTK finishes before next emit. */
+static gboolean emit_items_changed_idle(gpointer user_data) {
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return G_SOURCE_REMOVE;
+
+  self->emit_idle_id = 0;
+
+  if (self->emit_added > 0) {
+    /* Emit a single batched signal for all items added since last emit */
+    g_list_model_items_changed(G_LIST_MODEL(self), self->emit_start, 0, self->emit_added);
+    self->emit_added = 0;
+    self->last_update_time_ms = get_current_time_ms();
+  }
+
+  return G_SOURCE_REMOVE;
+}
+
+/* Schedule an items_changed emission for the next idle iteration.
+ * Coalesces multiple rapid insertions into a single signal. */
+static void schedule_items_changed(GnNostrEventModel *self, guint position, guint added) {
+  if (self->emit_idle_id == 0) {
+    /* First item in this batch - record position */
+    self->emit_start = position;
+    self->emit_added = added;
+    self->emit_idle_id = g_idle_add(emit_items_changed_idle, self);
+  } else {
+    /* Subsequent items - extend the range if needed */
+    guint new_start = MIN(self->emit_start, position);
+    guint old_end = self->emit_start + self->emit_added;
+    guint new_end = MAX(old_end, position + added);
+    self->emit_start = new_start;
+    self->emit_added = new_end - new_start;
+  }
+}
+
 /* nostrc-yi2: Defer note insertion (when user is not at top) */
 static void defer_note_insertion(GnNostrEventModel *self, uint64_t note_key, gint64 created_at) {
   /* Check if already in deferred queue */
@@ -630,16 +676,10 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
   NoteEntry entry = { .note_key = note_key, .created_at = created_at };
   g_array_insert_val(self->notes, pos, entry);
 
-  /* nostrc-yi2: Rate-limited emit - debounce rapid updates */
-  gint64 now_ms = get_current_time_ms();
-  gint64 elapsed = now_ms - self->last_update_time_ms;
-  if (elapsed >= MIN_UPDATE_INTERVAL_MS || self->last_update_time_ms == 0) {
-    self->last_update_time_ms = now_ms;
-    g_list_model_items_changed(G_LIST_MODEL(self), pos, 0, 1);
-  } else {
-    /* Schedule debounced flush */
-    schedule_deferred_flush(self);
-  }
+  /* nostrc-apq: Always use idle-scheduled emission to prevent GTK4 re-entrancy.
+   * Direct g_list_model_items_changed calls can crash GTK4's ListView if
+   * emitted during batch processing while GTK is still updating from previous emit. */
+  schedule_items_changed(self, pos, 1);
 }
 
 /* Enforce window size (~100 items) and evict oldest, including cache cleanup. */
@@ -1055,6 +1095,12 @@ static void gn_nostr_event_model_finalize(GObject *object) {
   }
   if (self->deferred_notes) g_array_unref(self->deferred_notes);
 
+  /* nostrc-apq: Clean up idle emission */
+  if (self->emit_idle_id > 0) {
+    g_source_remove(self->emit_idle_id);
+    self->emit_idle_id = 0;
+  }
+
   G_OBJECT_CLASS(gn_nostr_event_model_parent_class)->finalize(object);
 }
 
@@ -1144,6 +1190,11 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
   self->debounce_source_id = 0;
   self->last_update_time_ms = 0;
   self->pending_new_count = 0;
+
+  /* nostrc-apq: Initialize idle emission fields */
+  self->emit_idle_id = 0;
+  self->emit_start = 0;
+  self->emit_added = 0;
 
   /* Install lifetime subscriptions via dispatcher (marshals to main loop) */
   self->sub_profiles = gn_ndb_subscribe(FILTER_PROFILES, on_sub_profiles_batch, self, NULL);
