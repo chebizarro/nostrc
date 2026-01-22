@@ -725,6 +725,53 @@ static void on_note_card_reply_requested_relay(GnostrNoteCardRow *row, const cha
   (void)user_data;
 }
 
+/* Handler for repost button - relay to main window */
+static void on_note_card_repost_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+  /* Relay the signal up to the main window */
+  GtkWidget *widget = GTK_WIDGET(row);
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
+      /* Found the main window, call method to handle repost */
+      extern void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
+      gnostr_main_window_request_repost(widget, id_hex, pubkey_hex);
+      break;
+    }
+  }
+  (void)user_data;
+}
+
+/* Handler for quote button - relay to main window */
+static void on_note_card_quote_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+  /* Relay the signal up to the main window */
+  GtkWidget *widget = GTK_WIDGET(row);
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
+      /* Found the main window, call method to open composer in quote mode */
+      extern void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
+      gnostr_main_window_request_quote(widget, id_hex, pubkey_hex);
+      break;
+    }
+  }
+  (void)user_data;
+}
+
+/* Handler for like button - relay to main window */
+static void on_note_card_like_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+  /* Relay the signal up to the main window */
+  GtkWidget *widget = GTK_WIDGET(row);
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
+      /* Found the main window - like not yet implemented, just log */
+      g_message("[TIMELINE] Like requested for id=%s (not yet implemented)", id_hex ? id_hex : "(null)");
+      break;
+    }
+  }
+  (void)user_data;
+}
+
 /* Callback when profile is loaded for an event item - show the row */
 static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
@@ -773,6 +820,12 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
   g_signal_connect(row, "open-profile", G_CALLBACK(on_note_card_open_profile_relay), NULL);
   /* Connect the reply-requested signal */
   g_signal_connect(row, "reply-requested", G_CALLBACK(on_note_card_reply_requested_relay), NULL);
+  /* Connect the repost-requested signal */
+  g_signal_connect(row, "repost-requested", G_CALLBACK(on_note_card_repost_requested_relay), NULL);
+  /* Connect the quote-requested signal */
+  g_signal_connect(row, "quote-requested", G_CALLBACK(on_note_card_quote_requested_relay), NULL);
+  /* Connect the like-requested signal */
+  g_signal_connect(row, "like-requested", G_CALLBACK(on_note_card_like_requested_relay), NULL);
 
   gtk_list_item_set_child(item, row);
 }

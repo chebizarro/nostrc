@@ -21,6 +21,8 @@ struct _GnostrNoteCardRow {
   GtkWidget *btn_display_name;
   GtkWidget *btn_menu;
   GtkWidget *btn_reply;
+  GtkWidget *btn_repost;
+  GtkWidget *btn_like;
   GtkWidget *avatar_box;
   GtkWidget *avatar_initials;
   GtkWidget *avatar_image;
@@ -32,6 +34,7 @@ struct _GnostrNoteCardRow {
   GtkWidget *embed_box;
   GtkWidget *og_preview_container;
   GtkWidget *actions_box;
+  GtkWidget *repost_popover;  /* popover menu for repost/quote options */
   // state
   char *avatar_url;
 #ifdef HAVE_SOUP3
@@ -56,6 +59,9 @@ enum {
   SIGNAL_REQUEST_EMBED,
   SIGNAL_OPEN_PROFILE,
   SIGNAL_REPLY_REQUESTED,
+  SIGNAL_REPOST_REQUESTED,
+  SIGNAL_QUOTE_REQUESTED,
+  SIGNAL_LIKE_REQUESTED,
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -87,10 +93,16 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   /* Don't manually clear og_preview - it's a child widget that will be
    * automatically disposed when the template is disposed */
   self->og_preview = NULL;
+  /* Clean up the repost popover before disposing template */
+  if (self->repost_popover) {
+    gtk_widget_unparent(self->repost_popover);
+    self->repost_popover = NULL;
+  }
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_CARD_ROW);
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
   self->lbl_display = NULL; self->lbl_handle = NULL; self->lbl_timestamp = NULL; self->content_label = NULL;
   self->media_box = NULL; self->embed_box = NULL; self->og_preview_container = NULL; self->actions_box = NULL;
+  self->btn_repost = NULL; self->btn_like = NULL;
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->dispose(obj);
 }
 
@@ -233,6 +245,89 @@ static void on_reply_clicked(GtkButton *btn, gpointer user_data) {
   }
 }
 
+static void on_repost_action_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (self && self->id_hex && self->pubkey_hex) {
+    /* Hide popover first */
+    if (self->repost_popover && GTK_IS_POPOVER(self->repost_popover)) {
+      gtk_popover_popdown(GTK_POPOVER(self->repost_popover));
+    }
+    g_signal_emit(self, signals[SIGNAL_REPOST_REQUESTED], 0,
+                  self->id_hex, self->pubkey_hex);
+  }
+}
+
+static void on_quote_action_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (self && self->id_hex && self->pubkey_hex) {
+    /* Hide popover first */
+    if (self->repost_popover && GTK_IS_POPOVER(self->repost_popover)) {
+      gtk_popover_popdown(GTK_POPOVER(self->repost_popover));
+    }
+    g_signal_emit(self, signals[SIGNAL_QUOTE_REQUESTED], 0,
+                  self->id_hex, self->pubkey_hex);
+  }
+}
+
+static void on_repost_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (!self) return;
+
+  /* Create popover if not already created */
+  if (!self->repost_popover) {
+    self->repost_popover = gtk_popover_new();
+    gtk_widget_set_parent(self->repost_popover, GTK_WIDGET(self->btn_repost));
+
+    /* Create a vertical box for the menu items */
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    gtk_widget_set_margin_start(box, 6);
+    gtk_widget_set_margin_end(box, 6);
+    gtk_widget_set_margin_top(box, 6);
+    gtk_widget_set_margin_bottom(box, 6);
+
+    /* Repost button */
+    GtkWidget *repost_btn = gtk_button_new();
+    GtkWidget *repost_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *repost_icon = gtk_image_new_from_icon_name("object-rotate-right-symbolic");
+    GtkWidget *repost_label = gtk_label_new("Repost");
+    gtk_box_append(GTK_BOX(repost_box), repost_icon);
+    gtk_box_append(GTK_BOX(repost_box), repost_label);
+    gtk_button_set_child(GTK_BUTTON(repost_btn), repost_box);
+    gtk_button_set_has_frame(GTK_BUTTON(repost_btn), FALSE);
+    g_signal_connect(repost_btn, "clicked", G_CALLBACK(on_repost_action_clicked), self);
+    gtk_box_append(GTK_BOX(box), repost_btn);
+
+    /* Quote button */
+    GtkWidget *quote_btn = gtk_button_new();
+    GtkWidget *quote_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *quote_icon = gtk_image_new_from_icon_name("format-text-quote-symbolic");
+    GtkWidget *quote_label = gtk_label_new("Quote");
+    gtk_box_append(GTK_BOX(quote_box), quote_icon);
+    gtk_box_append(GTK_BOX(quote_box), quote_label);
+    gtk_button_set_child(GTK_BUTTON(quote_btn), quote_box);
+    gtk_button_set_has_frame(GTK_BUTTON(quote_btn), FALSE);
+    g_signal_connect(quote_btn, "clicked", G_CALLBACK(on_quote_action_clicked), self);
+    gtk_box_append(GTK_BOX(box), quote_btn);
+
+    gtk_popover_set_child(GTK_POPOVER(self->repost_popover), box);
+  }
+
+  /* Show the popover */
+  gtk_popover_popup(GTK_POPOVER(self->repost_popover));
+}
+
+static void on_like_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (self && self->id_hex && self->pubkey_hex) {
+    g_signal_emit(self, signals[SIGNAL_LIKE_REQUESTED], 0,
+                  self->id_hex, self->pubkey_hex);
+  }
+}
+
 static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   GtkWidgetClass *wclass = GTK_WIDGET_CLASS(klass);
   GObjectClass *gclass = G_OBJECT_CLASS(klass);
@@ -246,6 +341,8 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_display_name);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_menu);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_reply);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_repost);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_like);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_box);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_initials);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_image);
@@ -273,6 +370,15 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   signals[SIGNAL_REPLY_REQUESTED] = g_signal_new("reply-requested",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 3, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+  signals[SIGNAL_REPOST_REQUESTED] = g_signal_new("repost-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
+  signals[SIGNAL_QUOTE_REQUESTED] = g_signal_new("quote-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
+  signals[SIGNAL_LIKE_REQUESTED] = g_signal_new("like-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
 }
 
 static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
@@ -306,6 +412,18 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
   /* Connect reply button */
   if (GTK_IS_BUTTON(self->btn_reply)) {
     g_signal_connect(self->btn_reply, "clicked", G_CALLBACK(on_reply_clicked), self);
+  }
+  /* Connect repost button */
+  if (GTK_IS_BUTTON(self->btn_repost)) {
+    g_signal_connect(self->btn_repost, "clicked", G_CALLBACK(on_repost_clicked), self);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_repost),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Repost Note", -1);
+  }
+  /* Connect like button */
+  if (GTK_IS_BUTTON(self->btn_like)) {
+    g_signal_connect(self->btn_like, "clicked", G_CALLBACK(on_like_clicked), self);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_like),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Like Note", -1);
   }
 #ifdef HAVE_SOUP3
   self->avatar_cancellable = g_cancellable_new();

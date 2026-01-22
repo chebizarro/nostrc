@@ -14,6 +14,10 @@ struct _GnostrComposer {
   char *reply_to_id;       /* event ID being replied to (hex) */
   char *root_id;           /* thread root event ID (hex), may equal reply_to_id */
   char *reply_to_pubkey;   /* pubkey of author being replied to (hex) */
+  /* Quote context for NIP-18 quote posts */
+  char *quote_id;          /* event ID being quoted (hex) */
+  char *quote_pubkey;      /* pubkey of author being quoted (hex) */
+  char *quote_nostr_uri;   /* nostr:note1... URI for the quoted note */
 };
 
 G_DEFINE_TYPE(GnostrComposer, gnostr_composer, GTK_TYPE_WIDGET)
@@ -43,6 +47,9 @@ static void gnostr_composer_finalize(GObject *obj) {
   g_clear_pointer(&self->reply_to_id, g_free);
   g_clear_pointer(&self->root_id, g_free);
   g_clear_pointer(&self->reply_to_pubkey, g_free);
+  g_clear_pointer(&self->quote_id, g_free);
+  g_clear_pointer(&self->quote_pubkey, g_free);
+  g_clear_pointer(&self->quote_nostr_uri, g_free);
   G_OBJECT_CLASS(gnostr_composer_parent_class)->finalize(obj);
 }
 
@@ -126,8 +133,9 @@ void gnostr_composer_clear(GnostrComposer *self) {
   if (!self->text_view || !GTK_IS_TEXT_VIEW(self->text_view)) return;
   GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));
   gtk_text_buffer_set_text(buf, "", 0);
-  /* Also clear reply context */
+  /* Also clear reply and quote context */
   gnostr_composer_clear_reply_context(self);
+  gnostr_composer_clear_quote_context(self);
 }
 
 void gnostr_composer_set_reply_context(GnostrComposer *self,
@@ -206,4 +214,98 @@ const char *gnostr_composer_get_root_id(GnostrComposer *self) {
 const char *gnostr_composer_get_reply_to_pubkey(GnostrComposer *self) {
   g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
   return self->reply_to_pubkey;
+}
+
+/* Quote context for NIP-18 quote posts */
+void gnostr_composer_set_quote_context(GnostrComposer *self,
+                                       const char *quote_id,
+                                       const char *quote_pubkey,
+                                       const char *nostr_uri,
+                                       const char *quoted_author_display_name) {
+  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+
+  /* Clear any existing reply context first */
+  gnostr_composer_clear_reply_context(self);
+
+  /* Store quote context */
+  g_free(self->quote_id);
+  g_free(self->quote_pubkey);
+  g_free(self->quote_nostr_uri);
+
+  self->quote_id = g_strdup(quote_id);
+  self->quote_pubkey = g_strdup(quote_pubkey);
+  self->quote_nostr_uri = g_strdup(nostr_uri);
+
+  /* Update indicator to show we're quoting */
+  if (self->reply_indicator && GTK_IS_LABEL(self->reply_indicator)) {
+    char *label = g_strdup_printf("Quoting %s",
+                                   quoted_author_display_name ? quoted_author_display_name : "@user");
+    gtk_label_set_text(GTK_LABEL(self->reply_indicator), label);
+    g_free(label);
+  }
+  /* Show the indicator box */
+  if (self->reply_indicator_box && GTK_IS_WIDGET(self->reply_indicator_box)) {
+    gtk_widget_set_visible(self->reply_indicator_box, TRUE);
+  }
+
+  /* Update button label */
+  if (self->btn_post && GTK_IS_BUTTON(self->btn_post)) {
+    gtk_button_set_label(GTK_BUTTON(self->btn_post), "Quote");
+  }
+
+  /* Pre-fill text with nostr: URI at the end */
+  if (nostr_uri && self->text_view && GTK_IS_TEXT_VIEW(self->text_view)) {
+    GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));
+    char *prefill = g_strdup_printf("\n\n%s", nostr_uri);
+    gtk_text_buffer_set_text(buf, prefill, -1);
+    g_free(prefill);
+    /* Move cursor to the start for user to type their comment */
+    GtkTextIter start;
+    gtk_text_buffer_get_start_iter(buf, &start);
+    gtk_text_buffer_place_cursor(buf, &start);
+  }
+
+  g_message("composer: set quote context id=%s pubkey=%s uri=%s",
+            quote_id ? quote_id : "(null)",
+            quote_pubkey ? quote_pubkey : "(null)",
+            nostr_uri ? nostr_uri : "(null)");
+}
+
+void gnostr_composer_clear_quote_context(GnostrComposer *self) {
+  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+
+  g_clear_pointer(&self->quote_id, g_free);
+  g_clear_pointer(&self->quote_pubkey, g_free);
+  g_clear_pointer(&self->quote_nostr_uri, g_free);
+
+  /* Hide indicator box if no reply context either */
+  if (!self->reply_to_id) {
+    if (self->reply_indicator_box && GTK_IS_WIDGET(self->reply_indicator_box)) {
+      gtk_widget_set_visible(self->reply_indicator_box, FALSE);
+    }
+    /* Reset button label */
+    if (self->btn_post && GTK_IS_BUTTON(self->btn_post)) {
+      gtk_button_set_label(GTK_BUTTON(self->btn_post), "Post");
+    }
+  }
+}
+
+gboolean gnostr_composer_is_quote(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), FALSE);
+  return self->quote_id != NULL;
+}
+
+const char *gnostr_composer_get_quote_id(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+  return self->quote_id;
+}
+
+const char *gnostr_composer_get_quote_pubkey(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+  return self->quote_pubkey;
+}
+
+const char *gnostr_composer_get_quote_nostr_uri(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+  return self->quote_nostr_uri;
 }
