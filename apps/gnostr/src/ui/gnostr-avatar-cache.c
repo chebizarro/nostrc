@@ -153,29 +153,47 @@ static char *avatar_path_for_url(const char *url) {
   return g_build_filename(dir, hex, NULL);
 }
 
+/* Create GdkTexture from GdkPixbuf using gdk_memory_texture_new().
+ * This replaces the deprecated gdk_texture_new_for_pixbuf() in GTK 4.20+. */
+static GdkTexture *texture_new_from_pixbuf(GdkPixbuf *pixbuf) {
+  g_return_val_if_fail(pixbuf != NULL, NULL);
+
+  int width = gdk_pixbuf_get_width(pixbuf);
+  int height = gdk_pixbuf_get_height(pixbuf);
+  int rowstride = gdk_pixbuf_get_rowstride(pixbuf);
+  gboolean has_alpha = gdk_pixbuf_get_has_alpha(pixbuf);
+  GBytes *bytes = gdk_pixbuf_read_pixel_bytes(pixbuf);
+
+  GdkMemoryFormat format = has_alpha ? GDK_MEMORY_R8G8B8A8 : GDK_MEMORY_R8G8B8;
+  GdkTexture *texture = gdk_memory_texture_new(width, height, format, bytes, rowstride);
+  g_bytes_unref(bytes);
+
+  return texture;
+}
+
 /* Decode image at bounded size using GdkPixbuf, then create GdkTexture.
  * This drastically reduces memory usage vs. loading full-size images.
  * Returns new ref or NULL on error. */
 static GdkTexture *avatar_texture_from_file_scaled(const char *path, GError **error) {
   g_return_val_if_fail(path != NULL, NULL);
-  
+
   /* Load and scale using GdkPixbuf */
   GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file_at_scale(
-    path, 
+    path,
     s_avatar_size,  /* width */
     s_avatar_size,  /* height */
     TRUE,           /* preserve aspect ratio */
     error
   );
-  
+
   if (!pixbuf) {
     return NULL;
   }
-  
+
   /* Create texture from scaled pixbuf */
-  GdkTexture *texture = gdk_texture_new_for_pixbuf(pixbuf);
+  GdkTexture *texture = texture_new_from_pixbuf(pixbuf);
   g_object_unref(pixbuf);
-  
+
   return texture;
 }
 
@@ -205,11 +223,11 @@ static GdkTexture *avatar_texture_from_bytes_scaled(GBytes *bytes, GError **erro
   if (!pixbuf) {
     return NULL;
   }
-  
+
   /* Create texture from scaled pixbuf */
-  GdkTexture *texture = gdk_texture_new_for_pixbuf(pixbuf);
+  GdkTexture *texture = texture_new_from_pixbuf(pixbuf);
   g_object_unref(pixbuf);
-  
+
   return texture;
 }
 
