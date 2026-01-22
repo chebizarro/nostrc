@@ -361,11 +361,12 @@ if (BUILD_TESTING)
     src/util/blossom.c
     src/util/blossom_settings.c
     src/util/relays.c
+    src/util/relay_info.c
     src/ipc/signer_ipc.c
     ${SIGNER_PROXY_C}
     ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c
     ${CMAKE_SOURCE_DIR}/gobject/src/nostr_relay.c)
-  target_link_libraries(gnostr-test-blossom PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB nostr nip19 libgo)
+  target_link_libraries(gnostr-test-blossom PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB PkgConfig::LIBSOUP nostr nip19 libgo)
   _gnostr_apply_sanitizers(gnostr-test-blossom)
   add_test(NAME gnostr-test-blossom COMMAND gnostr-test-blossom)
   set_tests_properties(gnostr-test-blossom PROPERTIES
@@ -384,12 +385,13 @@ if (BUILD_TESTING)
   target_sources(gnostr-test-blossom-settings PRIVATE
     src/util/blossom_settings.c
     src/util/relays.c
+    src/util/relay_info.c
     src/ipc/signer_ipc.c
     ${SIGNER_PROXY_C}
     ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c
     ${CMAKE_SOURCE_DIR}/gobject/src/nostr_relay.c)
   target_link_libraries(gnostr-test-blossom-settings PRIVATE
-    PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB
+    PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB PkgConfig::LIBSOUP
     nostr libgo)
   _gnostr_apply_sanitizers(gnostr-test-blossom-settings)
   add_test(NAME gnostr-test-blossom-settings COMMAND gnostr-test-blossom-settings)
