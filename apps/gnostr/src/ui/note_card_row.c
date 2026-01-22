@@ -104,6 +104,7 @@ enum {
   SIGNAL_BOOKMARK_TOGGLED,
   SIGNAL_REPORT_NOTE_REQUESTED,
   SIGNAL_SHARE_NOTE_REQUESTED,
+  SIGNAL_SEARCH_HASHTAG,
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -203,6 +204,14 @@ static gboolean on_content_activate_link(GtkLabel *label, const char *uri, gpoin
   GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
   (void)label;
   if (!self || !uri) return FALSE;
+  /* Hashtag links - emit search signal */
+  if (g_str_has_prefix(uri, "hashtag:")) {
+    const char *tag = uri + 8; /* Skip "hashtag:" prefix */
+    if (tag && *tag) {
+      g_signal_emit(self, signals[SIGNAL_SEARCH_HASHTAG], 0, tag);
+    }
+    return TRUE;
+  }
   /* nostr: URIs and bech32 entities */
   if (g_str_has_prefix(uri, "nostr:") || g_str_has_prefix(uri, "note1") || g_str_has_prefix(uri, "npub1") ||
       g_str_has_prefix(uri, "nevent1") || g_str_has_prefix(uri, "nprofile1") || g_str_has_prefix(uri, "naddr1")) {
@@ -888,6 +897,9 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   signals[SIGNAL_SHARE_NOTE_REQUESTED] = g_signal_new("share-note-requested",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIGNAL_SEARCH_HASHTAG] = g_signal_new("search-hashtag",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 1, G_TYPE_STRING);
 }
 
 static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
@@ -1451,6 +1463,33 @@ static gboolean token_is_nostr(const char *t) {
                g_str_has_prefix(t, "nevent1") || g_str_has_prefix(t, "nprofile1") || g_str_has_prefix(t, "naddr1"));
 }
 
+/* Check if token is a hashtag (#word) */
+static gboolean token_is_hashtag(const char *t) {
+  if (!t || t[0] != '#' || t[1] == '\0') return FALSE;
+  /* Must have at least one alphanumeric char after # */
+  return g_ascii_isalnum(t[1]) || (unsigned char)t[1] > 127; /* Allow Unicode */
+}
+
+/* Extract hashtag text (without # prefix and trailing punctuation) */
+static gchar *extract_hashtag(const char *t, gchar **suffix) {
+  if (!t || t[0] != '#') { if (suffix) *suffix = NULL; return NULL; }
+  const char *start = t + 1; /* Skip # */
+  size_t len = strlen(start);
+  /* Find end of hashtag (alphanumeric, underscore, or high-byte UTF-8) */
+  size_t end = 0;
+  while (end < len) {
+    unsigned char c = (unsigned char)start[end];
+    if (g_ascii_isalnum(c) || c == '_' || c > 127) {
+      end++;
+    } else {
+      break;
+    }
+  }
+  if (end == 0) { if (suffix) *suffix = NULL; return NULL; }
+  if (suffix) *suffix = (end < len) ? g_strdup(start + end) : NULL;
+  return g_strndup(start, end);
+}
+
 void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *content) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
 
@@ -1467,6 +1506,7 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
       if (t[0]=='\0') { g_string_append(out, " "); continue; }
       gboolean is_url = token_is_url(t);
       gboolean is_nostr = token_is_nostr(t);
+      gboolean is_hashtag = token_is_hashtag(t);
       if (is_url || is_nostr) {
         gchar *suffix = NULL;
         gchar *clean = extract_clean_url(t, &suffix);
@@ -1490,6 +1530,26 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
           g_free(esc);
         }
         g_free(clean);
+        g_free(suffix);
+      } else if (is_hashtag) {
+        gchar *suffix = NULL;
+        gchar *tag = extract_hashtag(t, &suffix);
+        if (tag && *tag) {
+          gchar *esc_tag = g_markup_escape_text(tag, -1);
+          /* Use hashtag: URI scheme for internal handling */
+          g_string_append_printf(out, "<a href=\"hashtag:%s\">#%s</a>", esc_tag, esc_tag);
+          g_free(esc_tag);
+          if (suffix && *suffix) {
+            gchar *esc_suffix = g_markup_escape_text(suffix, -1);
+            g_string_append(out, esc_suffix);
+            g_free(esc_suffix);
+          }
+        } else {
+          gchar *esc = g_markup_escape_text(t, -1);
+          g_string_append(out, esc);
+          g_free(esc);
+        }
+        g_free(tag);
         g_free(suffix);
       } else {
         gchar *esc = g_markup_escape_text(t, -1);
@@ -1694,15 +1754,32 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
     for (guint i = 0; tokens && tokens[i]; i++) {
       const char *t = tokens[i];
       if (t[0] == '\0') { g_string_append(out, " "); continue; }
-      gboolean link = FALSE;
-      if (g_str_has_prefix(t, "http://") || g_str_has_prefix(t, "https://") ||
+      gboolean is_link = g_str_has_prefix(t, "http://") || g_str_has_prefix(t, "https://") ||
           g_str_has_prefix(t, "nostr:") || g_str_has_prefix(t, "note1") || g_str_has_prefix(t, "npub1") ||
-          g_str_has_prefix(t, "nevent1") || g_str_has_prefix(t, "nprofile1") || g_str_has_prefix(t, "naddr1"))
-        link = TRUE;
-      if (link) {
+          g_str_has_prefix(t, "nevent1") || g_str_has_prefix(t, "nprofile1") || g_str_has_prefix(t, "naddr1");
+      gboolean is_hashtag = token_is_hashtag(t);
+      if (is_link) {
         gchar *esc = g_markup_escape_text(t, -1);
         g_string_append_printf(out, "<a href=\"%s\">%s</a>", esc, esc);
         g_free(esc);
+      } else if (is_hashtag) {
+        gchar *suffix = NULL;
+        gchar *tag = extract_hashtag(t, &suffix);
+        if (tag && *tag) {
+          gchar *esc_tag = g_markup_escape_text(tag, -1);
+          g_string_append_printf(out, "<a href=\"hashtag:%s\">#%s</a>", esc_tag, esc_tag);
+          g_free(esc_tag);
+          if (suffix && *suffix) {
+            gchar *esc_suffix = g_markup_escape_text(suffix, -1);
+            g_string_append(out, esc_suffix);
+            g_free(esc_suffix);
+          }
+        } else {
+          gchar *esc = g_markup_escape_text(t, -1);
+          g_string_append(out, esc); g_free(esc);
+        }
+        g_free(tag);
+        g_free(suffix);
       } else {
         gchar *esc = g_markup_escape_text(t, -1);
         g_string_append(out, esc); g_free(esc);

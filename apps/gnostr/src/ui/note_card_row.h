@@ -26,6 +26,7 @@ G_DECLARE_FINAL_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GNOSTR, NOTE_CARD_
  * "bookmark-toggled" (gchar* id_hex, gboolean is_bookmarked, gpointer user_data)
  * "report-note-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data) - NIP-56 report request
  * "share-note-requested" (gchar* nostr_uri, gpointer user_data) - share note URI
+ * "search-hashtag" (gchar* hashtag, gpointer user_data) - search for hashtag (without # prefix)
  */
 
 typedef struct _GnostrNoteCardRow GnostrNoteCardRow;
