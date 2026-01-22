@@ -3586,16 +3586,11 @@ static void on_event_model_new_items_pending(GnNostrEventModel *model, guint cou
   }
 }
 
-/* nostrc-yi2: Calm timeline - handle new notes indicator button click */
-static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
-  (void)btn;
+/* nostrc-9f4: Idle callback to scroll timeline to top after model changes complete */
+static gboolean scroll_to_top_idle(gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->event_model) return;
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return G_SOURCE_REMOVE;
 
-  /* Flush pending notes */
-  gn_nostr_event_model_flush_pending(self->event_model);
-
-  /* Scroll to top */
   if (self->timeline && G_TYPE_CHECK_INSTANCE_TYPE(self->timeline, GNOSTR_TYPE_TIMELINE_VIEW)) {
     GtkWidget *scroller = gnostr_timeline_view_get_scrolled_window(GNOSTR_TIMELINE_VIEW(self->timeline));
     if (scroller && GTK_IS_SCROLLED_WINDOW(scroller)) {
@@ -3605,6 +3600,23 @@ static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
       }
     }
   }
+  return G_SOURCE_REMOVE;
+}
+
+/* nostrc-yi2: Calm timeline - handle new notes indicator button click */
+static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->event_model) return;
+
+  /* Flush pending notes - this schedules model changes via idle */
+  gn_nostr_event_model_flush_pending(self->event_model);
+
+  /* nostrc-9f4: Defer scroll to idle to avoid GTK4 ListView crash.
+   * The model flush schedules items_changed via g_idle_add, so we need to
+   * scroll AFTER that emission completes. Using g_idle_add_full with lower
+   * priority ensures our scroll runs after the model's default-priority idle. */
+  g_idle_add_full(G_PRIORITY_LOW, scroll_to_top_idle, self, NULL);
 
   /* Hide indicator */
   if (self->new_notes_revealer && GTK_IS_REVEALER(self->new_notes_revealer)) {
