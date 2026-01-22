@@ -283,7 +283,8 @@ if (BUILD_TESTING)
   add_test(NAME gnostr-test-blossom-settings COMMAND gnostr-test-blossom-settings)
   set_tests_properties(gnostr-test-blossom-settings PROPERTIES
     TIMEOUT 30
-    LABELS "blossom;settings;unit;gnostr")
+    LABELS "blossom;settings;unit;gnostr"
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}")
 
   # NIP-46 E2E tests
   add_executable(gnostr-test-nip46-e2e tests/test_nip46_e2e.c)
