@@ -100,6 +100,7 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${CMAKE_SOURCE_DIR}/nips/nip19/include
   ${CMAKE_SOURCE_DIR}/nips/nip10/include
   ${CMAKE_SOURCE_DIR}/nips/nip17/include
+  ${CMAKE_SOURCE_DIR}/nips/nip25/include
   ${SECP256K1_INCLUDE_DIRS})
 # Compile the GI wrapper implementation into the app (no separate gobject lib target)
 # NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
@@ -115,6 +116,9 @@ if (TARGET nip19)
 endif()
 if (TARGET nip10)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nip10)
+endif()
+if (TARGET nip25)
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE nip25)
 endif()
 if (TARGET nostr_nip46_core)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_nip46_core)

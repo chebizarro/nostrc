@@ -468,3 +468,70 @@ char *storage_ndb_note_tags_json(storage_ndb_note *note)
   g_string_append_c(json, ']');
   return g_string_free(json, FALSE);
 }
+
+/* ============== NIP-25 Reaction Count API ============== */
+
+/* Count reactions (kind 7) for a given event.
+ * Uses a NIP-01 filter query to find all kind 7 events that reference the given event ID. */
+guint storage_ndb_count_reactions(const char *event_id_hex)
+{
+  if (!event_id_hex || strlen(event_id_hex) != 64) return 0;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return 0;
+
+  /* Build filter: {"kinds":[7],"#e":["<event_id>"]} */
+  gchar *filter_json = g_strdup_printf("{\"kinds\":[7],\"#e\":[\"%s\"]}", event_id_hex);
+
+  char **results = NULL;
+  int count = 0;
+  int rc = storage_ndb_query(txn, filter_json, &results, &count);
+  g_free(filter_json);
+
+  storage_ndb_end_query(txn);
+
+  if (rc != 0) return 0;
+
+  guint reaction_count = (guint)count;
+
+  /* Free the results - we only need the count */
+  if (results) {
+    storage_ndb_free_results(results, count);
+  }
+
+  return reaction_count;
+}
+
+/* Check if a specific user has reacted to an event.
+ * Uses a NIP-01 filter query to find reactions from the given user. */
+gboolean storage_ndb_user_has_reacted(const char *event_id_hex, const char *user_pubkey_hex)
+{
+  if (!event_id_hex || strlen(event_id_hex) != 64) return FALSE;
+  if (!user_pubkey_hex || strlen(user_pubkey_hex) != 64) return FALSE;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return FALSE;
+
+  /* Build filter: {"kinds":[7],"authors":["<pubkey>"],"#e":["<event_id>"],"limit":1} */
+  gchar *filter_json = g_strdup_printf(
+    "{\"kinds\":[7],\"authors\":[\"%s\"],\"#e\":[\"%s\"],\"limit\":1}",
+    user_pubkey_hex, event_id_hex);
+
+  char **results = NULL;
+  int count = 0;
+  int rc = storage_ndb_query(txn, filter_json, &results, &count);
+  g_free(filter_json);
+
+  storage_ndb_end_query(txn);
+
+  if (rc != 0) return FALSE;
+
+  gboolean has_reacted = (count > 0);
+
+  /* Free the results */
+  if (results) {
+    storage_ndb_free_results(results, count);
+  }
+
+  return has_reacted;
+}

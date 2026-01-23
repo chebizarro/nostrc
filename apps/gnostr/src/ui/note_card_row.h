@@ -91,6 +91,24 @@ void gnostr_note_card_row_set_is_own_note(GnostrNoteCardRow *self, gboolean is_o
 /* Login state: set whether user is logged in (disables auth-required buttons when logged out) */
 void gnostr_note_card_row_set_logged_in(GnostrNoteCardRow *self, gboolean logged_in);
 
+/* NIP-18 Reposts: set repost information to display "reposted by X" attribution */
+void gnostr_note_card_row_set_repost_info(GnostrNoteCardRow *self,
+                                           const char *reposter_pubkey_hex,
+                                           const char *reposter_display_name,
+                                           gint64 repost_created_at);
+
+/* NIP-18 Reposts: set whether this card represents a repost (kind 6/16) */
+void gnostr_note_card_row_set_is_repost(GnostrNoteCardRow *self, gboolean is_repost);
+
+/* NIP-18 Reposts: update the repost count display */
+void gnostr_note_card_row_set_repost_count(GnostrNoteCardRow *self, guint count);
+
+/* NIP-18 Quote Reposts: set quote post info to display the quoted note inline */
+void gnostr_note_card_row_set_quote_info(GnostrNoteCardRow *self,
+                                          const char *quoted_event_id_hex,
+                                          const char *quoted_content,
+                                          const char *quoted_author_name);
+
 G_END_DECLS
 
 #endif /* GNOSTR_NOTE_CARD_ROW_H */

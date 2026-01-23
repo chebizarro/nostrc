@@ -801,6 +801,33 @@ static void relay_manager_populate_info(RelayManagerCtx *ctx, GnostrRelayInfo *i
     gtk_widget_set_visible(policy_box, has_policy_links);
   }
 
+  /* NIP-65 Permission display */
+  GtkWidget *nip65_icon = GTK_WIDGET(gtk_builder_get_object(ctx->builder, "info_nip65_icon"));
+  GtkLabel *nip65_label = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_nip65_label"));
+  if (nip65_icon && nip65_label && ctx->selected_url && ctx->relay_types) {
+    gpointer type_ptr = g_hash_table_lookup(ctx->relay_types, ctx->selected_url);
+    GnostrRelayType type = type_ptr ? GPOINTER_TO_INT(type_ptr) : GNOSTR_RELAY_READWRITE;
+    const gchar *icon_name;
+    const gchar *label_text;
+    switch (type) {
+      case GNOSTR_RELAY_READ:
+        icon_name = "go-down-symbolic";
+        label_text = "Read Only";
+        break;
+      case GNOSTR_RELAY_WRITE:
+        icon_name = "go-up-symbolic";
+        label_text = "Write Only";
+        break;
+      case GNOSTR_RELAY_READWRITE:
+      default:
+        icon_name = "network-transmit-receive-symbolic";
+        label_text = "Read + Write";
+        break;
+    }
+    gtk_image_set_from_icon_name(GTK_IMAGE(nip65_icon), icon_name);
+    gtk_label_set_text(nip65_label, label_text);
+  }
+
   gtk_stack_set_visible_child_name(stack, "info");
 }
 

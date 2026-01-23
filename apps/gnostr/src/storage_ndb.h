@@ -109,6 +109,19 @@ void storage_ndb_hex_encode(const unsigned char *bin32, char *hex65);
  * Caller must g_free() the result. */
 char *storage_ndb_note_tags_json(storage_ndb_note *note);
 
+/* ============== NIP-25 Reaction Count API ============== */
+
+/* Count reactions (kind 7) for a given event.
+ * event_id_hex is the 64-char hex ID of the event to count reactions for.
+ * Returns the number of reactions found, or 0 if none/error. */
+guint storage_ndb_count_reactions(const char *event_id_hex);
+
+/* Check if a specific user has reacted to an event.
+ * event_id_hex: 64-char hex ID of the event
+ * user_pubkey_hex: 64-char hex pubkey of the user
+ * Returns TRUE if the user has reacted, FALSE otherwise. */
+gboolean storage_ndb_user_has_reacted(const char *event_id_hex, const char *user_pubkey_hex);
+
 #ifdef __cplusplus
 }
 #endif

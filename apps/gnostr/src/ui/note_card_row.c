@@ -96,6 +96,18 @@ struct _GnostrNoteCardRow {
   GtkWidget *delete_btn;  /* Reference to delete button for visibility toggle */
   /* Login state: track whether user is logged in (affects button sensitivity) */
   gboolean is_logged_in;
+  /* NIP-18 Repost state */
+  gboolean is_repost;
+  gchar *reposter_pubkey;
+  gchar *reposter_display_name;
+  gint64 repost_created_at;
+  guint repost_count;
+  GtkWidget *repost_indicator_box;  /* "Reposted by X" header */
+  GtkWidget *repost_indicator_label;
+  GtkWidget *lbl_repost_count;  /* Repost count next to button */
+  /* NIP-18 Quote state */
+  gchar *quoted_event_id;
+  GtkWidget *quote_embed_box;  /* Container for quoted note preview */
 };
 
 G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
@@ -174,6 +186,9 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   self->btn_repost = NULL; self->btn_like = NULL; self->btn_bookmark = NULL; self->btn_thread = NULL;
   self->reply_indicator_box = NULL; self->reply_indicator_label = NULL;
   self->reply_count_box = NULL; self->reply_count_label = NULL;
+  /* NIP-18 repost widgets */
+  self->repost_indicator_box = NULL; self->repost_indicator_label = NULL;
+  self->lbl_repost_count = NULL; self->quote_embed_box = NULL;
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->dispose(obj);
 }
 
@@ -188,6 +203,10 @@ static void gnostr_note_card_row_finalize(GObject *obj) {
   g_clear_pointer(&self->nip05, g_free);
   g_clear_pointer(&self->author_lud16, g_free);
   g_clear_pointer(&self->content_text, g_free);
+  /* NIP-18 repost state cleanup */
+  g_clear_pointer(&self->reposter_pubkey, g_free);
+  g_clear_pointer(&self->reposter_display_name, g_free);
+  g_clear_pointer(&self->quoted_event_id, g_free);
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->finalize(obj);
 }
 
@@ -2737,5 +2756,164 @@ void gnostr_note_card_row_set_logged_in(GnostrNoteCardRow *self, gboolean logged
   if (GTK_IS_WIDGET(self->btn_bookmark)) {
     gtk_widget_set_sensitive(self->btn_bookmark, logged_in);
     gtk_widget_set_tooltip_text(self->btn_bookmark, logged_in ? "Bookmark" : logged_out_tooltip);
+  }
+}
+
+/* NIP-18: Set repost information to display "reposted by X" attribution */
+void gnostr_note_card_row_set_repost_info(GnostrNoteCardRow *self,
+                                           const char *reposter_pubkey_hex,
+                                           const char *reposter_display_name,
+                                           gint64 repost_created_at) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  g_clear_pointer(&self->reposter_pubkey, g_free);
+  g_clear_pointer(&self->reposter_display_name, g_free);
+
+  self->reposter_pubkey = g_strdup(reposter_pubkey_hex);
+  self->reposter_display_name = g_strdup(reposter_display_name);
+  self->repost_created_at = repost_created_at;
+
+  /* Create repost indicator box if it doesn't exist */
+  if (!self->repost_indicator_box && self->root && GTK_IS_WIDGET(self->root)) {
+    /* Create "Reposted by X" indicator */
+    self->repost_indicator_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_add_css_class(self->repost_indicator_box, "repost-indicator");
+    gtk_widget_set_margin_start(self->repost_indicator_box, 52);  /* Align with content */
+    gtk_widget_set_margin_bottom(self->repost_indicator_box, 4);
+
+    /* Repost icon */
+    GtkWidget *icon = gtk_image_new_from_icon_name("object-rotate-right-symbolic");
+    gtk_widget_add_css_class(icon, "dim-label");
+    gtk_box_append(GTK_BOX(self->repost_indicator_box), icon);
+
+    /* "Reposted by" label */
+    self->repost_indicator_label = gtk_label_new(NULL);
+    gtk_widget_add_css_class(self->repost_indicator_label, "dim-label");
+    gtk_widget_add_css_class(self->repost_indicator_label, "caption");
+    gtk_box_append(GTK_BOX(self->repost_indicator_box), self->repost_indicator_label);
+
+    /* Insert at the top of the card - before the main content box */
+    if (GTK_IS_BOX(self->root)) {
+      gtk_box_prepend(GTK_BOX(self->root), self->repost_indicator_box);
+    }
+  }
+
+  /* Update the label text */
+  if (GTK_IS_LABEL(self->repost_indicator_label)) {
+    const char *display = reposter_display_name && *reposter_display_name
+                          ? reposter_display_name : "Someone";
+    gchar *text = g_strdup_printf("Reposted by %s", display);
+    gtk_label_set_text(GTK_LABEL(self->repost_indicator_label), text);
+    g_free(text);
+  }
+
+  /* Show the indicator */
+  if (GTK_IS_WIDGET(self->repost_indicator_box)) {
+    gtk_widget_set_visible(self->repost_indicator_box, TRUE);
+  }
+}
+
+/* NIP-18: Set whether this card represents a repost (kind 6/16) */
+void gnostr_note_card_row_set_is_repost(GnostrNoteCardRow *self, gboolean is_repost) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  self->is_repost = is_repost;
+
+  /* Add/remove repost CSS class for styling */
+  if (is_repost) {
+    gtk_widget_add_css_class(GTK_WIDGET(self), "repost");
+  } else {
+    gtk_widget_remove_css_class(GTK_WIDGET(self), "repost");
+    /* Hide repost indicator if not a repost */
+    if (GTK_IS_WIDGET(self->repost_indicator_box)) {
+      gtk_widget_set_visible(self->repost_indicator_box, FALSE);
+    }
+  }
+}
+
+/* NIP-18: Update the repost count display */
+void gnostr_note_card_row_set_repost_count(GnostrNoteCardRow *self, guint count) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  self->repost_count = count;
+
+  /* Update the repost count label if it exists */
+  if (GTK_IS_LABEL(self->lbl_repost_count)) {
+    if (count > 0) {
+      gchar *text = g_strdup_printf("%u", count);
+      gtk_label_set_text(GTK_LABEL(self->lbl_repost_count), text);
+      gtk_widget_set_visible(self->lbl_repost_count, TRUE);
+      g_free(text);
+    } else {
+      gtk_widget_set_visible(self->lbl_repost_count, FALSE);
+    }
+  }
+}
+
+/* NIP-18 Quote Reposts: Set quote post info to display the quoted note inline */
+void gnostr_note_card_row_set_quote_info(GnostrNoteCardRow *self,
+                                          const char *quoted_event_id_hex,
+                                          const char *quoted_content,
+                                          const char *quoted_author_name) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  g_clear_pointer(&self->quoted_event_id, g_free);
+  self->quoted_event_id = g_strdup(quoted_event_id_hex);
+
+  /* Create quote embed box if it doesn't exist */
+  if (!self->quote_embed_box && self->embed_box && GTK_IS_WIDGET(self->embed_box)) {
+    self->quote_embed_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    gtk_widget_add_css_class(self->quote_embed_box, "quote-embed");
+    gtk_widget_add_css_class(self->quote_embed_box, "card");
+    gtk_widget_set_margin_top(self->quote_embed_box, 8);
+    gtk_widget_set_margin_bottom(self->quote_embed_box, 8);
+
+    /* Container padding */
+    gtk_widget_set_margin_start(self->quote_embed_box, 8);
+    gtk_widget_set_margin_end(self->quote_embed_box, 8);
+
+    /* Author label */
+    GtkWidget *author_label = gtk_label_new(NULL);
+    gtk_widget_add_css_class(author_label, "caption");
+    gtk_widget_add_css_class(author_label, "dim-label");
+    gtk_label_set_xalign(GTK_LABEL(author_label), 0);
+    g_object_set_data(G_OBJECT(self->quote_embed_box), "author-label", author_label);
+    gtk_box_append(GTK_BOX(self->quote_embed_box), author_label);
+
+    /* Content label */
+    GtkWidget *content_label = gtk_label_new(NULL);
+    gtk_label_set_wrap(GTK_LABEL(content_label), TRUE);
+    gtk_label_set_wrap_mode(GTK_LABEL(content_label), PANGO_WRAP_WORD_CHAR);
+    gtk_label_set_xalign(GTK_LABEL(content_label), 0);
+    gtk_label_set_max_width_chars(GTK_LABEL(content_label), 60);
+    gtk_label_set_ellipsize(GTK_LABEL(content_label), PANGO_ELLIPSIZE_END);
+    gtk_label_set_lines(GTK_LABEL(content_label), 3);
+    g_object_set_data(G_OBJECT(self->quote_embed_box), "content-label", content_label);
+    gtk_box_append(GTK_BOX(self->quote_embed_box), content_label);
+
+    /* Add to embed_box */
+    gtk_box_append(GTK_BOX(self->embed_box), self->quote_embed_box);
+  }
+
+  /* Update content */
+  if (GTK_IS_WIDGET(self->quote_embed_box)) {
+    GtkWidget *author_label = g_object_get_data(G_OBJECT(self->quote_embed_box), "author-label");
+    GtkWidget *content_label = g_object_get_data(G_OBJECT(self->quote_embed_box), "content-label");
+
+    if (GTK_IS_LABEL(author_label)) {
+      const char *author = quoted_author_name && *quoted_author_name
+                           ? quoted_author_name : "Unknown";
+      gchar *author_text = g_strdup_printf("Quoting %s", author);
+      gtk_label_set_text(GTK_LABEL(author_label), author_text);
+      g_free(author_text);
+    }
+
+    if (GTK_IS_LABEL(content_label)) {
+      gtk_label_set_text(GTK_LABEL(content_label),
+                         quoted_content && *quoted_content ? quoted_content : "(content unavailable)");
+    }
+
+    gtk_widget_set_visible(self->quote_embed_box, TRUE);
+    gtk_widget_set_visible(self->embed_box, TRUE);
   }
 }

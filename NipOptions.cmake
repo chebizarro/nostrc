@@ -45,6 +45,16 @@ if(ENABLE_NIP17)
     add_subdirectory(nips/nip17)
 endif()
 
+# NIP-59 depends on NIP-44 for encryption
+if(ENABLE_NIP59)
+    set(ENABLE_NIP44 ON CACHE BOOL "Enable nip44" FORCE)
+endif()
+
+option(ENABLE_NIP59 "Enable nip59 (Gift Wrap)" ON)
+if(ENABLE_NIP59)
+    add_subdirectory(nips/nip59)
+endif()
+
 option(ENABLE_NIP13 "Enable nip13" OFF)
 if(ENABLE_NIP13)
     add_subdirectory(nips/nip13)
@@ -53,6 +63,11 @@ endif()
 option(ENABLE_NIP19 "Enable nip19" ON)
 if(ENABLE_NIP19)
     add_subdirectory(nips/nip19)
+endif()
+
+option(ENABLE_NIP25 "Enable nip25 (Reactions)" ON)
+if(ENABLE_NIP25)
+    add_subdirectory(nips/nip25)
 endif()
 
 option(ENABLE_NIP29 "Enable nip29" OFF)
@@ -130,6 +145,12 @@ if(ENABLE_NIP54)
     add_subdirectory(nips/nip54)
 endif()
 
+# NIP-57 Lightning Zaps
+option(ENABLE_NIP57 "Enable nip57 (Lightning Zaps)" ON)
+if(ENABLE_NIP57)
+    add_subdirectory(nips/nip57)
+endif()
+
 option(ENABLE_NIP5F "Enable nip5f" ON)
 if(ENABLE_NIP5F)
     add_subdirectory(nips/nip5f)
@@ -169,5 +190,11 @@ endif()
 option(ENABLE_NIP51 "Enable nip51 (User Lists)" ON)
 if(ENABLE_NIP51)
     add_subdirectory(nips/nip51)
+endif()
+
+# NIP-98 HTTP Auth (used by NIP-96 file storage and Blossom)
+option(ENABLE_NIP98 "Enable nip98 (HTTP Auth)" ON)
+if(ENABLE_NIP98)
+    add_subdirectory(nips/nip98)
 endif()
 

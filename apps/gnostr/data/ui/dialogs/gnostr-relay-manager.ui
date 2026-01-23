@@ -54,7 +54,7 @@
                 <property name="xalign">0.0</property>
                 <property name="use-markup">true</property>
                 <property name="wrap">true</property>
-                <property name="label">&lt;small&gt;Click a relay to view NIP-11 info. &lt;b&gt;Enter&lt;/b&gt; to add, &lt;b&gt;Delete&lt;/b&gt; to remove.&lt;/small&gt;</property>
+                <property name="label">&lt;small&gt;Click a relay to view NIP-11 info. Use the dropdown to set &lt;b&gt;NIP-65&lt;/b&gt; permissions (read/write). &lt;b&gt;Enter&lt;/b&gt; to add, &lt;b&gt;Delete&lt;/b&gt; to remove.&lt;/small&gt;</property>
               </object>
             </child>
 
@@ -414,6 +414,49 @@
                                     <property name="label">(none)</property>
                                     <property name="css-classes">dim-label</property>
                                     <property name="visible">false</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- NIP-65 Permission -->
+                            <child>
+                              <object class="GtkBox" id="info_nip65_box">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">2</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="xalign">0.0</property>
+                                    <property name="use-markup">true</property>
+                                    <property name="label">&lt;b&gt;NIP-65 Permission&lt;/b&gt;</property>
+                                    <property name="css-classes">dim-label</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">8</property>
+                                    <child>
+                                      <object class="GtkImage" id="info_nip65_icon">
+                                        <property name="icon-name">network-transmit-receive-symbolic</property>
+                                        <property name="icon-size">normal</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="info_nip65_label">
+                                        <property name="xalign">0.0</property>
+                                        <property name="label">Read + Write</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="xalign">0.0</property>
+                                    <property name="wrap">true</property>
+                                    <property name="use-markup">true</property>
+                                    <property name="label">&lt;small&gt;Use the dropdown in the relay list to change permissions.&lt;/small&gt;</property>
+                                    <property name="css-classes">dim-label</property>
                                   </object>
                                 </child>
                               </object>

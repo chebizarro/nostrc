@@ -523,6 +523,16 @@ typedef struct _TimelineItem {
   gboolean visible;
   /* children list when acting as a parent in a thread */
   GListStore *children; /* element-type: TimelineItem */
+  /* NIP-18 repost info */
+  gboolean is_repost;
+  gchar *reposter_pubkey;
+  gchar *reposter_display_name;
+  gint64 repost_created_at;
+  /* NIP-18 quote repost info */
+  gboolean has_quote;
+  gchar *quoted_event_id;
+  gchar *quoted_content;
+  gchar *quoted_author;
 } TimelineItem;
 
 typedef struct _TimelineItemClass {
@@ -600,6 +610,12 @@ static void timeline_item_dispose(GObject *obj) {
   g_clear_pointer(&self->pubkey, g_free);
   g_clear_pointer(&self->avatar_url, g_free);
   if (self->children) g_clear_object(&self->children);
+  /* NIP-18 repost cleanup */
+  g_clear_pointer(&self->reposter_pubkey, g_free);
+  g_clear_pointer(&self->reposter_display_name, g_free);
+  g_clear_pointer(&self->quoted_event_id, g_free);
+  g_clear_pointer(&self->quoted_content, g_free);
+  g_clear_pointer(&self->quoted_author, g_free);
   G_OBJECT_CLASS(timeline_item_parent_class)->dispose(obj);
 }
 
@@ -643,6 +659,35 @@ static void timeline_item_set_meta(TimelineItem *it, const char *id, const char 
                "pubkey", pubkey,
                "created-at", created_at,
                NULL);
+}
+
+/* NIP-18: Set repost info on a timeline item */
+static void timeline_item_set_repost_info(TimelineItem *it,
+                                           const char *reposter_pubkey,
+                                           const char *reposter_display_name,
+                                           gint64 repost_created_at) {
+  if (!it) return;
+  g_clear_pointer(&it->reposter_pubkey, g_free);
+  g_clear_pointer(&it->reposter_display_name, g_free);
+  it->is_repost = TRUE;
+  it->reposter_pubkey = g_strdup(reposter_pubkey);
+  it->reposter_display_name = g_strdup(reposter_display_name);
+  it->repost_created_at = repost_created_at;
+}
+
+/* NIP-18: Set quote info on a timeline item */
+static void timeline_item_set_quote_info(TimelineItem *it,
+                                          const char *quoted_event_id,
+                                          const char *quoted_content,
+                                          const char *quoted_author) {
+  if (!it) return;
+  g_clear_pointer(&it->quoted_event_id, g_free);
+  g_clear_pointer(&it->quoted_content, g_free);
+  g_clear_pointer(&it->quoted_author, g_free);
+  it->has_quote = TRUE;
+  it->quoted_event_id = g_strdup(quoted_event_id);
+  it->quoted_content = g_strdup(quoted_content);
+  it->quoted_author = g_strdup(quoted_author);
 }
 
 static GListModel *timeline_item_get_children_model(TimelineItem *it) {
@@ -1157,6 +1202,30 @@ static void on_item_notify_avatar_url(GObject *obj, GParamSpec *pspec, gpointer 
   g_free(url); g_free(display); g_free(handle);
 }
 
+/* NIP-25: Notify handler for like count changes */
+static void on_item_notify_like_count(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  GtkWidget *row = GTK_WIDGET(user_data);
+  if (!GTK_IS_WIDGET(row)) return;
+  if (!obj || !G_IS_OBJECT(obj)) return;
+  guint like_count = 0;
+  g_object_get(obj, "like-count", &like_count, NULL);
+  if (GNOSTR_IS_NOTE_CARD_ROW(row))
+    gnostr_note_card_row_set_like_count(GNOSTR_NOTE_CARD_ROW(row), like_count);
+}
+
+/* NIP-25: Notify handler for is_liked changes */
+static void on_item_notify_is_liked(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  GtkWidget *row = GTK_WIDGET(user_data);
+  if (!GTK_IS_WIDGET(row)) return;
+  if (!obj || !G_IS_OBJECT(obj)) return;
+  gboolean is_liked = FALSE;
+  g_object_get(obj, "is-liked", &is_liked, NULL);
+  if (GNOSTR_IS_NOTE_CARD_ROW(row))
+    gnostr_note_card_row_set_liked(GNOSTR_NOTE_CARD_ROW(row), is_liked);
+}
+
 /* Unbind cleanup: disconnect any notify handlers tied to this row */
 static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
@@ -1316,6 +1385,25 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                                           NULL, /* parent_author_name - will be resolved asynchronously if needed */
                                           is_reply);
 
+    /* NIP-18: Set repost info if this is a TimelineItem with repost data */
+    if (G_TYPE_CHECK_INSTANCE_TYPE(obj, timeline_item_get_type())) {
+      TimelineItem *ti = (TimelineItem *)obj;
+      if (ti->is_repost) {
+        gnostr_note_card_row_set_is_repost(GNOSTR_NOTE_CARD_ROW(row), TRUE);
+        gnostr_note_card_row_set_repost_info(GNOSTR_NOTE_CARD_ROW(row),
+                                              ti->reposter_pubkey,
+                                              ti->reposter_display_name,
+                                              ti->repost_created_at);
+      }
+      /* NIP-18: Set quote info if this item has a quote */
+      if (ti->has_quote && ti->quoted_event_id) {
+        gnostr_note_card_row_set_quote_info(GNOSTR_NOTE_CARD_ROW(row),
+                                             ti->quoted_event_id,
+                                             ti->quoted_content,
+                                             ti->quoted_author);
+      }
+    }
+
     /* NIP-05: Set verification identifier for async verification badge */
     if (nip05 && *nip05 && pubkey && strlen(pubkey) == 64) {
       gnostr_note_card_row_set_nip05(GNOSTR_NOTE_CARD_ROW(row), nip05, pubkey);
@@ -1341,7 +1429,6 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     } else {
       gnostr_note_card_row_set_is_own_note(GNOSTR_NOTE_CARD_ROW(row), FALSE);
     }
-    g_free(user_pubkey);
 
     /* nostrc-7o7: Apply no-animation class if item was added outside visible viewport */
     if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
@@ -1351,7 +1438,32 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       } else {
         gtk_widget_remove_css_class(row, "no-animation");
       }
+
+      /* NIP-25: Set reaction count and liked state from model or local storage */
+      guint like_count = gn_nostr_event_item_get_like_count(GN_NOSTR_EVENT_ITEM(obj));
+      gboolean is_liked = gn_nostr_event_item_get_is_liked(GN_NOSTR_EVENT_ITEM(obj));
+
+      /* If model doesn't have reaction data, fetch from local storage */
+      if (like_count == 0 && id_hex && strlen(id_hex) == 64) {
+        like_count = storage_ndb_count_reactions(id_hex);
+        if (like_count > 0) {
+          gn_nostr_event_item_set_like_count(GN_NOSTR_EVENT_ITEM(obj), like_count);
+        }
+      }
+
+      /* Check if current user has liked this event (from local storage) */
+      if (!is_liked && id_hex && strlen(id_hex) == 64 && user_pubkey) {
+        is_liked = storage_ndb_user_has_reacted(id_hex, user_pubkey);
+        if (is_liked) {
+          gn_nostr_event_item_set_is_liked(GN_NOSTR_EVENT_ITEM(obj), is_liked);
+        }
+      }
+
+      gnostr_note_card_row_set_like_count(GNOSTR_NOTE_CARD_ROW(row), like_count);
+      gnostr_note_card_row_set_liked(GNOSTR_NOTE_CARD_ROW(row), is_liked);
     }
+
+    g_free(user_pubkey);
 
     /* Always show row - use fallback display if no profile */
     gtk_widget_set_visible(row, TRUE);
@@ -1391,6 +1503,10 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     g_signal_connect_object(obj, "notify::display-name", G_CALLBACK(on_item_notify_display_name), row, 0);
     g_signal_connect_object(obj, "notify::handle",       G_CALLBACK(on_item_notify_handle),       row, 0);
     g_signal_connect_object(obj, "notify::avatar-url",   G_CALLBACK(on_item_notify_avatar_url),   row, 0);
+
+    /* NIP-25: Connect reaction count/state change handlers */
+    g_signal_connect_object(obj, "notify::like-count",   G_CALLBACK(on_item_notify_like_count),   row, 0);
+    g_signal_connect_object(obj, "notify::is-liked",     G_CALLBACK(on_item_notify_is_liked),     row, 0);
   }
 }
 

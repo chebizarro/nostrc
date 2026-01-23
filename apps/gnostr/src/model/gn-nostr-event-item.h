@@ -49,6 +49,12 @@ void gn_nostr_event_item_update_from_event(GnNostrEventItem *self,
 					   const char *content,
 					   gint kind);
 
+/* NIP-25: Reaction count support */
+guint gn_nostr_event_item_get_like_count(GnNostrEventItem *self);
+void gn_nostr_event_item_set_like_count(GnNostrEventItem *self, guint count);
+gboolean gn_nostr_event_item_get_is_liked(GnNostrEventItem *self);
+void gn_nostr_event_item_set_is_liked(GnNostrEventItem *self, gboolean is_liked);
+
 G_END_DECLS
 
 #endif

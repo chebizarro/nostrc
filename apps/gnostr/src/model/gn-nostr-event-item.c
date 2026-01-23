@@ -33,6 +33,10 @@ struct _GnNostrEventItem {
 
   /* nostrc-7o7: Skip animation for notes added outside visible viewport */
   gboolean skip_animation;
+
+  /* NIP-25: Reaction count (likes) */
+  guint like_count;
+  gboolean is_liked;  /* Whether current user has liked this event */
 };
 
 G_DEFINE_TYPE(GnNostrEventItem, gn_nostr_event_item, G_TYPE_OBJECT)
@@ -53,6 +57,8 @@ enum {
   PROP_IS_REPOST,
   PROP_IS_MUTED,
   PROP_SKIP_ANIMATION,
+  PROP_LIKE_COUNT,
+  PROP_IS_LIKED,
   N_PROPS
 };
 
@@ -170,6 +176,12 @@ static void gn_nostr_event_item_get_property(GObject *object, guint prop_id, GVa
     case PROP_SKIP_ANIMATION:
       g_value_set_boolean(value, self->skip_animation);
       break;
+    case PROP_LIKE_COUNT:
+      g_value_set_uint(value, self->like_count);
+      break;
+    case PROP_IS_LIKED:
+      g_value_set_boolean(value, self->is_liked);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
   }
@@ -185,6 +197,12 @@ static void gn_nostr_event_item_set_property(GObject *object, guint prop_id, con
       break;
     case PROP_SKIP_ANIMATION:
       self->skip_animation = g_value_get_boolean(value);
+      break;
+    case PROP_LIKE_COUNT:
+      self->like_count = g_value_get_uint(value);
+      break;
+    case PROP_IS_LIKED:
+      self->is_liked = g_value_get_boolean(value);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -227,6 +245,12 @@ static void gn_nostr_event_item_class_init(GnNostrEventItemClass *klass) {
   properties[PROP_SKIP_ANIMATION] = g_param_spec_boolean("skip-animation", "Skip Animation",
                                                           "Skip fade-in animation (nostrc-7o7)", FALSE,
                                                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_LIKE_COUNT] = g_param_spec_uint("like-count", "Like Count",
+                                                   "NIP-25 reaction count", 0, G_MAXUINT, 0,
+                                                   G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_IS_LIKED] = g_param_spec_boolean("is-liked", "Is Liked",
+                                                    "Whether current user has liked this event", FALSE,
+                                                    G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
   g_object_class_install_properties(object_class, N_PROPS, properties);
 }
@@ -443,5 +467,32 @@ void gn_nostr_event_item_set_skip_animation(GnNostrEventItem *self, gboolean ski
   if (self->skip_animation != skip) {
     self->skip_animation = skip;
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_SKIP_ANIMATION]);
+  }
+}
+
+/* NIP-25: Reaction count support */
+guint gn_nostr_event_item_get_like_count(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), 0);
+  return self->like_count;
+}
+
+void gn_nostr_event_item_set_like_count(GnNostrEventItem *self, guint count) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
+  if (self->like_count != count) {
+    self->like_count = count;
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_LIKE_COUNT]);
+  }
+}
+
+gboolean gn_nostr_event_item_get_is_liked(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), FALSE);
+  return self->is_liked;
+}
+
+void gn_nostr_event_item_set_is_liked(GnNostrEventItem *self, gboolean is_liked) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
+  if (self->is_liked != is_liked) {
+    self->is_liked = is_liked;
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_IS_LIKED]);
   }
 }
