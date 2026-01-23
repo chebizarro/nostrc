@@ -783,6 +783,958 @@ static void test_password_match_error_class(TestUIFixture *fixture, gconstpointe
 }
 
 /* ===========================================================================
+ * Test Cases: Npub Validation
+ * =========================================================================== */
+
+/* Helper function to validate npub format */
+static gboolean is_valid_npub(const char *npub) {
+  if (!npub) return FALSE;
+  if (!g_str_has_prefix(npub, "npub1")) return FALSE;
+  if (strlen(npub) != 63) return FALSE;  /* npub1 + 58 bech32 chars */
+
+  /* Check that remaining characters are valid bech32 */
+  const char *bech32_chars = "023456789acdefghjklmnpqrstuvwxyz";
+  for (size_t i = 5; i < strlen(npub); i++) {
+    if (strchr(bech32_chars, npub[i]) == NULL) {
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
+/* Helper function to validate nsec format */
+static gboolean is_valid_nsec(const char *nsec) {
+  if (!nsec) return FALSE;
+  if (!g_str_has_prefix(nsec, "nsec1")) return FALSE;
+  if (strlen(nsec) != 63) return FALSE;
+
+  const char *bech32_chars = "023456789acdefghjklmnpqrstuvwxyz";
+  for (size_t i = 5; i < strlen(nsec); i++) {
+    if (strchr(bech32_chars, nsec[i]) == NULL) {
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
+/* Helper function to validate 64-character hex string */
+static gboolean is_hex64(const char *s) {
+  if (!s) return FALSE;
+  if (strlen(s) != 64) return FALSE;
+  for (size_t i = 0; i < 64; i++) {
+    char c = s[i];
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
+static void test_npub_validation_valid(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  /* Valid npub examples */
+  g_assert_true(is_valid_npub("npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
+  g_assert_true(is_valid_npub("npub1xtscya34g58tk0z605fvr788k263gsu6cy9x0mhnm87echrgufzsevkk5s"));
+}
+
+static void test_npub_validation_invalid_prefix(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  /* Invalid prefix */
+  g_assert_false(is_valid_npub("nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
+  g_assert_false(is_valid_npub("xpub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
+  g_assert_false(is_valid_npub("Npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
+}
+
+static void test_npub_validation_invalid_length(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  /* Too short */
+  g_assert_false(is_valid_npub("npub1"));
+  g_assert_false(is_valid_npub("npub1abc"));
+
+  /* Too long */
+  g_assert_false(is_valid_npub("npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"));
+}
+
+static void test_npub_validation_invalid_chars(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  /* Invalid bech32 characters (b, i, o, 1 after prefix) */
+  g_assert_false(is_valid_npub("npub1bqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
+  g_assert_false(is_valid_npub("npub1iqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
+  g_assert_false(is_valid_npub("npub1oqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
+  g_assert_false(is_valid_npub("npub11qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
+}
+
+static void test_npub_validation_null_empty(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  g_assert_false(is_valid_npub(NULL));
+  g_assert_false(is_valid_npub(""));
+}
+
+static void test_nsec_validation_valid(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  g_assert_true(is_valid_nsec("nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
+}
+
+static void test_nsec_validation_invalid(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  g_assert_false(is_valid_nsec("npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj"));
+  g_assert_false(is_valid_nsec(NULL));
+  g_assert_false(is_valid_nsec(""));
+}
+
+static void test_hex64_validation_valid(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  g_assert_true(is_hex64("0000000000000000000000000000000000000000000000000000000000000000"));
+  g_assert_true(is_hex64("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));
+  g_assert_true(is_hex64("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"));
+  g_assert_true(is_hex64("ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789"));
+}
+
+static void test_hex64_validation_invalid(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  /* Too short */
+  g_assert_false(is_hex64("abcdef"));
+
+  /* Too long */
+  g_assert_false(is_hex64("00000000000000000000000000000000000000000000000000000000000000000"));
+
+  /* Invalid characters */
+  g_assert_false(is_hex64("ghijklmnopqrstuvwxyzabcdef0123456789abcdef0123456789abcdef01234"));
+
+  /* NULL and empty */
+  g_assert_false(is_hex64(NULL));
+  g_assert_false(is_hex64(""));
+}
+
+/* ===========================================================================
+ * Test Cases: Mock Import Key Dialog
+ * =========================================================================== */
+
+struct _MockImportKeyDialog {
+  AdwDialog parent_instance;
+  GtkWidget *entry_secret;
+  GtkWidget *entry_label;
+  GtkWidget *btn_ok;
+  GtkWidget *btn_cancel;
+  gboolean key_valid;
+};
+
+G_DECLARE_FINAL_TYPE(MockImportKeyDialog, mock_import_key_dialog, MOCK, IMPORT_KEY_DIALOG, AdwDialog)
+G_DEFINE_TYPE(MockImportKeyDialog, mock_import_key_dialog, ADW_TYPE_DIALOG)
+
+static void validate_key_input(MockImportKeyDialog *self);
+
+static void on_secret_changed(GtkEditable *editable, gpointer user_data) {
+  (void)editable;
+  MockImportKeyDialog *self = MOCK_IMPORT_KEY_DIALOG(user_data);
+  validate_key_input(self);
+}
+
+static void validate_key_input(MockImportKeyDialog *self) {
+  const char *text = gtk_editable_get_text(GTK_EDITABLE(self->entry_secret));
+
+  /* Validate: nsec1..., ncrypt..., or 64-hex */
+  self->key_valid = FALSE;
+  if (text && *text) {
+    if (g_str_has_prefix(text, "nsec1")) {
+      self->key_valid = is_valid_nsec(text);
+    } else if (g_str_has_prefix(text, "ncrypt")) {
+      /* ncrypt keys have variable length, just check prefix and minimum length */
+      self->key_valid = strlen(text) > 10;
+    } else {
+      self->key_valid = is_hex64(text);
+    }
+  }
+
+  gtk_widget_set_sensitive(self->btn_ok, self->key_valid);
+}
+
+static void mock_import_key_dialog_class_init(MockImportKeyDialogClass *klass) {
+  (void)klass;
+}
+
+static void mock_import_key_dialog_init(MockImportKeyDialog *self) {
+  GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+  gtk_widget_set_margin_start(content, 16);
+  gtk_widget_set_margin_end(content, 16);
+  gtk_widget_set_margin_top(content, 16);
+  gtk_widget_set_margin_bottom(content, 16);
+
+  /* Secret key entry */
+  GtkWidget *secret_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+  GtkWidget *secret_label = gtk_label_new("Private Key (nsec, hex, or ncrypt)");
+  gtk_label_set_xalign(GTK_LABEL(secret_label), 0);
+  self->entry_secret = gtk_entry_new();
+  gtk_entry_set_placeholder_text(GTK_ENTRY(self->entry_secret), "nsec1... or 64-hex or ncrypt...");
+  g_signal_connect(self->entry_secret, "changed", G_CALLBACK(on_secret_changed), self);
+  gtk_box_append(GTK_BOX(secret_box), secret_label);
+  gtk_box_append(GTK_BOX(secret_box), self->entry_secret);
+  gtk_box_append(GTK_BOX(content), secret_box);
+
+  /* Label entry */
+  GtkWidget *label_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+  GtkWidget *label_label = gtk_label_new("Label (optional)");
+  gtk_label_set_xalign(GTK_LABEL(label_label), 0);
+  self->entry_label = gtk_entry_new();
+  gtk_entry_set_placeholder_text(GTK_ENTRY(self->entry_label), "My Key");
+  gtk_box_append(GTK_BOX(label_box), label_label);
+  gtk_box_append(GTK_BOX(label_box), self->entry_label);
+  gtk_box_append(GTK_BOX(content), label_box);
+
+  /* Buttons */
+  GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_halign(btn_box, GTK_ALIGN_END);
+  gtk_widget_set_margin_top(btn_box, 12);
+
+  self->btn_cancel = gtk_button_new_with_label("Cancel");
+  self->btn_ok = gtk_button_new_with_label("Import");
+  gtk_widget_add_css_class(self->btn_ok, "suggested-action");
+  gtk_widget_set_sensitive(self->btn_ok, FALSE);
+
+  gtk_box_append(GTK_BOX(btn_box), self->btn_cancel);
+  gtk_box_append(GTK_BOX(btn_box), self->btn_ok);
+  gtk_box_append(GTK_BOX(content), btn_box);
+
+  adw_dialog_set_title(ADW_DIALOG(self), "Import Key");
+  adw_dialog_set_content_width(ADW_DIALOG(self), 480);
+  adw_dialog_set_child(ADW_DIALOG(self), content);
+
+  self->key_valid = FALSE;
+}
+
+static MockImportKeyDialog *mock_import_key_dialog_new(void) {
+  return g_object_new(mock_import_key_dialog_get_type(), NULL);
+}
+
+static void test_import_key_dialog_creation(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockImportKeyDialog *dialog = mock_import_key_dialog_new();
+  g_assert_nonnull(dialog);
+  g_assert_true(ADW_IS_DIALOG(dialog));
+
+  g_assert_nonnull(dialog->entry_secret);
+  g_assert_nonnull(dialog->entry_label);
+  g_assert_nonnull(dialog->btn_ok);
+  g_assert_nonnull(dialog->btn_cancel);
+
+  /* Import button should be disabled initially */
+  g_assert_false(gtk_widget_get_sensitive(dialog->btn_ok));
+
+  g_object_unref(dialog);
+}
+
+static void test_import_key_dialog_nsec_validation(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockImportKeyDialog *dialog = mock_import_key_dialog_new();
+
+  /* Valid nsec */
+  gtk_editable_set_text(GTK_EDITABLE(dialog->entry_secret),
+                        "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj");
+  process_pending_events();
+  g_assert_true(dialog->key_valid);
+  g_assert_true(gtk_widget_get_sensitive(dialog->btn_ok));
+
+  /* Invalid nsec (wrong prefix) */
+  gtk_editable_set_text(GTK_EDITABLE(dialog->entry_secret), "npub1abc");
+  process_pending_events();
+  g_assert_false(dialog->key_valid);
+  g_assert_false(gtk_widget_get_sensitive(dialog->btn_ok));
+
+  g_object_unref(dialog);
+}
+
+static void test_import_key_dialog_hex_validation(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockImportKeyDialog *dialog = mock_import_key_dialog_new();
+
+  /* Valid 64-hex */
+  gtk_editable_set_text(GTK_EDITABLE(dialog->entry_secret),
+                        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789");
+  process_pending_events();
+  g_assert_true(dialog->key_valid);
+  g_assert_true(gtk_widget_get_sensitive(dialog->btn_ok));
+
+  /* Invalid hex (too short) */
+  gtk_editable_set_text(GTK_EDITABLE(dialog->entry_secret), "abcdef");
+  process_pending_events();
+  g_assert_false(dialog->key_valid);
+  g_assert_false(gtk_widget_get_sensitive(dialog->btn_ok));
+
+  g_object_unref(dialog);
+}
+
+static void test_import_key_dialog_ncrypt_validation(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockImportKeyDialog *dialog = mock_import_key_dialog_new();
+
+  /* Valid ncrypt (variable length but minimum prefix check) */
+  gtk_editable_set_text(GTK_EDITABLE(dialog->entry_secret), "ncrypt1abcdefghijklmnop");
+  process_pending_events();
+  g_assert_true(dialog->key_valid);
+  g_assert_true(gtk_widget_get_sensitive(dialog->btn_ok));
+
+  /* Too short ncrypt */
+  gtk_editable_set_text(GTK_EDITABLE(dialog->entry_secret), "ncrypt");
+  process_pending_events();
+  g_assert_false(dialog->key_valid);
+  g_assert_false(gtk_widget_get_sensitive(dialog->btn_ok));
+
+  g_object_unref(dialog);
+}
+
+/* ===========================================================================
+ * Test Cases: Mock Lock Screen
+ * =========================================================================== */
+
+typedef enum {
+  MOCK_LOCK_REASON_STARTUP,
+  MOCK_LOCK_REASON_MANUAL,
+  MOCK_LOCK_REASON_TIMEOUT
+} MockLockReason;
+
+struct _MockLockScreen {
+  GtkBox parent_instance;
+  GtkWidget *entry_password;
+  GtkWidget *btn_unlock;
+  GtkWidget *lbl_error;
+  GtkWidget *lbl_lock_reason;
+  MockLockReason lock_reason;
+  gboolean busy;
+  gboolean password_configured;
+};
+
+G_DECLARE_FINAL_TYPE(MockLockScreen, mock_lock_screen, MOCK, LOCK_SCREEN, GtkBox)
+G_DEFINE_TYPE(MockLockScreen, mock_lock_screen, GTK_TYPE_BOX)
+
+static void mock_lock_screen_class_init(MockLockScreenClass *klass) {
+  (void)klass;
+}
+
+static void mock_lock_screen_init(MockLockScreen *self) {
+  gtk_orientable_set_orientation(GTK_ORIENTABLE(self), GTK_ORIENTATION_VERTICAL);
+  gtk_widget_set_valign(GTK_WIDGET(self), GTK_ALIGN_CENTER);
+  gtk_widget_set_halign(GTK_WIDGET(self), GTK_ALIGN_CENTER);
+  gtk_box_set_spacing(GTK_BOX(self), 12);
+
+  /* Lock icon */
+  GtkWidget *icon = gtk_image_new_from_icon_name("system-lock-screen-symbolic");
+  gtk_image_set_pixel_size(GTK_IMAGE(icon), 64);
+  gtk_box_append(GTK_BOX(self), icon);
+
+  /* Title */
+  GtkWidget *title = gtk_label_new("Session Locked");
+  gtk_widget_add_css_class(title, "title-1");
+  gtk_box_append(GTK_BOX(self), title);
+
+  /* Lock reason */
+  self->lbl_lock_reason = gtk_label_new("");
+  gtk_widget_add_css_class(self->lbl_lock_reason, "dim-label");
+  gtk_box_append(GTK_BOX(self), self->lbl_lock_reason);
+
+  /* Password entry */
+  self->entry_password = gtk_password_entry_new();
+  gtk_password_entry_set_show_peek_icon(GTK_PASSWORD_ENTRY(self->entry_password), TRUE);
+  gtk_widget_set_size_request(self->entry_password, 250, -1);
+  gtk_box_append(GTK_BOX(self), self->entry_password);
+
+  /* Error label */
+  self->lbl_error = gtk_label_new("");
+  gtk_widget_add_css_class(self->lbl_error, "error");
+  gtk_widget_set_visible(self->lbl_error, FALSE);
+  gtk_box_append(GTK_BOX(self), self->lbl_error);
+
+  /* Unlock button */
+  self->btn_unlock = gtk_button_new_with_label("_Unlock");
+  gtk_button_set_use_underline(GTK_BUTTON(self->btn_unlock), TRUE);
+  gtk_widget_add_css_class(self->btn_unlock, "suggested-action");
+  gtk_box_append(GTK_BOX(self), self->btn_unlock);
+
+  self->lock_reason = MOCK_LOCK_REASON_STARTUP;
+  self->busy = FALSE;
+  self->password_configured = TRUE;
+}
+
+static MockLockScreen *mock_lock_screen_new(void) {
+  return g_object_new(mock_lock_screen_get_type(), NULL);
+}
+
+static void mock_lock_screen_set_busy(MockLockScreen *self, gboolean busy) {
+  self->busy = busy;
+  gtk_widget_set_sensitive(self->entry_password, !busy);
+  gtk_widget_set_sensitive(self->btn_unlock, !busy);
+  if (busy) {
+    gtk_button_set_label(GTK_BUTTON(self->btn_unlock), "Unlocking...");
+  } else {
+    gtk_button_set_label(GTK_BUTTON(self->btn_unlock), "_Unlock");
+  }
+}
+
+static void mock_lock_screen_show_error(MockLockScreen *self, const char *message) {
+  if (message && *message) {
+    gtk_label_set_text(GTK_LABEL(self->lbl_error), message);
+    gtk_widget_set_visible(self->lbl_error, TRUE);
+  } else {
+    gtk_widget_set_visible(self->lbl_error, FALSE);
+  }
+}
+
+static void mock_lock_screen_set_lock_reason(MockLockScreen *self, MockLockReason reason) {
+  self->lock_reason = reason;
+  const char *text = "Session locked";
+  switch (reason) {
+    case MOCK_LOCK_REASON_MANUAL: text = "Manually locked"; break;
+    case MOCK_LOCK_REASON_TIMEOUT: text = "Locked due to inactivity"; break;
+    case MOCK_LOCK_REASON_STARTUP: text = "Session started locked"; break;
+  }
+  gtk_label_set_text(GTK_LABEL(self->lbl_lock_reason), text);
+}
+
+static void test_lock_screen_creation(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockLockScreen *lock = mock_lock_screen_new();
+  g_assert_nonnull(lock);
+  g_assert_true(GTK_IS_BOX(lock));
+
+  g_assert_nonnull(lock->entry_password);
+  g_assert_nonnull(lock->btn_unlock);
+  g_assert_nonnull(lock->lbl_error);
+  g_assert_nonnull(lock->lbl_lock_reason);
+
+  /* Error label should be hidden initially */
+  g_assert_false(gtk_widget_get_visible(lock->lbl_error));
+
+  g_object_unref(lock);
+}
+
+static void test_lock_screen_busy_state(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockLockScreen *lock = mock_lock_screen_new();
+
+  /* Initially not busy */
+  g_assert_false(lock->busy);
+  g_assert_true(gtk_widget_get_sensitive(lock->entry_password));
+  g_assert_true(gtk_widget_get_sensitive(lock->btn_unlock));
+
+  /* Set busy */
+  mock_lock_screen_set_busy(lock, TRUE);
+  g_assert_true(lock->busy);
+  g_assert_false(gtk_widget_get_sensitive(lock->entry_password));
+  g_assert_false(gtk_widget_get_sensitive(lock->btn_unlock));
+
+  /* Clear busy */
+  mock_lock_screen_set_busy(lock, FALSE);
+  g_assert_false(lock->busy);
+  g_assert_true(gtk_widget_get_sensitive(lock->entry_password));
+  g_assert_true(gtk_widget_get_sensitive(lock->btn_unlock));
+
+  g_object_unref(lock);
+}
+
+static void test_lock_screen_error_display(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockLockScreen *lock = mock_lock_screen_new();
+
+  /* Show error */
+  mock_lock_screen_show_error(lock, "Invalid password");
+  g_assert_true(gtk_widget_get_visible(lock->lbl_error));
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(lock->lbl_error)), ==, "Invalid password");
+
+  /* Clear error */
+  mock_lock_screen_show_error(lock, NULL);
+  g_assert_false(gtk_widget_get_visible(lock->lbl_error));
+
+  g_object_unref(lock);
+}
+
+static void test_lock_screen_lock_reasons(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockLockScreen *lock = mock_lock_screen_new();
+
+  mock_lock_screen_set_lock_reason(lock, MOCK_LOCK_REASON_MANUAL);
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(lock->lbl_lock_reason)), ==, "Manually locked");
+
+  mock_lock_screen_set_lock_reason(lock, MOCK_LOCK_REASON_TIMEOUT);
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(lock->lbl_lock_reason)), ==, "Locked due to inactivity");
+
+  mock_lock_screen_set_lock_reason(lock, MOCK_LOCK_REASON_STARTUP);
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(lock->lbl_lock_reason)), ==, "Session started locked");
+
+  g_object_unref(lock);
+}
+
+/* ===========================================================================
+ * Test Cases: Keyboard Shortcuts
+ * =========================================================================== */
+
+/* Mock action tracker for keyboard shortcut tests */
+typedef struct {
+  gboolean new_profile_triggered;
+  gboolean import_profile_triggered;
+  gboolean export_triggered;
+  gboolean lock_triggered;
+  gboolean preferences_triggered;
+  gboolean quit_triggered;
+  gboolean about_triggered;
+} MockActionTracker;
+
+static MockActionTracker action_tracker = { FALSE };
+
+static void reset_action_tracker(void) {
+  memset(&action_tracker, 0, sizeof(MockActionTracker));
+}
+
+/* Test action callbacks */
+static void test_action_new_profile(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param; (void)user_data;
+  action_tracker.new_profile_triggered = TRUE;
+}
+
+static void test_action_import_profile(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param; (void)user_data;
+  action_tracker.import_profile_triggered = TRUE;
+}
+
+static void test_action_export(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param; (void)user_data;
+  action_tracker.export_triggered = TRUE;
+}
+
+static void test_action_lock(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param; (void)user_data;
+  action_tracker.lock_triggered = TRUE;
+}
+
+static void test_action_preferences(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param; (void)user_data;
+  action_tracker.preferences_triggered = TRUE;
+}
+
+static void test_action_quit(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param; (void)user_data;
+  action_tracker.quit_triggered = TRUE;
+}
+
+static void test_action_about(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param; (void)user_data;
+  action_tracker.about_triggered = TRUE;
+}
+
+static void setup_test_actions(GtkWindow *window) {
+  static const GActionEntry entries[] = {
+    { "new-profile", test_action_new_profile, NULL, NULL, NULL },
+    { "import-profile", test_action_import_profile, NULL, NULL, NULL },
+    { "export", test_action_export, NULL, NULL, NULL },
+    { "lock", test_action_lock, NULL, NULL, NULL },
+    { "preferences", test_action_preferences, NULL, NULL, NULL },
+    { "quit", test_action_quit, NULL, NULL, NULL },
+    { "about", test_action_about, NULL, NULL, NULL },
+  };
+  g_action_map_add_action_entries(G_ACTION_MAP(window), entries, G_N_ELEMENTS(entries), window);
+}
+
+static void test_keyboard_shortcuts_action_registration(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)user_data;
+
+  /* Setup actions on the window */
+  setup_test_actions(GTK_WINDOW(fixture->window));
+  reset_action_tracker();
+
+  /* Verify actions are registered */
+  GAction *action = g_action_map_lookup_action(G_ACTION_MAP(fixture->window), "new-profile");
+  g_assert_nonnull(action);
+
+  action = g_action_map_lookup_action(G_ACTION_MAP(fixture->window), "import-profile");
+  g_assert_nonnull(action);
+
+  action = g_action_map_lookup_action(G_ACTION_MAP(fixture->window), "export");
+  g_assert_nonnull(action);
+
+  action = g_action_map_lookup_action(G_ACTION_MAP(fixture->window), "lock");
+  g_assert_nonnull(action);
+
+  action = g_action_map_lookup_action(G_ACTION_MAP(fixture->window), "preferences");
+  g_assert_nonnull(action);
+
+  action = g_action_map_lookup_action(G_ACTION_MAP(fixture->window), "quit");
+  g_assert_nonnull(action);
+
+  action = g_action_map_lookup_action(G_ACTION_MAP(fixture->window), "about");
+  g_assert_nonnull(action);
+}
+
+static void test_keyboard_shortcuts_action_activation(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)user_data;
+
+  setup_test_actions(GTK_WINDOW(fixture->window));
+  reset_action_tracker();
+
+  /* Test activating actions directly (simulating keyboard shortcuts) */
+  g_action_group_activate_action(G_ACTION_GROUP(fixture->window), "new-profile", NULL);
+  process_pending_events();
+  g_assert_true(action_tracker.new_profile_triggered);
+
+  reset_action_tracker();
+  g_action_group_activate_action(G_ACTION_GROUP(fixture->window), "import-profile", NULL);
+  process_pending_events();
+  g_assert_true(action_tracker.import_profile_triggered);
+
+  reset_action_tracker();
+  g_action_group_activate_action(G_ACTION_GROUP(fixture->window), "export", NULL);
+  process_pending_events();
+  g_assert_true(action_tracker.export_triggered);
+
+  reset_action_tracker();
+  g_action_group_activate_action(G_ACTION_GROUP(fixture->window), "lock", NULL);
+  process_pending_events();
+  g_assert_true(action_tracker.lock_triggered);
+
+  reset_action_tracker();
+  g_action_group_activate_action(G_ACTION_GROUP(fixture->window), "preferences", NULL);
+  process_pending_events();
+  g_assert_true(action_tracker.preferences_triggered);
+
+  reset_action_tracker();
+  g_action_group_activate_action(G_ACTION_GROUP(fixture->window), "about", NULL);
+  process_pending_events();
+  g_assert_true(action_tracker.about_triggered);
+}
+
+/* ===========================================================================
+ * Test Cases: Window Layout and Sizing
+ * =========================================================================== */
+
+static void test_window_minimum_size(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)user_data;
+
+  /* Set a small size and verify window accepts it */
+  gtk_window_set_default_size(GTK_WINDOW(fixture->window), 400, 300);
+  process_pending_events();
+
+  int width, height;
+  gtk_window_get_default_size(GTK_WINDOW(fixture->window), &width, &height);
+
+  /* Window should accept reasonable minimum sizes */
+  g_assert_cmpint(width, >=, 100);
+  g_assert_cmpint(height, >=, 100);
+}
+
+static void test_window_default_size(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)user_data;
+
+  int width, height;
+  gtk_window_get_default_size(GTK_WINDOW(fixture->window), &width, &height);
+
+  /* Default size should be 920x640 as set in fixture */
+  g_assert_cmpint(width, ==, 920);
+  g_assert_cmpint(height, ==, 640);
+}
+
+static void test_sidebar_width(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)user_data;
+
+  /* Find the scrolled window containing sidebar */
+  GtkWidget *parent = gtk_widget_get_parent(GTK_WIDGET(fixture->window->sidebar));
+  g_assert_nonnull(parent);
+
+  int min_width, nat_width;
+  gtk_widget_measure(parent, GTK_ORIENTATION_HORIZONTAL, -1, &min_width, &nat_width, NULL, NULL);
+
+  /* Sidebar should have reasonable width */
+  g_assert_cmpint(min_width, >=, 100);
+}
+
+static void test_stack_expands_horizontally(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)user_data;
+
+  /* Stack should be set to expand horizontally */
+  g_assert_true(gtk_widget_get_hexpand(GTK_WIDGET(fixture->window->stack)));
+}
+
+/* ===========================================================================
+ * Test Cases: Approval Dialog Event Types
+ * =========================================================================== */
+
+/* Extended approval dialog with event type support */
+struct _MockApprovalDialogExt {
+  AdwDialog parent_instance;
+  GtkWidget *approve_btn;
+  GtkWidget *deny_btn;
+  GtkWidget *remember_check;
+  GtkWidget *event_type_label;
+  GtkWidget *event_icon;
+  GtkWidget *ttl_dropdown;
+  gboolean decision_made;
+  gboolean approved;
+  gboolean remember;
+  int event_kind;
+  guint64 ttl_seconds;
+};
+
+G_DECLARE_FINAL_TYPE(MockApprovalDialogExt, mock_approval_dialog_ext, MOCK, APPROVAL_DIALOG_EXT, AdwDialog)
+G_DEFINE_TYPE(MockApprovalDialogExt, mock_approval_dialog_ext, ADW_TYPE_DIALOG)
+
+static const char *mock_get_event_type_name(int kind) {
+  switch (kind) {
+    case 0: return "Metadata";
+    case 1: return "Short Text Note";
+    case 3: return "Contacts";
+    case 4: return "Encrypted Direct Message";
+    case 6: return "Repost";
+    case 7: return "Reaction";
+    case 9734: return "Zap Request";
+    case 9735: return "Zap";
+    case 22242: return "Client Authentication";
+    case 24133: return "Nostr Connect";
+    case 30023: return "Long-form Content";
+    default: return "Unknown Event";
+  }
+}
+
+static void mock_approval_dialog_ext_set_event_type(MockApprovalDialogExt *self, int kind) {
+  self->event_kind = kind;
+  const char *name = mock_get_event_type_name(kind);
+  gchar *label = g_strdup_printf("%s (kind %d)", name, kind);
+  gtk_label_set_text(GTK_LABEL(self->event_type_label), label);
+  g_free(label);
+}
+
+static void on_remember_toggled_ext(GtkCheckButton *btn, gpointer user_data) {
+  MockApprovalDialogExt *self = MOCK_APPROVAL_DIALOG_EXT(user_data);
+  gboolean active = gtk_check_button_get_active(btn);
+  gtk_widget_set_sensitive(self->ttl_dropdown, active);
+}
+
+static void mock_approval_dialog_ext_class_init(MockApprovalDialogExtClass *klass) {
+  (void)klass;
+}
+
+static void mock_approval_dialog_ext_init(MockApprovalDialogExt *self) {
+  GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+  gtk_widget_set_margin_start(content, 12);
+  gtk_widget_set_margin_end(content, 12);
+  gtk_widget_set_margin_top(content, 12);
+  gtk_widget_set_margin_bottom(content, 12);
+
+  /* Event type display */
+  GtkWidget *type_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  self->event_icon = gtk_image_new_from_icon_name("mail-unread-symbolic");
+  self->event_type_label = gtk_label_new("Unknown Event");
+  gtk_box_append(GTK_BOX(type_box), self->event_icon);
+  gtk_box_append(GTK_BOX(type_box), self->event_type_label);
+  gtk_box_append(GTK_BOX(content), type_box);
+
+  /* Remember checkbox */
+  self->remember_check = gtk_check_button_new_with_label("Remember this decision");
+  g_signal_connect(self->remember_check, "toggled", G_CALLBACK(on_remember_toggled_ext), self);
+  gtk_box_append(GTK_BOX(content), self->remember_check);
+
+  /* TTL dropdown */
+  GtkStringList *ttl_model = gtk_string_list_new(NULL);
+  gtk_string_list_append(ttl_model, "10 minutes");
+  gtk_string_list_append(ttl_model, "1 hour");
+  gtk_string_list_append(ttl_model, "24 hours");
+  gtk_string_list_append(ttl_model, "Forever");
+  self->ttl_dropdown = gtk_drop_down_new(G_LIST_MODEL(ttl_model), NULL);
+  gtk_widget_set_sensitive(self->ttl_dropdown, FALSE);
+  gtk_box_append(GTK_BOX(content), self->ttl_dropdown);
+
+  /* Buttons */
+  GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_halign(btn_box, GTK_ALIGN_END);
+
+  self->deny_btn = gtk_button_new_with_label("Deny");
+  gtk_widget_add_css_class(self->deny_btn, "destructive-action");
+  self->approve_btn = gtk_button_new_with_label("Approve");
+  gtk_widget_add_css_class(self->approve_btn, "suggested-action");
+
+  gtk_box_append(GTK_BOX(btn_box), self->deny_btn);
+  gtk_box_append(GTK_BOX(btn_box), self->approve_btn);
+  gtk_box_append(GTK_BOX(content), btn_box);
+
+  adw_dialog_set_title(ADW_DIALOG(self), "Signing Request");
+  adw_dialog_set_child(ADW_DIALOG(self), content);
+
+  self->event_kind = 0;
+  self->decision_made = FALSE;
+  self->approved = FALSE;
+  self->remember = FALSE;
+  self->ttl_seconds = 0;
+}
+
+static MockApprovalDialogExt *mock_approval_dialog_ext_new(void) {
+  return g_object_new(mock_approval_dialog_ext_get_type(), NULL);
+}
+
+static void test_approval_dialog_event_types(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockApprovalDialogExt *dialog = mock_approval_dialog_ext_new();
+
+  /* Test various event kinds */
+  mock_approval_dialog_ext_set_event_type(dialog, 1);
+  const char *text = gtk_label_get_text(GTK_LABEL(dialog->event_type_label));
+  g_assert_true(g_str_has_prefix(text, "Short Text Note"));
+
+  mock_approval_dialog_ext_set_event_type(dialog, 4);
+  text = gtk_label_get_text(GTK_LABEL(dialog->event_type_label));
+  g_assert_true(g_str_has_prefix(text, "Encrypted Direct Message"));
+
+  mock_approval_dialog_ext_set_event_type(dialog, 9735);
+  text = gtk_label_get_text(GTK_LABEL(dialog->event_type_label));
+  g_assert_true(g_str_has_prefix(text, "Zap"));
+
+  mock_approval_dialog_ext_set_event_type(dialog, 99999);
+  text = gtk_label_get_text(GTK_LABEL(dialog->event_type_label));
+  g_assert_true(g_str_has_prefix(text, "Unknown Event"));
+
+  g_object_unref(dialog);
+}
+
+static void test_approval_dialog_ttl_dropdown(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockApprovalDialogExt *dialog = mock_approval_dialog_ext_new();
+
+  /* TTL dropdown should be disabled initially */
+  g_assert_false(gtk_widget_get_sensitive(dialog->ttl_dropdown));
+
+  /* Enable remember */
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(dialog->remember_check), TRUE);
+  process_pending_events();
+
+  /* Now TTL dropdown should be enabled */
+  g_assert_true(gtk_widget_get_sensitive(dialog->ttl_dropdown));
+
+  /* Disable remember */
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(dialog->remember_check), FALSE);
+  process_pending_events();
+
+  /* TTL dropdown should be disabled again */
+  g_assert_false(gtk_widget_get_sensitive(dialog->ttl_dropdown));
+
+  g_object_unref(dialog);
+}
+
+static void test_approval_dialog_button_styles(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockApprovalDialogExt *dialog = mock_approval_dialog_ext_new();
+
+  /* Approve should have suggested-action */
+  g_assert_true(gtk_widget_has_css_class(dialog->approve_btn, "suggested-action"));
+
+  /* Deny should have destructive-action */
+  g_assert_true(gtk_widget_has_css_class(dialog->deny_btn, "destructive-action"));
+
+  g_object_unref(dialog);
+}
+
+/* ===========================================================================
+ * Test Cases: Mock D-Bus Service for UI Tests
+ * =========================================================================== */
+
+/* Simple mock for D-Bus connection state */
+typedef struct {
+  gboolean connected;
+  gchar *stored_npub;
+  gchar *error_message;
+} MockDBusState;
+
+static MockDBusState mock_dbus = { FALSE, NULL, NULL };
+
+static void mock_dbus_init(void) {
+  mock_dbus.connected = TRUE;
+  mock_dbus.stored_npub = g_strdup("npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj");
+  mock_dbus.error_message = NULL;
+}
+
+static void mock_dbus_cleanup(void) {
+  mock_dbus.connected = FALSE;
+  g_free(mock_dbus.stored_npub);
+  mock_dbus.stored_npub = NULL;
+  g_free(mock_dbus.error_message);
+  mock_dbus.error_message = NULL;
+}
+
+static gboolean mock_dbus_get_public_key(gchar **npub_out) {
+  if (!mock_dbus.connected) return FALSE;
+  *npub_out = g_strdup(mock_dbus.stored_npub);
+  return TRUE;
+}
+
+static gboolean mock_dbus_sign_event(const gchar *event_json, gchar **signature_out) {
+  if (!mock_dbus.connected) return FALSE;
+  if (!event_json || !*event_json) return FALSE;
+
+  /* Generate mock signature (128 hex chars) */
+  *signature_out = g_strnfill(128, 'a');
+  return TRUE;
+}
+
+static void test_mock_dbus_connection(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  mock_dbus_init();
+  g_assert_true(mock_dbus.connected);
+
+  gchar *npub = NULL;
+  g_assert_true(mock_dbus_get_public_key(&npub));
+  g_assert_nonnull(npub);
+  g_assert_true(g_str_has_prefix(npub, "npub1"));
+  g_free(npub);
+
+  mock_dbus_cleanup();
+  g_assert_false(mock_dbus.connected);
+}
+
+static void test_mock_dbus_sign_event(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  mock_dbus_init();
+
+  gchar *sig = NULL;
+  g_assert_true(mock_dbus_sign_event("{\"content\":\"test\"}", &sig));
+  g_assert_nonnull(sig);
+  g_assert_cmpuint(strlen(sig), ==, 128);
+  g_free(sig);
+
+  /* Empty event should fail */
+  g_assert_false(mock_dbus_sign_event("", &sig));
+
+  mock_dbus_cleanup();
+}
+
+static void test_mock_dbus_disconnected(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  /* Don't call init - simulate disconnected state */
+  mock_dbus.connected = FALSE;
+
+  gchar *npub = NULL;
+  g_assert_false(mock_dbus_get_public_key(&npub));
+
+  gchar *sig = NULL;
+  g_assert_false(mock_dbus_sign_event("{}", &sig));
+}
+
+/* ===========================================================================
  * Test Main
  * =========================================================================== */
 
@@ -797,6 +1749,16 @@ int main(int argc, char *argv[]) {
              test_ui_fixture_setup, test_window_destruction, test_ui_fixture_teardown);
   g_test_add("/ui/window/components", TestUIFixture, NULL,
              test_ui_fixture_setup, test_window_components, test_ui_fixture_teardown);
+
+  /* Window layout tests */
+  g_test_add("/ui/layout/minimum-size", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_window_minimum_size, test_ui_fixture_teardown);
+  g_test_add("/ui/layout/default-size", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_window_default_size, test_ui_fixture_teardown);
+  g_test_add("/ui/layout/sidebar-width", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_sidebar_width, test_ui_fixture_teardown);
+  g_test_add("/ui/layout/stack-expands", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_stack_expands_horizontally, test_ui_fixture_teardown);
 
   /* Page navigation tests */
   g_test_add("/ui/navigation/initial-state", TestUIFixture, NULL,
@@ -813,8 +1775,34 @@ int main(int argc, char *argv[]) {
              test_ui_fixture_setup, test_approval_dialog_creation, test_ui_fixture_teardown);
   g_test_add("/ui/dialog/approval-buttons", TestUIFixture, NULL,
              test_ui_fixture_setup, test_approval_dialog_buttons, test_ui_fixture_teardown);
+  g_test_add("/ui/dialog/approval-event-types", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_approval_dialog_event_types, test_ui_fixture_teardown);
+  g_test_add("/ui/dialog/approval-ttl-dropdown", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_approval_dialog_ttl_dropdown, test_ui_fixture_teardown);
+  g_test_add("/ui/dialog/approval-button-styles", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_approval_dialog_button_styles, test_ui_fixture_teardown);
   g_test_add("/ui/dialog/create-profile-creation", TestUIFixture, NULL,
              test_ui_fixture_setup, test_create_profile_dialog_creation, test_ui_fixture_teardown);
+
+  /* Import key dialog tests */
+  g_test_add("/ui/dialog/import-key-creation", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_import_key_dialog_creation, test_ui_fixture_teardown);
+  g_test_add("/ui/dialog/import-key-nsec-validation", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_import_key_dialog_nsec_validation, test_ui_fixture_teardown);
+  g_test_add("/ui/dialog/import-key-hex-validation", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_import_key_dialog_hex_validation, test_ui_fixture_teardown);
+  g_test_add("/ui/dialog/import-key-ncrypt-validation", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_import_key_dialog_ncrypt_validation, test_ui_fixture_teardown);
+
+  /* Lock screen tests */
+  g_test_add("/ui/lock-screen/creation", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_lock_screen_creation, test_ui_fixture_teardown);
+  g_test_add("/ui/lock-screen/busy-state", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_lock_screen_busy_state, test_ui_fixture_teardown);
+  g_test_add("/ui/lock-screen/error-display", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_lock_screen_error_display, test_ui_fixture_teardown);
+  g_test_add("/ui/lock-screen/lock-reasons", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_lock_screen_lock_reasons, test_ui_fixture_teardown);
 
   /* Password validation tests */
   g_test_add("/ui/validation/password-empty", TestUIFixture, NULL,
@@ -827,6 +1815,26 @@ int main(int argc, char *argv[]) {
              test_ui_fixture_setup, test_password_validation_match, test_ui_fixture_teardown);
   g_test_add("/ui/validation/password-clear-confirm", TestUIFixture, NULL,
              test_ui_fixture_setup, test_password_validation_clear_confirm, test_ui_fixture_teardown);
+
+  /* Npub validation tests */
+  g_test_add("/ui/validation/npub-valid", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_npub_validation_valid, test_ui_fixture_teardown);
+  g_test_add("/ui/validation/npub-invalid-prefix", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_npub_validation_invalid_prefix, test_ui_fixture_teardown);
+  g_test_add("/ui/validation/npub-invalid-length", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_npub_validation_invalid_length, test_ui_fixture_teardown);
+  g_test_add("/ui/validation/npub-invalid-chars", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_npub_validation_invalid_chars, test_ui_fixture_teardown);
+  g_test_add("/ui/validation/npub-null-empty", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_npub_validation_null_empty, test_ui_fixture_teardown);
+  g_test_add("/ui/validation/nsec-valid", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_nsec_validation_valid, test_ui_fixture_teardown);
+  g_test_add("/ui/validation/nsec-invalid", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_nsec_validation_invalid, test_ui_fixture_teardown);
+  g_test_add("/ui/validation/hex64-valid", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_hex64_validation_valid, test_ui_fixture_teardown);
+  g_test_add("/ui/validation/hex64-invalid", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_hex64_validation_invalid, test_ui_fixture_teardown);
 
   /* Button state tests */
   g_test_add("/ui/button/create-requires-name", TestUIFixture, NULL,
@@ -845,6 +1853,20 @@ int main(int argc, char *argv[]) {
              test_ui_fixture_setup, test_password_match_success_class, test_ui_fixture_teardown);
   g_test_add("/ui/css/password-match-error", TestUIFixture, NULL,
              test_ui_fixture_setup, test_password_match_error_class, test_ui_fixture_teardown);
+
+  /* Keyboard shortcut tests */
+  g_test_add("/ui/shortcuts/action-registration", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_keyboard_shortcuts_action_registration, test_ui_fixture_teardown);
+  g_test_add("/ui/shortcuts/action-activation", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_keyboard_shortcuts_action_activation, test_ui_fixture_teardown);
+
+  /* Mock D-Bus tests */
+  g_test_add("/ui/mock-dbus/connection", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_mock_dbus_connection, test_ui_fixture_teardown);
+  g_test_add("/ui/mock-dbus/sign-event", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_mock_dbus_sign_event, test_ui_fixture_teardown);
+  g_test_add("/ui/mock-dbus/disconnected", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_mock_dbus_disconnected, test_ui_fixture_teardown);
 
   return g_test_run();
 }
