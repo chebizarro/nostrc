@@ -1020,21 +1020,33 @@ static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec
   
   if (profile) {
     /* Profile loaded - show the row and update author info */
-    gchar *display = NULL, *handle = NULL, *avatar_url = NULL;
+    gchar *display = NULL, *handle = NULL, *avatar_url = NULL, *nip05 = NULL;
     g_object_get(profile,
                  "display-name", &display,
                  "name",         &handle,
                  "picture-url",  &avatar_url,
+                 "nip05",        &nip05,
                  NULL);
-    
+
     if (GNOSTR_IS_NOTE_CARD_ROW(row)) {
       gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row), display, handle, avatar_url);
       gtk_widget_set_visible(row, TRUE);
+
+      /* NIP-05: Set verification identifier if available */
+      if (nip05 && *nip05) {
+        gchar *pubkey = NULL;
+        g_object_get(event_item, "pubkey", &pubkey, NULL);
+        if (pubkey && strlen(pubkey) == 64) {
+          gnostr_note_card_row_set_nip05(GNOSTR_NOTE_CARD_ROW(row), nip05, pubkey);
+        }
+        g_free(pubkey);
+      }
     }
-    
+
     g_free(display);
     g_free(handle);
     g_free(avatar_url);
+    g_free(nip05);
     g_object_unref(profile);
   }
 }
@@ -1209,7 +1221,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   }
   
   gchar *display = NULL, *handle = NULL, *ts = NULL, *content = NULL, *root_id = NULL, *avatar_url = NULL;
-  gchar *pubkey = NULL, *id_hex = NULL, *parent_id = NULL, *parent_pubkey = NULL;
+  gchar *pubkey = NULL, *id_hex = NULL, *parent_id = NULL, *parent_pubkey = NULL, *nip05 = NULL;
   guint depth = 0; gboolean is_reply = FALSE; gint64 created_at = 0;
   
   /* Check if this is a GnNostrEventItem (new model) */
@@ -1238,6 +1250,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                    "display-name", &display,
                    "name",         &handle,
                    "picture-url",  &avatar_url,
+                   "nip05",        &nip05,
                    NULL);
       g_object_unref(profile);
     }
@@ -1303,6 +1316,11 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                                           NULL, /* parent_author_name - will be resolved asynchronously if needed */
                                           is_reply);
 
+    /* NIP-05: Set verification identifier for async verification badge */
+    if (nip05 && *nip05 && pubkey && strlen(pubkey) == 64) {
+      gnostr_note_card_row_set_nip05(GNOSTR_NOTE_CARD_ROW(row), nip05, pubkey);
+    }
+
     /* NIP-51: Set bookmark state from local cache */
     if (id_hex && strlen(id_hex) == 64) {
       GnostrBookmarks *bookmarks = gnostr_bookmarks_get_default();
@@ -1360,7 +1378,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
            id_hex ? id_hex : "(null)",
            root_id ? root_id : "(null)");
   g_free(display); g_free(handle); g_free(ts); g_free(content); g_free(root_id); g_free(id_hex);
-  g_free(avatar_url); g_free(parent_id); g_free(parent_pubkey);
+  g_free(avatar_url); g_free(parent_id); g_free(parent_pubkey); g_free(nip05);
 
   /* Model-level profile gating handles profile fetching; no bind-time enqueue here. */
   g_free(pubkey);

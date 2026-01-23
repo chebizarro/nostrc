@@ -105,6 +105,14 @@ static GnostrProfileMeta *meta_from_json(const char *pk, const char *json) {
     const char *v = json_object_get_string_member(obj, "picture");
     if (v && *v) m->picture = g_strdup(v);
   }
+  if (json_object_has_member(obj, "nip05")) {
+    const char *v = json_object_get_string_member(obj, "nip05");
+    if (v && *v) m->nip05 = g_strdup(v);
+  }
+  if (json_object_has_member(obj, "lud16")) {
+    const char *v = json_object_get_string_member(obj, "lud16");
+    if (v && *v) m->lud16 = g_strdup(v);
+  }
   m->created_at = 0;
   g_object_unref(p);
   return m;
@@ -139,6 +147,8 @@ static GnostrProfileMeta *meta_copy(const GnostrProfileMeta *src) {
   c->display_name = src->display_name ? g_strdup(src->display_name) : NULL;
   c->name = src->name ? g_strdup(src->name) : NULL;
   c->picture = src->picture ? g_strdup(src->picture) : NULL;
+  c->nip05 = src->nip05 ? g_strdup(src->nip05) : NULL;
+  c->lud16 = src->lud16 ? g_strdup(src->lud16) : NULL;
   c->created_at = src->created_at;
   return c;
 }
@@ -193,6 +203,8 @@ void gnostr_profile_meta_free(GnostrProfileMeta *m) {
   g_free(m->display_name);
   g_free(m->name);
   g_free(m->picture);
+  g_free(m->nip05);
+  g_free(m->lud16);
   g_free(m);
 }
 

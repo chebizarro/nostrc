@@ -2495,6 +2495,11 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
 
+  /* Close thread pane if open - panels are mutually exclusive */
+  if (self->thread_revealer && GTK_IS_REVEALER(self->thread_revealer)) {
+    gtk_revealer_set_reveal_child(GTK_REVEALER(self->thread_revealer), FALSE);
+  }
+
   /* Check if profile pane is currently visible */
   gboolean sidebar_visible = gtk_revealer_get_reveal_child(GTK_REVEALER(self->profile_revealer));
 
@@ -2813,17 +2818,17 @@ void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id
     return;
   }
 
+  /* Close profile pane first if open - panels are mutually exclusive */
+  if (self->profile_revealer && GTK_IS_REVEALER(self->profile_revealer)) {
+    gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), FALSE);
+  }
+
   /* Set the thread root and load the thread */
   gnostr_thread_view_set_thread_root(GNOSTR_THREAD_VIEW(self->thread_view), root_event_id);
 
   /* Reveal the thread panel */
   if (self->thread_revealer && GTK_IS_REVEALER(self->thread_revealer)) {
     gtk_revealer_set_reveal_child(GTK_REVEALER(self->thread_revealer), TRUE);
-  }
-
-  /* Hide profile pane if visible to avoid overlap */
-  if (self->profile_revealer && GTK_IS_REVEALER(self->profile_revealer)) {
-    gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), FALSE);
   }
 }
 

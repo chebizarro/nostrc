@@ -525,6 +525,9 @@ static void fetch_profile_for_event(GnostrThreadView *self, ThreadEventItem *ite
     if (meta->picture && *meta->picture) {
       item->avatar_url = g_strdup(meta->picture);
     }
+    if (meta->nip05 && *meta->nip05) {
+      item->nip05 = g_strdup(meta->nip05);
+    }
     gnostr_profile_meta_free(meta);
   } else {
     /* Profile not in cache/db - request fetch from relays */
@@ -1071,6 +1074,9 @@ static void update_item_profile_from_cache(ThreadEventItem *item) {
   }
   if (meta->picture && *meta->picture && !item->avatar_url) {
     item->avatar_url = g_strdup(meta->picture);
+  }
+  if (meta->nip05 && *meta->nip05 && !item->nip05) {
+    item->nip05 = g_strdup(meta->nip05);
   }
 
   gnostr_profile_meta_free(meta);

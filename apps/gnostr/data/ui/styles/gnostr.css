@@ -1290,6 +1290,14 @@ button.liked image {
   min-height: 16px;
 }
 
+/* NIP-05 verification badge (note card) */
+.nip05-verified-badge {
+  color: #2e7d32;
+  min-width: 14px;
+  min-height: 14px;
+  margin-left: 4px;
+}
+
 /* Follow indicator */
 .follow-indicator {
   color: @accent_bg_color;
