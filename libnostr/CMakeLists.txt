@@ -183,11 +183,19 @@ target_compile_definitions(nostr PUBLIC NOSTR_HAVE_LIBGO=1)
 option(LIBNOSTR_WITH_NOSTRDB "Enable nostrdb storage backend" ON)
 if(LIBNOSTR_WITH_NOSTRDB)
   target_compile_definitions(nostr PUBLIC LIBNOSTR_WITH_NOSTRDB=1)
-  # Attach backend sources to the existing target
-  target_sources(nostr PRIVATE src/store/nostrdb/ndb_backend.c)
 
   # Vendored nostrdb setup: expect a subdirectory (default: third_party/nostrdb)
   set(LIBNOSTR_NDB_VENDOR_PATH "${CMAKE_SOURCE_DIR}/third_party/nostrdb" CACHE PATH "Path to vendored nostrdb source")
+
+  # Add nostrdb include directories to nostr target BEFORE adding ndb_backend.c
+  # This ensures the compiler can find nostrdb.h when compiling the backend source
+  target_include_directories(nostr PRIVATE
+    "${LIBNOSTR_NDB_VENDOR_PATH}/src"
+    "${LIBNOSTR_NDB_VENDOR_PATH}/src/bindings/c"
+  )
+
+  # Attach backend sources to the existing target
+  target_sources(nostr PRIVATE src/store/nostrdb/ndb_backend.c)
   if(EXISTS "${LIBNOSTR_NDB_VENDOR_PATH}/src/nostrdb.c")
     message(STATUS "libnostr: using vendored nostrdb sources at ${LIBNOSTR_NDB_VENDOR_PATH}")
     # Collect nostrdb core sources and deps
