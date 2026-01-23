@@ -117,6 +117,7 @@ label a:visited {
   min-width: 32px;
   min-height: 32px;
   padding: 4px;
+  border-radius: 50%;
 }
 
 .profile-close-button:hover {
@@ -753,6 +754,7 @@ button.pill:hover {
   min-height: 36px;
   padding: 8px;
   border: none;
+  border-radius: 50%;
   transition: all 150ms ease;
 }
 
