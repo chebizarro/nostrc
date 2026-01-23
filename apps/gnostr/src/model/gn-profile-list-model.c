@@ -404,6 +404,10 @@ static void
 load_profiles_data_free(LoadProfilesData *data)
 {
     if (data->loaded_profiles) {
+        /* Free any remaining entries (in case of error before transfer) */
+        for (guint i = 0; i < data->loaded_profiles->len; i++) {
+            profile_entry_free(g_ptr_array_index(data->loaded_profiles, i));
+        }
         g_ptr_array_free(data->loaded_profiles, TRUE);
     }
     g_free(data);
@@ -417,7 +421,8 @@ load_profiles_in_thread(GTask *task, gpointer source_object, gpointer task_data,
     (void)cancellable;
 
     LoadProfilesData *data = g_new0(LoadProfilesData, 1);
-    data->loaded_profiles = g_ptr_array_new_with_free_func((GDestroyNotify)profile_entry_free);
+    /* Don't use a free function - ownership will be transferred to all_profiles */
+    data->loaded_profiles = g_ptr_array_new();
 
     /* Query nostrdb for all kind:0 events */
     void *txn = NULL;
@@ -493,7 +498,7 @@ load_profiles_complete(GObject *source, GAsyncResult *result, gpointer user_data
             g_ptr_array_add(self->all_profiles, entry);
         }
 
-        /* Clear the loaded array without freeing entries (we transferred ownership) */
+        /* Clear the loaded array - entries are now owned by all_profiles */
         g_ptr_array_set_size(data->loaded_profiles, 0);
 
         self->total_count = self->all_profiles->len;

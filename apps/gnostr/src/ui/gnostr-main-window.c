@@ -3468,7 +3468,9 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
    * If we prepopulate first, profile fetches will skip all relays (not in pool yet). */
   {
     const char *live = g_getenv("GNOSTR_LIVE");
-    if (live && *live && g_strcmp0(live, "0") != 0) {
+    /* Default to live mode unless explicitly disabled with "0" or "FALSE" */
+    gboolean enable_live = !live || (g_strcmp0(live, "0") != 0 && g_ascii_strcasecmp(live, "FALSE") != 0);
+    if (enable_live) {
       start_pool_live(self);
       /* Also start profile subscription if identity is configured */
       start_profile_subscription(self);

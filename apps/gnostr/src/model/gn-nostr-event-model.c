@@ -638,30 +638,27 @@ static gboolean emit_items_changed_idle(gpointer user_data) {
    * 2. Then refresh remaining items if needed.
    * 3. If model grew (new_len > old_len): emit add at end. */
   if (self->pending_refresh) {
-    guint new_len = self->notes->len;
+    guint old_len = self->last_emitted_len;  /* What GTK thinks the length is */
+    guint new_len = self->notes->len;        /* Actual current length */
     self->pending_refresh = FALSE;
     self->emit_added = 0;
 
-    /* CRITICAL FIX: GTK ListView calls get_item() for all removed items
-     * during items_changed signal handling. If our array has already shrunk
-     * before this idle callback runs, GTK will access items that no longer
-     * exist, causing SIGSEGV.
+    /* CRITICAL: The 'removed' parameter must match what GTK previously knew.
+     * If GTK thinks there are old_len items and we say "remove X, add Y",
+     * GTK calculates new length as: old_len - X + Y.
      *
-     * The ONLY safe signal when the model might have shrunk is one where
-     * we report changes only within the CURRENT array bounds. We tell GTK
-     * that all current items have changed (removed=new_len, added=new_len),
-     * effectively saying "refresh everything that currently exists".
+     * By using (removed=old_len, added=new_len), GTK computes:
+     *   new_length = old_len - old_len + new_len = new_len
      *
-     * This under-reports removals but avoids the crash. GTK's internal
-     * item count will resync on the next get_n_items call. */
-    self->last_emitted_len = new_len;
+     * This correctly handles both growth and shrinkage. GTK won't try to
+     * access items beyond new_len because get_item() bounds checks. */
 
-    if (new_len > 0) {
-      /* Emit "all N items changed" - safe because N is the current array size */
-      g_list_model_items_changed(G_LIST_MODEL(self), 0, new_len, new_len);
+    if (old_len > 0 || new_len > 0) {
+      g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
     }
-    /* Note: If new_len is 0, we don't emit anything. GTK will see the empty
-     * model via get_n_items() and handle it correctly. */
+
+    /* Update tracking AFTER emission */
+    self->last_emitted_len = new_len;
 
     self->last_update_time_ms = get_current_time_ms();
     return G_SOURCE_REMOVE;
