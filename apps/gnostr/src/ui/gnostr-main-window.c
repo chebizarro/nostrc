@@ -111,7 +111,7 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
 static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer user_data);
 /* Forward declarations for discover page signal handlers */
 static void on_discover_open_profile(GnostrPageDiscover *page, const char *pubkey_hex, gpointer user_data);
-static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, gpointer user_data);
+static void on_stack_visible_child_changed(GObject *stack, GParamSpec *pspec, gpointer user_data);
 /* Forward declaration for ESC key handler to close profile sidebar */
 static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data);
 /* Forward declaration for close-request handler (nostrc-61s.6: background mode) */
