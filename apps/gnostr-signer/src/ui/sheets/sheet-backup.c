@@ -814,10 +814,10 @@ void sheet_backup_set_account(SheetBackup *self, const gchar *npub) {
       gchar *truncated = g_strdup_printf("%.*s...%s",
                                           12, npub,
                                           npub + strlen(npub) - 8);
-      adw_action_row_set_title(self->row_account, truncated);
+      adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->row_account), truncated);
       g_free(truncated);
     } else {
-      adw_action_row_set_title(self->row_account, npub);
+      adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->row_account), npub);
     }
   }
 }
@@ -857,17 +857,13 @@ static void on_reminder_response(GObject *source, GAsyncResult *result, gpointer
   }
 
   if (choice == 1) {  /* "Backup Now" */
-    /* Get the window from the dialog to present the backup sheet */
-    /* Since we don't have a direct reference, we'll try to find an active window */
-    GListModel *windows = gtk_window_group_list_windows(gtk_window_group_new());
-    if (windows && g_list_model_get_n_items(windows) > 0) {
-      GtkWindow *win = g_list_model_get_item(windows, 0);
-      if (win) {
-        SheetBackup *backup_dlg = sheet_backup_new();
-        sheet_backup_set_account(backup_dlg, npub);
-        adw_dialog_present(ADW_DIALOG(backup_dlg), GTK_WIDGET(win));
-        g_object_unref(win);
-      }
+    /* Get an active window to present the backup sheet */
+    GtkApplication *app = GTK_APPLICATION(g_application_get_default());
+    GtkWindow *win = gtk_application_get_active_window(app);
+    if (win) {
+      SheetBackup *backup_dlg = sheet_backup_new();
+      sheet_backup_set_account(backup_dlg, npub);
+      adw_dialog_present(ADW_DIALOG(backup_dlg), GTK_WIDGET(win));
     }
   }
 
