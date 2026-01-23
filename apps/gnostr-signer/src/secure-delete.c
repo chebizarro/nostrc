@@ -282,7 +282,7 @@ gboolean gn_is_ssd(const char *path) {
   }
 
 #ifdef __linux__
-  /* Linux: Check /sys/block/*/queue/rotational
+  /* Linux: Check /sys/block/<dev>/queue/rotational
    * 0 = SSD, 1 = HDD
    */
   struct stat st;
