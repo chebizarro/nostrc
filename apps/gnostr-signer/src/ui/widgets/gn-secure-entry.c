@@ -394,6 +394,21 @@ gn_secure_entry_update_visibility(GnSecureEntry *self)
       ? "Hide password"
       : "Show password";
     gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_toggle_visibility), tooltip);
+
+    /* Update accessibility label for screen readers */
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_toggle_visibility),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, tooltip,
+                                   -1);
+  }
+
+  /* Update entry accessibility description based on visibility */
+  if (self->entry_password) {
+    const gchar *desc = self->show_password
+      ? "Password is visible. Characters are shown."
+      : "Password is hidden. Characters are masked.";
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->entry_password),
+                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, desc,
+                                   -1);
   }
 }
 
@@ -427,6 +442,14 @@ gn_secure_entry_update_strength(GnSecureEntry *self)
     gtk_widget_remove_css_class(strength_widget, "accent");
     gtk_widget_remove_css_class(strength_widget, "success");
     gtk_widget_add_css_class(strength_widget, get_strength_css_class(self->cached_strength));
+
+    /* Update accessibility for strength level bar */
+    if (self->level_strength && self->buffer_len > 0) {
+      g_autofree gchar *strength_desc = g_strdup_printf("Password strength: %s", label);
+      gtk_accessible_update_property(GTK_ACCESSIBLE(self->level_strength),
+                                     GTK_ACCESSIBLE_PROPERTY_VALUE_TEXT, strength_desc,
+                                     -1);
+    }
   }
 }
 
@@ -436,8 +459,17 @@ gn_secure_entry_update_indicators(GnSecureEntry *self)
 {
   /* Caps lock warning */
   if (self->lbl_caps_warning && self->show_caps_warning) {
+    gboolean was_visible = gtk_widget_get_visible(GTK_WIDGET(self->lbl_caps_warning));
     gtk_widget_set_visible(GTK_WIDGET(self->lbl_caps_warning),
                            self->caps_lock_on);
+
+    /* Announce caps lock state change to screen readers via live region */
+    if (self->caps_lock_on && !was_visible && self->entry_password) {
+      /* Update the entry's accessible state to include caps lock warning */
+      gtk_accessible_update_state(GTK_ACCESSIBLE(self->entry_password),
+                                  GTK_ACCESSIBLE_STATE_BUSY, FALSE,
+                                  -1);
+    }
   }
 
   /* Length indicator */

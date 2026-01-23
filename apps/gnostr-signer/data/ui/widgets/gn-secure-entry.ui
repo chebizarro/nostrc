@@ -23,6 +23,10 @@
                 <property name="visibility">false</property>
                 <property name="input-purpose">password</property>
                 <property name="enable-emoji-completion">false</property>
+                <accessibility>
+                  <property name="label" translatable="yes">Password</property>
+                  <property name="description" translatable="yes">Enter your password. Characters are hidden for security.</property>
+                </accessibility>
                 <style>
                   <class name="gn-secure-entry-field"/>
                 </style>
@@ -32,6 +36,10 @@
               <object class="GtkButton" id="btn_toggle_visibility">
                 <property name="tooltip-text" translatable="yes">Show password</property>
                 <property name="valign">center</property>
+                <accessibility>
+                  <property name="label" translatable="yes">Toggle password visibility</property>
+                  <property name="description" translatable="yes">Press to show or hide the password text</property>
+                </accessibility>
                 <style>
                   <class name="flat"/>
                 </style>
@@ -66,6 +74,10 @@
                     <property name="hexpand">true</property>
                     <property name="valign">center</property>
                     <property name="visible">false</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Password strength meter</property>
+                      <property name="description" translatable="yes">Indicates the strength of your password from weak to very strong</property>
+                    </accessibility>
                     <offsets>
                       <offset name="low" value="1"/>
                       <offset name="high" value="3"/>
@@ -118,6 +130,9 @@
                     <property name="label" translatable="yes">Caps Lock is on</property>
                     <property name="xalign">0</property>
                     <property name="visible">false</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Warning: Caps Lock is enabled</property>
+                    </accessibility>
                     <style>
                       <class name="caption"/>
                       <class name="warning"/>
