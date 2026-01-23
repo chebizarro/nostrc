@@ -101,6 +101,10 @@ struct _GnNostrEventModel {
   /* Deferred trim to prevent GTK4 re-entrancy when called from scroll callbacks */
   guint pending_trim_to;          /* Target count for deferred trim (0 = no pending) */
   guint trim_idle_id;             /* Pending idle source for trim operation */
+
+  /* Deferred delete event processing to prevent GTK4 re-entrancy */
+  GArray *pending_deletes;        /* uint64_t note_keys of kind=5 events to process */
+  guint delete_idle_id;           /* Pending idle source for delete processing */
 };
 
 typedef struct {
@@ -1226,16 +1230,24 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
   end_batch(self);
 }
 
-static void on_sub_deletes_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
-  (void)subid;
+/* Idle handler to process pending delete events. Deferred to avoid GTK4 re-entrancy
+ * crashes when model changes are emitted from nostrdb subscription callbacks. */
+static gboolean process_pending_deletes_idle(gpointer user_data) {
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
-  if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
+  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return G_SOURCE_REMOVE;
+
+  self->delete_idle_id = 0;
+
+  if (!self->pending_deletes || self->pending_deletes->len == 0) {
+    return G_SOURCE_REMOVE;
+  }
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return G_SOURCE_REMOVE;
 
-  for (guint i = 0; i < n_keys; i++) {
-    uint64_t del_key = note_keys[i];
+  /* Process all pending delete keys */
+  for (guint i = 0; i < self->pending_deletes->len; i++) {
+    uint64_t del_key = g_array_index(self->pending_deletes, uint64_t, i);
     storage_ndb_note *note = storage_ndb_get_note_ptr(txn, del_key);
     if (!note) continue;
 
@@ -1263,6 +1275,28 @@ static void on_sub_deletes_batch(uint64_t subid, const uint64_t *note_keys, guin
   }
 
   storage_ndb_end_query(txn);
+
+  /* Clear processed deletes */
+  g_array_set_size(self->pending_deletes, 0);
+
+  return G_SOURCE_REMOVE;
+}
+
+static void on_sub_deletes_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
+  (void)subid;
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
+
+  /* Queue delete keys for deferred processing to avoid GTK4 re-entrancy crashes.
+   * Processing happens in an idle handler when GTK is in a stable state. */
+  for (guint i = 0; i < n_keys; i++) {
+    g_array_append_val(self->pending_deletes, note_keys[i]);
+  }
+
+  /* Schedule idle processing if not already scheduled */
+  if (self->delete_idle_id == 0) {
+    self->delete_idle_id = g_idle_add(process_pending_deletes_idle, self);
+  }
 }
 
 /* -------------------- GObject boilerplate -------------------- */
@@ -1314,6 +1348,13 @@ static void gn_nostr_event_model_finalize(GObject *object) {
     g_source_remove(self->trim_idle_id);
     self->trim_idle_id = 0;
   }
+
+  /* Clean up deferred delete processing */
+  if (self->delete_idle_id > 0) {
+    g_source_remove(self->delete_idle_id);
+    self->delete_idle_id = 0;
+  }
+  if (self->pending_deletes) g_array_unref(self->pending_deletes);
 
   G_OBJECT_CLASS(gn_nostr_event_model_parent_class)->finalize(object);
 }
@@ -1417,6 +1458,10 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
   /* Deferred trim */
   self->pending_trim_to = 0;
   self->trim_idle_id = 0;
+
+  /* Deferred delete processing */
+  self->pending_deletes = g_array_new(FALSE, FALSE, sizeof(uint64_t));
+  self->delete_idle_id = 0;
 
   /* Install lifetime subscriptions via dispatcher (marshals to main loop) */
   self->sub_profiles = gn_ndb_subscribe(FILTER_PROFILES, on_sub_profiles_batch, self, NULL);
