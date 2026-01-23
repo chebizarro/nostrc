@@ -26,6 +26,7 @@
         <file preprocess="xml-stripblanks">ui/sheets/sheet-sign-message.ui</file>
         <file preprocess="xml-stripblanks">ui/sheets/sheet-backup.ui</file>
         <file preprocess="xml-stripblanks">ui/sheets/sheet-key-rotation.ui</file>
+        <file preprocess="xml-stripblanks">ui/sheets/sheet-delegation.ui</file>
         <file preprocess="xml-stripblanks">ui/sheets/sheet-create-account.ui</file>
         <file preprocess="xml-stripblanks">ui/widgets/app-row.ui</file>
         <file preprocess="xml-stripblanks">ui/widgets/gn-secure-entry.ui</file>
@@ -34,5 +35,6 @@
         <file preprocess="xml-stripblanks">ui/approval-dialog.ui</file>
         <file preprocess="xml-stripblanks">ui/lock-screen.ui</file>
         <file preprocess="xml-stripblanks">ui/onboarding-assistant.ui</file>
+        <file preprocess="xml-stripblanks">ui/shortcuts-window.ui</file>
     </gresource>
 </gresources>

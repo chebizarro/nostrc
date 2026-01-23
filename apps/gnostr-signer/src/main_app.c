@@ -48,6 +48,8 @@ typedef struct {
 static void apply_theme_preference(SettingsTheme theme);
 static void on_theme_setting_changed(const char *key, gpointer user_data);
 static void update_high_contrast_css(gboolean enable);
+static void on_system_high_contrast_changed(GObject *obj, GParamSpec *pspec, gpointer user_data);
+static gboolean should_use_high_contrast(void);
 
 static void set_status(AppUI *ui, const char *text, const char *css_key) {
   gtk_label_set_text(ui->status, text);
@@ -465,6 +467,59 @@ static void update_high_contrast_css(gboolean enable) {
   }
 }
 
+/* Determine if high contrast should be used based on:
+ * 1. Force high contrast setting (user preference)
+ * 2. Theme explicitly set to high-contrast
+ * 3. System high contrast mode (GNOME/GTK accessibility setting)
+ */
+static gboolean should_use_high_contrast(void) {
+  SettingsManager *sm = settings_manager_get_default();
+
+  /* Check if user has forced high contrast */
+  if (settings_manager_get_force_high_contrast(sm)) {
+    g_debug("High contrast enabled via force-high-contrast setting");
+    return TRUE;
+  }
+
+  /* Check if theme is explicitly set to high-contrast */
+  SettingsTheme theme = settings_manager_get_theme(sm);
+  if (theme == SETTINGS_THEME_HIGH_CONTRAST) {
+    g_debug("High contrast enabled via theme=high-contrast");
+    return TRUE;
+  }
+
+  /* Check system high contrast preference via AdwStyleManager */
+  AdwStyleManager *style_manager = adw_style_manager_get_default();
+  if (adw_style_manager_get_high_contrast(style_manager)) {
+    g_debug("High contrast enabled via system accessibility setting");
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
+/* Callback for system high contrast changes (GNOME accessibility settings) */
+static void on_system_high_contrast_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  (void)user_data;
+
+  AdwStyleManager *style_manager = ADW_STYLE_MANAGER(obj);
+  gboolean system_hc = adw_style_manager_get_high_contrast(style_manager);
+
+  g_debug("System high contrast changed: %s", system_hc ? "enabled" : "disabled");
+
+  /* Re-evaluate whether to use high contrast */
+  gboolean use_hc = should_use_high_contrast();
+  update_high_contrast_css(use_hc);
+
+  /* Apply/remove high-contrast classes on windows */
+  if (global_app) {
+    SettingsManager *sm = settings_manager_get_default();
+    SettingsHighContrastVariant hc_variant = settings_manager_get_high_contrast_variant(sm);
+    apply_high_contrast_to_windows(global_app, use_hc, hc_variant);
+  }
+}
+
 /* Callback when onboarding finishes - present main window */
 static void on_onboarding_finished(gboolean completed, gpointer user_data) {
   GtkApplication *app = GTK_APPLICATION(user_data);
@@ -577,6 +632,12 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
   /* Listen for theme setting changes */
   settings_manager_connect_changed(sm, "theme", on_theme_setting_changed, NULL);
   settings_manager_connect_changed(sm, "high-contrast-variant", on_theme_setting_changed, NULL);
+  settings_manager_connect_changed(sm, "force-high-contrast", on_theme_setting_changed, NULL);
+
+  /* Listen for system high contrast changes (GNOME accessibility settings) */
+  AdwStyleManager *style_manager = adw_style_manager_get_default();
+  g_signal_connect(style_manager, "notify::high-contrast",
+                   G_CALLBACK(on_system_high_contrast_changed), NULL);
 
   /* Load application stylesheet from resources */
   gint64 css_start = startup_timing_measure_start();
@@ -589,12 +650,11 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
   g_object_unref(prov);
   startup_timing_measure_end(css_start, "css-load", 30);
 
-  /* Load high-contrast CSS if theme is high-contrast (sm already defined above) */
-  SettingsTheme theme = settings_manager_get_theme(sm);
-  gboolean is_high_contrast = (theme == SETTINGS_THEME_HIGH_CONTRAST);
-  if (is_high_contrast) {
+  /* Load high-contrast CSS if needed (considers system, force, and theme settings) */
+  gboolean use_high_contrast = should_use_high_contrast();
+  if (use_high_contrast) {
     gint64 hc_start = startup_timing_measure_start();
-    update_high_contrast_css(is_high_contrast);
+    update_high_contrast_css(use_high_contrast);
     startup_timing_measure_end(hc_start, "high-contrast-css-load", 20);
   }
 
@@ -623,7 +683,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
   g_debug("Created main window: %p", win);
 
   /* Apply high-contrast class if needed */
-  if (is_high_contrast) {
+  if (use_high_contrast) {
     SettingsHighContrastVariant hc_variant = settings_manager_get_high_contrast_variant(sm);
     gtk_widget_add_css_class(GTK_WIDGET(win), "high-contrast");
     switch (hc_variant) {
@@ -661,7 +721,9 @@ static GtkApplication *global_app = NULL;
 static void apply_theme_preference(SettingsTheme theme) {
   AdwStyleManager *style_manager = adw_style_manager_get_default();
   AdwColorScheme color_scheme;
-  gboolean is_high_contrast = (theme == SETTINGS_THEME_HIGH_CONTRAST);
+
+  /* Determine if high contrast should be used (considers system, force, and theme settings) */
+  gboolean use_high_contrast = should_use_high_contrast();
 
   switch (theme) {
     case SETTINGS_THEME_LIGHT:
@@ -684,23 +746,25 @@ static void apply_theme_preference(SettingsTheme theme) {
   adw_style_manager_set_color_scheme(style_manager, color_scheme);
 
   /* Load/unload high-contrast CSS */
-  update_high_contrast_css(is_high_contrast);
+  update_high_contrast_css(use_high_contrast);
 
   /* Apply/remove high-contrast classes on windows */
   if (global_app) {
     SettingsManager *sm = settings_manager_get_default();
     SettingsHighContrastVariant hc_variant = settings_manager_get_high_contrast_variant(sm);
-    apply_high_contrast_to_windows(global_app, is_high_contrast, hc_variant);
+    apply_high_contrast_to_windows(global_app, use_high_contrast, hc_variant);
   }
 
   g_debug("Theme applied: %d -> color_scheme=%d, high_contrast=%s", theme, color_scheme,
-          is_high_contrast ? "true" : "false");
+          use_high_contrast ? "true" : "false");
 }
 
 /* Callback for theme setting changes */
 static void on_theme_setting_changed(const gchar *key, gpointer user_data) {
   (void)user_data;
-  if (g_strcmp0(key, "theme") != 0 && g_strcmp0(key, "high-contrast-variant") != 0) return;
+  if (g_strcmp0(key, "theme") != 0 &&
+      g_strcmp0(key, "high-contrast-variant") != 0 &&
+      g_strcmp0(key, "force-high-contrast") != 0) return;
 
   SettingsManager *sm = settings_manager_get_default();
   SettingsTheme theme = settings_manager_get_theme(sm);
@@ -740,6 +804,25 @@ static void on_app_show_onboarding(GSimpleAction *action, GVariant *param, gpoin
   gtk_window_present(GTK_WINDOW(onboarding));
 }
 
+/* Action handler for showing keyboard shortcuts help overlay (Ctrl+?) */
+static void on_app_show_shortcuts(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param;
+  GtkApplication *app = GTK_APPLICATION(user_data);
+  GtkWindow *win = gtk_application_get_active_window(app);
+  if (!win) return;
+
+  /* Load shortcuts window from resource */
+  GtkBuilder *builder = gtk_builder_new_from_resource("/org/gnostr/signer/ui/shortcuts-window.ui");
+  GtkShortcutsWindow *shortcuts = GTK_SHORTCUTS_WINDOW(gtk_builder_get_object(builder, "shortcuts_window"));
+
+  if (shortcuts) {
+    gtk_window_set_transient_for(GTK_WINDOW(shortcuts), win);
+    gtk_window_present(GTK_WINDOW(shortcuts));
+  }
+
+  g_object_unref(builder);
+}
+
 int main(int argc, char **argv) {
   /* Initialize startup timing first thing */
   startup_timing_init();
@@ -769,6 +852,7 @@ int main(int argc, char **argv) {
     { "export", on_app_export, NULL, NULL, NULL },
     { "lock", on_app_lock, NULL, NULL, NULL },
     { "show-onboarding", on_app_show_onboarding, NULL, NULL, NULL },
+    { "show-shortcuts", on_app_show_shortcuts, NULL, NULL, NULL },
   };
   g_action_map_add_action_entries(G_ACTION_MAP(app), app_entries, G_N_ELEMENTS(app_entries), app);
 
@@ -793,6 +877,9 @@ int main(int argc, char **argv) {
 
   const char *about_accels[] = { "F1", NULL };
   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.about", about_accels);
+
+  const char *shortcuts_accels[] = { "<Primary>question", NULL };
+  gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.show-shortcuts", shortcuts_accels);
 
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
   int status = g_application_run(G_APPLICATION(app), argc, argv);

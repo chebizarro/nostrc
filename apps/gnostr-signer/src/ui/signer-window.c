@@ -228,6 +228,22 @@ static void on_win_quit(GSimpleAction *action, GVariant *param, gpointer user_da
   }
 }
 
+static void on_win_show_shortcuts(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param;
+  SignerWindow *self = SIGNER_WINDOW(user_data);
+
+  /* Load shortcuts window from resource */
+  GtkBuilder *builder = gtk_builder_new_from_resource(APP_RESOURCE_PATH "/ui/shortcuts-window.ui");
+  GtkShortcutsWindow *shortcuts = GTK_SHORTCUTS_WINDOW(gtk_builder_get_object(builder, "shortcuts_window"));
+
+  if (shortcuts) {
+    gtk_window_set_transient_for(GTK_WINDOW(shortcuts), GTK_WINDOW(self));
+    gtk_window_present(GTK_WINDOW(shortcuts));
+  }
+
+  g_object_unref(builder);
+}
+
 /* Setup window-level actions and keyboard shortcuts using GtkShortcutController */
 static void setup_window_shortcuts(SignerWindow *self) {
   /* Add window-level actions */
@@ -239,6 +255,7 @@ static void setup_window_shortcuts(SignerWindow *self) {
     { "preferences", on_win_preferences, NULL, NULL, NULL },
     { "about", on_win_about, NULL, NULL, NULL },
     { "quit", on_win_quit, NULL, NULL, NULL },
+    { "show-shortcuts", on_win_show_shortcuts, NULL, NULL, NULL },
   };
   g_action_map_add_action_entries(G_ACTION_MAP(self), win_entries, G_N_ELEMENTS(win_entries), self);
 
@@ -294,6 +311,13 @@ static void setup_window_shortcuts(SignerWindow *self) {
     gtk_named_action_new("win.about")
   );
   gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(controller), shortcut_about);
+
+  /* Ctrl+?: Show keyboard shortcuts help overlay */
+  GtkShortcut *shortcut_help = gtk_shortcut_new(
+    gtk_keyval_trigger_new(GDK_KEY_question, GDK_CONTROL_MASK | GDK_SHIFT_MASK),
+    gtk_named_action_new("win.show-shortcuts")
+  );
+  gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(controller), shortcut_help);
 
   /* Note: Escape to close dialogs is handled natively by AdwDialog.
    * AdwDialog automatically closes when Escape is pressed, so we don't
@@ -461,6 +485,7 @@ static void signer_window_init(SignerWindow *self) {
     /* App section */
     GMenu *app_section = g_menu_new();
     g_menu_append(app_section, "Preferences\tCtrl+,", "win.preferences");
+    g_menu_append(app_section, "Keyboard Shortcuts\tCtrl+?", "win.show-shortcuts");
     g_menu_append(app_section, "About GNostr Signer\tF1", "win.about");
     g_menu_append(app_section, "Quit\tCtrl+Q", "win.quit");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(app_section));

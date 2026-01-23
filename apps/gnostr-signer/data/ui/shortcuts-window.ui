@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <object class="GtkShortcutsWindow" id="shortcuts_window">
+    <property name="modal">true</property>
+    <child>
+      <object class="GtkShortcutsSection">
+        <property name="section-name">shortcuts</property>
+        <property name="max-height">12</property>
+        <!-- General Shortcuts Group -->
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title" translatable="yes">General</property>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Show Keyboard Shortcuts</property>
+                <property name="accelerator">&lt;Primary&gt;question</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Preferences</property>
+                <property name="accelerator">&lt;Primary&gt;comma</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Help / About</property>
+                <property name="accelerator">F1</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Quit Application</property>
+                <property name="accelerator">&lt;Primary&gt;q</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <!-- Profile Management Group -->
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title" translatable="yes">Profile Management</property>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">New Identity</property>
+                <property name="accelerator">&lt;Primary&gt;n</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Import Profile</property>
+                <property name="accelerator">&lt;Primary&gt;i</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Export / Backup</property>
+                <property name="accelerator">&lt;Primary&gt;e</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <!-- Security Group -->
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title" translatable="yes">Security</property>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Lock Session</property>
+                <property name="accelerator">&lt;Primary&gt;l</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <!-- Dialogs Group -->
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title" translatable="yes">Dialogs</property>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Close Dialog</property>
+                <property name="accelerator">Escape</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>
