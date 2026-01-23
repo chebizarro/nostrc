@@ -383,7 +383,6 @@ if(SANITIZE MATCHES "address" OR SANITIZE MATCHES "undefined")
     COMMAND ${CMAKE_COMMAND} -E env
       ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1
       UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
-      GNOSTR_LIVE=FALSE
       ${GNOSTR_BINARY}
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/apps/gnostr
   )
@@ -398,7 +397,6 @@ if(SANITIZE MATCHES "thread")
   add_test(NAME gnostr_tsan_test
     COMMAND ${CMAKE_COMMAND} -E env
       TSAN_OPTIONS=halt_on_error=1:history_size=7:second_deadlock_stack=1
-      GNOSTR_LIVE=FALSE
       ${GNOSTR_BINARY}
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/apps/gnostr
   )

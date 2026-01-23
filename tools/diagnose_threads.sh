@@ -8,9 +8,9 @@ echo "================================"
 echo ""
 
 # Start gnostr in background
-echo "Starting GNOSTR_LIVE=TRUE ./build/apps/gnostr/gnostr..."
+echo "Starting ./build/apps/gnostr/gnostr..."
 cd /home/bizarro/Documents/Projects/nostrc
-GNOSTR_LIVE=TRUE ./build/apps/gnostr/gnostr > /tmp/gnostr_diag.log 2>&1 &
+./build/apps/gnostr/gnostr > /tmp/gnostr_diag.log 2>&1 &
 GNOSTR_PID=$!
 
 echo "PID: $GNOSTR_PID"

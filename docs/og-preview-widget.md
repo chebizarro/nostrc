@@ -126,7 +126,7 @@ if (url_detected) {
 
 To test the widget:
 1. Build: `cmake --build build --target gnostr`
-2. Run: `GNOSTR_LIVE=TRUE ./build/apps/gnostr/gnostr`
+2. Run: `./build/apps/gnostr/gnostr`
 3. Post a note with a URL (e.g., "Check out https://github.com")
 4. The preview card should appear below the note content
 

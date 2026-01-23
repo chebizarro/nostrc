@@ -44,7 +44,7 @@ cd build && ctest -R test_subscription_backpressure
 #### 3. ASan/UBSan Integration Test (2 minute soak)
 ```bash
 cd build-asan/apps/gnostr
-timeout 120 env ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 GNOSTR_LIVE=TRUE ./gnostr
+timeout 120 env ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 ./gnostr
 ```
 **Result:** PASS - No errors for 2 minutes
 - No heap/stack overflows
@@ -85,8 +85,7 @@ cd build && ctest -R test_subscription_lifecycle
 ## Performance Observations
 
 ### Thread Count
-- With `GNOSTR_LIVE=FALSE`: ~10-15 threads (stable)
-- With `GNOSTR_LIVE=TRUE`: ~135 threads (goroutines, stable)
+- Typical operation: ~135 threads (goroutines, stable)
 - No thread explosion observed
 - Cleanup worker thread functioning correctly
 

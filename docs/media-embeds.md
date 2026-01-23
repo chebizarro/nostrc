@@ -192,7 +192,7 @@ To test media embeds:
 cmake --build build --target gnostr
 
 # Run
-GNOSTR_LIVE=TRUE ./build/apps/gnostr/gnostr
+./build/apps/gnostr/gnostr
 ```
 
 Post test notes:
