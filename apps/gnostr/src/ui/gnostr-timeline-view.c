@@ -591,7 +591,6 @@ static void timeline_item_get_property(GObject *obj, guint prop_id, GValue *valu
 
 static void timeline_item_dispose(GObject *obj) {
   TimelineItem *self = (TimelineItem*)obj;
-  g_debug("🔴 DISPOSE TimelineItem %p (pubkey=%.8s)", (void*)obj, self->pubkey ? self->pubkey : "null");
   g_clear_pointer(&self->display_name, g_free);
   g_clear_pointer(&self->handle, g_free);
   g_clear_pointer(&self->timestamp, g_free);
@@ -602,7 +601,6 @@ static void timeline_item_dispose(GObject *obj) {
   g_clear_pointer(&self->avatar_url, g_free);
   if (self->children) g_clear_object(&self->children);
   G_OBJECT_CLASS(timeline_item_parent_class)->dispose(obj);
-  g_debug("🔴 DISPOSE TimelineItem %p COMPLETE", (void*)obj);
 }
 
 static void timeline_item_class_init(TimelineItemClass *klass) {
@@ -1032,11 +1030,6 @@ static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec
     if (GNOSTR_IS_NOTE_CARD_ROW(row)) {
       gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row), display, handle, avatar_url);
       gtk_widget_set_visible(row, TRUE);
-      
-      gchar *event_id = NULL;
-      g_object_get(event_item, "event-id", &event_id, NULL);
-      g_debug("[PROFILE] Profile loaded for event %s - showing row", event_id ? event_id : "(null)");
-      g_free(event_id);
     }
     
     g_free(display);
@@ -1049,7 +1042,6 @@ static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec
 static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
   GtkWidget *row = GTK_WIDGET(gnostr_note_card_row_new());
-  g_debug("factory_setup_cb: created note-card row=%p for item=%p", (void*)row, (void*)item);
 
   /* Connect the open-profile signal */
   g_signal_connect(row, "open-profile", G_CALLBACK(on_note_card_open_profile_relay), NULL);
@@ -1096,18 +1088,12 @@ static void try_set_avatar(GtkWidget *row, const char *avatar_url, const char *d
   if (i == 0) { initials[0] = 'A'; initials[1] = 'N'; }
   if (GTK_IS_LABEL(w_init)) gtk_label_set_text(GTK_LABEL(w_init), initials);
 
-  g_debug("avatar set: row=%p url=%s display=%.30s handle=%.30s", 
-          (void*)row, avatar_url ? avatar_url : "(null)", 
-          display ? display : "", handle ? handle : "");
-  
   if (!avatar_url || !*avatar_url || !str_has_prefix_http(avatar_url) || !GTK_IS_PICTURE(w_img)) {
-    g_debug("avatar set: invalid or no image widget, showing initials (url=%s, is_picture=%d)", 
-            avatar_url ? avatar_url : "(null)", GTK_IS_PICTURE(w_img));
     if (GTK_IS_WIDGET(w_img)) gtk_widget_set_visible(w_img, FALSE);
     if (GTK_IS_WIDGET(w_init)) gtk_widget_set_visible(w_init, TRUE);
     return;
   }
-  
+
   /* Try loading from cache first */
   GdkTexture *cached = gnostr_avatar_try_load_cached(avatar_url);
   if (cached) {
@@ -1115,7 +1101,6 @@ static void try_set_avatar(GtkWidget *row, const char *avatar_url, const char *d
     gtk_widget_set_visible(w_img, TRUE);
     if (GTK_IS_WIDGET(w_init)) gtk_widget_set_visible(w_init, FALSE);
     g_object_unref(cached);
-    g_debug("avatar set: cache hit url=%s", avatar_url);
     return;
   }
   
@@ -1128,60 +1113,33 @@ static void on_item_notify_display_name(GObject *obj, GParamSpec *pspec, gpointe
   (void)pspec;
   GtkWidget *row = GTK_WIDGET(user_data);
   if (!GTK_IS_WIDGET(row)) return;
-  /* CRITICAL: Validate obj before accessing properties */
-  if (!obj || !G_IS_OBJECT(obj)) {
-    g_debug("on_item_notify_display_name: obj is invalid, ignoring");
-    return;
-  }
-  gchar *display = NULL, *handle = NULL, *avatar_url = NULL, *pubkey = NULL;
-  g_object_get(obj, "display-name", &display, "handle", &handle, "avatar-url", &avatar_url, "pubkey", &pubkey, NULL);
-  g_debug("🔔 on_item_notify_display_name: pubkey=%.*s display='%s' handle='%s' avatar='%s'", 
-            pubkey ? 8 : 0, pubkey ? pubkey : "", 
-            display ? display : "(null)", 
-            handle ? handle : "(null)", 
-            avatar_url ? avatar_url : "(null)");
+  if (!obj || !G_IS_OBJECT(obj)) return;
+  gchar *display = NULL, *handle = NULL, *avatar_url = NULL;
+  g_object_get(obj, "display-name", &display, "handle", &handle, "avatar-url", &avatar_url, NULL);
   if (GNOSTR_IS_NOTE_CARD_ROW(row))
     gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row), display, handle, avatar_url);
-  g_free(display); g_free(handle); g_free(avatar_url); g_free(pubkey);
+  g_free(display); g_free(handle); g_free(avatar_url);
 }
 
 static void on_item_notify_handle(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
   GtkWidget *row = GTK_WIDGET(user_data);
   if (!GTK_IS_WIDGET(row)) return;
-  /* CRITICAL: Validate obj before accessing properties */
-  if (!obj || !G_IS_OBJECT(obj)) {
-    g_debug("on_item_notify_handle: obj is invalid, ignoring");
-    return;
-  }
-  gchar *display = NULL, *handle = NULL, *avatar_url = NULL, *pubkey = NULL;
-  g_object_get(obj, "display-name", &display, "handle", &handle, "avatar-url", &avatar_url, "pubkey", &pubkey, NULL);
-  g_debug("🔔 on_item_notify_handle: pubkey=%.*s display='%s' handle='%s' avatar='%s'", 
-            pubkey ? 8 : 0, pubkey ? pubkey : "", 
-            display ? display : "(null)", 
-            handle ? handle : "(null)", 
-            avatar_url ? avatar_url : "(null)");
+  if (!obj || !G_IS_OBJECT(obj)) return;
+  gchar *display = NULL, *handle = NULL, *avatar_url = NULL;
+  g_object_get(obj, "display-name", &display, "handle", &handle, "avatar-url", &avatar_url, NULL);
   if (GNOSTR_IS_NOTE_CARD_ROW(row))
     gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row), display, handle, avatar_url);
-  g_free(display); g_free(handle); g_free(avatar_url); g_free(pubkey);
+  g_free(display); g_free(handle); g_free(avatar_url);
 }
 
 static void on_item_notify_avatar_url(GObject *obj, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
   GtkWidget *row = GTK_WIDGET(user_data);
   if (!GTK_IS_WIDGET(row)) return;
-  /* CRITICAL: Validate obj before accessing properties */
-  if (!obj || !G_IS_OBJECT(obj)) {
-    g_debug("on_item_notify_avatar_url: obj is invalid, ignoring");
-    return;
-  }
-  gchar *url = NULL, *display = NULL, *handle = NULL, *pubkey = NULL;
-  g_object_get(obj, "avatar-url", &url, "display-name", &display, "handle", &handle, "pubkey", &pubkey, NULL);
-  g_debug("🔔 on_item_notify_avatar_url: pubkey=%.*s display='%s' handle='%s' avatar='%s'", 
-            pubkey ? 8 : 0, pubkey ? pubkey : "", 
-            display ? display : "(null)", 
-            handle ? handle : "(null)", 
-            url ? url : "(null)");
+  if (!obj || !G_IS_OBJECT(obj)) return;
+  gchar *url = NULL, *display = NULL, *handle = NULL;
+  g_object_get(obj, "avatar-url", &url, "display-name", &display, "handle", &handle, NULL);
   if (GNOSTR_IS_NOTE_CARD_ROW(row))
     gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row), display, handle, url);
   g_free(url); g_free(display); g_free(handle);

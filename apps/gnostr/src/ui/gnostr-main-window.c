@@ -238,14 +238,12 @@ static void schedule_apply_profiles(GnostrMainWindow *self, GPtrArray *items /* 
   IdleApplyProfilesCtx *c = g_new0(IdleApplyProfilesCtx, 1);
   c->self = g_object_ref(self);
   c->items = items; /* transfer */
-  g_debug("[PROFILE] Scheduling %u profiles for UI update", items->len);
   g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, apply_profiles_idle, c, NULL);
 }
 
 static gboolean profile_apply_on_main(gpointer data) {
   ProfileApplyCtx *c = (ProfileApplyCtx*)data;
   if (c && c->pubkey_hex && c->content_json) {
-    g_debug("[PROFILE] Applying profile %.*s...", 8, c->pubkey_hex);
     GList *tops = gtk_window_list_toplevels();
     for (GList *l = tops; l; l = l->next) {
       if (GNOSTR_IS_MAIN_WINDOW(l->data)) {
@@ -459,7 +457,6 @@ static void enqueue_profile_author(GnostrMainWindow *self, const char *pubkey_he
     if (g_strcmp0(s, pubkey_hex) == 0) goto schedule_only; /* already queued */
   }
   g_ptr_array_add(self->profile_fetch_queue, g_strdup(pubkey_hex));
-  g_debug("[PROFILE] Queued author %.*s... (queue size: %u)", 8, pubkey_hex, self->profile_fetch_queue->len);
 schedule_only:
   /* Debounce triggering */
   if (self->profile_fetch_source_id) {
@@ -2498,8 +2495,6 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
 
-  g_debug("[UI] Profile click for %.*s...", 8, pubkey_hex);
-
   /* Check if profile pane is currently visible */
   gboolean sidebar_visible = gtk_revealer_get_reveal_child(GTK_REVEALER(self->profile_revealer));
 
@@ -2508,15 +2503,13 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
   if (GNOSTR_IS_PROFILE_PANE(self->profile_pane)) {
     const char *current = gnostr_profile_pane_get_current_pubkey(GNOSTR_PROFILE_PANE(self->profile_pane));
     if (sidebar_visible && current && strcmp(current, pubkey_hex) == 0) {
-      /* Same profile clicked while sidebar is visible - toggle OFF (close sidebar) */
-      g_debug("[UI] Toggle: closing profile pane (same profile clicked)");
+      /* Same profile clicked while sidebar is visible - toggle OFF */
       gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), FALSE);
       return;
     }
   }
 
   /* Different profile or sidebar was closed - show the profile pane */
-  g_debug("[UI] Toggle: showing profile pane for %.*s...", 8, pubkey_hex);
   gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), TRUE);
   
   /* Set the pubkey on the profile pane */
@@ -2540,7 +2533,6 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
             if (content && *content) {
               extern void gnostr_profile_pane_update_from_json(GnostrProfilePane *pane, const char *json);
               gnostr_profile_pane_update_from_json(GNOSTR_PROFILE_PANE(self->profile_pane), content);
-              g_debug("[PROFILE] Loaded profile for %.8s from nostrdb", pubkey_hex);
               found = TRUE;
             }
           }
@@ -2551,7 +2543,6 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
 
       if (!found) {
         /* Profile not in DB, enqueue for fetching from relays */
-        g_debug("[PROFILE] Profile %.8s not in nostrdb, enqueueing for fetch", pubkey_hex);
         enqueue_profile_author(self, pubkey_hex);
       }
       storage_ndb_end_query(txn);
@@ -2563,8 +2554,6 @@ static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer us
   (void)pane;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-
-  g_debug("[UI] Closing profile pane");
   gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), FALSE);
 }
 
@@ -2573,9 +2562,6 @@ static void on_discover_open_profile(GnostrPageDiscover *page, const char *pubke
   (void)page;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
-
-  g_debug("[DISCOVER] Open profile requested: %.*s...", 8, pubkey_hex);
-  /* Reuse the note card open profile logic */
   on_note_card_open_profile(NULL, pubkey_hex, self);
 }
 
@@ -2588,7 +2574,6 @@ static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, g
 
   /* When Discover page becomes visible, load profiles */
   if (visible_child == self->page_discover) {
-    g_debug("[DISCOVER] Page became visible, loading profiles");
     if (GNOSTR_IS_PAGE_DISCOVER(self->page_discover)) {
       gnostr_page_discover_load_profiles(GNOSTR_PAGE_DISCOVER(self->page_discover));
     }
@@ -2966,10 +2951,8 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
   }
   
   if (!self->profile_fetch_queue || self->profile_fetch_queue->len == 0) {
-    /* Queue empty - silent */
     return G_SOURCE_REMOVE;
   }
-  g_debug("[PROFILE] Fetching profiles for %u authors", self->profile_fetch_queue->len);
   /* Snapshot and clear queue */
   GPtrArray *authors = self->profile_fetch_queue;
   self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
@@ -3005,9 +2988,7 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
     storage_ndb_end_query(txn);
   }
   
-  if (cached_applied > 0) {
-    g_debug("[PROFILE] ✓ %u cached profiles loaded from DB", cached_applied);
-  }
+  (void)cached_applied; /* Used for DB cache optimization */
   
   /* NOTE: We still fetch ALL profiles from relays to check for updates.
    * Cached profiles give instant UI feedback, relay fetch keeps them fresh. */
@@ -3023,13 +3004,11 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
     return G_SOURCE_REMOVE;
   }
   
-  /* NOTE: Relays should already be in the pool from start_pool_live().
-   * If not, the async fetch will skip unavailable relays. */
-  /* Build batch list but dispatch sequentially (EOSE-gated) */
+  /* Build batch list; dispatch sequentially (EOSE-gated) */
   const guint total = authors->len;
-  const guint batch_sz = 100; /* Increased from 16 to reduce inter-batch issues */
+  const guint batch_sz = 100;
   const guint n_batches = (total + batch_sz - 1) / batch_sz;
-  g_debug("[PROFILE] Fetching %u authors from %zu relays (%u batches)", total, url_count, n_batches);
+  (void)n_batches; /* For batch organization only */
   
   /* Check for stale batch state (shouldn't happen, but be defensive) */
   if (self->profile_batches) {
@@ -3050,8 +3029,6 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
       self->profile_batch_url_count = 0;
     }
     self->profile_batch_pos = 0;
-    
-    g_debug("[PROFILE] Stale state cleared, proceeding with new fetch");
     /* Fall through to create new batch sequence */
   }
   /* Do not set a free-func: we'll free each batch when its callback completes,
@@ -3321,16 +3298,10 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Manage Relays", -1);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_settings),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Settings", -1);
-  /* Report HTTP avatar support availability */
-#ifdef HAVE_SOUP3
-  g_debug("http: libsoup3 enabled; avatar HTTP fetch active");
-#else
-  g_debug("http: libsoup3 NOT enabled; avatar HTTP fetch disabled");
-#endif
-  /* Sanity logging and guard for avatar popover attachment */
+  /* Sanity check and guard for avatar popover attachment */
   GtkPopover *init_pop = NULL;
   if (self->btn_avatar) init_pop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(self->btn_avatar));
-  g_debug("[INIT] Avatar button setup");
+  (void)init_pop; /* May be unused depending on avatar_popover state */
   if (self->btn_avatar && self->avatar_popover) {
     /* Unconditionally associate the popover to avoid ambiguity */
     gtk_menu_button_set_popover(GTK_MENU_BUTTON(self->btn_avatar), GTK_WIDGET(self->avatar_popover));
@@ -3338,9 +3309,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   g_return_if_fail(self->composer != NULL);
   /* Initialize weak refs to template children needed in async paths */
   g_weak_ref_init(&self->timeline_ref, self->timeline);
-  /* NEW: Initialize GListModel-based event model */
+  /* Initialize GListModel-based event model */
   self->event_model = gn_nostr_event_model_new();
-  g_debug("[INIT] Created GnNostrEventModel");
   
   /* Configure initial query for kind-1 notes */
   GnNostrQueryParams params = {
@@ -3361,7 +3331,6 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   
   /* Attach model to timeline view */
   if (self->timeline && G_TYPE_CHECK_INSTANCE_TYPE(self->timeline, GNOSTR_TYPE_TIMELINE_VIEW)) {
-    g_debug("[INIT] Attaching GnNostrEventModel to timeline view");
     /* Wrap GListModel in a selection model */
     GtkSelectionModel *selection = GTK_SELECTION_MODEL(
       gtk_single_selection_new(G_LIST_MODEL(self->event_model))
@@ -3375,7 +3344,6 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
       GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
       if (vadj) {
         g_signal_connect(vadj, "value-changed", G_CALLBACK(on_timeline_scroll_value_changed), self);
-        g_debug("[INIT] Connected scroll edge detection for sliding window");
       }
     }
 
@@ -3417,7 +3385,6 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
 
   /* Register for relay configuration changes (live relay switching, nostrc-36y.4) */
   self->relay_change_handler_id = gnostr_relay_change_connect(on_relay_config_changed, self);
-  g_debug("[LIVE_RELAY] Registered relay change handler (id=%lu)", self->relay_change_handler_id);
   /* Build app menu for header button */
   if (self->btn_menu) {
     GMenu *menu = g_menu_new();
@@ -3432,7 +3399,6 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(about_action));
     g_object_unref(about_action);
   }
-  g_debug("connecting post-requested handler on composer=%p", (void*)self->composer);
   g_signal_connect(self->composer, "post-requested",
                    G_CALLBACK(on_composer_post_requested), self);
   /* nostrc-yi2: Calm timeline - connect new notes button click */
@@ -3443,7 +3409,6 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   if (self->profile_pane && GNOSTR_IS_PROFILE_PANE(self->profile_pane)) {
     g_signal_connect(self->profile_pane, "close-requested",
                      G_CALLBACK(on_profile_pane_close_requested), self);
-    g_debug("connected profile pane close-requested signal");
   }
   /* Connect thread view signals */
   if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
@@ -3451,26 +3416,22 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                      G_CALLBACK(on_thread_view_close_requested), self);
     g_signal_connect(self->thread_view, "open-profile",
                      G_CALLBACK(on_thread_view_open_profile), self);
-    g_debug("connected thread view signals");
   }
   /* Connect discover page signals (nostrc-dr3) */
   if (self->page_discover && GNOSTR_IS_PAGE_DISCOVER(self->page_discover)) {
     g_signal_connect(self->page_discover, "open-profile",
                      G_CALLBACK(on_discover_open_profile), self);
-    g_debug("connected discover page open-profile signal");
   }
   /* Connect stack visible-child-name signal to load discover profiles on demand */
   if (self->stack && GTK_IS_STACK(self->stack)) {
     g_signal_connect(self->stack, "notify::visible-child",
                      G_CALLBACK(on_stack_visible_child_changed), self);
-    g_debug("connected stack visible-child signal for discover page");
   }
   /* Add key event controller for ESC to close profile sidebar */
   {
     GtkEventController *key_controller = gtk_event_controller_key_new();
     g_signal_connect(key_controller, "key-pressed", G_CALLBACK(on_key_pressed), self);
     gtk_widget_add_controller(GTK_WIDGET(self), key_controller);
-    g_debug("connected ESC key handler for profile sidebar");
   }
   if (self->btn_avatar) {
     /* Ensure avatar button is interactable */
@@ -3490,7 +3451,6 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   {
     const char *live = g_getenv("GNOSTR_LIVE");
     if (live && *live && g_strcmp0(live, "0") != 0) {
-      g_debug("[INIT] Starting live subscriptions (GNOSTR_LIVE=TRUE)");
       start_pool_live(self);
       /* Also start profile subscription if identity is configured */
       start_profile_subscription(self);
@@ -3995,7 +3955,6 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
 
       if (!gnostr_relay_validation_result_is_valid(validation)) {
         gchar *errors = gnostr_relay_validation_result_format_errors(validation);
-        g_debug("[PUBLISH] Skipping %s due to limit violations: %s", url, errors ? errors : "unknown");
         if (errors) {
           if (limit_warnings->len > 0) g_string_append(limit_warnings, "\n");
           g_string_append(limit_warnings, errors);
@@ -4018,7 +3977,6 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
 
     GError *conn_err = NULL;
     if (!gnostr_relay_connect(relay, &conn_err)) {
-      g_debug("[PUBLISH] Failed to connect to %s: %s", url, conn_err ? conn_err->message : "unknown");
       g_clear_error(&conn_err);
       g_object_unref(relay);
       fail_count++;
@@ -4027,10 +3985,8 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
 
     GError *pub_err = NULL;
     if (gnostr_relay_publish(relay, event, &pub_err)) {
-      g_debug("[PUBLISH] Published to %s", url);
       success_count++;
     } else {
-      g_debug("[PUBLISH] Publish failed to %s: %s", url, pub_err ? pub_err->message : "unknown");
       g_clear_error(&pub_err);
       fail_count++;
     }
@@ -4340,9 +4296,6 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
         relay_info, like_content, like_content_len, like_tag_count, like_created_at, like_serialized_len);
 
       if (!gnostr_relay_validation_result_is_valid(validation)) {
-        gchar *errors = gnostr_relay_validation_result_format_errors(validation);
-        g_debug("[LIKE] Skipping %s due to limit violations: %s", url, errors ? errors : "unknown");
-        g_free(errors);
         gnostr_relay_validation_result_free(validation);
         gnostr_relay_info_free(relay_info);
         limit_skip_count++;
@@ -4360,7 +4313,6 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
 
     GError *conn_err = NULL;
     if (!gnostr_relay_connect(relay, &conn_err)) {
-      g_debug("[LIKE] Failed to connect to %s: %s", url, conn_err ? conn_err->message : "unknown");
       g_clear_error(&conn_err);
       g_object_unref(relay);
       fail_count++;
@@ -4369,10 +4321,8 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
 
     GError *pub_err = NULL;
     if (gnostr_relay_publish(relay, event, &pub_err)) {
-      g_debug("[LIKE] Published reaction to %s", url);
       success_count++;
     } else {
-      g_debug("[LIKE] Publish failed to %s: %s", url, pub_err ? pub_err->message : "unknown");
       g_clear_error(&pub_err);
       fail_count++;
     }
@@ -4382,7 +4332,7 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
   /* Show result toast and update UI */
   if (success_count > 0) {
     if (limit_skip_count > 0) {
-      char *msg = g_strdup_printf("Liked! (%u relays skipped due to limits)", limit_skip_count);
+      char *msg = g_strdup_printf("Liked! (%u relays skipped)", limit_skip_count);
       show_toast(self, msg);
       g_free(msg);
     } else {
@@ -4403,9 +4353,8 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
     if (signed_event_json) {
       int ingest_rc = storage_ndb_ingest_event_json(signed_event_json, NULL);
       if (ingest_rc != 0) {
-        g_warning("[LIKE] Failed to ingest reaction event to local cache");
+        g_warning("[LIKE] Failed to store reaction locally");
       } else {
-        g_debug("[LIKE] Reaction event stored in local cache");
       }
     }
   } else {
@@ -5100,55 +5049,37 @@ static gboolean check_relay_health(gpointer user_data) {
   
   /* Skip health check if reconnection is already in progress */
   if (self->reconnection_in_progress) {
-    g_debug("relay_health: reconnection in progress, skipping check");
     return G_SOURCE_CONTINUE;
   }
-  
+
   /* Get list of relay URLs from the pool */
   GPtrArray *relay_urls = gnostr_simple_pool_get_relay_urls(self->pool);
   if (!relay_urls || relay_urls->len == 0) {
-    g_debug("relay_health: no relays in pool");
     if (relay_urls) g_ptr_array_unref(relay_urls);
     return G_SOURCE_CONTINUE;
   }
-  
+
   /* Check connection status of each relay */
   guint disconnected_count = 0;
   guint connected_count = 0;
-  
+
   for (guint i = 0; i < relay_urls->len; i++) {
     const char *url = g_ptr_array_index(relay_urls, i);
     if (!url) continue;
-    
+
     gboolean is_connected = gnostr_simple_pool_is_relay_connected(self->pool, url);
     if (is_connected) {
       connected_count++;
-      g_debug("relay_health: %s is CONNECTED", url);
     } else {
       disconnected_count++;
-      g_warning("relay_health: %s is DISCONNECTED", url);
     }
   }
-  
-  /* Log relay health and goroutine count to detect growth */
-  int goroutine_count = go_get_active_count();
-  /* Get ingest stats for memory diagnostics */
-  guint64 ingest_count = storage_ndb_get_ingest_count();
-  guint64 ingest_mb = storage_ndb_get_ingest_bytes() / (1024 * 1024);
 
-  g_debug("relay_health: status - %u connected, %u disconnected (total %u, goroutines=%d, ingested=%" G_GUINT64_FORMAT ", ingest_mb=%" G_GUINT64_FORMAT ")",
-          connected_count, disconnected_count, relay_urls->len, goroutine_count, ingest_count, ingest_mb);
-  
-  /* If ALL relays are disconnected, trigger reconnection (not just any) */
+  /* If ALL relays are disconnected, trigger reconnection */
   if (disconnected_count > 0 && connected_count == 0) {
-    g_warning("relay_health: ALL %u relay(s) disconnected - triggering reconnection", 
+    g_warning("relay_health: all %u relay(s) disconnected - reconnecting",
               disconnected_count);
-    
-    /* Restart the live subscription to reconnect */
     start_pool_live(self);
-  } else if (disconnected_count > 0) {
-    g_debug("relay_health: %u relay(s) disconnected but %u still connected - not reconnecting",
-              disconnected_count, connected_count);
   }
   
   g_ptr_array_unref(relay_urls);
@@ -5163,7 +5094,6 @@ static gboolean periodic_model_refresh(gpointer user_data) {
   }
   
   if (self->event_model) {
-    g_debug("[MODEL] Periodic refresh triggered");
     gn_nostr_event_model_refresh(self->event_model);
   }
   
@@ -5176,7 +5106,6 @@ static gboolean retry_pool_live(gpointer user_data) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) {
     return G_SOURCE_REMOVE;
   }
-  g_debug("[RELAY] Retrying subscription after failure");
   start_pool_live(self);
   return G_SOURCE_REMOVE;
 }
