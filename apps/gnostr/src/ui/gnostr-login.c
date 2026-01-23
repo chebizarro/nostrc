@@ -11,6 +11,11 @@
 #include "nostr/nip46/nip46_client.h"
 #include "nostr/nip46/nip46_uri.h"
 #include "nostr/nip19/nip19.h"
+#include "nostr/nip44/nip44.h"
+#include "nostr_simple_pool.h"
+#include "nostr-event.h"
+#include "nostr-filter.h"
+#include "nostr-kinds.h"
 #include <glib/gi18n.h>
 #include <jansson.h>
 #include <secp256k1.h>
@@ -66,9 +71,16 @@ struct _GnostrLogin {
   gboolean connecting_bunker;
   gboolean local_signer_available;
   char *nostrconnect_uri;          /* URI for QR code display */
-  char *nostrconnect_secret;       /* Secret for bunker auth */
+  char *nostrconnect_secret;       /* Secret for bunker auth (hex) */
+  uint8_t nostrconnect_secret_bytes[32]; /* Secret bytes for decryption */
+  char *client_pubkey_hex;         /* Client pubkey from nostrconnect URI */
   NostrNip46Session *nip46_session; /* NIP-46 session */
   GCancellable *cancellable;       /* For async operations */
+
+  /* NIP-46 relay subscription for receiving signer responses */
+  GnostrSimplePool *nip46_pool;
+  gulong nip46_events_handler;
+  gboolean listening_for_response;
 };
 
 G_DEFINE_TYPE(GnostrLogin, gnostr_login, GTK_TYPE_WINDOW)
@@ -92,6 +104,9 @@ static void on_done_clicked(GtkButton *btn, gpointer user_data);
 static void check_local_signer_availability(GnostrLogin *self);
 static void save_npub_to_settings(const char *npub);
 static void show_success(GnostrLogin *self, const char *npub);
+static void start_nip46_listener(GnostrLogin *self, const char *relay_url);
+static void stop_nip46_listener(GnostrLogin *self);
+static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data);
 
 static void show_toast(GnostrLogin *self, const char *msg) {
   if (!self->toast_label || !self->toast_revealer) return;
@@ -113,6 +128,9 @@ static gboolean hide_toast_on_main(gpointer user_data) {
 static void gnostr_login_dispose(GObject *obj) {
   GnostrLogin *self = GNOSTR_LOGIN(obj);
 
+  /* Stop NIP-46 relay listener */
+  stop_nip46_listener(self);
+
   if (self->cancellable) {
     g_cancellable_cancel(self->cancellable);
     g_clear_object(&self->cancellable);
@@ -127,6 +145,11 @@ static void gnostr_login_dispose(GObject *obj) {
   self->nostrconnect_uri = NULL;
   g_free(self->nostrconnect_secret);
   self->nostrconnect_secret = NULL;
+  g_free(self->client_pubkey_hex);
+  self->client_pubkey_hex = NULL;
+
+  /* Clear secret bytes from memory */
+  memset(self->nostrconnect_secret_bytes, 0, sizeof(self->nostrconnect_secret_bytes));
 
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_LOGIN);
   G_OBJECT_CLASS(gnostr_login_parent_class)->dispose(obj);
@@ -222,6 +245,14 @@ GnostrLogin *gnostr_login_new(GtkWindow *parent) {
                                     "modal", TRUE,
                                     NULL);
   return self;
+}
+
+NostrNip46Session *gnostr_login_take_nip46_session(GnostrLogin *self) {
+  g_return_val_if_fail(GNOSTR_IS_LOGIN(self), NULL);
+
+  NostrNip46Session *session = self->nip46_session;
+  self->nip46_session = NULL;
+  return session;
 }
 
 /* ---- Local Signer (NIP-55L) ---- */
@@ -408,6 +439,9 @@ static void generate_nostrconnect_uri(GnostrLogin *self) {
     secret_bytes[i] = g_random_int_range(0, 256);
   }
 
+  /* Store secret bytes for NIP-44 decryption later */
+  memcpy(self->nostrconnect_secret_bytes, secret_bytes, 32);
+
   /* Encode secret as hex for the URI query parameter */
   char secret_hex[65];
   for (int i = 0; i < 32; i++) {
@@ -443,10 +477,15 @@ static void generate_nostrconnect_uri(GnostrLogin *self) {
     g_warning("Failed to derive client pubkey from secret");
     /* Clear secret bytes on failure */
     memset(secret_bytes, 0, sizeof(secret_bytes));
+    memset(self->nostrconnect_secret_bytes, 0, sizeof(self->nostrconnect_secret_bytes));
     return;
   }
 
-  /* Clear secret bytes from stack */
+  /* Store client pubkey for subscription filter */
+  g_free(self->client_pubkey_hex);
+  self->client_pubkey_hex = g_strdup(client_pubkey_hex);
+
+  /* Clear secret bytes from stack (we've stored them in self) */
   memset(secret_bytes, 0, sizeof(secret_bytes));
 
   /* Build nostrconnect:// URI with relay and metadata
@@ -482,12 +521,23 @@ static void on_remote_signer_clicked(GtkButton *btn, gpointer user_data) {
 
   /* Switch to bunker page */
   gtk_stack_set_visible_child(GTK_STACK(self->stack), self->page_bunker);
+
+  /* Start listening for NIP-46 responses on the relay */
+  const char *relay = "wss://relay.nsec.app";
+  start_nip46_listener(self, relay);
+
+  /* Update status */
+  gtk_label_set_text(GTK_LABEL(self->lbl_bunker_status), "Scan QR code with your mobile signer...");
+  gtk_widget_set_visible(self->spinner_bunker, TRUE);
 }
 
 static void on_back_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrLogin *self = GNOSTR_LOGIN(user_data);
   if (!GNOSTR_IS_LOGIN(self)) return;
+
+  /* Stop listening for NIP-46 responses */
+  stop_nip46_listener(self);
 
   gtk_stack_set_visible_child(GTK_STACK(self->stack), self->page_choose);
 }
@@ -710,4 +760,245 @@ static void on_done_clicked(GtkButton *btn, gpointer user_data) {
   if (!GNOSTR_IS_LOGIN(self)) return;
 
   gtk_window_close(GTK_WINDOW(self));
+}
+
+/* ---- NIP-46 Relay Listener for Remote Signer Responses ---- */
+
+/* NIP-46 response kind */
+#define NIP46_RESPONSE_KIND 24133
+
+static void on_nip46_subscribe_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GnostrLogin *self = GNOSTR_LOGIN(user_data);
+  GError *error = NULL;
+
+  gnostr_simple_pool_subscribe_many_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+
+  if (error) {
+    g_warning("[NIP46_LOGIN] Subscription failed: %s", error->message);
+    if (GNOSTR_IS_LOGIN(self)) {
+      gtk_label_set_text(GTK_LABEL(self->lbl_bunker_status), "Failed to connect to relay");
+      gtk_widget_set_visible(self->spinner_bunker, FALSE);
+    }
+    g_clear_error(&error);
+  } else {
+    g_message("[NIP46_LOGIN] Listening for signer response...");
+  }
+
+  if (self) g_object_unref(self);
+}
+
+/* Handle incoming NIP-46 events from the relay */
+static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer user_data) {
+  (void)pool;
+  GnostrLogin *self = GNOSTR_LOGIN(user_data);
+
+  if (!GNOSTR_IS_LOGIN(self) || !batch) return;
+
+  for (guint i = 0; i < batch->len; i++) {
+    NostrEvent *event = g_ptr_array_index(batch, i);
+    if (!event) continue;
+
+    int kind = nostr_event_get_kind(event);
+    if (kind != NIP46_RESPONSE_KIND) continue;
+
+    const char *content = nostr_event_get_content(event);
+    const char *sender_pubkey = nostr_event_get_pubkey(event);
+
+    if (!content || !sender_pubkey) continue;
+
+    g_message("[NIP46_LOGIN] Received NIP-46 event from %s", sender_pubkey);
+
+    /* Decrypt content using NIP-44 with our client secret and the sender's pubkey */
+    uint8_t sender_pubkey_bytes[32];
+    for (int j = 0; j < 32; j++) {
+      unsigned int byte;
+      if (sscanf(sender_pubkey + j * 2, "%2x", &byte) != 1) {
+        g_warning("[NIP46_LOGIN] Invalid sender pubkey");
+        continue;
+      }
+      sender_pubkey_bytes[j] = (uint8_t)byte;
+    }
+
+    /* Decrypt the content using NIP-44 v2 */
+    uint8_t *plaintext_bytes = NULL;
+    size_t plaintext_len = 0;
+    int rc = nostr_nip44_decrypt_v2(
+      self->nostrconnect_secret_bytes,
+      sender_pubkey_bytes,
+      content,
+      &plaintext_bytes,
+      &plaintext_len
+    );
+
+    if (rc != 0 || !plaintext_bytes) {
+      g_warning("[NIP46_LOGIN] Failed to decrypt NIP-46 response: %d", rc);
+      continue;
+    }
+
+    /* Null-terminate the plaintext for JSON parsing */
+    char *plaintext = g_strndup((const char*)plaintext_bytes, plaintext_len);
+    free(plaintext_bytes);
+
+    g_message("[NIP46_LOGIN] Decrypted response: %s", plaintext);
+
+    /* Parse the NIP-46 response JSON:
+     * {"id":"...","result":"<signer_pubkey>","error":null}
+     * For connect request, result contains the signer's pubkey
+     */
+    json_error_t jerr;
+    json_t *root = json_loads(plaintext, 0, &jerr);
+    g_free(plaintext);
+
+    if (!root) {
+      g_warning("[NIP46_LOGIN] Failed to parse NIP-46 JSON: %s", jerr.text);
+      continue;
+    }
+
+    /* Check for error */
+    json_t *error_obj = json_object_get(root, "error");
+    if (error_obj && !json_is_null(error_obj)) {
+      const char *err_msg = json_string_value(error_obj);
+      g_warning("[NIP46_LOGIN] Signer error: %s", err_msg ? err_msg : "unknown");
+      gtk_label_set_text(GTK_LABEL(self->lbl_bunker_status),
+                         err_msg ? err_msg : "Signer rejected request");
+      gtk_widget_set_visible(self->spinner_bunker, FALSE);
+      json_decref(root);
+      continue;
+    }
+
+    /* Get the result (signer's pubkey for connect, or "ack" for simple response) */
+    json_t *result_obj = json_object_get(root, "result");
+    const char *result = json_string_value(result_obj);
+
+    if (!result) {
+      g_warning("[NIP46_LOGIN] No result in NIP-46 response");
+      json_decref(root);
+      continue;
+    }
+
+    g_message("[NIP46_LOGIN] Authorization received, signer pubkey: %s", result);
+
+    /* For nostrconnect, the result is "ack" and we use the sender's pubkey as the signer */
+    const char *signer_pubkey_hex = NULL;
+    if (strcmp(result, "ack") == 0) {
+      signer_pubkey_hex = sender_pubkey;
+    } else if (strlen(result) == 64) {
+      /* Result is the signer's pubkey */
+      signer_pubkey_hex = result;
+    } else {
+      g_warning("[NIP46_LOGIN] Unexpected result format: %s", result);
+      json_decref(root);
+      continue;
+    }
+
+    /* Convert hex pubkey to npub */
+    uint8_t pubkey_bytes[32];
+    for (int j = 0; j < 32; j++) {
+      unsigned int byte;
+      if (sscanf(signer_pubkey_hex + j * 2, "%2x", &byte) != 1) {
+        g_warning("[NIP46_LOGIN] Invalid signer pubkey");
+        json_decref(root);
+        continue;
+      }
+      pubkey_bytes[j] = (uint8_t)byte;
+    }
+
+    char *npub = NULL;
+    if (nostr_nip19_encode_npub(pubkey_bytes, &npub) != 0 || !npub) {
+      g_warning("[NIP46_LOGIN] Failed to encode npub");
+      json_decref(root);
+      continue;
+    }
+
+    json_decref(root);
+
+    /* Stop listening */
+    stop_nip46_listener(self);
+
+    /* Create NIP-46 session for future signing operations */
+    if (self->nip46_session) {
+      nostr_nip46_session_free(self->nip46_session);
+    }
+    self->nip46_session = nostr_nip46_client_new();
+
+    /* Save to settings and show success */
+    save_npub_to_settings(npub);
+    show_success(self, npub);
+    free(npub);
+    return;
+  }
+}
+
+static void start_nip46_listener(GnostrLogin *self, const char *relay_url) {
+  if (!self || !relay_url) return;
+
+  if (self->listening_for_response) {
+    g_warning("[NIP46_LOGIN] Already listening for response");
+    return;
+  }
+
+  if (!self->client_pubkey_hex) {
+    g_warning("[NIP46_LOGIN] No client pubkey set");
+    return;
+  }
+
+  g_message("[NIP46_LOGIN] Starting listener on %s for pubkey %s",
+            relay_url, self->client_pubkey_hex);
+
+  /* Create pool */
+  self->nip46_pool = gnostr_simple_pool_new();
+  if (!self->nip46_pool) {
+    g_warning("[NIP46_LOGIN] Failed to create pool");
+    return;
+  }
+
+  /* Build filter for NIP-46 responses addressed to our client pubkey */
+  NostrFilter *filter = nostr_filter_new();
+  int kinds[] = { NIP46_RESPONSE_KIND };
+  nostr_filter_set_kinds(filter, kinds, 1);
+
+  /* Filter by p-tag for our client pubkey */
+  nostr_filter_tags_append(filter, "p", self->client_pubkey_hex, NULL);
+
+  NostrFilters *filters = nostr_filters_new();
+  nostr_filters_add(filters, filter);
+
+  /* Connect events signal */
+  self->nip46_events_handler = g_signal_connect(
+    self->nip46_pool, "events",
+    G_CALLBACK(on_nip46_events), self);
+
+  /* Start subscription */
+  const char *relays[] = { relay_url, NULL };
+  gnostr_simple_pool_subscribe_many_async(
+    self->nip46_pool,
+    relays,
+    1,
+    filters,
+    self->cancellable,
+    on_nip46_subscribe_done,
+    g_object_ref(self));
+
+  nostr_filters_free(filters);
+
+  self->listening_for_response = TRUE;
+}
+
+static void stop_nip46_listener(GnostrLogin *self) {
+  if (!self) return;
+
+  if (!self->listening_for_response) return;
+
+  g_message("[NIP46_LOGIN] Stopping listener");
+
+  if (self->nip46_pool) {
+    if (self->nip46_events_handler > 0) {
+      g_signal_handler_disconnect(self->nip46_pool, self->nip46_events_handler);
+      self->nip46_events_handler = 0;
+    }
+    g_clear_object(&self->nip46_pool);
+  }
+
+  self->listening_for_response = FALSE;
+  gtk_widget_set_visible(self->spinner_bunker, FALSE);
 }

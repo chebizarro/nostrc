@@ -2350,11 +2350,19 @@ static void update_login_ui_state(GnostrMainWindow *self);
 
 /* Signal handler for when user successfully signs in via login dialog */
 static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer user_data) {
-  (void)login;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
   g_debug("[AUTH] User signed in: %s", npub ? npub : "(null)");
+
+  /* Take ownership of the NIP-46 session from the login dialog */
+  if (self->nip46_session) {
+    nostr_nip46_session_free(self->nip46_session);
+  }
+  self->nip46_session = gnostr_login_take_nip46_session(login);
+  if (self->nip46_session) {
+    g_debug("[AUTH] NIP-46 remote signer session acquired");
+  }
 
   /* Update user_pubkey_hex from npub */
   if (npub && g_str_has_prefix(npub, "npub1")) {
