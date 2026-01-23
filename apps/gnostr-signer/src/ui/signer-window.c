@@ -124,6 +124,7 @@ static void signer_window_class_init(SignerWindowClass *klass) {
   STARTUP_TIME_BEGIN(STARTUP_PHASE_PAGES);
   g_type_ensure(TYPE_PAGE_PERMISSIONS);
   g_type_ensure(TYPE_PAGE_APPLICATIONS);
+  g_type_ensure(GN_TYPE_PAGE_SESSIONS);
   g_type_ensure(TYPE_PAGE_SETTINGS);
   STARTUP_TIME_END(STARTUP_PHASE_PAGES);
 
