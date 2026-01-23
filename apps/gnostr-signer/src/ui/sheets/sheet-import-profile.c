@@ -15,6 +15,7 @@
 #include "../../rate-limiter.h"
 #include "../../secure-memory.h"
 #include "../../hsm_provider.h"
+#include "../../keyboard-nav.h"
 
 #include <gtk/gtk.h>
 #include <adwaita.h>
@@ -1307,8 +1308,12 @@ static void sheet_import_profile_init(SheetImportProfile *self) {
   /* Set initial visibility */
   update_visible_sections(self);
 
-  /* Focus the ncryptsec text view */
-  if (self->text_ncryptsec) gtk_widget_grab_focus(GTK_WIDGET(self->text_ncryptsec));
+  /* Setup keyboard navigation (nostrc-tz8w):
+   * - Focus ncryptsec text view on dialog open (for NIP-49 method)
+   * - Import button is default (Enter activates when form is valid) */
+  gn_keyboard_nav_setup_dialog(ADW_DIALOG(self),
+                                GTK_WIDGET(self->text_ncryptsec),
+                                GTK_WIDGET(self->btn_import));
 }
 
 SheetImportProfile *sheet_import_profile_new(void) {

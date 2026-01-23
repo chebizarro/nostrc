@@ -1846,6 +1846,508 @@ static void test_high_contrast_color_scheme_integration(TestUIFixture *fixture, 
 }
 
 /* ===========================================================================
+ * Test Cases: Mock Backup Dialog
+ * =========================================================================== */
+
+struct _MockBackupDialog {
+  AdwDialog parent_instance;
+  GtkWidget *tab_switcher;
+  GtkWidget *backup_tab;
+  GtkWidget *recovery_tab;
+  GtkWidget *entry_npub;
+  GtkWidget *entry_password;
+  GtkWidget *btn_export;
+  GtkWidget *btn_copy;
+  GtkWidget *btn_import;
+  GtkWidget *qr_view;
+  GtkWidget *export_format_dropdown;
+  GtkWidget *mnemonic_view;
+  gboolean export_ready;
+  gboolean password_valid;
+  gchar *current_npub;
+};
+
+G_DECLARE_FINAL_TYPE(MockBackupDialog, mock_backup_dialog, MOCK, BACKUP_DIALOG, AdwDialog)
+G_DEFINE_TYPE(MockBackupDialog, mock_backup_dialog, ADW_TYPE_DIALOG)
+
+static void mock_backup_dialog_class_init(MockBackupDialogClass *klass) {
+  (void)klass;
+}
+
+static void on_backup_password_changed(GtkEditable *editable, gpointer user_data) {
+  MockBackupDialog *self = MOCK_BACKUP_DIALOG(user_data);
+  const char *password = gtk_editable_get_text(editable);
+  /* Password must be at least 8 characters for NIP-49 export */
+  self->password_valid = password && strlen(password) >= 8;
+  gtk_widget_set_sensitive(self->btn_export, self->password_valid && self->current_npub != NULL);
+}
+
+static void mock_backup_dialog_init(MockBackupDialog *self) {
+  GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+  gtk_widget_set_margin_start(content, 16);
+  gtk_widget_set_margin_end(content, 16);
+  gtk_widget_set_margin_top(content, 16);
+  gtk_widget_set_margin_bottom(content, 16);
+
+  /* Tab switcher for backup/recovery */
+  self->tab_switcher = gtk_stack_new();
+  gtk_stack_set_transition_type(GTK_STACK(self->tab_switcher), GTK_STACK_TRANSITION_TYPE_SLIDE_LEFT_RIGHT);
+
+  /* Backup tab content */
+  self->backup_tab = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+  GtkWidget *backup_label = gtk_label_new("Export your key backup");
+  gtk_box_append(GTK_BOX(self->backup_tab), backup_label);
+
+  /* Export format dropdown */
+  GtkStringList *format_model = gtk_string_list_new(NULL);
+  gtk_string_list_append(format_model, "NIP-49 Encrypted (ncryptsec)");
+  gtk_string_list_append(format_model, "Mnemonic Words (BIP-39)");
+  gtk_string_list_append(format_model, "Raw nsec (Unencrypted - Dangerous!)");
+  self->export_format_dropdown = gtk_drop_down_new(G_LIST_MODEL(format_model), NULL);
+  gtk_box_append(GTK_BOX(self->backup_tab), self->export_format_dropdown);
+
+  /* Password entry for encrypted export */
+  self->entry_password = gtk_password_entry_new();
+  gtk_password_entry_set_show_peek_icon(GTK_PASSWORD_ENTRY(self->entry_password), TRUE);
+  g_signal_connect(self->entry_password, "changed", G_CALLBACK(on_backup_password_changed), self);
+  gtk_box_append(GTK_BOX(self->backup_tab), self->entry_password);
+
+  /* QR code display area */
+  self->qr_view = gtk_image_new_from_icon_name("qr-code-symbolic");
+  gtk_image_set_pixel_size(GTK_IMAGE(self->qr_view), 200);
+  gtk_box_append(GTK_BOX(self->backup_tab), self->qr_view);
+
+  /* Export and copy buttons */
+  GtkWidget *export_btns = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_halign(export_btns, GTK_ALIGN_END);
+  self->btn_export = gtk_button_new_with_label("Export to File");
+  gtk_widget_add_css_class(self->btn_export, "suggested-action");
+  gtk_widget_set_sensitive(self->btn_export, FALSE);
+  self->btn_copy = gtk_button_new_with_label("Copy to Clipboard");
+  gtk_box_append(GTK_BOX(export_btns), self->btn_copy);
+  gtk_box_append(GTK_BOX(export_btns), self->btn_export);
+  gtk_box_append(GTK_BOX(self->backup_tab), export_btns);
+
+  gtk_stack_add_titled(GTK_STACK(self->tab_switcher), self->backup_tab, "backup", "Backup");
+
+  /* Recovery tab content */
+  self->recovery_tab = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+  GtkWidget *recovery_label = gtk_label_new("Import from backup");
+  gtk_box_append(GTK_BOX(self->recovery_tab), recovery_label);
+
+  /* Mnemonic display/input area */
+  self->mnemonic_view = gtk_text_view_new();
+  gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(self->mnemonic_view), GTK_WRAP_WORD);
+  gtk_text_view_set_editable(GTK_TEXT_VIEW(self->mnemonic_view), TRUE);
+  GtkWidget *mnemonic_scroll = gtk_scrolled_window_new();
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(mnemonic_scroll), self->mnemonic_view);
+  gtk_widget_set_size_request(mnemonic_scroll, -1, 100);
+  gtk_box_append(GTK_BOX(self->recovery_tab), mnemonic_scroll);
+
+  /* Import button */
+  self->btn_import = gtk_button_new_with_label("Import Key");
+  gtk_widget_add_css_class(self->btn_import, "suggested-action");
+  gtk_widget_set_halign(self->btn_import, GTK_ALIGN_END);
+  gtk_box_append(GTK_BOX(self->recovery_tab), self->btn_import);
+
+  gtk_stack_add_titled(GTK_STACK(self->tab_switcher), self->recovery_tab, "recovery", "Recovery");
+
+  /* Stack switcher for tabs */
+  GtkWidget *switcher = gtk_stack_switcher_new();
+  gtk_stack_switcher_set_stack(GTK_STACK_SWITCHER(switcher), GTK_STACK(self->tab_switcher));
+  gtk_widget_set_halign(switcher, GTK_ALIGN_CENTER);
+  gtk_box_append(GTK_BOX(content), switcher);
+  gtk_box_append(GTK_BOX(content), self->tab_switcher);
+
+  adw_dialog_set_title(ADW_DIALOG(self), "Backup & Recovery");
+  adw_dialog_set_content_width(ADW_DIALOG(self), 500);
+  adw_dialog_set_content_height(ADW_DIALOG(self), 450);
+  adw_dialog_set_child(ADW_DIALOG(self), content);
+
+  self->export_ready = FALSE;
+  self->password_valid = FALSE;
+  self->current_npub = NULL;
+}
+
+static MockBackupDialog *mock_backup_dialog_new(void) {
+  return g_object_new(mock_backup_dialog_get_type(), NULL);
+}
+
+static void mock_backup_dialog_set_account(MockBackupDialog *self, const gchar *npub) {
+  g_free(self->current_npub);
+  self->current_npub = g_strdup(npub);
+  /* Update export button sensitivity */
+  gtk_widget_set_sensitive(self->btn_export, self->password_valid && self->current_npub != NULL);
+}
+
+static void mock_backup_dialog_show_backup_tab(MockBackupDialog *self) {
+  gtk_stack_set_visible_child_name(GTK_STACK(self->tab_switcher), "backup");
+}
+
+static void mock_backup_dialog_show_recovery_tab(MockBackupDialog *self) {
+  gtk_stack_set_visible_child_name(GTK_STACK(self->tab_switcher), "recovery");
+}
+
+static void test_backup_dialog_creation(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockBackupDialog *dialog = mock_backup_dialog_new();
+  g_assert_nonnull(dialog);
+  g_assert_true(ADW_IS_DIALOG(dialog));
+
+  /* Verify dialog components exist */
+  g_assert_nonnull(dialog->tab_switcher);
+  g_assert_nonnull(dialog->backup_tab);
+  g_assert_nonnull(dialog->recovery_tab);
+  g_assert_nonnull(dialog->entry_password);
+  g_assert_nonnull(dialog->btn_export);
+  g_assert_nonnull(dialog->btn_copy);
+  g_assert_nonnull(dialog->btn_import);
+  g_assert_nonnull(dialog->qr_view);
+  g_assert_nonnull(dialog->export_format_dropdown);
+  g_assert_nonnull(dialog->mnemonic_view);
+
+  g_object_unref(dialog);
+}
+
+static void test_backup_dialog_tab_switching(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockBackupDialog *dialog = mock_backup_dialog_new();
+
+  /* Default should be backup tab */
+  mock_backup_dialog_show_backup_tab(dialog);
+  process_pending_events();
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(GTK_STACK(dialog->tab_switcher)), ==, "backup");
+
+  /* Switch to recovery tab */
+  mock_backup_dialog_show_recovery_tab(dialog);
+  process_pending_events();
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(GTK_STACK(dialog->tab_switcher)), ==, "recovery");
+
+  /* Switch back to backup tab */
+  mock_backup_dialog_show_backup_tab(dialog);
+  process_pending_events();
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(GTK_STACK(dialog->tab_switcher)), ==, "backup");
+
+  g_object_unref(dialog);
+}
+
+static void test_backup_dialog_export_button_state(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockBackupDialog *dialog = mock_backup_dialog_new();
+
+  /* Export button should be disabled initially */
+  g_assert_false(gtk_widget_get_sensitive(dialog->btn_export));
+
+  /* Set account but no password */
+  mock_backup_dialog_set_account(dialog, "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5gj7aj");
+  process_pending_events();
+  g_assert_false(gtk_widget_get_sensitive(dialog->btn_export));
+
+  /* Enter short password (less than 8 chars) */
+  gtk_editable_set_text(GTK_EDITABLE(dialog->entry_password), "short");
+  process_pending_events();
+  g_assert_false(gtk_widget_get_sensitive(dialog->btn_export));
+
+  /* Enter valid password (8+ chars) */
+  gtk_editable_set_text(GTK_EDITABLE(dialog->entry_password), "validpassword123");
+  process_pending_events();
+  g_assert_true(gtk_widget_get_sensitive(dialog->btn_export));
+
+  g_object_unref(dialog);
+}
+
+static void test_backup_dialog_export_format_options(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockBackupDialog *dialog = mock_backup_dialog_new();
+
+  /* Verify dropdown has expected number of items */
+  GListModel *model = gtk_drop_down_get_model(GTK_DROP_DOWN(dialog->export_format_dropdown));
+  g_assert_nonnull(model);
+  g_assert_cmpuint(g_list_model_get_n_items(model), ==, 3);
+
+  /* Test selecting different formats */
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(dialog->export_format_dropdown), 0);
+  g_assert_cmpuint(gtk_drop_down_get_selected(GTK_DROP_DOWN(dialog->export_format_dropdown)), ==, 0);
+
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(dialog->export_format_dropdown), 1);
+  g_assert_cmpuint(gtk_drop_down_get_selected(GTK_DROP_DOWN(dialog->export_format_dropdown)), ==, 1);
+
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(dialog->export_format_dropdown), 2);
+  g_assert_cmpuint(gtk_drop_down_get_selected(GTK_DROP_DOWN(dialog->export_format_dropdown)), ==, 2);
+
+  g_object_unref(dialog);
+}
+
+static void test_backup_dialog_mnemonic_input(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockBackupDialog *dialog = mock_backup_dialog_new();
+
+  /* Switch to recovery tab */
+  mock_backup_dialog_show_recovery_tab(dialog);
+  process_pending_events();
+
+  /* Verify mnemonic view is editable */
+  g_assert_true(gtk_text_view_get_editable(GTK_TEXT_VIEW(dialog->mnemonic_view)));
+
+  /* Enter mnemonic text */
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(dialog->mnemonic_view));
+  gtk_text_buffer_set_text(buffer, "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about", -1);
+  process_pending_events();
+
+  /* Verify text was entered */
+  GtkTextIter start, end;
+  gtk_text_buffer_get_bounds(buffer, &start, &end);
+  gchar *text = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+  g_assert_nonnull(text);
+  g_assert_true(g_str_has_prefix(text, "abandon"));
+  g_free(text);
+
+  g_object_unref(dialog);
+}
+
+/* ===========================================================================
+ * Test Cases: Sidebar-to-Page Synchronization
+ * =========================================================================== */
+
+/* Extended fixture with sidebar-page sync callback */
+static gchar *g_last_selected_page = NULL;
+
+static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
+  MockSignerWindow *window = MOCK_SIGNER_WINDOW(user_data);
+  int index = gtk_list_box_row_get_index(row);
+  const char *pages[] = { "permissions", "applications", "sessions", "settings" };
+
+  if (index >= 0 && index < 4) {
+    adw_view_stack_set_visible_child_name(window->stack, pages[index]);
+    g_free(g_last_selected_page);
+    g_last_selected_page = g_strdup(pages[index]);
+  }
+  (void)box;
+}
+
+static void test_sidebar_page_sync_on_row_click(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)user_data;
+
+  /* Connect sidebar row activation to page change */
+  g_signal_connect(fixture->window->sidebar, "row-activated",
+                   G_CALLBACK(on_sidebar_row_activated), fixture->window);
+
+  /* Click each sidebar row and verify page changes */
+  const char *expected_pages[] = { "permissions", "applications", "sessions", "settings" };
+
+  for (int i = 0; i < 4; i++) {
+    GtkListBoxRow *row = gtk_list_box_get_row_at_index(fixture->window->sidebar, i);
+    g_assert_nonnull(row);
+
+    /* Emit row-activated signal (simulating click) */
+    g_signal_emit_by_name(fixture->window->sidebar, "row-activated", row);
+    process_pending_events();
+
+    /* Verify stack changed to expected page */
+    const char *visible = adw_view_stack_get_visible_child_name(fixture->window->stack);
+    g_assert_cmpstr(visible, ==, expected_pages[i]);
+  }
+
+  g_free(g_last_selected_page);
+  g_last_selected_page = NULL;
+}
+
+static void test_sidebar_page_sync_bidirectional(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)user_data;
+
+  /* Connect sidebar to stack */
+  g_signal_connect(fixture->window->sidebar, "row-activated",
+                   G_CALLBACK(on_sidebar_row_activated), fixture->window);
+
+  /* Change page programmatically and verify */
+  adw_view_stack_set_visible_child_name(fixture->window->stack, "settings");
+  process_pending_events();
+  g_assert_cmpstr(adw_view_stack_get_visible_child_name(fixture->window->stack), ==, "settings");
+
+  /* Now click sidebar to change to different page */
+  GtkListBoxRow *row = gtk_list_box_get_row_at_index(fixture->window->sidebar, 0); /* permissions */
+  g_signal_emit_by_name(fixture->window->sidebar, "row-activated", row);
+  process_pending_events();
+  g_assert_cmpstr(adw_view_stack_get_visible_child_name(fixture->window->stack), ==, "permissions");
+}
+
+/* ===========================================================================
+ * Test Cases: Button States Based on Authentication
+ * =========================================================================== */
+
+typedef enum {
+  MOCK_AUTH_STATE_LOCKED,
+  MOCK_AUTH_STATE_UNLOCKED,
+  MOCK_AUTH_STATE_NO_PROFILE
+} MockAuthState;
+
+struct _MockAuthAwareToolbar {
+  GtkBox parent_instance;
+  GtkWidget *btn_sign;
+  GtkWidget *btn_new_identity;
+  GtkWidget *btn_import;
+  GtkWidget *btn_export;
+  GtkWidget *btn_lock;
+  GtkWidget *btn_settings;
+  MockAuthState auth_state;
+};
+
+G_DECLARE_FINAL_TYPE(MockAuthAwareToolbar, mock_auth_aware_toolbar, MOCK, AUTH_AWARE_TOOLBAR, GtkBox)
+G_DEFINE_TYPE(MockAuthAwareToolbar, mock_auth_aware_toolbar, GTK_TYPE_BOX)
+
+static void mock_auth_aware_toolbar_class_init(MockAuthAwareToolbarClass *klass) {
+  (void)klass;
+}
+
+static void mock_auth_aware_toolbar_init(MockAuthAwareToolbar *self) {
+  gtk_orientable_set_orientation(GTK_ORIENTABLE(self), GTK_ORIENTATION_HORIZONTAL);
+  gtk_box_set_spacing(GTK_BOX(self), 8);
+
+  self->btn_sign = gtk_button_new_with_label("Sign Event");
+  self->btn_new_identity = gtk_button_new_with_label("New Identity");
+  self->btn_import = gtk_button_new_with_label("Import");
+  self->btn_export = gtk_button_new_with_label("Export");
+  self->btn_lock = gtk_button_new_with_label("Lock");
+  self->btn_settings = gtk_button_new_with_label("Settings");
+
+  gtk_box_append(GTK_BOX(self), self->btn_sign);
+  gtk_box_append(GTK_BOX(self), self->btn_new_identity);
+  gtk_box_append(GTK_BOX(self), self->btn_import);
+  gtk_box_append(GTK_BOX(self), self->btn_export);
+  gtk_box_append(GTK_BOX(self), self->btn_lock);
+  gtk_box_append(GTK_BOX(self), self->btn_settings);
+
+  self->auth_state = MOCK_AUTH_STATE_LOCKED;
+}
+
+static MockAuthAwareToolbar *mock_auth_aware_toolbar_new(void) {
+  return g_object_new(mock_auth_aware_toolbar_get_type(), NULL);
+}
+
+static void mock_auth_aware_toolbar_set_auth_state(MockAuthAwareToolbar *self, MockAuthState state) {
+  self->auth_state = state;
+
+  switch (state) {
+    case MOCK_AUTH_STATE_LOCKED:
+      /* When locked: only unlock-related actions available */
+      gtk_widget_set_sensitive(self->btn_sign, FALSE);
+      gtk_widget_set_sensitive(self->btn_new_identity, FALSE);
+      gtk_widget_set_sensitive(self->btn_import, FALSE);
+      gtk_widget_set_sensitive(self->btn_export, FALSE);
+      gtk_widget_set_sensitive(self->btn_lock, FALSE);
+      gtk_widget_set_sensitive(self->btn_settings, FALSE);
+      break;
+
+    case MOCK_AUTH_STATE_UNLOCKED:
+      /* When unlocked: full access */
+      gtk_widget_set_sensitive(self->btn_sign, TRUE);
+      gtk_widget_set_sensitive(self->btn_new_identity, TRUE);
+      gtk_widget_set_sensitive(self->btn_import, TRUE);
+      gtk_widget_set_sensitive(self->btn_export, TRUE);
+      gtk_widget_set_sensitive(self->btn_lock, TRUE);
+      gtk_widget_set_sensitive(self->btn_settings, TRUE);
+      break;
+
+    case MOCK_AUTH_STATE_NO_PROFILE:
+      /* No profile: can create/import, but not sign/export */
+      gtk_widget_set_sensitive(self->btn_sign, FALSE);
+      gtk_widget_set_sensitive(self->btn_new_identity, TRUE);
+      gtk_widget_set_sensitive(self->btn_import, TRUE);
+      gtk_widget_set_sensitive(self->btn_export, FALSE);
+      gtk_widget_set_sensitive(self->btn_lock, FALSE);
+      gtk_widget_set_sensitive(self->btn_settings, TRUE);
+      break;
+  }
+}
+
+static void test_auth_state_locked_button_states(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockAuthAwareToolbar *toolbar = mock_auth_aware_toolbar_new();
+
+  mock_auth_aware_toolbar_set_auth_state(toolbar, MOCK_AUTH_STATE_LOCKED);
+  process_pending_events();
+
+  /* All buttons should be disabled when locked */
+  g_assert_false(gtk_widget_get_sensitive(toolbar->btn_sign));
+  g_assert_false(gtk_widget_get_sensitive(toolbar->btn_new_identity));
+  g_assert_false(gtk_widget_get_sensitive(toolbar->btn_import));
+  g_assert_false(gtk_widget_get_sensitive(toolbar->btn_export));
+  g_assert_false(gtk_widget_get_sensitive(toolbar->btn_lock));
+  g_assert_false(gtk_widget_get_sensitive(toolbar->btn_settings));
+
+  g_object_unref(toolbar);
+}
+
+static void test_auth_state_unlocked_button_states(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockAuthAwareToolbar *toolbar = mock_auth_aware_toolbar_new();
+
+  mock_auth_aware_toolbar_set_auth_state(toolbar, MOCK_AUTH_STATE_UNLOCKED);
+  process_pending_events();
+
+  /* All buttons should be enabled when unlocked */
+  g_assert_true(gtk_widget_get_sensitive(toolbar->btn_sign));
+  g_assert_true(gtk_widget_get_sensitive(toolbar->btn_new_identity));
+  g_assert_true(gtk_widget_get_sensitive(toolbar->btn_import));
+  g_assert_true(gtk_widget_get_sensitive(toolbar->btn_export));
+  g_assert_true(gtk_widget_get_sensitive(toolbar->btn_lock));
+  g_assert_true(gtk_widget_get_sensitive(toolbar->btn_settings));
+
+  g_object_unref(toolbar);
+}
+
+static void test_auth_state_no_profile_button_states(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockAuthAwareToolbar *toolbar = mock_auth_aware_toolbar_new();
+
+  mock_auth_aware_toolbar_set_auth_state(toolbar, MOCK_AUTH_STATE_NO_PROFILE);
+  process_pending_events();
+
+  /* Sign and export should be disabled without a profile */
+  g_assert_false(gtk_widget_get_sensitive(toolbar->btn_sign));
+  g_assert_false(gtk_widget_get_sensitive(toolbar->btn_export));
+  g_assert_false(gtk_widget_get_sensitive(toolbar->btn_lock));
+
+  /* Create and import should be enabled */
+  g_assert_true(gtk_widget_get_sensitive(toolbar->btn_new_identity));
+  g_assert_true(gtk_widget_get_sensitive(toolbar->btn_import));
+  g_assert_true(gtk_widget_get_sensitive(toolbar->btn_settings));
+
+  g_object_unref(toolbar);
+}
+
+static void test_auth_state_transition(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  MockAuthAwareToolbar *toolbar = mock_auth_aware_toolbar_new();
+
+  /* Start locked */
+  mock_auth_aware_toolbar_set_auth_state(toolbar, MOCK_AUTH_STATE_LOCKED);
+  process_pending_events();
+  g_assert_false(gtk_widget_get_sensitive(toolbar->btn_sign));
+
+  /* Unlock */
+  mock_auth_aware_toolbar_set_auth_state(toolbar, MOCK_AUTH_STATE_UNLOCKED);
+  process_pending_events();
+  g_assert_true(gtk_widget_get_sensitive(toolbar->btn_sign));
+
+  /* Lock again */
+  mock_auth_aware_toolbar_set_auth_state(toolbar, MOCK_AUTH_STATE_LOCKED);
+  process_pending_events();
+  g_assert_false(gtk_widget_get_sensitive(toolbar->btn_sign));
+
+  g_object_unref(toolbar);
+}
+
+/* ===========================================================================
  * Test Main
  * =========================================================================== */
 
@@ -1994,6 +2496,34 @@ int main(int argc, char *argv[]) {
              test_ui_fixture_setup, test_high_contrast_adw_style_manager, test_ui_fixture_teardown);
   g_test_add("/ui/high-contrast/color-scheme-integration", TestUIFixture, NULL,
              test_ui_fixture_setup, test_high_contrast_color_scheme_integration, test_ui_fixture_teardown);
+
+  /* Backup dialog tests */
+  g_test_add("/ui/dialog/backup-creation", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_backup_dialog_creation, test_ui_fixture_teardown);
+  g_test_add("/ui/dialog/backup-tab-switching", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_backup_dialog_tab_switching, test_ui_fixture_teardown);
+  g_test_add("/ui/dialog/backup-export-button-state", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_backup_dialog_export_button_state, test_ui_fixture_teardown);
+  g_test_add("/ui/dialog/backup-export-format-options", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_backup_dialog_export_format_options, test_ui_fixture_teardown);
+  g_test_add("/ui/dialog/backup-mnemonic-input", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_backup_dialog_mnemonic_input, test_ui_fixture_teardown);
+
+  /* Sidebar-to-page synchronization tests */
+  g_test_add("/ui/navigation/sidebar-page-sync", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_sidebar_page_sync_on_row_click, test_ui_fixture_teardown);
+  g_test_add("/ui/navigation/sidebar-page-bidirectional", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_sidebar_page_sync_bidirectional, test_ui_fixture_teardown);
+
+  /* Auth state button tests */
+  g_test_add("/ui/auth/locked-button-states", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_auth_state_locked_button_states, test_ui_fixture_teardown);
+  g_test_add("/ui/auth/unlocked-button-states", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_auth_state_unlocked_button_states, test_ui_fixture_teardown);
+  g_test_add("/ui/auth/no-profile-button-states", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_auth_state_no_profile_button_states, test_ui_fixture_teardown);
+  g_test_add("/ui/auth/state-transition", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_auth_state_transition, test_ui_fixture_teardown);
 
   return g_test_run();
 }

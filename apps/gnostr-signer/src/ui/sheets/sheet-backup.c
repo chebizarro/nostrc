@@ -14,6 +14,7 @@
 #include "../../secret_store.h"
 #include "../../secure-delete.h"
 #include "../../accounts_store.h"
+#include "../../keyboard-nav.h"
 
 #include <gtk/gtk.h>
 #include <adwaita.h>
@@ -869,6 +870,13 @@ static void sheet_backup_init(SheetBackup *self) {
   /* Set default security level to "Normal" */
   if (self->combo_security)
     adw_combo_row_set_selected(self->combo_security, 0);
+
+  /* Setup keyboard navigation (nostrc-tz8w):
+   * - Focus backup password entry on dialog open
+   * - Create Backup button is default for backup tab */
+  gn_keyboard_nav_setup_dialog(ADW_DIALOG(self),
+                                GTK_WIDGET(self->entry_backup_password),
+                                GTK_WIDGET(self->btn_create_backup));
 }
 
 SheetBackup *sheet_backup_new(void) {

@@ -116,6 +116,9 @@ static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, g
 static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data);
 /* Forward declaration for close-request handler (nostrc-61s.6: background mode) */
 static gboolean on_window_close_request(GtkWindow *window, gpointer user_data);
+/* Forward declarations for responsive navigation (nostrc-3u7j) */
+static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data);
+static void on_sidebar_toggle_clicked(GtkToggleButton *button, gpointer user_data);
 /* Forward declarations for repost/quote/like signal handlers */
 static void on_note_card_repost_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
 static void on_note_card_quote_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
@@ -265,8 +268,16 @@ static gboolean profile_apply_on_main(gpointer data) {
 
 /* Define the window instance struct early so functions can access fields */
 struct _GnostrMainWindow {
-  GtkApplicationWindow parent_instance;
-  // Template children
+  AdwApplicationWindow parent_instance;
+  // Template children - responsive layout
+  AdwToolbarView *toolbar_view;
+  AdwHeaderBar *header_bar;
+  AdwViewSwitcherTitle *switcher_title;
+  AdwNavigationSplitView *split_view;
+  GtkToggleButton *sidebar_toggle_btn;
+  GtkListBox *sidebar_list;
+  AdwViewSwitcherBar *bottom_bar;
+  // Template children - content
   GtkWidget *stack;
   GtkWidget *timeline;
   GWeakRef timeline_ref; /* weak ref to avoid UAF in async */
@@ -2626,6 +2637,37 @@ static gboolean on_window_close_request(GtkWindow *window, gpointer user_data) {
   return FALSE;
 }
 
+/* nostrc-3u7j: Responsive navigation - sidebar row activation handler */
+static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
+  (void)box;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!self || !self->stack || !row) return;
+
+  int idx = gtk_list_box_row_get_index(row);
+  const char *names[] = { "timeline", "notifications", "messages", "discover", "search" };
+  if (idx >= 0 && idx < 5) {
+    adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), names[idx]);
+  }
+
+  /* On narrow screens when sidebar is collapsed, selecting a row should close the sidebar */
+  if (self->split_view && adw_navigation_split_view_get_collapsed(self->split_view)) {
+    adw_navigation_split_view_set_show_content(self->split_view, TRUE);
+    if (self->sidebar_toggle_btn) {
+      gtk_toggle_button_set_active(self->sidebar_toggle_btn, FALSE);
+    }
+  }
+}
+
+/* nostrc-3u7j: Responsive navigation - sidebar toggle button handler */
+static void on_sidebar_toggle_clicked(GtkToggleButton *button, gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!self || !self->split_view) return;
+
+  gboolean active = gtk_toggle_button_get_active(button);
+  /* When toggle is active, show sidebar; when inactive, show content */
+  adw_navigation_split_view_set_show_content(self->split_view, !active);
+}
+
 /* ESC key handler to close profile sidebar */
 static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data) {
   (void)controller;
@@ -3332,6 +3374,23 @@ static void prepopulate_text_notes_from_cache(GnostrMainWindow *self, guint limi
 
 static void gnostr_main_window_init(GnostrMainWindow *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+
+  /* nostrc-3u7j: Setup responsive navigation */
+  if (self->sidebar_list) {
+    g_signal_connect(self->sidebar_list, "row-activated",
+                     G_CALLBACK(on_sidebar_row_activated), self);
+    /* Select first row and show default page */
+    GtkListBoxRow *first = gtk_list_box_get_row_at_index(self->sidebar_list, 0);
+    if (first) gtk_list_box_select_row(self->sidebar_list, first);
+  }
+  if (self->sidebar_toggle_btn) {
+    g_signal_connect(self->sidebar_toggle_btn, "toggled",
+                     G_CALLBACK(on_sidebar_toggle_clicked), self);
+  }
+  if (self->stack) {
+    adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "timeline");
+  }
+
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_relays),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Manage Relays", -1);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_settings),
@@ -3743,7 +3802,8 @@ static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
     gtk_revealer_set_reveal_child(GTK_REVEALER(self->new_notes_revealer), FALSE);
   }
 }
-GnostrMainWindow *gnostr_main_window_new(GtkApplication *app) {
+GnostrMainWindow *gnostr_main_window_new(AdwApplication *app) {
+  g_return_val_if_fail(ADW_IS_APPLICATION(app), NULL);
   return g_object_new(GNOSTR_TYPE_MAIN_WINDOW, "application", app, NULL);
 }
 
@@ -3838,6 +3898,15 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   g_type_ensure(GNOSTR_TYPE_SEARCH_RESULTS_VIEW);
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
   /* Bind expected template children (IDs must match the UI file) */
+  /* Responsive layout components (nostrc-3u7j) */
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toolbar_view);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, header_bar);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, switcher_title);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, split_view);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, sidebar_toggle_btn);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, sidebar_list);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, bottom_bar);
+  /* Content template children */
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, stack);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, timeline);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, timeline_overlay);

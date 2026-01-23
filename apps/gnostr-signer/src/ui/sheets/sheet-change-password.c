@@ -17,6 +17,7 @@
 #include "../widgets/gn-secure-entry.h"
 #include "../../accounts_store.h"
 #include "../../secret-storage.h"
+#include "../../keyboard-nav.h"
 #include <string.h>
 
 struct _SheetChangePassword {
@@ -249,8 +250,12 @@ sheet_change_password_init(SheetChangePassword *self)
     gtk_widget_set_visible(GTK_WIDGET(self->lbl_password_match), FALSE);
   }
 
-  /* Focus current password entry */
-  gn_secure_entry_grab_focus_entry(self->secure_current);
+  /* Setup keyboard navigation (nostrc-tz8w):
+   * - Focus current password entry on dialog open
+   * - Update button is default (Enter activates when form is valid) */
+  gn_keyboard_nav_setup_dialog(ADW_DIALOG(self),
+                                GTK_WIDGET(self->secure_current),
+                                GTK_WIDGET(self->btn_update));
 }
 
 SheetChangePassword *

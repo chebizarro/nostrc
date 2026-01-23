@@ -1,4 +1,4 @@
-#include <gtk/gtk.h>
+#include <adwaita.h>
 #include <glib/gstdio.h>
 #include <errno.h>
 #include "ui/gnostr-main-window.h"
@@ -12,16 +12,16 @@
 /* Global tray icon instance (Linux only) */
 static GnostrTrayIcon *g_tray_icon = NULL;
 
-static void on_activate(GtkApplication *app, gpointer user_data) {
+static void on_activate(GApplication *app, gpointer user_data) {
   (void)user_data;
-  GnostrMainWindow *win = gnostr_main_window_new(app);
+  GnostrMainWindow *win = gnostr_main_window_new(ADW_APPLICATION(app));
   gtk_window_present(GTK_WINDOW(win));
 
   /* Create system tray icon now that GTK is fully initialized.
    * Must be done here (not before g_application_run) to avoid
    * macOS Core Graphics assertion failures. */
   if (!g_tray_icon && gnostr_tray_icon_is_available()) {
-    g_tray_icon = gnostr_tray_icon_new(app);
+    g_tray_icon = gnostr_tray_icon_new(GTK_APPLICATION(app));
     if (g_tray_icon) {
       g_debug("System tray icon enabled");
     }
@@ -39,8 +39,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
 static void on_app_quit(GSimpleAction *action, GVariant *param, gpointer user_data) {
   (void)action; (void)param;
-  GtkApplication *app = GTK_APPLICATION(user_data);
-  g_application_quit(G_APPLICATION(app));
+  GApplication *app = G_APPLICATION(user_data);
+  g_application_quit(app);
 }
 
 static void on_shutdown(GApplication *app, gpointer user_data) {
@@ -54,14 +54,17 @@ static void on_shutdown(GApplication *app, gpointer user_data) {
 
 int main(int argc, char **argv) {
   g_set_prgname("gnostr");
-  GtkApplication *app = gtk_application_new("org.gnostr.Client", G_APPLICATION_DEFAULT_FLAGS);
+
+  /* Initialize libadwaita - required for adaptive/responsive features */
+  AdwApplication *app = adw_application_new("org.gnostr.Client", G_APPLICATION_DEFAULT_FLAGS);
+
   /* Install app actions */
   static const GActionEntry app_entries[] = {
     { "quit", on_app_quit, NULL, NULL, NULL },
   };
   g_action_map_add_action_entries(G_ACTION_MAP(app), app_entries, G_N_ELEMENTS(app_entries), app);
   const char *quit_accels[] = { "<Primary>q", NULL };
-  gtk_application_set_accels_for_action(app, "app.quit", quit_accels);
+  gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.quit", quit_accels);
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
 
   /* Initialize subscription dispatcher BEFORE storage to register callback */
