@@ -4,6 +4,7 @@
 #include "policy_store.h"
 #include "accounts_store.h"
 #include "settings_manager.h"
+#include "startup-timing.h"
 #include "ui/signer-window.h"
 #include "ui/onboarding-assistant.h"
 
@@ -488,9 +489,77 @@ static void on_onboarding_finished(gboolean completed, gpointer user_data) {
   gtk_window_present(GTK_WINDOW(win));
 }
 
+/* Callback when async secrets sync completes */
+static void on_secrets_sync_complete(AccountsStore *as, gpointer user_data) {
+  (void)user_data;
+  STARTUP_TIME_END(STARTUP_PHASE_SECRETS);
+
+  g_debug("Accounts sync with secrets completed, %u accounts loaded",
+          as ? accounts_store_count(as) : 0);
+
+  /* Generate and log startup report */
+  STARTUP_TIME_BEGIN(STARTUP_PHASE_READY);
+  STARTUP_TIME_END(STARTUP_PHASE_READY);
+  startup_timing_report();
+}
+
+/* Global deferred state for D-Bus connection */
+static GDBusConnection *deferred_dbus_conn = NULL;
+static guint deferred_dbus_signal_subscription = 0;
+
+/* Callback when async D-Bus connection completes */
+static void on_dbus_connected(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  (void)user_data;
+
+  GError *err = NULL;
+  deferred_dbus_conn = g_bus_get_finish(res, &err);
+
+  if (err) {
+    g_warning("Deferred D-Bus connection failed: %s", err->message);
+    g_clear_error(&err);
+    STARTUP_TIME_END(STARTUP_PHASE_DBUS);
+    return;
+  }
+
+  g_debug("D-Bus connection established in deferred init");
+  STARTUP_TIME_END(STARTUP_PHASE_DBUS);
+}
+
+/* Deferred initialization callback - runs after window is presented */
+static gboolean deferred_init_cb(gpointer user_data) {
+  (void)user_data;
+
+  gint64 deferred_start = startup_timing_measure_start();
+
+  STARTUP_TIME_BEGIN(STARTUP_PHASE_ACCOUNTS);
+
+  /* Create account store (fast - just INI file) */
+  AccountsStore *as = accounts_store_new();
+  accounts_store_load(as);
+
+  STARTUP_TIME_END(STARTUP_PHASE_ACCOUNTS);
+
+  /* Async sync with secrets (slow - D-Bus to libsecret/Keychain) */
+  STARTUP_TIME_BEGIN(STARTUP_PHASE_SECRETS);
+  accounts_store_sync_with_secrets_async(as, on_secrets_sync_complete, NULL);
+
+  /* Start async D-Bus connection (for approval signal subscription) */
+  STARTUP_TIME_BEGIN(STARTUP_PHASE_DBUS);
+  g_bus_get(G_BUS_TYPE_SESSION, NULL, on_dbus_connected, NULL);
+
+  startup_timing_measure_end(deferred_start, "deferred-init-scheduled", 50);
+
+  return G_SOURCE_REMOVE;  /* Don't repeat */
+}
+
 static void on_activate(GtkApplication *app, gpointer user_data) {
   (void)user_data;
+
+  STARTUP_TIME_MARK("activate-start");
+
   /* Load application stylesheet from resources */
+  gint64 css_start = startup_timing_measure_start();
   GtkCssProvider *prov = gtk_css_provider_new();
   gtk_css_provider_load_from_resource(prov, "/org/gnostr/signer/css/app.css");
   GdkDisplay *display = gdk_display_get_default();
@@ -498,14 +567,20 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(prov), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
   }
   g_object_unref(prov);
+  startup_timing_measure_end(css_start, "css-load", 30);
 
-  /* Load high-contrast CSS if theme is high-contrast */
+  /* Load high-contrast CSS if theme is high-contrast (already have settings from main) */
   SettingsManager *sm = settings_manager_get_default();
   SettingsTheme theme = settings_manager_get_theme(sm);
   gboolean is_high_contrast = (theme == SETTINGS_THEME_HIGH_CONTRAST);
-  update_high_contrast_css(is_high_contrast);
+  if (is_high_contrast) {
+    gint64 hc_start = startup_timing_measure_start();
+    update_high_contrast_css(is_high_contrast);
+    startup_timing_measure_end(hc_start, "high-contrast-css-load", 20);
+  }
 
-  /* Check if onboarding should be shown (first run) */
+  /* Check if onboarding should be shown (first run) - this is fast INI file check */
+  STARTUP_TIME_MARK("onboarding-check-start");
   if (onboarding_assistant_check_should_show()) {
     g_debug("First run detected, showing onboarding wizard");
 
@@ -516,10 +591,14 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     onboarding_assistant_set_on_finished(onboarding, on_onboarding_finished, app);
     gtk_application_add_window(app, GTK_WINDOW(onboarding));
     gtk_window_present(GTK_WINDOW(onboarding));
+
+    /* Schedule deferred init */
+    g_idle_add(deferred_init_cb, NULL);
     return;
   }
 
   /* Not first run - present main window directly */
+  STARTUP_TIME_BEGIN(STARTUP_PHASE_WINDOW);
   SignerWindow *win = signer_window_new(ADW_APPLICATION(app));
 
   /* Apply high-contrast class if needed */
@@ -540,6 +619,12 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
   }
 
   gtk_window_present(GTK_WINDOW(win));
+  STARTUP_TIME_END(STARTUP_PHASE_WINDOW);
+
+  STARTUP_TIME_MARK("window-presented");
+
+  /* Schedule deferred initialization for non-critical subsystems */
+  g_idle_add(deferred_init_cb, NULL);
 }
 
 static void on_app_quit(GSimpleAction *action, GVariant *param, gpointer user_data) {
@@ -635,16 +720,27 @@ static void on_app_show_onboarding(GSimpleAction *action, GVariant *param, gpoin
 }
 
 int main(int argc, char **argv) {
+  /* Initialize startup timing first thing */
+  startup_timing_init();
+  STARTUP_TIME_BEGIN(STARTUP_PHASE_INIT);
+
   g_set_prgname("gnostr-signer");
   AdwApplication *app = adw_application_new("org.gnostr.Signer", G_APPLICATION_DEFAULT_FLAGS);
+
+  STARTUP_TIME_END(STARTUP_PHASE_INIT);
 
   /* Store global app reference for theme change callbacks */
   global_app = GTK_APPLICATION(app);
 
   /* Initialize settings manager and apply theme preference at startup */
+  STARTUP_TIME_BEGIN(STARTUP_PHASE_SETTINGS);
   SettingsManager *sm = settings_manager_get_default();
   SettingsTheme initial_theme = settings_manager_get_theme(sm);
+  STARTUP_TIME_END(STARTUP_PHASE_SETTINGS);
+
+  STARTUP_TIME_BEGIN(STARTUP_PHASE_THEME);
   apply_theme_preference(initial_theme);
+  STARTUP_TIME_END(STARTUP_PHASE_THEME);
 
   /* Listen for theme setting changes */
   settings_manager_connect_changed(sm, "theme", on_theme_setting_changed, NULL);
@@ -681,6 +777,9 @@ int main(int argc, char **argv) {
 
   const char *lock_accels[] = { "<Primary>l", NULL };
   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.lock", lock_accels);
+
+  const char *about_accels[] = { "F1", NULL };
+  gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.about", about_accels);
 
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
   int status = g_application_run(G_APPLICATION(app), argc, argv);

@@ -11,6 +11,7 @@
 #include "../secret_store.h"
 #include "../profile_store.h"
 #include "../settings_manager.h"
+#include "../startup-timing.h"
 
 /* Provided by settings_page.c for cross-component updates */
 extern void gnostr_settings_apply_import_success(const char *npub, const char *label);
@@ -211,9 +212,11 @@ static void page_settings_class_init(PageSettingsClass *klass) {
 }
 
 static void page_settings_init(PageSettings *self) {
+  gint64 init_start = startup_timing_measure_start();
+
   gtk_widget_init_template(GTK_WIDGET(self));
 
-  /* Initialize theme combo with current setting */
+  /* Initialize theme combo with current setting (settings already loaded, fast) */
   self->updating_theme = TRUE;
   SettingsManager *sm = settings_manager_get_default();
   SettingsTheme theme = settings_manager_get_theme(sm);
@@ -249,6 +252,8 @@ static void page_settings_init(PageSettings *self) {
   g_signal_connect(self->switch_listen, "notify::active", G_CALLBACK(on_listen_notify), self);
   g_signal_connect(self->btn_follows, "clicked", G_CALLBACK(on_follows), self);
   g_signal_connect(self->btn_mutes, "clicked", G_CALLBACK(on_mutes), self);
+
+  startup_timing_measure_end(init_start, "page-settings-init", 50);
 }
 
 PageSettings *page_settings_new(void) {

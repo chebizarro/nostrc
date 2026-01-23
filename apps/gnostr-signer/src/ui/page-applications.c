@@ -3,6 +3,7 @@
 #include "app-resources.h"
 #include "sheets/sheet-add-application.h"
 #include "sheets/sheet-create-bunker.h"
+#include "../startup-timing.h"
 
 struct _PageApplications {
   AdwPreferencesPage parent_instance;
@@ -33,9 +34,11 @@ static void page_applications_class_init(PageApplicationsClass *klass) {
 }
 
 static void page_applications_init(PageApplications *self) {
+  gint64 init_start = startup_timing_measure_start();
   gtk_widget_init_template(GTK_WIDGET(self));
   g_signal_connect(self->btn_add_app, "clicked", G_CALLBACK(on_add_app), self);
   g_signal_connect(self->btn_add_bunker, "clicked", G_CALLBACK(on_add_bunker), self);
+  startup_timing_measure_end(init_start, "page-applications-init", 30);
 }
 
 PageApplications *page_applications_new(void) {

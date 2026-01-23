@@ -1,5 +1,6 @@
 #include "page-permissions.h"
 #include "app-resources.h"
+#include "../startup-timing.h"
 
 struct _PagePermissions {
   AdwPreferencesPage parent_instance;
@@ -13,7 +14,9 @@ static void page_permissions_class_init(PagePermissionsClass *klass) {
 }
 
 static void page_permissions_init(PagePermissions *self) {
+  gint64 init_start = startup_timing_measure_start();
   gtk_widget_init_template(GTK_WIDGET(self));
+  startup_timing_measure_end(init_start, "page-permissions-init", 30);
 }
 
 PagePermissions *page_permissions_new(void) {
