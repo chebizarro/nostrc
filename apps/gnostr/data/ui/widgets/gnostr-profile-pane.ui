@@ -5,7 +5,7 @@
       <object class="GtkBox" id="root">
         <property name="orientation">vertical</property>
         <property name="spacing">0</property>
-        <property name="width-request">768</property>
+        <property name="width-request">450</property>
         <style>
           <class name="profile-pane"/>
         </style>
