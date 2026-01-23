@@ -207,6 +207,30 @@ static void cache_lru_remove_key(GnNostrEventModel *self, uint64_t note_key) {
   g_list_free_1(link);
 }
 
+/* Deferred signal emission data */
+typedef struct {
+  GnNostrEventModel *model;
+  guint position;
+  guint removed;
+  guint added;
+} DeferredSignal;
+
+/* Idle callback to emit items-changed signal safely */
+static gboolean emit_items_changed_idle(gpointer user_data) {
+  DeferredSignal *data = (DeferredSignal *)user_data;
+  if (data && GN_IS_NOSTR_EVENT_MODEL(data->model)) {
+    g_list_model_items_changed(G_LIST_MODEL(data->model),
+                               data->position,
+                               data->removed,
+                               data->added);
+  }
+  if (data) {
+    g_object_unref(data->model);
+    g_free(data);
+  }
+  return G_SOURCE_REMOVE;
+}
+
 /* Batch mode helpers - accumulate model changes and emit single items-changed signal */
 static void begin_batch(GnNostrEventModel *self) {
   if (!self) return;
@@ -228,7 +252,10 @@ static void end_batch(GnNostrEventModel *self) {
    *   - removed: (old_len - min_pos) items from min_pos
    *   - added: (new_len - min_pos) items at min_pos
    * This is semantically correct and causes GTK to re-query all items
-   * from min_pos to the end. */
+   * from min_pos to the end. 
+   *
+   * CRITICAL: Defer signal emission to next idle cycle to avoid GTK
+   * internal state corruption when called during list iteration. */
   if (self->batch_added_count > 0 && self->batch_min_pos != G_MAXUINT) {
     guint new_len = self->notes ? self->notes->len : 0;
     guint old_tail = (self->batch_old_len > self->batch_min_pos)
@@ -236,10 +263,18 @@ static void end_batch(GnNostrEventModel *self) {
     guint new_tail = (new_len > self->batch_min_pos)
                      ? (new_len - self->batch_min_pos) : 0;
 
-    g_list_model_items_changed(G_LIST_MODEL(self),
-                               self->batch_min_pos,
-                               old_tail,
-                               new_tail);
+    /* Validate parameters before scheduling signal emission */
+    if (self->batch_min_pos <= new_len) {
+      DeferredSignal *data = g_new0(DeferredSignal, 1);
+      data->model = g_object_ref(self);
+      data->position = self->batch_min_pos;
+      data->removed = old_tail;
+      data->added = new_tail;
+      g_idle_add(emit_items_changed_idle, data);
+    } else {
+      g_warning("[MODEL] Invalid batch parameters: min_pos=%u, old_len=%u, new_len=%u, old_tail=%u, new_tail=%u",
+                self->batch_min_pos, self->batch_old_len, new_len, old_tail, new_tail);
+    }
   }
 
   self->batch_min_pos = G_MAXUINT;
