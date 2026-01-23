@@ -89,11 +89,7 @@ struct _GnNostrEventModel {
   gint64 last_update_time_ms;     /* Timestamp of last items-changed emission */
   guint pending_new_count;        /* Count of new items waiting (for indicator) */
 
-  /* Batch insertion mode - accumulate changes, emit single signal at end */
-  gboolean in_batch;              /* TRUE during batch operations */
-  guint batch_min_pos;            /* Minimum insertion position in current batch */
-  guint batch_added_count;        /* Number of items added in current batch */
-  guint batch_old_len;            /* Model length before batch started */
+  /* Batch mode removed - was causing GTK ListView crashes */
 };
 
 typedef struct {
@@ -207,29 +203,7 @@ static void cache_lru_remove_key(GnNostrEventModel *self, uint64_t note_key) {
   g_list_free_1(link);
 }
 
-/* Batch mode helpers - accumulate model changes and emit single items-changed signal */
-static void begin_batch(GnNostrEventModel *self) {
-  if (!self) return;
-  self->in_batch = TRUE;
-  self->batch_min_pos = G_MAXUINT;
-  self->batch_added_count = 0;
-}
-
-static void end_batch(GnNostrEventModel *self) {
-  if (!self || !self->in_batch) return;
-  self->in_batch = FALSE;
-
-  /* Emit single items-changed for all accumulated insertions */
-  if (self->batch_added_count > 0 && self->batch_min_pos != G_MAXUINT) {
-    g_list_model_items_changed(G_LIST_MODEL(self),
-                               self->batch_min_pos,
-                               0,
-                               self->batch_added_count);
-  }
-
-  self->batch_min_pos = G_MAXUINT;
-  self->batch_added_count = 0;
-}
+/* Batch mode removed - direct signal emission per note works reliably */
 
 /* Helper functions */
 
@@ -660,25 +634,8 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
   NoteEntry entry = { .note_key = note_key, .created_at = created_at };
   g_array_insert_val(self->notes, pos, entry);
 
-  /* In batch mode: track position range, emit single signal at end_batch() */
-  if (self->in_batch) {
-    if (pos < self->batch_min_pos) {
-      self->batch_min_pos = pos;
-    }
-    self->batch_added_count++;
-    return;
-  }
-
-  /* nostrc-yi2: Rate-limited emit - debounce rapid updates */
-  gint64 now_ms = get_current_time_ms();
-  gint64 elapsed = now_ms - self->last_update_time_ms;
-  if (elapsed >= MIN_UPDATE_INTERVAL_MS || self->last_update_time_ms == 0) {
-    self->last_update_time_ms = now_ms;
-    g_list_model_items_changed(G_LIST_MODEL(self), pos, 0, 1);
-  } else {
-    /* Schedule debounced flush */
-    schedule_deferred_flush(self);
-  }
+  /* Emit items-changed signal immediately for each insertion */
+  g_list_model_items_changed(G_LIST_MODEL(self), pos, 0, 1);
 }
 
 /* Enforce window size (~100 items) and evict oldest, including cache cleanup. */
@@ -748,9 +705,6 @@ static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex)
     return;
   }
 
-  /* Enter batch mode for pending notes flush */
-  begin_batch(self);
-
   for (guint i = 0; i < arr->len; i++) {
     PendingEntry *pe = &g_array_index(arr, PendingEntry, i);
     add_note_internal(self, pe->note_key, pe->created_at, NULL, NULL, 0);
@@ -758,9 +712,6 @@ static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex)
 
   g_array_unref(arr);
   g_free(key_str);
-
-  /* End batch mode - emit single items-changed signal */
-  end_batch(self);
 
   enforce_window(self);
 }
@@ -971,9 +922,6 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
     return;
   }
 
-  /* Enter batch mode - accumulate all changes, emit single signal at end */
-  begin_batch(self);
-
   guint added = 0, filtered = 0, pending = 0, no_note = 0;
 
   for (guint i = 0; i < n_keys; i++) {
@@ -1021,10 +969,7 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
 
   storage_ndb_end_query(txn);
 
-  /* End batch mode - emit single items-changed signal for all additions */
-  end_batch(self);
-
-  /* Enforce window AFTER batch signal - removals are a separate atomic operation */
+  /* Enforce window size */
   enforce_window(self);
 }
 
