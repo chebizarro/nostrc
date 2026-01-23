@@ -1742,38 +1742,38 @@ static void test_high_contrast_css_class_applied(TestUIFixture *fixture, gconstp
   (void)user_data;
 
   /* Verify that high-contrast class can be added to window */
-  gtk_widget_add_css_class(GTK_WIDGET(fixture->win), "high-contrast");
-  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->win), "high-contrast"));
+  gtk_widget_add_css_class(GTK_WIDGET(fixture->window), "high-contrast");
+  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->window), "high-contrast"));
 
   /* Verify it can be removed */
-  gtk_widget_remove_css_class(GTK_WIDGET(fixture->win), "high-contrast");
-  g_assert_false(gtk_widget_has_css_class(GTK_WIDGET(fixture->win), "high-contrast"));
+  gtk_widget_remove_css_class(GTK_WIDGET(fixture->window), "high-contrast");
+  g_assert_false(gtk_widget_has_css_class(GTK_WIDGET(fixture->window), "high-contrast"));
 }
 
 static void test_high_contrast_variant_inverted(TestUIFixture *fixture, gconstpointer user_data) {
   (void)user_data;
 
   /* Test inverted variant (white on black) */
-  gtk_widget_add_css_class(GTK_WIDGET(fixture->win), "high-contrast");
-  gtk_widget_add_css_class(GTK_WIDGET(fixture->win), "inverted");
+  gtk_widget_add_css_class(GTK_WIDGET(fixture->window), "high-contrast");
+  gtk_widget_add_css_class(GTK_WIDGET(fixture->window), "inverted");
 
-  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->win), "high-contrast"));
-  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->win), "inverted"));
+  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->window), "high-contrast"));
+  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->window), "inverted"));
 
-  gtk_widget_remove_css_class(GTK_WIDGET(fixture->win), "inverted");
-  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->win), "high-contrast"));
-  g_assert_false(gtk_widget_has_css_class(GTK_WIDGET(fixture->win), "inverted"));
+  gtk_widget_remove_css_class(GTK_WIDGET(fixture->window), "inverted");
+  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->window), "high-contrast"));
+  g_assert_false(gtk_widget_has_css_class(GTK_WIDGET(fixture->window), "inverted"));
 }
 
 static void test_high_contrast_variant_yellow_on_black(TestUIFixture *fixture, gconstpointer user_data) {
   (void)user_data;
 
   /* Test yellow-on-black variant */
-  gtk_widget_add_css_class(GTK_WIDGET(fixture->win), "high-contrast");
-  gtk_widget_add_css_class(GTK_WIDGET(fixture->win), "yellow-on-black");
+  gtk_widget_add_css_class(GTK_WIDGET(fixture->window), "high-contrast");
+  gtk_widget_add_css_class(GTK_WIDGET(fixture->window), "yellow-on-black");
 
-  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->win), "high-contrast"));
-  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->win), "yellow-on-black"));
+  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->window), "high-contrast"));
+  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->window), "yellow-on-black"));
 }
 
 static void test_high_contrast_focus_indicators(TestUIFixture *fixture, gconstpointer user_data) {
@@ -1781,10 +1781,10 @@ static void test_high_contrast_focus_indicators(TestUIFixture *fixture, gconstpo
 
   /* Create a button to test focus indicator visibility in high contrast */
   GtkWidget *btn = gtk_button_new_with_label("Test Button");
-  gtk_window_set_child(GTK_WINDOW(fixture->win), btn);
+  gtk_window_set_child(GTK_WINDOW(fixture->window), btn);
 
   /* In high contrast, focus indicators should be visible (3px dotted rings) */
-  gtk_widget_add_css_class(GTK_WIDGET(fixture->win), "high-contrast");
+  gtk_widget_add_css_class(GTK_WIDGET(fixture->window), "high-contrast");
 
   /* Verify button is accessible and can grab focus */
   g_assert_true(gtk_widget_get_can_focus(btn));
@@ -1805,10 +1805,10 @@ static void test_high_contrast_button_styles(TestUIFixture *fixture, gconstpoint
   gtk_box_append(GTK_BOX(box), normal_btn);
   gtk_box_append(GTK_BOX(box), suggested_btn);
   gtk_box_append(GTK_BOX(box), destructive_btn);
-  gtk_window_set_child(GTK_WINDOW(fixture->win), box);
+  gtk_window_set_child(GTK_WINDOW(fixture->window), box);
 
   /* Add high contrast class to window */
-  gtk_widget_add_css_class(GTK_WIDGET(fixture->win), "high-contrast");
+  gtk_widget_add_css_class(GTK_WIDGET(fixture->window), "high-contrast");
 
   /* Verify all buttons still have their semantic classes */
   g_assert_true(gtk_widget_has_css_class(suggested_btn, "suggested-action"));

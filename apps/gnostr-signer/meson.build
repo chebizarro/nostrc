@@ -62,44 +62,138 @@ endif
 # Include directories for NIP libraries
 root_inc = include_directories('../../')
 libnostr_inc = include_directories('../../libnostr/include')
-nip55l_inc = include_directories('../../nips/nip55l/include')
-nip46_inc = include_directories('../../nips/nip46/include')
-nip19_inc = include_directories('../../nips/nip19/include')
+libgo_inc = include_directories('../../libgo/include')
+nips_inc = include_directories(
+  '../../nips/nip01/include',
+  '../../nips/nip02/include',
+  '../../nips/nip04/include',
+  '../../nips/nip05/include',
+  '../../nips/nip06/include',
+  '../../nips/nip10/include',
+  '../../nips/nip11/include',
+  '../../nips/nip17/include',
+  '../../nips/nip19/include',
+  '../../nips/nip29/include',
+  '../../nips/nip31/include',
+  '../../nips/nip34/include',
+  '../../nips/nip42/include',
+  '../../nips/nip44/include',
+  '../../nips/nip45/include',
+  '../../nips/nip46/include',
+  '../../nips/nip47/include',
+  '../../nips/nip49/include',
+  '../../nips/nip50/include',
+  '../../nips/nip51/include',
+  '../../nips/nip52/include',
+  '../../nips/nip53/include',
+  '../../nips/nip54/include',
+  '../../nips/nip55l/include',
+  '../../nips/nip5f/include',
+  '../../nips/nip77/include',
+  '../../nips/nip86/include',
+  '../../nips/nip94/include',
+)
 
 # Source files
 app_sources = files(
   'src/main_app.c',
   'src/accounts_store.c',
+  'src/backup-recovery.c',
   'src/bunker_service.c',
   'src/cache-manager.c',
+  'src/client_session.c',
+  'src/delegation.c',
+  'src/event_history.c',
+  'src/hsm_provider.c',
+  'src/hsm_provider_mock.c',
+  'src/hsm_provider_pkcs11.c',
+  'src/hsm_provider_tpm.c',
+  'src/hw_keystore_manager.c',
+  'src/hw_wallet_ledger.c',
+  'src/hw_wallet_provider.c',
+  'src/hw_wallet_trezor.c',
   'src/i18n.c',
+  'src/key_provider.c',
+  'src/key_provider_ed25519.c',
+  'src/key_provider_secp256k1.c',
+  'src/key_rotation.c',
+  'src/keyboard-nav.c',
   'src/memory-profile.c',
+  'src/multisig_coordinator.c',
+  'src/multisig_nip46.c',
+  'src/multisig_store.c',
+  'src/multisig_wallet.c',
   'src/policy_store.c',
   'src/profile_store.c',
+  'src/qr-code.c',
+  'src/qr-scanner.c',
+  'src/rate-limiter.c',
   'src/relay_info.c',
   'src/relay_store.c',
   'src/secret_store.c',
   'src/secret-storage.c',
+  'src/secure-delete.c',
+  'src/secure-mem.c',
+  'src/secure-memory.c',
+  'src/session-manager.c',
   'src/settings_manager.c',
+  'src/social-recovery.c',
+  'src/startup-timing.c',
   'src/user_list_store.c',
 )
 
 # UI source files
-app_ui_sources = []
-ui_src_dir = 'src/ui'
-if run_command('test', '-d', ui_src_dir, check: false).returncode() == 0
-  # Add UI sources if directory exists
-  app_ui_sources = files(
-    'src/ui/account_settings.c',
-    'src/ui/about_dialog.c',
-    'src/ui/bunker_connect_dialog.c',
-    'src/ui/connection_manager_page.c',
-    'src/ui/lazy-loader.c',
-    'src/ui/main_window.c',
-    'src/ui/relay_page.c',
-    'src/ui/theme.c',
-  )
-endif
+app_ui_sources = files(
+  'src/ui/accounts_page.c',
+  'src/ui/approval_dialog.c',
+  'src/ui/confirm-delete-dialog.c',
+  'src/ui/events-page.c',
+  'src/ui/hardware_keystore_widget.c',
+  'src/ui/home_page.c',
+  'src/ui/lazy-loader.c',
+  'src/ui/lock-screen.c',
+  'src/ui/onboarding-assistant.c',
+  'src/ui/page-applications.c',
+  'src/ui/page-history.c',
+  'src/ui/page-permissions.c',
+  'src/ui/page-sessions.c',
+  'src/ui/page-settings.c',
+  'src/ui/permissions_page.c',
+  'src/ui/profile-dashboard.c',
+  'src/ui/settings_page.c',
+  'src/ui/signer-window.c',
+  'src/ui/welcome-page.c',
+  # Sheets
+  'src/ui/sheets/sheet-account-backup.c',
+  'src/ui/sheets/sheet-add-application.c',
+  'src/ui/sheets/sheet-backup.c',
+  'src/ui/sheets/sheet-change-password.c',
+  'src/ui/sheets/sheet-create-account.c',
+  'src/ui/sheets/sheet-create-bunker.c',
+  'src/ui/sheets/sheet-create-multisig.c',
+  'src/ui/sheets/sheet-create-profile.c',
+  'src/ui/sheets/sheet-delegation.c',
+  'src/ui/sheets/sheet-event-details.c',
+  'src/ui/sheets/sheet-hw-wallet.c',
+  'src/ui/sheets/sheet-import-key.c',
+  'src/ui/sheets/sheet-import-profile.c',
+  'src/ui/sheets/sheet-key-rotation.c',
+  'src/ui/sheets/sheet-multisig-signing.c',
+  'src/ui/sheets/sheet-orbot-setup.c',
+  'src/ui/sheets/sheet-profile-editor.c',
+  'src/ui/sheets/sheet-qr-display.c',
+  'src/ui/sheets/sheet-qr-scanner.c',
+  'src/ui/sheets/sheet-relay-config.c',
+  'src/ui/sheets/sheet-select-account.c',
+  'src/ui/sheets/sheet-sign-message.c',
+  'src/ui/sheets/sheet-social-recovery.c',
+  'src/ui/sheets/sheet-user-list.c',
+  # Widgets
+  'src/ui/widgets/app-row.c',
+  'src/ui/widgets/gn-secure-entry.c',
+  'src/ui/widgets/identity-row.c',
+  'src/ui/widgets/relay-row.c',
+)
 
 # GResource compilation
 gnome = import('gnome')
@@ -136,9 +230,8 @@ executable(app_bin,
   include_directories: [
     root_inc,
     libnostr_inc,
-    nip55l_inc,
-    nip46_inc,
-    nip19_inc,
+    libgo_inc,
+    nips_inc,
   ],
   dependencies: app_deps,
   c_args: [
@@ -178,5 +271,5 @@ summary({
 
 summary({
   'Translations': true,
-  'Languages': 'en, ja, es, pt_BR, id, fa',
+  'Languages': 'ja, es, pt_BR, id, fa',
 }, section: 'Internationalization')

@@ -13,6 +13,9 @@
  * - Constant-time comparison to prevent timing attacks
  */
 
+/* Enable memset_s on macOS/C11 */
+#define __STDC_WANT_LIB_EXT1__ 1
+
 #include "secure-mem.h"
 #include <string.h>
 #include <stdlib.h>

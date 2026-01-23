@@ -7,6 +7,9 @@
  * - Reference-counted GnSecureString wrapper
  */
 
+/* Enable memset_s on macOS/C11 */
+#define __STDC_WANT_LIB_EXT1__ 1
+
 #include "secure-memory.h"
 #include <string.h>
 #include <stdlib.h>
