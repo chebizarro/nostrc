@@ -15,6 +15,7 @@
 #include "gnostr-search-results-view.h"
 #include "note_card_row.h"
 #include "../ipc/signer_ipc.h"
+#include "../ipc/gnostr-signer-service.h"
 #include "../model/gn-nostr-event-model.h"
 #include "../model/gn-nostr-event-item.h"
 #include "../model/gn-nostr-profile.h"
@@ -2360,8 +2361,16 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
     nostr_nip46_session_free(self->nip46_session);
   }
   self->nip46_session = gnostr_login_take_nip46_session(login);
-  if (self->nip46_session) {
-    g_debug("[AUTH] NIP-46 remote signer session acquired");
+
+  /* Configure the unified signer service with the NIP-46 session (or NULL for NIP-55L) */
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  gnostr_signer_service_set_nip46_session(signer, self->nip46_session);
+  self->nip46_session = NULL; /* Signer service now owns the session */
+
+  if (gnostr_signer_service_get_method(signer) == GNOSTR_SIGNER_METHOD_NIP46) {
+    g_debug("[AUTH] Using NIP-46 remote signer");
+  } else if (gnostr_signer_service_get_method(signer) == GNOSTR_SIGNER_METHOD_NIP55L) {
+    g_debug("[AUTH] Using NIP-55L local signer");
   }
 
   /* Update user_pubkey_hex from npub */
@@ -2370,6 +2379,8 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
     if (nostr_nip19_decode_npub(npub, pubkey_bytes) == 0) {
       g_free(self->user_pubkey_hex);
       self->user_pubkey_hex = hex_encode_lower(pubkey_bytes, 32);
+      /* Also set pubkey on signer service */
+      gnostr_signer_service_set_pubkey(signer, self->user_pubkey_hex);
     }
   }
 
@@ -2443,6 +2454,9 @@ static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data) {
     nostr_nip46_session_free(self->nip46_session);
     self->nip46_session = NULL;
   }
+
+  /* Clear the signer service */
+  gnostr_signer_service_clear(gnostr_signer_service_get_default());
 
   /* Update UI */
   update_login_ui_state(self);
@@ -4030,19 +4044,20 @@ static void publish_context_free(PublishContext *ctx) {
   g_free(ctx);
 }
 
-/* Callback when DBus sign_event completes */
+/* Callback when unified signer service completes signing */
 static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   PublishContext *ctx = (PublishContext*)user_data;
+  (void)source; /* Not used with unified signer service */
+
   if (!ctx || !GNOSTR_IS_MAIN_WINDOW(ctx->self)) {
     publish_context_free(ctx);
     return;
   }
   GnostrMainWindow *self = ctx->self;
-  NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
 
   GError *error = NULL;
   char *signed_event_json = NULL;
-  gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(proxy, &signed_event_json, res, &error);
+  gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
 
   if (!ok || !signed_event_json) {
     char *msg = g_strdup_printf("Signing failed: %s", error ? error->message : "unknown error");
@@ -4612,14 +4627,10 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
     return;
   }
 
-  /* Get signer proxy */
-  GError *proxy_err = NULL;
-  NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
-  if (!proxy) {
-    char *msg = g_strdup_printf("Signer not available: %s", proxy_err ? proxy_err->message : "not connected");
-    show_toast(self, msg);
-    g_free(msg);
-    g_clear_error(&proxy_err);
+  /* Check if signer is available */
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  if (!gnostr_signer_service_is_available(signer)) {
+    show_toast(self, "Signer not available - please sign in");
     return;
   }
 
@@ -4772,12 +4783,11 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
   ctx->self = self;
   ctx->text = g_strdup(text);
 
-  /* Call signer asynchronously */
-  nostr_org_nostr_signer_call_sign_event(
-    proxy,
+  /* Call unified signer service (uses NIP-46 or NIP-55L based on login method) */
+  gnostr_sign_event_async(
     event_json,      /* event_json */
-    "",              /* current_user: empty = use default */
-    "gnostr",        /* app_id */
+    "",              /* current_user: ignored */
+    "gnostr",        /* app_id: ignored */
     NULL,            /* cancellable */
     on_sign_event_complete,
     ctx

@@ -1,0 +1,407 @@
+/**
+ * GnostrSignerService - Unified Signing Service Implementation
+ */
+
+#include "gnostr-signer-service.h"
+#include "signer_ipc.h"
+#include "nostr/nip46/nip46_client.h"
+#include <string.h>
+
+struct _GnostrSignerService {
+  GObject parent_instance;
+
+  /* Current signing method */
+  GnostrSignerMethod method;
+
+  /* User's public key (hex) */
+  char *pubkey_hex;
+
+  /* NIP-46 session (owned if method is NIP46) */
+  NostrNip46Session *nip46_session;
+
+  /* NIP-55L proxy (lazy initialized) */
+  NostrSignerProxy *nip55l_proxy;
+};
+
+G_DEFINE_TYPE(GnostrSignerService, gnostr_signer_service, G_TYPE_OBJECT)
+
+/* Global default instance */
+static GnostrSignerService *s_default_service = NULL;
+
+static void
+gnostr_signer_service_dispose(GObject *object)
+{
+  GnostrSignerService *self = GNOSTR_SIGNER_SERVICE(object);
+
+  if (self->nip46_session) {
+    nostr_nip46_session_free(self->nip46_session);
+    self->nip46_session = NULL;
+  }
+
+  /* Don't free the proxy - it's shared via signer_ipc */
+  self->nip55l_proxy = NULL;
+
+  G_OBJECT_CLASS(gnostr_signer_service_parent_class)->dispose(object);
+}
+
+static void
+gnostr_signer_service_finalize(GObject *object)
+{
+  GnostrSignerService *self = GNOSTR_SIGNER_SERVICE(object);
+
+  g_free(self->pubkey_hex);
+
+  G_OBJECT_CLASS(gnostr_signer_service_parent_class)->finalize(object);
+}
+
+static void
+gnostr_signer_service_class_init(GnostrSignerServiceClass *klass)
+{
+  GObjectClass *object_class = G_OBJECT_CLASS(klass);
+
+  object_class->dispose = gnostr_signer_service_dispose;
+  object_class->finalize = gnostr_signer_service_finalize;
+}
+
+static void
+gnostr_signer_service_init(GnostrSignerService *self)
+{
+  self->method = GNOSTR_SIGNER_METHOD_NONE;
+  self->pubkey_hex = NULL;
+  self->nip46_session = NULL;
+  self->nip55l_proxy = NULL;
+}
+
+GnostrSignerService *
+gnostr_signer_service_new(void)
+{
+  return g_object_new(GNOSTR_TYPE_SIGNER_SERVICE, NULL);
+}
+
+GnostrSignerService *
+gnostr_signer_service_get_default(void)
+{
+  if (!s_default_service) {
+    s_default_service = gnostr_signer_service_new();
+  }
+  return s_default_service;
+}
+
+void
+gnostr_signer_service_set_nip46_session(GnostrSignerService *self,
+                                         NostrNip46Session *session)
+{
+  g_return_if_fail(GNOSTR_IS_SIGNER_SERVICE(self));
+
+  /* Free old session if any */
+  if (self->nip46_session) {
+    nostr_nip46_session_free(self->nip46_session);
+    self->nip46_session = NULL;
+  }
+
+  if (session) {
+    self->nip46_session = session;
+    self->method = GNOSTR_SIGNER_METHOD_NIP46;
+    g_debug("[SIGNER_SERVICE] Switched to NIP-46 remote signer");
+  } else {
+    /* Check if NIP-55L is available as fallback */
+    GError *error = NULL;
+    self->nip55l_proxy = gnostr_signer_proxy_get(&error);
+    if (self->nip55l_proxy) {
+      self->method = GNOSTR_SIGNER_METHOD_NIP55L;
+      g_debug("[SIGNER_SERVICE] Using NIP-55L local signer");
+    } else {
+      self->method = GNOSTR_SIGNER_METHOD_NONE;
+      g_debug("[SIGNER_SERVICE] No signer available");
+      if (error) g_error_free(error);
+    }
+  }
+}
+
+GnostrSignerMethod
+gnostr_signer_service_get_method(GnostrSignerService *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_SIGNER_SERVICE(self), GNOSTR_SIGNER_METHOD_NONE);
+  return self->method;
+}
+
+gboolean
+gnostr_signer_service_is_available(GnostrSignerService *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_SIGNER_SERVICE(self), FALSE);
+  return self->method != GNOSTR_SIGNER_METHOD_NONE;
+}
+
+const char *
+gnostr_signer_service_get_pubkey(GnostrSignerService *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_SIGNER_SERVICE(self), NULL);
+  return self->pubkey_hex;
+}
+
+void
+gnostr_signer_service_set_pubkey(GnostrSignerService *self,
+                                  const char *pubkey_hex)
+{
+  g_return_if_fail(GNOSTR_IS_SIGNER_SERVICE(self));
+
+  g_free(self->pubkey_hex);
+  self->pubkey_hex = g_strdup(pubkey_hex);
+}
+
+void
+gnostr_signer_service_clear(GnostrSignerService *self)
+{
+  g_return_if_fail(GNOSTR_IS_SIGNER_SERVICE(self));
+
+  if (self->nip46_session) {
+    nostr_nip46_session_free(self->nip46_session);
+    self->nip46_session = NULL;
+  }
+
+  g_free(self->pubkey_hex);
+  self->pubkey_hex = NULL;
+
+  self->nip55l_proxy = NULL;
+  self->method = GNOSTR_SIGNER_METHOD_NONE;
+
+  g_debug("[SIGNER_SERVICE] Cleared all authentication state");
+}
+
+/* ---- Async Signing Implementation ---- */
+
+typedef struct {
+  GnostrSignerService *service;
+  GnostrSignerCallback callback;
+  gpointer user_data;
+  char *event_json;
+} SignContext;
+
+static void
+sign_context_free(SignContext *ctx)
+{
+  if (!ctx) return;
+  g_free(ctx->event_json);
+  g_free(ctx);
+}
+
+/* NIP-55L callback */
+static void
+on_nip55l_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  SignContext *ctx = (SignContext *)user_data;
+  NostrSignerProxy *proxy = (NostrSignerProxy *)source;
+
+  GError *error = NULL;
+  char *signed_event_json = NULL;
+
+  gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(
+      proxy, &signed_event_json, res, &error);
+
+  if (!ok) {
+    if (!error) {
+      error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED, "Signing failed");
+    }
+    ctx->callback(ctx->service, NULL, error, ctx->user_data);
+    g_error_free(error);
+  } else {
+    ctx->callback(ctx->service, signed_event_json, NULL, ctx->user_data);
+    g_free(signed_event_json);
+  }
+
+  sign_context_free(ctx);
+}
+
+/* NIP-46 signing (runs in thread) */
+static void
+nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable *cancellable)
+{
+  SignContext *ctx = (SignContext *)task_data;
+  (void)source;
+  (void)cancellable;
+
+  if (!ctx->service->nip46_session) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "NIP-46 session not available");
+    return;
+  }
+
+  char *signed_event_json = NULL;
+  int rc = nostr_nip46_client_sign_event(ctx->service->nip46_session,
+                                          ctx->event_json,
+                                          &signed_event_json);
+
+  if (rc != 0 || !signed_event_json) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "NIP-46 signing failed (error %d)", rc);
+    return;
+  }
+
+  g_task_return_pointer(task, signed_event_json, g_free);
+}
+
+static void
+on_nip46_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  SignContext *ctx = (SignContext *)user_data;
+  (void)source;
+
+  GError *error = NULL;
+  char *signed_event_json = g_task_propagate_pointer(G_TASK(res), &error);
+
+  if (error) {
+    ctx->callback(ctx->service, NULL, error, ctx->user_data);
+    g_error_free(error);
+  } else {
+    ctx->callback(ctx->service, signed_event_json, NULL, ctx->user_data);
+    g_free(signed_event_json);
+  }
+
+  sign_context_free(ctx);
+}
+
+void
+gnostr_signer_service_sign_event_async(GnostrSignerService *self,
+                                        const char *event_json,
+                                        GCancellable *cancellable,
+                                        GnostrSignerCallback callback,
+                                        gpointer user_data)
+{
+  g_return_if_fail(GNOSTR_IS_SIGNER_SERVICE(self));
+  g_return_if_fail(event_json != NULL);
+  g_return_if_fail(callback != NULL);
+
+  SignContext *ctx = g_new0(SignContext, 1);
+  ctx->service = self;
+  ctx->callback = callback;
+  ctx->user_data = user_data;
+  ctx->event_json = g_strdup(event_json);
+
+  switch (self->method) {
+    case GNOSTR_SIGNER_METHOD_NIP46:
+      g_debug("[SIGNER_SERVICE] Signing via NIP-46 remote signer");
+      {
+        GTask *task = g_task_new(NULL, cancellable, on_nip46_sign_complete, ctx);
+        g_task_set_task_data(task, ctx, NULL); /* ctx freed in callback */
+        g_task_run_in_thread(task, nip46_sign_thread);
+        g_object_unref(task);
+      }
+      break;
+
+    case GNOSTR_SIGNER_METHOD_NIP55L:
+      g_debug("[SIGNER_SERVICE] Signing via NIP-55L local signer");
+      if (!self->nip55l_proxy) {
+        GError *error = NULL;
+        self->nip55l_proxy = gnostr_signer_proxy_get(&error);
+        if (!self->nip55l_proxy) {
+          GError *cb_error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED,
+                                          "Failed to connect to local signer: %s",
+                                          error ? error->message : "unknown");
+          callback(self, NULL, cb_error, user_data);
+          g_error_free(cb_error);
+          if (error) g_error_free(error);
+          sign_context_free(ctx);
+          return;
+        }
+      }
+      nostr_org_nostr_signer_call_sign_event(
+          self->nip55l_proxy,
+          event_json,
+          "",  /* current_user: empty = use default */
+          "",  /* app_id: empty = use default */
+          cancellable,
+          on_nip55l_sign_complete,
+          ctx);
+      break;
+
+    case GNOSTR_SIGNER_METHOD_NONE:
+    default:
+      {
+        GError *error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED,
+                                     "No signing method available");
+        callback(self, NULL, error, user_data);
+        g_error_free(error);
+        sign_context_free(ctx);
+      }
+      break;
+  }
+}
+
+/* ---- Convenience Wrapper for Easy Migration ---- */
+
+typedef struct {
+  GAsyncReadyCallback callback;
+  gpointer user_data;
+  char *signed_event;
+  GError *error;
+} WrapperContext;
+
+static void
+on_wrapper_sign_complete(GnostrSignerService *service,
+                          const char *signed_event_json,
+                          GError *error,
+                          gpointer user_data)
+{
+  WrapperContext *ctx = (WrapperContext *)user_data;
+  (void)service;
+
+  /* Create a GTask to hold the result */
+  GTask *task = g_task_new(NULL, NULL, NULL, NULL);
+
+  if (error) {
+    g_task_return_error(task, g_error_copy(error));
+  } else if (signed_event_json) {
+    g_task_return_pointer(task, g_strdup(signed_event_json), g_free);
+  } else {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                             "Signing returned no result");
+  }
+
+  /* Call the original callback */
+  ctx->callback(NULL, G_ASYNC_RESULT(task), ctx->user_data);
+
+  g_object_unref(task);
+  g_free(ctx);
+}
+
+void
+gnostr_sign_event_async(const char *event_json,
+                         const char *current_user,
+                         const char *app_id,
+                         GCancellable *cancellable,
+                         GAsyncReadyCallback callback,
+                         gpointer user_data)
+{
+  (void)current_user;
+  (void)app_id;
+
+  WrapperContext *ctx = g_new0(WrapperContext, 1);
+  ctx->callback = callback;
+  ctx->user_data = user_data;
+
+  gnostr_signer_service_sign_event_async(
+      gnostr_signer_service_get_default(),
+      event_json,
+      cancellable,
+      on_wrapper_sign_complete,
+      ctx);
+}
+
+gboolean
+gnostr_sign_event_finish(GAsyncResult *res,
+                          char **out_signed_event,
+                          GError **error)
+{
+  g_return_val_if_fail(G_IS_TASK(res), FALSE);
+
+  char *result = g_task_propagate_pointer(G_TASK(res), error);
+  if (result) {
+    if (out_signed_event) {
+      *out_signed_event = result;
+    } else {
+      g_free(result);
+    }
+    return TRUE;
+  }
+  return FALSE;
+}
