@@ -10,6 +10,7 @@
  */
 #include "secret_store.h"
 #include "secure-memory.h"
+#include "secure-mem.h"
 #include "secure-delete.h"
 #include <nostr/nip55l/signer_ops.h>
 #include <nostr/nip55l/error.h>

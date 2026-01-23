@@ -5,6 +5,7 @@
 #include "accounts_store.h"
 #include "settings_manager.h"
 #include "startup-timing.h"
+#include "secure-mem.h"
 #include "ui/signer-window.h"
 #include "ui/onboarding-assistant.h"
 
@@ -744,6 +745,10 @@ int main(int argc, char **argv) {
   startup_timing_init();
   STARTUP_TIME_BEGIN(STARTUP_PHASE_INIT);
 
+  /* Initialize secure memory subsystem for handling sensitive data
+   * (private keys, passwords, session tokens, etc.) */
+  gnostr_secure_mem_init();
+
   g_set_prgname("gnostr-signer");
   AdwApplication *app = adw_application_new("org.gnostr.Signer", G_APPLICATION_DEFAULT_FLAGS);
 
@@ -792,5 +797,9 @@ int main(int argc, char **argv) {
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
   int status = g_application_run(G_APPLICATION(app), argc, argv);
   g_object_unref(app);
+
+  /* Shutdown secure memory subsystem - securely zeros and frees all remaining allocations */
+  gnostr_secure_mem_shutdown();
+
   return status;
 }

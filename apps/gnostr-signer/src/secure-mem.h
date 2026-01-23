@@ -1,0 +1,305 @@
+/* secure-mem.h - Secure memory utilities for gnostr-signer
+ *
+ * Provides secure memory allocation, deallocation, and string handling
+ * for sensitive data like private keys (nsec), passwords, passphrases,
+ * decrypted content, and session tokens.
+ *
+ * Features:
+ * - Memory locked in RAM via mlock() to prevent swapping to disk
+ * - Secure zeroing via explicit_bzero() that won't be optimized away
+ * - Guard pages in debug builds for overflow detection
+ * - Integration with libsodium if available
+ *
+ * This is the simplified API for gnostr-signer. For the full-featured
+ * GnSecureString type, see secure-memory.h.
+ *
+ * Security Notes:
+ * - Always use gnostr_secure_free() to release memory from gnostr_secure_alloc()
+ * - Always use gnostr_secure_strfree() to release strings from gnostr_secure_strdup()
+ * - Size parameters must be accurate for secure zeroing to work correctly
+ * - mlock() may fail without elevated privileges (non-fatal warning)
+ */
+#pragma once
+
+#include <glib.h>
+#include <stddef.h>
+#include <stdbool.h>
+
+G_BEGIN_DECLS
+
+/* ============================================================
+ * Initialization
+ * ============================================================ */
+
+/**
+ * gnostr_secure_mem_init:
+ *
+ * Initialize the secure memory subsystem.
+ * Called automatically on first allocation if not called explicitly.
+ * Safe to call multiple times.
+ *
+ * Returns: TRUE on success, FALSE on failure
+ */
+gboolean gnostr_secure_mem_init(void);
+
+/**
+ * gnostr_secure_mem_shutdown:
+ *
+ * Shutdown the secure memory subsystem.
+ * Securely zeros and frees all remaining allocations.
+ * Call this during application exit for clean shutdown.
+ */
+void gnostr_secure_mem_shutdown(void);
+
+/* ============================================================
+ * Core Memory Operations
+ * ============================================================ */
+
+/**
+ * gnostr_secure_alloc:
+ * @size: Number of bytes to allocate
+ *
+ * Allocate secure memory for sensitive data.
+ *
+ * The allocated memory is:
+ * - Zero-initialized
+ * - Locked in RAM (mlock) to prevent swapping to disk
+ * - Protected by guard canaries in debug builds
+ *
+ * IMPORTANT: Always free with gnostr_secure_free(), never with free() or g_free()
+ *
+ * Returns: Pointer to allocated memory, or NULL on failure
+ */
+void *gnostr_secure_alloc(size_t size);
+
+/**
+ * gnostr_secure_free:
+ * @ptr: Pointer from gnostr_secure_alloc (NULL is safe)
+ * @size: Size of allocation (must match original allocation)
+ *
+ * Free secure memory, securely zeroing it first.
+ *
+ * Uses explicit_bzero() (or equivalent) to ensure the memory is
+ * actually zeroed before being freed, preventing compiler optimization
+ * from removing the zeroing operation.
+ *
+ * Safe to call with NULL pointer.
+ */
+void gnostr_secure_free(void *ptr, size_t size);
+
+/**
+ * gnostr_secure_clear:
+ * @ptr: Memory to zero (NULL is safe)
+ * @size: Number of bytes to zero
+ *
+ * Securely zero memory without freeing it.
+ *
+ * This is an explicit_bzero() wrapper that ensures the compiler
+ * doesn't optimize away the zeroing operation.
+ *
+ * Use this for:
+ * - Stack-allocated buffers containing sensitive data
+ * - Clearing data before reuse
+ * - Zeroing temporaries
+ *
+ * Safe to call with NULL pointer or zero size.
+ */
+void gnostr_secure_clear(void *ptr, size_t size);
+
+/* ============================================================
+ * Secure String Handling
+ * ============================================================ */
+
+/**
+ * gnostr_secure_strdup:
+ * @str: Source string (can be NULL)
+ *
+ * Duplicate a string into secure memory.
+ *
+ * The returned string is stored in locked memory that won't be
+ * swapped to disk.
+ *
+ * IMPORTANT: Free with gnostr_secure_strfree(), never with g_free() or free()
+ *
+ * Returns: New string in secure memory, or NULL if @str is NULL or on failure
+ */
+gchar *gnostr_secure_strdup(const char *str);
+
+/**
+ * gnostr_secure_strndup:
+ * @str: Source string (can be NULL)
+ * @n: Maximum number of characters to copy
+ *
+ * Duplicate up to @n characters of a string into secure memory.
+ *
+ * Returns: New null-terminated string in secure memory, or NULL
+ */
+gchar *gnostr_secure_strndup(const char *str, size_t n);
+
+/**
+ * gnostr_secure_strfree:
+ * @str: String from gnostr_secure_strdup (NULL is safe)
+ *
+ * Free a secure string, securely clearing it first.
+ *
+ * The string content is zeroed using explicit_bzero() before
+ * the memory is freed.
+ *
+ * Safe to call with NULL.
+ */
+void gnostr_secure_strfree(gchar *str);
+
+/* ============================================================
+ * Memory Locking
+ * ============================================================ */
+
+/**
+ * gnostr_secure_mlock:
+ * @ptr: Memory to lock
+ * @size: Size of memory region
+ *
+ * Lock memory region to prevent it from being swapped to disk.
+ *
+ * This is useful for locking memory that wasn't allocated with
+ * gnostr_secure_alloc() (e.g., stack buffers, existing heap allocations).
+ *
+ * Note: May require elevated privileges. Failure is typically non-fatal
+ * and logged as a warning.
+ *
+ * Returns: TRUE if mlock succeeded, FALSE otherwise
+ */
+gboolean gnostr_secure_mlock(void *ptr, size_t size);
+
+/**
+ * gnostr_secure_munlock:
+ * @ptr: Memory to unlock
+ * @size: Size of memory region
+ *
+ * Unlock a previously locked memory region.
+ *
+ * Should be called before freeing memory that was locked with
+ * gnostr_secure_mlock() (not needed for gnostr_secure_alloc() memory).
+ */
+void gnostr_secure_munlock(void *ptr, size_t size);
+
+/**
+ * gnostr_secure_mlock_available:
+ *
+ * Check if mlock() is available and working on this system.
+ *
+ * Returns: TRUE if mlock is functional, FALSE otherwise
+ */
+gboolean gnostr_secure_mlock_available(void);
+
+/* ============================================================
+ * Constant-Time Operations
+ * ============================================================ */
+
+/**
+ * gnostr_secure_memcmp:
+ * @a: First memory region
+ * @b: Second memory region
+ * @size: Number of bytes to compare
+ *
+ * Constant-time memory comparison.
+ *
+ * Compares two memory regions in constant time to prevent timing
+ * side-channel attacks. Unlike memcmp(), this function does NOT
+ * return early on first difference.
+ *
+ * Returns: 0 if memory regions are equal, non-zero if different
+ *          (does NOT indicate which is "greater")
+ */
+int gnostr_secure_memcmp(const void *a, const void *b, size_t size);
+
+/**
+ * gnostr_secure_streq:
+ * @a: First string (can be NULL)
+ * @b: Second string (can be NULL)
+ *
+ * Constant-time string comparison.
+ *
+ * Compares two null-terminated strings in constant time.
+ * Returns FALSE immediately if lengths differ (length is not secret).
+ *
+ * Returns: TRUE if strings are equal, FALSE otherwise
+ */
+gboolean gnostr_secure_streq(const char *a, const char *b);
+
+/* ============================================================
+ * Convenience Macros
+ * ============================================================ */
+
+/**
+ * GNOSTR_SECURE_CLEAR_BUFFER:
+ * @buf: Buffer (must be array, not pointer)
+ *
+ * Securely zero a stack-allocated buffer.
+ * Only works with arrays where sizeof() gives the actual size.
+ */
+#define GNOSTR_SECURE_CLEAR_BUFFER(buf) \
+    gnostr_secure_clear((buf), sizeof(buf))
+
+/**
+ * GNOSTR_SECURE_FREE_STRING:
+ * @str: String pointer (will be set to NULL)
+ *
+ * Securely clear and free a string, then set pointer to NULL.
+ * Works with any allocated string (not just gnostr_secure_strdup).
+ */
+#define GNOSTR_SECURE_FREE_STRING(str) \
+    G_STMT_START { \
+        if ((str) != NULL) { \
+            gnostr_secure_clear((str), strlen(str)); \
+            g_free(str); \
+            (str) = NULL; \
+        } \
+    } G_STMT_END
+
+/**
+ * GNOSTR_SECURE_STRFREE:
+ * @str: Secure string pointer (will be set to NULL)
+ *
+ * Free a secure string and set pointer to NULL.
+ * Use this for strings from gnostr_secure_strdup().
+ */
+#define GNOSTR_SECURE_STRFREE(str) \
+    G_STMT_START { \
+        gnostr_secure_strfree(str); \
+        (str) = NULL; \
+    } G_STMT_END
+
+/* ============================================================
+ * Statistics and Debugging
+ * ============================================================ */
+
+/**
+ * GnostrSecureMemStats:
+ * @total_allocated: Total bytes currently allocated
+ * @total_locked: Total bytes successfully locked in memory
+ * @allocation_count: Number of active allocations
+ * @peak_allocated: Peak memory usage
+ * @mlock_available: Whether mlock is working
+ * @sodium_available: Whether libsodium is being used
+ *
+ * Statistics about secure memory usage.
+ */
+typedef struct {
+    size_t total_allocated;
+    size_t total_locked;
+    size_t allocation_count;
+    size_t peak_allocated;
+    gboolean mlock_available;
+    gboolean sodium_available;
+} GnostrSecureMemStats;
+
+/**
+ * gnostr_secure_mem_get_stats:
+ *
+ * Get statistics about secure memory usage.
+ *
+ * Returns: Current statistics
+ */
+GnostrSecureMemStats gnostr_secure_mem_get_stats(void);
+
+G_END_DECLS

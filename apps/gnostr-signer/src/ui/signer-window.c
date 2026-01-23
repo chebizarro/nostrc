@@ -7,6 +7,8 @@
 #include "sheets/sheet-create-profile.h"
 #include "sheets/sheet-import-profile.h"
 #include "sheets/sheet-account-backup.h"
+#include "sheets/sheet-backup.h"
+#include "../secret_store.h"
 #include "../startup-timing.h"
 #include <gio/gio.h>
 #include <gdk/gdkkeysyms.h>
@@ -423,11 +425,22 @@ void signer_window_show_import_profile(SignerWindow *self) {
  * signer_window_show_backup:
  * @self: a #SignerWindow
  *
- * Opens the export/backup dialog.
+ * Opens the export/backup dialog with both backup and recovery features.
  */
 void signer_window_show_backup(SignerWindow *self) {
   g_return_if_fail(SIGNER_IS_WINDOW(self));
-  SheetAccountBackup *dialog = sheet_account_backup_new();
+
+  /* Get the currently active npub if available */
+  gchar *npub = NULL;
+  secret_store_get_public_key(NULL, &npub);
+
+  /* Create the comprehensive backup/recovery dialog */
+  SheetBackup *dialog = sheet_backup_new();
+  if (npub && *npub) {
+    sheet_backup_set_account(dialog, npub);
+    g_free(npub);
+  }
+
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(self));
 }
 

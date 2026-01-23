@@ -9,6 +9,7 @@
 #include "secret_store.h"
 #include "settings_manager.h"
 #include "secure-delete.h"
+#include "secure-mem.h"
 #include <string.h>
 
 /* Change callback entry */
@@ -295,10 +296,12 @@ GPtrArray *accounts_store_list(AccountsStore *as) {
     e->id = g_strdup((const gchar*)key);
     e->label = g_strdup((const gchar*)val);
 
-    /* Check if secret exists */
+    /* Check if secret exists - nsec is in secure memory, must free securely */
     gchar *nsec = NULL;
     e->has_secret = (secret_store_get_secret(e->id, &nsec) == SECRET_STORE_OK);
-    g_free(nsec);
+    if (nsec) {
+      gnostr_secure_strfree(nsec);
+    }
 
     g_ptr_array_add(arr, e);
   }
@@ -381,9 +384,12 @@ AccountEntry *accounts_store_find(AccountsStore *as, const gchar *query) {
       e->id = g_strdup(id);
       e->label = g_strdup(label);
 
+      /* nsec is in secure memory, must free securely */
       gchar *nsec = NULL;
       e->has_secret = (secret_store_get_secret(id, &nsec) == SECRET_STORE_OK);
-      g_free(nsec);
+      if (nsec) {
+        gnostr_secure_strfree(nsec);
+      }
 
       return e;
     }

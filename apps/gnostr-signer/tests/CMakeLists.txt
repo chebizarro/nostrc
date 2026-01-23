@@ -181,9 +181,34 @@ set_tests_properties(signer/rate-limiter PROPERTIES
 )
 
 # ==============================================================================
+# Test: UI components (window, dialogs, navigation, form validation)
+# Uses GTK test utilities with mock widgets to avoid D-Bus/network dependencies
+# ==============================================================================
+pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)
+pkg_check_modules(ADWAITA REQUIRED IMPORTED_TARGET libadwaita-1)
+
+add_executable(test-ui test-ui.c)
+target_include_directories(test-ui PRIVATE ${SIGNER_INCLUDE_DIRS})
+target_link_libraries(test-ui PRIVATE
+    ${SIGNER_TEST_LIBS}
+    PkgConfig::GTK4
+    PkgConfig::ADWAITA
+)
+target_link_directories(test-ui PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_compile_features(test-ui PRIVATE c_std_11)
+apply_test_sanitizers(test-ui)
+
+add_test(NAME signer/ui COMMAND test-ui)
+set_tests_properties(signer/ui PROPERTIES
+    TIMEOUT 60
+    LABELS "signer;ui;unit"
+    ENVIRONMENT "GDK_BACKEND=x11;GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr-signer;GTK_A11Y=none"
+)
+
+# ==============================================================================
 # All signer tests target (convenience)
 # ==============================================================================
 add_custom_target(signer-tests
-    DEPENDS test-crypto test-identity test-session test-bunker test-dbus test-rate-limiter
+    DEPENDS test-crypto test-identity test-session test-bunker test-dbus test-rate-limiter test-ui
     COMMENT "Building all gnostr-signer tests"
 )

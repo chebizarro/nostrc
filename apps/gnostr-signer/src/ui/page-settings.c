@@ -4,6 +4,7 @@
 #include "sheets/sheet-select-account.h"
 #include "sheets/sheet-import-key.h"
 #include "sheets/sheet-account-backup.h"
+#include "sheets/sheet-backup.h"
 #include "sheets/sheet-orbot-setup.h"
 #include "sheets/sheet-user-list.h"
 #include "sheets/sheet-relay-config.h"
@@ -90,7 +91,23 @@ static void on_add_account(GtkButton *b, gpointer user_data){
 }
 static void on_backup_keys(GtkButton *b, gpointer user_data){
   (void)b; PageSettings *self = user_data; if (!self) return;
-  SheetAccountBackup *dlg = sheet_account_backup_new();
+
+  /* Get the currently active npub */
+  gchar *npub = NULL;
+  SecretStoreResult rc = secret_store_get_public_key(NULL, &npub);
+
+  if (rc != SECRET_STORE_OK || !npub || !*npub) {
+    GtkAlertDialog *ad = gtk_alert_dialog_new("No account selected. Please select or add an account first.");
+    gtk_alert_dialog_show(ad, get_parent_window(GTK_WIDGET(self)));
+    g_object_unref(ad);
+    return;
+  }
+
+  /* Create and present the comprehensive backup/recovery dialog */
+  SheetBackup *dlg = sheet_backup_new();
+  sheet_backup_set_account(dlg, npub);
+  g_free(npub);
+
   adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
 }
 
@@ -220,7 +237,9 @@ static void page_settings_init(PageSettings *self) {
   self->updating_theme = TRUE;
   SettingsManager *sm = settings_manager_get_default();
   SettingsTheme theme = settings_manager_get_theme(sm);
-  /* Map SettingsTheme to combo index: SYSTEM=0, LIGHT=1, DARK=2 */
+  /* Map SettingsTheme to combo index: SYSTEM=0, LIGHT=1, DARK=2
+   * Note: HIGH_CONTRAST falls back to SYSTEM since the combo only has 3 options.
+   * High contrast is still applied via AdwStyleManager in main_app.c */
   guint theme_idx;
   switch (theme) {
     case SETTINGS_THEME_LIGHT:
@@ -228,6 +247,10 @@ static void page_settings_init(PageSettings *self) {
       break;
     case SETTINGS_THEME_DARK:
       theme_idx = 2;
+      break;
+    case SETTINGS_THEME_HIGH_CONTRAST:
+      /* High contrast: fall back to System in UI (actual theme still applied) */
+      theme_idx = 0;
       break;
     case SETTINGS_THEME_SYSTEM:
     default:

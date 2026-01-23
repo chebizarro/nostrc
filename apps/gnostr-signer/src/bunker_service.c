@@ -9,6 +9,7 @@
 #include "secret_store.h"
 #include "settings_manager.h"
 #include "secure-memory.h"
+#include "secure-mem.h"
 #include "rate-limiter.h"
 #include "client_session.h"
 

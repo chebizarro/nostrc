@@ -1,8 +1,10 @@
 /* backup-recovery.c - Backup and recovery implementation for gnostr-signer
  *
  * Implements NIP-49 encrypted backup and BIP-39 mnemonic import/export.
+ * Uses secure memory functions for handling private keys and passwords.
  */
 #include "backup-recovery.h"
+#include "secure-mem.h"
 
 #include <nostr/nip49/nip49.h>
 #include <nostr/nip49/nip49_g.h>
@@ -80,12 +82,9 @@ static gchar *pubkey_to_npub(const guint8 pk[32]) {
   return npub;
 }
 
-/* Helper: Securely clear memory */
+/* Helper: Securely clear memory - wraps gnostr_secure_clear */
 static void secure_clear(void *ptr, gsize len) {
-  if (ptr && len > 0) {
-    volatile guint8 *p = (volatile guint8 *)ptr;
-    while (len--) *p++ = 0;
-  }
+  gnostr_secure_clear(ptr, len);
 }
 
 gboolean gn_backup_export_nip49(const gchar *nsec,

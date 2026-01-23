@@ -13,6 +13,7 @@
  * - Secure password entry with auto-clear timeout (nostrc-6s2)
  */
 #include "sheet-create-profile.h"
+#include "sheet-backup.h"
 #include "../app-resources.h"
 #include "../widgets/gn-secure-entry.h"
 #include "../../rate-limiter.h"
@@ -227,6 +228,11 @@ static void create_profile_dbus_done(GObject *src, GAsyncResult *res, gpointer u
       }
 
       adw_dialog_close(ADW_DIALOG(self));
+
+      /* Trigger backup reminder for newly created key */
+      if (npub && *npub && ctx->parent) {
+        sheet_backup_trigger_reminder(ctx->parent, npub);
+      }
     } else {
       GtkAlertDialog *ad = gtk_alert_dialog_new("Profile creation failed.\n\nPlease try again.");
       gtk_alert_dialog_show(ad, ctx->parent ? ctx->parent : GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
