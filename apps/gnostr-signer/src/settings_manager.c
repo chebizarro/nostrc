@@ -6,6 +6,16 @@ struct _SettingsManager {
   GSettings *settings;
   gchar *default_identity_cache;
   gchar *tor_proxy_cache;
+  /* Startup optimization: cached values for batch read */
+  gboolean startup_cache_valid;
+  SettingsTheme cached_theme;
+  SettingsHighContrastVariant cached_hc_variant;
+  gboolean cached_force_hc;
+  gint cached_window_width;
+  gint cached_window_height;
+  gboolean cached_window_maximized;
+  gint cached_lock_timeout;
+  gboolean cached_remember_approvals;
 };
 
 /* Singleton instance */
@@ -14,7 +24,54 @@ static SettingsManager *default_instance = NULL;
 SettingsManager *settings_manager_new(void) {
   SettingsManager *sm = g_new0(SettingsManager, 1);
   sm->settings = g_settings_new(GNOSTR_SIGNER_SCHEMA_ID);
+  sm->startup_cache_valid = FALSE;
   return sm;
+}
+
+/**
+ * settings_manager_preload_startup_settings:
+ * @sm: A #SettingsManager
+ *
+ * Preload commonly-used startup settings into cache to reduce
+ * D-Bus round trips during application startup. Call this once
+ * early in the startup sequence.
+ */
+void settings_manager_preload_startup_settings(SettingsManager *sm) {
+  if (!sm || !sm->settings || sm->startup_cache_valid) return;
+
+  /* Batch read all startup-critical settings in one go */
+  gchar *theme_str = g_settings_get_string(sm->settings, "theme");
+  gchar *hc_variant_str = g_settings_get_string(sm->settings, "high-contrast-variant");
+
+  /* Parse theme */
+  sm->cached_theme = SETTINGS_THEME_SYSTEM;
+  if (g_strcmp0(theme_str, "light") == 0) {
+    sm->cached_theme = SETTINGS_THEME_LIGHT;
+  } else if (g_strcmp0(theme_str, "dark") == 0) {
+    sm->cached_theme = SETTINGS_THEME_DARK;
+  } else if (g_strcmp0(theme_str, "high-contrast") == 0) {
+    sm->cached_theme = SETTINGS_THEME_HIGH_CONTRAST;
+  }
+  g_free(theme_str);
+
+  /* Parse high-contrast variant */
+  sm->cached_hc_variant = SETTINGS_HC_DEFAULT;
+  if (g_strcmp0(hc_variant_str, "inverted") == 0) {
+    sm->cached_hc_variant = SETTINGS_HC_INVERTED;
+  } else if (g_strcmp0(hc_variant_str, "yellow-on-black") == 0) {
+    sm->cached_hc_variant = SETTINGS_HC_YELLOW_ON_BLACK;
+  }
+  g_free(hc_variant_str);
+
+  /* Read booleans and integers */
+  sm->cached_force_hc = g_settings_get_boolean(sm->settings, "force-high-contrast");
+  sm->cached_window_width = g_settings_get_int(sm->settings, "window-width");
+  sm->cached_window_height = g_settings_get_int(sm->settings, "window-height");
+  sm->cached_window_maximized = g_settings_get_boolean(sm->settings, "window-maximized");
+  sm->cached_lock_timeout = g_settings_get_int(sm->settings, "lock-timeout-sec");
+  sm->cached_remember_approvals = g_settings_get_boolean(sm->settings, "remember-approvals");
+
+  sm->startup_cache_valid = TRUE;
 }
 
 void settings_manager_free(SettingsManager *sm) {
@@ -109,6 +166,11 @@ void settings_manager_set_identity_label(SettingsManager *sm, const gchar *npub,
 SettingsTheme settings_manager_get_theme(SettingsManager *sm) {
   if (!sm) return SETTINGS_THEME_SYSTEM;
 
+  /* Use cached value during startup for faster access */
+  if (sm->startup_cache_valid) {
+    return sm->cached_theme;
+  }
+
   gchar *theme = g_settings_get_string(sm->settings, "theme");
   SettingsTheme result = SETTINGS_THEME_SYSTEM;
 
@@ -141,6 +203,11 @@ void settings_manager_set_theme(SettingsManager *sm, SettingsTheme theme) {
 SettingsHighContrastVariant settings_manager_get_high_contrast_variant(SettingsManager *sm) {
   if (!sm) return SETTINGS_HC_DEFAULT;
 
+  /* Use cached value during startup for faster access */
+  if (sm->startup_cache_valid) {
+    return sm->cached_hc_variant;
+  }
+
   gchar *variant = g_settings_get_string(sm->settings, "high-contrast-variant");
   SettingsHighContrastVariant result = SETTINGS_HC_DEFAULT;
 
@@ -168,7 +235,14 @@ void settings_manager_set_high_contrast_variant(SettingsManager *sm, SettingsHig
 }
 
 gboolean settings_manager_get_force_high_contrast(SettingsManager *sm) {
-  return sm ? g_settings_get_boolean(sm->settings, "force-high-contrast") : FALSE;
+  if (!sm) return FALSE;
+
+  /* Use cached value during startup for faster access */
+  if (sm->startup_cache_valid) {
+    return sm->cached_force_hc;
+  }
+
+  return g_settings_get_boolean(sm->settings, "force-high-contrast");
 }
 
 void settings_manager_set_force_high_contrast(SettingsManager *sm, gboolean force) {
@@ -178,6 +252,14 @@ void settings_manager_set_force_high_contrast(SettingsManager *sm, gboolean forc
 
 void settings_manager_get_window_size(SettingsManager *sm, gint *width, gint *height) {
   if (!sm) return;
+
+  /* Use cached values during startup for faster access */
+  if (sm->startup_cache_valid) {
+    if (width) *width = sm->cached_window_width;
+    if (height) *height = sm->cached_window_height;
+    return;
+  }
+
   if (width) *width = g_settings_get_int(sm->settings, "window-width");
   if (height) *height = g_settings_get_int(sm->settings, "window-height");
 }
@@ -189,7 +271,14 @@ void settings_manager_set_window_size(SettingsManager *sm, gint width, gint heig
 }
 
 gboolean settings_manager_get_window_maximized(SettingsManager *sm) {
-  return sm ? g_settings_get_boolean(sm->settings, "window-maximized") : FALSE;
+  if (!sm) return FALSE;
+
+  /* Use cached value during startup for faster access */
+  if (sm->startup_cache_valid) {
+    return sm->cached_window_maximized;
+  }
+
+  return g_settings_get_boolean(sm->settings, "window-maximized");
 }
 
 void settings_manager_set_window_maximized(SettingsManager *sm, gboolean maximized) {
@@ -199,7 +288,14 @@ void settings_manager_set_window_maximized(SettingsManager *sm, gboolean maximiz
 
 /* Security Settings */
 gint settings_manager_get_lock_timeout(SettingsManager *sm) {
-  return sm ? g_settings_get_int(sm->settings, "lock-timeout-sec") : 300;
+  if (!sm) return 300;
+
+  /* Use cached value during startup for faster access */
+  if (sm->startup_cache_valid) {
+    return sm->cached_lock_timeout;
+  }
+
+  return g_settings_get_int(sm->settings, "lock-timeout-sec");
 }
 
 void settings_manager_set_lock_timeout(SettingsManager *sm, gint seconds) {
@@ -208,7 +304,14 @@ void settings_manager_set_lock_timeout(SettingsManager *sm, gint seconds) {
 }
 
 gboolean settings_manager_get_remember_approvals(SettingsManager *sm) {
-  return sm ? g_settings_get_boolean(sm->settings, "remember-approvals") : FALSE;
+  if (!sm) return FALSE;
+
+  /* Use cached value during startup for faster access */
+  if (sm->startup_cache_valid) {
+    return sm->cached_remember_approvals;
+  }
+
+  return g_settings_get_boolean(sm->settings, "remember-approvals");
 }
 
 void settings_manager_set_remember_approvals(SettingsManager *sm, gboolean remember) {

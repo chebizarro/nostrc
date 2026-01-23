@@ -626,6 +626,10 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
   /* Initialize settings manager and apply theme preference after GTK is initialized */
   STARTUP_TIME_BEGIN(STARTUP_PHASE_SETTINGS);
   SettingsManager *sm = settings_manager_get_default();
+
+  /* Preload startup-critical settings in batch to reduce D-Bus round trips */
+  settings_manager_preload_startup_settings(sm);
+
   SettingsTheme initial_theme = settings_manager_get_theme(sm);
   STARTUP_TIME_END(STARTUP_PHASE_SETTINGS);
 
@@ -644,7 +648,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
                    G_CALLBACK(on_system_high_contrast_changed), NULL);
 
   /* Load application stylesheet from resources */
-  gint64 css_start = startup_timing_measure_start();
+  STARTUP_TIME_BEGIN(STARTUP_PHASE_CSS);
   GtkCssProvider *prov = gtk_css_provider_new();
   gtk_css_provider_load_from_resource(prov, "/org/gnostr/signer/css/app.css");
   GdkDisplay *display = gdk_display_get_default();
@@ -652,14 +656,12 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(prov), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
   }
   g_object_unref(prov);
-  startup_timing_measure_end(css_start, "css-load", 30);
+  STARTUP_TIME_END(STARTUP_PHASE_CSS);
 
   /* Load high-contrast CSS if needed (considers system, force, and theme settings) */
   gboolean use_high_contrast = should_use_high_contrast();
   if (use_high_contrast) {
-    gint64 hc_start = startup_timing_measure_start();
     update_high_contrast_css(use_high_contrast);
-    startup_timing_measure_end(hc_start, "high-contrast-css-load", 20);
   }
 
   /* Check if onboarding should be shown (first run) - this is fast INI file check */

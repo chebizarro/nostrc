@@ -120,6 +120,7 @@ on_dialog_closed(AdwDialog *dialog) {
 static void
 update_delete_button_sensitivity(GnConfirmDeleteDialog *self) {
   gboolean can_delete = FALSE;
+  const char *disabled_reason = NULL;
 
   switch (self->severity) {
     case GN_DELETE_SEVERITY_LOW:
@@ -137,6 +138,9 @@ update_delete_button_sensitivity(GnConfirmDeleteDialog *self) {
       const char *typed = gtk_editable_get_text(GTK_EDITABLE(self->confirm_entry));
       const char *expected = self->confirm_text ? self->confirm_text : "DELETE";
       can_delete = (g_strcmp0(typed, expected) == 0);
+      if (!can_delete) {
+        disabled_reason = "Delete button is disabled. Type the exact confirmation text to enable it.";
+      }
       break;
     }
 
@@ -146,13 +150,42 @@ update_delete_button_sensitivity(GnConfirmDeleteDialog *self) {
       const char *expected = self->confirm_text ? self->confirm_text : "DELETE ALL DATA";
       const char *password = gtk_editable_get_text(GTK_EDITABLE(self->password_entry));
 
-      can_delete = (g_strcmp0(typed, expected) == 0) &&
-                   (password && strlen(password) > 0);
+      gboolean text_matches = (g_strcmp0(typed, expected) == 0);
+      gboolean has_password = (password && strlen(password) > 0);
+
+      can_delete = text_matches && has_password;
+
+      if (!can_delete) {
+        if (!text_matches && !has_password) {
+          disabled_reason = "Delete button is disabled. Type the confirmation text and enter your password to enable it.";
+        } else if (!text_matches) {
+          disabled_reason = "Delete button is disabled. Type the exact confirmation text to enable it.";
+        } else {
+          disabled_reason = "Delete button is disabled. Enter your password to enable it.";
+        }
+      }
       break;
     }
   }
 
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_delete), can_delete);
+
+  /* Update accessibility state for the delete button (nostrc-qfdg) */
+  if (can_delete) {
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_delete),
+                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Click to confirm and proceed with the deletion",
+                                   -1);
+    gtk_accessible_update_state(GTK_ACCESSIBLE(self->btn_delete),
+                                GTK_ACCESSIBLE_STATE_DISABLED, FALSE,
+                                -1);
+  } else if (disabled_reason) {
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_delete),
+                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, disabled_reason,
+                                   -1);
+    gtk_accessible_update_state(GTK_ACCESSIBLE(self->btn_delete),
+                                GTK_ACCESSIBLE_STATE_DISABLED, TRUE,
+                                -1);
+  }
 }
 
 static void
@@ -165,12 +198,17 @@ update_ui_for_severity(GnConfirmDeleteDialog *self) {
   gtk_widget_remove_css_class(GTK_WIDGET(self->btn_delete), "destructive-action");
   gtk_widget_remove_css_class(GTK_WIDGET(self->btn_delete), "error");
 
+  const char *severity_desc = NULL;
+  const char *icon_desc = NULL;
+
   switch (self->severity) {
     case GN_DELETE_SEVERITY_LOW:
       /* Simple dialog with destructive button */
       gtk_button_set_label(self->btn_delete, "Delete");
       gtk_widget_add_css_class(GTK_WIDGET(self->btn_delete), "destructive-action");
       gtk_image_set_from_icon_name(self->warning_icon, "user-trash-symbolic");
+      severity_desc = "Low severity deletion. Click Delete to proceed.";
+      icon_desc = "Trash icon indicating a simple deletion";
       break;
 
     case GN_DELETE_SEVERITY_MEDIUM:
@@ -178,6 +216,8 @@ update_ui_for_severity(GnConfirmDeleteDialog *self) {
       gtk_button_set_label(self->btn_delete, "Delete");
       gtk_widget_add_css_class(GTK_WIDGET(self->btn_delete), "destructive-action");
       gtk_image_set_from_icon_name(self->warning_icon, "dialog-warning-symbolic");
+      severity_desc = "Medium severity deletion. Please review before proceeding.";
+      icon_desc = "Warning icon indicating this deletion requires attention";
       break;
 
     case GN_DELETE_SEVERITY_HIGH:
@@ -187,15 +227,27 @@ update_ui_for_severity(GnConfirmDeleteDialog *self) {
       if (self->confirm_text) {
         gchar *hint = g_strdup_printf("Type \"%s\" to confirm", self->confirm_text);
         gtk_label_set_text(self->confirm_hint, hint);
+
+        /* Update accessibility for confirm entry (nostrc-qfdg) */
+        gchar *entry_desc = g_strdup_printf("Type exactly %s to enable the delete button", self->confirm_text);
+        gtk_accessible_update_property(GTK_ACCESSIBLE(self->confirm_entry),
+                                       GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, entry_desc,
+                                       -1);
+        g_free(entry_desc);
         g_free(hint);
       } else {
         gtk_label_set_text(self->confirm_hint, "Type \"DELETE\" to confirm");
+        gtk_accessible_update_property(GTK_ACCESSIBLE(self->confirm_entry),
+                                       GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Type exactly DELETE to enable the delete button",
+                                       -1);
       }
 
       gtk_button_set_label(self->btn_delete, "Permanently Delete");
       gtk_widget_add_css_class(GTK_WIDGET(self->btn_delete), "destructive-action");
       gtk_widget_add_css_class(GTK_WIDGET(self->btn_delete), "error");
       gtk_image_set_from_icon_name(self->warning_icon, "dialog-warning-symbolic");
+      severity_desc = "High severity deletion. You must type a confirmation text to proceed. This action cannot be undone.";
+      icon_desc = "Warning icon indicating this deletion is permanent and requires confirmation";
       break;
 
     case GN_DELETE_SEVERITY_CRITICAL:
@@ -206,16 +258,42 @@ update_ui_for_severity(GnConfirmDeleteDialog *self) {
       if (self->confirm_text) {
         gchar *hint = g_strdup_printf("Type \"%s\" to confirm", self->confirm_text);
         gtk_label_set_text(self->confirm_hint, hint);
+
+        /* Update accessibility for confirm entry (nostrc-qfdg) */
+        gchar *entry_desc = g_strdup_printf("Type exactly %s to enable the delete button", self->confirm_text);
+        gtk_accessible_update_property(GTK_ACCESSIBLE(self->confirm_entry),
+                                       GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, entry_desc,
+                                       -1);
+        g_free(entry_desc);
         g_free(hint);
       } else {
         gtk_label_set_text(self->confirm_hint, "Type \"DELETE ALL DATA\" to confirm");
+        gtk_accessible_update_property(GTK_ACCESSIBLE(self->confirm_entry),
+                                       GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Type exactly DELETE ALL DATA to enable the delete button",
+                                       -1);
       }
 
       gtk_button_set_label(self->btn_delete, "Permanently Delete Everything");
       gtk_widget_add_css_class(GTK_WIDGET(self->btn_delete), "destructive-action");
       gtk_widget_add_css_class(GTK_WIDGET(self->btn_delete), "error");
       gtk_image_set_from_icon_name(self->warning_icon, "dialog-error-symbolic");
+      severity_desc = "Critical severity deletion. You must type a confirmation text AND enter your password to proceed. This action is irreversible and will delete all data.";
+      icon_desc = "Error icon indicating this is a critical and irreversible deletion";
       break;
+  }
+
+  /* Update dialog accessibility with severity information (nostrc-qfdg) */
+  if (severity_desc) {
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self),
+                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, severity_desc,
+                                   -1);
+  }
+
+  /* Update warning icon accessibility (nostrc-qfdg) */
+  if (icon_desc) {
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->warning_icon),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, icon_desc,
+                                   -1);
   }
 
   update_delete_button_sensitivity(self);
@@ -253,6 +331,12 @@ gn_confirm_delete_dialog_init(GnConfirmDeleteDialog *self) {
   /* Build the dialog UI programmatically */
   adw_dialog_set_title(ADW_DIALOG(self), "Confirm Deletion");
   adw_dialog_set_content_width(ADW_DIALOG(self), 400);
+
+  /* Set accessibility role and label for the dialog (nostrc-qfdg) */
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Confirmation dialog for deletion",
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "A confirmation dialog requiring your acknowledgment before deleting data. This action may be irreversible.",
+                                 -1);
 
   /* Main content box */
   GtkBox *main_box = GTK_BOX(gtk_box_new(GTK_ORIENTATION_VERTICAL, 24));
@@ -321,9 +405,16 @@ gn_confirm_delete_dialog_init(GnConfirmDeleteDialog *self) {
 
   self->confirm_entry = GTK_ENTRY(gtk_entry_new());
   gtk_entry_set_placeholder_text(self->confirm_entry, "Type confirmation text here");
+  gtk_widget_set_focusable(GTK_WIDGET(self->confirm_entry), TRUE);
   g_signal_connect(self->confirm_entry, "changed",
                    G_CALLBACK(on_confirm_entry_changed), self);
   gtk_box_append(self->confirm_entry_box, GTK_WIDGET(self->confirm_entry));
+
+  /* Add accessibility for confirm entry (nostrc-qfdg) */
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->confirm_entry),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Confirmation text entry",
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Type the exact confirmation text shown above to enable the delete button",
+                                 -1);
 
   gtk_box_append(main_box, GTK_WIDGET(self->confirm_entry_box));
 
@@ -337,9 +428,16 @@ gn_confirm_delete_dialog_init(GnConfirmDeleteDialog *self) {
 
   self->password_entry = GTK_PASSWORD_ENTRY(gtk_password_entry_new());
   gtk_password_entry_set_show_peek_icon(self->password_entry, TRUE);
+  gtk_widget_set_focusable(GTK_WIDGET(self->password_entry), TRUE);
   g_signal_connect(self->password_entry, "changed",
                    G_CALLBACK(on_password_entry_changed), self);
   gtk_box_append(self->password_box, GTK_WIDGET(self->password_entry));
+
+  /* Add accessibility for password entry (nostrc-qfdg) */
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->password_entry),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Password confirmation",
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Enter your password to confirm this critical deletion operation",
+                                 -1);
 
   gtk_box_append(main_box, GTK_WIDGET(self->password_box));
 
@@ -349,15 +447,29 @@ gn_confirm_delete_dialog_init(GnConfirmDeleteDialog *self) {
   gtk_widget_set_margin_top(GTK_WIDGET(button_box), 12);
 
   self->btn_cancel = GTK_BUTTON(gtk_button_new_with_label("Cancel"));
+  gtk_widget_set_focusable(GTK_WIDGET(self->btn_cancel), TRUE);
   g_signal_connect(self->btn_cancel, "clicked",
                    G_CALLBACK(on_cancel_clicked), self);
   gtk_box_append(button_box, GTK_WIDGET(self->btn_cancel));
 
+  /* Add accessibility for cancel button (nostrc-qfdg) */
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_cancel),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Cancel deletion",
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Cancel and close this dialog without deleting anything",
+                                 -1);
+
   self->btn_delete = GTK_BUTTON(gtk_button_new_with_label("Delete"));
+  gtk_widget_set_focusable(GTK_WIDGET(self->btn_delete), TRUE);
   gtk_widget_add_css_class(GTK_WIDGET(self->btn_delete), "destructive-action");
   g_signal_connect(self->btn_delete, "clicked",
                    G_CALLBACK(on_delete_clicked), self);
   gtk_box_append(button_box, GTK_WIDGET(self->btn_delete));
+
+  /* Add accessibility for delete button (nostrc-qfdg) */
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_delete),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Confirm deletion",
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Proceed with the deletion. This action may be irreversible.",
+                                 -1);
 
   gtk_box_append(main_box, GTK_WIDGET(button_box));
 

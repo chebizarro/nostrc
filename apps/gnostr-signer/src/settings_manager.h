@@ -258,6 +258,19 @@ void settings_manager_disconnect_changed(SettingsManager *sm, gulong handler_id)
 /* Get singleton instance */
 SettingsManager *settings_manager_get_default(void);
 
+/**
+ * settings_manager_preload_startup_settings:
+ * @sm: A #SettingsManager
+ *
+ * Preload commonly-used startup settings into cache to reduce
+ * D-Bus round trips during application startup. This batches
+ * multiple GSettings reads into a single operation.
+ *
+ * Call this once early in the startup sequence, ideally right
+ * after creating the SettingsManager.
+ */
+void settings_manager_preload_startup_settings(SettingsManager *sm);
+
 /* ============================================================================
  * Internationalization Settings
  * ============================================================================ */

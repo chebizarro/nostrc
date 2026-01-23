@@ -16,6 +16,7 @@
 #include <time.h>
 #include "../accounts_store.h"
 #include "../client_session.h"
+#include "../keyboard-nav.h"
 
 // Callback signature for decision results
 // decision: TRUE=Approve, FALSE=Deny; remember: TRUE to persist policy;
@@ -168,6 +169,19 @@ static void on_remember_toggled(GtkCheckButton *btn, gpointer user_data) {
   GnostrApprovalDialog *self = GNOSTR_APPROVAL_DIALOG(user_data);
   gboolean active = gtk_check_button_get_active(btn);
   gtk_widget_set_sensitive(GTK_WIDGET(self->ttl_dropdown), active);
+
+  /* Update accessibility state for screen readers (nostrc-qfdg) */
+  if (active) {
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->ttl_dropdown),
+                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                   "Select how long to remember this decision. Available options: 10 minutes, 1 hour, 24 hours, or Forever.",
+                                   -1);
+  } else {
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->ttl_dropdown),
+                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                   "Duration selector is disabled. Check 'Remember this decision' to enable.",
+                                   -1);
+  }
 }
 
 static void on_expand_clicked(GtkButton *btn, gpointer user_data) {
@@ -181,6 +195,19 @@ static void on_expand_clicked(GtkButton *btn, gpointer user_data) {
     gtk_label_set_ellipsize(self->content_preview, PANGO_ELLIPSIZE_NONE);
     gtk_label_set_lines(self->content_preview, -1);
     gtk_button_set_label(self->btn_expand, "Show Less");
+
+    /* Update accessibility for expanded state (nostrc-qfdg) */
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_expand),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Collapse and show less content",
+                                   -1);
+    gtk_accessible_update_state(GTK_ACCESSIBLE(self->btn_expand),
+                                GTK_ACCESSIBLE_STATE_EXPANDED, TRUE,
+                                -1);
+    gchar *accessible_desc = g_strdup_printf("Full event content: %s", self->full_content);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->content_preview),
+                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
+                                   -1);
+    g_free(accessible_desc);
   } else {
     /* Re-truncate */
     if (self->full_content && strlen(self->full_content) > PREVIEW_MAX_CHARS) {
@@ -193,6 +220,19 @@ static void on_expand_clicked(GtkButton *btn, gpointer user_data) {
     gtk_label_set_ellipsize(self->content_preview, PANGO_ELLIPSIZE_END);
     gtk_label_set_lines(self->content_preview, 3);
     gtk_button_set_label(self->btn_expand, "Show More");
+
+    /* Update accessibility for collapsed state (nostrc-qfdg) */
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_expand),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Show full event content",
+                                   -1);
+    gtk_accessible_update_state(GTK_ACCESSIBLE(self->btn_expand),
+                                GTK_ACCESSIBLE_STATE_EXPANDED, FALSE,
+                                -1);
+    gchar *accessible_desc = g_strdup_printf("Event content preview (truncated, %zu characters total). Press Show More button to see full content.", strlen(self->full_content));
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->content_preview),
+                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
+                                   -1);
+    g_free(accessible_desc);
   }
 }
 
@@ -410,6 +450,23 @@ static void gnostr_approval_dialog_init(GnostrApprovalDialog *self) {
   gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(shortcut_ctrl), deny_shortcut);
 
   gtk_widget_add_controller(GTK_WIDGET(self), shortcut_ctrl);
+
+  /* Setup keyboard navigation - focus deny button first (safer default),
+   * with approve as the action button (nostrc-qfdg) */
+  gn_keyboard_nav_setup_dialog(ADW_DIALOG(self),
+                               GTK_WIDGET(self->btn_deny),
+                               GTK_WIDGET(self->btn_approve));
+
+  /* Setup focus chain for proper tab navigation order (nostrc-qfdg) */
+  GtkWidget *focus_widgets[] = {
+    GTK_WIDGET(self->identity_dropdown),
+    GTK_WIDGET(self->chk_remember),
+    GTK_WIDGET(self->ttl_dropdown),
+    GTK_WIDGET(self->btn_deny),
+    GTK_WIDGET(self->btn_approve),
+    NULL
+  };
+  gn_keyboard_nav_setup_focus_chain(focus_widgets);
 }
 
 /**
@@ -438,6 +495,16 @@ void gnostr_approval_dialog_set_event_type(GnostrApprovalDialog *self, int kind)
 
   gchar *subtitle = g_strdup_printf("%s (kind %d)", type_name, kind);
   adw_action_row_set_subtitle(self->row_event_type, subtitle);
+
+  /* Update accessibility description for screen readers (nostrc-qfdg) */
+  gchar *accessible_desc = g_strdup_printf("Event type: %s, kind number %d", type_name, kind);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->row_event_type),
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
+                                 -1);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->event_type_icon),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, type_name,
+                                 -1);
+  g_free(accessible_desc);
   g_free(subtitle);
 
   gtk_image_set_from_icon_name(self->event_type_icon, icon_name);
@@ -455,12 +522,27 @@ void gnostr_approval_dialog_set_app_name(GnostrApprovalDialog *self,
                                          const char *app_name) {
   g_return_if_fail(GNOSTR_IS_APPROVAL_DIALOG(self));
 
-  adw_action_row_set_subtitle(self->row_app,
-                              app_name ? app_name : "Unknown Application");
+  const char *display_name = app_name ? app_name : "Unknown Application";
+  adw_action_row_set_subtitle(self->row_app, display_name);
 
   gchar *title = g_strdup_printf("%s requests signature",
                                  app_name ? app_name : "Application");
   gtk_label_set_text(self->header_title, title);
+
+  /* Update accessibility for screen readers (nostrc-qfdg) */
+  gchar *accessible_desc = g_strdup_printf("Requesting application: %s", display_name);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->row_app),
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
+                                 -1);
+
+  /* Update dialog accessible label to include app name for screen reader context */
+  gchar *dialog_label = g_strdup_printf("Signature approval request from %s", display_name);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, dialog_label,
+                                 -1);
+
+  g_free(accessible_desc);
+  g_free(dialog_label);
   g_free(title);
 }
 
@@ -485,8 +567,18 @@ void gnostr_approval_dialog_set_identity(GnostrApprovalDialog *self,
     } else {
       adw_action_row_set_subtitle(self->row_identity, identity_npub);
     }
+
+    /* Update accessibility with full identity for screen readers (nostrc-qfdg) */
+    gchar *accessible_desc = g_strdup_printf("Signing identity: %s", identity_npub);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->row_identity),
+                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
+                                   -1);
+    g_free(accessible_desc);
   } else {
     adw_action_row_set_subtitle(self->row_identity, "Not specified");
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->row_identity),
+                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Signing identity: Not specified",
+                                   -1);
   }
 }
 
@@ -526,6 +618,11 @@ void gnostr_approval_dialog_set_content(GnostrApprovalDialog *self,
     gtk_label_set_text(self->content_preview, "(No content)");
     gtk_widget_set_visible(GTK_WIDGET(self->btn_expand), FALSE);
     gtk_widget_set_visible(GTK_WIDGET(self->content_frame), FALSE);
+
+    /* Update accessibility (nostrc-qfdg) */
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->content_preview),
+                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Event has no content",
+                                   -1);
     return;
   }
 
@@ -539,9 +636,26 @@ void gnostr_approval_dialog_set_content(GnostrApprovalDialog *self,
     g_free(truncated);
     g_free(display);
     gtk_widget_set_visible(GTK_WIDGET(self->btn_expand), TRUE);
+
+    /* Update accessibility for truncated content (nostrc-qfdg) */
+    gchar *accessible_desc = g_strdup_printf("Event content preview (truncated, %zu characters total). Press Show More button to see full content.", strlen(content));
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->content_preview),
+                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
+                                   -1);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_expand),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Show full event content",
+                                   -1);
+    g_free(accessible_desc);
   } else {
     gtk_label_set_text(self->content_preview, content);
     gtk_widget_set_visible(GTK_WIDGET(self->btn_expand), FALSE);
+
+    /* Update accessibility for full content (nostrc-qfdg) */
+    gchar *accessible_desc = g_strdup_printf("Event content: %s", content);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->content_preview),
+                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
+                                   -1);
+    g_free(accessible_desc);
   }
 }
 
@@ -614,11 +728,39 @@ void gnostr_approval_dialog_set_accounts(GnostrApprovalDialog *self,
   /* Disable approve if no signable identity available */
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), count > 0);
 
+  /* Update accessibility for the identity dropdown (nostrc-qfdg) */
+  if (count > 1) {
+    gchar *accessible_desc = g_strdup_printf("Select signing identity. %u accounts available.", count);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->identity_dropdown),
+                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
+                                   -1);
+    g_free(accessible_desc);
+  }
+
+  /* Update approve button accessibility based on state (nostrc-qfdg) */
+  if (count == 0) {
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_approve),
+                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                   "Approve button is disabled. No accounts available for signing.",
+                                   -1);
+  } else {
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_approve),
+                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                   "Click to approve and sign this event with your private key. Keyboard shortcut: Ctrl+A.",
+                                   -1);
+  }
+
   /* Show warning if selected identity is watch-only */
   if (selected_is_watch_only && count == 0) {
     /* Update header to show watch-only warning */
     gtk_label_set_text(self->header_title, "Cannot sign (Watch-only account)");
     gtk_widget_add_css_class(GTK_WIDGET(self->header_title), "warning");
+
+    /* Announce watch-only warning to screen readers (nostrc-qfdg) */
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->header_title),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                   "Warning: Cannot sign. This is a watch-only account without signing capability.",
+                                   -1);
   }
 }
 

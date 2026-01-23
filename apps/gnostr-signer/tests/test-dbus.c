@@ -24,6 +24,8 @@
 #include <keys.h>
 #include <nostr-utils.h>
 #include <nostr/nip19/nip19.h>
+#include <nostr/nip44/nip44.h>
+#include <nostr/nip04.h>
 
 /* D-Bus identifiers matching nip55l_dbus_names.h */
 #define TEST_BUS_NAME       "org.nostr.Signer"
@@ -56,8 +58,12 @@
 
 typedef struct {
     GTestDBus    *dbus;
-    GDBusConnection *conn;
+    GDBusConnection *service_conn;   /* Connection for the service */
+    GDBusConnection *client_conn;    /* Connection for client proxy */
     GDBusProxy   *proxy;
+    GMainContext *service_context;   /* Main context for service thread */
+    GMainLoop    *service_loop;      /* Main loop for service thread */
+    GThread      *service_thread;    /* Thread running the service */
     GPid          daemon_pid;
     gchar        *test_key_hex;      /* Test private key (hex) */
     gchar        *test_npub;         /* Corresponding npub */
@@ -67,6 +73,17 @@ typedef struct {
 /* Forward declarations */
 static void fixture_setup(DbusFixture *fix, gconstpointer user_data);
 static void fixture_teardown(DbusFixture *fix, gconstpointer user_data);
+
+/* Service thread function - runs the service main loop */
+static gpointer
+service_thread_func(gpointer user_data)
+{
+    DbusFixture *fix = (DbusFixture *)user_data;
+    g_main_context_push_thread_default(fix->service_context);
+    g_main_loop_run(fix->service_loop);
+    g_main_context_pop_thread_default(fix->service_context);
+    return NULL;
+}
 
 /* Helper: Generate test keypair and store for tests */
 static void
@@ -376,20 +393,159 @@ handle_method_call(GDBusConnection       *connection,
         return;
     }
 
-    if (g_strcmp0(method_name, "NIP04Encrypt") == 0 ||
-        g_strcmp0(method_name, "NIP04Decrypt") == 0 ||
-        g_strcmp0(method_name, "NIP44Encrypt") == 0 ||
-        g_strcmp0(method_name, "NIP44Decrypt") == 0) {
-        /* Mock implementation - just return input for testing protocol */
-        const gchar *text = NULL;
-        const gchar *pubkey = NULL;
+    if (g_strcmp0(method_name, "NIP44Encrypt") == 0) {
+        const gchar *plaintext = NULL;
+        const gchar *peer_pubkey = NULL;
         const gchar *identity = NULL;
 
-        g_variant_get(parameters, "(&s&s&s)", &text, &pubkey, &identity);
+        g_variant_get(parameters, "(&s&s&s)", &plaintext, &peer_pubkey, &identity);
 
-        /* Return mock encrypted/decrypted text */
+        if (!mock_state.stored_sk_hex || !plaintext || !peer_pubkey || strlen(peer_pubkey) != 64) {
+            g_dbus_method_invocation_return_dbus_error(invocation,
+                ERR_INTERNAL, "missing key or invalid parameters");
+            return;
+        }
+
+        /* Convert keys to binary */
+        uint8_t sk[32], peer_pk[32];
+        if (!nostr_hex2bin(sk, mock_state.stored_sk_hex, 32) ||
+            !nostr_hex2bin(peer_pk, peer_pubkey, 32)) {
+            g_dbus_method_invocation_return_dbus_error(invocation,
+                ERR_CRYPTO, "invalid key format");
+            return;
+        }
+
+        /* Perform actual NIP-44 encryption */
+        char *ciphertext = NULL;
+        int rc = nostr_nip44_encrypt_v2(sk, peer_pk, (const uint8_t*)plaintext, strlen(plaintext), &ciphertext);
+        memset(sk, 0, sizeof(sk));
+
+        if (rc != 0 || !ciphertext) {
+            g_dbus_method_invocation_return_dbus_error(invocation,
+                ERR_CRYPTO, "encryption failed");
+            return;
+        }
+
         g_dbus_method_invocation_return_value(invocation,
-            g_variant_new("(s)", text ? text : ""));
+            g_variant_new("(s)", ciphertext));
+        free(ciphertext);
+        return;
+    }
+
+    if (g_strcmp0(method_name, "NIP44Decrypt") == 0) {
+        const gchar *ciphertext = NULL;
+        const gchar *peer_pubkey = NULL;
+        const gchar *identity = NULL;
+
+        g_variant_get(parameters, "(&s&s&s)", &ciphertext, &peer_pubkey, &identity);
+
+        if (!mock_state.stored_sk_hex || !ciphertext || !peer_pubkey || strlen(peer_pubkey) != 64) {
+            g_dbus_method_invocation_return_dbus_error(invocation,
+                ERR_INTERNAL, "missing key or invalid parameters");
+            return;
+        }
+
+        /* Convert keys to binary */
+        uint8_t sk[32], peer_pk[32];
+        if (!nostr_hex2bin(sk, mock_state.stored_sk_hex, 32) ||
+            !nostr_hex2bin(peer_pk, peer_pubkey, 32)) {
+            g_dbus_method_invocation_return_dbus_error(invocation,
+                ERR_CRYPTO, "invalid key format");
+            return;
+        }
+
+        /* Perform actual NIP-44 decryption */
+        uint8_t *plaintext = NULL;
+        size_t plaintext_len = 0;
+        int rc = nostr_nip44_decrypt_v2(sk, peer_pk, ciphertext, &plaintext, &plaintext_len);
+        memset(sk, 0, sizeof(sk));
+
+        if (rc != 0 || !plaintext) {
+            g_dbus_method_invocation_return_dbus_error(invocation,
+                ERR_CRYPTO, "decryption failed");
+            return;
+        }
+
+        /* Ensure null-terminated for string return */
+        gchar *result = g_strndup((const gchar*)plaintext, plaintext_len);
+        free(plaintext);
+
+        g_dbus_method_invocation_return_value(invocation,
+            g_variant_new("(s)", result));
+        g_free(result);
+        return;
+    }
+
+    if (g_strcmp0(method_name, "NIP04Encrypt") == 0) {
+        const gchar *plaintext = NULL;
+        const gchar *peer_pubkey = NULL;
+        const gchar *identity = NULL;
+
+        g_variant_get(parameters, "(&s&s&s)", &plaintext, &peer_pubkey, &identity);
+
+        if (!mock_state.stored_sk_hex || !plaintext || !peer_pubkey || strlen(peer_pubkey) != 64) {
+            g_dbus_method_invocation_return_dbus_error(invocation,
+                ERR_INTERNAL, "missing key or invalid parameters");
+            return;
+        }
+
+        /* Convert x-only (64 hex) to compressed SEC1 (66 hex) by prepending 02 (even parity)
+         * This works because NIP-04 ECDH only uses the X coordinate anyway */
+        gchar *compressed_pk = g_strdup_printf("02%s", peer_pubkey);
+
+        /* Perform actual NIP-04 encryption (API takes hex strings) */
+        char *ciphertext = NULL;
+        char *error_msg = NULL;
+        int rc = nostr_nip04_encrypt(plaintext, compressed_pk, mock_state.stored_sk_hex,
+                                     &ciphertext, &error_msg);
+        g_free(compressed_pk);
+
+        if (rc != 0 || !ciphertext) {
+            g_dbus_method_invocation_return_dbus_error(invocation,
+                ERR_CRYPTO, error_msg ? error_msg : "encryption failed");
+            free(error_msg);
+            return;
+        }
+
+        g_dbus_method_invocation_return_value(invocation,
+            g_variant_new("(s)", ciphertext));
+        free(ciphertext);
+        return;
+    }
+
+    if (g_strcmp0(method_name, "NIP04Decrypt") == 0) {
+        const gchar *ciphertext = NULL;
+        const gchar *peer_pubkey = NULL;
+        const gchar *identity = NULL;
+
+        g_variant_get(parameters, "(&s&s&s)", &ciphertext, &peer_pubkey, &identity);
+
+        if (!mock_state.stored_sk_hex || !ciphertext || !peer_pubkey || strlen(peer_pubkey) != 64) {
+            g_dbus_method_invocation_return_dbus_error(invocation,
+                ERR_INTERNAL, "missing key or invalid parameters");
+            return;
+        }
+
+        /* Convert x-only (64 hex) to compressed SEC1 (66 hex) by prepending 02 */
+        gchar *compressed_pk = g_strdup_printf("02%s", peer_pubkey);
+
+        /* Perform actual NIP-04 decryption (API takes hex strings) */
+        char *plaintext = NULL;
+        char *error_msg = NULL;
+        int rc = nostr_nip04_decrypt(ciphertext, compressed_pk, mock_state.stored_sk_hex,
+                                     &plaintext, &error_msg);
+        g_free(compressed_pk);
+
+        if (rc != 0 || !plaintext) {
+            g_dbus_method_invocation_return_dbus_error(invocation,
+                ERR_CRYPTO, error_msg ? error_msg : "decryption failed");
+            free(error_msg);
+            return;
+        }
+
+        g_dbus_method_invocation_return_value(invocation,
+            g_variant_new("(s)", plaintext));
+        free(plaintext);
         return;
     }
 
@@ -714,9 +870,15 @@ fixture_setup(DbusFixture *fix, gconstpointer user_data)
     fix->dbus = g_test_dbus_new(G_TEST_DBUS_NONE);
     g_test_dbus_up(fix->dbus);
 
-    /* Get connection to test bus */
+    /* Create a dedicated main context and loop for the service thread */
+    fix->service_context = g_main_context_new();
+    fix->service_loop = g_main_loop_new(fix->service_context, FALSE);
+
+    /* Get connection for the service - use the service context */
     const gchar *bus_addr = g_test_dbus_get_bus_address(fix->dbus);
-    fix->conn = g_dbus_connection_new_for_address_sync(
+
+    g_main_context_push_thread_default(fix->service_context);
+    fix->service_conn = g_dbus_connection_new_for_address_sync(
         bus_addr,
         G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
         G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
@@ -724,25 +886,55 @@ fixture_setup(DbusFixture *fix, gconstpointer user_data)
         NULL,  /* cancellable */
         &error);
     g_assert_no_error(error);
-    g_assert_nonnull(fix->conn);
+    g_assert_nonnull(fix->service_conn);
 
-    /* Register mock service on the test bus */
+    /* Register mock service object on the test bus first */
+    GDBusNodeInfo *introspection_data = g_dbus_node_info_new_for_xml(introspection_xml, &error);
+    g_assert_no_error(error);
+
+    service_registration_id = g_dbus_connection_register_object(
+        fix->service_conn,
+        TEST_OBJECT_PATH,
+        introspection_data->interfaces[0],
+        &interface_vtable,
+        fix,
+        NULL,  /* user_data_free_func */
+        &error);
+    g_assert_no_error(error);
+    g_assert_cmpuint(service_registration_id, >, 0);
+    g_dbus_node_info_unref(introspection_data);
+
+    /* Own the bus name */
     service_name_id = g_bus_own_name_on_connection(
-        fix->conn,
+        fix->service_conn,
         TEST_BUS_NAME,
         G_BUS_NAME_OWNER_FLAGS_NONE,
         on_name_acquired,
         on_name_lost,
         fix,
         NULL);
+    g_main_context_pop_thread_default(fix->service_context);
 
-    /* Give the service time to register */
-    while (g_main_context_iteration(NULL, FALSE)) { }
-    g_usleep(50000);  /* 50ms */
+    /* Start the service thread to process D-Bus method calls */
+    fix->service_thread = g_thread_new("dbus-service", service_thread_func, fix);
 
-    /* Create proxy to the service */
+    /* Give the service time to start up */
+    g_usleep(100000);  /* 100ms */
+
+    /* Get a separate connection for the client (uses default main context) */
+    fix->client_conn = g_dbus_connection_new_for_address_sync(
+        bus_addr,
+        G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
+        G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
+        NULL,  /* observer */
+        NULL,  /* cancellable */
+        &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(fix->client_conn);
+
+    /* Create proxy to the service using the client connection */
     fix->proxy = g_dbus_proxy_new_sync(
-        fix->conn,
+        fix->client_conn,
         G_DBUS_PROXY_FLAGS_NONE,
         NULL,  /* interface_info */
         TEST_BUS_NAME,
@@ -765,20 +957,53 @@ fixture_teardown(DbusFixture *fix, gconstpointer user_data)
         fix->proxy = NULL;
     }
 
-    /* Unown the name */
-    if (service_name_id) {
-        g_bus_unown_name(service_name_id);
-        service_name_id = 0;
+    /* Stop the service main loop (this will cause the thread to exit) */
+    if (fix->service_loop) {
+        g_main_loop_quit(fix->service_loop);
     }
 
-    /* Wait for pending operations */
-    while (g_main_context_iteration(NULL, FALSE)) { }
+    /* Wait for service thread to finish */
+    if (fix->service_thread) {
+        g_thread_join(fix->service_thread);
+        fix->service_thread = NULL;
+    }
 
-    /* Clean up connection */
-    if (fix->conn) {
-        g_dbus_connection_close_sync(fix->conn, NULL, NULL);
-        g_object_unref(fix->conn);
-        fix->conn = NULL;
+    /* Unown the name (must be done from service context) */
+    if (service_name_id) {
+        g_main_context_push_thread_default(fix->service_context);
+        g_bus_unown_name(service_name_id);
+        service_name_id = 0;
+        g_main_context_pop_thread_default(fix->service_context);
+    }
+
+    /* Unregister the object */
+    if (service_registration_id && fix->service_conn) {
+        g_dbus_connection_unregister_object(fix->service_conn, service_registration_id);
+        service_registration_id = 0;
+    }
+
+    /* Clean up client connection */
+    if (fix->client_conn) {
+        g_dbus_connection_close_sync(fix->client_conn, NULL, NULL);
+        g_object_unref(fix->client_conn);
+        fix->client_conn = NULL;
+    }
+
+    /* Clean up service connection */
+    if (fix->service_conn) {
+        g_dbus_connection_close_sync(fix->service_conn, NULL, NULL);
+        g_object_unref(fix->service_conn);
+        fix->service_conn = NULL;
+    }
+
+    /* Clean up service loop and context */
+    if (fix->service_loop) {
+        g_main_loop_unref(fix->service_loop);
+        fix->service_loop = NULL;
+    }
+    if (fix->service_context) {
+        g_main_context_unref(fix->service_context);
+        fix->service_context = NULL;
     }
 
     /* Tear down test bus */
@@ -1141,6 +1366,8 @@ test_dbus_clear_key_mutations_disabled(DbusFixture *fix, gconstpointer user_data
 
 /* ===========================================================================
  * Test: NIP-04 Encryption Methods
+ * Note: The D-Bus interface (NIP-55L) uses 64-char hex x-only pubkeys,
+ * which are internally converted as needed by the implementation.
  * =========================================================================== */
 
 static void
@@ -1150,14 +1377,18 @@ test_dbus_nip04_encrypt(DbusFixture *fix, gconstpointer user_data)
     GError *error = NULL;
     GVariant *result;
 
-    /* Generate a peer pubkey */
+    /* Generate a peer keypair - use x-only pubkey per NIP-55L spec */
     char *peer_sk = nostr_key_generate_private();
     char *peer_pk = nostr_key_get_public(peer_sk);
+    g_assert_nonnull(peer_pk);
+    g_assert_cmpuint(strlen(peer_pk), ==, 64);  /* x-only = 32 bytes = 64 hex */
+
+    const gchar *plaintext = "Hello, NIP-04 encrypted world!";
 
     result = g_dbus_proxy_call_sync(
         fix->proxy,
         "NIP04Encrypt",
-        g_variant_new("(sss)", "Hello, encrypted world!", peer_pk, ""),
+        g_variant_new("(sss)", plaintext, peer_pk, ""),
         G_DBUS_CALL_FLAGS_NONE,
         5000,
         NULL,
@@ -1169,6 +1400,13 @@ test_dbus_nip04_encrypt(DbusFixture *fix, gconstpointer user_data)
     const gchar *ciphertext = NULL;
     g_variant_get(result, "(&s)", &ciphertext);
     g_assert_nonnull(ciphertext);
+    g_assert_cmpuint(strlen(ciphertext), >, 0);
+
+    /* Ciphertext should be different from plaintext */
+    g_assert_cmpstr(ciphertext, !=, plaintext);
+
+    /* NIP-04 ciphertext format: base64(ct)?iv=base64(iv) */
+    /* Format check skipped - implementation may handle x-only to compressed conversion */
 
     g_variant_unref(result);
     free(peer_sk);
@@ -1182,15 +1420,17 @@ test_dbus_nip04_decrypt(DbusFixture *fix, gconstpointer user_data)
     GError *error = NULL;
     GVariant *result;
 
-    /* Generate a peer pubkey */
+    /* Generate a peer keypair */
     char *peer_sk = nostr_key_generate_private();
     char *peer_pk = nostr_key_get_public(peer_sk);
 
-    /* In mock, we just return the input */
+    const gchar *original_plaintext = "Hello, NIP-04 encrypted world!";
+
+    /* First encrypt */
     result = g_dbus_proxy_call_sync(
         fix->proxy,
-        "NIP04Decrypt",
-        g_variant_new("(sss)", "mock-ciphertext", peer_pk, ""),
+        "NIP04Encrypt",
+        g_variant_new("(sss)", original_plaintext, peer_pk, ""),
         G_DBUS_CALL_FLAGS_NONE,
         5000,
         NULL,
@@ -1199,17 +1439,110 @@ test_dbus_nip04_decrypt(DbusFixture *fix, gconstpointer user_data)
     g_assert_no_error(error);
     g_assert_nonnull(result);
 
-    const gchar *plaintext = NULL;
-    g_variant_get(result, "(&s)", &plaintext);
-    g_assert_nonnull(plaintext);
+    gchar *ciphertext = NULL;
+    g_variant_get(result, "(s)", &ciphertext);
+    g_variant_unref(result);
+
+    /* Now decrypt - peer decrypts using their sk and our pk */
+    /* For D-Bus interface, we decrypt using our stored key and peer's pubkey */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "NIP04Decrypt",
+        g_variant_new("(sss)", ciphertext, peer_pk, ""),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+
+    g_assert_no_error(error);
+    g_assert_nonnull(result);
+
+    const gchar *decrypted_plaintext = NULL;
+    g_variant_get(result, "(&s)", &decrypted_plaintext);
+    g_assert_nonnull(decrypted_plaintext);
+
+    /* Verify roundtrip */
+    g_assert_cmpstr(decrypted_plaintext, ==, original_plaintext);
 
     g_variant_unref(result);
+    g_free(ciphertext);
+    free(peer_sk);
+    free(peer_pk);
+}
+
+static void
+test_dbus_nip04_roundtrip(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    /* Generate a peer keypair */
+    char *peer_sk = nostr_key_generate_private();
+    char *peer_pk = nostr_key_get_public(peer_sk);
+
+    /* Test various message sizes */
+    const gchar *test_messages[] = {
+        "Short message",
+        "A medium-length message that contains some special characters: !@#$%^&*()",
+        "A longer message that spans multiple lines and contains unicode: \xe4\xb8\xad\xe6\x96\x87 \xf0\x9f\x91\x8d",
+        ""  /* Empty message */
+    };
+
+    for (size_t i = 0; i < G_N_ELEMENTS(test_messages); i++) {
+        const gchar *original = test_messages[i];
+
+        /* Encrypt */
+        result = g_dbus_proxy_call_sync(
+            fix->proxy,
+            "NIP04Encrypt",
+            g_variant_new("(sss)", original, peer_pk, ""),
+            G_DBUS_CALL_FLAGS_NONE,
+            5000,
+            NULL,
+            &error);
+
+        if (strlen(original) == 0) {
+            /* Empty messages may or may not be supported - just verify no crash */
+            if (result) g_variant_unref(result);
+            g_clear_error(&error);
+            continue;
+        }
+
+        g_assert_no_error(error);
+        g_assert_nonnull(result);
+
+        gchar *ciphertext = NULL;
+        g_variant_get(result, "(s)", &ciphertext);
+        g_variant_unref(result);
+
+        /* Decrypt */
+        result = g_dbus_proxy_call_sync(
+            fix->proxy,
+            "NIP04Decrypt",
+            g_variant_new("(sss)", ciphertext, peer_pk, ""),
+            G_DBUS_CALL_FLAGS_NONE,
+            5000,
+            NULL,
+            &error);
+
+        g_assert_no_error(error);
+        g_assert_nonnull(result);
+
+        const gchar *decrypted = NULL;
+        g_variant_get(result, "(&s)", &decrypted);
+        g_assert_cmpstr(decrypted, ==, original);
+
+        g_variant_unref(result);
+        g_free(ciphertext);
+    }
+
     free(peer_sk);
     free(peer_pk);
 }
 
 /* ===========================================================================
- * Test: NIP-44 Encryption Methods
+ * Test: NIP-44 Encryption Methods (Modern, Recommended)
  * =========================================================================== */
 
 static void
@@ -1219,13 +1552,16 @@ test_dbus_nip44_encrypt(DbusFixture *fix, gconstpointer user_data)
     GError *error = NULL;
     GVariant *result;
 
+    /* Generate a peer keypair */
     char *peer_sk = nostr_key_generate_private();
     char *peer_pk = nostr_key_get_public(peer_sk);
+
+    const gchar *plaintext = "Hello, NIP-44 world!";
 
     result = g_dbus_proxy_call_sync(
         fix->proxy,
         "NIP44Encrypt",
-        g_variant_new("(sss)", "Hello, NIP-44 world!", peer_pk, ""),
+        g_variant_new("(sss)", plaintext, peer_pk, ""),
         G_DBUS_CALL_FLAGS_NONE,
         5000,
         NULL,
@@ -1233,6 +1569,15 @@ test_dbus_nip44_encrypt(DbusFixture *fix, gconstpointer user_data)
 
     g_assert_no_error(error);
     g_assert_nonnull(result);
+
+    const gchar *ciphertext = NULL;
+    g_variant_get(result, "(&s)", &ciphertext);
+    g_assert_nonnull(ciphertext);
+    g_assert_cmpuint(strlen(ciphertext), >, 0);
+
+    /* NIP-44 ciphertext is base64 encoded */
+    /* It should be different from plaintext */
+    g_assert_cmpstr(ciphertext, !=, plaintext);
 
     g_variant_unref(result);
     free(peer_sk);
@@ -1246,13 +1591,17 @@ test_dbus_nip44_decrypt(DbusFixture *fix, gconstpointer user_data)
     GError *error = NULL;
     GVariant *result;
 
+    /* Generate a peer keypair */
     char *peer_sk = nostr_key_generate_private();
     char *peer_pk = nostr_key_get_public(peer_sk);
 
+    const gchar *original_plaintext = "Hello, NIP-44 world!";
+
+    /* First encrypt */
     result = g_dbus_proxy_call_sync(
         fix->proxy,
-        "NIP44Decrypt",
-        g_variant_new("(sss)", "mock-nip44-ciphertext", peer_pk, ""),
+        "NIP44Encrypt",
+        g_variant_new("(sss)", original_plaintext, peer_pk, ""),
         G_DBUS_CALL_FLAGS_NONE,
         5000,
         NULL,
@@ -1261,7 +1610,159 @@ test_dbus_nip44_decrypt(DbusFixture *fix, gconstpointer user_data)
     g_assert_no_error(error);
     g_assert_nonnull(result);
 
+    gchar *ciphertext = NULL;
+    g_variant_get(result, "(s)", &ciphertext);
     g_variant_unref(result);
+
+    /* Now decrypt */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "NIP44Decrypt",
+        g_variant_new("(sss)", ciphertext, peer_pk, ""),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+
+    g_assert_no_error(error);
+    g_assert_nonnull(result);
+
+    const gchar *decrypted_plaintext = NULL;
+    g_variant_get(result, "(&s)", &decrypted_plaintext);
+    g_assert_nonnull(decrypted_plaintext);
+
+    /* Verify roundtrip */
+    g_assert_cmpstr(decrypted_plaintext, ==, original_plaintext);
+
+    g_variant_unref(result);
+    g_free(ciphertext);
+    free(peer_sk);
+    free(peer_pk);
+}
+
+static void
+test_dbus_nip44_roundtrip(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    /* Generate a peer keypair */
+    char *peer_sk = nostr_key_generate_private();
+    char *peer_pk = nostr_key_get_public(peer_sk);
+
+    /* Test various message sizes and content */
+    const gchar *test_messages[] = {
+        "Short message",
+        "A medium-length message that contains some special characters: !@#$%^&*()",
+        "A longer message that spans multiple lines\nand contains unicode: \xe4\xb8\xad\xe6\x96\x87 \xf0\x9f\x91\x8d",
+        "Message with JSON content: {\"name\":\"test\",\"value\":123}",
+    };
+
+    for (size_t i = 0; i < G_N_ELEMENTS(test_messages); i++) {
+        const gchar *original = test_messages[i];
+
+        /* Encrypt */
+        result = g_dbus_proxy_call_sync(
+            fix->proxy,
+            "NIP44Encrypt",
+            g_variant_new("(sss)", original, peer_pk, ""),
+            G_DBUS_CALL_FLAGS_NONE,
+            5000,
+            NULL,
+            &error);
+
+        g_assert_no_error(error);
+        g_assert_nonnull(result);
+
+        gchar *ciphertext = NULL;
+        g_variant_get(result, "(s)", &ciphertext);
+        g_variant_unref(result);
+
+        /* Verify ciphertext is different */
+        g_assert_cmpstr(ciphertext, !=, original);
+
+        /* Decrypt */
+        result = g_dbus_proxy_call_sync(
+            fix->proxy,
+            "NIP44Decrypt",
+            g_variant_new("(sss)", ciphertext, peer_pk, ""),
+            G_DBUS_CALL_FLAGS_NONE,
+            5000,
+            NULL,
+            &error);
+
+        g_assert_no_error(error);
+        g_assert_nonnull(result);
+
+        const gchar *decrypted = NULL;
+        g_variant_get(result, "(&s)", &decrypted);
+        g_assert_cmpstr(decrypted, ==, original);
+
+        g_variant_unref(result);
+        g_free(ciphertext);
+    }
+
+    free(peer_sk);
+    free(peer_pk);
+}
+
+static void
+test_dbus_nip44_large_message(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    /* Generate a peer keypair */
+    char *peer_sk = nostr_key_generate_private();
+    char *peer_pk = nostr_key_get_public(peer_sk);
+
+    /* Create a large message (16KB) */
+    gsize large_size = 16 * 1024;
+    gchar *large_message = g_malloc(large_size + 1);
+    for (gsize i = 0; i < large_size; i++) {
+        large_message[i] = 'A' + (i % 26);
+    }
+    large_message[large_size] = '\0';
+
+    /* Encrypt */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "NIP44Encrypt",
+        g_variant_new("(sss)", large_message, peer_pk, ""),
+        G_DBUS_CALL_FLAGS_NONE,
+        10000,  /* Longer timeout for large message */
+        NULL,
+        &error);
+
+    g_assert_no_error(error);
+    g_assert_nonnull(result);
+
+    gchar *ciphertext = NULL;
+    g_variant_get(result, "(s)", &ciphertext);
+    g_variant_unref(result);
+
+    /* Decrypt */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "NIP44Decrypt",
+        g_variant_new("(sss)", ciphertext, peer_pk, ""),
+        G_DBUS_CALL_FLAGS_NONE,
+        10000,
+        NULL,
+        &error);
+
+    g_assert_no_error(error);
+    g_assert_nonnull(result);
+
+    const gchar *decrypted = NULL;
+    g_variant_get(result, "(&s)", &decrypted);
+    g_assert_cmpstr(decrypted, ==, large_message);
+
+    g_variant_unref(result);
+    g_free(ciphertext);
+    g_free(large_message);
     free(peer_sk);
     free(peer_pk);
 }
@@ -2060,7 +2561,7 @@ main(int argc, char *argv[])
                DbusFixture, NULL,
                fixture_setup, test_dbus_clear_key_mutations_disabled, fixture_teardown);
 
-    /* NIP-04 encryption tests */
+    /* NIP-04 encryption tests (legacy) */
     g_test_add("/signer/dbus/nip04/encrypt",
                DbusFixture, NULL,
                fixture_setup, test_dbus_nip04_encrypt, fixture_teardown);
@@ -2069,7 +2570,11 @@ main(int argc, char *argv[])
                DbusFixture, NULL,
                fixture_setup, test_dbus_nip04_decrypt, fixture_teardown);
 
-    /* NIP-44 encryption tests */
+    g_test_add("/signer/dbus/nip04/roundtrip",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_nip04_roundtrip, fixture_teardown);
+
+    /* NIP-44 encryption tests (modern, recommended) */
     g_test_add("/signer/dbus/nip44/encrypt",
                DbusFixture, NULL,
                fixture_setup, test_dbus_nip44_encrypt, fixture_teardown);
@@ -2077,6 +2582,14 @@ main(int argc, char *argv[])
     g_test_add("/signer/dbus/nip44/decrypt",
                DbusFixture, NULL,
                fixture_setup, test_dbus_nip44_decrypt, fixture_teardown);
+
+    g_test_add("/signer/dbus/nip44/roundtrip",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_nip44_roundtrip, fixture_teardown);
+
+    g_test_add("/signer/dbus/nip44/large_message",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_nip44_large_message, fixture_teardown);
 
     /* Zap decryption tests */
     g_test_add("/signer/dbus/decrypt_zap_event",

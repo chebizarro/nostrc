@@ -150,9 +150,21 @@ gn_lock_screen_init(GnLockScreen *self)
   gtk_label_set_justify(self->lbl_rate_limit_message, GTK_JUSTIFY_CENTER);
   gtk_box_append(self->box_rate_limit, GTK_WIDGET(self->lbl_rate_limit_message));
 
+  /* Set accessibility for rate limit message (nostrc-qfdg) */
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->lbl_rate_limit_message),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Rate limit warning",
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Shows warning when too many failed authentication attempts have occurred",
+                                 -1);
+
   self->lbl_rate_limit_countdown = GTK_LABEL(gtk_label_new(NULL));
   gtk_widget_add_css_class(GTK_WIDGET(self->lbl_rate_limit_countdown), "title-1");
   gtk_box_append(self->box_rate_limit, GTK_WIDGET(self->lbl_rate_limit_countdown));
+
+  /* Set accessibility for countdown (nostrc-qfdg) */
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->lbl_rate_limit_countdown),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Lockout countdown timer",
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Time remaining until you can try again",
+                                 -1);
 
   /* Insert rate limit box before error label */
   gtk_box_insert_child_after(GTK_BOX(self), GTK_WIDGET(self->box_rate_limit),
@@ -210,12 +222,28 @@ on_lockout_timer_tick(gpointer user_data)
     /* Lockout expired */
     self->lockout_timer_id = 0;
     update_rate_limit_ui(self);
+
+    /* Announce unlock to screen readers (nostrc-qfdg) */
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->lbl_rate_limit_countdown),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Lockout expired. You may now try again.",
+                                   -1);
     return G_SOURCE_REMOVE;
   }
 
   /* Update countdown display */
   gchar *time_str = format_countdown_time(remaining);
   gtk_label_set_text(self->lbl_rate_limit_countdown, time_str);
+
+  /* Update accessibility value for screen readers (nostrc-qfdg)
+   * Only announce at key intervals to avoid spam */
+  if (remaining == 60 || remaining == 30 || remaining == 10 || remaining <= 5) {
+    gchar *accessible_value = g_strdup_printf("%s remaining", time_str);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->lbl_rate_limit_countdown),
+                                   GTK_ACCESSIBLE_PROPERTY_VALUE_TEXT, accessible_value,
+                                   -1);
+    g_free(accessible_value);
+  }
+
   g_free(time_str);
 
   return G_SOURCE_CONTINUE;

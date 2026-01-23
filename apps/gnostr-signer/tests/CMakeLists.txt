@@ -24,6 +24,7 @@ set(SIGNER_INCLUDE_DIRS
     ${CMAKE_SOURCE_DIR}/nips/nip55l/include
     ${CMAKE_SOURCE_DIR}/nips/nip49/include
     ${CMAKE_SOURCE_DIR}/nips/nip46/include
+    ${CMAKE_SOURCE_DIR}/nips/nip44/include
     ${CMAKE_SOURCE_DIR}/nips/nip19/include
     ${CMAKE_SOURCE_DIR}/nips/nip06/include
     ${CMAKE_SOURCE_DIR}/nips/nip04/include
@@ -45,6 +46,13 @@ set(SIGNER_TEST_LIBS
     nostr_json
 )
 
+# Common link directories for pkg-config libraries
+set(SIGNER_TEST_LINK_DIRS
+    ${GLIB_LIBRARY_DIRS}
+    ${JSON_GLIB_LIBRARY_DIRS}
+    ${SECP256K1_LIBRARY_DIRS}
+)
+
 # Add NIP libraries if available
 if(TARGET nip19)
     list(APPEND SIGNER_TEST_LIBS nip19)
@@ -60,6 +68,9 @@ if(TARGET nostr_nip49_glib)
 endif()
 if(TARGET nip04)
     list(APPEND SIGNER_TEST_LIBS nip04)
+endif()
+if(TARGET nip44)
+    list(APPEND SIGNER_TEST_LIBS nip44)
 endif()
 if(TARGET nostr_nip55l_core)
     list(APPEND SIGNER_TEST_LIBS nostr_nip55l_core)
@@ -86,7 +97,7 @@ endfunction()
 add_executable(test-crypto test-crypto.c)
 target_include_directories(test-crypto PRIVATE ${SIGNER_INCLUDE_DIRS})
 target_link_libraries(test-crypto PRIVATE ${SIGNER_TEST_LIBS})
-target_link_directories(test-crypto PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(test-crypto PRIVATE ${SIGNER_TEST_LINK_DIRS})
 target_compile_features(test-crypto PRIVATE c_std_11)
 apply_test_sanitizers(test-crypto)
 
@@ -103,7 +114,7 @@ set_tests_properties(signer/crypto PROPERTIES
 add_executable(test-identity test-identity.c)
 target_include_directories(test-identity PRIVATE ${SIGNER_INCLUDE_DIRS})
 target_link_libraries(test-identity PRIVATE ${SIGNER_TEST_LIBS})
-target_link_directories(test-identity PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(test-identity PRIVATE ${SIGNER_TEST_LINK_DIRS})
 target_compile_features(test-identity PRIVATE c_std_11)
 apply_test_sanitizers(test-identity)
 
@@ -120,7 +131,7 @@ set_tests_properties(signer/identity PROPERTIES
 add_executable(test-session test-session.c)
 target_include_directories(test-session PRIVATE ${SIGNER_INCLUDE_DIRS})
 target_link_libraries(test-session PRIVATE ${SIGNER_TEST_LIBS})
-target_link_directories(test-session PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(test-session PRIVATE ${SIGNER_TEST_LINK_DIRS})
 target_compile_features(test-session PRIVATE c_std_11)
 apply_test_sanitizers(test-session)
 
@@ -137,7 +148,7 @@ set_tests_properties(signer/session PROPERTIES
 add_executable(test-bunker test-bunker.c)
 target_include_directories(test-bunker PRIVATE ${SIGNER_INCLUDE_DIRS})
 target_link_libraries(test-bunker PRIVATE ${SIGNER_TEST_LIBS})
-target_link_directories(test-bunker PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(test-bunker PRIVATE ${SIGNER_TEST_LINK_DIRS})
 target_compile_features(test-bunker PRIVATE c_std_11)
 apply_test_sanitizers(test-bunker)
 
@@ -156,7 +167,7 @@ set_tests_properties(signer/bunker PROPERTIES
 add_executable(test-dbus test-dbus.c)
 target_include_directories(test-dbus PRIVATE ${SIGNER_INCLUDE_DIRS})
 target_link_libraries(test-dbus PRIVATE ${SIGNER_TEST_LIBS})
-target_link_directories(test-dbus PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(test-dbus PRIVATE ${SIGNER_TEST_LINK_DIRS})
 target_compile_features(test-dbus PRIVATE c_std_11)
 apply_test_sanitizers(test-dbus)
 
@@ -177,7 +188,7 @@ add_executable(test-rate-limiter
 )
 target_include_directories(test-rate-limiter PRIVATE ${SIGNER_INCLUDE_DIRS})
 target_link_libraries(test-rate-limiter PRIVATE ${SIGNER_TEST_LIBS})
-target_link_directories(test-rate-limiter PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(test-rate-limiter PRIVATE ${SIGNER_TEST_LINK_DIRS})
 target_compile_features(test-rate-limiter PRIVATE c_std_11)
 apply_test_sanitizers(test-rate-limiter)
 
@@ -202,7 +213,7 @@ target_link_libraries(test-ui PRIVATE
     PkgConfig::GTK4
     PkgConfig::ADWAITA
 )
-target_link_directories(test-ui PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(test-ui PRIVATE ${SIGNER_TEST_LINK_DIRS})
 target_compile_features(test-ui PRIVATE c_std_11)
 apply_test_sanitizers(test-ui)
 
@@ -233,7 +244,7 @@ target_link_libraries(test-hsm-provider PRIVATE
 if(TARGET nip19)
     target_link_libraries(test-hsm-provider PRIVATE nip19)
 endif()
-target_link_directories(test-hsm-provider PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(test-hsm-provider PRIVATE ${SIGNER_TEST_LINK_DIRS})
 target_compile_features(test-hsm-provider PRIVATE c_std_11)
 apply_test_sanitizers(test-hsm-provider)
 
@@ -252,7 +263,7 @@ set_tests_properties(signer/hsm-provider PROPERTIES
 add_executable(test-core test-core.c)
 target_include_directories(test-core PRIVATE ${SIGNER_INCLUDE_DIRS})
 target_link_libraries(test-core PRIVATE ${SIGNER_TEST_LIBS})
-target_link_directories(test-core PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(test-core PRIVATE ${SIGNER_TEST_LINK_DIRS})
 target_compile_features(test-core PRIVATE c_std_11)
 apply_test_sanitizers(test-core)
 
@@ -273,7 +284,7 @@ add_executable(test-secure-mem
 )
 target_include_directories(test-secure-mem PRIVATE ${SIGNER_INCLUDE_DIRS})
 target_link_libraries(test-secure-mem PRIVATE ${SIGNER_TEST_LIBS})
-target_link_directories(test-secure-mem PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(test-secure-mem PRIVATE ${SIGNER_TEST_LINK_DIRS})
 target_compile_features(test-secure-mem PRIVATE c_std_11)
 apply_test_sanitizers(test-secure-mem)
 
@@ -296,7 +307,7 @@ add_executable(test-social-recovery
 )
 target_include_directories(test-social-recovery PRIVATE ${SIGNER_INCLUDE_DIRS})
 target_link_libraries(test-social-recovery PRIVATE ${SIGNER_TEST_LIBS})
-target_link_directories(test-social-recovery PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_link_directories(test-social-recovery PRIVATE ${SIGNER_TEST_LINK_DIRS})
 target_compile_features(test-social-recovery PRIVATE c_std_11)
 apply_test_sanitizers(test-social-recovery)
 
@@ -308,10 +319,36 @@ set_tests_properties(signer/social-recovery PROPERTIES
 )
 
 # ==============================================================================
+# Test: Signer Core functionality (key generation, signing, NIP-44, event workflow)
+# Comprehensive tests for core cryptographic and signing operations
+# Issue: nostrc-ddh
+# ==============================================================================
+add_executable(test-signer-core test-signer-core.c)
+target_include_directories(test-signer-core PRIVATE
+    ${SIGNER_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/nips/nip44/include
+)
+target_link_libraries(test-signer-core PRIVATE ${SIGNER_TEST_LIBS})
+# Link NIP-44 library for encryption tests
+if(TARGET nostr_nip44_core)
+    target_link_libraries(test-signer-core PRIVATE nostr_nip44_core)
+endif()
+target_link_directories(test-signer-core PRIVATE ${SIGNER_TEST_LINK_DIRS})
+target_compile_features(test-signer-core PRIVATE c_std_11)
+apply_test_sanitizers(test-signer-core)
+
+add_test(NAME signer/signer-core COMMAND test-signer-core)
+set_tests_properties(signer/signer-core PROPERTIES
+    TIMEOUT 120
+    LABELS "signer;core;crypto;signing;nip44;unit"
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr-signer"
+)
+
+# ==============================================================================
 # All signer tests target (convenience)
 # ==============================================================================
 add_custom_target(signer-tests
-    DEPENDS test-crypto test-identity test-session test-bunker test-dbus test-rate-limiter test-ui test-hsm-provider test-core test-secure-mem test-social-recovery
+    DEPENDS test-crypto test-identity test-session test-bunker test-dbus test-rate-limiter test-ui test-hsm-provider test-core test-secure-mem test-social-recovery test-signer-core
     COMMENT "Building all gnostr-signer tests"
 )
 

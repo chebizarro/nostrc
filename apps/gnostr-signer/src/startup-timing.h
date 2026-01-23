@@ -32,6 +32,8 @@ typedef enum {
   STARTUP_PHASE_INIT = 0,
   STARTUP_PHASE_SETTINGS,
   STARTUP_PHASE_THEME,
+  STARTUP_PHASE_CSS,       /* CSS stylesheet loading */
+  STARTUP_PHASE_TYPES,     /* GType registration for UI widgets */
   STARTUP_PHASE_WINDOW,
   STARTUP_PHASE_PAGES,
   STARTUP_PHASE_SECRETS,

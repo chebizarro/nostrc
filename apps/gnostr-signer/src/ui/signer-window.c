@@ -46,6 +46,7 @@ struct _SignerWindow {
   /* Startup optimization: lazy loading state */
   gboolean deferred_init_scheduled;
   gboolean page_data_loaded;
+  gboolean session_signals_connected;
   /* Session management */
   gulong session_locked_handler;
   gulong session_unlocked_handler;
@@ -142,19 +143,22 @@ static void on_sidebar_toggle_clicked(GtkToggleButton *button, gpointer user_dat
 static void signer_window_dispose(GObject *object) {
   SignerWindow *self = SIGNER_WINDOW(object);
 
-  /* Disconnect session manager signals */
-  GnSessionManager *sm = gn_session_manager_get_default();
-  if (self->session_locked_handler > 0) {
-    g_signal_handler_disconnect(sm, self->session_locked_handler);
-    self->session_locked_handler = 0;
-  }
-  if (self->session_unlocked_handler > 0) {
-    g_signal_handler_disconnect(sm, self->session_unlocked_handler);
-    self->session_unlocked_handler = 0;
-  }
-  if (self->session_timeout_warning_handler > 0) {
-    g_signal_handler_disconnect(sm, self->session_timeout_warning_handler);
-    self->session_timeout_warning_handler = 0;
+  /* Disconnect session manager signals if they were connected */
+  if (self->session_signals_connected) {
+    GnSessionManager *sm = gn_session_manager_get_default();
+    if (self->session_locked_handler > 0) {
+      g_signal_handler_disconnect(sm, self->session_locked_handler);
+      self->session_locked_handler = 0;
+    }
+    if (self->session_unlocked_handler > 0) {
+      g_signal_handler_disconnect(sm, self->session_unlocked_handler);
+      self->session_unlocked_handler = 0;
+    }
+    if (self->session_timeout_warning_handler > 0) {
+      g_signal_handler_disconnect(sm, self->session_timeout_warning_handler);
+      self->session_timeout_warning_handler = 0;
+    }
+    self->session_signals_connected = FALSE;
   }
 
   /* Save state on dispose as a backup */
@@ -171,15 +175,16 @@ static void signer_window_class_init(SignerWindowClass *klass) {
 
   STARTUP_TIME_MARK("signer-window-class-init");
 
-  /* Ensure custom page types are registered before template instantiation */
-  STARTUP_TIME_BEGIN(STARTUP_PHASE_PAGES);
+  /* Ensure custom page types are registered before template instantiation
+   * This is tracked as STARTUP_PHASE_TYPES to separate from page data loading */
+  STARTUP_TIME_BEGIN(STARTUP_PHASE_TYPES);
   g_type_ensure(GN_TYPE_LOCK_SCREEN);
   g_type_ensure(TYPE_PAGE_PERMISSIONS);
   g_type_ensure(TYPE_PAGE_APPLICATIONS);
   g_type_ensure(GN_TYPE_PAGE_SESSIONS);
   g_type_ensure(GN_TYPE_PAGE_HISTORY);
   g_type_ensure(TYPE_PAGE_SETTINGS);
-  STARTUP_TIME_END(STARTUP_PHASE_PAGES);
+  STARTUP_TIME_END(STARTUP_PHASE_TYPES);
 
   gtk_widget_class_set_template_from_resource(widget_class, APP_RESOURCE_PATH "/ui/signer-window.ui");
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, main_stack);
@@ -410,6 +415,26 @@ static void on_lock_screen_unlock_requested(GnLockScreen *lock_screen, gpointer 
   g_debug("Window: unlock requested from lock screen");
 }
 
+/* Connect session manager signals (deferred to after window display) */
+static void signer_window_connect_session_signals(SignerWindow *self) {
+  if (self->session_signals_connected) return;
+
+  GnSessionManager *sm = gn_session_manager_get_default();
+
+  self->session_locked_handler = g_signal_connect(sm, "session-locked",
+                                                   G_CALLBACK(on_session_locked), self);
+  self->session_unlocked_handler = g_signal_connect(sm, "session-unlocked",
+                                                     G_CALLBACK(on_session_unlocked), self);
+  self->session_timeout_warning_handler = g_signal_connect(sm, "timeout-warning",
+                                                            G_CALLBACK(on_session_timeout_warning), self);
+
+  /* Connect to lock screen unlock signal */
+  g_signal_connect(self->lock_screen, "unlock-requested",
+                   G_CALLBACK(on_lock_screen_unlock_requested), self);
+
+  self->session_signals_connected = TRUE;
+}
+
 /* Deferred initialization for non-critical page data */
 static gboolean signer_window_deferred_page_init(gpointer user_data) {
   SignerWindow *self = SIGNER_WINDOW(user_data);
@@ -420,12 +445,21 @@ static gboolean signer_window_deferred_page_init(gpointer user_data) {
 
   gint64 start = startup_timing_measure_start();
 
+  STARTUP_TIME_BEGIN(STARTUP_PHASE_PAGES);
+
+  /* Connect session signals now that window is displayed */
+  signer_window_connect_session_signals(self);
+
   /* Page-specific data loading can be triggered here.
    * Currently pages load their data on demand when shown,
    * but any heavy initialization should be deferred here.
+   *
+   * Trigger initial data load for the visible (first) page only.
+   * Other pages will load on demand when selected.
    */
   self->page_data_loaded = TRUE;
 
+  STARTUP_TIME_END(STARTUP_PHASE_PAGES);
   startup_timing_measure_end(start, "deferred-page-data-init", 50);
   STARTUP_TIME_MARK("pages-data-ready");
 
@@ -440,6 +474,7 @@ static void signer_window_init(SignerWindow *self) {
   /* Initialize state */
   self->deferred_init_scheduled = FALSE;
   self->page_data_loaded = FALSE;
+  self->session_signals_connected = FALSE;
   self->session_locked_handler = 0;
   self->session_unlocked_handler = 0;
   self->session_timeout_warning_handler = 0;
@@ -457,18 +492,9 @@ static void signer_window_init(SignerWindow *self) {
   /* Setup keyboard shortcuts using GtkShortcutController */
   setup_window_shortcuts(self);
 
-  /* Connect to session manager signals */
+  /* Get session manager for initial lock state check only
+   * Signal connections are deferred to after window display for faster startup */
   GnSessionManager *sm = gn_session_manager_get_default();
-  self->session_locked_handler = g_signal_connect(sm, "session-locked",
-                                                   G_CALLBACK(on_session_locked), self);
-  self->session_unlocked_handler = g_signal_connect(sm, "session-unlocked",
-                                                     G_CALLBACK(on_session_unlocked), self);
-  self->session_timeout_warning_handler = g_signal_connect(sm, "timeout-warning",
-                                                            G_CALLBACK(on_session_timeout_warning), self);
-
-  /* Connect to lock screen unlock signal */
-  g_signal_connect(self->lock_screen, "unlock-requested",
-                   G_CALLBACK(on_lock_screen_unlock_requested), self);
 
   /* Set initial lock state based on session manager */
   if (gn_session_manager_is_locked(sm)) {
