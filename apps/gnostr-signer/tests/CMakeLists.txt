@@ -23,7 +23,9 @@ set(SIGNER_INCLUDE_DIRS
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
     ${CMAKE_SOURCE_DIR}/nips/nip55l/include
     ${CMAKE_SOURCE_DIR}/nips/nip49/include
+    ${CMAKE_SOURCE_DIR}/nips/nip46/include
     ${CMAKE_SOURCE_DIR}/nips/nip19/include
+    ${CMAKE_SOURCE_DIR}/nips/nip06/include
     ${CMAKE_SOURCE_DIR}/nips/nip04/include
     ${CMAKE_SOURCE_DIR}/libnostr/include
     ${CMAKE_SOURCE_DIR}/libgo/include
