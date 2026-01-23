@@ -1,0 +1,264 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="SheetQrScanner" parent="AdwDialog">
+    <property name="title" translatable="yes">Scan QR Code</property>
+    <property name="can-close">true</property>
+    <property name="content-width">400</property>
+    <property name="content-height">480</property>
+    <accessibility>
+      <property name="label">QR code scanner dialog</property>
+      <property name="description">Scan a QR code to import a key</property>
+    </accessibility>
+    <child>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="show-end-title-buttons">false</property>
+            <property name="show-start-title-buttons">false</property>
+            <child type="start">
+              <object class="GtkButton" id="btn_cancel">
+                <property name="label" translatable="yes">Cancel</property>
+                <accessibility>
+                  <property name="label">Cancel</property>
+                  <property name="description">Close without importing</property>
+                </accessibility>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkStack" id="stack">
+            <property name="transition-type">slide-left-right</property>
+
+            <!-- Scanner Page -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">scanner</property>
+                <property name="child">
+                  <object class="GtkBox" id="scanner_page">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">16</property>
+                    <property name="margin-start">24</property>
+                    <property name="margin-end">24</property>
+                    <property name="margin-top">16</property>
+                    <property name="margin-bottom">24</property>
+
+                    <!-- Scanner widget will be prepended here -->
+
+                    <!-- Status Label -->
+                    <child>
+                      <object class="GtkLabel" id="status_label">
+                        <property name="label" translatable="yes">Ready to scan</property>
+                        <property name="halign">center</property>
+                        <accessibility>
+                          <property name="label">Scanner status</property>
+                        </accessibility>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+
+                    <!-- Action Buttons -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">8</property>
+                        <property name="halign">center</property>
+
+                        <child>
+                          <object class="GtkButton" id="btn_camera">
+                            <property name="label" translatable="yes">Start Camera</property>
+                            <property name="halign">center</property>
+                            <accessibility>
+                              <property name="label">Start camera</property>
+                              <property name="description">Use camera to scan QR code</property>
+                            </accessibility>
+                            <style>
+                              <class name="suggested-action"/>
+                            </style>
+                          </object>
+                        </child>
+
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">8</property>
+                            <property name="halign">center</property>
+
+                            <child>
+                              <object class="GtkButton" id="btn_paste">
+                                <property name="label" translatable="yes">Paste from Clipboard</property>
+                                <accessibility>
+                                  <property name="label">Paste image</property>
+                                  <property name="description">Scan QR code from clipboard image</property>
+                                </accessibility>
+                              </object>
+                            </child>
+
+                            <child>
+                              <object class="GtkButton" id="btn_file">
+                                <property name="label" translatable="yes">Open File</property>
+                                <accessibility>
+                                  <property name="label">Open file</property>
+                                  <property name="description">Scan QR code from image file</property>
+                                </accessibility>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Hint -->
+                    <child>
+                      <object class="GtkLabel" id="hint_label">
+                        <property name="label" translatable="yes">Scan an nsec, ncryptsec, or hex key QR code</property>
+                        <property name="halign">center</property>
+                        <property name="wrap">true</property>
+                        <property name="margin-top">8</property>
+                        <accessibility>
+                          <property name="label">Scanning hint</property>
+                        </accessibility>
+                        <style>
+                          <class name="dim-label"/>
+                          <class name="caption"/>
+                        </style>
+                      </object>
+                    </child>
+
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Result Page -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">result</property>
+                <property name="child">
+                  <object class="GtkBox" id="result_page">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">16</property>
+                    <property name="margin-start">24</property>
+                    <property name="margin-end">24</property>
+                    <property name="margin-top">24</property>
+                    <property name="margin-bottom">24</property>
+                    <property name="valign">center</property>
+
+                    <!-- Success Icon -->
+                    <child>
+                      <object class="GtkImage" id="result_icon">
+                        <property name="icon-name">emblem-ok-symbolic</property>
+                        <property name="pixel-size">64</property>
+                        <property name="halign">center</property>
+                        <accessibility>
+                          <property name="label">Success icon</property>
+                        </accessibility>
+                        <style>
+                          <class name="success"/>
+                        </style>
+                      </object>
+                    </child>
+
+                    <!-- Result Title -->
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">QR Code Scanned</property>
+                        <property name="halign">center</property>
+                        <style>
+                          <class name="title-2"/>
+                        </style>
+                      </object>
+                    </child>
+
+                    <!-- Result Type -->
+                    <child>
+                      <object class="GtkLabel" id="result_type_label">
+                        <property name="label" translatable="yes">Type</property>
+                        <property name="halign">center</property>
+                        <accessibility>
+                          <property name="label">Detected content type</property>
+                        </accessibility>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+
+                    <!-- Result Data Preview -->
+                    <child>
+                      <object class="GtkFrame">
+                        <property name="halign">center</property>
+                        <style>
+                          <class name="view"/>
+                        </style>
+                        <child>
+                          <object class="GtkLabel" id="result_data_label">
+                            <property name="label" translatable="yes">Data</property>
+                            <property name="wrap">true</property>
+                            <property name="wrap-mode">char</property>
+                            <property name="selectable">true</property>
+                            <property name="max-width-chars">35</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">8</property>
+                            <property name="margin-bottom">8</property>
+                            <accessibility>
+                              <property name="label">Scanned data</property>
+                            </accessibility>
+                            <style>
+                              <class name="monospace"/>
+                              <class name="caption"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Action Buttons -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">12</property>
+                        <property name="halign">center</property>
+                        <property name="margin-top">16</property>
+
+                        <child>
+                          <object class="GtkButton">
+                            <property name="label" translatable="yes">Back</property>
+                            <accessibility>
+                              <property name="label">Go back</property>
+                              <property name="description">Return to scanner</property>
+                            </accessibility>
+                          </object>
+                        </child>
+
+                        <child>
+                          <object class="GtkButton" id="btn_import">
+                            <property name="label" translatable="yes">Import Key</property>
+                            <accessibility>
+                              <property name="label">Import key</property>
+                              <property name="description">Import this key to your account</property>
+                            </accessibility>
+                            <style>
+                              <class name="suggested-action"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                  </object>
+                </property>
+              </object>
+            </child>
+
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

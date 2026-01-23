@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
   <requires lib="gtk" version="4.12"/>
-  <requires lib="adwaita" version="1.4"/>
+  <requires lib="adwaita" version="1.5"/>
   <template class="SheetKeyRotation" parent="AdwDialog">
     <property name="title" translatable="yes">Key Rotation</property>
     <property name="can-close">true</property>
     <property name="content-width">480</property>
-    <property name="content-height">580</property>
+    <property name="content-height">-1</property>
+    <property name="follows-content-size">true</property>
     <accessibility>
       <property name="label">Key rotation dialog</property>
       <property name="description">Rotate your Nostr identity to a new keypair while maintaining continuity</property>
@@ -39,6 +40,7 @@
                     <child>
                       <object class="AdwClamp">
                         <property name="maximum-size">420</property>
+                        <property name="tightening-threshold">360</property>
                         <child>
                           <object class="GtkBox">
                             <property name="orientation">vertical</property>
@@ -256,6 +258,7 @@ Do not close this dialog.</property>
                     <child>
                       <object class="AdwClamp">
                         <property name="maximum-size">420</property>
+                        <property name="tightening-threshold">360</property>
                         <child>
                           <object class="GtkBox">
                             <property name="orientation">vertical</property>

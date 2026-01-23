@@ -167,6 +167,15 @@ void settings_manager_set_high_contrast_variant(SettingsManager *sm, SettingsHig
   g_settings_set_string(sm->settings, "high-contrast-variant", value);
 }
 
+gboolean settings_manager_get_force_high_contrast(SettingsManager *sm) {
+  return sm ? g_settings_get_boolean(sm->settings, "force-high-contrast") : FALSE;
+}
+
+void settings_manager_set_force_high_contrast(SettingsManager *sm, gboolean force) {
+  if (!sm) return;
+  g_settings_set_boolean(sm->settings, "force-high-contrast", force);
+}
+
 void settings_manager_get_window_size(SettingsManager *sm, gint *width, gint *height) {
   if (!sm) return;
   if (width) *width = g_settings_get_int(sm->settings, "window-width");
@@ -396,4 +405,120 @@ gulong settings_manager_connect_changed(SettingsManager *sm,
 void settings_manager_disconnect_changed(SettingsManager *sm, gulong handler_id) {
   if (!sm || handler_id == 0) return;
   g_signal_handler_disconnect(sm->settings, handler_id);
+}
+
+/* Hardware Keystore Settings */
+gboolean settings_manager_get_hardware_keystore_enabled(SettingsManager *sm) {
+  return sm ? g_settings_get_boolean(sm->settings, "hardware-keystore-enabled") : FALSE;
+}
+
+void settings_manager_set_hardware_keystore_enabled(SettingsManager *sm, gboolean enabled) {
+  if (!sm) return;
+  g_settings_set_boolean(sm->settings, "hardware-keystore-enabled", enabled);
+}
+
+HardwareKeystoreMode settings_manager_get_hardware_keystore_mode(SettingsManager *sm) {
+  if (!sm) return HW_KS_MODE_DISABLED;
+  gint mode = g_settings_get_int(sm->settings, "hardware-keystore-mode");
+  if (mode < HW_KS_MODE_DISABLED || mode > HW_KS_MODE_AUTO)
+    return HW_KS_MODE_DISABLED;
+  return (HardwareKeystoreMode)mode;
+}
+
+void settings_manager_set_hardware_keystore_mode(SettingsManager *sm, HardwareKeystoreMode mode) {
+  if (!sm) return;
+  g_settings_set_int(sm->settings, "hardware-keystore-mode", (gint)mode);
+}
+
+gboolean settings_manager_get_hardware_keystore_fallback(SettingsManager *sm) {
+  return sm ? g_settings_get_boolean(sm->settings, "hardware-keystore-fallback") : TRUE;
+}
+
+void settings_manager_set_hardware_keystore_fallback(SettingsManager *sm, gboolean fallback) {
+  if (!sm) return;
+  g_settings_set_boolean(sm->settings, "hardware-keystore-fallback", fallback);
+}
+
+gchar **settings_manager_get_hardware_keystore_identities(SettingsManager *sm) {
+  return sm ? g_settings_get_strv(sm->settings, "hardware-keystore-identities") : NULL;
+}
+
+void settings_manager_set_hardware_keystore_identities(SettingsManager *sm, const gchar *const *npubs) {
+  if (!sm) return;
+  g_settings_set_strv(sm->settings, "hardware-keystore-identities", npubs);
+}
+
+gboolean settings_manager_add_hardware_keystore_identity(SettingsManager *sm, const gchar *npub) {
+  if (!sm || !npub || !*npub) return FALSE;
+
+  g_auto(GStrv) identities = settings_manager_get_hardware_keystore_identities(sm);
+  if (!identities) {
+    const gchar *new_identities[] = {npub, NULL};
+    settings_manager_set_hardware_keystore_identities(sm, new_identities);
+    return TRUE;
+  }
+
+  /* Check if already present */
+  for (gsize i = 0; identities[i] != NULL; i++) {
+    if (g_strcmp0(identities[i], npub) == 0)
+      return FALSE; /* Already present */
+  }
+
+  /* Add new identity */
+  gsize len = g_strv_length(identities);
+  gchar **new_identities = g_new0(gchar *, len + 2);
+  for (gsize i = 0; i < len; i++) {
+    new_identities[i] = g_strdup(identities[i]);
+  }
+  new_identities[len] = g_strdup(npub);
+  new_identities[len + 1] = NULL;
+
+  settings_manager_set_hardware_keystore_identities(sm, (const gchar *const *)new_identities);
+  g_strfreev(new_identities);
+
+  return TRUE;
+}
+
+gboolean settings_manager_remove_hardware_keystore_identity(SettingsManager *sm, const gchar *npub) {
+  if (!sm || !npub || !*npub) return FALSE;
+
+  g_auto(GStrv) identities = settings_manager_get_hardware_keystore_identities(sm);
+  if (!identities)
+    return FALSE;
+
+  gsize len = g_strv_length(identities);
+  gboolean found = FALSE;
+
+  /* Find and remove */
+  GPtrArray *new_array = g_ptr_array_new_with_free_func(g_free);
+  for (gsize i = 0; i < len; i++) {
+    if (g_strcmp0(identities[i], npub) == 0) {
+      found = TRUE;
+    } else {
+      g_ptr_array_add(new_array, g_strdup(identities[i]));
+    }
+  }
+
+  if (found) {
+    g_ptr_array_add(new_array, NULL);
+    settings_manager_set_hardware_keystore_identities(sm, (const gchar *const *)new_array->pdata);
+  }
+
+  g_ptr_array_free(new_array, TRUE);
+  return found;
+}
+
+gboolean settings_manager_is_hardware_keystore_identity(SettingsManager *sm, const gchar *npub) {
+  if (!sm || !npub || !*npub) return FALSE;
+
+  g_auto(GStrv) identities = settings_manager_get_hardware_keystore_identities(sm);
+  if (!identities)
+    return FALSE;
+
+  for (gsize i = 0; identities[i] != NULL; i++) {
+    if (g_strcmp0(identities[i], npub) == 0)
+      return TRUE;
+  }
+
+  return FALSE;
 }

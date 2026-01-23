@@ -11,12 +11,14 @@
  * - Passphrase match validation
  * - Rate limiting for authentication attempts (nostrc-1g1)
  * - Secure password entry with auto-clear timeout (nostrc-6s2)
+ * - Full keyboard navigation (nostrc-tz8w)
  */
 #include "sheet-create-profile.h"
 #include "sheet-backup.h"
 #include "../app-resources.h"
 #include "../widgets/gn-secure-entry.h"
 #include "../../rate-limiter.h"
+#include "../../keyboard-nav.h"
 
 #include <gtk/gtk.h>
 #include <adwaita.h>
@@ -435,8 +437,12 @@ static void sheet_create_profile_init(SheetCreateProfile *self) {
   /* Hide feedback labels initially */
   if (self->lbl_passphrase_match) gtk_widget_set_visible(GTK_WIDGET(self->lbl_passphrase_match), FALSE);
 
-  /* Focus display name entry */
-  if (self->entry_display_name) gtk_widget_grab_focus(GTK_WIDGET(self->entry_display_name));
+  /* Setup keyboard navigation (nostrc-tz8w):
+   * - Focus display name entry on dialog open
+   * - Create button is default (Enter activates when form is valid) */
+  gn_keyboard_nav_setup_dialog(ADW_DIALOG(self),
+                                GTK_WIDGET(self->entry_display_name),
+                                GTK_WIDGET(self->btn_create));
 }
 
 SheetCreateProfile *sheet_create_profile_new(void) {

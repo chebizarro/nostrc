@@ -4,6 +4,7 @@
  * Uses secure memory for handling sensitive data like signatures.
  * Includes rate limiting to prevent brute force attacks (nostrc-1g1).
  * Includes session management for client approval tracking (nostrc-09n).
+ * Includes event history logging for transaction tracking (nostrc-ebr).
  */
 #include "bunker_service.h"
 #include "accounts_store.h"
@@ -13,6 +14,7 @@
 #include "secure-mem.h"
 #include "rate-limiter.h"
 #include "client_session.h"
+#include "event_history.h"
 
 #include <nostr/nip46/nip46_bunker.h>
 #include <nostr/nip46/nip46_uri.h>
@@ -196,6 +198,28 @@ static char *bunker_sign_cb(const char *event_json,
     }
   }
 
+  /* Extract content preview for history logging */
+  gchar *content_preview = NULL;
+  const gchar *content_start = strstr(event_json, "\"content\"");
+  if (content_start) {
+    content_start = strchr(content_start, ':');
+    if (content_start) {
+      content_start++;
+      while (*content_start == ' ' || *content_start == '"') content_start++;
+      const gchar *content_end = content_start;
+      while (*content_end && *content_end != '"') content_end++;
+      gsize len = MIN((gsize)(content_end - content_start), 100);
+      content_preview = g_strndup(content_start, len);
+    }
+  }
+
+  /* Get client app name if available */
+  const gchar *client_app = NULL;
+  BunkerConnection *conn = g_hash_table_lookup(bs->connections, bs->current_signing_client);
+  if (conn) {
+    client_app = conn->app_name;
+  }
+
   if (!auto_approve && bs->auth_cb) {
     /* Create request for UI prompt */
     BunkerSignRequest *req = g_new0(BunkerSignRequest, 1);
@@ -205,20 +229,10 @@ static char *bunker_sign_cb(const char *event_json,
     req->event_json = g_strdup(event_json);
     req->event_kind = kind;
 
-    /* Create preview */
-    const gchar *content_start = strstr(event_json, "\"content\"");
-    if (content_start) {
-      content_start = strchr(content_start, ':');
-      if (content_start) {
-        content_start++;
-        while (*content_start == ' ' || *content_start == '"') content_start++;
-        const gchar *content_end = content_start;
-        while (*content_end && *content_end != '"') content_end++;
-        gsize len = MIN((gsize)(content_end - content_start), 100);
-        req->preview = g_strndup(content_start, len);
-      }
-    }
-    if (!req->preview) {
+    /* Use extracted preview */
+    if (content_preview) {
+      req->preview = g_strdup(content_preview);
+    } else {
       req->preview = g_strdup_printf("Event kind %d", kind);
     }
 
@@ -226,7 +240,19 @@ static char *bunker_sign_cb(const char *event_json,
 
     /* Ask UI for approval */
     if (!bs->auth_cb(req, bs->auth_cb_ud)) {
-      /* Denied */
+      /* Denied - log to history (nostrc-ebr) */
+      GnEventHistory *history = gn_event_history_get_default();
+      gn_event_history_add_entry(history,
+        NULL,  /* No event ID for denied requests */
+        kind,
+        bs->current_signing_client,
+        client_app,
+        bs->identity_npub,
+        "sign_event",
+        GN_EVENT_HISTORY_DENIED,
+        content_preview);
+
+      g_free(content_preview);
       g_hash_table_remove(bs->pending_requests, req->request_id);
       return NULL;
     }
@@ -239,8 +265,53 @@ static char *bunker_sign_cb(const char *event_json,
 
   if (rc != SECRET_STORE_OK || !signature) {
     g_warning("bunker: sign failed: %d", rc);
+
+    /* Log error to history (nostrc-ebr) */
+    GnEventHistory *history = gn_event_history_get_default();
+    gn_event_history_add_entry(history,
+      NULL,  /* No event ID for failed requests */
+      kind,
+      bs->current_signing_client,
+      client_app,
+      bs->identity_npub,
+      "sign_event",
+      GN_EVENT_HISTORY_ERROR,
+      content_preview);
+
+    g_free(content_preview);
     return NULL;
   }
+
+  /* Extract event ID from the event JSON if available */
+  gchar *event_id = NULL;
+  const gchar *id_start = strstr(event_json, "\"id\"");
+  if (id_start) {
+    id_start = strchr(id_start, ':');
+    if (id_start) {
+      id_start++;
+      while (*id_start == ' ' || *id_start == '"') id_start++;
+      const gchar *id_end = id_start;
+      while (*id_end && *id_end != '"') id_end++;
+      if (id_end > id_start) {
+        event_id = g_strndup(id_start, id_end - id_start);
+      }
+    }
+  }
+
+  /* Log successful signing to history (nostrc-ebr) */
+  GnEventHistory *history = gn_event_history_get_default();
+  gn_event_history_add_entry(history,
+    event_id,
+    kind,
+    bs->current_signing_client,
+    client_app,
+    bs->identity_npub,
+    "sign_event",
+    GN_EVENT_HISTORY_SUCCESS,
+    content_preview);
+
+  g_free(event_id);
+  g_free(content_preview);
 
   /* Build signed event JSON - for now just return signature
    * The nip46 library expects the full signed event

@@ -1,0 +1,601 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.5"/>
+  <template class="SheetSocialRecovery" parent="AdwDialog">
+    <property name="title" translatable="yes">Social Recovery</property>
+    <property name="can-close">true</property>
+    <property name="content-width">550</property>
+    <property name="content-height">-1</property>
+    <property name="follows-content-size">true</property>
+    <accessibility>
+      <property name="label">Social recovery dialog</property>
+      <property name="description">Set up or manage social recovery using trusted guardians</property>
+    </accessibility>
+    <child>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <child type="start">
+              <object class="GtkButton" id="btn_close">
+                <property name="icon-name">window-close-symbolic</property>
+                <property name="tooltip-text" translatable="yes">Close dialog</property>
+                <accessibility>
+                  <property name="label">Close</property>
+                </accessibility>
+              </object>
+            </child>
+          </object>
+        </child>
+        <property name="content">
+          <object class="AdwViewStack" id="view_stack">
+            <!-- Setup Tab -->
+            <child>
+              <object class="AdwViewStackPage">
+                <property name="name">setup</property>
+                <property name="title" translatable="yes">Setup</property>
+                <property name="icon-name">shield-symbolic</property>
+                <property name="child">
+                  <object class="GtkScrolledWindow">
+                    <property name="hscrollbar-policy">never</property>
+                    <property name="vscrollbar-policy">automatic</property>
+                    <child>
+                      <object class="AdwClamp">
+                        <property name="maximum-size">500</property>
+                        <property name="tightening-threshold">400</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">18</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">18</property>
+                            <property name="margin-bottom">18</property>
+                            <!-- Description -->
+                            <child>
+                              <object class="AdwStatusPage">
+                                <property name="icon-name">people-symbolic</property>
+                                <property name="title" translatable="yes">Social Recovery</property>
+                                <property name="description" translatable="yes">Split your key into encrypted shares and distribute them to trusted guardians. If you lose access, collect enough shares to recover your key.</property>
+                              </object>
+                            </child>
+                            <!-- Account Info -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">Account to Protect</property>
+                                <child>
+                                  <object class="AdwActionRow" id="row_setup_account">
+                                    <property name="title" translatable="yes">npub1...</property>
+                                    <property name="subtitle" translatable="yes">Selected identity</property>
+                                    <property name="activatable">false</property>
+                                    <child type="prefix">
+                                      <object class="GtkImage">
+                                        <property name="icon-name">key-symbolic</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- Add Guardian Section -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">Add Guardians</property>
+                                <property name="description" translatable="yes">Add trusted contacts who will hold recovery shares. Choose people you trust who are unlikely to collude.</property>
+                                <child>
+                                  <object class="AdwEntryRow" id="entry_guardian_npub">
+                                    <property name="title" translatable="yes">Guardian's npub</property>
+                                    <accessibility>
+                                      <property name="description">Enter the guardian's public key</property>
+                                    </accessibility>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwEntryRow" id="entry_guardian_name">
+                                    <property name="title" translatable="yes">Name (optional)</property>
+                                    <accessibility>
+                                      <property name="description">Optional friendly name for this guardian</property>
+                                    </accessibility>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwActionRow">
+                                    <property name="activatable">false</property>
+                                    <child type="suffix">
+                                      <object class="GtkButton" id="btn_add_guardian">
+                                        <property name="label" translatable="yes">Add Guardian</property>
+                                        <property name="valign">center</property>
+                                        <style>
+                                          <class name="suggested-action"/>
+                                        </style>
+                                        <accessibility>
+                                          <property name="label">Add guardian to list</property>
+                                        </accessibility>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- Guardian List -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">Guardians</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">6</property>
+                                    <property name="halign">start</property>
+                                    <property name="margin-start">12</property>
+                                    <property name="margin-bottom">6</property>
+                                    <child>
+                                      <object class="GtkLabel" id="lbl_guardian_count">
+                                        <property name="label">0 guardians</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkListBox" id="list_guardians">
+                                    <property name="selection-mode">none</property>
+                                    <style>
+                                      <class name="boxed-list"/>
+                                    </style>
+                                    <accessibility>
+                                      <property name="label">Guardian list</property>
+                                    </accessibility>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- Threshold Configuration -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">Recovery Threshold</property>
+                                <property name="description" translatable="yes">How many guardians must provide their shares to recover your key.</property>
+                                <child>
+                                  <object class="AdwSpinRow" id="spin_threshold">
+                                    <property name="title" translatable="yes">Required Shares</property>
+                                    <property name="subtitle" translatable="yes">Minimum guardians needed for recovery</property>
+                                    <property name="adjustment">
+                                      <object class="GtkAdjustment">
+                                        <property name="lower">2</property>
+                                        <property name="upper">10</property>
+                                        <property name="value">2</property>
+                                        <property name="step-increment">1</property>
+                                        <property name="page-increment">1</property>
+                                      </object>
+                                    </property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="margin-start">12</property>
+                                    <property name="margin-end">12</property>
+                                    <property name="margin-top">6</property>
+                                    <property name="margin-bottom">6</property>
+                                    <child>
+                                      <object class="GtkLabel" id="lbl_threshold_info">
+                                        <property name="label" translatable="yes">Add at least 2 guardians to continue</property>
+                                        <property name="wrap">true</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                          <class name="caption"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- Setup Action -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">horizontal</property>
+                                <property name="halign">center</property>
+                                <property name="margin-top">12</property>
+                                <child>
+                                  <object class="GtkButton" id="btn_setup_recovery">
+                                    <property name="label" translatable="yes">Set Up Recovery</property>
+                                    <property name="sensitive">false</property>
+                                    <style>
+                                      <class name="suggested-action"/>
+                                      <class name="pill"/>
+                                    </style>
+                                    <accessibility>
+                                      <property name="label">Generate recovery shares</property>
+                                    </accessibility>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- Setup Result -->
+                            <child>
+                              <object class="AdwPreferencesGroup" id="group_setup_result">
+                                <property name="visible">false</property>
+                                <property name="title" translatable="yes">Recovery Created</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">12</property>
+                                    <property name="margin-start">12</property>
+                                    <property name="margin-end">12</property>
+                                    <property name="margin-top">12</property>
+                                    <property name="margin-bottom">12</property>
+                                    <child>
+                                      <object class="GtkLabel" id="lbl_setup_status">
+                                        <property name="wrap">true</property>
+                                        <property name="xalign">0</property>
+                                        <accessibility>
+                                          <property name="label">Setup status</property>
+                                        </accessibility>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- Share Distribution -->
+                            <child>
+                              <object class="AdwPreferencesGroup" id="group_shares">
+                                <property name="visible">false</property>
+                                <property name="title" translatable="yes">Distribute Shares</property>
+                                <property name="description" translatable="yes">Send each guardian their encrypted share. Click the copy button to copy a message you can send them.</property>
+                                <child>
+                                  <object class="GtkListBox" id="list_shares">
+                                    <property name="selection-mode">none</property>
+                                    <style>
+                                      <class name="boxed-list"/>
+                                    </style>
+                                    <accessibility>
+                                      <property name="label">Share distribution list</property>
+                                    </accessibility>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+            <!-- Manage Tab -->
+            <child>
+              <object class="AdwViewStackPage">
+                <property name="name">manage</property>
+                <property name="title" translatable="yes">Manage</property>
+                <property name="icon-name">applications-system-symbolic</property>
+                <property name="child">
+                  <object class="GtkScrolledWindow">
+                    <property name="hscrollbar-policy">never</property>
+                    <property name="vscrollbar-policy">automatic</property>
+                    <child>
+                      <object class="AdwClamp">
+                        <property name="maximum-size">500</property>
+                        <property name="tightening-threshold">400</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">18</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">18</property>
+                            <property name="margin-bottom">18</property>
+                            <!-- Account Info -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">Account</property>
+                                <child>
+                                  <object class="AdwActionRow" id="row_manage_account">
+                                    <property name="title" translatable="yes">npub1...</property>
+                                    <property name="subtitle" translatable="yes">Selected identity</property>
+                                    <property name="activatable">false</property>
+                                    <child type="prefix">
+                                      <object class="GtkImage">
+                                        <property name="icon-name">key-symbolic</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- No Config Status -->
+                            <child>
+                              <object class="AdwStatusPage" id="status_no_config">
+                                <property name="icon-name">dialog-information-symbolic</property>
+                                <property name="title" translatable="yes">No Recovery Configured</property>
+                                <property name="description" translatable="yes">Social recovery has not been set up for this identity. Switch to the Setup tab to configure it.</property>
+                              </object>
+                            </child>
+                            <!-- Configuration Info -->
+                            <child>
+                              <object class="AdwPreferencesGroup" id="group_config_info">
+                                <property name="visible">false</property>
+                                <property name="title" translatable="yes">Recovery Configuration</property>
+                                <child>
+                                  <object class="AdwActionRow" id="row_config_threshold">
+                                    <property name="title" translatable="yes">Threshold</property>
+                                    <property name="subtitle">-</property>
+                                    <property name="activatable">false</property>
+                                    <child type="prefix">
+                                      <object class="GtkImage">
+                                        <property name="icon-name">user-available-symbolic</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwActionRow" id="row_config_created">
+                                    <property name="title" translatable="yes">Created</property>
+                                    <property name="subtitle">-</property>
+                                    <property name="activatable">false</property>
+                                    <child type="prefix">
+                                      <object class="GtkImage">
+                                        <property name="icon-name">x-office-calendar-symbolic</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- Guardian List (Manage) -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">Guardians</property>
+                                <child>
+                                  <object class="GtkListBox" id="list_manage_guardians">
+                                    <property name="selection-mode">none</property>
+                                    <style>
+                                      <class name="boxed-list"/>
+                                    </style>
+                                    <accessibility>
+                                      <property name="label">Configured guardians</property>
+                                    </accessibility>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- Manage Actions -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">12</property>
+                                <property name="halign">center</property>
+                                <property name="margin-top">12</property>
+                                <child>
+                                  <object class="GtkButton" id="btn_delete_recovery">
+                                    <property name="label" translatable="yes">Delete Recovery</property>
+                                    <style>
+                                      <class name="destructive-action"/>
+                                    </style>
+                                    <accessibility>
+                                      <property name="label">Delete recovery configuration</property>
+                                    </accessibility>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+            <!-- Recover Tab -->
+            <child>
+              <object class="AdwViewStackPage">
+                <property name="name">recover</property>
+                <property name="title" translatable="yes">Recover</property>
+                <property name="icon-name">view-refresh-symbolic</property>
+                <property name="child">
+                  <object class="GtkScrolledWindow">
+                    <property name="hscrollbar-policy">never</property>
+                    <property name="vscrollbar-policy">automatic</property>
+                    <child>
+                      <object class="AdwClamp">
+                        <property name="maximum-size">500</property>
+                        <property name="tightening-threshold">400</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">18</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">18</property>
+                            <property name="margin-bottom">18</property>
+                            <!-- Instructions -->
+                            <child>
+                              <object class="AdwStatusPage">
+                                <property name="icon-name">view-refresh-symbolic</property>
+                                <property name="title" translatable="yes">Recover Your Key</property>
+                                <property name="description" translatable="yes">Collect shares from your guardians and enter them below to reconstruct your private key.</property>
+                              </object>
+                            </child>
+                            <!-- Recovery Settings -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">Recovery Settings</property>
+                                <child>
+                                  <object class="AdwEntryRow" id="entry_recover_npub">
+                                    <property name="title" translatable="yes">Identity to Recover (optional)</property>
+                                    <accessibility>
+                                      <property name="description">Enter the npub of the identity you are recovering</property>
+                                    </accessibility>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwSpinRow" id="spin_recover_threshold">
+                                    <property name="title" translatable="yes">Required Shares</property>
+                                    <property name="subtitle" translatable="yes">The threshold set when recovery was configured</property>
+                                    <property name="adjustment">
+                                      <object class="GtkAdjustment">
+                                        <property name="lower">2</property>
+                                        <property name="upper">10</property>
+                                        <property name="value">2</property>
+                                        <property name="step-increment">1</property>
+                                        <property name="page-increment">1</property>
+                                      </object>
+                                    </property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- Add Share Section -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">Add Shares</property>
+                                <property name="description" translatable="yes">Paste each guardian's decrypted share (starting with sss1:).</property>
+                                <child>
+                                  <object class="AdwEntryRow" id="entry_share_input">
+                                    <property name="title" translatable="yes">Share Data</property>
+                                    <accessibility>
+                                      <property name="description">Paste a decrypted share from a guardian</property>
+                                    </accessibility>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwActionRow">
+                                    <property name="activatable">false</property>
+                                    <child type="suffix">
+                                      <object class="GtkButton" id="btn_add_share">
+                                        <property name="label" translatable="yes">Add Share</property>
+                                        <property name="valign">center</property>
+                                        <style>
+                                          <class name="suggested-action"/>
+                                        </style>
+                                        <accessibility>
+                                          <property name="label">Add share to collection</property>
+                                        </accessibility>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- Collected Shares List -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">Collected Shares</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">6</property>
+                                    <property name="halign">start</property>
+                                    <property name="margin-start">12</property>
+                                    <property name="margin-bottom">6</property>
+                                    <child>
+                                      <object class="GtkLabel" id="lbl_share_count">
+                                        <property name="label">0 of 2 shares collected</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkListBox" id="list_collected_shares">
+                                    <property name="selection-mode">none</property>
+                                    <style>
+                                      <class name="boxed-list"/>
+                                    </style>
+                                    <accessibility>
+                                      <property name="label">Collected shares</property>
+                                    </accessibility>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- Recover Action -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">horizontal</property>
+                                <property name="halign">center</property>
+                                <property name="margin-top">12</property>
+                                <child>
+                                  <object class="GtkButton" id="btn_recover">
+                                    <property name="label" translatable="yes">Recover Key</property>
+                                    <property name="sensitive">false</property>
+                                    <style>
+                                      <class name="suggested-action"/>
+                                      <class name="pill"/>
+                                    </style>
+                                    <accessibility>
+                                      <property name="label">Reconstruct key from shares</property>
+                                    </accessibility>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- Recovery Result -->
+                            <child>
+                              <object class="AdwPreferencesGroup" id="group_recovery_result">
+                                <property name="visible">false</property>
+                                <property name="title" translatable="yes">Key Recovered</property>
+                                <child>
+                                  <object class="AdwStatusPage">
+                                    <property name="icon-name">emblem-ok-symbolic</property>
+                                    <property name="title" translatable="yes">Success!</property>
+                                    <property name="description" translatable="yes">Your key has been reconstructed from the shares.</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwActionRow" id="row_recovered_npub">
+                                    <property name="title" translatable="yes">Public Key</property>
+                                    <property name="subtitle">npub1...</property>
+                                    <property name="subtitle-selectable">true</property>
+                                    <child type="prefix">
+                                      <object class="GtkImage">
+                                        <property name="icon-name">key-symbolic</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwActionRow">
+                                    <property name="activatable">false</property>
+                                    <child type="suffix">
+                                      <object class="GtkButton" id="btn_import_recovered">
+                                        <property name="label" translatable="yes">Import Key</property>
+                                        <property name="valign">center</property>
+                                        <style>
+                                          <class name="suggested-action"/>
+                                        </style>
+                                        <accessibility>
+                                          <property name="label">Import recovered key to wallet</property>
+                                        </accessibility>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+          </object>
+        </property>
+        <child type="bottom">
+          <object class="AdwViewSwitcherBar">
+            <property name="stack">view_stack</property>
+            <property name="reveal">true</property>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

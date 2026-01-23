@@ -7,9 +7,11 @@
  * - QR code display for scanning
  */
 #include "sheet-account-backup.h"
+#include "sheet-qr-display.h"
 #include "../app-resources.h"
 #include "../../backup-recovery.h"
 #include "../../secret_store.h"
+#include "../../qr-code.h"
 
 #include <gtk/gtk.h>
 #include <adwaita.h>
@@ -219,9 +221,29 @@ static void on_show_qr(GtkButton *btn, gpointer user_data) {
   SheetAccountBackup *self = SHEET_ACCOUNT_BACKUP(user_data);
   if (!self) return;
 
-  /* QR code display is a placeholder for now */
-  show_alert(self, "QR code display is not yet implemented.\n\n"
-                   "This feature will allow you to scan your key with a mobile app.");
+  /* Check if QR generation is available */
+  if (!gn_qr_generation_available()) {
+    show_alert(self, "QR code generation is not available.\n\n"
+                     "This feature requires libqrencode to be installed.");
+    return;
+  }
+
+  /* Get npub for display */
+  if (!self->current_npub) {
+    show_alert(self, "No account selected for QR display.");
+    return;
+  }
+
+  /* Create and show QR display dialog */
+  SheetQrDisplay *qr_dialog = sheet_qr_display_new();
+  sheet_qr_display_set_npub(qr_dialog, self->current_npub);
+
+  GtkWidget *parent = gtk_widget_get_root(GTK_WIDGET(self));
+  if (parent && ADW_IS_DIALOG(parent)) {
+    adw_dialog_present(ADW_DIALOG(qr_dialog), parent);
+  } else {
+    adw_dialog_present(ADW_DIALOG(qr_dialog), GTK_WIDGET(self));
+  }
 }
 
 /* Handler: Create NIP-49 encrypted backup */

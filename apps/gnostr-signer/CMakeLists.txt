@@ -47,6 +47,32 @@ if (GNOSTR_SIGNER_WITH_PKCS11)
   endif()
 endif()
 
+# Optional hidapi for hardware wallet support (Ledger, Trezor)
+option(GNOSTR_SIGNER_WITH_HW_WALLET "Enable hardware wallet support (Ledger/Trezor)" ON)
+if (GNOSTR_SIGNER_WITH_HW_WALLET)
+  pkg_check_modules(HIDAPI QUIET IMPORTED_TARGET hidapi)
+  if (NOT HIDAPI_FOUND)
+    # Try platform-specific variants
+    if (APPLE)
+      pkg_check_modules(HIDAPI QUIET IMPORTED_TARGET hidapi)
+    elseif(WIN32)
+      pkg_check_modules(HIDAPI QUIET IMPORTED_TARGET hidapi)
+    else()
+      # Linux: try hidapi-libusb or hidapi-hidraw
+      pkg_check_modules(HIDAPI QUIET IMPORTED_TARGET hidapi-libusb)
+      if (NOT HIDAPI_FOUND)
+        pkg_check_modules(HIDAPI QUIET IMPORTED_TARGET hidapi-hidraw)
+      endif()
+    endif()
+  endif()
+  if (HIDAPI_FOUND)
+    message(STATUS "hidapi found - Hardware wallet support enabled (Ledger/Trezor)")
+  else()
+    message(STATUS "hidapi not found - Hardware wallet support disabled")
+    message(STATUS "  Install hidapi: brew install hidapi (macOS), apt install libhidapi-dev (Linux)")
+  endif()
+endif()
+
 # Main GTK4 application (UI shell)
 file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/ui/sheets/*.c src/ui/widgets/*.c)
 if (NOT APP_SRC)
@@ -128,6 +154,10 @@ elseif(APPLE)
   find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
   message(STATUS "gnostr-signer: Security.framework linked for Keychain support")
+elseif(WIN32)
+  # Windows: Use DPAPI for secure credential storage
+  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_USE_WINDOWS_CREDENTIAL_STORE=1)
+  message(STATUS "gnostr-signer: Windows Credential Manager (DPAPI) will be used")
 endif()
 
 # Link libsodium for secure memory and Ed25519 if available
@@ -147,6 +177,13 @@ if (GNOSTR_SIGNER_WITH_PKCS11 AND P11KIT_FOUND)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::P11KIT)
   target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_PKCS11=1)
   message(STATUS "gnostr-signer: PKCS#11 HSM support enabled")
+endif()
+
+# Link hidapi for hardware wallet support if available
+if (GNOSTR_SIGNER_WITH_HW_WALLET AND HIDAPI_FOUND)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::HIDAPI)
+  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_HIDAPI=1)
+  message(STATUS "gnostr-signer: Hardware wallet support enabled (Ledger/Trezor)")
 endif()
 
 # Link math library on Linux (for fmin, fmax, etc.)
@@ -254,6 +291,84 @@ endif()
 option(BUILD_SIGNER_TESTS "Build gnostr-signer unit tests" ON)
 if (BUILD_SIGNER_TESTS)
   add_subdirectory(tests)
+endif()
+
+# ==============================================================================
+# Windows Installer Support
+# ==============================================================================
+if(WIN32)
+  option(BUILD_WINDOWS_INSTALLER "Build Windows NSIS installer" OFF)
+
+  # Windows-specific compile definitions
+  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE
+    GNOSTR_PLATFORM_WINDOWS=1
+    _WIN32_WINNT=0x0A00  # Windows 10+
+  )
+  target_compile_definitions(gnostr-signer-daemon PRIVATE
+    GNOSTR_PLATFORM_WINDOWS=1
+    _WIN32_WINNT=0x0A00
+  )
+
+  # Link Windows credential storage (DPAPI)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE crypt32 advapi32)
+  message(STATUS "gnostr-signer: Windows DPAPI linked for credential storage")
+
+  # Enable Named Pipes IPC on Windows (instead of D-Bus)
+  target_compile_definitions(gnostr-signer-daemon PRIVATE GNOSTR_USE_NAMED_PIPES=1)
+
+  if(BUILD_WINDOWS_INSTALLER)
+    # Application version for installer
+    set(GNOSTR_SIGNER_VERSION "1.0.0" CACHE STRING "Application version for Windows installer")
+
+    # Path to packaging files
+    set(WINDOWS_PACKAGING_DIR ${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows)
+
+    # Find NSIS
+    find_program(MAKENSIS_EXECUTABLE makensis
+      HINTS
+        "C:/Program Files (x86)/NSIS"
+        "C:/Program Files/NSIS"
+        "$ENV{PROGRAMFILES}/NSIS"
+        "$ENV{PROGRAMFILES\(x86\)}/NSIS"
+    )
+
+    if(MAKENSIS_EXECUTABLE)
+      # Custom target to bundle dependencies
+      add_custom_target(windows-bundle-deps
+        COMMAND ${CMAKE_COMMAND} -E echo "Bundling Windows dependencies..."
+        COMMAND powershell -ExecutionPolicy Bypass -File
+          "${WINDOWS_PACKAGING_DIR}/bundle-deps.ps1"
+          -BuildDir "${CMAKE_BINARY_DIR}"
+          -OutputDir "${CMAKE_BINARY_DIR}/deps"
+        DEPENDS ${APP_SIGNER_BIN} gnostr-signer-daemon
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Bundling GTK4 and dependencies for Windows installer"
+        VERBATIM
+      )
+
+      # Custom target to build NSIS installer
+      add_custom_target(windows-installer
+        COMMAND ${CMAKE_COMMAND} -E echo "Building Windows NSIS installer..."
+        COMMAND ${MAKENSIS_EXECUTABLE}
+          /DVERSION=${GNOSTR_SIGNER_VERSION}
+          /DARCH=x64
+          /DBUILD_DIR=${CMAKE_BINARY_DIR}
+          /DDEPS_DIR=${CMAKE_BINARY_DIR}/deps
+          "${WINDOWS_PACKAGING_DIR}/gnostr-signer.nsi"
+        DEPENDS windows-bundle-deps
+        WORKING_DIRECTORY ${WINDOWS_PACKAGING_DIR}
+        COMMENT "Creating Windows NSIS installer"
+        VERBATIM
+      )
+
+      message(STATUS "Windows installer support enabled. Available targets:")
+      message(STATUS "  - windows-bundle-deps: Bundle GTK4 runtime and dependencies")
+      message(STATUS "  - windows-installer: Build NSIS installer package")
+    else()
+      message(WARNING "NSIS not found - Windows installer targets disabled")
+      message(STATUS "Install NSIS from https://nsis.sourceforge.io/ to enable")
+    endif()
+  endif()
 endif()
 
 # ==============================================================================

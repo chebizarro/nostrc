@@ -5,9 +5,13 @@
  * - Secure credential storage via secret store
  * - GLib timeout-based auto-lock
  * - GSettings integration for persistence
+ * - Rate limiting to prevent brute force attacks (nostrc-1g1)
+ * - Secure memory handling for sensitive data (nostrc-ycd)
  */
 #include "session-manager.h"
 #include "settings_manager.h"
+#include "rate-limiter.h"
+#include "secure-mem.h"
 
 #include <string.h>
 
@@ -99,19 +103,17 @@ compute_password_hash(const gchar *password)
   return result;
 }
 
-/* Utility: Secure memory wipe */
+/* Utility: Secure memory wipe using secure-mem.h API
+ * This uses explicit_bzero/sodium_memzero to ensure the compiler
+ * doesn't optimize away the zeroing operation.
+ */
 static void
 secure_wipe(gchar *str)
 {
   if (!str)
     return;
 
-  volatile gchar *p = (volatile gchar *)str;
-  gsize len = strlen(str);
-
-  while (len--) {
-    *p++ = 0;
-  }
+  gnostr_secure_clear(str, strlen(str));
 }
 
 /* Load password hash from secret store */
@@ -539,10 +541,26 @@ gn_session_manager_authenticate(GnSessionManager *self,
 {
   g_return_val_if_fail(GN_IS_SESSION_MANAGER(self), FALSE);
 
+  /* Check rate limiting first (nostrc-1g1) */
+  GnRateLimiter *limiter = gn_rate_limiter_get_default();
+  if (!gn_rate_limiter_check_allowed(limiter)) {
+    guint remaining = gn_rate_limiter_get_remaining_lockout(limiter);
+    g_set_error(error,
+                G_IO_ERROR,
+                G_IO_ERROR_PERMISSION_DENIED,
+                "Too many failed attempts. Please wait %u seconds before trying again.",
+                remaining);
+    g_debug("session-manager: Rate limited, %u seconds remaining", remaining);
+    return FALSE;
+  }
+
   /* If no password is configured, any password is accepted
    * (or we auto-unlock if password is NULL) */
   if (!self->password_configured) {
     g_debug("session-manager: No password configured, auto-authenticating");
+
+    /* Reset rate limiter on success */
+    gn_rate_limiter_record_attempt(limiter, TRUE);
 
     self->state = GN_SESSION_STATE_AUTHENTICATED;
     self->session_started = g_get_monotonic_time() / G_USEC_PER_SEC;
@@ -580,14 +598,31 @@ gn_session_manager_authenticate(GnSessionManager *self,
   g_free(hash);
 
   if (!match) {
-    g_set_error(error,
-                G_IO_ERROR,
-                G_IO_ERROR_PERMISSION_DENIED,
-                "Invalid password");
+    /* Record failed attempt for rate limiting (nostrc-1g1) */
+    gn_rate_limiter_record_attempt(limiter, FALSE);
+
+    /* Check if now rate limited after this failure */
+    if (gn_rate_limiter_is_locked_out(limiter)) {
+      guint remaining = gn_rate_limiter_get_remaining_lockout(limiter);
+      g_set_error(error,
+                  G_IO_ERROR,
+                  G_IO_ERROR_PERMISSION_DENIED,
+                  "Too many failed attempts. Please wait %u seconds before trying again.",
+                  remaining);
+    } else {
+      guint attempts_left = gn_rate_limiter_get_attempts_remaining(limiter);
+      g_set_error(error,
+                  G_IO_ERROR,
+                  G_IO_ERROR_PERMISSION_DENIED,
+                  "Invalid password. %u attempt%s remaining.",
+                  attempts_left, attempts_left == 1 ? "" : "s");
+    }
     return FALSE;
   }
 
-  /* Authentication successful */
+  /* Authentication successful - reset rate limiter (nostrc-1g1) */
+  gn_rate_limiter_record_attempt(limiter, TRUE);
+
   g_debug("session-manager: Authentication successful");
 
   self->state = GN_SESSION_STATE_AUTHENTICATED;

@@ -1,0 +1,8 @@
+# GNostr Signer daemon
+usr/bin/gnostr-signer-daemon
+
+# D-Bus service file (session bus)
+usr/share/dbus-1/services/org.nostr.Signer.service
+
+# Systemd user service
+usr/share/systemd/user/gnostr-signer-daemon.service

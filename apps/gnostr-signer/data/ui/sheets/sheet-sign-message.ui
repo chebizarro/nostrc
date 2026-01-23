@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
   <requires lib="gtk" version="4.12"/>
-  <requires lib="adwaita" version="1.4"/>
+  <requires lib="adwaita" version="1.5"/>
   <template class="SheetSignMessage" parent="AdwDialog">
     <property name="title" translatable="yes">Sign Message</property>
     <property name="content-width">520</property>
-    <property name="content-height">480</property>
+    <property name="content-height">-1</property>
+    <property name="follows-content-size">true</property>
     <property name="can-close">true</property>
     <accessibility>
       <property name="label">Sign message dialog</property>
@@ -48,20 +49,29 @@
           </object>
         </child>
         <child>
-          <object class="GtkBox">
-            <property name="orientation">vertical</property>
-            <property name="spacing">0</property>
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">never</property>
             <property name="vexpand">true</property>
+            <property name="propagate-natural-height">true</property>
+            <child>
+              <object class="AdwClamp">
+                <property name="maximum-size">560</property>
+                <property name="tightening-threshold">400</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">0</property>
+                    <property name="vexpand">true</property>
 
             <!-- Profile Info -->
             <child>
               <object class="GtkBox">
                 <property name="orientation">vertical</property>
                 <property name="spacing">8</property>
-                <property name="margin-top">24</property>
+                <property name="margin-top">20</property>
                 <property name="margin-bottom">16</property>
-                <property name="margin-start">24</property>
-                <property name="margin-end">24</property>
+                <property name="margin-start">16</property>
+                <property name="margin-end">16</property>
                 <accessibility>
                   <property name="label">Signing profile information</property>
                 </accessibility>
@@ -98,8 +108,8 @@
               <object class="GtkBox">
                 <property name="orientation">vertical</property>
                 <property name="spacing">8</property>
-                <property name="margin-start">24</property>
-                <property name="margin-end">24</property>
+                <property name="margin-start">16</property>
+                <property name="margin-end">16</property>
                 <property name="margin-bottom">16</property>
                 <property name="vexpand">true</property>
                 <accessibility>
@@ -154,9 +164,9 @@
                   <object class="GtkBox">
                     <property name="orientation">vertical</property>
                     <property name="spacing">8</property>
-                    <property name="margin-start">24</property>
-                    <property name="margin-end">24</property>
-                    <property name="margin-bottom">24</property>
+                    <property name="margin-start">16</property>
+                    <property name="margin-end">16</property>
+                    <property name="margin-bottom">16</property>
                     <accessibility>
                       <property name="label">Signature result section</property>
                     </accessibility>
@@ -219,6 +229,10 @@
               </object>
             </child>
 
+                  </object>
+                </child>
+              </object>
+            </child>
           </object>
         </child>
       </object>

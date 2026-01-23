@@ -1,0 +1,8 @@
+# Trigger GSettings schema compilation on install/remove
+interest-noawait /usr/share/glib-2.0/schemas
+
+# Trigger icon cache update on install/remove
+interest-noawait /usr/share/icons/hicolor
+
+# Trigger desktop database update on install/remove
+interest-noawait /usr/share/applications

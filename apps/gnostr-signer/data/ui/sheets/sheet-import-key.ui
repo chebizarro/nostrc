@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
   <requires lib="gtk" version="4.12"/>
-  <requires lib="adwaita" version="1.4"/>
+  <requires lib="adwaita" version="1.5"/>
   <template class="SheetImportKey" parent="AdwDialog">
+    <property name="content-width">400</property>
+    <property name="content-height">-1</property>
+    <property name="follows-content-size">true</property>
+    <!-- Enable Escape to close dialog (nostrc-tz8w) -->
+    <property name="can-close">true</property>
     <accessibility>
       <property name="label">Add new account dialog</property>
       <property name="description">Import an existing Nostr private key to add a new signing account</property>
@@ -21,19 +26,23 @@
             </property>
             <child type="start">
               <object class="GtkButton" id="btn_cancel">
-                <property name="label" translatable="yes">Cancel</property>
+                <property name="label" translatable="yes">_Cancel</property>
+                <property name="use-underline">true</property>
+                <property name="focusable">true</property>
                 <accessibility>
                   <property name="label">Cancel</property>
-                  <property name="description">Close this dialog without adding an account</property>
+                  <property name="description">Close this dialog without adding an account. Press Escape or Alt+C.</property>
                 </accessibility>
               </object>
             </child>
             <child type="end">
               <object class="GtkButton" id="btn_ok">
-                <property name="label" translatable="yes">Add</property>
+                <property name="label" translatable="yes">_Add</property>
+                <property name="use-underline">true</property>
+                <property name="focusable">true</property>
                 <accessibility>
                   <property name="label">Add account</property>
-                  <property name="description">Import the key and add this account</property>
+                  <property name="description">Import the key and add this account. Press Alt+A or Enter when form is valid.</property>
                 </accessibility>
                 <style>
                   <class name="suggested-action"/>
@@ -43,54 +52,111 @@
           </object>
         </child>
         <child>
-          <object class="GtkBox">
-            <property name="orientation">vertical</property>
-            <property name="spacing">12</property>
-            <property name="margin-top">16</property>
-            <property name="margin-bottom">16</property>
-            <property name="margin-start">16</property>
-            <property name="margin-end">16</property>
-
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vexpand">true</property>
+            <property name="propagate-natural-height">true</property>
             <child>
-              <object class="GtkLabel">
-                <property name="wrap">true</property>
-                <property name="label" translatable="yes">Paste your private key (hex, nsec, or ncrypt). It will be stored securely via libsecret. The public key will be saved in settings.</property>
-                <accessibility>
-                  <property name="label">Import instructions</property>
-                  <property name="description">Your private key will be stored securely. Supported formats include hex, nsec, and ncrypt.</property>
-                </accessibility>
-              </object>
-            </child>
+              <object class="AdwClamp">
+                <property name="maximum-size">500</property>
+                <property name="tightening-threshold">400</property>
+                <property name="margin-top">16</property>
+                <property name="margin-bottom">16</property>
+                <property name="margin-start">16</property>
+                <property name="margin-end">16</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">16</property>
 
-            <child>
-              <object class="GtkEntry" id="entry_secret">
-                <property name="placeholder-text" translatable="yes">nsec1... or 64-hex or ncrypt...</property>
-                <property name="hexpand">true</property>
-                <accessibility>
-                  <property name="label">Private key</property>
-                  <property name="description">Enter your Nostr private key in nsec, hex, or ncrypt format</property>
-                </accessibility>
-              </object>
-            </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="wrap">true</property>
+                        <property name="wrap-mode">word-char</property>
+                        <property name="xalign">0</property>
+                        <property name="label" translatable="yes">Paste your private key (hex, nsec, or ncrypt). It will be stored securely via libsecret. The public key will be saved in settings.</property>
+                        <accessibility>
+                          <property name="label">Import instructions</property>
+                          <property name="description">Your private key will be stored securely. Supported formats include hex, nsec, and ncrypt.</property>
+                        </accessibility>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
 
-            <child>
-              <object class="GtkEntry" id="entry_label">
-                <property name="placeholder-text" translatable="yes">Label (optional)</property>
-                <property name="hexpand">true</property>
-                <accessibility>
-                  <property name="label">Account label</property>
-                  <property name="description">Optional friendly name for this account</property>
-                </accessibility>
-              </object>
-            </child>
+                    <!-- QR Scan Button -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="halign">center</property>
+                        <property name="margin-bottom">8</property>
+                        <child>
+                          <object class="GtkButton" id="btn_scan_qr">
+                            <property name="label" translatable="yes">Scan _QR Code</property>
+                            <property name="use-underline">true</property>
+                            <property name="focusable">true</property>
+                            <accessibility>
+                              <property name="label">Scan QR code</property>
+                              <property name="description">Import a key by scanning a QR code from camera or image</property>
+                            </accessibility>
+                            <style>
+                              <class name="pill"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
 
-            <child>
-              <object class="GtkCheckButton" id="chk_link_user">
-                <property name="label" translatable="yes">Link to current Linux user</property>
-                <accessibility>
-                  <property name="label">Link to Linux user</property>
-                  <property name="description">When checked, this account will be associated with your current system user</property>
-                </accessibility>
+                    <!-- Key Input Group -->
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <child>
+                          <object class="AdwEntryRow" id="entry_secret">
+                            <property name="title" translatable="yes">Private Key</property>
+                            <property name="input-hints">GTK_INPUT_HINT_NO_SPELLCHECK | GTK_INPUT_HINT_PRIVATE</property>
+                            <accessibility>
+                              <property name="label">Private key</property>
+                              <property name="description">Enter your Nostr private key in nsec, hex, or ncrypt format</property>
+                            </accessibility>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwEntryRow" id="entry_label">
+                            <property name="title" translatable="yes">Label (optional)</property>
+                            <accessibility>
+                              <property name="label">Account label</property>
+                              <property name="description">Optional friendly name for this account</property>
+                            </accessibility>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Options Group -->
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Link to current user</property>
+                            <property name="subtitle" translatable="yes">Associate this account with your system user</property>
+                            <child type="prefix">
+                              <object class="GtkCheckButton" id="chk_link_user">
+                                <property name="valign">center</property>
+                                <accessibility>
+                                  <property name="label">Link to user</property>
+                                  <property name="description">When checked, this account will be associated with your current system user</property>
+                                </accessibility>
+                              </object>
+                            </child>
+                            <property name="activatable-widget">chk_link_user</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                  </object>
+                </child>
               </object>
             </child>
           </object>

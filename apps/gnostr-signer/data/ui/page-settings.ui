@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
   <requires lib="gtk" version="4.12"/>
-  <requires lib="adwaita" version="1.4"/>
+  <requires lib="adwaita" version="1.5"/>
   <template class="PageSettings" parent="AdwPreferencesPage">
     <accessibility>
       <property name="label">Settings page</property>
@@ -19,7 +19,7 @@
             <property name="title" translatable="yes">Theme</property>
             <property name="subtitle" translatable="yes">Choose the app color scheme</property>
             <accessibility>
-              <property name="description">Select the application color theme from System, Light, or Dark modes</property>
+              <property name="description">Select the application color theme from System, Light, Dark, or High Contrast modes</property>
             </accessibility>
             <property name="model">
               <object class="GtkStringList" id="theme_model">
@@ -27,6 +27,35 @@
                   <item translatable="yes">System</item>
                   <item translatable="yes">Light</item>
                   <item translatable="yes">Dark</item>
+                  <item translatable="yes">High Contrast</item>
+                </items>
+              </object>
+            </property>
+          </object>
+        </child>
+        <child>
+          <object class="AdwSwitchRow" id="switch_force_high_contrast">
+            <property name="title" translatable="yes">Force High Contrast</property>
+            <property name="subtitle" translatable="yes">Use high contrast regardless of system settings</property>
+            <accessibility>
+              <property name="label">Force high contrast mode</property>
+              <property name="description">Enable to always use high contrast styling, even when the system is not in high contrast mode</property>
+            </accessibility>
+          </object>
+        </child>
+        <child>
+          <object class="AdwComboRow" id="combo_high_contrast_variant">
+            <property name="title" translatable="yes">High Contrast Style</property>
+            <property name="subtitle" translatable="yes">Color scheme for high contrast mode</property>
+            <accessibility>
+              <property name="description">Select the color scheme variant for high contrast mode: Black on White, White on Black, or Yellow on Black</property>
+            </accessibility>
+            <property name="model">
+              <object class="GtkStringList" id="high_contrast_variant_model">
+                <items>
+                  <item translatable="yes">Black on White</item>
+                  <item translatable="yes">White on Black</item>
+                  <item translatable="yes">Yellow on Black</item>
                 </items>
               </object>
             </property>
@@ -178,6 +207,27 @@
                 <accessibility>
                   <property name="label">Open key backup dialog</property>
                   <property name="description">Click to open the key backup and export dialog</property>
+                </accessibility>
+                <style><class name="suffix-action"/></style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwActionRow">
+            <property name="title" translatable="yes">Social Recovery</property>
+            <property name="subtitle" translatable="yes">Set up guardians for key recovery</property>
+            <accessibility>
+              <property name="description">Configure trusted contacts who can help recover your key using Shamir secret sharing</property>
+            </accessibility>
+            <child type="suffix">
+              <object class="GtkButton" id="btn_social_recovery">
+                <property name="label" translatable="yes">Open</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Open social recovery dialog</property>
+                  <property name="description">Click to set up or manage social recovery with guardians</property>
                 </accessibility>
                 <style><class name="suffix-action"/></style>
               </object>

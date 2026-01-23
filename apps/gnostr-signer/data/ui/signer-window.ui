@@ -1,16 +1,38 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
   <requires lib="gtk" version="4.12"/>
-  <requires lib="adwaita" version="1.4"/>
+  <requires lib="adwaita" version="1.5"/>
   <template class="SignerWindow" parent="AdwApplicationWindow">
     <property name="default-width">920</property>
     <property name="default-height">640</property>
+    <property name="width-request">320</property>
+    <property name="height-request">480</property>
     <!-- Enable keyboard navigation for the window -->
     <property name="focus-visible">true</property>
     <accessibility>
       <property name="label">GNostr Signer main window</property>
       <property name="description">Main application window for managing Nostr signing keys and connected applications</property>
     </accessibility>
+
+    <!-- Responsive breakpoints for adaptive layout -->
+    <child>
+      <object class="AdwBreakpoint" id="breakpoint_mobile">
+        <condition>max-width: 500px</condition>
+        <!-- On narrow screens: collapse sidebar, show bottom bar -->
+        <setter object="split_view" property="collapsed">true</setter>
+        <setter object="bottom_bar" property="reveal">true</setter>
+        <setter object="switcher_title" property="title-visible">true</setter>
+      </object>
+    </child>
+    <child>
+      <object class="AdwBreakpoint" id="breakpoint_tablet">
+        <condition>max-width: 800px</condition>
+        <!-- On medium screens: sidebar overlay mode -->
+        <setter object="split_view" property="collapsed">true</setter>
+        <setter object="bottom_bar" property="reveal">false</setter>
+      </object>
+    </child>
+
     <child>
       <!-- Main stack to switch between locked and unlocked states -->
       <object class="GtkStack" id="main_stack">
@@ -42,9 +64,22 @@
                     <accessibility>
                       <property name="label">Main header bar</property>
                     </accessibility>
+                    <!-- Toggle button to show sidebar on narrow screens -->
+                    <child type="start">
+                      <object class="GtkToggleButton" id="sidebar_toggle_btn">
+                        <property name="icon-name">sidebar-show-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Toggle sidebar</property>
+                        <property name="visible">false</property>
+                        <accessibility>
+                          <property name="label">Toggle sidebar</property>
+                          <property name="description">Show or hide the navigation sidebar</property>
+                        </accessibility>
+                      </object>
+                    </child>
                     <property name="title-widget">
                       <object class="AdwViewSwitcherTitle" id="switcher_title">
                         <property name="stack">stack</property>
+                        <property name="title">GNostr Signer</property>
                         <accessibility>
                           <property name="label">Page switcher</property>
                           <property name="description">Switch between Permissions, Applications, and Settings pages</property>
@@ -65,8 +100,9 @@
                 </child>
                 <child>
                   <object class="AdwNavigationSplitView" id="split_view">
-                    <property name="min-sidebar-width">260</property>
-                    <property name="max-sidebar-width">320</property>
+                    <property name="min-sidebar-width">220</property>
+                    <property name="max-sidebar-width">300</property>
+                    <property name="sidebar-width-fraction">0.30</property>
                     <accessibility>
                       <property name="label">Navigation split view</property>
                       <property name="description">Main content area with sidebar navigation</property>
@@ -79,84 +115,186 @@
                           <property name="description">Navigate between different sections of the application</property>
                         </accessibility>
                         <property name="child">
-                          <object class="GtkListBox" id="sidebar">
-                            <property name="selection-mode">browse</property>
-                            <property name="activate-on-single-click">true</property>
-                            <style>
-                              <class name="navigation-sidebar"/>
-                            </style>
-                            <accessibility>
-                              <property name="label">Navigation sections list</property>
-                              <property name="description">List of navigation sections. Use arrow keys to navigate and Enter to select.</property>
-                            </accessibility>
+                          <object class="GtkScrolledWindow">
+                            <property name="hscrollbar-policy">never</property>
+                            <property name="vexpand">true</property>
                             <child>
-                              <object class="GtkListBoxRow">
+                              <object class="GtkListBox" id="sidebar">
+                                <property name="selection-mode">browse</property>
+                                <property name="activate-on-single-click">true</property>
+                                <!-- Enable keyboard focus for Tab navigation (nostrc-tz8w) -->
+                                <property name="focusable">true</property>
+                                <property name="focus-on-click">true</property>
+                                <style>
+                                  <class name="navigation-sidebar"/>
+                                </style>
                                 <accessibility>
-                                  <property name="label">Permissions and Connection section</property>
-                                  <property name="description">Navigate to permissions and connection settings</property>
+                                  <property name="label">Navigation sections list</property>
+                                  <property name="description">List of navigation sections. Use arrow keys to navigate and Enter to select.</property>
                                 </accessibility>
                                 <child>
-                                  <object class="GtkLabel">
-                                    <property name="label" translatable="yes">Permissions &amp; Connection</property>
-                                    <property name="margin-start">12</property>
-                                    <property name="margin-end">12</property>
-                                    <property name="margin-top">8</property>
-                                    <property name="margin-bottom">8</property>
-                                    <property name="xalign">0</property>
+                                  <object class="GtkListBoxRow" id="row_permissions">
+                                    <accessibility>
+                                      <property name="label">Permissions and Connection section</property>
+                                      <property name="description">Navigate to permissions and connection settings</property>
+                                    </accessibility>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">12</property>
+                                        <property name="margin-start">12</property>
+                                        <property name="margin-end">12</property>
+                                        <property name="margin-top">10</property>
+                                        <property name="margin-bottom">10</property>
+                                        <child>
+                                          <object class="GtkImage">
+                                            <property name="icon-name">security-high-symbolic</property>
+                                            <style>
+                                              <class name="dim-label"/>
+                                            </style>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label" translatable="yes">Permissions</property>
+                                            <property name="xalign">0</property>
+                                            <property name="hexpand">true</property>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
                                   </object>
                                 </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkListBoxRow">
-                                <accessibility>
-                                  <property name="label">Applications section</property>
-                                  <property name="description">Navigate to manage connected applications</property>
-                                </accessibility>
                                 <child>
-                                  <object class="GtkLabel">
-                                    <property name="label" translatable="yes">Applications</property>
-                                    <property name="margin-start">12</property>
-                                    <property name="margin-end">12</property>
-                                    <property name="margin-top">8</property>
-                                    <property name="margin-bottom">8</property>
-                                    <property name="xalign">0</property>
+                                  <object class="GtkListBoxRow" id="row_applications">
+                                    <accessibility>
+                                      <property name="label">Applications section</property>
+                                      <property name="description">Navigate to manage connected applications</property>
+                                    </accessibility>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">12</property>
+                                        <property name="margin-start">12</property>
+                                        <property name="margin-end">12</property>
+                                        <property name="margin-top">10</property>
+                                        <property name="margin-bottom">10</property>
+                                        <child>
+                                          <object class="GtkImage">
+                                            <property name="icon-name">application-x-executable-symbolic</property>
+                                            <style>
+                                              <class name="dim-label"/>
+                                            </style>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label" translatable="yes">Applications</property>
+                                            <property name="xalign">0</property>
+                                            <property name="hexpand">true</property>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
                                   </object>
                                 </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkListBoxRow">
-                                <accessibility>
-                                  <property name="label">Active Sessions section</property>
-                                  <property name="description">Navigate to manage active client sessions</property>
-                                </accessibility>
                                 <child>
-                                  <object class="GtkLabel">
-                                    <property name="label" translatable="yes">Active Sessions</property>
-                                    <property name="margin-start">12</property>
-                                    <property name="margin-end">12</property>
-                                    <property name="margin-top">8</property>
-                                    <property name="margin-bottom">8</property>
-                                    <property name="xalign">0</property>
+                                  <object class="GtkListBoxRow" id="row_sessions">
+                                    <accessibility>
+                                      <property name="label">Active Sessions section</property>
+                                      <property name="description">Navigate to manage active client sessions</property>
+                                    </accessibility>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">12</property>
+                                        <property name="margin-start">12</property>
+                                        <property name="margin-end">12</property>
+                                        <property name="margin-top">10</property>
+                                        <property name="margin-bottom">10</property>
+                                        <child>
+                                          <object class="GtkImage">
+                                            <property name="icon-name">network-wireless-symbolic</property>
+                                            <style>
+                                              <class name="dim-label"/>
+                                            </style>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label" translatable="yes">Sessions</property>
+                                            <property name="xalign">0</property>
+                                            <property name="hexpand">true</property>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
                                   </object>
                                 </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkListBoxRow">
-                                <accessibility>
-                                  <property name="label">Settings section</property>
-                                  <property name="description">Navigate to application settings</property>
-                                </accessibility>
                                 <child>
-                                  <object class="GtkLabel">
-                                    <property name="label" translatable="yes">Settings</property>
-                                    <property name="margin-start">12</property>
-                                    <property name="margin-end">12</property>
-                                    <property name="margin-top">8</property>
-                                    <property name="margin-bottom">8</property>
-                                    <property name="xalign">0</property>
+                                  <object class="GtkListBoxRow" id="row_history">
+                                    <accessibility>
+                                      <property name="label">Event History section</property>
+                                      <property name="description">Navigate to view signing operation history</property>
+                                    </accessibility>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">12</property>
+                                        <property name="margin-start">12</property>
+                                        <property name="margin-end">12</property>
+                                        <property name="margin-top">10</property>
+                                        <property name="margin-bottom">10</property>
+                                        <child>
+                                          <object class="GtkImage">
+                                            <property name="icon-name">document-open-recent-symbolic</property>
+                                            <style>
+                                              <class name="dim-label"/>
+                                            </style>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label" translatable="yes">History</property>
+                                            <property name="xalign">0</property>
+                                            <property name="hexpand">true</property>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkListBoxRow" id="row_settings">
+                                    <accessibility>
+                                      <property name="label">Settings section</property>
+                                      <property name="description">Navigate to application settings</property>
+                                    </accessibility>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">12</property>
+                                        <property name="margin-start">12</property>
+                                        <property name="margin-end">12</property>
+                                        <property name="margin-top">10</property>
+                                        <property name="margin-bottom">10</property>
+                                        <child>
+                                          <object class="GtkImage">
+                                            <property name="icon-name">emblem-system-symbolic</property>
+                                            <style>
+                                              <class name="dim-label"/>
+                                            </style>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label" translatable="yes">Settings</property>
+                                            <property name="xalign">0</property>
+                                            <property name="hexpand">true</property>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
                                   </object>
                                 </child>
                               </object>
@@ -181,7 +319,8 @@
                             <child>
                               <object class="AdwViewStackPage">
                                 <property name="name">permissions</property>
-                                <property name="title" translatable="yes">Permissions &amp; Connection</property>
+                                <property name="title" translatable="yes">Permissions</property>
+                                <property name="icon-name">security-high-symbolic</property>
                                 <property name="child">
                                   <object class="PagePermissions" id="page_permissions"/>
                                 </property>
@@ -190,7 +329,8 @@
                             <child>
                               <object class="AdwViewStackPage">
                                 <property name="name">applications</property>
-                                <property name="title" translatable="yes">Applications</property>
+                                <property name="title" translatable="yes">Apps</property>
+                                <property name="icon-name">application-x-executable-symbolic</property>
                                 <property name="child">
                                   <object class="PageApplications" id="page_applications"/>
                                 </property>
@@ -199,7 +339,8 @@
                             <child>
                               <object class="AdwViewStackPage">
                                 <property name="name">sessions</property>
-                                <property name="title" translatable="yes">Active Sessions</property>
+                                <property name="title" translatable="yes">Sessions</property>
+                                <property name="icon-name">network-wireless-symbolic</property>
                                 <property name="child">
                                   <object class="GnPageSessions" id="page_sessions"/>
                                 </property>
@@ -207,8 +348,19 @@
                             </child>
                             <child>
                               <object class="AdwViewStackPage">
+                                <property name="name">history</property>
+                                <property name="title" translatable="yes">History</property>
+                                <property name="icon-name">document-open-recent-symbolic</property>
+                                <property name="child">
+                                  <object class="GnPageHistory" id="page_history"/>
+                                </property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwViewStackPage">
                                 <property name="name">settings</property>
                                 <property name="title" translatable="yes">Settings</property>
+                                <property name="icon-name">emblem-system-symbolic</property>
                                 <property name="child">
                                   <object class="PageSettings" id="page_settings"/>
                                 </property>
@@ -218,6 +370,17 @@
                         </property>
                       </object>
                     </child>
+                  </object>
+                </child>
+                <!-- Bottom bar for narrow screens (mobile) -->
+                <child type="bottom">
+                  <object class="AdwViewSwitcherBar" id="bottom_bar">
+                    <property name="stack">stack</property>
+                    <property name="reveal">false</property>
+                    <accessibility>
+                      <property name="label">Bottom navigation bar</property>
+                      <property name="description">Navigation bar for narrow screens</property>
+                    </accessibility>
                   </object>
                 </child>
               </object>

@@ -1,0 +1,362 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="libadwaita" version="1.0"/>
+
+  <template class="SheetHwWallet" parent="AdwDialog">
+    <property name="title" translatable="yes">Hardware Wallet</property>
+    <property name="content-width">400</property>
+    <property name="content-height">500</property>
+
+    <child>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="show-end-title-buttons">false</property>
+            <property name="show-start-title-buttons">false</property>
+            <child type="start">
+              <object class="GtkButton">
+                <property name="icon-name">window-close-symbolic</property>
+                <property name="action-name">window.close</property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <property name="content">
+          <object class="AdwNavigationView" id="nav_view">
+            <!-- Device Selection Page -->
+            <child>
+              <object class="AdwNavigationPage" id="page_devices">
+                <property name="title" translatable="yes">Select Device</property>
+                <property name="tag">devices</property>
+
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">0</property>
+
+                    <!-- Instructions Banner -->
+                    <child>
+                      <object class="AdwBanner" id="banner_instructions">
+                        <property name="title" translatable="yes">Connect your hardware wallet and unlock it</property>
+                        <property name="revealed">true</property>
+                      </object>
+                    </child>
+
+                    <!-- Device Stack -->
+                    <child>
+                      <object class="GtkStack" id="stack_devices">
+                        <property name="vexpand">true</property>
+
+                        <!-- No Devices State -->
+                        <child>
+                          <object class="GtkStackPage">
+                            <property name="name">empty</property>
+                            <property name="child">
+                              <object class="AdwStatusPage" id="status_no_devices">
+                                <property name="icon-name">drive-removable-media-symbolic</property>
+                                <property name="title" translatable="yes">No Devices Found</property>
+                                <property name="description" translatable="yes">Connect a Ledger or Trezor device and unlock it</property>
+
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">12</property>
+                                    <property name="halign">center</property>
+
+                                    <child>
+                                      <object class="GtkSpinner" id="spinner_scanning">
+                                        <property name="spinning">false</property>
+                                        <property name="width-request">32</property>
+                                        <property name="height-request">32</property>
+                                      </object>
+                                    </child>
+
+                                    <child>
+                                      <object class="GtkButton" id="btn_refresh">
+                                        <property name="label" translatable="yes">Scan for Devices</property>
+                                        <property name="halign">center</property>
+                                        <style>
+                                          <class name="suggested-action"/>
+                                          <class name="pill"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+
+                        <!-- Devices List -->
+                        <child>
+                          <object class="GtkStackPage">
+                            <property name="name">devices</property>
+                            <property name="child">
+                              <object class="GtkScrolledWindow">
+                                <property name="hscrollbar-policy">never</property>
+                                <property name="vexpand">true</property>
+
+                                <child>
+                                  <object class="AdwClamp">
+                                    <property name="maximum-size">600</property>
+                                    <property name="margin-start">12</property>
+                                    <property name="margin-end">12</property>
+                                    <property name="margin-top">12</property>
+                                    <property name="margin-bottom">12</property>
+
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">vertical</property>
+                                        <property name="spacing">12</property>
+
+                                        <!-- Optional Label Entry (for import mode) -->
+                                        <child>
+                                          <object class="AdwPreferencesGroup">
+                                            <property name="title" translatable="yes">Account Label</property>
+                                            <property name="description" translatable="yes">Optional name for this account</property>
+
+                                            <child>
+                                              <object class="AdwEntryRow" id="entry_label">
+                                                <property name="title" translatable="yes">Label</property>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+
+                                        <!-- Device List -->
+                                        <child>
+                                          <object class="AdwPreferencesGroup">
+                                            <property name="title" translatable="yes">Connected Devices</property>
+
+                                            <child>
+                                              <object class="GtkListBox" id="listbox_devices">
+                                                <property name="selection-mode">none</property>
+                                                <style>
+                                                  <class name="boxed-list"/>
+                                                </style>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+
+                                        <!-- Refresh Button -->
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="halign">center</property>
+                                            <property name="spacing">12</property>
+
+                                            <child>
+                                              <object class="GtkButton">
+                                                <property name="label" translatable="yes">Refresh</property>
+                                                <property name="action-name">hw.refresh</property>
+                                                <style>
+                                                  <class name="flat"/>
+                                                </style>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Confirmation Page (waiting for device) -->
+            <child>
+              <object class="AdwNavigationPage" id="page_confirm">
+                <property name="title" translatable="yes">Confirm on Device</property>
+                <property name="tag">confirm</property>
+
+                <property name="child">
+                  <object class="AdwStatusPage" id="status_confirm">
+                    <property name="icon-name">dialog-password-symbolic</property>
+                    <property name="title" translatable="yes">Confirm on Device</property>
+
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">24</property>
+                        <property name="halign">center</property>
+                        <property name="margin-top">12</property>
+                        <property name="margin-bottom">12</property>
+
+                        <!-- Device Info -->
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">6</property>
+                            <property name="halign">center</property>
+
+                            <child>
+                              <object class="GtkLabel" id="lbl_confirm_device">
+                                <property name="label">Hardware Wallet</property>
+                                <style>
+                                  <class name="title-2"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <child>
+                              <object class="GtkLabel" id="lbl_confirm_action">
+                                <property name="label" translatable="yes">Please confirm on your device</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                        <!-- Spinner -->
+                        <child>
+                          <object class="GtkSpinner" id="spinner_confirm">
+                            <property name="spinning">true</property>
+                            <property name="width-request">48</property>
+                            <property name="height-request">48</property>
+                          </object>
+                        </child>
+
+                        <!-- Cancel Button -->
+                        <child>
+                          <object class="GtkButton" id="btn_confirm_cancel">
+                            <property name="label" translatable="yes">Cancel</property>
+                            <property name="halign">center</property>
+                            <style>
+                              <class name="pill"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Success Page -->
+            <child>
+              <object class="AdwNavigationPage" id="page_success">
+                <property name="title" translatable="yes">Success</property>
+                <property name="tag">success</property>
+
+                <property name="child">
+                  <object class="AdwStatusPage" id="status_success">
+                    <property name="icon-name">emblem-ok-symbolic</property>
+                    <property name="title" translatable="yes">Account Added</property>
+                    <property name="description" translatable="yes">Your hardware wallet identity has been imported</property>
+
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">18</property>
+                        <property name="halign">center</property>
+
+                        <!-- Public Key Display -->
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">6</property>
+
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Public Key</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <child>
+                              <object class="GtkBox">
+                                <property name="spacing">6</property>
+
+                                <child>
+                                  <object class="GtkLabel" id="lbl_npub_result">
+                                    <property name="label">npub1...</property>
+                                    <property name="selectable">true</property>
+                                    <property name="ellipsize">middle</property>
+                                    <property name="max-width-chars">40</property>
+                                    <style>
+                                      <class name="monospace"/>
+                                    </style>
+                                  </object>
+                                </child>
+
+                                <child>
+                                  <object class="GtkButton" id="btn_copy_npub">
+                                    <property name="icon-name">edit-copy-symbolic</property>
+                                    <property name="tooltip-text" translatable="yes">Copy to Clipboard</property>
+                                    <style>
+                                      <class name="flat"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                        <!-- Note about hardware signing -->
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">6</property>
+                            <property name="halign">center</property>
+
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">security-high-symbolic</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Signing requires your hardware wallet</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                        <!-- Finish Button -->
+                        <child>
+                          <object class="GtkButton" id="btn_finish">
+                            <property name="label" translatable="yes">Done</property>
+                            <property name="halign">center</property>
+                            <style>
+                              <class name="suggested-action"/>
+                              <class name="pill"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+          </object>
+        </property>
+      </object>
+    </child>
+  </template>
+</interface>

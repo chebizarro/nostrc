@@ -1,0 +1,37 @@
+#!/usr/bin/make -f
+# Debian rules file for gnostr-signer
+
+export DH_VERBOSE = 1
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# Use Ninja for faster builds
+export DH_CMAKE_GENERATOR = Ninja
+
+%:
+	dh $@ --buildsystem=cmake
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=/usr/lib/$(DEB_HOST_MULTIARCH) \
+		-DBUILD_SIGNER_TESTS=OFF \
+		-DGNOSTR_SIGNER_WITH_PKCS11=ON
+
+override_dh_auto_build:
+	dh_auto_build -- gnostr-signer gnostr-signer-daemon
+
+override_dh_auto_install:
+	dh_auto_install
+	# Ensure D-Bus service file has correct path
+	sed -i 's|@CMAKE_INSTALL_FULL_BINDIR@|/usr/bin|g' \
+		debian/tmp/usr/share/dbus-1/services/org.nostr.Signer.service || true
+
+override_dh_installsystemd:
+	dh_installsystemd --user --name=gnostr-signer-daemon
+
+# Don't run tests during build (they require D-Bus session)
+override_dh_auto_test:
+
+override_dh_shlibdeps:
+	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info

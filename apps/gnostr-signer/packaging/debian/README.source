@@ -1,0 +1,101 @@
+GNostr Signer Debian Packaging
+==============================
+
+This directory contains the Debian packaging files for gnostr-signer.
+
+Building the Package
+--------------------
+
+### Prerequisites
+
+Install the build dependencies on Debian/Ubuntu:
+
+    sudo apt install devscripts debhelper cmake ninja-build \
+        libgtk-4-dev libadwaita-1-dev libglib2.0-dev libjson-glib-dev \
+        libsecret-1-dev libsecp256k1-dev libsodium-dev libssl-dev \
+        libwebsockets-dev libnsync-dev libp11-kit-dev
+
+### Building from Source
+
+1. Copy the debian directory to the source root:
+
+       cp -r apps/gnostr-signer/packaging/debian ./debian
+
+2. Build the package:
+
+       dpkg-buildpackage -us -uc -b
+
+   Or using debuild:
+
+       debuild -us -uc -b
+
+3. The resulting .deb files will be in the parent directory:
+   - gnostr-signer_0.1.0-1_amd64.deb
+   - gnostr-signer-daemon_0.1.0-1_amd64.deb
+
+### Building in a Clean Environment (Recommended)
+
+Using pbuilder or sbuild ensures all dependencies are properly declared:
+
+    # Create a chroot (once)
+    sudo pbuilder create --distribution bookworm
+
+    # Build the package
+    pdebuild
+
+### Installing
+
+    sudo dpkg -i gnostr-signer_0.1.0-1_amd64.deb gnostr-signer-daemon_0.1.0-1_amd64.deb
+    sudo apt install -f  # Install any missing dependencies
+
+Target Distributions
+--------------------
+
+- Ubuntu 22.04 LTS (Jammy Jellyfish) and later
+- Debian 12 (Bookworm) and later
+
+These distributions provide GTK4 and libadwaita in their repositories.
+
+Package Structure
+-----------------
+
+The packaging creates two binary packages:
+
+1. **gnostr-signer**: The GTK4 GUI application
+   - /usr/bin/gnostr-signer
+   - Desktop file, icons, GSettings schema
+   - AppStream metadata
+
+2. **gnostr-signer-daemon**: The D-Bus/UDS daemon
+   - /usr/bin/gnostr-signer-daemon
+   - D-Bus service file
+   - Systemd user service
+
+Post-Installation
+-----------------
+
+After installation, enable the daemon for automatic startup:
+
+    systemctl --user enable --now gnostr-signer-daemon
+
+The daemon will also be automatically activated via D-Bus when applications
+request the org.nostr.Signer service.
+
+Lintian Checks
+--------------
+
+Run lintian to check the package for common issues:
+
+    lintian --info --display-info gnostr-signer_*.deb
+
+Notes
+-----
+
+- The package does not enable the systemd user service by default.
+  Users must explicitly enable it with `systemctl --user enable`.
+
+- The GSettings schema is compiled in the postinst script.
+
+- The D-Bus service file is configured for session bus activation.
+
+- Man pages are included for both binaries.

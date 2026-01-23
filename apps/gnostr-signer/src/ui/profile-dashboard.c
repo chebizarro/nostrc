@@ -45,6 +45,7 @@ struct _ProfileDashboard {
   GtkButton *btn_backup_keys;
   GtkButton *btn_change_password;
   GtkButton *btn_sign_message;
+  GtkButton *btn_delegations;
 };
 
 G_DEFINE_TYPE(ProfileDashboard, profile_dashboard, ADW_TYPE_BIN)
@@ -120,6 +121,12 @@ static void on_sign_message(GtkButton *btn, gpointer user_data) {
   (void)btn;
   ProfileDashboard *self = PROFILE_DASHBOARD(user_data);
   g_signal_emit(self, signals[SIGNAL_ACTION_CLICKED], 0, "sign-message");
+}
+
+static void on_delegations(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  ProfileDashboard *self = PROFILE_DASHBOARD(user_data);
+  g_signal_emit(self, signals[SIGNAL_ACTION_CLICKED], 0, "delegations");
 }
 
 /* GObject property accessors */
@@ -227,6 +234,7 @@ static void profile_dashboard_class_init(ProfileDashboardClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, ProfileDashboard, btn_backup_keys);
   gtk_widget_class_bind_template_child(widget_class, ProfileDashboard, btn_change_password);
   gtk_widget_class_bind_template_child(widget_class, ProfileDashboard, btn_sign_message);
+  gtk_widget_class_bind_template_child(widget_class, ProfileDashboard, btn_delegations);
 }
 
 static void profile_dashboard_init(ProfileDashboard *self) {
@@ -252,6 +260,9 @@ static void profile_dashboard_init(ProfileDashboard *self) {
   if (self->btn_sign_message)
     g_signal_connect(self->btn_sign_message, "clicked",
                      G_CALLBACK(on_sign_message), self);
+  if (self->btn_delegations)
+    g_signal_connect(self->btn_delegations, "clicked",
+                     G_CALLBACK(on_delegations), self);
 
   /* Initial UI update */
   update_profile_ui(self);

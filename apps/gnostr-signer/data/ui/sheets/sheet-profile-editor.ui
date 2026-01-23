@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
   <requires lib="gtk" version="4.12"/>
-  <requires lib="adwaita" version="1.4"/>
+  <requires lib="adwaita" version="1.5"/>
   <template class="SheetProfileEditor" parent="AdwDialog">
     <property name="title" translatable="yes">Edit Profile</property>
     <property name="content-width">520</property>
-    <property name="content-height">720</property>
+    <property name="content-height">-1</property>
+    <property name="follows-content-size">true</property>
     <accessibility>
       <property name="label">Profile editor dialog</property>
       <property name="description">Edit your Nostr profile metadata including display name, bio, images, and identifiers</property>
@@ -66,10 +67,11 @@
             <child>
               <object class="AdwClamp">
                 <property name="maximum-size">600</property>
+                <property name="tightening-threshold">400</property>
                 <property name="margin-top">16</property>
                 <property name="margin-bottom">16</property>
-                <property name="margin-start">16</property>
-                <property name="margin-end">16</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
                 <child>
                   <object class="GtkBox">
                     <property name="orientation">vertical</property>

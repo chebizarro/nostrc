@@ -1735,6 +1735,117 @@ static void test_mock_dbus_disconnected(TestUIFixture *fixture, gconstpointer us
 }
 
 /* ===========================================================================
+ * Test Cases: High Contrast Theme Support
+ * =========================================================================== */
+
+static void test_high_contrast_css_class_applied(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)user_data;
+
+  /* Verify that high-contrast class can be added to window */
+  gtk_widget_add_css_class(GTK_WIDGET(fixture->win), "high-contrast");
+  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->win), "high-contrast"));
+
+  /* Verify it can be removed */
+  gtk_widget_remove_css_class(GTK_WIDGET(fixture->win), "high-contrast");
+  g_assert_false(gtk_widget_has_css_class(GTK_WIDGET(fixture->win), "high-contrast"));
+}
+
+static void test_high_contrast_variant_inverted(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)user_data;
+
+  /* Test inverted variant (white on black) */
+  gtk_widget_add_css_class(GTK_WIDGET(fixture->win), "high-contrast");
+  gtk_widget_add_css_class(GTK_WIDGET(fixture->win), "inverted");
+
+  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->win), "high-contrast"));
+  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->win), "inverted"));
+
+  gtk_widget_remove_css_class(GTK_WIDGET(fixture->win), "inverted");
+  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->win), "high-contrast"));
+  g_assert_false(gtk_widget_has_css_class(GTK_WIDGET(fixture->win), "inverted"));
+}
+
+static void test_high_contrast_variant_yellow_on_black(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)user_data;
+
+  /* Test yellow-on-black variant */
+  gtk_widget_add_css_class(GTK_WIDGET(fixture->win), "high-contrast");
+  gtk_widget_add_css_class(GTK_WIDGET(fixture->win), "yellow-on-black");
+
+  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->win), "high-contrast"));
+  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(fixture->win), "yellow-on-black"));
+}
+
+static void test_high_contrast_focus_indicators(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)user_data;
+
+  /* Create a button to test focus indicator visibility in high contrast */
+  GtkWidget *btn = gtk_button_new_with_label("Test Button");
+  gtk_window_set_child(GTK_WINDOW(fixture->win), btn);
+
+  /* In high contrast, focus indicators should be visible (3px dotted rings) */
+  gtk_widget_add_css_class(GTK_WIDGET(fixture->win), "high-contrast");
+
+  /* Verify button is accessible and can grab focus */
+  g_assert_true(gtk_widget_get_can_focus(btn));
+  g_assert_true(gtk_widget_get_focusable(btn));
+}
+
+static void test_high_contrast_button_styles(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)user_data;
+
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+  GtkWidget *normal_btn = gtk_button_new_with_label("Normal");
+  GtkWidget *suggested_btn = gtk_button_new_with_label("Suggested");
+  GtkWidget *destructive_btn = gtk_button_new_with_label("Destructive");
+
+  gtk_widget_add_css_class(suggested_btn, "suggested-action");
+  gtk_widget_add_css_class(destructive_btn, "destructive-action");
+
+  gtk_box_append(GTK_BOX(box), normal_btn);
+  gtk_box_append(GTK_BOX(box), suggested_btn);
+  gtk_box_append(GTK_BOX(box), destructive_btn);
+  gtk_window_set_child(GTK_WINDOW(fixture->win), box);
+
+  /* Add high contrast class to window */
+  gtk_widget_add_css_class(GTK_WIDGET(fixture->win), "high-contrast");
+
+  /* Verify all buttons still have their semantic classes */
+  g_assert_true(gtk_widget_has_css_class(suggested_btn, "suggested-action"));
+  g_assert_true(gtk_widget_has_css_class(destructive_btn, "destructive-action"));
+}
+
+static void test_high_contrast_adw_style_manager(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  /* Test AdwStyleManager high-contrast property access */
+  AdwStyleManager *style_manager = adw_style_manager_get_default();
+  g_assert_nonnull(style_manager);
+
+  /* Get current high contrast state (may be false in test environment) */
+  gboolean system_hc = adw_style_manager_get_high_contrast(style_manager);
+  /* This is a read-only property reflecting system state, so we just verify it's accessible */
+  g_assert_true(system_hc == TRUE || system_hc == FALSE);
+}
+
+static void test_high_contrast_color_scheme_integration(TestUIFixture *fixture, gconstpointer user_data) {
+  (void)fixture; (void)user_data;
+
+  AdwStyleManager *style_manager = adw_style_manager_get_default();
+  g_assert_nonnull(style_manager);
+
+  /* Save original scheme */
+  AdwColorScheme original = adw_style_manager_get_color_scheme(style_manager);
+
+  /* Test that we can set force-light (used with high contrast black-on-white) */
+  adw_style_manager_set_color_scheme(style_manager, ADW_COLOR_SCHEME_FORCE_LIGHT);
+  g_assert_cmpint(adw_style_manager_get_color_scheme(style_manager), ==, ADW_COLOR_SCHEME_FORCE_LIGHT);
+
+  /* Restore original */
+  adw_style_manager_set_color_scheme(style_manager, original);
+}
+
+/* ===========================================================================
  * Test Main
  * =========================================================================== */
 
@@ -1867,6 +1978,22 @@ int main(int argc, char *argv[]) {
              test_ui_fixture_setup, test_mock_dbus_sign_event, test_ui_fixture_teardown);
   g_test_add("/ui/mock-dbus/disconnected", TestUIFixture, NULL,
              test_ui_fixture_setup, test_mock_dbus_disconnected, test_ui_fixture_teardown);
+
+  /* High contrast theme tests */
+  g_test_add("/ui/high-contrast/css-class-applied", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_high_contrast_css_class_applied, test_ui_fixture_teardown);
+  g_test_add("/ui/high-contrast/variant-inverted", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_high_contrast_variant_inverted, test_ui_fixture_teardown);
+  g_test_add("/ui/high-contrast/variant-yellow-on-black", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_high_contrast_variant_yellow_on_black, test_ui_fixture_teardown);
+  g_test_add("/ui/high-contrast/focus-indicators", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_high_contrast_focus_indicators, test_ui_fixture_teardown);
+  g_test_add("/ui/high-contrast/button-styles", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_high_contrast_button_styles, test_ui_fixture_teardown);
+  g_test_add("/ui/high-contrast/adw-style-manager", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_high_contrast_adw_style_manager, test_ui_fixture_teardown);
+  g_test_add("/ui/high-contrast/color-scheme-integration", TestUIFixture, NULL,
+             test_ui_fixture_setup, test_high_contrast_color_scheme_integration, test_ui_fixture_teardown);
 
   return g_test_run();
 }

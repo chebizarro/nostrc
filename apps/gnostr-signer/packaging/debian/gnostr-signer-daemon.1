@@ -1,0 +1,118 @@
+.TH GNOSTR-SIGNER-DAEMON 1 "January 2025" "gnostr-signer 0.1.0" "User Commands"
+.SH NAME
+gnostr-signer-daemon \- D-Bus daemon for Nostr signing operations
+.SH SYNOPSIS
+.B gnostr-signer-daemon
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B gnostr-signer-daemon
+is the backend service for GNostr Signer. It provides D-Bus and Unix domain
+socket interfaces for Nostr signing operations, implementing NIP-55L (Linux
+Signer Interface).
+.PP
+The daemon handles:
+.IP \(bu 2
+Cryptographic signing of Nostr events
+.IP \(bu 2
+NIP-04 and NIP-44 encryption/decryption
+.IP \(bu 2
+Key storage and retrieval from the system keyring
+.IP \(bu 2
+Permission checks and user approval coordination
+.PP
+The daemon is typically started automatically via D-Bus activation when an
+application requests the org.nostr.Signer service, or can be run as a systemd
+user service.
+.SH OPTIONS
+.TP
+.B \-\-help
+Display help information and exit
+.TP
+.B \-\-version
+Display version information and exit
+.SH ENVIRONMENT
+.TP
+.B NOSTR_SIGNER_ENDPOINT
+Override the default socket endpoint. Format: unix:/path/to/socket.sock
+.br
+Default: unix:$XDG_RUNTIME_DIR/gnostr/signer.sock
+.TP
+.B NOSTR_SIGNER_ALLOW_KEY_MUTATIONS
+Set to "1" to allow StoreKey and ClearKey D-Bus methods. Required for key
+import operations.
+.TP
+.B G_MESSAGES_DEBUG
+Set to "all" to enable debug logging
+.SH FILES
+.TP
+.I $XDG_RUNTIME_DIR/gnostr/signer.sock
+Unix domain socket for NIP-5F clients
+.TP
+.I ~/.config/gnostr/
+User configuration directory
+.TP
+.I ~/.local/share/gnostr/
+User data directory (permissions, audit logs)
+.TP
+.I /usr/share/dbus-1/services/org.nostr.Signer.service
+D-Bus service activation file
+.TP
+.I /usr/share/systemd/user/gnostr-signer-daemon.service
+Systemd user service unit
+.SH D-BUS INTERFACE
+The daemon registers on the session bus at:
+.PP
+.RS
+Bus Name: org.nostr.Signer
+.br
+Object Path: /org/nostr/signer
+.br
+Interface: org.nostr.Signer
+.RE
+.PP
+Methods include:
+.RS
+.IP \(bu 2
+GetPublicKey \- Get the current user's public key
+.IP \(bu 2
+SignEvent \- Sign a Nostr event JSON
+.IP \(bu 2
+NIP44Encrypt/NIP44Decrypt \- Modern encryption (recommended)
+.IP \(bu 2
+NIP04Encrypt/NIP04Decrypt \- Legacy encryption (compatibility)
+.IP \(bu 2
+GetRelays \- Get configured relay URLs
+.RE
+.SH SECURITY
+The daemon is designed with security hardening:
+.IP \(bu 2
+Private keys never leave the daemon process boundary
+.IP \(bu 2
+Keys are stored in the system keyring (GNOME Keyring/libsecret)
+.IP \(bu 2
+Memory is securely cleared when keys are no longer needed
+.IP \(bu 2
+Systemd service includes sandboxing directives
+.SH SYSTEMD
+Enable automatic startup with:
+.PP
+.RS
+systemctl \-\-user enable \-\-now gnostr-signer-daemon
+.RE
+.PP
+View logs with:
+.PP
+.RS
+journalctl \-\-user -u gnostr-signer-daemon
+.RE
+.SH SEE ALSO
+.BR gnostr-signer (1),
+.BR gnome-keyring (1),
+.BR dbus-daemon (1),
+.BR systemctl (1)
+.SH BUGS
+Report bugs at: https://github.com/gnostr-org/gnostr-signer/issues
+.SH AUTHOR
+GNostr Project <gnostr@example.com>
+.SH COPYRIGHT
+Copyright \(co 2024-2025 GNostr Project. License: MIT.

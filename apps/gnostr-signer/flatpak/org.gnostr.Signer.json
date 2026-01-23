@@ -1,7 +1,8 @@
 {
+  "$schema": "https://raw.githubusercontent.com/niclaslindstedt/flatpak-manifest-json-schema/main/schema.json",
   "app-id": "org.gnostr.Signer",
   "runtime": "org.gnome.Platform",
-  "runtime-version": "46",
+  "runtime-version": "47",
   "sdk": "org.gnome.Sdk",
   "command": "gnostr-signer",
   "finish-args": [
@@ -13,15 +14,20 @@
     "--share=network",
     "--metadata=X-DConf=migrate-path=/org/gnostr/Signer/",
     "--talk-name=org.freedesktop.Notifications",
-    "--talk-name=org.freedesktop.portal.Desktop"
+    "--talk-name=org.freedesktop.portal.Desktop",
+    "--talk-name=org.freedesktop.portal.FileChooser",
+    "--talk-name=org.freedesktop.portal.Background"
   ],
   "cleanup": [
     "/include",
     "/lib/pkgconfig",
+    "/lib/cmake",
     "/lib/*.a",
     "/lib/*.la",
     "/share/man",
-    "/share/doc"
+    "/share/doc",
+    "/share/gtk-doc",
+    "/share/aclocal"
   ],
   "modules": [
     {
@@ -45,6 +51,21 @@
       ]
     },
     {
+      "name": "libsodium",
+      "buildsystem": "autotools",
+      "config-opts": [
+        "--disable-static"
+      ],
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/jedisct1/libsodium.git",
+          "tag": "1.0.20-RELEASE",
+          "commit": "d72e3f01c37e1c743cc7151a8e23c6e8ee592770"
+        }
+      ]
+    },
+    {
       "name": "nsync",
       "buildsystem": "cmake-ninja",
       "config-opts": [
@@ -56,8 +77,41 @@
         {
           "type": "git",
           "url": "https://github.com/google/nsync.git",
-          "tag": "1.29.2",
-          "commit": "33d7d2d94fdd6fe4e1e8f4f2e1d88c4c1d8f3e5a"
+          "tag": "1.29.2"
+        }
+      ]
+    },
+    {
+      "name": "jansson",
+      "buildsystem": "meson",
+      "config-opts": [
+        "-Ddocs=disabled",
+        "-Dtests=disabled"
+      ],
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/akheron/jansson.git",
+          "tag": "v2.14",
+          "commit": "684e18c927e89615c2d501737e90018f4930d6c5"
+        }
+      ]
+    },
+    {
+      "name": "flatcc",
+      "buildsystem": "cmake-ninja",
+      "config-opts": [
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DFLATCC_INSTALL=ON",
+        "-DFLATCC_TEST=OFF",
+        "-DFLATCC_REFLECTION=OFF"
+      ],
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/dvidelern/flatcc.git",
+          "tag": "v0.6.1",
+          "commit": "034f15e4a9e26e21c72a1e2bdd37eb9ed1bdc625"
         }
       ]
     },
@@ -68,10 +122,15 @@
         "-DCMAKE_BUILD_TYPE=Release",
         "-DLWS_WITH_SSL=ON",
         "-DLWS_WITH_SHARED=ON",
+        "-DLWS_WITH_STATIC=OFF",
         "-DLWS_WITHOUT_TESTAPPS=ON",
         "-DLWS_WITHOUT_TEST_SERVER=ON",
+        "-DLWS_WITHOUT_TEST_SERVER_EXTPOLL=ON",
         "-DLWS_WITHOUT_TEST_PING=ON",
-        "-DLWS_WITHOUT_TEST_CLIENT=ON"
+        "-DLWS_WITHOUT_TEST_CLIENT=ON",
+        "-DLWS_WITH_GLIB=ON",
+        "-DLWS_WITH_LIBUV=OFF",
+        "-DLWS_WITH_LIBEVENT=OFF"
       ],
       "sources": [
         {
@@ -84,20 +143,15 @@
     },
     {
       "name": "gnostr-signer",
-      "buildsystem": "cmake-ninja",
-      "config-opts": [
-        "-DCMAKE_BUILD_TYPE=Release",
-        "-DCMAKE_INSTALL_PREFIX=/app"
-      ],
-      "sources": [
-        {
-          "type": "dir",
-          "path": "../../.."
+      "buildsystem": "simple",
+      "build-options": {
+        "env": {
+          "CMAKE_PREFIX_PATH": "/app"
         }
-      ],
+      },
       "build-commands": [
-        "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/app",
-        "cmake --build build --target gnostr-signer gnostr-signer-daemon",
+        "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/app -DBUILD_APPS=ON -DBUILD_TESTING_FRAMEWORK=OFF -DGNOSTR_ENABLE_GOA=OFF -DGNOSTR_ENABLE_SEAHORSE_HELPERS=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF",
+        "cmake --build build --target gnostr-signer gnostr-signer-daemon -j",
         "install -Dm755 build/apps/gnostr-signer/gnostr-signer /app/bin/gnostr-signer",
         "install -Dm755 build/apps/gnostr-signer/gnostr-signer-daemon /app/bin/gnostr-signer-daemon",
         "install -Dm644 apps/gnostr-signer/data/org.gnostr.Signer.desktop /app/share/applications/org.gnostr.Signer.desktop",
@@ -106,6 +160,12 @@
         "install -Dm644 apps/gnostr-signer/data/org.gnostr.Signer.gschema.xml /app/share/glib-2.0/schemas/org.gnostr.Signer.gschema.xml",
         "glib-compile-schemas /app/share/glib-2.0/schemas/",
         "install -Dm644 apps/gnostr-signer/flatpak/org.nostr.Signer.service /app/share/dbus-1/services/org.nostr.Signer.service"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "../../.."
+        }
       ]
     }
   ]

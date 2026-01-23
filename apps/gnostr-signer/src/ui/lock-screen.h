@@ -98,4 +98,25 @@ void gn_lock_screen_set_busy(GnLockScreen *self, gboolean busy);
  */
 gboolean gn_lock_screen_get_password_configured(GnLockScreen *self);
 
+/**
+ * gn_lock_screen_is_rate_limited:
+ * @self: A #GnLockScreen
+ *
+ * Checks if the lock screen is currently rate limited due to
+ * too many failed authentication attempts (nostrc-1g1).
+ *
+ * Returns: %TRUE if rate limited
+ */
+gboolean gn_lock_screen_is_rate_limited(GnLockScreen *self);
+
+/**
+ * gn_lock_screen_get_rate_limit_remaining:
+ * @self: A #GnLockScreen
+ *
+ * Gets the number of seconds remaining in the rate limit lockout.
+ *
+ * Returns: Seconds until retry allowed, or 0 if not rate limited
+ */
+guint gn_lock_screen_get_rate_limit_remaining(GnLockScreen *self);
+
 G_END_DECLS

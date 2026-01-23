@@ -1,6 +1,9 @@
 #include "sheet-import-key.h"
+#include "sheet-qr-scanner.h"
 #include "../app-resources.h"
 #include "../../secure-delete.h"
+#include "../../keyboard-nav.h"
+#include "../../qr-code.h"
 
 #include <gtk/gtk.h>
 #include <adwaita.h>
@@ -14,6 +17,7 @@ struct _SheetImportKey {
   AdwDialog parent_instance;
   GtkButton *btn_cancel;
   GtkButton *btn_ok;
+  GtkButton *btn_scan_qr;
   GtkEntry *entry_secret;
   GtkEntry *entry_label;
   GtkCheckButton *chk_link_user;
@@ -148,6 +152,47 @@ static void import_call_done(GObject *src, GAsyncResult *res, gpointer user_data
 
 static void on_cancel(GtkButton *b, gpointer user_data){ (void)b; SheetImportKey *self = user_data; if (self) adw_dialog_close(ADW_DIALOG(self)); }
 
+/* QR scanner success callback */
+static void on_qr_scan_success(const gchar *data, GnQrContentType type, gpointer user_data) {
+  SheetImportKey *self = SHEET_IMPORT_KEY(user_data);
+  if (!self || !data) return;
+
+  (void)type; /* Type is already validated by scanner */
+
+  /* Extract key data from nostr: URI if needed */
+  const gchar *key_data = data;
+  if (g_str_has_prefix(data, "nostr:")) {
+    key_data = data + 6; /* Skip "nostr:" prefix */
+  }
+
+  /* Set the scanned data in the entry field */
+  if (self->entry_secret) {
+    gtk_editable_set_text(GTK_EDITABLE(self->entry_secret), key_data);
+    /* Enable the OK button */
+    if (self->btn_ok) {
+      gtk_widget_set_sensitive(GTK_WIDGET(self->btn_ok), TRUE);
+    }
+  }
+}
+
+/* Handler: Scan QR code button */
+static void on_scan_qr(GtkButton *b, gpointer user_data) {
+  (void)b;
+  SheetImportKey *self = SHEET_IMPORT_KEY(user_data);
+  if (!self) return;
+
+  /* Create and show QR scanner dialog */
+  SheetQrScanner *scanner = sheet_qr_scanner_new();
+  sheet_qr_scanner_set_on_success(scanner, on_qr_scan_success, self);
+
+  GtkWidget *parent = gtk_widget_get_root(GTK_WIDGET(self));
+  if (parent && ADW_IS_DIALOG(parent)) {
+    adw_dialog_present(ADW_DIALOG(scanner), parent);
+  } else {
+    adw_dialog_present(ADW_DIALOG(scanner), GTK_WIDGET(self));
+  }
+}
+
 static void on_ok(GtkButton *b, gpointer user_data){
   (void)b;
   SheetImportKey *self = (SheetImportKey*)user_data;
@@ -215,6 +260,7 @@ static void sheet_import_key_class_init(SheetImportKeyClass *klass){
   gtk_widget_class_set_template_from_resource(wc, APP_RESOURCE_PATH "/ui/sheets/sheet-import-key.ui");
   gtk_widget_class_bind_template_child(wc, SheetImportKey, btn_cancel);
   gtk_widget_class_bind_template_child(wc, SheetImportKey, btn_ok);
+  gtk_widget_class_bind_template_child(wc, SheetImportKey, btn_scan_qr);
   gtk_widget_class_bind_template_child(wc, SheetImportKey, entry_secret);
   gtk_widget_class_bind_template_child(wc, SheetImportKey, entry_label);
   gtk_widget_class_bind_template_child(wc, SheetImportKey, chk_link_user);
@@ -224,9 +270,21 @@ static void sheet_import_key_init(SheetImportKey *self){
   gtk_widget_init_template(GTK_WIDGET(self));
   if (self->btn_cancel) g_signal_connect(self->btn_cancel, "clicked", G_CALLBACK(on_cancel), self);
   if (self->btn_ok) g_signal_connect(self->btn_ok, "clicked", G_CALLBACK(on_ok), self);
-  if (self->entry_secret) gtk_widget_grab_focus(GTK_WIDGET(self->entry_secret));
+  if (self->btn_scan_qr) g_signal_connect(self->btn_scan_qr, "clicked", G_CALLBACK(on_scan_qr), self);
   if (self->entry_secret) g_signal_connect(self->entry_secret, "changed", G_CALLBACK(on_secret_changed), self);
   if (self->btn_ok) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_ok), FALSE);
+
+  /* Setup keyboard navigation: focus entry on dialog open, Enter activates Add button */
+  gn_keyboard_nav_setup_dialog(ADW_DIALOG(self),
+                                GTK_WIDGET(self->entry_secret),
+                                GTK_WIDGET(self->btn_ok));
+
+  /* Connect Enter key in entry to activate button */
+  if (self->entry_secret && self->btn_ok) {
+    gn_keyboard_nav_connect_enter_activate(GTK_WIDGET(self->entry_secret),
+                                            GTK_WIDGET(self->btn_ok));
+  }
+
   /* Prefill from clipboard if it looks like a key */
   GtkWidget *w = GTK_WIDGET(self);
   GdkDisplay *dpy = gtk_widget_get_display(w);

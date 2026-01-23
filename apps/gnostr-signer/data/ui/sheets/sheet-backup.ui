@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
   <requires lib="gtk" version="4.12"/>
-  <requires lib="adwaita" version="1.4"/>
+  <requires lib="adwaita" version="1.5"/>
   <template class="SheetBackup" parent="AdwDialog">
     <property name="title" translatable="yes">Backup &amp; Recovery</property>
     <property name="can-close">true</property>
     <property name="content-width">500</property>
-    <property name="content-height">600</property>
+    <property name="content-height">-1</property>
+    <property name="follows-content-size">true</property>
     <accessibility>
       <property name="label">Backup and recovery dialog</property>
       <property name="description">Backup your private key or recover from backup using NIP-49 encrypted format or BIP-39 mnemonic</property>
@@ -41,6 +42,7 @@
                     <child>
                       <object class="AdwClamp">
                         <property name="maximum-size">450</property>
+                        <property name="tightening-threshold">360</property>
                         <child>
                           <object class="GtkBox">
                             <property name="orientation">vertical</property>
@@ -267,6 +269,7 @@
                     <child>
                       <object class="AdwClamp">
                         <property name="maximum-size">450</property>
+                        <property name="tightening-threshold">360</property>
                         <child>
                           <object class="GtkBox">
                             <property name="orientation">vertical</property>

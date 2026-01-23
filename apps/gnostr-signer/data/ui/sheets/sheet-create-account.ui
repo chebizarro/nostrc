@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
   <requires lib="gtk" version="4.12"/>
-  <requires lib="adwaita" version="1.4"/>
+  <requires lib="adwaita" version="1.5"/>
   <template class="SheetCreateAccount" parent="AdwDialog">
     <property name="title" translatable="yes">Create Account</property>
     <property name="content-width">500</property>
-    <property name="content-height">600</property>
+    <property name="content-height">-1</property>
+    <property name="follows-content-size">true</property>
     <property name="can-close">true</property>
     <accessibility>
       <property name="label">Create account wizard</property>
@@ -13,6 +14,10 @@
     </accessibility>
     <child>
       <object class="AdwNavigationView" id="nav_view">
+        <accessibility>
+          <property name="label">Account creation steps</property>
+          <property name="description">Navigate through the steps to create your new Nostr account</property>
+        </accessibility>
         <!-- Step 1: Display Name -->
         <child>
           <object class="AdwNavigationPage" id="page_display_name">
@@ -35,6 +40,10 @@
                       <object class="GtkButton" id="btn_step1_next">
                         <property name="label" translatable="yes">_Next</property>
                         <property name="use-underline">true</property>
+                        <accessibility>
+                          <property name="label">Next step</property>
+                          <property name="description">Continue to the password step. Keyboard shortcut: Alt+N</property>
+                        </accessibility>
                         <style>
                           <class name="suggested-action"/>
                         </style>
@@ -49,6 +58,7 @@
                     <child>
                       <object class="AdwClamp">
                         <property name="maximum-size">500</property>
+                        <property name="tightening-threshold">360</property>
                         <property name="margin-top">24</property>
                         <property name="margin-bottom">24</property>
                         <property name="margin-start">24</property>
@@ -65,6 +75,9 @@
                               <object class="GtkImage">
                                 <property name="icon-name">avatar-default-symbolic</property>
                                 <property name="pixel-size">80</property>
+                                <accessibility>
+                                  <property name="label">Profile avatar icon</property>
+                                </accessibility>
                                 <style>
                                   <class name="dim-label"/>
                                 </style>
@@ -100,6 +113,10 @@
                                   <object class="AdwEntryRow" id="entry_display_name">
                                     <property name="title" translatable="yes">Display Name</property>
                                     <property name="input-hints">GTK_INPUT_HINT_SPELLCHECK</property>
+                                    <accessibility>
+                                      <property name="label">Display name</property>
+                                      <property name="description">Enter a display name for your Nostr profile. This is optional and can be changed later.</property>
+                                    </accessibility>
                                   </object>
                                 </child>
                               </object>
@@ -138,6 +155,10 @@
                       <object class="GtkButton" id="btn_step2_back">
                         <property name="icon-name">go-previous-symbolic</property>
                         <property name="tooltip-text" translatable="yes">Go back</property>
+                        <accessibility>
+                          <property name="label">Go back</property>
+                          <property name="description">Return to the display name step</property>
+                        </accessibility>
                       </object>
                     </child>
                     <child type="end">
@@ -145,6 +166,10 @@
                         <property name="label" translatable="yes">_Next</property>
                         <property name="use-underline">true</property>
                         <property name="sensitive">false</property>
+                        <accessibility>
+                          <property name="label">Next step</property>
+                          <property name="description">Continue to the seed phrase step. Keyboard shortcut: Alt+N</property>
+                        </accessibility>
                         <style>
                           <class name="suggested-action"/>
                         </style>
@@ -159,6 +184,7 @@
                     <child>
                       <object class="AdwClamp">
                         <property name="maximum-size">500</property>
+                        <property name="tightening-threshold">360</property>
                         <property name="margin-top">24</property>
                         <property name="margin-bottom">24</property>
                         <property name="margin-start">24</property>
@@ -174,6 +200,9 @@
                                 <property name="icon-name">dialog-password-symbolic</property>
                                 <property name="pixel-size">64</property>
                                 <property name="halign">center</property>
+                                <accessibility>
+                                  <property name="label">Password icon</property>
+                                </accessibility>
                                 <style>
                                   <class name="dim-label"/>
                                 </style>
@@ -229,6 +258,10 @@
                                     <property name="margin-start">4</property>
                                     <property name="margin-end">4</property>
                                     <property name="margin-bottom">8</property>
+                                    <accessibility>
+                                      <property name="label">Password entry</property>
+                                      <property name="description">Enter a strong password to protect your private key</property>
+                                    </accessibility>
                                   </object>
                                 </child>
 
@@ -246,6 +279,10 @@
                                         <property name="max-value">1</property>
                                         <property name="value">0</property>
                                         <property name="mode">continuous</property>
+                                        <accessibility>
+                                          <property name="label">Password strength meter</property>
+                                          <property name="description">Indicates the strength of your password from weak to strong</property>
+                                        </accessibility>
                                         <offsets>
                                           <offset name="low" value="0.25"/>
                                           <offset name="high" value="0.5"/>
@@ -287,6 +324,10 @@
                                     <property name="margin-start">4</property>
                                     <property name="margin-end">4</property>
                                     <property name="margin-bottom">4</property>
+                                    <accessibility>
+                                      <property name="label">Confirm password entry</property>
+                                      <property name="description">Re-enter your password to confirm</property>
+                                    </accessibility>
                                   </object>
                                 </child>
 
@@ -297,6 +338,10 @@
                                     <property name="visible">false</property>
                                     <property name="xalign">1</property>
                                     <property name="margin-end">12</property>
+                                    <accessibility>
+                                      <property name="label">Password match status</property>
+                                      <relation name="live">polite</relation>
+                                    </accessibility>
                                     <style>
                                       <class name="caption"/>
                                     </style>
@@ -359,6 +404,7 @@
                     <child>
                       <object class="AdwClamp">
                         <property name="maximum-size">500</property>
+                        <property name="tightening-threshold">360</property>
                         <property name="margin-top">24</property>
                         <property name="margin-bottom">24</property>
                         <property name="margin-start">24</property>
@@ -540,6 +586,7 @@
                     <child>
                       <object class="AdwClamp">
                         <property name="maximum-size">500</property>
+                        <property name="tightening-threshold">360</property>
                         <property name="margin-top">24</property>
                         <property name="margin-bottom">24</property>
                         <property name="margin-start">24</property>
@@ -721,6 +768,7 @@
                     <child>
                       <object class="AdwClamp">
                         <property name="maximum-size">500</property>
+                        <property name="tightening-threshold">360</property>
                         <property name="margin-top">24</property>
                         <property name="margin-bottom">24</property>
                         <property name="margin-start">24</property>

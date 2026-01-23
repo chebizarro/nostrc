@@ -1,0 +1,72 @@
+.TH GNOSTR-SIGNER 1 "January 2025" "gnostr-signer 0.1.0" "User Commands"
+.SH NAME
+gnostr-signer \- Secure Nostr identity management and signing service
+.SH SYNOPSIS
+.B gnostr-signer
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B gnostr-signer
+is a GTK4/libadwaita application for managing Nostr identities and signing
+events securely. It keeps your private keys safe while allowing Nostr clients
+to request signatures through a secure D-Bus interface.
+.PP
+The application provides a graphical interface for:
+.IP \(bu 2
+Creating and managing multiple Nostr identities
+.IP \(bu 2
+Approving or denying signing requests from applications
+.IP \(bu 2
+Configuring per-application permissions
+.IP \(bu 2
+Setting up NIP-46 remote signer (bunker) connections
+.IP \(bu 2
+Backing up and restoring keys
+.SH OPTIONS
+.TP
+.B \-\-new\-identity
+Open the new identity creation dialog
+.TP
+.B \-\-settings
+Open the settings page directly
+.TP
+.B \-\-help
+Display help information and exit
+.TP
+.B \-\-version
+Display version information and exit
+.SH ENVIRONMENT
+.TP
+.B GSETTINGS_SCHEMA_DIR
+Directory containing GSettings schemas. Set this if running from a non-standard
+location.
+.TP
+.B G_MESSAGES_DEBUG
+Set to "all" to enable debug logging
+.SH FILES
+.TP
+.I ~/.config/gnostr/
+User configuration directory
+.TP
+.I ~/.local/share/gnostr/
+User data directory (permissions, audit logs)
+.TP
+.I /usr/share/glib-2.0/schemas/org.gnostr.Signer.gschema.xml
+GSettings schema file
+.SH D-BUS INTERFACE
+The signer communicates with the daemon via D-Bus at:
+.PP
+.RS
+Bus Name: org.nostr.Signer
+.br
+Object Path: /org/nostr/signer
+.RE
+.SH SEE ALSO
+.BR gnostr-signer-daemon (1),
+.BR gnome-keyring (1),
+.BR dbus-daemon (1)
+.SH BUGS
+Report bugs at: https://github.com/gnostr-org/gnostr-signer/issues
+.SH AUTHOR
+GNostr Project <gnostr@example.com>
+.SH COPYRIGHT
+Copyright \(co 2024-2025 GNostr Project. License: MIT.

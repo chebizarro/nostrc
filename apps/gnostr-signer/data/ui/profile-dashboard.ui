@@ -1,21 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
   <requires lib="gtk" version="4.12"/>
-  <requires lib="adwaita" version="1.4"/>
+  <requires lib="adwaita" version="1.5"/>
   <template class="ProfileDashboard" parent="AdwBin">
     <accessibility>
       <property name="label">Profile dashboard</property>
       <property name="description">Dashboard showing your profile information and quick actions</property>
     </accessibility>
     <child>
+      <object class="GtkScrolledWindow">
+        <property name="hscrollbar-policy">never</property>
+        <property name="vexpand">true</property>
+        <child>
+          <object class="AdwClamp">
+            <property name="maximum-size">600</property>
+            <property name="tightening-threshold">400</property>
+            <property name="margin-top">16</property>
+            <property name="margin-bottom">16</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <child>
       <object class="GtkBox">
         <property name="orientation">vertical</property>
-        <property name="spacing">24</property>
-        <property name="margin-start">24</property>
-        <property name="margin-end">24</property>
-        <property name="margin-top">24</property>
-        <property name="margin-bottom">24</property>
-        <property name="halign">center</property>
+        <property name="spacing">20</property>
+        <property name="halign">fill</property>
         <property name="valign">start</property>
 
         <!-- Profile Header Section -->
@@ -354,9 +362,61 @@
               </object>
             </child>
 
+            <!-- Delegations Button (NIP-26) -->
+            <child>
+              <object class="GtkFlowBoxChild">
+                <property name="focusable">true</property>
+                <child>
+                  <object class="GtkButton" id="btn_delegations">
+                    <property name="width-request">140</property>
+                    <property name="height-request">100</property>
+                    <property name="tooltip-text" translatable="yes">Manage signing delegations (NIP-26)</property>
+                    <accessibility>
+                      <property name="label">Delegations</property>
+                      <property name="description">Manage NIP-26 signing delegations allowing other keys to sign on your behalf</property>
+                    </accessibility>
+                    <style>
+                      <class name="flat"/>
+                      <class name="action-button"/>
+                    </style>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">8</property>
+                        <property name="halign">center</property>
+                        <property name="valign">center</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">emblem-shared-symbolic</property>
+                            <property name="pixel-size">32</property>
+                            <accessibility>
+                              <property name="label">Delegations icon</property>
+                              <property name="description">Decorative icon for delegation management</property>
+                            </accessibility>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Delegations</property>
+                            <property name="wrap">true</property>
+                            <property name="max-width-chars">12</property>
+                            <property name="justify">center</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+
           </object>
         </child>
 
+      </object>
+            </child>
+          </object>
+        </child>
       </object>
     </child>
   </template>

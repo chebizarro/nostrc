@@ -1,0 +1,12 @@
+gnostr-signer (0.1.0-1) unstable; urgency=medium
+
+  * Initial release.
+  * Features:
+    - GTK4/libadwaita GUI for identity management
+    - D-Bus interface for Nostr signing operations (NIP-55L)
+    - NIP-46 remote signer (bunker) support
+    - Secure key storage via GNOME Keyring/libsecret
+    - Application permission management
+    - NIP-04 and NIP-44 encryption support
+
+ -- GNostr Project <gnostr@example.com>  Wed, 22 Jan 2025 00:00:00 +0000

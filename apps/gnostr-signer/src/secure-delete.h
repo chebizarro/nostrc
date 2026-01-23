@@ -376,6 +376,183 @@ gboolean gn_is_ssd(const char *path);
 GnDeleteResult gn_try_trim(const char *filepath);
 
 /* ============================================================
+ * Verification and OS-Specific Support
+ * ============================================================ */
+
+/**
+ * gn_secure_delete_verify:
+ * @filepath: Path to verify (should not exist after secure delete)
+ *
+ * Verifies that a file has been successfully deleted.
+ *
+ * Checks:
+ * 1. File no longer exists
+ * 2. File is not accessible
+ * 3. Parent directory is still valid
+ *
+ * Returns: TRUE if file is confirmed deleted, FALSE if still accessible
+ */
+gboolean gn_secure_delete_verify(const char *filepath);
+
+/**
+ * gn_secure_delete_with_os_tools:
+ * @filepath: Path to the file to delete
+ * @opts: Deletion options (NULL for defaults)
+ *
+ * Attempts to use OS-specific secure deletion tools:
+ * - Linux: shred command
+ * - macOS: rm -P (secure remove)
+ *
+ * Falls back to gn_secure_delete_file_opts if tools unavailable.
+ *
+ * Returns: GN_DELETE_OK on success, error code otherwise
+ */
+GnDeleteResult gn_secure_delete_with_os_tools(const char *filepath,
+                                               const GnDeleteOptions *opts);
+
+/**
+ * GnOsSecureDeleteSupport:
+ *
+ * Indicates what OS-level secure deletion tools are available.
+ */
+typedef enum {
+  GN_OS_DELETE_NONE = 0,          /* No OS tools available */
+  GN_OS_DELETE_SHRED = 1 << 0,    /* Linux shred command */
+  GN_OS_DELETE_SRM = 1 << 1,      /* macOS srm (deprecated but may exist) */
+  GN_OS_DELETE_RM_P = 1 << 2,     /* macOS rm -P */
+  GN_OS_DELETE_WIPE = 1 << 3      /* wipe command */
+} GnOsSecureDeleteSupport;
+
+/**
+ * gn_os_secure_delete_available:
+ *
+ * Checks what OS-level secure deletion tools are available.
+ *
+ * Returns: Bitmask of available tools
+ */
+GnOsSecureDeleteSupport gn_os_secure_delete_available(void);
+
+/* ============================================================
+ * Batch Operations
+ * ============================================================ */
+
+/**
+ * GnSecureDeleteCallback:
+ * @filepath: Current file being processed
+ * @current: Current file number (1-based)
+ * @total: Total number of files
+ * @result: Result of current deletion
+ * @user_data: User data passed to batch function
+ *
+ * Callback for batch secure deletion operations.
+ *
+ * Returns: TRUE to continue processing, FALSE to abort
+ */
+typedef gboolean (*GnSecureDeleteCallback)(const char *filepath,
+                                            guint current,
+                                            guint total,
+                                            GnDeleteResult result,
+                                            gpointer user_data);
+
+/**
+ * gn_secure_delete_files:
+ * @files: NULL-terminated array of file paths
+ * @opts: Deletion options (NULL for defaults)
+ * @callback: Optional progress callback
+ * @user_data: User data for callback
+ *
+ * Securely deletes multiple files with progress reporting.
+ *
+ * Returns: Number of files successfully deleted
+ */
+guint gn_secure_delete_files(const char **files,
+                              const GnDeleteOptions *opts,
+                              GnSecureDeleteCallback callback,
+                              gpointer user_data);
+
+/**
+ * gn_secure_delete_pattern:
+ * @dirpath: Directory to search in
+ * @pattern: Glob pattern to match (e.g., "*.backup", "*.log")
+ * @opts: Deletion options (NULL for defaults)
+ * @callback: Optional progress callback
+ * @user_data: User data for callback
+ *
+ * Securely deletes all files matching a pattern in a directory.
+ *
+ * Returns: Number of files successfully deleted
+ */
+guint gn_secure_delete_pattern(const char *dirpath,
+                                const char *pattern,
+                                const GnDeleteOptions *opts,
+                                GnSecureDeleteCallback callback,
+                                gpointer user_data);
+
+/* ============================================================
+ * Sensitive Data Categories
+ * ============================================================
+ *
+ * High-level functions for securely deleting specific types
+ * of sensitive data in the gnostr-signer application.
+ */
+
+/**
+ * gn_secure_delete_key_files:
+ * @npub: The npub identifier for the key
+ *
+ * Securely deletes all local key-related files:
+ * - Key backup files
+ * - Encrypted key exports
+ * - Temporary key files
+ *
+ * Note: Does NOT remove from secure storage (Keychain/libsecret).
+ *
+ * Returns: GN_DELETE_OK on success, first error on failure
+ */
+GnDeleteResult gn_secure_delete_key_files(const char *npub);
+
+/**
+ * gn_secure_delete_backup_files:
+ * @max_age_days: Delete backups older than this (0 = all backups)
+ *
+ * Securely deletes backup files:
+ * - NIP-49 encrypted backups
+ * - JSON backup metadata files
+ * - Old/expired backups
+ *
+ * Returns: Number of files deleted
+ */
+guint gn_secure_delete_backup_files(guint max_age_days);
+
+/**
+ * gn_secure_delete_session_data:
+ *
+ * Securely deletes all session-related data:
+ * - Session cache files
+ * - Client session data
+ * - Temporary authentication tokens
+ *
+ * Returns: GN_DELETE_OK on success, error code otherwise
+ */
+GnDeleteResult gn_secure_delete_session_data(void);
+
+/**
+ * gn_secure_delete_log_files:
+ * @sensitive_only: TRUE to only delete logs with sensitive patterns
+ *
+ * Securely deletes log files:
+ * - Application logs
+ * - Debug logs
+ * - Audit logs containing sensitive data
+ *
+ * If @sensitive_only is TRUE, scans logs for sensitive patterns
+ * (nsec, ncryptsec, passwords) before deletion.
+ *
+ * Returns: Number of log files deleted
+ */
+guint gn_secure_delete_log_files(gboolean sensitive_only);
+
+/* ============================================================
  * Integration Helpers
  * ============================================================
  *

@@ -9,6 +9,9 @@
 #include <unistd.h>
 #include <pwd.h>
 
+/* Hardware keystore widget */
+#include "hardware_keystore_widget.h"
+
 typedef struct {
   AccountsStore *as;
   GtkWidget *page;
@@ -264,6 +267,18 @@ GtkWidget *gnostr_settings_page_new(AccountsStore *as) {
   GtkWidget *list = gtk_list_box_new();
   ui->list = list;
   gtk_box_append(GTK_BOX(page), list);
+
+  /* Hardware Keystore section */
+  GtkWidget *hw_section = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+  gtk_widget_set_margin_top(hw_section, 16);
+  gtk_box_append(GTK_BOX(page), hw_section);
+
+  GtkWidget *hw_separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+  gtk_box_append(GTK_BOX(hw_section), hw_separator);
+
+  GtkWidget *hw_widget = hw_keystore_widget_new();
+  gtk_widget_set_margin_top(hw_widget, 8);
+  gtk_box_append(GTK_BOX(hw_section), hw_widget);
 
   ui->as = as;
   gnostr_settings_page_refresh(page, as);

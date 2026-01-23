@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ==================================================================== -->
+    <!-- launchd plist for Gnostr Signer Daemon                               -->
+    <!-- ==================================================================== -->
+    <!-- Manages the background signing daemon for local IPC (NIP-55L/5F)     -->
+    <!--                                                                      -->
+    <!-- Installation:                                                        -->
+    <!--   cp org.gnostr.Signer.daemon.plist ~/Library/LaunchAgents/          -->
+    <!--   launchctl load ~/Library/LaunchAgents/org.gnostr.Signer.daemon.plist -->
+    <!--                                                                      -->
+    <!-- When installed via .app bundle, the app can manage this automatically -->
+
+    <!-- Service identifier -->
+    <key>Label</key>
+    <string>org.gnostr.Signer.daemon</string>
+
+    <!-- Executable path -->
+    <!-- Update this path based on installation method -->
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Option 1: Installed via Homebrew -->
+        <!-- <string>/opt/homebrew/bin/gnostr-signer-daemon</string> -->
+
+        <!-- Option 2: From .app bundle -->
+        <string>/Applications/Gnostr Signer.app/Contents/MacOS/gnostr-signer-daemon</string>
+    </array>
+
+    <!-- Start on user login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Keep daemon running (restart if it crashes) -->
+    <key>KeepAlive</key>
+    <dict>
+        <!-- Restart if daemon crashes -->
+        <key>SuccessfulExit</key>
+        <false/>
+
+        <!-- Don't run if network is unavailable -->
+        <key>NetworkState</key>
+        <true/>
+    </dict>
+
+    <!-- Throttle restarts (wait 10 seconds between restart attempts) -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Working directory -->
+    <key>WorkingDirectory</key>
+    <string>/tmp</string>
+
+    <!-- Environment variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- XDG directories for config/data -->
+        <key>XDG_CONFIG_HOME</key>
+        <string>~/Library/Application Support</string>
+
+        <key>XDG_DATA_HOME</key>
+        <string>~/Library/Application Support</string>
+
+        <!-- GSettings schema location (for .app bundle) -->
+        <key>GSETTINGS_SCHEMA_DIR</key>
+        <string>/Applications/Gnostr Signer.app/Contents/Resources/share/glib-2.0/schemas</string>
+    </dict>
+
+    <!-- Logging -->
+    <key>StandardOutPath</key>
+    <string>/tmp/gnostr-signer-daemon.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/gnostr-signer-daemon.err.log</string>
+
+    <!-- Process type (background daemon) -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Low priority to not impact system performance -->
+    <key>LowPriorityIO</key>
+    <true/>
+
+    <!-- Resource limits -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <!-- Max open files -->
+        <key>NumberOfFiles</key>
+        <integer>256</integer>
+    </dict>
+
+    <!-- Socket activation for Unix domain socket (NIP-5F) -->
+    <!-- Uncomment to enable socket-activated launch -->
+    <!--
+    <key>Sockets</key>
+    <dict>
+        <key>gnostr-signer</key>
+        <dict>
+            <key>SockPathName</key>
+            <string>/tmp/gnostr-signer.sock</string>
+            <key>SockPathMode</key>
+            <integer>384</integer>
+        </dict>
+    </dict>
+    -->
+
+    <!-- Mach service for DBus-like IPC (macOS native) -->
+    <!-- Uncomment if using XPC instead of Unix sockets -->
+    <!--
+    <key>MachServices</key>
+    <dict>
+        <key>org.gnostr.Signer</key>
+        <true/>
+    </dict>
+    -->
+
+    <!-- Nice value (lower priority) -->
+    <key>Nice</key>
+    <integer>5</integer>
+</dict>
+</plist>

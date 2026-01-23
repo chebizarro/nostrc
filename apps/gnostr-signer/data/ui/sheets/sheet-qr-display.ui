@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.5"/>
+  <template class="SheetQrDisplay" parent="AdwDialog">
+    <property name="title" translatable="yes">QR Code</property>
+    <property name="can-close">true</property>
+    <property name="content-width">400</property>
+    <property name="content-height">520</property>
+    <accessibility>
+      <property name="label">QR code display dialog</property>
+      <property name="description">Shows a QR code for sharing or backup</property>
+    </accessibility>
+    <child>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="show-end-title-buttons">false</property>
+            <property name="show-start-title-buttons">false</property>
+            <child type="end">
+              <object class="GtkButton" id="btn_close">
+                <property name="label" translatable="yes">Done</property>
+                <accessibility>
+                  <property name="label">Close dialog</property>
+                </accessibility>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <child>
+              <object class="GtkBox" id="content_box">
+                <property name="orientation">vertical</property>
+                <property name="spacing">16</property>
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">16</property>
+                <property name="margin-bottom">24</property>
+                <property name="halign">center</property>
+
+                <!-- Title -->
+                <child>
+                  <object class="GtkLabel" id="title_label">
+                    <property name="label" translatable="yes">QR Code</property>
+                    <property name="halign">center</property>
+                    <accessibility>
+                      <property name="label">QR code title</property>
+                    </accessibility>
+                    <style>
+                      <class name="title-2"/>
+                    </style>
+                  </object>
+                </child>
+
+                <!-- QR Code Image -->
+                <child>
+                  <object class="GtkFrame">
+                    <property name="halign">center</property>
+                    <style>
+                      <class name="view"/>
+                    </style>
+                    <child>
+                      <object class="GtkPicture" id="qr_picture">
+                        <property name="content-fit">contain</property>
+                        <property name="width-request">280</property>
+                        <property name="height-request">280</property>
+                        <property name="margin-start">8</property>
+                        <property name="margin-end">8</property>
+                        <property name="margin-top">8</property>
+                        <property name="margin-bottom">8</property>
+                        <accessibility>
+                          <property name="label">QR code image</property>
+                          <property name="description">Scan this QR code with a compatible app</property>
+                        </accessibility>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Content Type -->
+                <child>
+                  <object class="GtkLabel" id="type_label">
+                    <property name="label" translatable="yes">Type</property>
+                    <property name="halign">center</property>
+                    <accessibility>
+                      <property name="label">Content type</property>
+                    </accessibility>
+                    <style>
+                      <class name="dim-label"/>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+
+                <!-- Data Preview -->
+                <child>
+                  <object class="GtkLabel" id="data_label">
+                    <property name="label" translatable="yes">Data</property>
+                    <property name="halign">center</property>
+                    <property name="wrap">true</property>
+                    <property name="wrap-mode">char</property>
+                    <property name="selectable">true</property>
+                    <property name="max-width-chars">40</property>
+                    <accessibility>
+                      <property name="label">QR code data</property>
+                      <property name="description">The data encoded in the QR code</property>
+                    </accessibility>
+                    <style>
+                      <class name="monospace"/>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+
+                <!-- Warning Box (shown for sensitive content) -->
+                <child>
+                  <object class="GtkBox" id="warning_box">
+                    <property name="visible">false</property>
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">8</property>
+                    <property name="halign">center</property>
+                    <property name="margin-top">8</property>
+                    <accessibility>
+                      <property name="label">Security warning</property>
+                    </accessibility>
+                    <style>
+                      <class name="warning"/>
+                      <class name="card"/>
+                    </style>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">dialog-warning-symbolic</property>
+                        <property name="margin-start">12</property>
+                        <property name="margin-top">8</property>
+                        <property name="margin-bottom">8</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="warning_label">
+                        <property name="label" translatable="yes">Warning message</property>
+                        <property name="wrap">true</property>
+                        <property name="max-width-chars">35</property>
+                        <property name="margin-end">12</property>
+                        <property name="margin-top">8</property>
+                        <property name="margin-bottom">8</property>
+                        <accessibility>
+                          <property name="label">Warning text</property>
+                        </accessibility>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Copy Button -->
+                <child>
+                  <object class="GtkButton" id="btn_copy">
+                    <property name="label" translatable="yes">Copy to Clipboard</property>
+                    <property name="halign">center</property>
+                    <property name="margin-top">8</property>
+                    <accessibility>
+                      <property name="label">Copy data to clipboard</property>
+                      <property name="description">Copy the QR code data to your clipboard</property>
+                    </accessibility>
+                  </object>
+                </child>
+
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

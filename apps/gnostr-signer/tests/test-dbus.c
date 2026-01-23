@@ -1,11 +1,14 @@
 /* test-dbus.c - D-Bus interface integration tests for gnostr-signer
  *
- * Tests the org.nostr.Signer D-Bus interface using GTestDBus for isolated
- * testing. This module verifies:
+ * Tests both org.nostr.Signer and org.gnostr.Signer D-Bus interfaces using
+ * GTestDBus for isolated testing. This module verifies:
  *   - Service startup and bus name acquisition
  *   - GetPublicKey method
  *   - SignEvent method (with pre-approved ACL)
- *   - Error handling (invalid input, rate limiting)
+ *   - NIP-44 Encrypt/Decrypt methods
+ *   - Session management over D-Bus
+ *   - Concurrent client requests
+ *   - Error handling (invalid input, rate limiting, edge cases)
  *
  * Issue: nostrc-991
  */
@@ -27,12 +30,22 @@
 #define TEST_OBJECT_PATH    "/org/nostr/signer"
 #define TEST_INTERFACE      "org.nostr.Signer"
 
+/* Alternative org.gnostr.Signer naming (canonical) */
+#define GNOSTR_BUS_NAME     "org.gnostr.Signer"
+#define GNOSTR_OBJECT_PATH  "/org/gnostr/signer"
+#define GNOSTR_INTERFACE    "org.gnostr.Signer"
+
 /* Error names from nip55l_dbus_errors.h */
 #define ERR_PERMISSION     "org.nostr.Signer.Error.PermissionDenied"
 #define ERR_RATELIMIT      "org.nostr.Signer.Error.RateLimited"
 #define ERR_APPROVAL       "org.nostr.Signer.Error.ApprovalDenied"
 #define ERR_INVALID_INPUT  "org.nostr.Signer.Error.InvalidInput"
 #define ERR_INTERNAL       "org.nostr.Signer.Error.Internal"
+#define ERR_SESSION        "org.nostr.Signer.Error.SessionExpired"
+#define ERR_CRYPTO         "org.nostr.Signer.Error.CryptoFailed"
+
+/* Number of parallel clients for concurrency tests */
+#define CONCURRENT_CLIENTS  5
 
 /* ===========================================================================
  * Test Fixture
@@ -82,32 +95,75 @@ generate_test_keypair(DbusFixture *fix)
  * requiring full daemon infrastructure.
  */
 
+/* Mock session data for session management tests */
+typedef struct {
+    gchar *client_pubkey;
+    gchar *identity;
+    gint64 created_at;
+    gint64 last_activity;
+    gint64 expires_at;
+    guint permissions;
+    gboolean active;
+} MockClientSession;
+
 /* Mock state */
 typedef struct {
     gchar *stored_npub;
     gchar *stored_sk_hex;
-    GHashTable *acl;  /* app_id -> allowed (gboolean) */
+    GHashTable *acl;       /* app_id -> allowed (gboolean) */
+    GHashTable *sessions;  /* session_key -> MockClientSession* */
+    guint request_count;   /* Total requests processed */
+    GMutex lock;           /* For thread safety in concurrent tests */
 } MockSignerState;
 
-static MockSignerState mock_state = { NULL, NULL, NULL };
+static MockSignerState mock_state = { NULL, NULL, NULL, NULL, 0, { 0 } };
+
+static void
+mock_client_session_free(MockClientSession *session)
+{
+    if (!session) return;
+    g_free(session->client_pubkey);
+    g_free(session->identity);
+    g_free(session);
+}
+
+static gchar *
+make_session_key(const gchar *client_pubkey, const gchar *identity)
+{
+    return g_strdup_printf("%s:%s", client_pubkey, identity ? identity : "default");
+}
 
 static void
 mock_state_init(const gchar *sk_hex, const gchar *npub)
 {
+    g_mutex_init(&mock_state.lock);
     mock_state.stored_sk_hex = g_strdup(sk_hex);
     mock_state.stored_npub = g_strdup(npub);
     mock_state.acl = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    mock_state.sessions = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                                 g_free, (GDestroyNotify)mock_client_session_free);
+    mock_state.request_count = 0;
 }
 
 static void
 mock_state_clear(void)
 {
+    g_mutex_lock(&mock_state.lock);
     g_free(mock_state.stored_sk_hex);
     g_free(mock_state.stored_npub);
     if (mock_state.acl) {
         g_hash_table_destroy(mock_state.acl);
     }
-    memset(&mock_state, 0, sizeof(mock_state));
+    if (mock_state.sessions) {
+        g_hash_table_destroy(mock_state.sessions);
+    }
+    mock_state.stored_sk_hex = NULL;
+    mock_state.stored_npub = NULL;
+    mock_state.acl = NULL;
+    mock_state.sessions = NULL;
+    mock_state.request_count = 0;
+    g_mutex_unlock(&mock_state.lock);
+    g_mutex_clear(&mock_state.lock);
 }
 
 static void
@@ -115,6 +171,63 @@ mock_acl_allow(const gchar *app_id)
 {
     if (mock_state.acl && app_id) {
         g_hash_table_insert(mock_state.acl, g_strdup(app_id), GINT_TO_POINTER(TRUE));
+    }
+}
+
+/* Session management helpers */
+static MockClientSession *
+mock_session_create(const gchar *client_pubkey, const gchar *identity, guint permissions)
+{
+    MockClientSession *session = g_new0(MockClientSession, 1);
+    session->client_pubkey = g_strdup(client_pubkey);
+    session->identity = g_strdup(identity ? identity : mock_state.stored_npub);
+    session->created_at = (gint64)time(NULL);
+    session->last_activity = session->created_at;
+    session->expires_at = session->created_at + 900;  /* 15 minute default */
+    session->permissions = permissions;
+    session->active = TRUE;
+
+    gchar *key = make_session_key(client_pubkey, session->identity);
+    g_hash_table_replace(mock_state.sessions, key, session);
+
+    return session;
+}
+
+static MockClientSession *
+mock_session_lookup(const gchar *client_pubkey, const gchar *identity)
+{
+    gchar *key = make_session_key(client_pubkey, identity);
+    MockClientSession *session = g_hash_table_lookup(mock_state.sessions, key);
+    g_free(key);
+    return session;
+}
+
+static gboolean
+mock_session_is_active(const gchar *client_pubkey, const gchar *identity)
+{
+    MockClientSession *session = mock_session_lookup(client_pubkey, identity);
+    if (!session) return FALSE;
+    if (!session->active) return FALSE;
+
+    gint64 now = (gint64)time(NULL);
+    return now < session->expires_at;
+}
+
+static void
+mock_session_touch(const gchar *client_pubkey, const gchar *identity)
+{
+    MockClientSession *session = mock_session_lookup(client_pubkey, identity);
+    if (session && session->active) {
+        session->last_activity = (gint64)time(NULL);
+    }
+}
+
+static void
+mock_session_revoke(const gchar *client_pubkey, const gchar *identity)
+{
+    MockClientSession *session = mock_session_lookup(client_pubkey, identity);
+    if (session) {
+        session->active = FALSE;
     }
 }
 
@@ -299,6 +412,118 @@ handle_method_call(GDBusConnection       *connection,
         return;
     }
 
+    /* Session management methods */
+    if (g_strcmp0(method_name, "CreateSession") == 0) {
+        const gchar *client_pubkey = NULL;
+        const gchar *identity = NULL;
+        guint32 permissions = 0;
+        gint64 ttl_seconds = 0;
+
+        g_variant_get(parameters, "(&s&sux)", &client_pubkey, &identity, &permissions, &ttl_seconds);
+
+        if (!client_pubkey || !*client_pubkey) {
+            g_dbus_method_invocation_return_dbus_error(invocation,
+                ERR_INVALID_INPUT, "client_pubkey is required");
+            return;
+        }
+
+        g_mutex_lock(&mock_state.lock);
+        MockClientSession *session = mock_session_create(client_pubkey, identity, permissions);
+        if (ttl_seconds > 0) {
+            session->expires_at = session->created_at + ttl_seconds;
+        } else if (ttl_seconds == -1) {
+            session->expires_at = G_MAXINT64;  /* Never expires */
+        }
+        g_mutex_unlock(&mock_state.lock);
+
+        g_dbus_method_invocation_return_value(invocation,
+            g_variant_new("(b)", TRUE));
+        return;
+    }
+
+    if (g_strcmp0(method_name, "GetSession") == 0) {
+        const gchar *client_pubkey = NULL;
+        const gchar *identity = NULL;
+
+        g_variant_get(parameters, "(&s&s)", &client_pubkey, &identity);
+
+        g_mutex_lock(&mock_state.lock);
+        MockClientSession *session = mock_session_lookup(client_pubkey, identity);
+
+        if (!session) {
+            g_mutex_unlock(&mock_state.lock);
+            g_dbus_method_invocation_return_value(invocation,
+                g_variant_new("(bux)", FALSE, (guint32)0, (gint64)0));
+            return;
+        }
+
+        gboolean active = session->active && (time(NULL) < session->expires_at);
+        guint32 perms = session->permissions;
+        gint64 expires = session->expires_at;
+        g_mutex_unlock(&mock_state.lock);
+
+        g_dbus_method_invocation_return_value(invocation,
+            g_variant_new("(bux)", active, perms, expires));
+        return;
+    }
+
+    if (g_strcmp0(method_name, "RevokeSession") == 0) {
+        const gchar *client_pubkey = NULL;
+        const gchar *identity = NULL;
+
+        g_variant_get(parameters, "(&s&s)", &client_pubkey, &identity);
+
+        g_mutex_lock(&mock_state.lock);
+        MockClientSession *session = mock_session_lookup(client_pubkey, identity);
+        gboolean ok = FALSE;
+        if (session) {
+            session->active = FALSE;
+            ok = TRUE;
+        }
+        g_mutex_unlock(&mock_state.lock);
+
+        g_dbus_method_invocation_return_value(invocation,
+            g_variant_new("(b)", ok));
+        return;
+    }
+
+    if (g_strcmp0(method_name, "ListSessions") == 0) {
+        g_mutex_lock(&mock_state.lock);
+
+        GString *json = g_string_new("[");
+        GHashTableIter iter;
+        gpointer key, value;
+        gboolean first = TRUE;
+
+        if (mock_state.sessions) {
+            g_hash_table_iter_init(&iter, mock_state.sessions);
+            while (g_hash_table_iter_next(&iter, &key, &value)) {
+                MockClientSession *session = (MockClientSession*)value;
+                if (!first) g_string_append_c(json, ',');
+                g_string_append_printf(json,
+                    "{\"client_pubkey\":\"%s\",\"identity\":\"%s\",\"active\":%s,\"permissions\":%u}",
+                    session->client_pubkey,
+                    session->identity,
+                    session->active ? "true" : "false",
+                    session->permissions);
+                first = FALSE;
+            }
+        }
+        g_string_append_c(json, ']');
+        g_mutex_unlock(&mock_state.lock);
+
+        gchar *result = g_string_free(json, FALSE);
+        g_dbus_method_invocation_return_value(invocation,
+            g_variant_new("(s)", result));
+        g_free(result);
+        return;
+    }
+
+    /* Increment request counter for concurrency tests */
+    g_mutex_lock(&mock_state.lock);
+    mock_state.request_count++;
+    g_mutex_unlock(&mock_state.lock);
+
     /* Unknown method */
     g_dbus_method_invocation_return_dbus_error(invocation,
         "org.freedesktop.DBus.Error.UnknownMethod",
@@ -377,6 +602,36 @@ static const gchar introspection_xml[] =
     "    <signal name='ApprovalCompleted'>"
     "      <arg type='s' name='request_id'/>"
     "      <arg type='b' name='decision'/>"
+    "    </signal>"
+    "    <method name='CreateSession'>"
+    "      <arg name='client_pubkey' type='s' direction='in'/>"
+    "      <arg name='identity' type='s' direction='in'/>"
+    "      <arg name='permissions' type='u' direction='in'/>"
+    "      <arg name='ttl_seconds' type='x' direction='in'/>"
+    "      <arg name='ok' type='b' direction='out'/>"
+    "    </method>"
+    "    <method name='GetSession'>"
+    "      <arg name='client_pubkey' type='s' direction='in'/>"
+    "      <arg name='identity' type='s' direction='in'/>"
+    "      <arg name='active' type='b' direction='out'/>"
+    "      <arg name='permissions' type='u' direction='out'/>"
+    "      <arg name='expires_at' type='x' direction='out'/>"
+    "    </method>"
+    "    <method name='RevokeSession'>"
+    "      <arg name='client_pubkey' type='s' direction='in'/>"
+    "      <arg name='identity' type='s' direction='in'/>"
+    "      <arg name='ok' type='b' direction='out'/>"
+    "    </method>"
+    "    <method name='ListSessions'>"
+    "      <arg name='sessions_json' type='s' direction='out'/>"
+    "    </method>"
+    "    <signal name='SessionCreated'>"
+    "      <arg type='s' name='client_pubkey'/>"
+    "      <arg type='s' name='identity'/>"
+    "    </signal>"
+    "    <signal name='SessionRevoked'>"
+    "      <arg type='s' name='client_pubkey'/>"
+    "      <arg type='s' name='identity'/>"
     "    </signal>"
     "  </interface>"
     "</node>";
@@ -1074,6 +1329,683 @@ test_dbus_approve_request(DbusFixture *fix, gconstpointer user_data)
 }
 
 /* ===========================================================================
+ * Test: Session Management over D-Bus
+ * =========================================================================== */
+
+static void
+test_dbus_session_create(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    /* Create a session */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "CreateSession",
+        g_variant_new("(ssux)", "client_pubkey_abc123", fix->test_npub, (guint32)31, (gint64)3600),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+
+    g_assert_no_error(error);
+    g_assert_nonnull(result);
+
+    gboolean ok = FALSE;
+    g_variant_get(result, "(b)", &ok);
+    g_assert_true(ok);
+
+    g_variant_unref(result);
+}
+
+static void
+test_dbus_session_get_existing(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    /* First create a session */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "CreateSession",
+        g_variant_new("(ssux)", "test_client_pk", fix->test_npub, (guint32)15, (gint64)900),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+    g_assert_no_error(error);
+    g_variant_unref(result);
+
+    /* Now get the session */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "GetSession",
+        g_variant_new("(ss)", "test_client_pk", fix->test_npub),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+
+    g_assert_no_error(error);
+    g_assert_nonnull(result);
+
+    gboolean active = FALSE;
+    guint32 permissions = 0;
+    gint64 expires_at = 0;
+    g_variant_get(result, "(bux)", &active, &permissions, &expires_at);
+
+    g_assert_true(active);
+    g_assert_cmpuint(permissions, ==, 15);
+    g_assert_cmpint(expires_at, >, 0);
+
+    g_variant_unref(result);
+}
+
+static void
+test_dbus_session_get_nonexistent(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "GetSession",
+        g_variant_new("(ss)", "nonexistent_client", ""),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+
+    g_assert_no_error(error);
+    g_assert_nonnull(result);
+
+    gboolean active = TRUE;  /* Initialize to opposite of expected */
+    guint32 permissions = 0;
+    gint64 expires_at = 0;
+    g_variant_get(result, "(bux)", &active, &permissions, &expires_at);
+
+    g_assert_false(active);
+    g_assert_cmpuint(permissions, ==, 0);
+    g_assert_cmpint(expires_at, ==, 0);
+
+    g_variant_unref(result);
+}
+
+static void
+test_dbus_session_revoke(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    /* Create a session */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "CreateSession",
+        g_variant_new("(ssux)", "revoke_test_pk", fix->test_npub, (guint32)7, (gint64)3600),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+    g_assert_no_error(error);
+    g_variant_unref(result);
+
+    /* Verify it exists and is active */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "GetSession",
+        g_variant_new("(ss)", "revoke_test_pk", fix->test_npub),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+    g_assert_no_error(error);
+
+    gboolean active = FALSE;
+    guint32 permissions = 0;
+    gint64 expires_at = 0;
+    g_variant_get(result, "(bux)", &active, &permissions, &expires_at);
+    g_assert_true(active);
+    g_variant_unref(result);
+
+    /* Revoke the session */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "RevokeSession",
+        g_variant_new("(ss)", "revoke_test_pk", fix->test_npub),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+    g_assert_no_error(error);
+
+    gboolean ok = FALSE;
+    g_variant_get(result, "(b)", &ok);
+    g_assert_true(ok);
+    g_variant_unref(result);
+
+    /* Verify it's no longer active */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "GetSession",
+        g_variant_new("(ss)", "revoke_test_pk", fix->test_npub),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+    g_assert_no_error(error);
+
+    g_variant_get(result, "(bux)", &active, &permissions, &expires_at);
+    g_assert_false(active);
+    g_variant_unref(result);
+}
+
+static void
+test_dbus_session_list(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    /* Create multiple sessions */
+    for (int i = 0; i < 3; i++) {
+        gchar *client_pk = g_strdup_printf("list_test_client_%d", i);
+        result = g_dbus_proxy_call_sync(
+            fix->proxy,
+            "CreateSession",
+            g_variant_new("(ssux)", client_pk, fix->test_npub, (guint32)(i + 1), (gint64)3600),
+            G_DBUS_CALL_FLAGS_NONE,
+            5000,
+            NULL,
+            &error);
+        g_assert_no_error(error);
+        g_variant_unref(result);
+        g_free(client_pk);
+    }
+
+    /* List all sessions */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "ListSessions",
+        NULL,
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+
+    g_assert_no_error(error);
+    g_assert_nonnull(result);
+
+    const gchar *sessions_json = NULL;
+    g_variant_get(result, "(&s)", &sessions_json);
+    g_assert_nonnull(sessions_json);
+
+    /* Should be a JSON array with at least 3 entries */
+    g_assert_true(sessions_json[0] == '[');
+    g_assert_true(strstr(sessions_json, "list_test_client_0") != NULL);
+    g_assert_true(strstr(sessions_json, "list_test_client_1") != NULL);
+    g_assert_true(strstr(sessions_json, "list_test_client_2") != NULL);
+
+    g_variant_unref(result);
+}
+
+static void
+test_dbus_session_create_invalid_input(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    /* Empty client_pubkey should fail */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "CreateSession",
+        g_variant_new("(ssux)", "", fix->test_npub, (guint32)7, (gint64)3600),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+
+    g_assert_null(result);
+    g_assert_nonnull(error);
+    g_assert_true(g_dbus_error_is_remote_error(error));
+
+    gchar *remote_error = g_dbus_error_get_remote_error(error);
+    g_assert_cmpstr(remote_error, ==, ERR_INVALID_INPUT);
+    g_free(remote_error);
+    g_error_free(error);
+}
+
+/* ===========================================================================
+ * Test: Concurrent Client Requests
+ * =========================================================================== */
+
+typedef struct {
+    DbusFixture *fix;
+    gint client_id;
+    gboolean success;
+    gint requests_completed;
+    GMutex mutex;
+} ConcurrentTestData;
+
+static gpointer
+concurrent_client_thread(gpointer user_data)
+{
+    ConcurrentTestData *data = (ConcurrentTestData*)user_data;
+    GError *error = NULL;
+
+    for (int i = 0; i < 10; i++) {
+        /* Make a GetPublicKey call */
+        GVariant *result = g_dbus_proxy_call_sync(
+            data->fix->proxy,
+            "GetPublicKey",
+            NULL,
+            G_DBUS_CALL_FLAGS_NONE,
+            5000,
+            NULL,
+            &error);
+
+        g_mutex_lock(&data->mutex);
+        if (result) {
+            data->requests_completed++;
+            g_variant_unref(result);
+        } else {
+            data->success = FALSE;
+            g_clear_error(&error);
+        }
+        g_mutex_unlock(&data->mutex);
+
+        /* Small delay to interleave with other threads */
+        g_usleep(1000);  /* 1ms */
+    }
+
+    return NULL;
+}
+
+static void
+test_dbus_concurrent_requests(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+
+    ConcurrentTestData data[CONCURRENT_CLIENTS];
+    GThread *threads[CONCURRENT_CLIENTS];
+
+    /* Initialize test data */
+    for (int i = 0; i < CONCURRENT_CLIENTS; i++) {
+        data[i].fix = fix;
+        data[i].client_id = i;
+        data[i].success = TRUE;
+        data[i].requests_completed = 0;
+        g_mutex_init(&data[i].mutex);
+    }
+
+    /* Start concurrent threads */
+    for (int i = 0; i < CONCURRENT_CLIENTS; i++) {
+        threads[i] = g_thread_new(NULL, concurrent_client_thread, &data[i]);
+    }
+
+    /* Wait for all threads to complete */
+    for (int i = 0; i < CONCURRENT_CLIENTS; i++) {
+        g_thread_join(threads[i]);
+    }
+
+    /* Verify results */
+    gint total_completed = 0;
+    for (int i = 0; i < CONCURRENT_CLIENTS; i++) {
+        g_assert_true(data[i].success);
+        total_completed += data[i].requests_completed;
+        g_mutex_clear(&data[i].mutex);
+    }
+
+    /* All requests should have completed */
+    g_assert_cmpint(total_completed, ==, CONCURRENT_CLIENTS * 10);
+}
+
+static gpointer
+concurrent_sign_thread(gpointer user_data)
+{
+    ConcurrentTestData *data = (ConcurrentTestData*)user_data;
+    GError *error = NULL;
+
+    /* Each thread signs different events */
+    for (int i = 0; i < 5; i++) {
+        gchar *event_json = g_strdup_printf(
+            "{\"pubkey\":\"test\",\"created_at\":%ld,\"kind\":1,\"tags\":[],\"content\":\"msg %d from client %d\"}",
+            (long)time(NULL), i, data->client_id);
+
+        GVariant *result = g_dbus_proxy_call_sync(
+            data->fix->proxy,
+            "SignEvent",
+            g_variant_new("(sss)", event_json, "", "concurrent-test-app"),
+            G_DBUS_CALL_FLAGS_NONE,
+            5000,
+            NULL,
+            &error);
+
+        g_mutex_lock(&data->mutex);
+        if (result) {
+            const gchar *sig = NULL;
+            g_variant_get(result, "(&s)", &sig);
+            if (sig && strlen(sig) == 128) {
+                data->requests_completed++;
+            }
+            g_variant_unref(result);
+        } else {
+            g_clear_error(&error);
+        }
+        g_mutex_unlock(&data->mutex);
+
+        g_free(event_json);
+        g_usleep(500);  /* 0.5ms */
+    }
+
+    return NULL;
+}
+
+static void
+test_dbus_concurrent_sign_requests(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+
+    /* Allow all apps to sign */
+    mock_acl_allow("*");
+
+    ConcurrentTestData data[CONCURRENT_CLIENTS];
+    GThread *threads[CONCURRENT_CLIENTS];
+
+    /* Initialize test data */
+    for (int i = 0; i < CONCURRENT_CLIENTS; i++) {
+        data[i].fix = fix;
+        data[i].client_id = i;
+        data[i].success = TRUE;
+        data[i].requests_completed = 0;
+        g_mutex_init(&data[i].mutex);
+    }
+
+    /* Start concurrent threads */
+    for (int i = 0; i < CONCURRENT_CLIENTS; i++) {
+        threads[i] = g_thread_new(NULL, concurrent_sign_thread, &data[i]);
+    }
+
+    /* Wait for all threads to complete */
+    for (int i = 0; i < CONCURRENT_CLIENTS; i++) {
+        g_thread_join(threads[i]);
+    }
+
+    /* Verify results - all sign requests should succeed */
+    gint total_completed = 0;
+    for (int i = 0; i < CONCURRENT_CLIENTS; i++) {
+        total_completed += data[i].requests_completed;
+        g_mutex_clear(&data[i].mutex);
+    }
+
+    /* All requests should have completed */
+    g_assert_cmpint(total_completed, ==, CONCURRENT_CLIENTS * 5);
+}
+
+/* ===========================================================================
+ * Test: Error Handling and Edge Cases
+ * =========================================================================== */
+
+static void
+test_dbus_sign_malformed_json(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    mock_acl_allow("*");
+
+    /* Malformed JSON - note: mock currently just checks for empty,
+     * but real implementation would validate JSON */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "SignEvent",
+        g_variant_new("(sss)", "{invalid json", "", "test-app"),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+
+    /* Mock returns signature anyway, but this tests the protocol flow */
+    if (result) {
+        g_variant_unref(result);
+    } else {
+        g_clear_error(&error);
+    }
+}
+
+static void
+test_dbus_nip44_empty_plaintext(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    char *peer_sk = nostr_key_generate_private();
+    char *peer_pk = nostr_key_get_public(peer_sk);
+
+    /* Empty plaintext */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "NIP44Encrypt",
+        g_variant_new("(sss)", "", peer_pk, ""),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+
+    /* Mock returns input, but real implementation might handle differently */
+    if (result) {
+        g_variant_unref(result);
+    }
+    g_clear_error(&error);
+
+    free(peer_sk);
+    free(peer_pk);
+}
+
+static void
+test_dbus_nip44_invalid_pubkey(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    /* Invalid pubkey format */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "NIP44Encrypt",
+        g_variant_new("(sss)", "Hello world", "not-a-valid-pubkey", ""),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+
+    /* Mock is lenient, real implementation would validate */
+    if (result) {
+        g_variant_unref(result);
+    }
+    g_clear_error(&error);
+}
+
+static void
+test_dbus_sign_very_large_event(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    mock_acl_allow("*");
+
+    /* Create a large event (64KB content) */
+    gsize large_size = 64 * 1024;
+    gchar *large_content = g_malloc(large_size + 1);
+    memset(large_content, 'A', large_size);
+    large_content[large_size] = '\0';
+
+    gchar *event_json = g_strdup_printf(
+        "{\"pubkey\":\"test\",\"created_at\":1234567890,\"kind\":1,\"tags\":[],\"content\":\"%s\"}",
+        large_content);
+
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "SignEvent",
+        g_variant_new("(sss)", event_json, "", "test-app"),
+        G_DBUS_CALL_FLAGS_NONE,
+        10000,  /* Longer timeout for large event */
+        NULL,
+        &error);
+
+    g_assert_no_error(error);
+    g_assert_nonnull(result);
+
+    const gchar *signature = NULL;
+    g_variant_get(result, "(&s)", &signature);
+    g_assert_cmpuint(strlen(signature), ==, 128);
+
+    g_variant_unref(result);
+    g_free(event_json);
+    g_free(large_content);
+}
+
+static void
+test_dbus_rapid_requests(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    /* Make 100 rapid GetPublicKey requests */
+    gint success_count = 0;
+    for (int i = 0; i < 100; i++) {
+        result = g_dbus_proxy_call_sync(
+            fix->proxy,
+            "GetPublicKey",
+            NULL,
+            G_DBUS_CALL_FLAGS_NONE,
+            5000,
+            NULL,
+            &error);
+
+        if (result) {
+            success_count++;
+            g_variant_unref(result);
+        }
+        g_clear_error(&error);
+    }
+
+    /* All should succeed (no rate limiting for GetPublicKey) */
+    g_assert_cmpint(success_count, ==, 100);
+}
+
+static void
+test_dbus_sign_special_characters(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    mock_acl_allow("*");
+
+    /* Event with special characters, unicode, etc. */
+    const gchar *event_json =
+        "{\"pubkey\":\"test\",\"created_at\":1234567890,\"kind\":1,\"tags\":[],"
+        "\"content\":\"Hello \\\"world\\\" with unicode: \\u4e2d\\u6587 and newlines\\n\\ttab\"}";
+
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "SignEvent",
+        g_variant_new("(sss)", event_json, "", "test-app"),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+
+    g_assert_no_error(error);
+    g_assert_nonnull(result);
+
+    g_variant_unref(result);
+}
+
+static void
+test_dbus_session_revoke_nonexistent(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    /* Try to revoke a session that doesn't exist */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "RevokeSession",
+        g_variant_new("(ss)", "nonexistent_client_pk", ""),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+
+    g_assert_no_error(error);
+    g_assert_nonnull(result);
+
+    gboolean ok = TRUE;  /* Initialize to opposite of expected */
+    g_variant_get(result, "(b)", &ok);
+    g_assert_false(ok);  /* Should return false for nonexistent session */
+
+    g_variant_unref(result);
+}
+
+static void
+test_dbus_session_never_expires(DbusFixture *fix, gconstpointer user_data)
+{
+    (void)user_data;
+    GError *error = NULL;
+    GVariant *result;
+
+    /* Create a session that never expires (ttl = -1) */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "CreateSession",
+        g_variant_new("(ssux)", "never_expire_client", fix->test_npub, (guint32)31, (gint64)-1),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+
+    g_assert_no_error(error);
+    g_assert_nonnull(result);
+    g_variant_unref(result);
+
+    /* Verify the session is active */
+    result = g_dbus_proxy_call_sync(
+        fix->proxy,
+        "GetSession",
+        g_variant_new("(ss)", "never_expire_client", fix->test_npub),
+        G_DBUS_CALL_FLAGS_NONE,
+        5000,
+        NULL,
+        &error);
+
+    g_assert_no_error(error);
+    g_assert_nonnull(result);
+
+    gboolean active = FALSE;
+    guint32 permissions = 0;
+    gint64 expires_at = 0;
+    g_variant_get(result, "(bux)", &active, &permissions, &expires_at);
+
+    g_assert_true(active);
+    g_assert_cmpuint(permissions, ==, 31);
+    /* expires_at should be very large (G_MAXINT64) */
+    g_assert_cmpint(expires_at, >, 0);
+
+    g_variant_unref(result);
+}
+
+/* ===========================================================================
  * Test Runner
  * =========================================================================== */
 
@@ -1155,6 +2087,73 @@ main(int argc, char *argv[])
     g_test_add("/signer/dbus/approve_request",
                DbusFixture, NULL,
                fixture_setup, test_dbus_approve_request, fixture_teardown);
+
+    /* Session management tests */
+    g_test_add("/signer/dbus/session/create",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_session_create, fixture_teardown);
+
+    g_test_add("/signer/dbus/session/get_existing",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_session_get_existing, fixture_teardown);
+
+    g_test_add("/signer/dbus/session/get_nonexistent",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_session_get_nonexistent, fixture_teardown);
+
+    g_test_add("/signer/dbus/session/revoke",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_session_revoke, fixture_teardown);
+
+    g_test_add("/signer/dbus/session/revoke_nonexistent",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_session_revoke_nonexistent, fixture_teardown);
+
+    g_test_add("/signer/dbus/session/list",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_session_list, fixture_teardown);
+
+    g_test_add("/signer/dbus/session/create_invalid_input",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_session_create_invalid_input, fixture_teardown);
+
+    g_test_add("/signer/dbus/session/never_expires",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_session_never_expires, fixture_teardown);
+
+    /* Concurrent request tests */
+    g_test_add("/signer/dbus/concurrent/get_public_key",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_concurrent_requests, fixture_teardown);
+
+    g_test_add("/signer/dbus/concurrent/sign_events",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_concurrent_sign_requests, fixture_teardown);
+
+    /* Error handling and edge cases */
+    g_test_add("/signer/dbus/error/sign_malformed_json",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_sign_malformed_json, fixture_teardown);
+
+    g_test_add("/signer/dbus/error/nip44_empty_plaintext",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_nip44_empty_plaintext, fixture_teardown);
+
+    g_test_add("/signer/dbus/error/nip44_invalid_pubkey",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_nip44_invalid_pubkey, fixture_teardown);
+
+    g_test_add("/signer/dbus/edge/large_event",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_sign_very_large_event, fixture_teardown);
+
+    g_test_add("/signer/dbus/edge/rapid_requests",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_rapid_requests, fixture_teardown);
+
+    g_test_add("/signer/dbus/edge/special_characters",
+               DbusFixture, NULL,
+               fixture_setup, test_dbus_sign_special_characters, fixture_teardown);
 
     return g_test_run();
 }

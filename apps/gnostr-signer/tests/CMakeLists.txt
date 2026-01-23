@@ -237,9 +237,55 @@ set_tests_properties(signer/hsm-provider PROPERTIES
 )
 
 # ==============================================================================
+# Test: Core signer modules (secret_store, backup-recovery, session, relay, delegation)
+# Uses mock implementations to test core functionality without external dependencies
+# Issue: nostrc-ddh
+# ==============================================================================
+add_executable(test-core test-core.c)
+target_include_directories(test-core PRIVATE ${SIGNER_INCLUDE_DIRS})
+target_link_libraries(test-core PRIVATE ${SIGNER_TEST_LIBS})
+target_link_directories(test-core PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_compile_features(test-core PRIVATE c_std_11)
+apply_test_sanitizers(test-core)
+
+add_test(NAME signer/core COMMAND test-core)
+set_tests_properties(signer/core PROPERTIES
+    TIMEOUT 60
+    LABELS "signer;core;unit;secret_store;backup;session;relay;delegation"
+    ENVIRONMENT "GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr-signer"
+)
+
+# ==============================================================================
+# Test: Secure memory management
+# Issue: nostrc-ycd
+# ==============================================================================
+add_executable(test-secure-mem
+    test-secure-mem.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/secure-mem.c
+)
+target_include_directories(test-secure-mem PRIVATE ${SIGNER_INCLUDE_DIRS})
+target_link_libraries(test-secure-mem PRIVATE ${SIGNER_TEST_LIBS})
+target_link_directories(test-secure-mem PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_compile_features(test-secure-mem PRIVATE c_std_11)
+apply_test_sanitizers(test-secure-mem)
+
+add_test(NAME signer/secure-mem COMMAND test-secure-mem)
+set_tests_properties(signer/secure-mem PROPERTIES
+    TIMEOUT 30
+    LABELS "signer;secure-mem;security;unit"
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr-signer"
+)
+
+# ==============================================================================
 # All signer tests target (convenience)
 # ==============================================================================
 add_custom_target(signer-tests
-    DEPENDS test-crypto test-identity test-session test-bunker test-dbus test-rate-limiter test-ui test-hsm-provider
+    DEPENDS test-crypto test-identity test-session test-bunker test-dbus test-rate-limiter test-ui test-hsm-provider test-core test-secure-mem
     COMMENT "Building all gnostr-signer tests"
 )
+
+# ==============================================================================
+# Fuzz Testing Targets (optional, requires Clang and -DBUILD_FUZZ_TARGETS=ON)
+# Issue: nostrc-p7f6
+# ==============================================================================
+add_subdirectory(fuzz)

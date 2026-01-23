@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
     <requires lib="gtk" version="4.12" />
-    <requires lib="adwaita" version="1.4" />
+    <requires lib="adwaita" version="1.5" />
 
     <template class="OnboardingAssistant" parent="AdwWindow">
         <property name="title" translatable="yes">Welcome to GNostr Signer</property>
@@ -9,6 +9,10 @@
         <property name="default-height">500</property>
         <property name="modal">true</property>
         <property name="resizable">false</property>
+        <accessibility>
+            <property name="label">Setup assistant window</property>
+            <property name="description">Step-by-step wizard to set up your Nostr identity with GNostr Signer</property>
+        </accessibility>
 
         <child>
             <object class="GtkBox">
@@ -19,6 +23,9 @@
                     <object class="AdwHeaderBar">
                         <property name="show-start-title-buttons">false</property>
                         <property name="show-end-title-buttons">false</property>
+                        <accessibility>
+                            <property name="label">Setup assistant header</property>
+                        </accessibility>
                         <property name="title-widget"><object class="AdwWindowTitle"> <property name="title" translatable="yes">Setup Assistant</property>
                             </object>
                         </property>
@@ -26,6 +33,10 @@
                             <object class="GtkButton" id="btn_skip">
                                 <property name="label" translatable="yes">Skip</property>
                                 <property name="valign">center</property>
+                                <accessibility>
+                                    <property name="label">Skip setup</property>
+                                    <property name="description">Skip the setup wizard and configure later</property>
+                                </accessibility>
                             </object>
                         </child>
                     </object>
@@ -49,6 +60,10 @@
                                 <property name="interactive">false</property>
                                 <property name="allow-scroll-wheel">false</property>
                                 <property name="allow-long-swipes">false</property>
+                                <accessibility>
+                                    <property name="label">Setup wizard pages</property>
+                                    <property name="description">Navigate through setup steps using the Back and Next buttons</property>
+                                </accessibility>
 
                                 <!-- Page 1: Welcome -->
                                 <child>
@@ -59,12 +74,19 @@
                                         <property name="halign">center</property>
                                         <property name="margin-start">24</property>
                                         <property name="margin-end">24</property>
+                                        <accessibility>
+                                            <property name="label">Welcome page - Step 1</property>
+                                            <property name="description">Introduction to GNostr Signer and what it does</property>
+                                        </accessibility>
 
                                         <child>
                                             <object class="GtkImage">
                                                 <property name="icon-name">org.gnostr.Signer</property>
                                                 <property name="pixel-size">96</property>
                                                 <property name="margin-bottom">12</property>
+                                                <accessibility>
+                                                    <property name="label">GNostr Signer application icon</property>
+                                                </accessibility>
                                             </object>
                                         </child>
 
@@ -108,12 +130,19 @@
                                         <property name="halign">center</property>
                                         <property name="margin-start">24</property>
                                         <property name="margin-end">24</property>
+                                        <accessibility>
+                                            <property name="label">Security overview page - Step 2</property>
+                                            <property name="description">Learn how your keys are protected with encrypted storage, session protection, and permission control</property>
+                                        </accessibility>
 
                                         <child>
                                             <object class="GtkImage">
                                                 <property name="icon-name">security-high-symbolic</property>
                                                 <property name="pixel-size">64</property>
                                                 <property name="margin-bottom">12</property>
+                                                <accessibility>
+                                                    <property name="label">Security shield icon</property>
+                                                </accessibility>
                                                 <style>
                                                     <class name="accent" />
                                                 </style>
@@ -236,6 +265,10 @@
                                         <property name="halign">center</property>
                                         <property name="margin-start">24</property>
                                         <property name="margin-end">24</property>
+                                        <accessibility>
+                                            <property name="label">Get started page - Step 3</property>
+                                            <property name="description">Choose whether to create a new Nostr identity or import an existing one</property>
+                                        </accessibility>
 
                                         <child>
                                             <object class="GtkLabel">
@@ -279,6 +312,10 @@
                                                             <object class="GtkCheckButton"
                                                                 id="radio_create">
                                                                 <property name="valign">center</property>
+                                                                <accessibility>
+                                                                    <property name="label">Create new identity</property>
+                                                                    <property name="description">Generate a new Nostr keypair for a fresh identity</property>
+                                                                </accessibility>
                                                             </object>
                                                         </child>
 
@@ -287,6 +324,9 @@
                                                                 <property name="icon-name">list-add-symbolic</property>
                                                                 <property name="pixel-size">32</property>
                                                                 <property name="valign">center</property>
+                                                                <accessibility>
+                                                                    <property name="label">Add new identity icon</property>
+                                                                </accessibility>
                                                             </object>
                                                         </child>
 
@@ -338,6 +378,10 @@
                                                                 id="radio_import">
                                                                 <property name="valign">center</property>
                                                                 <property name="group">radio_create</property>
+                                                                <accessibility>
+                                                                    <property name="label">Import existing identity</property>
+                                                                    <property name="description">Use an existing nsec key, seed phrase, or backup file from another app</property>
+                                                                </accessibility>
                                                             </object>
                                                         </child>
 
@@ -346,6 +390,9 @@
                                                                 <property name="icon-name">document-open-symbolic</property>
                                                                 <property name="pixel-size">32</property>
                                                                 <property name="valign">center</property>
+                                                                <accessibility>
+                                                                    <property name="label">Import identity icon</property>
+                                                                </accessibility>
                                                             </object>
                                                         </child>
 
@@ -392,12 +439,19 @@
                                         <property name="halign">center</property>
                                         <property name="margin-start">24</property>
                                         <property name="margin-end">24</property>
+                                        <accessibility>
+                                            <property name="label">Create profile page</property>
+                                            <property name="description">Set up your new Nostr identity with a name and passphrase</property>
+                                        </accessibility>
 
                                         <child>
                                             <object class="GtkImage">
                                                 <property name="icon-name">avatar-default-symbolic</property>
                                                 <property name="pixel-size">48</property>
                                                 <property name="margin-bottom">8</property>
+                                                <accessibility>
+                                                    <property name="label">Profile avatar icon</property>
+                                                </accessibility>
                                             </object>
                                         </child>
 
@@ -433,6 +487,10 @@
                                                 <child>
                                                     <object class="AdwEntryRow" id="entry_profile_name">
                                                         <property name="title" translatable="yes">Display Name</property>
+                                                        <accessibility>
+                                                            <property name="label">Display name</property>
+                                                            <property name="description">Enter a display name for your Nostr profile. This is optional and can be changed later.</property>
+                                                        </accessibility>
                                                         <style>
                                                             <class name="card" />
                                                         </style>
@@ -444,6 +502,10 @@
                                                     <object class="GtkBox" id="box_passphrase_container">
                                                         <property name="orientation">vertical</property>
                                                         <property name="spacing">4</property>
+                                                        <accessibility>
+                                                            <property name="label">Passphrase entry container</property>
+                                                            <property name="description">Enter a secure passphrase to protect your private key</property>
+                                                        </accessibility>
                                                     </object>
                                                 </child>
 
@@ -453,6 +515,10 @@
                                                         <property name="min-value">0</property>
                                                         <property name="max-value">1</property>
                                                         <property name="value">0</property>
+                                                        <accessibility>
+                                                            <property name="label">Passphrase strength meter</property>
+                                                            <property name="description">Indicates the strength of your passphrase from weak to strong</property>
+                                                        </accessibility>
                                                     </object>
                                                 </child>
 
@@ -473,6 +539,10 @@
                                                         <property name="orientation">vertical</property>
                                                         <property name="spacing">4</property>
                                                         <property name="margin-top">8</property>
+                                                        <accessibility>
+                                                            <property name="label">Confirm passphrase container</property>
+                                                            <property name="description">Re-enter your passphrase to confirm</property>
+                                                        </accessibility>
                                                     </object>
                                                 </child>
 
@@ -520,14 +590,24 @@
                                                         <property name="spacing">8</property>
                                                         <property name="halign">center</property>
                                                         <property name="margin-top">12</property>
+                                                        <accessibility>
+                                                            <property name="label">Status indicator</property>
+                                                            <relation name="live">polite</relation>
+                                                        </accessibility>
                                                         <child>
                                                             <object class="GtkSpinner" id="spinner_status">
                                                                 <property name="spinning">false</property>
+                                                                <accessibility>
+                                                                    <property name="label">Loading indicator</property>
+                                                                </accessibility>
                                                             </object>
                                                         </child>
                                                         <child>
                                                             <object class="GtkLabel" id="lbl_status">
                                                                 <property name="label"></property>
+                                                                <accessibility>
+                                                                    <property name="label">Status message</property>
+                                                                </accessibility>
                                                             </object>
                                                         </child>
                                                     </object>
@@ -546,12 +626,19 @@
                                         <property name="halign">center</property>
                                         <property name="margin-start">24</property>
                                         <property name="margin-end">24</property>
+                                        <accessibility>
+                                            <property name="label">Import key page</property>
+                                            <property name="description">Import your existing Nostr key using nsec, NIP-49 encrypted backup, or mnemonic phrase</property>
+                                        </accessibility>
 
                                         <child>
                                             <object class="GtkImage">
                                                 <property name="icon-name">document-open-symbolic</property>
                                                 <property name="pixel-size">48</property>
                                                 <property name="margin-bottom">4</property>
+                                                <accessibility>
+                                                    <property name="label">Import key icon</property>
+                                                </accessibility>
                                             </object>
                                         </child>
 
@@ -584,6 +671,10 @@
                                                                 id="radio_import_nsec">
                                                                 <property name="active">true</property>
                                                                 <property name="label" translatable="yes">nsec / NIP-49</property>
+                                                                <accessibility>
+                                                                    <property name="label">Import nsec or NIP-49 encrypted backup</property>
+                                                                    <property name="description">Import using an nsec1 private key or ncryptsec1 encrypted backup</property>
+                                                                </accessibility>
                                                             </object>
                                                         </child>
 
@@ -592,6 +683,10 @@
                                                                 id="radio_import_seed">
                                                                 <property name="group">radio_import_nsec</property>
                                                                 <property name="label" translatable="yes">Mnemonic</property>
+                                                                <accessibility>
+                                                                    <property name="label">Import mnemonic seed phrase</property>
+                                                                    <property name="description">Import using a 12 or 24 word BIP-39 recovery phrase</property>
+                                                                </accessibility>
                                                             </object>
                                                         </child>
 
@@ -601,6 +696,10 @@
                                                                 <property name="group">radio_import_nsec</property>
                                                                 <property name="label" translatable="yes">File</property>
                                                                 <property name="sensitive">false</property>
+                                                                <accessibility>
+                                                                    <property name="label">Import from file</property>
+                                                                    <property name="description">Import from a backup file. This feature is coming soon.</property>
+                                                                </accessibility>
                                                             </object>
                                                         </child>
                                                     </object>
@@ -622,6 +721,10 @@
                                                                         <property name="top-margin">8</property>
                                                                         <property name="bottom-margin">8</property>
                                                                         <property name="monospace">true</property>
+                                                                        <accessibility>
+                                                                            <property name="label">Key data input</property>
+                                                                            <property name="description">Enter your nsec1, ncryptsec1 encrypted backup, or mnemonic phrase here</property>
+                                                                        </accessibility>
                                                                         <style>
                                                                             <class name="view" />
                                                                         </style>
@@ -667,6 +770,10 @@
                                                                         </items>
                                                                     </object>
                                                                 </property>
+                                                                <accessibility>
+                                                                    <property name="label">Word count selector</property>
+                                                                    <property name="description">Select whether your seed phrase has 12 or 24 words</property>
+                                                                </accessibility>
                                                             </object>
                                                         </child>
                                                     </object>
@@ -678,6 +785,10 @@
                                                         <property name="orientation">vertical</property>
                                                         <property name="spacing">4</property>
                                                         <property name="margin-top">8</property>
+                                                        <accessibility>
+                                                            <property name="label">Decryption passphrase container</property>
+                                                            <property name="description">Enter the passphrase used to decrypt your NIP-49 encrypted backup</property>
+                                                        </accessibility>
                                                     </object>
                                                 </child>
 
@@ -707,12 +818,19 @@
                                         <property name="halign">center</property>
                                         <property name="margin-start">24</property>
                                         <property name="margin-end">24</property>
+                                        <accessibility>
+                                            <property name="label">Recovery phrase page</property>
+                                            <property name="description">Your secret recovery phrase. Write down these words in order and keep them safe. This is the only way to recover your key.</property>
+                                        </accessibility>
 
                                         <child>
                                             <object class="GtkImage">
                                                 <property name="icon-name">dialog-warning-symbolic</property>
                                                 <property name="pixel-size">48</property>
                                                 <property name="margin-bottom">8</property>
+                                                <accessibility>
+                                                    <property name="label">Warning icon</property>
+                                                </accessibility>
                                                 <style>
                                                     <class name="warning" />
                                                 </style>
@@ -772,6 +890,10 @@
                                                                         <property name="min-children-per-line">3</property>
                                                                         <property name="row-spacing">8</property>
                                                                         <property name="column-spacing">12</property>
+                                                                        <accessibility>
+                                                                            <property name="label">Recovery phrase words</property>
+                                                                            <property name="description">Your 12 or 24 word recovery phrase. Write these down in order.</property>
+                                                                        </accessibility>
                                                                     </object>
                                                                 </child>
                                                             </object>
@@ -783,6 +905,10 @@
                                                 <child>
                                                     <object class="GtkButton" id="btn_copy_seed">
                                                         <property name="halign">center</property>
+                                                        <accessibility>
+                                                            <property name="label">Copy recovery phrase to clipboard</property>
+                                                            <property name="description">Copy the recovery phrase to your clipboard. Be careful when pasting as it contains sensitive information.</property>
+                                                        </accessibility>
                                                         <child>
                                                             <object class="GtkBox">
                                                                 <property name="orientation">horizontal</property>
@@ -806,6 +932,10 @@
                                                     <object class="AdwBanner" id="seed_warning_banner">
                                                         <property name="title" translatable="yes">Never share your recovery phrase with anyone. Anyone with these words can access your identity.</property>
                                                         <property name="revealed">true</property>
+                                                        <accessibility>
+                                                            <property name="label">Security warning</property>
+                                                            <relation name="live">assertive</relation>
+                                                        </accessibility>
                                                         <style>
                                                             <class name="error" />
                                                         </style>
@@ -818,6 +948,10 @@
                                                         <property name="label" translatable="yes">I have written down my recovery phrase and stored it safely</property>
                                                         <property name="halign">center</property>
                                                         <property name="margin-top">8</property>
+                                                        <accessibility>
+                                                            <property name="label">Confirm recovery phrase saved</property>
+                                                            <property name="description">Check this box to confirm you have written down your recovery phrase and stored it in a safe place</property>
+                                                        </accessibility>
                                                     </object>
                                                 </child>
                                             </object>
@@ -834,12 +968,19 @@
                                         <property name="halign">center</property>
                                         <property name="margin-start">24</property>
                                         <property name="margin-end">24</property>
+                                        <accessibility>
+                                            <property name="label">Backup reminder page</property>
+                                            <property name="description">Important reminder to back up your private key. Your key is the only way to access your Nostr identity.</property>
+                                        </accessibility>
 
                                         <child>
                                             <object class="GtkImage">
                                                 <property name="icon-name">document-save-symbolic</property>
                                                 <property name="pixel-size">64</property>
                                                 <property name="margin-bottom">8</property>
+                                                <accessibility>
+                                                    <property name="label">Backup icon</property>
+                                                </accessibility>
                                                 <style>
                                                     <class name="warning" />
                                                 </style>
@@ -890,6 +1031,10 @@
                                                             <object class="GtkCheckButton"
                                                                 id="backup_understood">
                                                                 <property name="label" translatable="yes">I understand and will back up my key</property>
+                                                                <accessibility>
+                                                                    <property name="label">Confirm backup understanding</property>
+                                                                    <property name="description">Check this box to confirm you understand the importance of backing up your key</property>
+                                                                </accessibility>
                                                             </object>
                                                         </child>
                                                     </object>
@@ -908,12 +1053,19 @@
                                         <property name="halign">center</property>
                                         <property name="margin-start">24</property>
                                         <property name="margin-end">24</property>
+                                        <accessibility>
+                                            <property name="label">Setup complete page</property>
+                                            <property name="description">Congratulations! Your Nostr identity is set up and ready to use.</property>
+                                        </accessibility>
 
                                         <child>
                                             <object class="GtkImage">
                                                 <property name="icon-name">emblem-ok-symbolic</property>
                                                 <property name="pixel-size">72</property>
                                                 <property name="margin-bottom">12</property>
+                                                <accessibility>
+                                                    <property name="label">Success checkmark icon</property>
+                                                </accessibility>
                                                 <style>
                                                     <class name="success" />
                                                 </style>
@@ -979,6 +1131,10 @@
                                 <property name="carousel">carousel</property>
                                 <property name="halign">center</property>
                                 <property name="margin-top">8</property>
+                                <accessibility>
+                                    <property name="label">Page indicator</property>
+                                    <property name="description">Shows which step you are on in the setup wizard</property>
+                                </accessibility>
                             </object>
                         </child>
 
@@ -995,6 +1151,10 @@
                                     <object class="GtkButton" id="btn_back">
                                         <property name="label" translatable="yes">Back</property>
                                         <property name="width-request">100</property>
+                                        <accessibility>
+                                            <property name="label">Go back</property>
+                                            <property name="description">Return to the previous step in the setup wizard</property>
+                                        </accessibility>
                                     </object>
                                 </child>
 
@@ -1002,6 +1162,10 @@
                                     <object class="GtkButton" id="btn_next">
                                         <property name="label" translatable="yes">Next</property>
                                         <property name="width-request">100</property>
+                                        <accessibility>
+                                            <property name="label">Continue</property>
+                                            <property name="description">Continue to the next step in the setup wizard</property>
+                                        </accessibility>
                                         <style>
                                             <class name="suggested-action" />
                                         </style>

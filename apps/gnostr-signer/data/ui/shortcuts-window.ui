@@ -83,6 +83,66 @@
                 <property name="accelerator">Escape</property>
               </object>
             </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Submit Form / Activate Default</property>
+                <property name="accelerator">Return</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <!-- Navigation Group -->
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title" translatable="yes">Navigation</property>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Move to Next Element</property>
+                <property name="accelerator">Tab</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Move to Previous Element</property>
+                <property name="accelerator">&lt;Shift&gt;Tab</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Navigate Lists</property>
+                <property name="accelerator">Up Down</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Next / Previous Page</property>
+                <property name="accelerator">&lt;Primary&gt;Page_Down &lt;Primary&gt;Page_Up</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Activate Focused Button</property>
+                <property name="accelerator">Return space</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <!-- Approval Dialog Group -->
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title" translatable="yes">Approval Dialog</property>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Approve Request</property>
+                <property name="accelerator">&lt;Primary&gt;a</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Deny Request</property>
+                <property name="accelerator">&lt;Primary&gt;d</property>
+              </object>
+            </child>
           </object>
         </child>
       </object>

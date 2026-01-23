@@ -1,0 +1,38 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Reload D-Bus to recognize new service file
+        if command -v dbus-send >/dev/null 2>&1; then
+            dbus-send --session --type=method_call \
+                --dest=org.freedesktop.DBus \
+                /org/freedesktop/DBus \
+                org.freedesktop.DBus.ReloadConfig 2>/dev/null || true
+        fi
+
+        # Note: systemd user units are not enabled by default
+        # Users should run: systemctl --user enable --now gnostr-signer-daemon
+        echo ""
+        echo "GNostr Signer daemon installed."
+        echo ""
+        echo "To enable automatic startup for your user session, run:"
+        echo "  systemctl --user enable --now gnostr-signer-daemon"
+        echo ""
+        echo "The daemon will also be activated automatically via D-Bus when"
+        echo "applications request the org.nostr.Signer service."
+        echo ""
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

@@ -10,6 +10,7 @@
 #include "sheets/sheet-relay-config.h"
 #include "sheets/sheet-profile-editor.h"
 #include "sheets/sheet-key-rotation.h"
+#include "sheets/sheet-social-recovery.h"
 #include "../secret_store.h"
 #include "../profile_store.h"
 #include "../settings_manager.h"
@@ -27,9 +28,12 @@ struct _PageSettings {
   AdwPreferencesPage parent_instance;
   /* Template children */
   AdwComboRow *combo_theme;
+  AdwSwitchRow *switch_force_high_contrast;
+  AdwComboRow *combo_high_contrast_variant;
   GtkButton *btn_add_account;
   GtkButton *btn_select_account;
   GtkButton *btn_backup_keys;
+  GtkButton *btn_social_recovery;
   GtkButton *btn_edit_profile;
   GtkButton *btn_key_rotation;
   GtkButton *btn_orbot_setup;
@@ -47,6 +51,7 @@ struct _PageSettings {
   GtkButton *btn_manage_sessions;
   /* Internal state */
   gboolean updating_theme; /* Guard against recursive updates */
+  gboolean updating_high_contrast; /* Guard against recursive updates */
   gboolean updating_lock_timeout; /* Guard against recursive updates */
   gboolean updating_client_session_timeout; /* Guard against recursive updates */
   GSettings *settings; /* GSettings reference for session settings */
@@ -69,7 +74,7 @@ static void on_theme_combo_changed(GObject *obj, GParamSpec *pspec, gpointer use
   AdwComboRow *combo = ADW_COMBO_ROW(obj);
   guint selected = adw_combo_row_get_selected(combo);
 
-  /* Map: 0 = System, 1 = Light, 2 = Dark */
+  /* Map: 0 = System, 1 = Light, 2 = Dark, 3 = High Contrast */
   SettingsTheme theme;
   switch (selected) {
     case 1:
@@ -77,6 +82,9 @@ static void on_theme_combo_changed(GObject *obj, GParamSpec *pspec, gpointer use
       break;
     case 2:
       theme = SETTINGS_THEME_DARK;
+      break;
+    case 3:
+      theme = SETTINGS_THEME_HIGH_CONTRAST;
       break;
     default:
       theme = SETTINGS_THEME_SYSTEM;
@@ -86,6 +94,48 @@ static void on_theme_combo_changed(GObject *obj, GParamSpec *pspec, gpointer use
   SettingsManager *sm = settings_manager_get_default();
   settings_manager_set_theme(sm, theme);
   g_message("Theme preference changed to: %u", selected);
+}
+
+/* Force high contrast switch handler */
+static void on_force_high_contrast_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  PageSettings *self = user_data;
+  if (!self || self->updating_high_contrast) return;
+
+  AdwSwitchRow *row = ADW_SWITCH_ROW(obj);
+  gboolean active = adw_switch_row_get_active(row);
+
+  SettingsManager *sm = settings_manager_get_default();
+  settings_manager_set_force_high_contrast(sm, active);
+  g_message("Force high contrast: %s", active ? "enabled" : "disabled");
+}
+
+/* High contrast variant combo handler */
+static void on_high_contrast_variant_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  PageSettings *self = user_data;
+  if (!self || self->updating_high_contrast) return;
+
+  AdwComboRow *combo = ADW_COMBO_ROW(obj);
+  guint selected = adw_combo_row_get_selected(combo);
+
+  /* Map: 0 = Black on White (default), 1 = White on Black (inverted), 2 = Yellow on Black */
+  SettingsHighContrastVariant variant;
+  switch (selected) {
+    case 1:
+      variant = SETTINGS_HC_INVERTED;
+      break;
+    case 2:
+      variant = SETTINGS_HC_YELLOW_ON_BLACK;
+      break;
+    default:
+      variant = SETTINGS_HC_DEFAULT;
+      break;
+  }
+
+  SettingsManager *sm = settings_manager_get_default();
+  settings_manager_set_high_contrast_variant(sm, variant);
+  g_message("High contrast variant changed to: %u", selected);
 }
 
 /* Handlers */
@@ -204,6 +254,35 @@ static void on_key_rotation(GtkButton *b, gpointer user_data){
   SheetKeyRotation *dlg = sheet_key_rotation_new();
   sheet_key_rotation_set_account(dlg, npub);
   sheet_key_rotation_set_on_complete(dlg, on_key_rotation_complete, NULL);
+  g_free(npub);
+
+  adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
+}
+
+/* Social recovery completion callback */
+static void on_social_recovery_complete(const gchar *npub, gpointer ud) {
+  (void)ud;
+  g_message("Social recovery action complete for %s", npub);
+}
+
+static void on_social_recovery(GtkButton *b, gpointer user_data){
+  (void)b; PageSettings *self = user_data; if (!self) return;
+
+  /* Get the currently active npub */
+  gchar *npub = NULL;
+  SecretStoreResult rc = secret_store_get_public_key(NULL, &npub);
+
+  if (rc != SECRET_STORE_OK || !npub || !*npub) {
+    GtkAlertDialog *ad = gtk_alert_dialog_new("No account selected. Please select or add an account first.");
+    gtk_alert_dialog_show(ad, get_parent_window(GTK_WIDGET(self)));
+    g_object_unref(ad);
+    return;
+  }
+
+  /* Create and present the social recovery dialog */
+  SheetSocialRecovery *dlg = sheet_social_recovery_new();
+  sheet_social_recovery_set_account(dlg, npub);
+  sheet_social_recovery_set_on_complete(dlg, on_social_recovery_complete, NULL);
   g_free(npub);
 
   adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
@@ -389,9 +468,12 @@ static void page_settings_class_init(PageSettingsClass *klass) {
 
   gtk_widget_class_set_template_from_resource(wc, APP_RESOURCE_PATH "/ui/page-settings.ui");
   gtk_widget_class_bind_template_child(wc, PageSettings, combo_theme);
+  gtk_widget_class_bind_template_child(wc, PageSettings, switch_force_high_contrast);
+  gtk_widget_class_bind_template_child(wc, PageSettings, combo_high_contrast_variant);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_add_account);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_select_account);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_backup_keys);
+  gtk_widget_class_bind_template_child(wc, PageSettings, btn_social_recovery);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_edit_profile);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_key_rotation);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_orbot_setup);
@@ -418,11 +500,10 @@ static void page_settings_init(PageSettings *self) {
 
   /* Initialize theme combo with current setting (settings already loaded, fast) */
   self->updating_theme = TRUE;
+  self->updating_high_contrast = TRUE;
   SettingsManager *sm = settings_manager_get_default();
   SettingsTheme theme = settings_manager_get_theme(sm);
-  /* Map SettingsTheme to combo index: SYSTEM=0, LIGHT=1, DARK=2
-   * Note: HIGH_CONTRAST falls back to SYSTEM since the combo only has 3 options.
-   * High contrast is still applied via AdwStyleManager in main_app.c */
+  /* Map SettingsTheme to combo index: SYSTEM=0, LIGHT=1, DARK=2, HIGH_CONTRAST=3 */
   guint theme_idx;
   switch (theme) {
     case SETTINGS_THEME_LIGHT:
@@ -432,8 +513,7 @@ static void page_settings_init(PageSettings *self) {
       theme_idx = 2;
       break;
     case SETTINGS_THEME_HIGH_CONTRAST:
-      /* High contrast: fall back to System in UI (actual theme still applied) */
-      theme_idx = 0;
+      theme_idx = 3;
       break;
     case SETTINGS_THEME_SYSTEM:
     default:
@@ -441,7 +521,30 @@ static void page_settings_init(PageSettings *self) {
       break;
   }
   adw_combo_row_set_selected(self->combo_theme, theme_idx);
+
+  /* Initialize force high contrast switch */
+  gboolean force_hc = settings_manager_get_force_high_contrast(sm);
+  adw_switch_row_set_active(self->switch_force_high_contrast, force_hc);
+
+  /* Initialize high contrast variant combo */
+  SettingsHighContrastVariant hc_variant = settings_manager_get_high_contrast_variant(sm);
+  guint hc_variant_idx;
+  switch (hc_variant) {
+    case SETTINGS_HC_INVERTED:
+      hc_variant_idx = 1;
+      break;
+    case SETTINGS_HC_YELLOW_ON_BLACK:
+      hc_variant_idx = 2;
+      break;
+    case SETTINGS_HC_DEFAULT:
+    default:
+      hc_variant_idx = 0;
+      break;
+  }
+  adw_combo_row_set_selected(self->combo_high_contrast_variant, hc_variant_idx);
+
   self->updating_theme = FALSE;
+  self->updating_high_contrast = FALSE;
 
   /* Initialize session settings from GSettings */
   self->updating_lock_timeout = TRUE;
@@ -466,6 +569,8 @@ static void page_settings_init(PageSettings *self) {
 
   /* Connect theme combo change handler */
   g_signal_connect(self->combo_theme, "notify::selected", G_CALLBACK(on_theme_combo_changed), self);
+  g_signal_connect(self->switch_force_high_contrast, "notify::active", G_CALLBACK(on_force_high_contrast_changed), self);
+  g_signal_connect(self->combo_high_contrast_variant, "notify::selected", G_CALLBACK(on_high_contrast_variant_changed), self);
 
   /* Connect session settings handlers */
   g_signal_connect(self->combo_lock_timeout, "notify::selected", G_CALLBACK(on_lock_timeout_changed), self);
@@ -477,6 +582,7 @@ static void page_settings_init(PageSettings *self) {
   g_signal_connect(self->btn_add_account, "clicked", G_CALLBACK(on_add_account), self);
   g_signal_connect(self->btn_select_account, "clicked", G_CALLBACK(on_select_account), self);
   g_signal_connect(self->btn_backup_keys, "clicked", G_CALLBACK(on_backup_keys), self);
+  g_signal_connect(self->btn_social_recovery, "clicked", G_CALLBACK(on_social_recovery), self);
   g_signal_connect(self->btn_edit_profile, "clicked", G_CALLBACK(on_edit_profile), self);
   g_signal_connect(self->btn_key_rotation, "clicked", G_CALLBACK(on_key_rotation), self);
   g_signal_connect(self->btn_orbot_setup, "clicked", G_CALLBACK(on_orbot_setup), self);

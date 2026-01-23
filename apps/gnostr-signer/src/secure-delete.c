@@ -932,3 +932,578 @@ GnDeleteResult gn_secure_delete_all_data(void) {
 
   return result;
 }
+
+/* ============================================================
+ * Verification
+ * ============================================================ */
+
+gboolean gn_secure_delete_verify(const char *filepath) {
+  if (filepath == NULL || *filepath == '\0') {
+    return FALSE;
+  }
+
+  /* Check if file still exists */
+  if (g_file_test(filepath, G_FILE_TEST_EXISTS)) {
+    LOG_DEBUG("Verification failed: file still exists: %s", filepath);
+    return FALSE;
+  }
+
+  /* Try to open - should fail */
+  int fd = open(filepath, O_RDONLY);
+  if (fd >= 0) {
+    close(fd);
+    LOG_DEBUG("Verification failed: file still accessible: %s", filepath);
+    return FALSE;
+  }
+
+  /* Verify parent directory still exists */
+  gchar *parent = g_path_get_dirname(filepath);
+  gboolean parent_exists = g_file_test(parent, G_FILE_TEST_IS_DIR);
+  g_free(parent);
+
+  if (!parent_exists) {
+    LOG_DEBUG("Verification warning: parent directory also removed: %s", filepath);
+    /* This is still considered successful deletion */
+  }
+
+  LOG_DEBUG("Verification successful: file confirmed deleted: %s", filepath);
+  return TRUE;
+}
+
+/* ============================================================
+ * OS-Specific Secure Deletion Tools
+ * ============================================================ */
+
+GnOsSecureDeleteSupport gn_os_secure_delete_available(void) {
+  GnOsSecureDeleteSupport support = GN_OS_DELETE_NONE;
+
+#ifdef __linux__
+  /* Check for shred command */
+  if (g_find_program_in_path("shred") != NULL) {
+    support |= GN_OS_DELETE_SHRED;
+    LOG_DEBUG("OS tool available: shred");
+  }
+
+  /* Check for wipe command */
+  gchar *wipe_path = g_find_program_in_path("wipe");
+  if (wipe_path != NULL) {
+    support |= GN_OS_DELETE_WIPE;
+    LOG_DEBUG("OS tool available: wipe");
+    g_free(wipe_path);
+  }
+#endif
+
+#ifdef __APPLE__
+  /* macOS rm supports -P flag for secure delete */
+  support |= GN_OS_DELETE_RM_P;
+  LOG_DEBUG("OS tool available: rm -P");
+
+  /* Check for srm (deprecated but may be installed) */
+  gchar *srm_path = g_find_program_in_path("srm");
+  if (srm_path != NULL) {
+    support |= GN_OS_DELETE_SRM;
+    LOG_DEBUG("OS tool available: srm");
+    g_free(srm_path);
+  }
+#endif
+
+  return support;
+}
+
+/* Internal: Execute OS secure delete command */
+static GnDeleteResult execute_os_secure_delete(const char *filepath,
+                                                 GnOsSecureDeleteSupport tool,
+                                                 int passes) {
+  gchar *cmd = NULL;
+  GError *error = NULL;
+  gint exit_status = 0;
+
+  switch (tool) {
+#ifdef __linux__
+    case GN_OS_DELETE_SHRED: {
+      /* shred -n PASSES -z -u FILE
+       * -n: number of overwrite passes
+       * -z: add final zero pass
+       * -u: deallocate and remove file
+       */
+      cmd = g_strdup_printf("shred -n %d -z -u '%s'", passes, filepath);
+      break;
+    }
+
+    case GN_OS_DELETE_WIPE: {
+      /* wipe -f -q -Q PASSES FILE */
+      cmd = g_strdup_printf("wipe -f -q -Q %d '%s'", passes, filepath);
+      break;
+    }
+#endif
+
+#ifdef __APPLE__
+    case GN_OS_DELETE_SRM: {
+      /* srm -sz FILE (simple mode with zero) */
+      cmd = g_strdup_printf("srm -sz '%s'", filepath);
+      break;
+    }
+
+    case GN_OS_DELETE_RM_P: {
+      /* rm -P FILE (3-pass overwrite before unlink) */
+      cmd = g_strdup_printf("rm -P '%s'", filepath);
+      break;
+    }
+#endif
+
+    default:
+      return GN_DELETE_ERR_INVALID;
+  }
+
+  if (cmd == NULL) {
+    return GN_DELETE_ERR_INVALID;
+  }
+
+  LOG_DEBUG("Executing OS secure delete: %s", cmd);
+
+  gboolean ok = g_spawn_command_line_sync(cmd, NULL, NULL, &exit_status, &error);
+
+  g_free(cmd);
+
+  if (!ok) {
+    LOG_ERROR("OS secure delete failed: %s", error ? error->message : "unknown");
+    g_clear_error(&error);
+    return GN_DELETE_ERR_IO;
+  }
+
+  if (exit_status != 0) {
+    LOG_ERROR("OS secure delete command returned %d", exit_status);
+    return GN_DELETE_ERR_IO;
+  }
+
+  /* Verify deletion */
+  if (!gn_secure_delete_verify(filepath)) {
+    LOG_ERROR("OS secure delete verification failed for %s", filepath);
+    return GN_DELETE_ERR_IO;
+  }
+
+  LOG_INFO("OS secure delete successful: %s", filepath);
+  return GN_DELETE_OK;
+}
+
+GnDeleteResult gn_secure_delete_with_os_tools(const char *filepath,
+                                               const GnDeleteOptions *opts) {
+  if (filepath == NULL || *filepath == '\0') {
+    return GN_DELETE_ERR_INVALID;
+  }
+
+  /* Use default options if not provided */
+  GnDeleteOptions default_opts = GN_DELETE_OPTIONS_DEFAULT;
+  if (opts == NULL) {
+    opts = &default_opts;
+  }
+
+  GnOsSecureDeleteSupport available = gn_os_secure_delete_available();
+
+  /* Try OS tools in order of preference */
+#ifdef __linux__
+  if (available & GN_OS_DELETE_SHRED) {
+    GnDeleteResult r = execute_os_secure_delete(filepath, GN_OS_DELETE_SHRED, opts->passes);
+    if (r == GN_DELETE_OK) {
+      return r;
+    }
+    LOG_DEBUG("shred failed, trying fallback");
+  }
+
+  if (available & GN_OS_DELETE_WIPE) {
+    GnDeleteResult r = execute_os_secure_delete(filepath, GN_OS_DELETE_WIPE, opts->passes);
+    if (r == GN_DELETE_OK) {
+      return r;
+    }
+    LOG_DEBUG("wipe failed, trying fallback");
+  }
+#endif
+
+#ifdef __APPLE__
+  if (available & GN_OS_DELETE_SRM) {
+    GnDeleteResult r = execute_os_secure_delete(filepath, GN_OS_DELETE_SRM, opts->passes);
+    if (r == GN_DELETE_OK) {
+      return r;
+    }
+    LOG_DEBUG("srm failed, trying fallback");
+  }
+
+  if (available & GN_OS_DELETE_RM_P) {
+    GnDeleteResult r = execute_os_secure_delete(filepath, GN_OS_DELETE_RM_P, opts->passes);
+    if (r == GN_DELETE_OK) {
+      return r;
+    }
+    LOG_DEBUG("rm -P failed, trying fallback");
+  }
+#endif
+
+  /* Fallback to our implementation */
+  LOG_DEBUG("No OS tools succeeded, using built-in secure delete");
+  return gn_secure_delete_file_opts(filepath, opts);
+}
+
+/* ============================================================
+ * Batch Operations
+ * ============================================================ */
+
+guint gn_secure_delete_files(const char **files,
+                              const GnDeleteOptions *opts,
+                              GnSecureDeleteCallback callback,
+                              gpointer user_data) {
+  if (files == NULL) {
+    return 0;
+  }
+
+  /* Count files */
+  guint total = 0;
+  for (const char **p = files; *p != NULL; p++) {
+    total++;
+  }
+
+  if (total == 0) {
+    return 0;
+  }
+
+  guint deleted = 0;
+  guint current = 0;
+
+  for (const char **p = files; *p != NULL; p++) {
+    current++;
+    const char *filepath = *p;
+
+    GnDeleteResult result = gn_secure_delete_with_os_tools(filepath, opts);
+
+    if (result == GN_DELETE_OK) {
+      deleted++;
+    }
+
+    /* Call progress callback */
+    if (callback) {
+      gboolean cont = callback(filepath, current, total, result, user_data);
+      if (!cont) {
+        LOG_INFO("Batch deletion aborted by callback at file %u/%u", current, total);
+        break;
+      }
+    }
+  }
+
+  LOG_INFO("Batch deletion complete: %u/%u files deleted", deleted, total);
+  return deleted;
+}
+
+guint gn_secure_delete_pattern(const char *dirpath,
+                                const char *pattern,
+                                const GnDeleteOptions *opts,
+                                GnSecureDeleteCallback callback,
+                                gpointer user_data) {
+  if (dirpath == NULL || pattern == NULL) {
+    return 0;
+  }
+
+  LOG_INFO("Secure delete pattern: %s in %s", pattern, dirpath);
+
+  GDir *dir = g_dir_open(dirpath, 0, NULL);
+  if (dir == NULL) {
+    LOG_ERROR("Cannot open directory: %s", dirpath);
+    return 0;
+  }
+
+  /* Collect matching files */
+  GPtrArray *matches = g_ptr_array_new_with_free_func(g_free);
+  const gchar *entry;
+
+  while ((entry = g_dir_read_name(dir)) != NULL) {
+    if (g_pattern_match_simple(pattern, entry)) {
+      gchar *full_path = g_build_filename(dirpath, entry, NULL);
+
+      /* Only include regular files */
+      if (g_file_test(full_path, G_FILE_TEST_IS_REGULAR)) {
+        g_ptr_array_add(matches, full_path);
+      } else {
+        g_free(full_path);
+      }
+    }
+  }
+
+  g_dir_close(dir);
+
+  if (matches->len == 0) {
+    g_ptr_array_free(matches, TRUE);
+    LOG_DEBUG("No files matched pattern: %s", pattern);
+    return 0;
+  }
+
+  /* Add NULL terminator */
+  g_ptr_array_add(matches, NULL);
+
+  /* Delete the matched files */
+  guint deleted = gn_secure_delete_files(
+    (const char **)matches->pdata,
+    opts,
+    callback,
+    user_data
+  );
+
+  g_ptr_array_free(matches, TRUE);
+
+  return deleted;
+}
+
+/* ============================================================
+ * Sensitive Data Category Deletion
+ * ============================================================ */
+
+GnDeleteResult gn_secure_delete_key_files(const char *npub) {
+  if (npub == NULL || *npub == '\0') {
+    return GN_DELETE_ERR_INVALID;
+  }
+
+  LOG_INFO("Secure delete key files for: %.16s...", npub);
+
+  const char *config_dir = g_get_user_config_dir();
+  const char *cache_dir = g_get_user_cache_dir();
+
+  GnDeleteResult result = GN_DELETE_OK;
+  GnDeleteOptions opts = GN_DELETE_OPTIONS_DEFAULT;
+  opts.passes = GN_DELETE_PASSES_PARANOID;  /* Use paranoid mode for key files */
+
+  /* Delete key backup files */
+  gchar *backups_dir = g_build_filename(config_dir, "gnostr-signer", "backups", NULL);
+  if (g_file_test(backups_dir, G_FILE_TEST_IS_DIR)) {
+    gchar *pattern = g_strdup_printf("%s*", npub);
+    guint deleted = gn_secure_delete_pattern(backups_dir, pattern, &opts, NULL, NULL);
+    LOG_DEBUG("Deleted %u key backup files", deleted);
+    g_free(pattern);
+  }
+  g_free(backups_dir);
+
+  /* Delete encrypted exports */
+  gchar *exports_dir = g_build_filename(config_dir, "gnostr-signer", "exports", NULL);
+  if (g_file_test(exports_dir, G_FILE_TEST_IS_DIR)) {
+    gchar *pattern = g_strdup_printf("%s*.ncryptsec", npub);
+    guint deleted = gn_secure_delete_pattern(exports_dir, pattern, &opts, NULL, NULL);
+    LOG_DEBUG("Deleted %u encrypted export files", deleted);
+    g_free(pattern);
+  }
+  g_free(exports_dir);
+
+  /* Delete key cache */
+  gchar *key_cache = g_build_filename(cache_dir, "gnostr-signer", "keys", npub, NULL);
+  if (g_file_test(key_cache, G_FILE_TEST_IS_DIR)) {
+    GnDeleteResult r = gn_secure_delete_dir_opts(key_cache, &opts);
+    if (r != GN_DELETE_OK && result == GN_DELETE_OK) {
+      result = r;
+    }
+  }
+  g_free(key_cache);
+
+  return result;
+}
+
+guint gn_secure_delete_backup_files(guint max_age_days) {
+  LOG_INFO("Secure delete backup files (max_age=%u days)", max_age_days);
+
+  const char *config_dir = g_get_user_config_dir();
+  gchar *backups_dir = g_build_filename(config_dir, "gnostr-signer", "backups", NULL);
+
+  if (!g_file_test(backups_dir, G_FILE_TEST_IS_DIR)) {
+    g_free(backups_dir);
+    return 0;
+  }
+
+  GDir *dir = g_dir_open(backups_dir, 0, NULL);
+  if (dir == NULL) {
+    g_free(backups_dir);
+    return 0;
+  }
+
+  guint deleted = 0;
+  time_t cutoff_time = 0;
+
+  if (max_age_days > 0) {
+    cutoff_time = time(NULL) - ((time_t)max_age_days * 24 * 60 * 60);
+  }
+
+  const gchar *entry;
+  GnDeleteOptions opts = GN_DELETE_OPTIONS_DEFAULT;
+  opts.passes = GN_DELETE_PASSES_PARANOID;
+
+  while ((entry = g_dir_read_name(dir)) != NULL) {
+    gchar *full_path = g_build_filename(backups_dir, entry, NULL);
+
+    /* Check if it's a regular file */
+    struct stat st;
+    if (stat(full_path, &st) == 0 && S_ISREG(st.st_mode)) {
+      gboolean should_delete = FALSE;
+
+      if (max_age_days == 0) {
+        /* Delete all backups */
+        should_delete = TRUE;
+      } else if (st.st_mtime < cutoff_time) {
+        /* Delete old backups */
+        should_delete = TRUE;
+      }
+
+      if (should_delete) {
+        GnDeleteResult r = gn_secure_delete_with_os_tools(full_path, &opts);
+        if (r == GN_DELETE_OK) {
+          deleted++;
+        }
+      }
+    }
+
+    g_free(full_path);
+  }
+
+  g_dir_close(dir);
+  g_free(backups_dir);
+
+  LOG_INFO("Deleted %u backup files", deleted);
+  return deleted;
+}
+
+GnDeleteResult gn_secure_delete_session_data(void) {
+  LOG_INFO("Secure delete session data");
+
+  const char *cache_dir = g_get_user_cache_dir();
+  const char *data_dir = g_get_user_data_dir();
+
+  GnDeleteResult result = GN_DELETE_OK;
+  GnDeleteOptions opts = GN_DELETE_OPTIONS_DEFAULT;
+
+  /* Delete session cache */
+  gchar *session_cache = g_build_filename(cache_dir, "gnostr-signer", "sessions", NULL);
+  if (g_file_test(session_cache, G_FILE_TEST_IS_DIR)) {
+    GnDeleteResult r = gn_secure_delete_dir_opts(session_cache, &opts);
+    if (r != GN_DELETE_OK && result == GN_DELETE_OK) {
+      result = r;
+    }
+  }
+  g_free(session_cache);
+
+  /* Delete client sessions */
+  gchar *client_sessions = g_build_filename(data_dir, "gnostr-signer", "client_sessions", NULL);
+  if (g_file_test(client_sessions, G_FILE_TEST_IS_DIR)) {
+    GnDeleteResult r = gn_secure_delete_dir_opts(client_sessions, &opts);
+    if (r != GN_DELETE_OK && result == GN_DELETE_OK) {
+      result = r;
+    }
+  }
+  g_free(client_sessions);
+
+  /* Delete authentication tokens */
+  gchar *tokens_dir = g_build_filename(cache_dir, "gnostr-signer", "tokens", NULL);
+  if (g_file_test(tokens_dir, G_FILE_TEST_IS_DIR)) {
+    GnDeleteResult r = gn_secure_delete_dir_opts(tokens_dir, &opts);
+    if (r != GN_DELETE_OK && result == GN_DELETE_OK) {
+      result = r;
+    }
+  }
+  g_free(tokens_dir);
+
+  /* Delete IPC tokens */
+  gchar *ipc_tokens = g_build_filename(cache_dir, "gnostr-signer", "ipc.token", NULL);
+  if (g_file_test(ipc_tokens, G_FILE_TEST_EXISTS)) {
+    GnDeleteResult r = gn_secure_delete_file_opts(ipc_tokens, &opts);
+    if (r != GN_DELETE_OK && result == GN_DELETE_OK) {
+      result = r;
+    }
+  }
+  g_free(ipc_tokens);
+
+  return result;
+}
+
+/* Check if a file contains sensitive patterns */
+static gboolean file_contains_sensitive_data(const char *filepath) {
+  gchar *contents = NULL;
+  gsize length = 0;
+
+  if (!g_file_get_contents(filepath, &contents, &length, NULL)) {
+    return FALSE;
+  }
+
+  gboolean sensitive = FALSE;
+
+  /* Check for sensitive patterns */
+  const char *patterns[] = {
+    "nsec1",           /* Private keys */
+    "ncryptsec1",      /* Encrypted private keys */
+    "password",        /* Password fields */
+    "secret",          /* Secret data */
+    "private_key",     /* Key fields */
+    "mnemonic",        /* Seed phrases */
+    NULL
+  };
+
+  for (const char **p = patterns; *p != NULL; p++) {
+    if (g_strstr_len(contents, length, *p) != NULL) {
+      sensitive = TRUE;
+      break;
+    }
+  }
+
+  /* Securely clear contents before freeing */
+  gn_secure_shred_buffer(contents, length);
+  g_free(contents);
+
+  return sensitive;
+}
+
+guint gn_secure_delete_log_files(gboolean sensitive_only) {
+  LOG_INFO("Secure delete log files (sensitive_only=%s)",
+           sensitive_only ? "true" : "false");
+
+  const char *cache_dir = g_get_user_cache_dir();
+  const char *data_dir = g_get_user_data_dir();
+
+  guint deleted = 0;
+  GnDeleteOptions opts = GN_DELETE_OPTIONS_DEFAULT;
+
+  /* Log directories to check */
+  const char *log_subdirs[] = { "logs", "debug", "audit", NULL };
+
+  for (const char **subdir = log_subdirs; *subdir != NULL; subdir++) {
+    gchar *log_dir = g_build_filename(cache_dir, "gnostr-signer", *subdir, NULL);
+
+    if (g_file_test(log_dir, G_FILE_TEST_IS_DIR)) {
+      GDir *dir = g_dir_open(log_dir, 0, NULL);
+      if (dir) {
+        const gchar *entry;
+        while ((entry = g_dir_read_name(dir)) != NULL) {
+          gchar *full_path = g_build_filename(log_dir, entry, NULL);
+
+          if (g_file_test(full_path, G_FILE_TEST_IS_REGULAR)) {
+            gboolean should_delete = TRUE;
+
+            if (sensitive_only) {
+              should_delete = file_contains_sensitive_data(full_path);
+            }
+
+            if (should_delete) {
+              GnDeleteResult r = gn_secure_delete_file_opts(full_path, &opts);
+              if (r == GN_DELETE_OK) {
+                deleted++;
+              }
+            }
+          }
+
+          g_free(full_path);
+        }
+        g_dir_close(dir);
+      }
+    }
+
+    g_free(log_dir);
+  }
+
+  /* Also check data directory for logs */
+  gchar *data_logs = g_build_filename(data_dir, "gnostr-signer", "logs", NULL);
+  if (g_file_test(data_logs, G_FILE_TEST_IS_DIR)) {
+    deleted += gn_secure_delete_pattern(data_logs, "*.log", &opts, NULL, NULL);
+  }
+  g_free(data_logs);
+
+  LOG_INFO("Deleted %u log files", deleted);
+  return deleted;
+}

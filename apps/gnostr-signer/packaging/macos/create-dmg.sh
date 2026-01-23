@@ -317,11 +317,23 @@ fi
 # Fix dylib install names to use @loader_path
 for dylib in "${APP_BUNDLE}/Contents/Frameworks/"*.dylib; do
     if [[ -f "${dylib}" ]]; then
-        local name
-        name=$(basename "${dylib}")
-        install_name_tool -id "@executable_path/../Frameworks/${name}" "${dylib}" 2>/dev/null || true
+        dylib_name=$(basename "${dylib}")
+        install_name_tool -id "@executable_path/../Frameworks/${dylib_name}" "${dylib}" 2>/dev/null || true
     fi
 done
+
+# -----------------------------------------------------------------------------
+# Bundle GTK resources (loaders, schemas, icons)
+# -----------------------------------------------------------------------------
+
+log "Bundling GTK resources..."
+
+BUNDLE_GTK_SCRIPT="${SCRIPT_DIR}/bundle-gtk.sh"
+if [[ -x "${BUNDLE_GTK_SCRIPT}" ]]; then
+    "${BUNDLE_GTK_SCRIPT}" --app-bundle "${APP_BUNDLE}"
+else
+    warn "bundle-gtk.sh not found or not executable, skipping GTK resource bundling"
+fi
 
 # -----------------------------------------------------------------------------
 # Copy resources

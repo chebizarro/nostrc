@@ -1,0 +1,25 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|upgrade|deconfigure)
+        # Stop and disable the user service for all users
+        # Note: This may not work for all users, but handles common cases
+        if command -v systemctl >/dev/null 2>&1; then
+            # Try to stop the service for the current user if running
+            systemctl --user stop gnostr-signer-daemon.service 2>/dev/null || true
+        fi
+        ;;
+
+    failed-upgrade)
+        ;;
+
+    *)
+        echo "prerm called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
   <requires lib="gtk" version="4.12"/>
-  <requires lib="adwaita" version="1.4"/>
+  <requires lib="adwaita" version="1.5"/>
   <template class="SheetCreateProfile" parent="AdwDialog">
     <property name="title" translatable="yes">Create Profile</property>
     <property name="content-width">480</property>
-    <property name="content-height">600</property>
+    <property name="content-height">-1</property>
+    <property name="follows-content-size">true</property>
     <!-- Enable close on Escape key -->
     <property name="can-close">true</property>
     <accessibility>
@@ -62,10 +63,11 @@
             <child>
               <object class="AdwClamp">
                 <property name="maximum-size">500</property>
+                <property name="tightening-threshold">400</property>
                 <property name="margin-top">16</property>
                 <property name="margin-bottom">16</property>
-                <property name="margin-start">16</property>
-                <property name="margin-end">16</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
                 <child>
                   <object class="GtkBox">
                     <property name="orientation">vertical</property>

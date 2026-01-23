@@ -270,6 +270,73 @@ gboolean gnostr_secure_streq(const char *a, const char *b);
     } G_STMT_END
 
 /* ============================================================
+ * Guard Page Support
+ * ============================================================ */
+
+/**
+ * GnostrGuardPageMode:
+ * @GNOSTR_GUARD_NONE: No guard pages (minimum overhead)
+ * @GNOSTR_GUARD_CANARY: Use canary values for overflow detection (default in debug)
+ * @GNOSTR_GUARD_PAGES: Use mprotected guard pages (most secure, higher overhead)
+ *
+ * Guard page modes for detecting buffer overflows/underflows.
+ */
+typedef enum {
+    GNOSTR_GUARD_NONE = 0,
+    GNOSTR_GUARD_CANARY = 1,
+    GNOSTR_GUARD_PAGES = 2
+} GnostrGuardPageMode;
+
+/**
+ * gnostr_secure_set_guard_mode:
+ * @mode: The guard page mode to use
+ *
+ * Set the guard page mode for secure allocations.
+ * Must be called before any allocations are made.
+ *
+ * In GNOSTR_GUARD_PAGES mode:
+ * - Each allocation is surrounded by inaccessible guard pages
+ * - Any buffer overflow/underflow causes immediate SIGSEGV
+ * - Higher memory overhead due to page alignment requirements
+ */
+void gnostr_secure_set_guard_mode(GnostrGuardPageMode mode);
+
+/**
+ * gnostr_secure_get_guard_mode:
+ *
+ * Get the current guard page mode.
+ *
+ * Returns: Current guard page mode
+ */
+GnostrGuardPageMode gnostr_secure_get_guard_mode(void);
+
+/**
+ * gnostr_secure_alloc_guarded:
+ * @size: Number of bytes to allocate
+ *
+ * Allocate secure memory with explicit guard pages.
+ * This function always uses guard pages regardless of the global mode.
+ *
+ * The allocation layout (with guard pages):
+ *   [GUARD PAGE][HEADER][USER DATA (aligned)][PADDING][GUARD PAGE]
+ *
+ * Any access to guard pages causes immediate SIGSEGV, providing
+ * instant detection of buffer overflows and underflows.
+ *
+ * Returns: Pointer to allocated memory, or NULL on failure
+ */
+void *gnostr_secure_alloc_guarded(size_t size);
+
+/**
+ * gnostr_secure_free_guarded:
+ * @ptr: Pointer from gnostr_secure_alloc_guarded
+ * @size: Size of allocation
+ *
+ * Free guarded secure memory.
+ */
+void gnostr_secure_free_guarded(void *ptr, size_t size);
+
+/* ============================================================
  * Statistics and Debugging
  * ============================================================ */
 
@@ -281,6 +348,8 @@ gboolean gnostr_secure_streq(const char *a, const char *b);
  * @peak_allocated: Peak memory usage
  * @mlock_available: Whether mlock is working
  * @sodium_available: Whether libsodium is being used
+ * @guard_mode: Current guard page mode
+ * @guard_violations: Number of guard violations detected (canary mode only)
  *
  * Statistics about secure memory usage.
  */
@@ -291,6 +360,8 @@ typedef struct {
     size_t peak_allocated;
     gboolean mlock_available;
     gboolean sodium_available;
+    GnostrGuardPageMode guard_mode;
+    size_t guard_violations;
 } GnostrSecureMemStats;
 
 /**
@@ -301,5 +372,61 @@ typedef struct {
  * Returns: Current statistics
  */
 GnostrSecureMemStats gnostr_secure_mem_get_stats(void);
+
+/**
+ * gnostr_secure_mem_dump_stats:
+ *
+ * Print secure memory statistics to debug output.
+ * Useful for debugging memory leaks of sensitive data.
+ */
+void gnostr_secure_mem_dump_stats(void);
+
+/**
+ * gnostr_secure_check_guards:
+ *
+ * Verify all guard canaries are intact.
+ * Only useful in GNOSTR_GUARD_CANARY mode.
+ *
+ * Returns: TRUE if all guards are valid, FALSE if corruption detected
+ */
+gboolean gnostr_secure_check_guards(void);
+
+/* ============================================================
+ * Secure Buffer Operations
+ * ============================================================ */
+
+/**
+ * gnostr_secure_copy:
+ * @dest: Destination buffer (must be in secure memory or locked)
+ * @src: Source buffer
+ * @size: Number of bytes to copy
+ *
+ * Copy data into secure memory.
+ * This is a secure version of memcpy that ensures the source
+ * data is properly cleared from non-secure locations afterward.
+ */
+void gnostr_secure_copy(void *dest, const void *src, size_t size);
+
+/**
+ * gnostr_secure_concat:
+ * @s1: First string (can be NULL)
+ * @s2: Second string (can be NULL)
+ *
+ * Concatenate two strings in secure memory.
+ *
+ * Returns: New string in secure memory, or NULL
+ */
+gchar *gnostr_secure_concat(const char *s1, const char *s2);
+
+/**
+ * gnostr_secure_sprintf:
+ * @format: printf-style format string
+ * @...: Format arguments
+ *
+ * Format a string in secure memory.
+ *
+ * Returns: New string in secure memory, or NULL on failure
+ */
+gchar *gnostr_secure_sprintf(const char *format, ...) G_GNUC_PRINTF(1, 2);
 
 G_END_DECLS

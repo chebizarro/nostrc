@@ -528,10 +528,10 @@ static void on_onboarding_finished(gboolean completed, gpointer user_data) {
   /* Present the main window now */
   SignerWindow *win = signer_window_new(ADW_APPLICATION(app));
 
-  /* Apply high-contrast class if needed */
-  SettingsManager *sm = settings_manager_get_default();
-  SettingsTheme theme = settings_manager_get_theme(sm);
-  if (theme == SETTINGS_THEME_HIGH_CONTRAST) {
+  /* Apply high-contrast class if needed (considers system, force, and theme settings) */
+  gboolean use_high_contrast = should_use_high_contrast();
+  if (use_high_contrast) {
+    SettingsManager *sm = settings_manager_get_default();
     SettingsHighContrastVariant hc_variant = settings_manager_get_high_contrast_variant(sm);
     gtk_widget_add_css_class(GTK_WIDGET(win), "high-contrast");
     switch (hc_variant) {

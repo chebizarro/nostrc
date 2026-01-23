@@ -1,10 +1,15 @@
 /* lock-screen.c - Lock screen widget implementation
  *
  * SPDX-License-Identifier: MIT
+ *
+ * Includes rate limiting display for brute force protection (nostrc-1g1).
+ * Includes keyboard navigation support (nostrc-tz8w).
  */
 #include "lock-screen.h"
 #include "app-resources.h"
 #include "../session-manager.h"
+#include "../rate-limiter.h"
+#include "../keyboard-nav.h"
 
 #include <time.h>
 
@@ -21,6 +26,12 @@ struct _GnLockScreen {
   GtkBox *box_session_info;
   GtkLabel *lbl_lock_reason;
   GtkLabel *lbl_locked_at;
+
+  /* Rate limiting UI (nostrc-1g1) */
+  GtkBox *box_rate_limit;
+  GtkLabel *lbl_rate_limit_message;
+  GtkLabel *lbl_rate_limit_countdown;
+  guint lockout_timer_id;
 
   /* State */
   GnLockReason lock_reason;
@@ -41,11 +52,26 @@ G_DEFINE_FINAL_TYPE(GnLockScreen, gn_lock_screen, GTK_TYPE_BOX)
 static void on_unlock_clicked(GtkButton *btn, gpointer user_data);
 static void on_password_activate(AdwPasswordEntryRow *entry, gpointer user_data);
 static void attempt_unlock(GnLockScreen *self);
+static void update_rate_limit_ui(GnLockScreen *self);
+static gboolean on_lockout_timer_tick(gpointer user_data);
+static void on_rate_limit_exceeded(GnRateLimiter *limiter, guint lockout_seconds, gpointer user_data);
+static void on_lockout_expired(GnRateLimiter *limiter, gpointer user_data);
 
 static void
 gn_lock_screen_dispose(GObject *object)
 {
-  /* GnLockScreen *self = GN_LOCK_SCREEN(object); */
+  GnLockScreen *self = GN_LOCK_SCREEN(object);
+
+  /* Stop lockout timer (nostrc-1g1) */
+  if (self->lockout_timer_id > 0) {
+    g_source_remove(self->lockout_timer_id);
+    self->lockout_timer_id = 0;
+  }
+
+  /* Disconnect rate limiter signals */
+  GnRateLimiter *limiter = gn_rate_limiter_get_default();
+  g_signal_handlers_disconnect_by_data(limiter, self);
+
   G_OBJECT_CLASS(gn_lock_screen_parent_class)->dispose(object);
 }
 
@@ -96,6 +122,7 @@ gn_lock_screen_init(GnLockScreen *self)
   self->lock_reason = GN_LOCK_REASON_STARTUP;
   self->locked_at = (gint64)time(NULL);
   self->busy = FALSE;
+  self->lockout_timer_id = 0;
 
   /* Connect signals */
   g_signal_connect(self->btn_unlock, "clicked",
@@ -111,6 +138,161 @@ gn_lock_screen_init(GnLockScreen *self)
     gtk_widget_set_visible(GTK_WIDGET(self->entry_password), FALSE);
     gtk_button_set_label(self->btn_unlock, "Unlock");
   }
+
+  /* Create rate limit UI box (nostrc-1g1) */
+  self->box_rate_limit = GTK_BOX(gtk_box_new(GTK_ORIENTATION_VERTICAL, 6));
+  gtk_widget_add_css_class(GTK_WIDGET(self->box_rate_limit), "rate-limit-box");
+  gtk_widget_set_visible(GTK_WIDGET(self->box_rate_limit), FALSE);
+
+  self->lbl_rate_limit_message = GTK_LABEL(gtk_label_new(NULL));
+  gtk_widget_add_css_class(GTK_WIDGET(self->lbl_rate_limit_message), "warning");
+  gtk_label_set_wrap(self->lbl_rate_limit_message, TRUE);
+  gtk_label_set_justify(self->lbl_rate_limit_message, GTK_JUSTIFY_CENTER);
+  gtk_box_append(self->box_rate_limit, GTK_WIDGET(self->lbl_rate_limit_message));
+
+  self->lbl_rate_limit_countdown = GTK_LABEL(gtk_label_new(NULL));
+  gtk_widget_add_css_class(GTK_WIDGET(self->lbl_rate_limit_countdown), "title-1");
+  gtk_box_append(self->box_rate_limit, GTK_WIDGET(self->lbl_rate_limit_countdown));
+
+  /* Insert rate limit box before error label */
+  gtk_box_insert_child_after(GTK_BOX(self), GTK_WIDGET(self->box_rate_limit),
+                              GTK_WIDGET(self->entry_password));
+
+  /* Connect to rate limiter signals (nostrc-1g1) */
+  GnRateLimiter *limiter = gn_rate_limiter_get_default();
+  g_signal_connect(limiter, "rate-limit-exceeded",
+                   G_CALLBACK(on_rate_limit_exceeded), self);
+  g_signal_connect(limiter, "lockout-expired",
+                   G_CALLBACK(on_lockout_expired), self);
+
+  /* Check initial rate limit state */
+  update_rate_limit_ui(self);
+
+  /* Setup keyboard navigation (nostrc-tz8w):
+   * Connect Enter key in password entry to trigger unlock button */
+  if (self->entry_password && self->btn_unlock) {
+    gn_keyboard_nav_connect_enter_activate(GTK_WIDGET(self->entry_password),
+                                            GTK_WIDGET(self->btn_unlock));
+  }
+}
+
+/* Rate limiting UI functions (nostrc-1g1) */
+
+static gchar *
+format_countdown_time(guint seconds)
+{
+  if (seconds < 60) {
+    return g_strdup_printf("%u second%s", seconds, seconds == 1 ? "" : "s");
+  } else if (seconds < 3600) {
+    guint mins = seconds / 60;
+    guint secs = seconds % 60;
+    if (secs > 0) {
+      return g_strdup_printf("%u:%02u", mins, secs);
+    } else {
+      return g_strdup_printf("%u minute%s", mins, mins == 1 ? "" : "s");
+    }
+  } else {
+    guint hours = seconds / 3600;
+    guint mins = (seconds % 3600) / 60;
+    return g_strdup_printf("%u:%02u:%02u", hours, mins, seconds % 60);
+  }
+}
+
+static gboolean
+on_lockout_timer_tick(gpointer user_data)
+{
+  GnLockScreen *self = GN_LOCK_SCREEN(user_data);
+
+  GnRateLimiter *limiter = gn_rate_limiter_get_default();
+  guint remaining = gn_rate_limiter_get_remaining_lockout(limiter);
+
+  if (remaining == 0) {
+    /* Lockout expired */
+    self->lockout_timer_id = 0;
+    update_rate_limit_ui(self);
+    return G_SOURCE_REMOVE;
+  }
+
+  /* Update countdown display */
+  gchar *time_str = format_countdown_time(remaining);
+  gtk_label_set_text(self->lbl_rate_limit_countdown, time_str);
+  g_free(time_str);
+
+  return G_SOURCE_CONTINUE;
+}
+
+static void
+update_rate_limit_ui(GnLockScreen *self)
+{
+  GnRateLimiter *limiter = gn_rate_limiter_get_default();
+
+  if (gn_rate_limiter_is_locked_out(limiter)) {
+    guint remaining = gn_rate_limiter_get_remaining_lockout(limiter);
+
+    /* Show lockout UI */
+    gtk_label_set_text(self->lbl_rate_limit_message,
+                       "Too many failed authentication attempts.\nPlease wait before trying again:");
+
+    gchar *time_str = format_countdown_time(remaining);
+    gtk_label_set_text(self->lbl_rate_limit_countdown, time_str);
+    g_free(time_str);
+
+    gtk_widget_set_visible(GTK_WIDGET(self->box_rate_limit), TRUE);
+
+    /* Disable input */
+    gtk_widget_set_sensitive(GTK_WIDGET(self->entry_password), FALSE);
+    gtk_widget_set_sensitive(GTK_WIDGET(self->btn_unlock), FALSE);
+
+    /* Start countdown timer if not already running */
+    if (self->lockout_timer_id == 0) {
+      self->lockout_timer_id = g_timeout_add_seconds(1, on_lockout_timer_tick, self);
+    }
+  } else {
+    /* Hide lockout UI */
+    gtk_widget_set_visible(GTK_WIDGET(self->box_rate_limit), FALSE);
+
+    /* Enable input */
+    gtk_widget_set_sensitive(GTK_WIDGET(self->entry_password), TRUE);
+    gtk_widget_set_sensitive(GTK_WIDGET(self->btn_unlock), TRUE);
+
+    /* Stop countdown timer */
+    if (self->lockout_timer_id > 0) {
+      g_source_remove(self->lockout_timer_id);
+      self->lockout_timer_id = 0;
+    }
+
+    /* Show remaining attempts if there have been failures */
+    guint attempts_remaining = gn_rate_limiter_get_attempts_remaining(limiter);
+    guint max_attempts = GN_RATE_LIMITER_DEFAULT_MAX_ATTEMPTS;
+    if (attempts_remaining < max_attempts && attempts_remaining > 0) {
+      gchar *msg = g_strdup_printf("%u attempt%s remaining",
+                                   attempts_remaining, attempts_remaining == 1 ? "" : "s");
+      gtk_label_set_text(self->lbl_rate_limit_message, msg);
+      gtk_label_set_text(self->lbl_rate_limit_countdown, "");
+      gtk_widget_set_visible(GTK_WIDGET(self->box_rate_limit), TRUE);
+      g_free(msg);
+    }
+  }
+}
+
+static void
+on_rate_limit_exceeded(GnRateLimiter *limiter, guint lockout_seconds, gpointer user_data)
+{
+  (void)limiter;
+  (void)lockout_seconds;
+  GnLockScreen *self = GN_LOCK_SCREEN(user_data);
+  update_rate_limit_ui(self);
+}
+
+static void
+on_lockout_expired(GnRateLimiter *limiter, gpointer user_data)
+{
+  (void)limiter;
+  GnLockScreen *self = GN_LOCK_SCREEN(user_data);
+  update_rate_limit_ui(self);
+
+  /* Focus password entry when lockout expires */
+  gn_lock_screen_focus_password(self);
 }
 
 static void
@@ -118,6 +300,13 @@ attempt_unlock(GnLockScreen *self)
 {
   if (self->busy)
     return;
+
+  /* Check rate limit before attempting (nostrc-1g1) */
+  GnRateLimiter *limiter = gn_rate_limiter_get_default();
+  if (gn_rate_limiter_is_locked_out(limiter)) {
+    update_rate_limit_ui(self);
+    return;
+  }
 
   GnSessionManager *sm = gn_session_manager_get_default();
   GError *error = NULL;
@@ -150,7 +339,15 @@ attempt_unlock(GnLockScreen *self)
   if (!success) {
     gn_lock_screen_show_error(self, error ? error->message : "Authentication failed");
     gn_lock_screen_clear_password(self);
-    gn_lock_screen_focus_password(self);
+
+    /* Update rate limit UI to show countdown if locked out (nostrc-1g1) */
+    update_rate_limit_ui(self);
+
+    /* Only focus if not locked out */
+    if (!gn_rate_limiter_is_locked_out(limiter)) {
+      gn_lock_screen_focus_password(self);
+    }
+
     g_clear_error(&error);
     return;
   }
@@ -297,4 +494,22 @@ gn_lock_screen_get_password_configured(GnLockScreen *self)
 
   GnSessionManager *sm = gn_session_manager_get_default();
   return gn_session_manager_has_password(sm);
+}
+
+gboolean
+gn_lock_screen_is_rate_limited(GnLockScreen *self)
+{
+  g_return_val_if_fail(GN_IS_LOCK_SCREEN(self), FALSE);
+
+  GnRateLimiter *limiter = gn_rate_limiter_get_default();
+  return gn_rate_limiter_is_locked_out(limiter);
+}
+
+guint
+gn_lock_screen_get_rate_limit_remaining(GnLockScreen *self)
+{
+  g_return_val_if_fail(GN_IS_LOCK_SCREEN(self), 0);
+
+  GnRateLimiter *limiter = gn_rate_limiter_get_default();
+  return gn_rate_limiter_get_remaining_lockout(limiter);
 }

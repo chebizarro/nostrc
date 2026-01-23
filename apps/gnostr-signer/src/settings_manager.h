@@ -52,6 +52,9 @@ void settings_manager_set_theme(SettingsManager *sm, SettingsTheme theme);
 SettingsHighContrastVariant settings_manager_get_high_contrast_variant(SettingsManager *sm);
 void settings_manager_set_high_contrast_variant(SettingsManager *sm, SettingsHighContrastVariant variant);
 
+gboolean settings_manager_get_force_high_contrast(SettingsManager *sm);
+void settings_manager_set_force_high_contrast(SettingsManager *sm, gboolean force);
+
 void settings_manager_get_window_size(SettingsManager *sm, gint *width, gint *height);
 void settings_manager_set_window_size(SettingsManager *sm, gint width, gint height);
 
@@ -114,6 +117,131 @@ void settings_manager_set_start_minimized(SettingsManager *sm, gboolean minimize
 /* Account Settings */
 gchar **settings_manager_get_account_order(SettingsManager *sm);
 void settings_manager_set_account_order(SettingsManager *sm, const gchar *const *npubs);
+
+/* Hardware Keystore Settings */
+
+/**
+ * HardwareKeystoreMode:
+ * @HW_KS_MODE_DISABLED: Hardware keystore is disabled
+ * @HW_KS_MODE_HARDWARE: Use hardware only (fail if unavailable)
+ * @HW_KS_MODE_FALLBACK: Allow software fallback
+ * @HW_KS_MODE_AUTO: Automatically choose best available
+ */
+typedef enum {
+  HW_KS_MODE_DISABLED = 0,
+  HW_KS_MODE_HARDWARE = 1,
+  HW_KS_MODE_FALLBACK = 2,
+  HW_KS_MODE_AUTO = 3
+} HardwareKeystoreMode;
+
+/**
+ * settings_manager_get_hardware_keystore_enabled:
+ * @sm: A #SettingsManager
+ *
+ * Gets whether hardware keystore is enabled.
+ *
+ * Returns: %TRUE if hardware keystore is enabled
+ */
+gboolean settings_manager_get_hardware_keystore_enabled(SettingsManager *sm);
+
+/**
+ * settings_manager_set_hardware_keystore_enabled:
+ * @sm: A #SettingsManager
+ * @enabled: Whether to enable hardware keystore
+ *
+ * Enables or disables hardware keystore.
+ */
+void settings_manager_set_hardware_keystore_enabled(SettingsManager *sm, gboolean enabled);
+
+/**
+ * settings_manager_get_hardware_keystore_mode:
+ * @sm: A #SettingsManager
+ *
+ * Gets the hardware keystore mode.
+ *
+ * Returns: The current #HardwareKeystoreMode
+ */
+HardwareKeystoreMode settings_manager_get_hardware_keystore_mode(SettingsManager *sm);
+
+/**
+ * settings_manager_set_hardware_keystore_mode:
+ * @sm: A #SettingsManager
+ * @mode: The mode to set
+ *
+ * Sets the hardware keystore mode.
+ */
+void settings_manager_set_hardware_keystore_mode(SettingsManager *sm, HardwareKeystoreMode mode);
+
+/**
+ * settings_manager_get_hardware_keystore_fallback:
+ * @sm: A #SettingsManager
+ *
+ * Gets whether software fallback is allowed for hardware keystore.
+ *
+ * Returns: %TRUE if fallback is allowed
+ */
+gboolean settings_manager_get_hardware_keystore_fallback(SettingsManager *sm);
+
+/**
+ * settings_manager_set_hardware_keystore_fallback:
+ * @sm: A #SettingsManager
+ * @fallback: Whether to allow software fallback
+ *
+ * Sets whether software fallback is allowed for hardware keystore.
+ */
+void settings_manager_set_hardware_keystore_fallback(SettingsManager *sm, gboolean fallback);
+
+/**
+ * settings_manager_get_hardware_keystore_identities:
+ * @sm: A #SettingsManager
+ *
+ * Gets the list of identity npubs that use hardware-backed keys.
+ *
+ * Returns: (transfer full): Array of npub strings. Free with g_strfreev().
+ */
+gchar **settings_manager_get_hardware_keystore_identities(SettingsManager *sm);
+
+/**
+ * settings_manager_set_hardware_keystore_identities:
+ * @sm: A #SettingsManager
+ * @npubs: Array of npub strings
+ *
+ * Sets the list of identity npubs that use hardware-backed keys.
+ */
+void settings_manager_set_hardware_keystore_identities(SettingsManager *sm, const gchar *const *npubs);
+
+/**
+ * settings_manager_add_hardware_keystore_identity:
+ * @sm: A #SettingsManager
+ * @npub: The npub to add
+ *
+ * Adds an identity to the hardware keystore list.
+ *
+ * Returns: %TRUE if added, %FALSE if already present
+ */
+gboolean settings_manager_add_hardware_keystore_identity(SettingsManager *sm, const gchar *npub);
+
+/**
+ * settings_manager_remove_hardware_keystore_identity:
+ * @sm: A #SettingsManager
+ * @npub: The npub to remove
+ *
+ * Removes an identity from the hardware keystore list.
+ *
+ * Returns: %TRUE if removed, %FALSE if not found
+ */
+gboolean settings_manager_remove_hardware_keystore_identity(SettingsManager *sm, const gchar *npub);
+
+/**
+ * settings_manager_is_hardware_keystore_identity:
+ * @sm: A #SettingsManager
+ * @npub: The npub to check
+ *
+ * Checks if an identity uses hardware-backed keys.
+ *
+ * Returns: %TRUE if the identity uses hardware keystore
+ */
+gboolean settings_manager_is_hardware_keystore_identity(SettingsManager *sm, const gchar *npub);
 
 /* Change notification callback type */
 typedef void (*SettingsChangedCb)(const gchar *key, gpointer user_data);

@@ -1,0 +1,72 @@
+Source: gnostr-signer
+Section: utils
+Priority: optional
+Maintainer: GNostr Project <gnostr@example.com>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.20),
+               ninja-build,
+               pkg-config,
+               libgtk-4-dev,
+               libadwaita-1-dev,
+               libglib2.0-dev,
+               libjson-glib-dev,
+               libsecret-1-dev,
+               libsecp256k1-dev,
+               libsodium-dev,
+               libssl-dev,
+               libwebsockets-dev,
+               libnsync-dev,
+               libp11-kit-dev
+Standards-Version: 4.6.2
+Homepage: https://github.com/gnostr-org/gnostr-signer
+Vcs-Browser: https://github.com/gnostr-org/gnostr-signer
+Vcs-Git: https://github.com/gnostr-org/gnostr-signer.git
+Rules-Requires-Root: no
+
+Package: gnostr-signer
+Architecture: any
+Depends: ${shlibs:Depends},
+         ${misc:Depends},
+         libgtk-4-1,
+         libadwaita-1-0,
+         libglib2.0-0,
+         libjson-glib-1.0-0,
+         libsecret-1-0,
+         gnome-keyring | kwalletd5
+Recommends: libsecp256k1-1,
+            libsodium23,
+            libwebsockets16 | libwebsockets17 | libwebsockets19
+Suggests: tor
+Description: Secure Nostr identity management and signing service
+ GNostr Signer is a GTK4/libadwaita application for managing Nostr identities
+ and signing events. It keeps your private keys safe while allowing Nostr
+ clients to request signatures through a secure D-Bus interface.
+ .
+ Features include:
+  * Secure key storage using the system keyring (GNOME Keyring/libsecret)
+  * Granular permission control for each application
+  * Interactive approval dialogs for signing requests
+  * NIP-46 remote signer (bunker) support
+  * Multiple identity management with profiles
+  * Backup and recovery options
+  * Audit logging of signing operations
+ .
+ GNostr Signer implements NIP-55 (Signer Application) for local signing
+ and NIP-46 (Nostr Connect) for remote signing capabilities.
+
+Package: gnostr-signer-daemon
+Architecture: any
+Depends: ${shlibs:Depends},
+         ${misc:Depends},
+         libglib2.0-0,
+         libjson-glib-1.0-0,
+         libsecret-1-0,
+         dbus-user-session
+Recommends: gnostr-signer
+Description: GNostr Signer D-Bus daemon for Nostr signing operations
+ The GNostr Signer daemon provides D-Bus and Unix socket interfaces for
+ Nostr signing operations. It handles cryptographic operations without
+ exposing private keys to client applications.
+ .
+ This package is typically used alongside gnostr-signer for headless
+ operation or as a background service activated via D-Bus.

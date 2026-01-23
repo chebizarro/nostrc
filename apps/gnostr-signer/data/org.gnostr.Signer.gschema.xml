@@ -28,6 +28,12 @@
       <description>Color scheme for high contrast mode: 'default' (black on white), 'inverted' (white on black), or 'yellow-on-black'.</description>
     </key>
 
+    <key name="force-high-contrast" type="b">
+      <default>false</default>
+      <summary>Force high contrast mode</summary>
+      <description>Always use high contrast theme regardless of system settings. When false, high contrast is only used when the system requests it or theme is set to 'high-contrast'.</description>
+    </key>
+
     <key name="window-width" type="i">
       <default>920</default>
       <summary>Window width</summary>
@@ -193,6 +199,31 @@
       <default>[]</default>
       <summary>Account order</summary>
       <description>Order of accounts in the account selector (npub list).</description>
+    </key>
+
+    <!-- Hardware Keystore Settings (nostrc-z4b) -->
+    <key name="hardware-keystore-enabled" type="b">
+      <default>false</default>
+      <summary>Enable hardware keystore</summary>
+      <description>Use platform hardware security (TPM/Secure Enclave) to protect the master signing key.</description>
+    </key>
+
+    <key name="hardware-keystore-mode" type="i">
+      <default>0</default>
+      <summary>Hardware keystore mode</summary>
+      <description>Mode for hardware keystore: 0=disabled, 1=hardware-only, 2=with-fallback, 3=auto.</description>
+    </key>
+
+    <key name="hardware-keystore-fallback" type="b">
+      <default>true</default>
+      <summary>Allow software fallback</summary>
+      <description>If hardware keystore is unavailable, fall back to software-protected keystore.</description>
+    </key>
+
+    <key name="hardware-keystore-identities" type="as">
+      <default>[]</default>
+      <summary>Hardware-backed identities</summary>
+      <description>List of npubs that use hardware-derived signing keys.</description>
     </key>
 
   </schema>

@@ -9,6 +9,7 @@
         <file preprocess="xml-stripblanks">ui/page-applications.ui</file>
         <file preprocess="xml-stripblanks">ui/page-settings.ui</file>
         <file preprocess="xml-stripblanks">ui/page-sessions.ui</file>
+        <file preprocess="xml-stripblanks">ui/page-history.ui</file>
         <file preprocess="xml-stripblanks">ui/events-page.ui</file>
         <file preprocess="xml-stripblanks">ui/sheets/sheet-select-account.ui</file>
         <file preprocess="xml-stripblanks">ui/sheets/sheet-account-backup.ui</file>
@@ -28,6 +29,10 @@
         <file preprocess="xml-stripblanks">ui/sheets/sheet-key-rotation.ui</file>
         <file preprocess="xml-stripblanks">ui/sheets/sheet-delegation.ui</file>
         <file preprocess="xml-stripblanks">ui/sheets/sheet-create-account.ui</file>
+        <file preprocess="xml-stripblanks">ui/sheets/sheet-social-recovery.ui</file>
+        <file preprocess="xml-stripblanks">ui/sheets/sheet-hw-wallet.ui</file>
+        <file preprocess="xml-stripblanks">ui/sheets/sheet-qr-display.ui</file>
+        <file preprocess="xml-stripblanks">ui/sheets/sheet-qr-scanner.ui</file>
         <file preprocess="xml-stripblanks">ui/widgets/app-row.ui</file>
         <file preprocess="xml-stripblanks">ui/widgets/gn-secure-entry.ui</file>
         <file preprocess="xml-stripblanks">ui/widgets/identity-row.ui</file>

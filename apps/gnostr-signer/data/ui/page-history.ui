@@ -1,0 +1,347 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.5"/>
+  <template class="GnPageHistory" parent="AdwPreferencesPage">
+    <property name="title" translatable="yes">Event History</property>
+    <property name="icon-name">document-open-recent-symbolic</property>
+    <accessibility>
+      <property name="label">Event history page</property>
+      <property name="description">View history of signing operations and event transactions</property>
+    </accessibility>
+
+    <!-- Filter Section -->
+    <child>
+      <object class="AdwPreferencesGroup">
+        <property name="title" translatable="yes">Filters</property>
+        <property name="description" translatable="yes">Filter history by event kind, client, or date</property>
+        <accessibility>
+          <property name="label">History filters group</property>
+        </accessibility>
+        <child>
+          <object class="AdwComboRow" id="combo_kind_filter">
+            <property name="title" translatable="yes">Event Kind</property>
+            <property name="subtitle" translatable="yes">Filter by Nostr event type</property>
+            <accessibility>
+              <property name="label">Event kind filter</property>
+              <property name="description">Select an event kind to filter the history</property>
+            </accessibility>
+          </object>
+        </child>
+        <child>
+          <object class="AdwComboRow" id="combo_client_filter">
+            <property name="title" translatable="yes">Client Application</property>
+            <property name="subtitle" translatable="yes">Filter by requesting application</property>
+            <accessibility>
+              <property name="label">Client filter</property>
+              <property name="description">Select a client to filter the history</property>
+            </accessibility>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">12</property>
+            <property name="margin-top">6</property>
+            <property name="margin-bottom">6</property>
+            <property name="halign">end</property>
+            <child>
+              <object class="GtkButton" id="btn_clear_filters">
+                <property name="label" translatable="yes">Clear Filters</property>
+                <property name="tooltip-text" translatable="yes">Remove all active filters</property>
+                <accessibility>
+                  <property name="label">Clear all filters</property>
+                </accessibility>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+
+    <!-- Statistics and Actions -->
+    <child>
+      <object class="AdwPreferencesGroup">
+        <property name="title" translatable="yes">History Management</property>
+        <accessibility>
+          <property name="label">History management group</property>
+        </accessibility>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">12</property>
+            <property name="margin-top">6</property>
+            <property name="margin-bottom">6</property>
+            <child>
+              <object class="GtkLabel" id="lbl_entry_count">
+                <property name="label" translatable="yes">0 entries</property>
+                <property name="hexpand">true</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+                <accessibility>
+                  <property name="label">Entry count</property>
+                  <property name="description">Number of history entries</property>
+                </accessibility>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_refresh">
+                <property name="icon-name">view-refresh-symbolic</property>
+                <property name="tooltip-text" translatable="yes">Refresh history</property>
+                <style>
+                  <class name="flat"/>
+                </style>
+                <accessibility>
+                  <property name="label">Refresh history</property>
+                </accessibility>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_export">
+                <property name="label" translatable="yes">Export</property>
+                <property name="tooltip-text" translatable="yes">Export history to JSON or CSV file</property>
+                <accessibility>
+                  <property name="label">Export history</property>
+                  <property name="description">Save history to a file in JSON or CSV format</property>
+                </accessibility>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_clear_history">
+                <property name="label" translatable="yes">Clear All</property>
+                <property name="sensitive">false</property>
+                <property name="tooltip-text" translatable="yes">Delete all history entries</property>
+                <style>
+                  <class name="destructive-action"/>
+                </style>
+                <accessibility>
+                  <property name="label">Clear all history</property>
+                  <property name="description">Permanently delete all history entries</property>
+                </accessibility>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+
+    <!-- History List -->
+    <child>
+      <object class="AdwPreferencesGroup">
+        <property name="title" translatable="yes">Recent Events</property>
+        <property name="description" translatable="yes">Signing operations performed by connected applications</property>
+        <accessibility>
+          <property name="label">Recent events list</property>
+          <property name="description">List of recent signing operations</property>
+        </accessibility>
+        <child>
+          <object class="GtkStack" id="empty_stack">
+            <property name="transition-type">crossfade</property>
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">empty</property>
+                <property name="child">
+                  <object class="AdwStatusPage">
+                    <property name="icon-name">document-open-recent-symbolic</property>
+                    <property name="title" translatable="yes">No History</property>
+                    <property name="description" translatable="yes">Signing operations will appear here once applications start making requests</property>
+                    <accessibility>
+                      <property name="label">No history entries</property>
+                    </accessibility>
+                  </object>
+                </property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">list</property>
+                <property name="child">
+                  <object class="GtkScrolledWindow">
+                    <property name="hexpand">true</property>
+                    <property name="vexpand">true</property>
+                    <property name="min-content-height">200</property>
+                    <property name="max-content-height">500</property>
+                    <accessibility>
+                      <property name="label">History list container</property>
+                    </accessibility>
+                    <child>
+                      <object class="GtkListBox" id="history_list">
+                        <property name="selection-mode">none</property>
+                        <style>
+                          <class name="boxed-list"/>
+                        </style>
+                        <accessibility>
+                          <property name="label">Event history list</property>
+                          <property name="description">List of signing operations. Use arrow keys to navigate.</property>
+                        </accessibility>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+
+    <!-- Pagination -->
+    <child>
+      <object class="AdwPreferencesGroup">
+        <accessibility>
+          <property name="label">Pagination controls</property>
+        </accessibility>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">12</property>
+            <property name="margin-top">6</property>
+            <property name="margin-bottom">6</property>
+            <property name="halign">center</property>
+            <child>
+              <object class="GtkButton" id="btn_prev_page">
+                <property name="icon-name">go-previous-symbolic</property>
+                <property name="tooltip-text" translatable="yes">Previous page</property>
+                <property name="sensitive">false</property>
+                <style>
+                  <class name="flat"/>
+                </style>
+                <accessibility>
+                  <property name="label">Previous page</property>
+                </accessibility>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="lbl_page_info">
+                <property name="label" translatable="yes">Page 1 of 1</property>
+                <property name="width-chars">15</property>
+                <property name="xalign">0.5</property>
+                <accessibility>
+                  <property name="label">Current page indicator</property>
+                </accessibility>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_next_page">
+                <property name="icon-name">go-next-symbolic</property>
+                <property name="tooltip-text" translatable="yes">Next page</property>
+                <property name="sensitive">false</property>
+                <style>
+                  <class name="flat"/>
+                </style>
+                <accessibility>
+                  <property name="label">Next page</property>
+                </accessibility>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+
+    <!-- Legend -->
+    <child>
+      <object class="AdwPreferencesGroup">
+        <property name="title" translatable="yes">Status Legend</property>
+        <accessibility>
+          <property name="label">Result status legend</property>
+        </accessibility>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">24</property>
+            <property name="margin-top">6</property>
+            <property name="margin-bottom">6</property>
+            <property name="halign">center</property>
+            <child>
+              <object class="GtkBox">
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">emblem-ok-symbolic</property>
+                    <style>
+                      <class name="success"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Success</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">action-unavailable-symbolic</property>
+                    <style>
+                      <class name="warning"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Denied</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">dialog-error-symbolic</property>
+                    <style>
+                      <class name="error"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Error</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">appointment-soon-symbolic</property>
+                    <style>
+                      <class name="warning"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Timeout</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

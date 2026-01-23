@@ -1,0 +1,12 @@
+# GNostr Signer GTK application
+usr/bin/gnostr-signer
+
+# Desktop file and icons
+usr/share/applications/gnostr-signer.desktop
+usr/share/icons/hicolor/*/apps/org.gnostr.Signer.*
+
+# GSettings schema
+usr/share/glib-2.0/schemas/org.gnostr.Signer.gschema.xml
+
+# AppStream metadata
+usr/share/metainfo/org.gnostr.Signer.metainfo.xml

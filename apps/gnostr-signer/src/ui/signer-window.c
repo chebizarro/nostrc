@@ -3,6 +3,7 @@
 #include "page-permissions.h"
 #include "page-applications.h"
 #include "page-sessions.h"
+#include "page-history.h"
 #include "page-settings.h"
 #include "lock-screen.h"
 #include "sheets/sheet-create-profile.h"
@@ -13,6 +14,7 @@
 #include "../secret_store.h"
 #include "../startup-timing.h"
 #include "../session-manager.h"
+#include "../keyboard-nav.h"
 #include <gio/gio.h>
 #include <gdk/gdkkeysyms.h>
 #include <time.h>
@@ -36,6 +38,7 @@ struct _SignerWindow {
   GtkWidget *page_permissions;
   GtkWidget *page_applications;
   GtkWidget *page_sessions;
+  GtkWidget *page_history;
   GtkWidget *page_settings;
   /* GSettings for persistence */
   GSettings *settings;
@@ -113,8 +116,8 @@ static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpoint
   SignerWindow *self = user_data;
   if (!self || !self->stack || !row) return;
   int idx = gtk_list_box_row_get_index(row);
-  const char *names[] = { "permissions", "applications", "sessions", "settings" };
-  if (idx >= 0 && idx < 4) adw_view_stack_set_visible_child_name(self->stack, names[idx]);
+  const char *names[] = { "permissions", "applications", "sessions", "history", "settings" };
+  if (idx >= 0 && idx < 5) adw_view_stack_set_visible_child_name(self->stack, names[idx]);
 }
 
 static void signer_window_dispose(GObject *object) {
@@ -155,6 +158,7 @@ static void signer_window_class_init(SignerWindowClass *klass) {
   g_type_ensure(TYPE_PAGE_PERMISSIONS);
   g_type_ensure(TYPE_PAGE_APPLICATIONS);
   g_type_ensure(GN_TYPE_PAGE_SESSIONS);
+  g_type_ensure(GN_TYPE_PAGE_HISTORY);
   g_type_ensure(TYPE_PAGE_SETTINGS);
   STARTUP_TIME_END(STARTUP_PHASE_PAGES);
 
@@ -171,6 +175,7 @@ static void signer_window_class_init(SignerWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, page_permissions);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, page_applications);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, page_sessions);
+  gtk_widget_class_bind_template_child(widget_class, SignerWindow, page_history);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, page_settings);
 }
 
@@ -499,6 +504,10 @@ static void signer_window_init(SignerWindow *self) {
   GtkListBoxRow *first = gtk_list_box_get_row_at_index(self->sidebar, 0);
   if (first) gtk_list_box_select_row(self->sidebar, first);
   if (self->stack) adw_view_stack_set_visible_child_name(self->stack, "permissions");
+
+  /* Setup enhanced keyboard navigation for sidebar */
+  static const char *page_names[] = { "permissions", "applications", "sessions", "history", "settings", NULL };
+  gn_keyboard_nav_setup_sidebar(self->sidebar, self->stack, page_names);
 }
 
 SignerWindow *signer_window_new(AdwApplication *app) {
