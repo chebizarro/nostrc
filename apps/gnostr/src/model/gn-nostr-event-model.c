@@ -93,6 +93,7 @@ struct _GnNostrEventModel {
   gboolean in_batch;              /* TRUE during batch operations */
   guint batch_min_pos;            /* Minimum insertion position in current batch */
   guint batch_added_count;        /* Number of items added in current batch */
+  guint batch_old_len;            /* Model length before batch started */
 };
 
 typedef struct {
@@ -212,22 +213,38 @@ static void begin_batch(GnNostrEventModel *self) {
   self->in_batch = TRUE;
   self->batch_min_pos = G_MAXUINT;
   self->batch_added_count = 0;
+  self->batch_old_len = self->notes ? self->notes->len : 0;
 }
 
 static void end_batch(GnNostrEventModel *self) {
   if (!self || !self->in_batch) return;
   self->in_batch = FALSE;
 
-  /* Emit single items-changed for all accumulated insertions */
+  /* Emit items-changed for batch insertions.
+   *
+   * When items are inserted at non-contiguous sorted positions, we can't
+   * express this with a simple "added N at position P" signal. Instead,
+   * we tell GTK that everything from min_pos onwards has changed:
+   *   - removed: (old_len - min_pos) items from min_pos
+   *   - added: (new_len - min_pos) items at min_pos
+   * This is semantically correct and causes GTK to re-query all items
+   * from min_pos to the end. */
   if (self->batch_added_count > 0 && self->batch_min_pos != G_MAXUINT) {
+    guint new_len = self->notes ? self->notes->len : 0;
+    guint old_tail = (self->batch_old_len > self->batch_min_pos)
+                     ? (self->batch_old_len - self->batch_min_pos) : 0;
+    guint new_tail = (new_len > self->batch_min_pos)
+                     ? (new_len - self->batch_min_pos) : 0;
+
     g_list_model_items_changed(G_LIST_MODEL(self),
                                self->batch_min_pos,
-                               0,
-                               self->batch_added_count);
+                               old_tail,
+                               new_tail);
   }
 
   self->batch_min_pos = G_MAXUINT;
   self->batch_added_count = 0;
+  self->batch_old_len = 0;
 }
 
 /* Helper functions */
