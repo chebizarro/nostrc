@@ -352,7 +352,7 @@ GnDeleteLogLevel gn_secure_delete_get_log_level(void);
  * Attempts to detect if a path resides on an SSD.
  *
  * Detection methods vary by platform:
- * - Linux: Check /sys/block/*/queue/rotational
+ * - Linux: Check /sys/block/<device>/queue/rotational
  * - macOS: Check disk characteristics via IOKit
  *
  * Returns: TRUE if likely SSD, FALSE if HDD or unknown
