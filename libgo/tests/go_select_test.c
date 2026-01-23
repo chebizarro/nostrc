@@ -6,11 +6,16 @@
 #include "go.h"
 #include "select.h"
 
+// Allow override via compile-time definition for TSAN tolerance
+#ifndef DELAY_MS
+#define DELAY_MS 50
+#endif
+
 static inline void sleep_ms(int ms){ struct timespec ts={ ms/1000, (long)(ms%1000)*1000000L }; nanosleep(&ts, NULL); }
 
 static void *delayed_send(void *arg){
     GoChannel *c = (GoChannel*)arg;
-    sleep_ms(50);
+    sleep_ms(DELAY_MS);
     int v = 42;
     go_channel_send(c, (void*)(long)v);
     return NULL;

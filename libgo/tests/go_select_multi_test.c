@@ -5,6 +5,14 @@
 #include "go.h"
 #include "select.h"
 
+// Allow override via compile-time definitions for TSAN tolerance
+#ifndef DELAY_MS
+#define DELAY_MS 1
+#endif
+#ifndef FAIRNESS_ITERATIONS
+#define FAIRNESS_ITERATIONS 200
+#endif
+
 static inline void sleep_ms(int ms){ struct timespec ts={ ms/1000, (long)(ms%1000)*1000000L }; nanosleep(&ts, NULL); }
 
 int main(void){
@@ -37,7 +45,7 @@ int main(void){
 
     // Basic fairness sanity: over many trials, both a and b should be picked at least once
     int seen_a = 0, seen_b = 0;
-    for (int i = 0; i < 200; ++i) {
+    for (int i = 0; i < FAIRNESS_ITERATIONS; ++i) {
         // refill both
         go_channel_try_send(a, (void*)1);
         go_channel_try_send(b, (void*)2);
@@ -45,7 +53,7 @@ int main(void){
         int k = go_select(cases, 3);
         if (k == 0) seen_a = 1; else if (k == 1) seen_b = 1;
         if (seen_a && seen_b) break;
-        sleep_ms(1);
+        sleep_ms(DELAY_MS);
     }
     if (!(seen_a && seen_b)) { fprintf(stderr, "fairness check failed\n"); return 4; }
 

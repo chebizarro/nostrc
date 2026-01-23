@@ -334,6 +334,9 @@ set_tests_properties(GoContextStressTest PROPERTIES TIMEOUT 30)
 if (GO_ENABLE_TSAN)
   set_tests_properties(GoTickerTest PROPERTIES TIMEOUT 120)
   set_tests_properties(GoChannelStressTest PROPERTIES TIMEOUT 180)
+  set_tests_properties(GoSelectTest PROPERTIES TIMEOUT 60)
+  set_tests_properties(GoChannelCloseTest PROPERTIES TIMEOUT 60)
+  set_tests_properties(GoSelectMultiTest PROPERTIES TIMEOUT 60)
 endif()
 
 # Under ASAN/UBSAN, allow more time for the stress test as well
@@ -521,6 +524,10 @@ if (GO_ENABLE_TSAN)
   # Faster tick and longer max wait to tolerate TSAN scheduling perturbation
   target_compile_definitions(go_ticker_test PRIVATE MAX_TICK_WAIT_MS=8000 TICK_MS=10)
   set_tests_properties(GoChannelStressTest PROPERTIES TIMEOUT 20)
+  # Increase internal sleep delays for TSAN overhead in select/close tests
+  target_compile_definitions(go_select_test PRIVATE DELAY_MS=500)
+  target_compile_definitions(go_channel_close_test PRIVATE DELAY_MS=500)
+  target_compile_definitions(go_select_multi_test PRIVATE DELAY_MS=10 FAIRNESS_ITERATIONS=50)
 elseif (GO_ENABLE_ASAN OR GO_ENABLE_UBSAN)
   # Match TSAN scaling under ASAN/UBSAN to avoid CI timeouts on macOS
   target_compile_definitions(go_channel_stress_test PRIVATE PRODUCERS=2 CONSUMERS=2 ITEMS_PER_PROD=200)
