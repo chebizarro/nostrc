@@ -16,6 +16,7 @@
 #include <nostr/nip55l/signer_ops.h>
 #include <nostr/nip19/nip19.h>
 #include <json-glib/json-glib.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
