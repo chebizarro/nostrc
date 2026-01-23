@@ -172,7 +172,12 @@ if (EXISTS ${CMAKE_SOURCE_DIR}/apps/relayd/CMakeLists.txt)
 endif()
 # Global hardening flags (GCC/Clang); keep portable and avoid breaking MSVC
 if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-  add_compile_options(-fstack-protector-strong -D_FORTIFY_SOURCE=2 -fno-strict-aliasing)
+  add_compile_options(-fstack-protector-strong -fno-strict-aliasing)
+  # _FORTIFY_SOURCE is incompatible with sanitizers (ASAN sets it to 0)
+  # Only add when not using sanitizers to avoid macro redefinition errors
+  if (NOT (GO_ENABLE_ASAN OR GO_ENABLE_UBSAN OR GO_ENABLE_TSAN))
+    add_compile_options(-D_FORTIFY_SOURCE=2)
+  endif()
   # Position independent for shared libs
   set(CMAKE_POSITION_INDEPENDENT_CODE ON)
   if (UNIX AND NOT APPLE)

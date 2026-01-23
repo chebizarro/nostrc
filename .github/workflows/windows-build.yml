@@ -63,7 +63,6 @@ jobs:
             mingw-w64-x86_64-glib2
             mingw-w64-x86_64-json-glib
             mingw-w64-x86_64-libsodium
-            mingw-w64-x86_64-libsecp256k1
             mingw-w64-x86_64-libsecret
             mingw-w64-x86_64-nsync
             mingw-w64-x86_64-nsis
