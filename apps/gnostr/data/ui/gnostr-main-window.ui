@@ -233,7 +233,7 @@
                                     <property name="margin-bottom">10</property>
                                     <child>
                                       <object class="GtkImage">
-                                        <property name="icon-name">bell-outline-symbolic</property>
+                                        <property name="icon-name">notifications-symbolic</property>
                                         <style>
                                           <class name="dim-label"/>
                                         </style>
@@ -428,38 +428,6 @@
                                       </object>
                                     </child>
 
-                                    <!-- Overlay: Profile Pane (slides in from right) -->
-                                    <child type="overlay">
-                                      <object class="GtkRevealer" id="profile_revealer">
-                                        <property name="transition-type">slide-left</property>
-                                        <property name="reveal-child">false</property>
-                                        <property name="transition-duration">250</property>
-                                        <property name="halign">end</property>
-                                        <property name="valign">fill</property>
-                                        <child>
-                                          <object class="GnostrProfilePane" id="profile_pane">
-                                            <property name="vexpand">true</property>
-                                          </object>
-                                        </child>
-                                      </object>
-                                    </child>
-
-                                    <!-- Overlay: Thread View (slides in from right, over profile pane) -->
-                                    <child type="overlay">
-                                      <object class="GtkRevealer" id="thread_revealer">
-                                        <property name="transition-type">slide-left</property>
-                                        <property name="reveal-child">false</property>
-                                        <property name="transition-duration">250</property>
-                                        <property name="halign">end</property>
-                                        <property name="valign">fill</property>
-                                        <child>
-                                          <object class="GnostrThreadView" id="thread_view">
-                                            <property name="vexpand">true</property>
-                                            <property name="width-request">450</property>
-                                          </object>
-                                        </child>
-                                      </object>
-                                    </child>
                                   </object>
                                 </property>
                               </object>
@@ -469,7 +437,7 @@
                               <object class="AdwViewStackPage">
                                 <property name="name">notifications</property>
                                 <property name="title" translatable="yes">Notifications</property>
-                                <property name="icon-name">bell-outline-symbolic</property>
+                                <property name="icon-name">notifications-symbolic</property>
                                 <property name="child">
                                   <object class="GnostrNotificationsView" id="notifications_view">
                                     <property name="hexpand">true</property>
@@ -550,6 +518,40 @@
             </child>
           </object>
         </child>
+        <!-- Overlay: Profile Pane (slides in from right, over any page) -->
+        <child type="overlay">
+          <object class="GtkRevealer" id="profile_revealer">
+            <property name="transition-type">slide-left</property>
+            <property name="reveal-child">false</property>
+            <property name="transition-duration">250</property>
+            <property name="halign">end</property>
+            <property name="valign">fill</property>
+            <child>
+              <object class="GnostrProfilePane" id="profile_pane">
+                <property name="vexpand">true</property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Overlay: Thread View (slides in from right, over profile pane) -->
+        <child type="overlay">
+          <object class="GtkRevealer" id="thread_revealer">
+            <property name="transition-type">slide-left</property>
+            <property name="reveal-child">false</property>
+            <property name="transition-duration">250</property>
+            <property name="halign">end</property>
+            <property name="valign">fill</property>
+            <child>
+              <object class="GnostrThreadView" id="thread_view">
+                <property name="vexpand">true</property>
+                <property name="width-request">450</property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Toast notification overlay -->
         <child type="overlay">
           <object class="GtkRevealer" id="toast_revealer">
             <property name="transition-type">crossfade</property>
