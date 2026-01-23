@@ -13,6 +13,7 @@ Makefile
 cmake_install.cmake
 CTestTestfile.cmake
 Testing
+.cache/
 
 # Ignore IDE and editor-specific files
 .vscode/

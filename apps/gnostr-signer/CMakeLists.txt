@@ -146,6 +146,15 @@ if (ENABLE_TCP_IPC)
   target_compile_definitions(gnostr-signer-daemon PRIVATE GNOSTR_ENABLE_TCP_IPC=1)
 endif()
 
+# Compile GSettings schema for development/testing
+add_custom_target(gnostr-signer-schemas ALL
+  COMMAND ${CMAKE_COMMAND} -E copy
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/org.gnostr.Signer.gschema.xml
+    ${CMAKE_CURRENT_BINARY_DIR}/org.gnostr.Signer.gschema.xml
+  COMMAND glib-compile-schemas ${CMAKE_CURRENT_BINARY_DIR}
+  COMMENT "Compiling GSettings schemas for gnostr-signer"
+  VERBATIM)
+
 # Data install (schemas, dbus, desktop)
 install(TARGETS ${APP_SIGNER_BIN} gnostr-signer-daemon RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 

@@ -43,6 +43,11 @@ typedef struct {
   GHashTable *pending;
 } AppUI;
 
+/* Forward declarations */
+static void apply_theme_preference(SettingsTheme theme);
+static void on_theme_setting_changed(const char *key, gpointer user_data);
+static void update_high_contrast_css(gboolean enable);
+
 static void set_status(AppUI *ui, const char *text, const char *css_key) {
   gtk_label_set_text(ui->status, text);
   GtkWidget *w = GTK_WIDGET(ui->status);
@@ -558,6 +563,20 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
   STARTUP_TIME_MARK("activate-start");
 
+  /* Initialize settings manager and apply theme preference after GTK is initialized */
+  STARTUP_TIME_BEGIN(STARTUP_PHASE_SETTINGS);
+  SettingsManager *sm = settings_manager_get_default();
+  SettingsTheme initial_theme = settings_manager_get_theme(sm);
+  STARTUP_TIME_END(STARTUP_PHASE_SETTINGS);
+
+  STARTUP_TIME_BEGIN(STARTUP_PHASE_THEME);
+  apply_theme_preference(initial_theme);
+  STARTUP_TIME_END(STARTUP_PHASE_THEME);
+
+  /* Listen for theme setting changes */
+  settings_manager_connect_changed(sm, "theme", on_theme_setting_changed, NULL);
+  settings_manager_connect_changed(sm, "high-contrast-variant", on_theme_setting_changed, NULL);
+
   /* Load application stylesheet from resources */
   gint64 css_start = startup_timing_measure_start();
   GtkCssProvider *prov = gtk_css_provider_new();
@@ -569,8 +588,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
   g_object_unref(prov);
   startup_timing_measure_end(css_start, "css-load", 30);
 
-  /* Load high-contrast CSS if theme is high-contrast (already have settings from main) */
-  SettingsManager *sm = settings_manager_get_default();
+  /* Load high-contrast CSS if theme is high-contrast (sm already defined above) */
   SettingsTheme theme = settings_manager_get_theme(sm);
   gboolean is_high_contrast = (theme == SETTINGS_THEME_HIGH_CONTRAST);
   if (is_high_contrast) {
@@ -588,6 +606,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     g_type_ensure(TYPE_ONBOARDING_ASSISTANT);
 
     OnboardingAssistant *onboarding = onboarding_assistant_new();
+    g_debug("Created onboarding assistant: %p", onboarding);
     onboarding_assistant_set_on_finished(onboarding, on_onboarding_finished, app);
     gtk_application_add_window(app, GTK_WINDOW(onboarding));
     gtk_window_present(GTK_WINDOW(onboarding));
@@ -600,6 +619,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
   /* Not first run - present main window directly */
   STARTUP_TIME_BEGIN(STARTUP_PHASE_WINDOW);
   SignerWindow *win = signer_window_new(ADW_APPLICATION(app));
+  g_debug("Created main window: %p", win);
 
   /* Apply high-contrast class if needed */
   if (is_high_contrast) {
@@ -732,19 +752,7 @@ int main(int argc, char **argv) {
   /* Store global app reference for theme change callbacks */
   global_app = GTK_APPLICATION(app);
 
-  /* Initialize settings manager and apply theme preference at startup */
-  STARTUP_TIME_BEGIN(STARTUP_PHASE_SETTINGS);
-  SettingsManager *sm = settings_manager_get_default();
-  SettingsTheme initial_theme = settings_manager_get_theme(sm);
-  STARTUP_TIME_END(STARTUP_PHASE_SETTINGS);
-
-  STARTUP_TIME_BEGIN(STARTUP_PHASE_THEME);
-  apply_theme_preference(initial_theme);
-  STARTUP_TIME_END(STARTUP_PHASE_THEME);
-
-  /* Listen for theme setting changes */
-  settings_manager_connect_changed(sm, "theme", on_theme_setting_changed, NULL);
-  settings_manager_connect_changed(sm, "high-contrast-variant", on_theme_setting_changed, NULL);
+  /* Settings will be initialized in on_activate after GTK is ready */
 
   /* Install app actions */
   static const GActionEntry app_entries[] = {

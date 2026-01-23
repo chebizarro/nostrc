@@ -40,6 +40,7 @@ struct _BunkerService {
 
   /* Active connections */
   GHashTable *connections;  /* client_pubkey -> BunkerConnection* */
+  gchar *current_signing_client;  /* Current client making a sign request */
 
   /* Pending requests */
   GHashTable *pending_requests;  /* request_id -> BunkerSignRequest* */
@@ -135,6 +136,10 @@ static int bunker_authorize_cb(const char *client_pubkey_hex,
 
   g_hash_table_replace(bs->connections, g_strdup(client_pubkey_hex), conn);
 
+  /* Store current client for sign callbacks */
+  g_free(bs->current_signing_client);
+  bs->current_signing_client = g_strdup(client_pubkey_hex);
+
   if (bs->conn_cb) {
     bs->conn_cb(conn, bs->conn_cb_ud);
   }
@@ -144,7 +149,6 @@ static int bunker_authorize_cb(const char *client_pubkey_hex,
 }
 
 static char *bunker_sign_cb(const char *event_json,
-                            const char *client_pubkey_hex,
                             void *user_data) {
   BunkerService *bs = (BunkerService*)user_data;
   if (!bs || !event_json) return NULL;
@@ -176,17 +180,17 @@ static char *bunker_sign_cb(const char *event_json,
   }
 
   /* Check for active client session (nostrc-09n) */
-  if (!auto_approve && client_pubkey_hex) {
+  if (!auto_approve && bs->current_signing_client) {
     GnClientSessionManager *sess_mgr = gn_client_session_manager_get_default();
     if (gn_client_session_manager_has_active_session(sess_mgr,
-                                                      client_pubkey_hex,
+                                                      bs->current_signing_client,
                                                       bs->identity_npub)) {
       /* Active session exists - auto-approve and touch session */
       gn_client_session_manager_touch_session(sess_mgr,
-                                               client_pubkey_hex,
+                                               bs->current_signing_client,
                                                bs->identity_npub);
       auto_approve = TRUE;
-      g_debug("bunker: auto-approved via active session for %s", client_pubkey_hex);
+      g_debug("bunker: auto-approved via active session for %s", bs->current_signing_client);
     }
   }
 
@@ -194,7 +198,7 @@ static char *bunker_sign_cb(const char *event_json,
     /* Create request for UI prompt */
     BunkerSignRequest *req = g_new0(BunkerSignRequest, 1);
     req->request_id = g_strdup_printf("bunker_%ld_%d", (long)time(NULL), g_random_int());
-    req->client_pubkey = g_strdup(client_pubkey_hex);
+    req->client_pubkey = g_strdup(bs->current_signing_client);
     req->method = g_strdup("sign_event");
     req->event_json = g_strdup(event_json);
     req->event_kind = kind;
@@ -267,6 +271,7 @@ void bunker_service_free(BunkerService *bs) {
   g_free(bs->error_message);
   g_free(bs->identity_npub);
   g_free(bs->identity_pubkey_hex);
+  g_free(bs->current_signing_client);
   g_strfreev(bs->relays);
   g_strfreev(bs->allowed_methods);
   g_strfreev(bs->allowed_pubkeys);
