@@ -97,6 +97,10 @@ struct _GnNostrEventModel {
   guint batch_start_len;          /* Length of notes array when batch started */
   gboolean pending_refresh;       /* TRUE if model needs full refresh emission */
   guint last_emitted_len;         /* Length at last emission (for calculating diff) */
+
+  /* Deferred trim to prevent GTK4 re-entrancy when called from scroll callbacks */
+  guint pending_trim_to;          /* Target count for deferred trim (0 = no pending) */
+  guint trim_idle_id;             /* Pending idle source for trim operation */
 };
 
 typedef struct {
@@ -1305,6 +1309,12 @@ static void gn_nostr_event_model_finalize(GObject *object) {
     self->emit_idle_id = 0;
   }
 
+  /* Clean up deferred trim */
+  if (self->trim_idle_id > 0) {
+    g_source_remove(self->trim_idle_id);
+    self->trim_idle_id = 0;
+  }
+
   G_OBJECT_CLASS(gn_nostr_event_model_parent_class)->finalize(object);
 }
 
@@ -1403,6 +1413,10 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
   self->batch_start_len = 0;
   self->pending_refresh = FALSE;
   self->last_emitted_len = 0;
+
+  /* Deferred trim */
+  self->pending_trim_to = 0;
+  self->trim_idle_id = 0;
 
   /* Install lifetime subscriptions via dispatcher (marshals to main loop) */
   self->sub_profiles = gn_ndb_subscribe(FILTER_PROFILES, on_sub_profiles_batch, self, NULL);
@@ -1962,8 +1976,8 @@ gint64 gn_nostr_event_model_get_newest_timestamp(GnNostrEventModel *self) {
   return newest->created_at;
 }
 
-void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count) {
-  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
+/* Internal: Execute the actual trim (called from idle handler) */
+static void do_trim_older(GnNostrEventModel *self, guint keep_count) {
   if (self->notes->len <= keep_count) return;
 
   guint to_remove = self->notes->len - keep_count;
@@ -1971,16 +1985,14 @@ void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count) 
 
   /* CRITICAL: Emit removal signal BEFORE removing from array.
    * Removing from end (position start_idx), GTK needs items to exist during signal. */
-  if (!self->in_batch) {
-    if (self->emit_idle_id > 0) {
-      g_source_remove(self->emit_idle_id);
-      self->emit_idle_id = 0;
-    }
-    g_list_model_items_changed(G_LIST_MODEL(self), start_idx, to_remove, 0);
-    self->last_emitted_len = keep_count;
-    self->pending_refresh = FALSE;
-    self->emit_added = 0;
+  if (self->emit_idle_id > 0) {
+    g_source_remove(self->emit_idle_id);
+    self->emit_idle_id = 0;
   }
+  g_list_model_items_changed(G_LIST_MODEL(self), start_idx, to_remove, 0);
+  self->last_emitted_len = keep_count;
+  self->pending_refresh = FALSE;
+  self->emit_added = 0;
 
   /* Remove oldest entries (tail) and their cached state */
   for (guint i = start_idx; i < self->notes->len; i++) {
@@ -1995,6 +2007,36 @@ void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count) 
   g_array_remove_range(self->notes, start_idx, to_remove);
 
   g_debug("[MODEL] Trimmed %u older items, %u remaining", to_remove, self->notes->len);
+}
+
+/* Idle handler for deferred trim */
+static gboolean trim_idle_cb(gpointer user_data) {
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return G_SOURCE_REMOVE;
+
+  self->trim_idle_id = 0;
+  guint keep_count = self->pending_trim_to;
+  self->pending_trim_to = 0;
+
+  if (keep_count > 0) {
+    do_trim_older(self, keep_count);
+  }
+
+  return G_SOURCE_REMOVE;
+}
+
+void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
+  if (self->notes->len <= keep_count) return;
+
+  /* Defer trim to idle to prevent GTK4 re-entrancy crashes.
+   * This function is often called from scroll callbacks, and emitting
+   * items_changed during scroll handling crashes GTK's ListView. */
+  self->pending_trim_to = keep_count;
+
+  if (self->trim_idle_id == 0) {
+    self->trim_idle_id = g_idle_add(trim_idle_cb, self);
+  }
 }
 
 guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
