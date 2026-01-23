@@ -272,10 +272,10 @@
                     <property name="use-underline">true</property>
                     <property name="hexpand">true</property>
                     <property name="focusable">true</property>
-                    <property name="tooltip-text" translatable="yes">Deny this request (Alt+D, Escape)</property>
+                    <property name="tooltip-text" translatable="yes">Deny this request (Ctrl+D, Escape)</property>
                     <accessibility>
                       <property name="label">Deny signature request</property>
-                      <property name="description">Click to deny this signing request. The application will not receive a signature. Keyboard shortcut: Alt+D or Escape.</property>
+                      <property name="description">Click to deny this signing request. The application will not receive a signature. Keyboard shortcut: Ctrl+D or Escape.</property>
                     </accessibility>
                     <style>
                       <class name="destructive-action"/>
@@ -289,10 +289,10 @@
                     <property name="hexpand">true</property>
                     <property name="focusable">true</property>
                     <property name="receives-default">true</property>
-                    <property name="tooltip-text" translatable="yes">Approve this request (Alt+A)</property>
+                    <property name="tooltip-text" translatable="yes">Approve this request (Ctrl+A)</property>
                     <accessibility>
                       <property name="label">Approve signature request</property>
-                      <property name="description">Click to approve and sign this event with your private key. Keyboard shortcut: Alt+A.</property>
+                      <property name="description">Click to approve and sign this event with your private key. Keyboard shortcut: Ctrl+A.</property>
                     </accessibility>
                     <style>
                       <class name="suggested-action"/>

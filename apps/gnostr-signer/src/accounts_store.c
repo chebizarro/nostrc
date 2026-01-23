@@ -515,3 +515,61 @@ void accounts_store_disconnect_changed(AccountsStore *as, guint handler_id) {
     }
   }
 }
+
+/* ======== Async API implementation ======== */
+
+typedef struct {
+  AccountsStore *as;
+  AccountsStoreSyncCallback callback;
+  gpointer user_data;
+  GPtrArray *secrets;  /* Result from async secret store list */
+} SyncAsyncData;
+
+/* Called in main thread after secret list completes */
+static void sync_secrets_list_cb(GPtrArray *entries, gpointer user_data) {
+  SyncAsyncData *data = user_data;
+  AccountsStore *as = data->as;
+
+  if (entries && as) {
+    for (guint i = 0; i < entries->len; i++) {
+      SecretStoreEntry *se = g_ptr_array_index(entries, i);
+      if (!se || !se->npub) continue;
+
+      /* Add if not already tracked */
+      if (!g_hash_table_contains(as->map, se->npub)) {
+        g_hash_table_insert(as->map, g_strdup(se->npub),
+                            g_strdup(se->label ? se->label : ""));
+
+        /* Set as active if first */
+        if (!as->active) {
+          as->active = g_strdup(se->npub);
+        }
+      }
+    }
+    g_ptr_array_unref(entries);
+  }
+
+  /* Invoke callback */
+  if (data->callback) {
+    data->callback(as, data->user_data);
+  }
+
+  g_free(data);
+}
+
+void accounts_store_sync_with_secrets_async(AccountsStore *as,
+                                            AccountsStoreSyncCallback callback,
+                                            gpointer user_data) {
+  if (!as) {
+    if (callback) callback(NULL, user_data);
+    return;
+  }
+
+  SyncAsyncData *data = g_new0(SyncAsyncData, 1);
+  data->as = as;
+  data->callback = callback;
+  data->user_data = user_data;
+
+  /* Use async secret store list */
+  secret_store_list_async(sync_secrets_list_cb, data);
+}

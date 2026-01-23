@@ -16,6 +16,7 @@
 #include <nostr/nip19/nip19.h>
 #include <keys.h>
 #include <nostr-utils.h>
+#include <gio/gio.h>  /* For GTask async API */
 #include <string.h>
 #include <stdlib.h>
 
@@ -653,4 +654,104 @@ SecretStoreResult secret_store_get_secret(const gchar *selector,
   (void)selector;
   return SECRET_STORE_ERR_BACKEND;
 #endif
+}
+
+/* ======== Async API implementation ======== */
+
+typedef struct {
+  SecretStoreListCallback callback;
+  gpointer user_data;
+} ListAsyncData;
+
+static void list_async_thread_func(GTask *task, gpointer source_object,
+                                   gpointer task_data, GCancellable *cancellable) {
+  (void)source_object;
+  (void)task_data;
+  (void)cancellable;
+
+  /* Run the synchronous list in thread pool */
+  GPtrArray *entries = secret_store_list();
+  g_task_return_pointer(task, entries, (GDestroyNotify)g_ptr_array_unref);
+}
+
+static void list_async_ready_cb(GObject *source_object, GAsyncResult *res,
+                                gpointer user_data) {
+  (void)source_object;
+  ListAsyncData *data = user_data;
+
+  GError *error = NULL;
+  GPtrArray *entries = g_task_propagate_pointer(G_TASK(res), &error);
+
+  if (error) {
+    g_warning("secret_store_list_async failed: %s", error->message);
+    g_clear_error(&error);
+    entries = NULL;
+  }
+
+  if (data->callback) {
+    data->callback(entries, data->user_data);
+  } else if (entries) {
+    g_ptr_array_unref(entries);
+  }
+
+  g_free(data);
+}
+
+void secret_store_list_async(SecretStoreListCallback callback, gpointer user_data) {
+  ListAsyncData *data = g_new0(ListAsyncData, 1);
+  data->callback = callback;
+  data->user_data = user_data;
+
+  GTask *task = g_task_new(NULL, NULL, list_async_ready_cb, data);
+  g_task_set_name(task, "secret_store_list_async");
+  g_task_run_in_thread(task, list_async_thread_func);
+  g_object_unref(task);
+}
+
+typedef struct {
+  SecretStoreAvailableCallback callback;
+  gpointer user_data;
+} AvailableAsyncData;
+
+static void available_async_thread_func(GTask *task, gpointer source_object,
+                                        gpointer task_data, GCancellable *cancellable) {
+  (void)source_object;
+  (void)task_data;
+  (void)cancellable;
+
+  gboolean available = secret_store_is_available();
+  g_task_return_boolean(task, available);
+}
+
+static void available_async_ready_cb(GObject *source_object, GAsyncResult *res,
+                                     gpointer user_data) {
+  (void)source_object;
+  AvailableAsyncData *data = user_data;
+
+  GError *error = NULL;
+  gboolean available = g_task_propagate_boolean(G_TASK(res), &error);
+
+  if (error) {
+    g_warning("secret_store_check_available_async failed: %s", error->message);
+    g_clear_error(&error);
+    available = FALSE;
+  }
+
+  if (data->callback) {
+    data->callback(available, data->user_data);
+  }
+
+  g_free(data);
+}
+
+void secret_store_check_available_async(SecretStoreAvailableCallback callback,
+                                        gpointer user_data) {
+  AvailableAsyncData *data = g_new0(AvailableAsyncData, 1);
+  data->callback = callback;
+  data->user_data = user_data;
+
+  GTask *task = g_task_new(NULL, NULL, available_async_ready_cb, data);
+  g_task_set_name(task, "secret_store_check_available_async");
+  g_task_run_in_thread(task, available_async_thread_func);
+  g_object_unref(task);
 }

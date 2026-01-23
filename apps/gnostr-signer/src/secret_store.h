@@ -103,4 +103,46 @@ gboolean secret_store_is_available(void);
 /* Get the backend name (e.g., "libsecret", "Keychain", "none") */
 const gchar *secret_store_backend_name(void);
 
+/* ======== Async API for startup optimization ======== */
+
+/**
+ * SecretStoreListCallback:
+ * @entries: (transfer full): GPtrArray of SecretStoreEntry*, or NULL on error
+ * @user_data: user data passed to the async function
+ *
+ * Callback type for secret_store_list_async.
+ */
+typedef void (*SecretStoreListCallback)(GPtrArray *entries, gpointer user_data);
+
+/**
+ * secret_store_list_async:
+ * @callback: function to call when listing completes
+ * @user_data: data to pass to callback
+ *
+ * Asynchronously list all stored identities. This runs the blocking
+ * secret service enumeration in a thread pool to avoid blocking the
+ * main thread during application startup.
+ *
+ * The callback receives ownership of the GPtrArray.
+ */
+void secret_store_list_async(SecretStoreListCallback callback, gpointer user_data);
+
+/**
+ * SecretStoreAvailableCallback:
+ * @available: whether the secret store backend is available
+ * @user_data: user data passed to the async function
+ *
+ * Callback type for secret_store_check_available_async.
+ */
+typedef void (*SecretStoreAvailableCallback)(gboolean available, gpointer user_data);
+
+/**
+ * secret_store_check_available_async:
+ * @callback: function to call when check completes
+ * @user_data: data to pass to callback
+ *
+ * Asynchronously check if the secret store backend is available.
+ */
+void secret_store_check_available_async(SecretStoreAvailableCallback callback, gpointer user_data);
+
 G_END_DECLS

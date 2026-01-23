@@ -114,4 +114,29 @@ void accounts_store_disconnect_changed(AccountsStore *as, guint handler_id);
 /* Get singleton instance for global access */
 AccountsStore *accounts_store_get_default(void);
 
+/* ======== Async API for startup optimization ======== */
+
+/**
+ * AccountsStoreSyncCallback:
+ * @as: the accounts store that was synced
+ * @user_data: user data passed to the async function
+ *
+ * Callback type for accounts_store_sync_with_secrets_async.
+ */
+typedef void (*AccountsStoreSyncCallback)(AccountsStore *as, gpointer user_data);
+
+/**
+ * accounts_store_sync_with_secrets_async:
+ * @as: the accounts store to sync
+ * @callback: function to call when sync completes
+ * @user_data: data to pass to callback
+ *
+ * Asynchronously sync accounts with secret store. This runs the blocking
+ * secret service enumeration in a thread pool to avoid blocking the
+ * main thread during application startup.
+ */
+void accounts_store_sync_with_secrets_async(AccountsStore *as,
+                                            AccountsStoreSyncCallback callback,
+                                            gpointer user_data);
+
 G_END_DECLS
