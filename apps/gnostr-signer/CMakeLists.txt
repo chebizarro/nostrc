@@ -114,6 +114,11 @@ if (SODIUM_FOUND)
   target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_SODIUM=1)
 endif()
 
+# Link math library on Linux (for fmin, fmax, etc.)
+if (UNIX AND NOT APPLE)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE m)
+endif()
+
 # Do not enable GNOSTR_HAVE_LIBSECRET unless helper lib is built; otherwise
 # we'd reference symbols not linked into the app.
 
