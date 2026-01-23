@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Basic Bundle Identification -->
+    <key>CFBundleIdentifier</key>
+    <string>org.gnostr.Signer</string>
+
+    <key>CFBundleName</key>
+    <string>Gnostr Signer</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>Gnostr Signer</string>
+
+    <key>CFBundleExecutable</key>
+    <string>gnostr-signer</string>
+
+    <!-- Version Information -->
+    <!-- @VERSION@ is replaced by CMake/build script from project version -->
+    <key>CFBundleVersion</key>
+    <string>@VERSION@</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+
+    <!-- Bundle Type and Signature -->
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <key>CFBundleSignature</key>
+    <string>????</string>
+
+    <!-- macOS Specific Settings -->
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <key>NSSupportsAutomaticGraphicsSwitching</key>
+    <true/>
+
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
+
+    <!-- UI and Appearance -->
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright 2024-2025 Gnostr Contributors. MIT License.</string>
+
+    <!-- Icons -->
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
+
+    <!-- URL Scheme Handling for nostr: protocol -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>org.gnostr.Signer.nostr</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>nostr</string>
+            </array>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+        </dict>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>org.gnostr.Signer.bunker</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>bunker</string>
+            </array>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+        </dict>
+    </array>
+
+    <!-- UTI Declarations for Nostr-related files -->
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>org.gnostr.nostr-event</string>
+            <key>UTTypeDescription</key>
+            <string>Nostr Event</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.json</string>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>nostr</string>
+                </array>
+                <key>public.mime-type</key>
+                <array>
+                    <string>application/nostr+json</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>org.gnostr.nostr-nsec</string>
+            <key>UTTypeDescription</key>
+            <string>Nostr Secret Key</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.plain-text</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>nsec</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
+
+    <!-- Document Types -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Nostr Event</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Default</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>org.gnostr.nostr-event</string>
+            </array>
+        </dict>
+    </array>
+
+    <!-- Privacy and Security Descriptions -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Gnostr Signer needs to communicate with other applications for signing requests.</string>
+
+    <!-- Network Access (for relay communication) -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Gnostr Signer connects to Nostr relays to publish and retrieve events.</string>
+
+    <!-- Prevent App Nap for daemon-like behavior -->
+    <key>NSAppSleepDisabled</key>
+    <false/>
+
+    <!-- Background modes -->
+    <key>LSBackgroundOnly</key>
+    <false/>
+
+    <!-- Sandbox exceptions for DBus/IPC -->
+    <key>NSUserActivityTypes</key>
+    <array>
+        <string>org.gnostr.Signer.sign-event</string>
+        <string>org.gnostr.Signer.manage-keys</string>
+    </array>
+</dict>
+</plist>

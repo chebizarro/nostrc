@@ -1,25 +1,107 @@
+# Flatpak manifest for GNostr Signer
+# Build with: flatpak-builder --user --install build-dir org.gnostr.Signer.yaml
 app-id: org.gnostr.Signer
 runtime: org.gnome.Platform
 runtime-version: '46'
 sdk: org.gnome.Sdk
 command: gnostr-signer
+
 finish-args:
+  # D-Bus access for IPC
   - --share=ipc
+  # Display protocols
   - --socket=fallback-x11
   - --socket=wayland
-  - --filesystem=home
+  # Access to libsecret/GNOME Keyring for secure key storage
+  - --talk-name=org.freedesktop.secrets
+  # D-Bus session bus access for our own service
+  - --own-name=org.nostr.Signer
+  # Network access for relay connections (NIP-46 bunker)
+  - --share=network
+  # GSettings access
+  - --metadata=X-DConf=migrate-path=/org/gnostr/Signer/
+  # Notifications
+  - --talk-name=org.freedesktop.Notifications
+  # Portal access for file chooser (backup/restore)
+  - --talk-name=org.freedesktop.portal.Desktop
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /lib/*.a
+  - /lib/*.la
+  - /share/man
+  - /share/doc
+
 modules:
-  - name: nostrc
+  # libsecp256k1 - elliptic curve cryptography for Nostr
+  - name: libsecp256k1
+    buildsystem: autotools
+    config-opts:
+      - --enable-module-recovery
+      - --enable-module-extrakeys
+      - --enable-module-schnorrsig
+      - --disable-benchmark
+      - --disable-tests
+      - --disable-exhaustive-tests
+    sources:
+      - type: git
+        url: https://github.com/bitcoin-core/secp256k1.git
+        tag: v0.5.1
+        commit: 642c885b6102725e25623738529895a95addc7d4
+
+  # nsync - Google's C library for synchronization primitives
+  - name: nsync
     buildsystem: cmake-ninja
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_SHARED_LIBS=ON
+      - -DNSYNC_ENABLE_TESTS=OFF
+    sources:
+      - type: git
+        url: https://github.com/google/nsync.git
+        tag: '1.29.2'
+        commit: 33d7d2d94fdd6fe4e1e8f4f2e1d88c4c1d8f3e5a
+
+  # libwebsockets - WebSocket client/server library
+  - name: libwebsockets
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DLWS_WITH_SSL=ON
+      - -DLWS_WITH_SHARED=ON
+      - -DLWS_WITHOUT_TESTAPPS=ON
+      - -DLWS_WITHOUT_TEST_SERVER=ON
+      - -DLWS_WITHOUT_TEST_PING=ON
+      - -DLWS_WITHOUT_TEST_CLIENT=ON
+    sources:
+      - type: git
+        url: https://github.com/warmcat/libwebsockets.git
+        tag: v4.3.3
+        commit: b0a749c8e7a8294b68581ce4feac224e51768bcf
+
+  # The main nostrc/gnostr-signer application
+  - name: gnostr-signer
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_PREFIX=/app
     sources:
       - type: dir
-        path: ../..
+        path: ../../..
     build-commands:
-      - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-      - cmake --build build -j --target gnostr-signer
-      - DESTDIR="${FLATPAK_DEST}" cmake --install build
+      - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/app
+      - cmake --build build --target gnostr-signer gnostr-signer-daemon
       - install -Dm755 build/apps/gnostr-signer/gnostr-signer /app/bin/gnostr-signer
+      - install -Dm755 build/apps/gnostr-signer/gnostr-signer-daemon /app/bin/gnostr-signer-daemon
+      # Install desktop file
+      - install -Dm644 apps/gnostr-signer/data/org.gnostr.Signer.desktop /app/share/applications/org.gnostr.Signer.desktop
+      # Install metainfo
+      - install -Dm644 apps/gnostr-signer/data/org.gnostr.Signer.metainfo.xml /app/share/metainfo/org.gnostr.Signer.metainfo.xml
+      # Install icons
       - install -Dm644 apps/gnostr-signer/data/icons/hicolor/scalable/apps/org.gnostr.Signer.svg /app/share/icons/hicolor/scalable/apps/org.gnostr.Signer.svg
-      - install -Dm644 apps/gnostr-signer/packaging/appimage/gnostr-signer.desktop /app/share/applications/gnostr-signer.desktop
+      # Install GSettings schema
+      - install -Dm644 apps/gnostr-signer/data/org.gnostr.Signer.gschema.xml /app/share/glib-2.0/schemas/org.gnostr.Signer.gschema.xml
+      - glib-compile-schemas /app/share/glib-2.0/schemas/
+      # Install D-Bus service file (use flatpak-specific version with correct path)
+      - install -Dm644 apps/gnostr-signer/flatpak/org.nostr.Signer.service /app/share/dbus-1/services/org.nostr.Signer.service

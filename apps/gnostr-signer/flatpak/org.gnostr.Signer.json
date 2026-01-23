@@ -1,0 +1,112 @@
+{
+  "app-id": "org.gnostr.Signer",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "46",
+  "sdk": "org.gnome.Sdk",
+  "command": "gnostr-signer",
+  "finish-args": [
+    "--share=ipc",
+    "--socket=fallback-x11",
+    "--socket=wayland",
+    "--talk-name=org.freedesktop.secrets",
+    "--own-name=org.nostr.Signer",
+    "--share=network",
+    "--metadata=X-DConf=migrate-path=/org/gnostr/Signer/",
+    "--talk-name=org.freedesktop.Notifications",
+    "--talk-name=org.freedesktop.portal.Desktop"
+  ],
+  "cleanup": [
+    "/include",
+    "/lib/pkgconfig",
+    "/lib/*.a",
+    "/lib/*.la",
+    "/share/man",
+    "/share/doc"
+  ],
+  "modules": [
+    {
+      "name": "libsecp256k1",
+      "buildsystem": "autotools",
+      "config-opts": [
+        "--enable-module-recovery",
+        "--enable-module-extrakeys",
+        "--enable-module-schnorrsig",
+        "--disable-benchmark",
+        "--disable-tests",
+        "--disable-exhaustive-tests"
+      ],
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/bitcoin-core/secp256k1.git",
+          "tag": "v0.5.1",
+          "commit": "642c885b6102725e25623738529895a95addc7d4"
+        }
+      ]
+    },
+    {
+      "name": "nsync",
+      "buildsystem": "cmake-ninja",
+      "config-opts": [
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DBUILD_SHARED_LIBS=ON",
+        "-DNSYNC_ENABLE_TESTS=OFF"
+      ],
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/google/nsync.git",
+          "tag": "1.29.2",
+          "commit": "33d7d2d94fdd6fe4e1e8f4f2e1d88c4c1d8f3e5a"
+        }
+      ]
+    },
+    {
+      "name": "libwebsockets",
+      "buildsystem": "cmake-ninja",
+      "config-opts": [
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DLWS_WITH_SSL=ON",
+        "-DLWS_WITH_SHARED=ON",
+        "-DLWS_WITHOUT_TESTAPPS=ON",
+        "-DLWS_WITHOUT_TEST_SERVER=ON",
+        "-DLWS_WITHOUT_TEST_PING=ON",
+        "-DLWS_WITHOUT_TEST_CLIENT=ON"
+      ],
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/warmcat/libwebsockets.git",
+          "tag": "v4.3.3",
+          "commit": "b0a749c8e7a8294b68581ce4feac224e51768bcf"
+        }
+      ]
+    },
+    {
+      "name": "gnostr-signer",
+      "buildsystem": "cmake-ninja",
+      "config-opts": [
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_INSTALL_PREFIX=/app"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "../../.."
+        }
+      ],
+      "build-commands": [
+        "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/app",
+        "cmake --build build --target gnostr-signer gnostr-signer-daemon",
+        "install -Dm755 build/apps/gnostr-signer/gnostr-signer /app/bin/gnostr-signer",
+        "install -Dm755 build/apps/gnostr-signer/gnostr-signer-daemon /app/bin/gnostr-signer-daemon",
+        "install -Dm644 apps/gnostr-signer/data/org.gnostr.Signer.desktop /app/share/applications/org.gnostr.Signer.desktop",
+        "install -Dm644 apps/gnostr-signer/data/org.gnostr.Signer.metainfo.xml /app/share/metainfo/org.gnostr.Signer.metainfo.xml",
+        "install -Dm644 apps/gnostr-signer/data/icons/hicolor/scalable/apps/org.gnostr.Signer.svg /app/share/icons/hicolor/scalable/apps/org.gnostr.Signer.svg",
+        "install -Dm644 apps/gnostr-signer/data/org.gnostr.Signer.gschema.xml /app/share/glib-2.0/schemas/org.gnostr.Signer.gschema.xml",
+        "glib-compile-schemas /app/share/glib-2.0/schemas/",
+        "install -Dm644 apps/gnostr-signer/flatpak/org.nostr.Signer.service /app/share/dbus-1/services/org.nostr.Signer.service"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,786 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+
+  <template class="OnboardingAssistant" parent="AdwWindow">
+    <property name="title" translatable="yes">Welcome to GNostr Signer</property>
+    <property name="default-width">600</property>
+    <property name="default-height">500</property>
+    <property name="modal">true</property>
+    <property name="resizable">false</property>
+
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+
+        <!-- Header Bar -->
+        <child>
+          <object class="AdwHeaderBar">
+            <property name="show-start-title-buttons">false</property>
+            <property name="show-end-title-buttons">false</property>
+            <property name="title-widget">
+              <object class="AdwWindowTitle">
+                <property name="title" translatable="yes">Setup Assistant</property>
+              </object>
+            </property>
+            <child type="end">
+              <object class="GtkButton" id="btn_skip">
+                <property name="label" translatable="yes">Skip</property>
+                <property name="valign">center</property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Main Content Area with Carousel -->
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="vexpand">true</property>
+            <property name="spacing">12</property>
+            <property name="margin-start">24</property>
+            <property name="margin-end">24</property>
+            <property name="margin-top">12</property>
+            <property name="margin-bottom">12</property>
+
+            <child>
+              <object class="AdwCarousel" id="carousel">
+                <property name="vexpand">true</property>
+                <property name="hexpand">true</property>
+                <property name="interactive">false</property>
+                <property name="allow-scroll-wheel">false</property>
+                <property name="allow-long-swipes">false</property>
+
+                <!-- Page 1: Welcome -->
+                <child>
+                  <object class="GtkBox" id="page_welcome">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">16</property>
+                    <property name="valign">center</property>
+                    <property name="halign">center</property>
+                    <property name="margin-start">24</property>
+                    <property name="margin-end">24</property>
+
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">org.gnostr.Signer</property>
+                        <property name="pixel-size">96</property>
+                        <property name="margin-bottom">12</property>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Welcome to GNostr Signer</property>
+                        <style><class name="title-1"/></style>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Your secure key manager for the Nostr network</property>
+                        <style><class name="dim-label"/></style>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="wrap">true</property>
+                        <property name="wrap-mode">word-char</property>
+                        <property name="max-width-chars">50</property>
+                        <property name="justify">center</property>
+                        <property name="margin-top">24</property>
+                        <property name="label" translatable="yes">GNostr Signer securely manages your Nostr identity keys, allowing applications to sign events on your behalf without ever exposing your private keys.
+
+This setup assistant will guide you through:
+- Understanding how your keys are protected
+- Creating or importing your Nostr identity
+- Setting up secure backup options</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Page 2: Security Overview -->
+                <child>
+                  <object class="GtkBox" id="page_security">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">16</property>
+                    <property name="valign">center</property>
+                    <property name="halign">center</property>
+                    <property name="margin-start">24</property>
+                    <property name="margin-end">24</property>
+
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">security-high-symbolic</property>
+                        <property name="pixel-size">64</property>
+                        <property name="margin-bottom">12</property>
+                        <style><class name="accent"/></style>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">How Your Keys Are Protected</property>
+                        <style><class name="title-2"/></style>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">12</property>
+                        <property name="margin-top">16</property>
+
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">12</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">dialog-password-symbolic</property>
+                                <property name="pixel-size">24</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="wrap">true</property>
+                                <property name="xalign">0</property>
+                                <property name="max-width-chars">45</property>
+                                <property name="label" translatable="yes"><b>Encrypted Storage</b> - Your private key is encrypted using your system's secure keyring (GNOME Keyring, KDE Wallet, or similar).</property>
+                                <property name="use-markup">true</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">12</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">system-lock-screen-symbolic</property>
+                                <property name="pixel-size">24</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="wrap">true</property>
+                                <property name="xalign">0</property>
+                                <property name="max-width-chars">45</property>
+                                <property name="label" translatable="yes"><b>Session Protection</b> - Keys are only decrypted in memory when needed and can be locked when you step away.</property>
+                                <property name="use-markup">true</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">12</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">emblem-ok-symbolic</property>
+                                <property name="pixel-size">24</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="wrap">true</property>
+                                <property name="xalign">0</property>
+                                <property name="max-width-chars">45</property>
+                                <property name="label" translatable="yes"><b>Permission Control</b> - You decide which applications can request signatures and can revoke access at any time.</property>
+                                <property name="use-markup">true</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">12</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">network-server-symbolic</property>
+                                <property name="pixel-size">24</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="wrap">true</property>
+                                <property name="xalign">0</property>
+                                <property name="max-width-chars">45</property>
+                                <property name="label" translatable="yes"><b>NIP-46 Remote Signing</b> - Use your keys across devices without ever sharing them directly.</property>
+                                <property name="use-markup">true</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Page 3: Choose Path (Create or Import) -->
+                <child>
+                  <object class="GtkBox" id="page_choose_path">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">16</property>
+                    <property name="valign">center</property>
+                    <property name="halign">center</property>
+                    <property name="margin-start">24</property>
+                    <property name="margin-end">24</property>
+
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Get Started</property>
+                        <style><class name="title-2"/></style>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Choose how you'd like to set up your Nostr identity</property>
+                        <style><class name="dim-label"/></style>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">16</property>
+                        <property name="margin-top">24</property>
+                        <property name="halign">center</property>
+
+                        <!-- Create New Identity -->
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">16</property>
+                            <style><class name="card"/></style>
+                            <property name="margin-start">8</property>
+                            <property name="margin-end">8</property>
+                            <property name="margin-top">8</property>
+                            <property name="margin-bottom">8</property>
+
+                            <child>
+                              <object class="GtkCheckButton" id="radio_create">
+                                <property name="valign">center</property>
+                              </object>
+                            </child>
+
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">list-add-symbolic</property>
+                                <property name="pixel-size">32</property>
+                                <property name="valign">center</property>
+                              </object>
+                            </child>
+
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">4</property>
+                                <property name="hexpand">true</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Create New Identity</property>
+                                    <property name="xalign">0</property>
+                                    <style><class name="heading"/></style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Generate a new Nostr keypair. Perfect if you're new to Nostr or want a fresh identity.</property>
+                                    <property name="xalign">0</property>
+                                    <property name="wrap">true</property>
+                                    <property name="max-width-chars">40</property>
+                                    <style><class name="dim-label"/></style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                        <!-- Import Existing Identity -->
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">16</property>
+                            <style><class name="card"/></style>
+                            <property name="margin-start">8</property>
+                            <property name="margin-end">8</property>
+                            <property name="margin-top">8</property>
+                            <property name="margin-bottom">8</property>
+
+                            <child>
+                              <object class="GtkCheckButton" id="radio_import">
+                                <property name="valign">center</property>
+                                <property name="group">radio_create</property>
+                              </object>
+                            </child>
+
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">document-open-symbolic</property>
+                                <property name="pixel-size">32</property>
+                                <property name="valign">center</property>
+                              </object>
+                            </child>
+
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">4</property>
+                                <property name="hexpand">true</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Import Existing Identity</property>
+                                    <property name="xalign">0</property>
+                                    <style><class name="heading"/></style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Use an existing nsec key, seed phrase, or backup file from another app.</property>
+                                    <property name="xalign">0</property>
+                                    <property name="wrap">true</property>
+                                    <property name="max-width-chars">40</property>
+                                    <style><class name="dim-label"/></style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Page 4a: Create Passphrase -->
+                <child>
+                  <object class="GtkBox" id="page_create_passphrase">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">16</property>
+                    <property name="valign">center</property>
+                    <property name="halign">center</property>
+                    <property name="margin-start">24</property>
+                    <property name="margin-end">24</property>
+
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">dialog-password-symbolic</property>
+                        <property name="pixel-size">48</property>
+                        <property name="margin-bottom">8</property>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Create a Passphrase</property>
+                        <style><class name="title-2"/></style>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">This passphrase will encrypt your private key locally</property>
+                        <property name="wrap">true</property>
+                        <property name="max-width-chars">45</property>
+                        <style><class name="dim-label"/></style>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">8</property>
+                        <property name="margin-top">16</property>
+                        <property name="halign">center</property>
+                        <property name="width-request">300</property>
+
+                        <child>
+                          <object class="GtkPasswordEntry" id="entry_passphrase">
+                            <property name="placeholder-text" translatable="yes">Enter passphrase</property>
+                            <property name="show-peek-icon">true</property>
+                          </object>
+                        </child>
+
+                        <child>
+                          <object class="GtkLevelBar" id="passphrase_strength">
+                            <property name="min-value">0</property>
+                            <property name="max-value">1</property>
+                            <property name="value">0</property>
+                            <property name="margin-top">4</property>
+                            <property name="margin-bottom">4</property>
+                          </object>
+                        </child>
+
+                        <child>
+                          <object class="GtkLabel" id="passphrase_hint">
+                            <property name="label" translatable="yes">Enter a strong passphrase</property>
+                            <property name="xalign">0</property>
+                            <style><class name="dim-label"/><class name="caption"/></style>
+                          </object>
+                        </child>
+
+                        <child>
+                          <object class="GtkPasswordEntry" id="entry_passphrase_confirm">
+                            <property name="placeholder-text" translatable="yes">Confirm passphrase</property>
+                            <property name="show-peek-icon">true</property>
+                            <property name="margin-top">8</property>
+                          </object>
+                        </child>
+
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Use a unique passphrase you don't use elsewhere. Consider using a password manager to generate and store it securely.</property>
+                            <property name="wrap">true</property>
+                            <property name="max-width-chars">40</property>
+                            <property name="margin-top">16</property>
+                            <style><class name="dim-label"/><class name="caption"/></style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Page 4b: Import Method -->
+                <child>
+                  <object class="GtkBox" id="page_import_method">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">16</property>
+                    <property name="valign">center</property>
+                    <property name="halign">center</property>
+                    <property name="margin-start">24</property>
+                    <property name="margin-end">24</property>
+
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">document-open-symbolic</property>
+                        <property name="pixel-size">48</property>
+                        <property name="margin-bottom">8</property>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Import Your Key</property>
+                        <style><class name="title-2"/></style>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Choose how to import your existing Nostr identity</property>
+                        <style><class name="dim-label"/></style>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">12</property>
+                        <property name="margin-top">16</property>
+                        <property name="halign">center</property>
+
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">12</property>
+                            <child>
+                              <object class="GtkCheckButton" id="radio_import_nsec">
+                                <property name="active">true</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">2</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">nsec Private Key</property>
+                                    <property name="xalign">0</property>
+                                    <style><class name="heading"/></style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Paste your nsec1... or hex private key</property>
+                                    <property name="xalign">0</property>
+                                    <style><class name="dim-label"/><class name="caption"/></style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">12</property>
+                            <child>
+                              <object class="GtkCheckButton" id="radio_import_seed">
+                                <property name="group">radio_import_nsec</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">2</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Recovery Seed Phrase</property>
+                                    <property name="xalign">0</property>
+                                    <style><class name="heading"/></style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">12 or 24 word BIP-39 mnemonic phrase</property>
+                                    <property name="xalign">0</property>
+                                    <style><class name="dim-label"/><class name="caption"/></style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">12</property>
+                            <child>
+                              <object class="GtkCheckButton" id="radio_import_file">
+                                <property name="group">radio_import_nsec</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">2</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Encrypted Backup File</property>
+                                    <property name="xalign">0</property>
+                                    <style><class name="heading"/></style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Import from ncrypt encrypted backup</property>
+                                    <property name="xalign">0</property>
+                                    <style><class name="dim-label"/><class name="caption"/></style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">You'll enter your key material in the main app after completing this setup.</property>
+                        <property name="wrap">true</property>
+                        <property name="max-width-chars">45</property>
+                        <property name="margin-top">16</property>
+                        <style><class name="dim-label"/><class name="caption"/></style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Page 5: Backup Reminder -->
+                <child>
+                  <object class="GtkBox" id="page_backup_reminder">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">16</property>
+                    <property name="valign">center</property>
+                    <property name="halign">center</property>
+                    <property name="margin-start">24</property>
+                    <property name="margin-end">24</property>
+
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">document-save-symbolic</property>
+                        <property name="pixel-size">64</property>
+                        <property name="margin-bottom">8</property>
+                        <style><class name="warning"/></style>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Back Up Your Key</property>
+                        <style><class name="title-2"/></style>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">12</property>
+                        <property name="margin-top">16</property>
+
+                        <child>
+                          <object class="AdwBanner">
+                            <property name="title" translatable="yes">Your private key is the ONLY way to access your Nostr identity. If you lose it, there is no recovery option.</property>
+                            <property name="revealed">true</property>
+                            <style><class name="warning"/></style>
+                          </object>
+                        </child>
+
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="wrap">true</property>
+                            <property name="max-width-chars">50</property>
+                            <property name="margin-top">8</property>
+                            <property name="label" translatable="yes">We strongly recommend creating a backup immediately after setup:
+
+- Use the Export feature to save an encrypted backup
+- Store your backup in multiple secure locations
+- Never share your private key with anyone
+- Consider using a hardware security key for additional protection</property>
+                          </object>
+                        </child>
+
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">8</property>
+                            <property name="margin-top">16</property>
+                            <property name="halign">center</property>
+                            <child>
+                              <object class="GtkCheckButton" id="backup_understood">
+                                <property name="label" translatable="yes">I understand and will back up my key</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Page 6: Ready -->
+                <child>
+                  <object class="GtkBox" id="page_ready">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">16</property>
+                    <property name="valign">center</property>
+                    <property name="halign">center</property>
+                    <property name="margin-start">24</property>
+                    <property name="margin-end">24</property>
+
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">emblem-ok-symbolic</property>
+                        <property name="pixel-size">72</property>
+                        <property name="margin-bottom">12</property>
+                        <style><class name="success"/></style>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">You're All Set!</property>
+                        <style><class name="title-1"/></style>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="wrap">true</property>
+                        <property name="max-width-chars">45</property>
+                        <property name="justify">center</property>
+                        <property name="margin-top">12</property>
+                        <property name="label" translatable="yes">GNostr Signer is ready to protect your Nostr identity. Here's what you can do next:</property>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">8</property>
+                        <property name="margin-top">16</property>
+                        <property name="halign">center</property>
+
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="xalign">0</property>
+                            <property name="label" translatable="yes">- Complete your key setup in the main window
+- Connect Nostr applications via NIP-46
+- Configure permission policies for apps
+- Export a backup of your key</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="wrap">true</property>
+                        <property name="max-width-chars">45</property>
+                        <property name="justify">center</property>
+                        <property name="margin-top">24</property>
+                        <property name="label" translatable="yes">You can always re-run this setup assistant from the Settings page.</property>
+                        <style><class name="dim-label"/><class name="caption"/></style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Carousel Indicator Dots -->
+            <child>
+              <object class="AdwCarouselIndicatorDots" id="carousel_dots">
+                <property name="carousel">carousel</property>
+                <property name="halign">center</property>
+                <property name="margin-top">8</property>
+              </object>
+            </child>
+
+            <!-- Navigation Buttons -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">12</property>
+                <property name="halign">center</property>
+                <property name="margin-top">16</property>
+                <property name="margin-bottom">8</property>
+
+                <child>
+                  <object class="GtkButton" id="btn_back">
+                    <property name="label" translatable="yes">Back</property>
+                    <property name="width-request">100</property>
+                  </object>
+                </child>
+
+                <child>
+                  <object class="GtkButton" id="btn_next">
+                    <property name="label" translatable="yes">Next</property>
+                    <property name="width-request">100</property>
+                    <style><class name="suggested-action"/></style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

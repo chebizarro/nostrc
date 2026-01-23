@@ -19,7 +19,13 @@
     <key name="theme" type="s">
       <default>'system'</default>
       <summary>Preferred theme</summary>
-      <description>Theme preference: 'system', 'light', or 'dark'.</description>
+      <description>Theme preference: 'system', 'light', 'dark', or 'high-contrast'.</description>
+    </key>
+
+    <key name="high-contrast-variant" type="s">
+      <default>'default'</default>
+      <summary>High contrast color scheme</summary>
+      <description>Color scheme for high contrast mode: 'default' (black on white), 'inverted' (white on black), or 'yellow-on-black'.</description>
     </key>
 
     <key name="window-width" type="i">
@@ -45,6 +51,24 @@
       <default>300</default>
       <summary>Auto-lock timeout</summary>
       <description>Seconds of inactivity before locking the signer UI and keys. 0 disables auto-lock.</description>
+    </key>
+
+    <key name="session-lock-on-idle" type="b">
+      <default>true</default>
+      <summary>Lock on system idle</summary>
+      <description>Automatically lock the session when the system goes idle or the screen locks.</description>
+    </key>
+
+    <key name="session-require-password" type="b">
+      <default>false</default>
+      <summary>Require password to unlock</summary>
+      <description>Whether a password is required to unlock the session. When false, the session can be unlocked without authentication.</description>
+    </key>
+
+    <key name="session-warning-sec" type="i">
+      <default>60</default>
+      <summary>Session timeout warning</summary>
+      <description>Seconds before auto-lock to show a warning. 0 disables the warning.</description>
     </key>
 
     <key name="remember-approvals" type="b">
@@ -135,6 +159,13 @@
       <default>30</default>
       <summary>Log retention days</summary>
       <description>Days to keep signing logs. 0 keeps forever.</description>
+    </key>
+
+    <!-- Onboarding Settings -->
+    <key name="onboarding-completed" type="b">
+      <default>false</default>
+      <summary>Onboarding completed</summary>
+      <description>Whether the new user onboarding wizard has been completed. Set to false to re-show on next launch.</description>
     </key>
 
     <!-- Startup Settings -->

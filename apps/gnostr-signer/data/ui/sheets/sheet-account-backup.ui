@@ -3,6 +3,13 @@
   <requires lib="gtk" version="4.12"/>
   <requires lib="adwaita" version="1.4"/>
   <template class="SheetAccountBackup" parent="AdwDialog">
+    <property name="title" translatable="yes">Key Backup</property>
+    <!-- Enable close on Escape key -->
+    <property name="can-close">true</property>
+    <accessibility>
+      <property name="label">Key backup dialog</property>
+      <property name="description">Backup your private key using various methods including seed words, copying, QR code, or encrypted backup</property>
+    </accessibility>
     <child>
       <object class="GtkBox">
         <property name="orientation">vertical</property>
@@ -14,6 +21,9 @@
         <child>
           <object class="GtkLabel">
             <property name="label" translatable="yes">Key Backup and Safety Tips</property>
+            <accessibility>
+              <property name="label">Key backup and safety tips heading</property>
+            </accessibility>
             <attributes><attribute name="weight" value="bold"/></attributes>
           </object>
         </child>
@@ -21,12 +31,20 @@
           <object class="GtkLabel">
             <property name="wrap">true</property>
             <property name="label" translatable="yes">• Never share your nsec\n• Developers will never ask for it\n• Keep a secure offline backup</property>
+            <accessibility>
+              <property name="label">Safety tips</property>
+              <property name="description">Important safety reminders: Never share your nsec, developers will never ask for it, keep a secure offline backup</property>
+            </accessibility>
           </object>
         </child>
         <child>
           <object class="GtkBox">
             <property name="orientation">horizontal</property>
             <property name="spacing">6</property>
+            <accessibility>
+              <property name="label">Backup options</property>
+              <property name="description">Choose how to view or export your private key</property>
+            </accessibility>
             <child>
               <object class="GtkButton" id="btn_show_seed">
                 <property name="label" translatable="yes">Show _seed words</property>
@@ -34,6 +52,10 @@
                 <property name="tooltip-text" translatable="yes">Reveal mnemonic words</property>
                 <property name="valign">center</property>
                 <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Show seed words</property>
+                  <property name="description">Display your recovery seed phrase. Keyboard shortcut: Alt+S.</property>
+                </accessibility>
               </object>
             </child>
             <child>
@@ -43,6 +65,10 @@
                 <property name="tooltip-text" translatable="yes">Copy nsec to clipboard</property>
                 <property name="valign">center</property>
                 <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Copy secret key</property>
+                  <property name="description">Copy your nsec private key to clipboard. Keyboard shortcut: Alt+C.</property>
+                </accessibility>
               </object>
             </child>
             <child>
@@ -52,6 +78,10 @@
                 <property name="tooltip-text" translatable="yes">Display QR code for scanning</property>
                 <property name="valign">center</property>
                 <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Show QR code</property>
+                  <property name="description">Display a QR code of your private key for scanning. Keyboard shortcut: Alt+Q.</property>
+                </accessibility>
               </object>
             </child>
           </object>
@@ -59,6 +89,10 @@
         <child>
           <object class="AdwPreferencesGroup">
             <property name="title" translatable="yes">Create encrypted key (NIP-49)</property>
+            <accessibility>
+              <property name="label">Create encrypted backup</property>
+              <property name="description">Create an encrypted backup of your key using NIP-49 format</property>
+            </accessibility>
             <child>
               <object class="GtkBox">
                 <property name="orientation">horizontal</property>
@@ -77,6 +111,10 @@
                     <property name="tooltip-text" translatable="yes">Enter a password for encryption</property>
                     <property name="valign">center</property>
                     <property name="vexpand">false</property>
+                    <accessibility>
+                      <property name="label">Encryption password</property>
+                      <property name="description">Enter a strong password to encrypt your backup</property>
+                    </accessibility>
                   </object>
                 </child>
                 <child>
@@ -86,8 +124,55 @@
                     <property name="tooltip-text" translatable="yes">Create an encrypted key</property>
                     <property name="valign">center</property>
                     <property name="vexpand">false</property>
+                    <accessibility>
+                      <property name="label">Create encrypted backup</property>
+                      <property name="description">Generate an encrypted backup string. Keyboard shortcut: Alt+C.</property>
+                    </accessibility>
                   </object>
                 </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <!-- Result display area (initially hidden) -->
+        <child>
+          <object class="GtkBox" id="box_result">
+            <property name="visible">false</property>
+            <property name="orientation">vertical</property>
+            <property name="spacing">6</property>
+            <accessibility>
+              <property name="label">Backup result</property>
+              <property name="description">Display area showing the generated backup data</property>
+            </accessibility>
+            <style>
+              <class name="card"/>
+            </style>
+            <child>
+              <object class="GtkLabel" id="lbl_result">
+                <property name="wrap">true</property>
+                <property name="selectable">true</property>
+                <property name="xalign">0</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <property name="margin-top">12</property>
+                <property name="margin-bottom">6</property>
+                <accessibility>
+                  <property name="label">Backup result text</property>
+                  <property name="description">Your backup data. Select and copy or use the copy button.</property>
+                </accessibility>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_copy_result">
+                <property name="label" translatable="yes">_Copy to Clipboard</property>
+                <property name="use-underline">true</property>
+                <property name="halign">end</property>
+                <property name="margin-end">12</property>
+                <property name="margin-bottom">12</property>
+                <accessibility>
+                  <property name="label">Copy result to clipboard</property>
+                  <property name="description">Copy the displayed backup data to your clipboard</property>
+                </accessibility>
               </object>
             </child>
           </object>
@@ -99,6 +184,10 @@
             <property name="tooltip-text" translatable="yes">Close and return to Settings</property>
             <property name="valign">center</property>
             <property name="vexpand">false</property>
+            <accessibility>
+              <property name="label">Back to settings</property>
+              <property name="description">Close this dialog and return to settings. Keyboard shortcut: Alt+B.</property>
+            </accessibility>
           </object>
         </child>
       </object>

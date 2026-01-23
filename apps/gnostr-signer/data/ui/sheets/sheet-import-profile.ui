@@ -6,6 +6,8 @@
     <property name="title" translatable="yes">Import Profile</property>
     <property name="content-width">520</property>
     <property name="content-height">680</property>
+    <!-- Enable close on Escape key -->
+    <property name="can-close">true</property>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
@@ -17,13 +19,17 @@
             </property>
             <child type="start">
               <object class="GtkButton" id="btn_cancel">
-                <property name="label" translatable="yes">Cancel</property>
+                <property name="label" translatable="yes">_Cancel</property>
+                <property name="use-underline">true</property>
+                <property name="focusable">true</property>
               </object>
             </child>
             <child type="end">
               <object class="GtkButton" id="btn_import">
-                <property name="label" translatable="yes">Import</property>
-                <property name="tooltip-text" translatable="yes">Import the profile using the selected method</property>
+                <property name="label" translatable="yes">_Import</property>
+                <property name="use-underline">true</property>
+                <property name="tooltip-text" translatable="yes">Import the profile using the selected method (Alt+I)</property>
+                <property name="focusable">true</property>
                 <style>
                   <class name="suggested-action"/>
                 </style>
@@ -232,7 +238,7 @@
                       </object>
                     </child>
 
-                    <!-- Passphrase Section (shared for NIP-49 and Mnemonic) -->
+                    <!-- Passphrase Section (shared for NIP-49 and Mnemonic) - using GnSecureEntry -->
                     <child>
                       <object class="GtkBox" id="box_passphrase">
                         <property name="orientation">vertical</property>
@@ -241,9 +247,29 @@
                           <object class="AdwPreferencesGroup">
                             <property name="title" translatable="yes">Decryption</property>
                             <property name="description" translatable="yes">Enter the passphrase used to protect your backup</property>
+
+                            <!-- Passphrase label -->
                             <child>
-                              <object class="AdwPasswordEntryRow" id="entry_passphrase">
-                                <property name="title" translatable="yes">Passphrase</property>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Passphrase</property>
+                                <property name="xalign">0</property>
+                                <property name="margin-start">4</property>
+                                <property name="margin-top">8</property>
+                                <style>
+                                  <class name="caption"/>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Container for GnSecureEntry (added programmatically) -->
+                            <child>
+                              <object class="GtkBox" id="box_passphrase_container">
+                                <property name="orientation">vertical</property>
+                                <property name="margin-start">4</property>
+                                <property name="margin-end">4</property>
+                                <property name="margin-bottom">8</property>
+                                <!-- GnSecureEntry will be added here programmatically -->
                               </object>
                             </child>
                           </object>

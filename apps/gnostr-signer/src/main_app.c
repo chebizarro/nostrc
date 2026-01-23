@@ -3,7 +3,9 @@
 #include <gio/gio.h>
 #include "policy_store.h"
 #include "accounts_store.h"
+#include "settings_manager.h"
 #include "ui/signer-window.h"
+#include "ui/onboarding-assistant.h"
 
 #define SIGNER_NAME  "org.nostr.Signer"
 #define SIGNER_PATH  "/org/nostr/signer"
@@ -78,6 +80,41 @@ static void on_app_about(GSimpleAction *action, GVariant *param, gpointer user_d
   adw_dialog_present(about, parent ? GTK_WIDGET(parent) : NULL);
 }
 
+/* Action handler for new profile (Ctrl+N) */
+static void on_app_new_profile(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param;
+  GtkApplication *app = GTK_APPLICATION(user_data);
+  GtkWindow *win = gtk_application_get_active_window(app);
+  if (!win) return;
+  signer_window_show_new_profile((SignerWindow*)win);
+}
+
+/* Action handler for import profile (Ctrl+I) */
+static void on_app_import_profile(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param;
+  GtkApplication *app = GTK_APPLICATION(user_data);
+  GtkWindow *win = gtk_application_get_active_window(app);
+  if (!win) return;
+  signer_window_show_import_profile((SignerWindow*)win);
+}
+
+/* Action handler for export/backup (Ctrl+E) */
+static void on_app_export(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param;
+  GtkApplication *app = GTK_APPLICATION(user_data);
+  GtkWindow *win = gtk_application_get_active_window(app);
+  if (!win) return;
+  signer_window_show_backup((SignerWindow*)win);
+}
+
+/* Action handler for lock session (Ctrl+L) */
+static void on_app_lock(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param;
+  GtkApplication *app = GTK_APPLICATION(user_data);
+  GtkWindow *win = gtk_application_get_active_window(app);
+  if (!win) return;
+  signer_window_lock_session((SignerWindow*)win);
+}
 
 typedef struct {
   AppUI *ui;
@@ -367,6 +404,90 @@ static GtkWidget *build_home_header(AppUI *ui, GtkWindow *win) {
   return box;
 }
 
+/* Global high-contrast CSS provider (loaded once, added/removed as needed) */
+static GtkCssProvider *high_contrast_provider = NULL;
+
+/* Apply high-contrast styling to all windows */
+static void apply_high_contrast_to_windows(GtkApplication *app, gboolean enable, SettingsHighContrastVariant variant) {
+  GList *windows = gtk_application_get_windows(app);
+  for (GList *l = windows; l != NULL; l = l->next) {
+    GtkWidget *win = GTK_WIDGET(l->data);
+    /* Remove existing high-contrast classes */
+    gtk_widget_remove_css_class(win, "high-contrast");
+    gtk_widget_remove_css_class(win, "inverted");
+    gtk_widget_remove_css_class(win, "yellow-on-black");
+
+    if (enable) {
+      /* Add base high-contrast class */
+      gtk_widget_add_css_class(win, "high-contrast");
+      /* Add variant-specific class */
+      switch (variant) {
+        case SETTINGS_HC_INVERTED:
+          gtk_widget_add_css_class(win, "inverted");
+          break;
+        case SETTINGS_HC_YELLOW_ON_BLACK:
+          gtk_widget_add_css_class(win, "yellow-on-black");
+          break;
+        case SETTINGS_HC_DEFAULT:
+        default:
+          /* Default uses just .high-contrast, no additional class */
+          break;
+      }
+    }
+  }
+}
+
+/* Load or unload high-contrast CSS provider */
+static void update_high_contrast_css(gboolean enable) {
+  GdkDisplay *display = gdk_display_get_default();
+  if (!display) return;
+
+  if (enable) {
+    if (!high_contrast_provider) {
+      high_contrast_provider = gtk_css_provider_new();
+      gtk_css_provider_load_from_resource(high_contrast_provider, "/org/gnostr/signer/css/high-contrast.css");
+    }
+    gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(high_contrast_provider),
+                                                GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
+    g_debug("High-contrast CSS loaded");
+  } else {
+    if (high_contrast_provider) {
+      gtk_style_context_remove_provider_for_display(display, GTK_STYLE_PROVIDER(high_contrast_provider));
+      g_debug("High-contrast CSS unloaded");
+    }
+  }
+}
+
+/* Callback when onboarding finishes - present main window */
+static void on_onboarding_finished(gboolean completed, gpointer user_data) {
+  GtkApplication *app = GTK_APPLICATION(user_data);
+  g_debug("Onboarding finished: completed=%s", completed ? "true" : "false");
+
+  /* Present the main window now */
+  SignerWindow *win = signer_window_new(ADW_APPLICATION(app));
+
+  /* Apply high-contrast class if needed */
+  SettingsManager *sm = settings_manager_get_default();
+  SettingsTheme theme = settings_manager_get_theme(sm);
+  if (theme == SETTINGS_THEME_HIGH_CONTRAST) {
+    SettingsHighContrastVariant hc_variant = settings_manager_get_high_contrast_variant(sm);
+    gtk_widget_add_css_class(GTK_WIDGET(win), "high-contrast");
+    switch (hc_variant) {
+      case SETTINGS_HC_INVERTED:
+        gtk_widget_add_css_class(GTK_WIDGET(win), "inverted");
+        break;
+      case SETTINGS_HC_YELLOW_ON_BLACK:
+        gtk_widget_add_css_class(GTK_WIDGET(win), "yellow-on-black");
+        break;
+      case SETTINGS_HC_DEFAULT:
+      default:
+        break;
+    }
+  }
+
+  gtk_window_present(GTK_WINDOW(win));
+}
+
 static void on_activate(GtkApplication *app, gpointer user_data) {
   (void)user_data;
   /* Load application stylesheet from resources */
@@ -377,8 +498,47 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(prov), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
   }
   g_object_unref(prov);
-  /* Present the new libadwaita SignerWindow shell */
+
+  /* Load high-contrast CSS if theme is high-contrast */
+  SettingsManager *sm = settings_manager_get_default();
+  SettingsTheme theme = settings_manager_get_theme(sm);
+  gboolean is_high_contrast = (theme == SETTINGS_THEME_HIGH_CONTRAST);
+  update_high_contrast_css(is_high_contrast);
+
+  /* Check if onboarding should be shown (first run) */
+  if (onboarding_assistant_check_should_show()) {
+    g_debug("First run detected, showing onboarding wizard");
+
+    /* Ensure OnboardingAssistant type is registered */
+    g_type_ensure(TYPE_ONBOARDING_ASSISTANT);
+
+    OnboardingAssistant *onboarding = onboarding_assistant_new();
+    onboarding_assistant_set_on_finished(onboarding, on_onboarding_finished, app);
+    gtk_application_add_window(app, GTK_WINDOW(onboarding));
+    gtk_window_present(GTK_WINDOW(onboarding));
+    return;
+  }
+
+  /* Not first run - present main window directly */
   SignerWindow *win = signer_window_new(ADW_APPLICATION(app));
+
+  /* Apply high-contrast class if needed */
+  if (is_high_contrast) {
+    SettingsHighContrastVariant hc_variant = settings_manager_get_high_contrast_variant(sm);
+    gtk_widget_add_css_class(GTK_WIDGET(win), "high-contrast");
+    switch (hc_variant) {
+      case SETTINGS_HC_INVERTED:
+        gtk_widget_add_css_class(GTK_WIDGET(win), "inverted");
+        break;
+      case SETTINGS_HC_YELLOW_ON_BLACK:
+        gtk_widget_add_css_class(GTK_WIDGET(win), "yellow-on-black");
+        break;
+      case SETTINGS_HC_DEFAULT:
+      default:
+        break;
+    }
+  }
+
   gtk_window_present(GTK_WINDOW(win));
 }
 
@@ -388,20 +548,140 @@ static void on_app_quit(GSimpleAction *action, GVariant *param, gpointer user_da
   g_application_quit(G_APPLICATION(app));
 }
 
+/* Global reference to the application for theme changes */
+static GtkApplication *global_app = NULL;
+
+/* Apply theme preference to AdwStyleManager and handle high-contrast */
+static void apply_theme_preference(SettingsTheme theme) {
+  AdwStyleManager *style_manager = adw_style_manager_get_default();
+  AdwColorScheme color_scheme;
+  gboolean is_high_contrast = (theme == SETTINGS_THEME_HIGH_CONTRAST);
+
+  switch (theme) {
+    case SETTINGS_THEME_LIGHT:
+      color_scheme = ADW_COLOR_SCHEME_FORCE_LIGHT;
+      break;
+    case SETTINGS_THEME_DARK:
+      color_scheme = ADW_COLOR_SCHEME_FORCE_DARK;
+      break;
+    case SETTINGS_THEME_HIGH_CONTRAST:
+      /* High contrast uses force-light as base for Black-on-White variant,
+       * but the CSS overrides will take effect */
+      color_scheme = ADW_COLOR_SCHEME_FORCE_LIGHT;
+      break;
+    case SETTINGS_THEME_SYSTEM:
+    default:
+      color_scheme = ADW_COLOR_SCHEME_DEFAULT;
+      break;
+  }
+
+  adw_style_manager_set_color_scheme(style_manager, color_scheme);
+
+  /* Load/unload high-contrast CSS */
+  update_high_contrast_css(is_high_contrast);
+
+  /* Apply/remove high-contrast classes on windows */
+  if (global_app) {
+    SettingsManager *sm = settings_manager_get_default();
+    SettingsHighContrastVariant hc_variant = settings_manager_get_high_contrast_variant(sm);
+    apply_high_contrast_to_windows(global_app, is_high_contrast, hc_variant);
+  }
+
+  g_debug("Theme applied: %d -> color_scheme=%d, high_contrast=%s", theme, color_scheme,
+          is_high_contrast ? "true" : "false");
+}
+
+/* Callback for theme setting changes */
+static void on_theme_setting_changed(const gchar *key, gpointer user_data) {
+  (void)user_data;
+  if (g_strcmp0(key, "theme") != 0 && g_strcmp0(key, "high-contrast-variant") != 0) return;
+
+  SettingsManager *sm = settings_manager_get_default();
+  SettingsTheme theme = settings_manager_get_theme(sm);
+  apply_theme_preference(theme);
+}
+
+/* Callback when re-running onboarding finishes - nothing special needed */
+static void on_rerun_onboarding_finished(gboolean completed, gpointer user_data) {
+  (void)user_data;
+  g_debug("Re-run onboarding finished: completed=%s", completed ? "true" : "false");
+  /* Main window already exists, just let onboarding close */
+}
+
+/* Action handler to re-run onboarding (from settings menu) */
+static void on_app_show_onboarding(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; (void)param;
+  GtkApplication *app = GTK_APPLICATION(user_data);
+
+  g_debug("Re-running onboarding wizard from settings");
+
+  /* Reset onboarding state so it can be run again */
+  onboarding_assistant_reset();
+
+  /* Ensure OnboardingAssistant type is registered */
+  g_type_ensure(TYPE_ONBOARDING_ASSISTANT);
+
+  OnboardingAssistant *onboarding = onboarding_assistant_new();
+  onboarding_assistant_set_on_finished(onboarding, on_rerun_onboarding_finished, app);
+
+  /* Set as transient to active window */
+  GtkWindow *active_win = gtk_application_get_active_window(app);
+  if (active_win) {
+    gtk_window_set_transient_for(GTK_WINDOW(onboarding), active_win);
+  }
+
+  gtk_application_add_window(app, GTK_WINDOW(onboarding));
+  gtk_window_present(GTK_WINDOW(onboarding));
+}
+
 int main(int argc, char **argv) {
   g_set_prgname("gnostr-signer");
   AdwApplication *app = adw_application_new("org.gnostr.Signer", G_APPLICATION_DEFAULT_FLAGS);
+
+  /* Store global app reference for theme change callbacks */
+  global_app = GTK_APPLICATION(app);
+
+  /* Initialize settings manager and apply theme preference at startup */
+  SettingsManager *sm = settings_manager_get_default();
+  SettingsTheme initial_theme = settings_manager_get_theme(sm);
+  apply_theme_preference(initial_theme);
+
+  /* Listen for theme setting changes */
+  settings_manager_connect_changed(sm, "theme", on_theme_setting_changed, NULL);
+  settings_manager_connect_changed(sm, "high-contrast-variant", on_theme_setting_changed, NULL);
+
   /* Install app actions */
   static const GActionEntry app_entries[] = {
     { "quit", on_app_quit, NULL, NULL, NULL },
     { "preferences", on_app_preferences, NULL, NULL, NULL },
     { "about", on_app_about, NULL, NULL, NULL },
+    { "new-profile", on_app_new_profile, NULL, NULL, NULL },
+    { "import-profile", on_app_import_profile, NULL, NULL, NULL },
+    { "export", on_app_export, NULL, NULL, NULL },
+    { "lock", on_app_lock, NULL, NULL, NULL },
+    { "show-onboarding", on_app_show_onboarding, NULL, NULL, NULL },
   };
   g_action_map_add_action_entries(G_ACTION_MAP(app), app_entries, G_N_ELEMENTS(app_entries), app);
+
+  /* Register keyboard accelerators */
   const char *quit_accels[] = { "<Primary>q", NULL };
   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.quit", quit_accels);
+
   const char *prefs_accels[] = { "<Primary>comma", NULL };
   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.preferences", prefs_accels);
+
+  const char *new_profile_accels[] = { "<Primary>n", NULL };
+  gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.new-profile", new_profile_accels);
+
+  const char *import_accels[] = { "<Primary>i", NULL };
+  gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.import-profile", import_accels);
+
+  const char *export_accels[] = { "<Primary>e", NULL };
+  gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.export", export_accels);
+
+  const char *lock_accels[] = { "<Primary>l", NULL };
+  gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.lock", lock_accels);
+
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
   int status = g_application_run(G_APPLICATION(app), argc, argv);
   g_object_unref(app);

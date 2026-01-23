@@ -1,10 +1,12 @@
 /* bunker_service.c - NIP-46 bunker service implementation
  *
  * Integrates with the nip46 library for protocol handling.
+ * Uses secure memory for handling sensitive data like signatures.
  */
 #include "bunker_service.h"
 #include "secret_store.h"
 #include "settings_manager.h"
+#include "secure-memory.h"
 
 #include <nostr/nip46/nip46_bunker.h>
 #include <nostr/nip46/nip46_uri.h>
@@ -183,7 +185,8 @@ static char *bunker_sign_cb(const char *event_json, void *user_data) {
     }
   }
 
-  /* Sign the event using our identity */
+  /* Sign the event using our identity
+   * Note: signature is returned in secure memory to prevent leakage */
   gchar *signature = NULL;
   SecretStoreResult rc = secret_store_sign_event(event_json, bs->identity_npub, &signature);
 
@@ -193,8 +196,16 @@ static char *bunker_sign_cb(const char *event_json, void *user_data) {
   }
 
   /* Build signed event JSON - for now just return signature
-   * The nip46 library expects the full signed event */
-  return signature;
+   * The nip46 library expects the full signed event
+   *
+   * Note: The caller (nip46 library) is responsible for freeing this.
+   * We make a regular copy since the library may not use secure memory. */
+  gchar *result = g_strdup(signature);
+
+  /* Securely clear and free our secure copy */
+  gn_secure_strfree(signature);
+
+  return result;
 }
 
 BunkerService *bunker_service_new(void) {
@@ -326,7 +337,8 @@ gchar *bunker_service_get_bunker_uri(BunkerService *bs, const gchar *secret) {
                                                secret,
                                                &uri);
   if (rc != 0 || !uri) {
-    /* Build manually if library fails */
+    /* Build manually if library fails
+     * Use GnSecureString for the secret parameter handling */
     GString *s = g_string_new("bunker://");
     g_string_append(s, bs->identity_pubkey_hex);
 
@@ -338,6 +350,8 @@ gchar *bunker_service_get_bunker_uri(BunkerService *bs, const gchar *secret) {
       }
     }
     if (secret && *secret) {
+      /* Note: The secret in the URI should be treated carefully;
+       * ideally this URI should not be logged or stored persistently */
       g_string_append_printf(s, "%ssecret=%s", first ? "?" : "&", secret);
     }
 

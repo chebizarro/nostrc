@@ -3,6 +3,10 @@
   <requires lib="gtk" version="4.12"/>
   <requires lib="adwaita" version="1.4"/>
   <template class="SheetAddApplication" parent="AdwDialog">
+    <accessibility>
+      <property name="label">Add application dialog</property>
+      <property name="description">Add a new application for signing by pasting a URI, scanning a QR code, or adding a nsecbunker</property>
+    </accessibility>
     <child>
       <object class="GtkBox">
         <property name="orientation">vertical</property>
@@ -14,6 +18,9 @@
         <child>
           <object class="GtkLabel">
             <property name="label" translatable="yes">Add a new application</property>
+            <accessibility>
+              <property name="label">Add application heading</property>
+            </accessibility>
             <attributes><attribute name="weight" value="bold"/></attributes>
           </object>
         </child>
@@ -21,6 +28,10 @@
           <object class="GtkBox">
             <property name="orientation">horizontal</property>
             <property name="spacing">12</property>
+            <accessibility>
+              <property name="label">Input methods</property>
+              <property name="description">Choose how to add the application connection</property>
+            </accessibility>
             <child>
               <object class="GtkButton" id="btn_paste">
                 <property name="label" translatable="yes">Paste from _clipboard</property>
@@ -28,6 +39,10 @@
                 <property name="tooltip-text" translatable="yes">Paste an application URI from the clipboard</property>
                 <property name="valign">center</property>
                 <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Paste from clipboard</property>
+                  <property name="description">Paste a nostr connect URI from your clipboard. Keyboard shortcut: Alt+C.</property>
+                </accessibility>
               </object>
             </child>
             <child>
@@ -37,6 +52,10 @@
                 <property name="tooltip-text" translatable="yes">Scan an application QR code</property>
                 <property name="valign">center</property>
                 <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Scan QR code</property>
+                  <property name="description">Use your camera to scan an application QR code. Keyboard shortcut: Alt+Q.</property>
+                </accessibility>
               </object>
             </child>
             <child>
@@ -46,6 +65,10 @@
                 <property name="tooltip-text" translatable="yes">Add a nsecbunker reference</property>
                 <property name="valign">center</property>
                 <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Add nsecbunker</property>
+                  <property name="description">Add a remote signer bunker connection. Keyboard shortcut: Alt+N.</property>
+                </accessibility>
               </object>
             </child>
           </object>
@@ -53,9 +76,18 @@
         <child>
           <object class="GtkFrame">
             <property name="label" translatable="yes">Preview</property>
+            <accessibility>
+              <property name="label">Application preview</property>
+              <property name="description">Preview of the application connection details</property>
+            </accessibility>
             <child>
               <object class="GtkLabel" id="preview_label">
                 <property name="wrap">true</property>
+                <property name="selectable">true</property>
+                <accessibility>
+                  <property name="label">Application details preview</property>
+                  <property name="description">Shows the parsed application connection information</property>
+                </accessibility>
               </object>
             </child>
           </object>
@@ -67,6 +99,13 @@
             <property name="tooltip-text" translatable="yes">Approve and add this application</property>
             <property name="valign">center</property>
             <property name="vexpand">false</property>
+            <accessibility>
+              <property name="label">Approve application</property>
+              <property name="description">Add this application and allow it to request signatures. Keyboard shortcut: Alt+A.</property>
+            </accessibility>
+            <style>
+              <class name="suggested-action"/>
+            </style>
           </object>
         </child>
         <child>
@@ -76,6 +115,10 @@
             <property name="tooltip-text" translatable="yes">Close without changes</property>
             <property name="valign">center</property>
             <property name="vexpand">false</property>
+            <accessibility>
+              <property name="label">Cancel</property>
+              <property name="description">Close this dialog without adding the application. Keyboard shortcut: Alt+C or Escape.</property>
+            </accessibility>
           </object>
         </child>
       </object>

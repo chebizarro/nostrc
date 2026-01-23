@@ -3,14 +3,63 @@
   <requires lib="gtk" version="4.12"/>
   <object class="GtkListBox" id="sidebar_list">
     <property name="selection-mode">browse</property>
+    <accessibility>
+      <property name="label">Navigation sidebar</property>
+      <property name="description">List of navigation sections. Use arrow keys to navigate and Enter to select.</property>
+    </accessibility>
     <child>
-      <object class="GtkListBoxRow"><child><object class="GtkLabel"><property name="label" translatable="yes">Permissions &amp; Connection</property><property name="xalign">0</property><property name="margin-start">12</property><property name="margin-end">12</property><property name="margin-top">8</property><property name="margin-bottom">8</property></object></child></object>
+      <object class="GtkListBoxRow">
+        <accessibility>
+          <property name="label">Permissions and Connection</property>
+          <property name="description">Navigate to permissions and connection settings</property>
+        </accessibility>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="yes">Permissions &amp; Connection</property>
+            <property name="xalign">0</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">8</property>
+            <property name="margin-bottom">8</property>
+          </object>
+        </child>
+      </object>
     </child>
     <child>
-      <object class="GtkListBoxRow"><child><object class="GtkLabel"><property name="label" translatable="yes">Applications</property><property name="xalign">0</property><property name="margin-start">12</property><property name="margin-end">12</property><property name="margin-top">8</property><property name="margin-bottom">8</property></object></child></object>
+      <object class="GtkListBoxRow">
+        <accessibility>
+          <property name="label">Applications</property>
+          <property name="description">Navigate to manage connected applications</property>
+        </accessibility>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="yes">Applications</property>
+            <property name="xalign">0</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">8</property>
+            <property name="margin-bottom">8</property>
+          </object>
+        </child>
+      </object>
     </child>
     <child>
-      <object class="GtkListBoxRow"><child><object class="GtkLabel"><property name="label" translatable="yes">Settings</property><property name="xalign">0</property><property name="margin-start">12</property><property name="margin-end">12</property><property name="margin-top">8</property><property name="margin-bottom">8</property></object></child></object>
+      <object class="GtkListBoxRow">
+        <accessibility>
+          <property name="label">Settings</property>
+          <property name="description">Navigate to application settings</property>
+        </accessibility>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="yes">Settings</property>
+            <property name="xalign">0</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">8</property>
+            <property name="margin-bottom">8</property>
+          </object>
+        </child>
+      </object>
     </child>
   </object>
 </interface>

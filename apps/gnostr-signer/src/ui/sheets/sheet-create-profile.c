@@ -3,15 +3,19 @@
  * Provides a UI for creating a new Nostr profile with passphrase protection.
  * Features:
  * - Display name input
- * - Passphrase input with visibility toggle
- * - Confirm passphrase input
+ * - Passphrase input with visibility toggle (using GnSecureEntry)
+ * - Confirm passphrase input (using GnSecureEntry)
  * - Recovery hint input (optional)
  * - Hardware key checkbox
  * - Passphrase strength validation
  * - Passphrase match validation
+ * - Rate limiting for authentication attempts (nostrc-1g1)
+ * - Secure password entry with auto-clear timeout (nostrc-6s2)
  */
 #include "sheet-create-profile.h"
 #include "../app-resources.h"
+#include "../widgets/gn-secure-entry.h"
+#include "../../rate-limiter.h"
 
 #include <gtk/gtk.h>
 #include <adwaita.h>
@@ -24,15 +28,17 @@ struct _SheetCreateProfile {
   GtkButton *btn_cancel;
   GtkButton *btn_create;
   AdwEntryRow *entry_display_name;
-  AdwPasswordEntryRow *entry_passphrase;
-  AdwPasswordEntryRow *entry_confirm_passphrase;
   AdwEntryRow *entry_recovery_hint;
   GtkCheckButton *chk_hardware_key;
 
+  /* Secure password entries (created programmatically) */
+  GnSecureEntry *secure_passphrase;
+  GnSecureEntry *secure_confirm_passphrase;
+  GtkBox *box_passphrase_container;
+  GtkBox *box_confirm_container;
+
   /* Status/feedback widgets */
-  GtkLabel *lbl_passphrase_strength;
   GtkLabel *lbl_passphrase_match;
-  GtkLevelBar *level_passphrase_strength;
   GtkBox *box_status;
   GtkSpinner *spinner_status;
   GtkLabel *lbl_status;
@@ -43,81 +49,6 @@ struct _SheetCreateProfile {
 };
 
 G_DEFINE_TYPE(SheetCreateProfile, sheet_create_profile, ADW_TYPE_DIALOG)
-
-/* Passphrase strength levels */
-typedef enum {
-  PASSPHRASE_STRENGTH_WEAK = 0,
-  PASSPHRASE_STRENGTH_FAIR = 1,
-  PASSPHRASE_STRENGTH_GOOD = 2,
-  PASSPHRASE_STRENGTH_STRONG = 3,
-  PASSPHRASE_STRENGTH_VERY_STRONG = 4
-} PassphraseStrength;
-
-/* Calculate passphrase strength based on various criteria */
-static PassphraseStrength calculate_passphrase_strength(const gchar *passphrase) {
-  if (!passphrase || *passphrase == '\0') {
-    return PASSPHRASE_STRENGTH_WEAK;
-  }
-
-  size_t len = strlen(passphrase);
-  gboolean has_lower = FALSE;
-  gboolean has_upper = FALSE;
-  gboolean has_digit = FALSE;
-  gboolean has_special = FALSE;
-  int score = 0;
-
-  /* Check character classes */
-  for (size_t i = 0; i < len; i++) {
-    char c = passphrase[i];
-    if (c >= 'a' && c <= 'z') has_lower = TRUE;
-    else if (c >= 'A' && c <= 'Z') has_upper = TRUE;
-    else if (c >= '0' && c <= '9') has_digit = TRUE;
-    else has_special = TRUE;
-  }
-
-  /* Score based on length */
-  if (len >= 8) score++;
-  if (len >= 12) score++;
-  if (len >= 16) score++;
-  if (len >= 20) score++;
-
-  /* Score based on character variety */
-  if (has_lower) score++;
-  if (has_upper) score++;
-  if (has_digit) score++;
-  if (has_special) score++;
-
-  /* Map score to strength level */
-  if (score <= 2) return PASSPHRASE_STRENGTH_WEAK;
-  if (score <= 4) return PASSPHRASE_STRENGTH_FAIR;
-  if (score <= 6) return PASSPHRASE_STRENGTH_GOOD;
-  if (score <= 7) return PASSPHRASE_STRENGTH_STRONG;
-  return PASSPHRASE_STRENGTH_VERY_STRONG;
-}
-
-/* Get display string for passphrase strength */
-static const gchar *get_strength_label(PassphraseStrength strength) {
-  switch (strength) {
-    case PASSPHRASE_STRENGTH_WEAK: return "Weak";
-    case PASSPHRASE_STRENGTH_FAIR: return "Fair";
-    case PASSPHRASE_STRENGTH_GOOD: return "Good";
-    case PASSPHRASE_STRENGTH_STRONG: return "Strong";
-    case PASSPHRASE_STRENGTH_VERY_STRONG: return "Very Strong";
-    default: return "";
-  }
-}
-
-/* Get CSS class for passphrase strength */
-static const gchar *get_strength_class(PassphraseStrength strength) {
-  switch (strength) {
-    case PASSPHRASE_STRENGTH_WEAK: return "error";
-    case PASSPHRASE_STRENGTH_FAIR: return "warning";
-    case PASSPHRASE_STRENGTH_GOOD: return "accent";
-    case PASSPHRASE_STRENGTH_STRONG: return "success";
-    case PASSPHRASE_STRENGTH_VERY_STRONG: return "success";
-    default: return "";
-  }
-}
 
 static void set_status(SheetCreateProfile *self, const gchar *message, gboolean spinning) {
   if (!self) return;
@@ -136,60 +67,41 @@ static void update_validation(SheetCreateProfile *self) {
   if (!self) return;
 
   const gchar *display_name = gtk_editable_get_text(GTK_EDITABLE(self->entry_display_name));
-  const gchar *passphrase = gtk_editable_get_text(GTK_EDITABLE(self->entry_passphrase));
-  const gchar *confirm = gtk_editable_get_text(GTK_EDITABLE(self->entry_confirm_passphrase));
+  gchar *passphrase = gn_secure_entry_get_text(self->secure_passphrase);
+  gchar *confirm = gn_secure_entry_get_text(self->secure_confirm_passphrase);
 
   gboolean has_display_name = display_name && *display_name;
   gboolean has_passphrase = passphrase && *passphrase;
   gboolean passphrases_match = g_strcmp0(passphrase, confirm) == 0;
-  gboolean passphrase_long_enough = strlen(passphrase ? passphrase : "") >= 8;
-
-  /* Update passphrase strength indicator */
-  PassphraseStrength strength = calculate_passphrase_strength(passphrase);
-  if (self->lbl_passphrase_strength) {
-    if (has_passphrase) {
-      gtk_label_set_text(self->lbl_passphrase_strength, get_strength_label(strength));
-      gtk_widget_set_visible(GTK_WIDGET(self->lbl_passphrase_strength), TRUE);
-
-      /* Update CSS class for color coding */
-      GtkStyleContext *ctx = gtk_widget_get_style_context(GTK_WIDGET(self->lbl_passphrase_strength));
-      gtk_style_context_remove_class(ctx, "error");
-      gtk_style_context_remove_class(ctx, "warning");
-      gtk_style_context_remove_class(ctx, "accent");
-      gtk_style_context_remove_class(ctx, "success");
-      gtk_style_context_add_class(ctx, get_strength_class(strength));
-    } else {
-      gtk_widget_set_visible(GTK_WIDGET(self->lbl_passphrase_strength), FALSE);
-    }
-  }
-
-  /* Update level bar */
-  if (self->level_passphrase_strength) {
-    gtk_level_bar_set_value(self->level_passphrase_strength, (gdouble)strength);
-    gtk_widget_set_visible(GTK_WIDGET(self->level_passphrase_strength), has_passphrase);
-  }
+  gboolean passphrase_long_enough = gn_secure_entry_meets_requirements(self->secure_passphrase);
 
   /* Update passphrase match indicator */
   if (self->lbl_passphrase_match) {
-    const gchar *confirm_text = gtk_editable_get_text(GTK_EDITABLE(self->entry_confirm_passphrase));
-    gboolean has_confirm = confirm_text && *confirm_text;
+    gboolean has_confirm = confirm && *confirm;
 
     if (has_confirm) {
+      GtkWidget *match_widget = GTK_WIDGET(self->lbl_passphrase_match);
       if (passphrases_match) {
         gtk_label_set_text(self->lbl_passphrase_match, "Passphrases match");
-        GtkStyleContext *ctx = gtk_widget_get_style_context(GTK_WIDGET(self->lbl_passphrase_match));
-        gtk_style_context_remove_class(ctx, "error");
-        gtk_style_context_add_class(ctx, "success");
+        gtk_widget_remove_css_class(match_widget, "error");
+        gtk_widget_add_css_class(match_widget, "success");
       } else {
         gtk_label_set_text(self->lbl_passphrase_match, "Passphrases do not match");
-        GtkStyleContext *ctx = gtk_widget_get_style_context(GTK_WIDGET(self->lbl_passphrase_match));
-        gtk_style_context_remove_class(ctx, "success");
-        gtk_style_context_add_class(ctx, "error");
+        gtk_widget_remove_css_class(match_widget, "success");
+        gtk_widget_add_css_class(match_widget, "error");
       }
-      gtk_widget_set_visible(GTK_WIDGET(self->lbl_passphrase_match), TRUE);
+      gtk_widget_set_visible(match_widget, TRUE);
     } else {
       gtk_widget_set_visible(GTK_WIDGET(self->lbl_passphrase_match), FALSE);
     }
+  }
+
+  /* Securely clear the retrieved passwords */
+  if (passphrase) {
+    gn_secure_entry_free_text(passphrase);
+  }
+  if (confirm) {
+    gn_secure_entry_free_text(confirm);
   }
 
   /* Enable/disable create button */
@@ -205,10 +117,23 @@ static void on_entry_changed(GtkEditable *editable, gpointer user_data) {
   update_validation(self);
 }
 
+static void on_secure_entry_changed(GnSecureEntry *entry, gpointer user_data) {
+  (void)entry;
+  SheetCreateProfile *self = user_data;
+  update_validation(self);
+}
+
 static void on_cancel(GtkButton *btn, gpointer user_data) {
   (void)btn;
   SheetCreateProfile *self = user_data;
-  if (self) adw_dialog_close(ADW_DIALOG(self));
+  if (self) {
+    /* Clear secure entries before closing */
+    if (self->secure_passphrase)
+      gn_secure_entry_clear(self->secure_passphrase);
+    if (self->secure_confirm_passphrase)
+      gn_secure_entry_clear(self->secure_confirm_passphrase);
+    adw_dialog_close(ADW_DIALOG(self));
+  }
 }
 
 /* Context for async profile creation */
@@ -224,10 +149,10 @@ typedef struct {
 static void create_ctx_free(CreateCtx *ctx) {
   if (!ctx) return;
   g_free(ctx->display_name);
-  /* Securely clear passphrase */
+  /* Securely clear passphrase using our helper */
   if (ctx->passphrase) {
-    memset(ctx->passphrase, 0, strlen(ctx->passphrase));
-    g_free(ctx->passphrase);
+    gn_secure_entry_free_text(ctx->passphrase);
+    ctx->passphrase = NULL;
   }
   g_free(ctx->recovery_hint);
   g_free(ctx);
@@ -274,6 +199,12 @@ static void create_profile_dbus_done(GObject *src, GAsyncResult *res, gpointer u
     g_message("CreateProfile reply ok=%s npub='%s'", ok ? "true" : "false", (npub && *npub) ? npub : "(empty)");
 
     if (ok) {
+      /* Clear secure entries on success */
+      if (self->secure_passphrase)
+        gn_secure_entry_clear(self->secure_passphrase);
+      if (self->secure_confirm_passphrase)
+        gn_secure_entry_clear(self->secure_confirm_passphrase);
+
       /* Copy npub to clipboard for convenience */
       if (npub && *npub) {
         GtkWidget *w = GTK_WIDGET(self);
@@ -312,8 +243,8 @@ static void on_create(GtkButton *btn, gpointer user_data) {
   if (!self) return;
 
   const gchar *display_name = gtk_editable_get_text(GTK_EDITABLE(self->entry_display_name));
-  const gchar *passphrase = gtk_editable_get_text(GTK_EDITABLE(self->entry_passphrase));
-  const gchar *confirm = gtk_editable_get_text(GTK_EDITABLE(self->entry_confirm_passphrase));
+  gchar *passphrase = gn_secure_entry_get_text(self->secure_passphrase);
+  gchar *confirm = gn_secure_entry_get_text(self->secure_confirm_passphrase);
   const gchar *recovery_hint = gtk_editable_get_text(GTK_EDITABLE(self->entry_recovery_hint));
   gboolean use_hardware_key = gtk_check_button_get_active(self->chk_hardware_key);
 
@@ -322,6 +253,8 @@ static void on_create(GtkButton *btn, gpointer user_data) {
     GtkAlertDialog *ad = gtk_alert_dialog_new("Please enter a display name.");
     gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
     g_object_unref(ad);
+    gn_secure_entry_free_text(passphrase);
+    gn_secure_entry_free_text(confirm);
     return;
   }
 
@@ -329,6 +262,8 @@ static void on_create(GtkButton *btn, gpointer user_data) {
     GtkAlertDialog *ad = gtk_alert_dialog_new("Passphrase must be at least 8 characters.");
     gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
     g_object_unref(ad);
+    gn_secure_entry_free_text(passphrase);
+    gn_secure_entry_free_text(confirm);
     return;
   }
 
@@ -336,8 +271,14 @@ static void on_create(GtkButton *btn, gpointer user_data) {
     GtkAlertDialog *ad = gtk_alert_dialog_new("Passphrases do not match.");
     gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
     g_object_unref(ad);
+    gn_secure_entry_free_text(passphrase);
+    gn_secure_entry_free_text(confirm);
     return;
   }
+
+  /* Securely clear confirm (we don't need it anymore) */
+  gn_secure_entry_free_text(confirm);
+  confirm = NULL;
 
   /* Disable buttons while processing */
   if (self->btn_create) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_create), FALSE);
@@ -356,15 +297,16 @@ static void on_create(GtkButton *btn, gpointer user_data) {
     gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
     g_object_unref(ad);
     if (e) g_clear_error(&e);
+    gn_secure_entry_free_text(passphrase);
     return;
   }
 
-  /* Create context for async call */
+  /* Create context for async call - passphrase ownership transfers to ctx */
   CreateCtx *ctx = g_new0(CreateCtx, 1);
   ctx->self = self;
   ctx->parent = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self)));
   ctx->display_name = g_strdup(display_name);
-  ctx->passphrase = g_strdup(passphrase);
+  ctx->passphrase = passphrase; /* Transfer ownership */
   ctx->recovery_hint = g_strdup(recovery_hint ? recovery_hint : "");
   ctx->use_hardware_key = use_hardware_key;
 
@@ -377,7 +319,7 @@ static void on_create(GtkButton *btn, gpointer user_data) {
                          "/org/nostr/signer",
                          "org.nostr.Signer",
                          "CreateProfile",
-                         g_variant_new("(ssssb)", display_name, passphrase, recovery_hint ? recovery_hint : "", "", use_hardware_key),
+                         g_variant_new("(ssssb)", display_name, ctx->passphrase, recovery_hint ? recovery_hint : "", "", use_hardware_key),
                          G_VARIANT_TYPE("(bs)"),
                          G_DBUS_CALL_FLAGS_NONE,
                          10000,
@@ -388,8 +330,21 @@ static void on_create(GtkButton *btn, gpointer user_data) {
   g_object_unref(bus);
 }
 
+static void sheet_create_profile_dispose(GObject *obj) {
+  SheetCreateProfile *self = SHEET_CREATE_PROFILE(obj);
+
+  /* Clear secure entries before disposal */
+  if (self->secure_passphrase) {
+    gn_secure_entry_clear(self->secure_passphrase);
+  }
+  if (self->secure_confirm_passphrase) {
+    gn_secure_entry_clear(self->secure_confirm_passphrase);
+  }
+
+  G_OBJECT_CLASS(sheet_create_profile_parent_class)->dispose(obj);
+}
+
 static void sheet_create_profile_finalize(GObject *obj) {
-  /* No allocated state to free currently */
   G_OBJECT_CLASS(sheet_create_profile_parent_class)->finalize(obj);
 }
 
@@ -397,6 +352,7 @@ static void sheet_create_profile_class_init(SheetCreateProfileClass *klass) {
   GtkWidgetClass *wc = GTK_WIDGET_CLASS(klass);
   GObjectClass *oc = G_OBJECT_CLASS(klass);
 
+  oc->dispose = sheet_create_profile_dispose;
   oc->finalize = sheet_create_profile_finalize;
 
   gtk_widget_class_set_template_from_resource(wc, APP_RESOURCE_PATH "/ui/sheets/sheet-create-profile.ui");
@@ -407,15 +363,15 @@ static void sheet_create_profile_class_init(SheetCreateProfileClass *klass) {
 
   /* Form entries */
   gtk_widget_class_bind_template_child(wc, SheetCreateProfile, entry_display_name);
-  gtk_widget_class_bind_template_child(wc, SheetCreateProfile, entry_passphrase);
-  gtk_widget_class_bind_template_child(wc, SheetCreateProfile, entry_confirm_passphrase);
   gtk_widget_class_bind_template_child(wc, SheetCreateProfile, entry_recovery_hint);
   gtk_widget_class_bind_template_child(wc, SheetCreateProfile, chk_hardware_key);
 
+  /* Containers for secure entries */
+  gtk_widget_class_bind_template_child(wc, SheetCreateProfile, box_passphrase_container);
+  gtk_widget_class_bind_template_child(wc, SheetCreateProfile, box_confirm_container);
+
   /* Feedback widgets */
-  gtk_widget_class_bind_template_child(wc, SheetCreateProfile, lbl_passphrase_strength);
   gtk_widget_class_bind_template_child(wc, SheetCreateProfile, lbl_passphrase_match);
-  gtk_widget_class_bind_template_child(wc, SheetCreateProfile, level_passphrase_strength);
 
   /* Status widgets */
   gtk_widget_class_bind_template_child(wc, SheetCreateProfile, box_status);
@@ -424,7 +380,36 @@ static void sheet_create_profile_class_init(SheetCreateProfileClass *klass) {
 }
 
 static void sheet_create_profile_init(SheetCreateProfile *self) {
+  /* Ensure GnSecureEntry type is registered */
+  g_type_ensure(GN_TYPE_SECURE_ENTRY);
+
   gtk_widget_init_template(GTK_WIDGET(self));
+
+  /* Create secure passphrase entry */
+  self->secure_passphrase = GN_SECURE_ENTRY(gn_secure_entry_new());
+  gn_secure_entry_set_placeholder_text(self->secure_passphrase, "Enter passphrase");
+  gn_secure_entry_set_min_length(self->secure_passphrase, 8);
+  gn_secure_entry_set_show_strength_indicator(self->secure_passphrase, TRUE);
+  gn_secure_entry_set_show_caps_warning(self->secure_passphrase, TRUE);
+  gn_secure_entry_set_requirements_text(self->secure_passphrase,
+    "Use at least 8 characters with mixed case, numbers, and symbols for a strong passphrase.");
+  gn_secure_entry_set_timeout(self->secure_passphrase, 120); /* 2 minute timeout */
+
+  if (self->box_passphrase_container) {
+    gtk_box_append(self->box_passphrase_container, GTK_WIDGET(self->secure_passphrase));
+  }
+
+  /* Create secure confirm passphrase entry */
+  self->secure_confirm_passphrase = GN_SECURE_ENTRY(gn_secure_entry_new());
+  gn_secure_entry_set_placeholder_text(self->secure_confirm_passphrase, "Confirm passphrase");
+  gn_secure_entry_set_min_length(self->secure_confirm_passphrase, 8);
+  gn_secure_entry_set_show_strength_indicator(self->secure_confirm_passphrase, FALSE);
+  gn_secure_entry_set_show_caps_warning(self->secure_confirm_passphrase, TRUE);
+  gn_secure_entry_set_timeout(self->secure_confirm_passphrase, 120);
+
+  if (self->box_confirm_container) {
+    gtk_box_append(self->box_confirm_container, GTK_WIDGET(self->secure_confirm_passphrase));
+  }
 
   /* Connect button handlers */
   if (self->btn_cancel) g_signal_connect(self->btn_cancel, "clicked", G_CALLBACK(on_cancel), self);
@@ -433,18 +418,16 @@ static void sheet_create_profile_init(SheetCreateProfile *self) {
   /* Connect entry change handlers for validation */
   if (self->entry_display_name)
     g_signal_connect(self->entry_display_name, "changed", G_CALLBACK(on_entry_changed), self);
-  if (self->entry_passphrase)
-    g_signal_connect(self->entry_passphrase, "changed", G_CALLBACK(on_entry_changed), self);
-  if (self->entry_confirm_passphrase)
-    g_signal_connect(self->entry_confirm_passphrase, "changed", G_CALLBACK(on_entry_changed), self);
+
+  /* Connect secure entry change handlers */
+  g_signal_connect(self->secure_passphrase, "changed", G_CALLBACK(on_secure_entry_changed), self);
+  g_signal_connect(self->secure_confirm_passphrase, "changed", G_CALLBACK(on_secure_entry_changed), self);
 
   /* Initially disable create button */
   if (self->btn_create) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_create), FALSE);
 
   /* Hide feedback labels initially */
-  if (self->lbl_passphrase_strength) gtk_widget_set_visible(GTK_WIDGET(self->lbl_passphrase_strength), FALSE);
   if (self->lbl_passphrase_match) gtk_widget_set_visible(GTK_WIDGET(self->lbl_passphrase_match), FALSE);
-  if (self->level_passphrase_strength) gtk_widget_set_visible(GTK_WIDGET(self->level_passphrase_strength), FALSE);
 
   /* Focus display name entry */
   if (self->entry_display_name) gtk_widget_grab_focus(GTK_WIDGET(self->entry_display_name));

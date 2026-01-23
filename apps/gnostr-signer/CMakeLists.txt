@@ -20,6 +20,14 @@ pkg_check_modules(ADWAITA REQUIRED IMPORTED_TARGET libadwaita-1)
 pkg_check_modules(JSON_GLIB REQUIRED IMPORTED_TARGET json-glib-1.0)
 pkg_check_modules(LIBSECRET QUIET IMPORTED_TARGET libsecret-1)
 
+# Optional libsodium for secure memory operations
+pkg_check_modules(SODIUM QUIET IMPORTED_TARGET libsodium)
+if (SODIUM_FOUND)
+  message(STATUS "libsodium found - secure memory will use sodium APIs")
+else()
+  message(STATUS "libsodium not found - secure memory will use system fallbacks")
+endif()
+
 # Main GTK4 application (UI shell)
 file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/ui/sheets/*.c src/ui/widgets/*.c)
 if (NOT APP_SRC)
@@ -47,7 +55,11 @@ target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/ni
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip46/include)
 # NIP-19 for bech32 encoding
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip19/include)
-# libnostr core for keys.h
+# NIP-49 for encrypted key backup (ncryptsec)
+target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip49/include)
+# NIP-06 for mnemonic derivation
+target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip06/include)
+# libnostr core for keys.h and crypto/bip39.h
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/libnostr/include)
 # Link against core to resolve owner APIs
 target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB nostr_nip55l_core nip04)
@@ -59,6 +71,20 @@ endif()
 if (TARGET nip19)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE nip19)
 endif()
+# Link NIP-49 for encrypted key backup
+if (TARGET nostr_nip49_glib)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE nostr_nip49_glib nostr_nip49_core)
+elseif (TARGET nostr_nip49_core)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE nostr_nip49_core)
+endif()
+# Link NIP-06 for mnemonic derivation
+if (TARGET nip06)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE nip06)
+endif()
+# Link nostr core for BIP-39 and keys
+if (TARGET nostr)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE nostr)
+endif()
 
 # Include project root so we can include gnome/seahorse/secret_store.h from the app
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR})
@@ -67,6 +93,25 @@ target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR})
 if (TARGET gnostr-secret)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE gnostr-secret)
   target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_LIBSECRET=1)
+endif()
+
+# Link libsecret directly for secret-storage.c when available
+if (LIBSECRET_FOUND AND NOT TARGET gnostr-secret)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::LIBSECRET)
+  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_LIBSECRET=1)
+  message(STATUS "gnostr-signer: libsecret linked directly for secure key storage")
+elseif(APPLE)
+  # macOS: Link Security.framework for Keychain support
+  find_library(SECURITY_FRAMEWORK Security REQUIRED)
+  find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
+  message(STATUS "gnostr-signer: Security.framework linked for Keychain support")
+endif()
+
+# Link libsodium for secure memory if available
+if (SODIUM_FOUND)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::SODIUM)
+  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_SODIUM=1)
 endif()
 
 # Do not enable GNOSTR_HAVE_LIBSECRET unless helper lib is built; otherwise
@@ -84,6 +129,12 @@ find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
 target_include_directories(gnostr-signer-daemon PRIVATE ${NSYNC_INCLUDE_DIR})
 find_library(NSYNC_LIB nsync REQUIRED)
 target_link_libraries(gnostr-signer-daemon PRIVATE nostr_nip55l_glib nostr_nip5f_core nip04 PkgConfig::GLIB ${NSYNC_LIB})
+
+# Link libsodium for daemon secure memory if available
+if (SODIUM_FOUND)
+  target_link_libraries(gnostr-signer-daemon PRIVATE PkgConfig::SODIUM)
+  target_compile_definitions(gnostr-signer-daemon PRIVATE GNOSTR_HAVE_SODIUM=1)
+endif()
 
 if (ENABLE_TCP_IPC)
   target_compile_definitions(gnostr-signer-daemon PRIVATE GNOSTR_ENABLE_TCP_IPC=1)
@@ -123,4 +174,103 @@ if (GTK_UPDATE_ICON_CACHE)
     COMMAND ${GTK_UPDATE_ICON_CACHE} -f -t ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor || true
     COMMENT "Updating icon cache"
   )
+endif()
+
+# ==============================================================================
+# Unit Tests
+# ==============================================================================
+# Include test suite (uses CTest/GLib testing framework)
+option(BUILD_SIGNER_TESTS "Build gnostr-signer unit tests" ON)
+if (BUILD_SIGNER_TESTS)
+  add_subdirectory(tests)
+endif()
+
+# ==============================================================================
+# macOS Application Bundle Support
+# ==============================================================================
+if(APPLE)
+  option(BUILD_MACOS_BUNDLE "Build macOS application bundle" OFF)
+
+  if(BUILD_MACOS_BUNDLE)
+    # Application version for bundle
+    set(GNOSTR_SIGNER_VERSION "1.0.0" CACHE STRING "Application version for macOS bundle")
+
+    # Path to packaging files
+    set(MACOS_PACKAGING_DIR ${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos)
+
+    # Generate Info.plist from template
+    configure_file(
+      ${MACOS_PACKAGING_DIR}/Info.plist.in
+      ${CMAKE_CURRENT_BINARY_DIR}/Info.plist
+      @ONLY
+    )
+    string(REPLACE "@VERSION@" "${GNOSTR_SIGNER_VERSION}" _info_plist_content "")
+
+    # Configure the Info.plist with version substitution
+    file(READ ${MACOS_PACKAGING_DIR}/Info.plist.in INFO_PLIST_CONTENT)
+    string(REPLACE "@VERSION@" "${GNOSTR_SIGNER_VERSION}" INFO_PLIST_CONTENT "${INFO_PLIST_CONTENT}")
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/Info.plist "${INFO_PLIST_CONTENT}")
+
+    # Custom target to build macOS .app bundle
+    add_custom_target(macos-bundle
+      COMMAND ${CMAKE_COMMAND} -E echo "Building macOS application bundle..."
+      COMMAND ${MACOS_PACKAGING_DIR}/create-dmg.sh
+        --build-dir "${CMAKE_BINARY_DIR}"
+        --version "${GNOSTR_SIGNER_VERSION}"
+        --output-dir "${CMAKE_BINARY_DIR}/bundle"
+        --skip-dmg
+      DEPENDS ${APP_SIGNER_BIN} gnostr-signer-daemon
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      COMMENT "Creating macOS application bundle"
+      VERBATIM
+    )
+
+    # Custom target to build DMG installer
+    add_custom_target(macos-dmg
+      COMMAND ${CMAKE_COMMAND} -E echo "Building macOS DMG installer..."
+      COMMAND ${MACOS_PACKAGING_DIR}/create-dmg.sh
+        --build-dir "${CMAKE_BINARY_DIR}"
+        --version "${GNOSTR_SIGNER_VERSION}"
+        --output-dir "${CMAKE_BINARY_DIR}/bundle"
+      DEPENDS ${APP_SIGNER_BIN} gnostr-signer-daemon
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      COMMENT "Creating macOS DMG installer"
+      VERBATIM
+    )
+
+    # Custom target for signed release DMG (requires DEVELOPER_ID env var)
+    add_custom_target(macos-dmg-signed
+      COMMAND ${CMAKE_COMMAND} -E echo "Building signed macOS DMG installer..."
+      COMMAND ${MACOS_PACKAGING_DIR}/create-dmg.sh
+        --build-dir "${CMAKE_BINARY_DIR}"
+        --version "${GNOSTR_SIGNER_VERSION}"
+        --output-dir "${CMAKE_BINARY_DIR}/bundle"
+        --sign "$ENV{DEVELOPER_ID}"
+      DEPENDS ${APP_SIGNER_BIN} gnostr-signer-daemon
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      COMMENT "Creating signed macOS DMG installer"
+      VERBATIM
+    )
+
+    # Custom target for notarized release DMG (requires Apple credentials)
+    add_custom_target(macos-dmg-notarized
+      COMMAND ${CMAKE_COMMAND} -E echo "Building notarized macOS DMG installer..."
+      COMMAND ${MACOS_PACKAGING_DIR}/create-dmg.sh
+        --build-dir "${CMAKE_BINARY_DIR}"
+        --version "${GNOSTR_SIGNER_VERSION}"
+        --output-dir "${CMAKE_BINARY_DIR}/bundle"
+        --sign "$ENV{DEVELOPER_ID}"
+        --notarize
+      DEPENDS ${APP_SIGNER_BIN} gnostr-signer-daemon
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      COMMENT "Creating notarized macOS DMG installer"
+      VERBATIM
+    )
+
+    message(STATUS "macOS bundle support enabled. Available targets:")
+    message(STATUS "  - macos-bundle: Build .app bundle only")
+    message(STATUS "  - macos-dmg: Build unsigned DMG installer")
+    message(STATUS "  - macos-dmg-signed: Build signed DMG (requires DEVELOPER_ID env var)")
+    message(STATUS "  - macos-dmg-notarized: Build notarized DMG (requires Apple credentials)")
+  endif()
 endif()

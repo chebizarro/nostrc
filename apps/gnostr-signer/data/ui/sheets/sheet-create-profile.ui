@@ -6,6 +6,8 @@
     <property name="title" translatable="yes">Create Profile</property>
     <property name="content-width">480</property>
     <property name="content-height">600</property>
+    <!-- Enable close on Escape key -->
+    <property name="can-close">true</property>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
@@ -17,13 +19,17 @@
             </property>
             <child type="start">
               <object class="GtkButton" id="btn_cancel">
-                <property name="label" translatable="yes">Cancel</property>
+                <property name="label" translatable="yes">_Cancel</property>
+                <property name="use-underline">true</property>
+                <property name="focusable">true</property>
               </object>
             </child>
             <child type="end">
               <object class="GtkButton" id="btn_create">
-                <property name="label" translatable="yes">Create</property>
-                <property name="tooltip-text" translatable="yes">Create a new profile with this passphrase</property>
+                <property name="label" translatable="yes">C_reate</property>
+                <property name="use-underline">true</property>
+                <property name="tooltip-text" translatable="yes">Create a new profile with this passphrase (Alt+R)</property>
+                <property name="focusable">true</property>
                 <style>
                   <class name="suggested-action"/>
                 </style>
@@ -72,57 +78,59 @@
                       </object>
                     </child>
 
-                    <!-- Security Group -->
+                    <!-- Security Group - using GnSecureEntry widgets -->
                     <child>
                       <object class="AdwPreferencesGroup">
                         <property name="title" translatable="yes">Security</property>
                         <property name="description" translatable="yes">Your passphrase protects your private key. Choose a strong passphrase that you can remember.</property>
 
+                        <!-- Passphrase label -->
                         <child>
-                          <object class="AdwPasswordEntryRow" id="entry_passphrase">
-                            <property name="title" translatable="yes">Passphrase</property>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Passphrase</property>
+                            <property name="xalign">0</property>
+                            <property name="margin-start">4</property>
+                            <property name="margin-top">8</property>
+                            <style>
+                              <class name="caption"/>
+                              <class name="dim-label"/>
+                            </style>
                           </object>
                         </child>
 
-                        <!-- Passphrase strength indicator -->
+                        <!-- Secure passphrase entry container -->
                         <child>
-                          <object class="GtkBox">
-                            <property name="orientation">horizontal</property>
-                            <property name="spacing">12</property>
-                            <property name="margin-start">12</property>
-                            <property name="margin-end">12</property>
-                            <property name="margin-top">4</property>
+                          <object class="GtkBox" id="box_passphrase_container">
+                            <property name="orientation">vertical</property>
+                            <property name="margin-start">4</property>
+                            <property name="margin-end">4</property>
                             <property name="margin-bottom">8</property>
-                            <child>
-                              <object class="GtkLevelBar" id="level_passphrase_strength">
-                                <property name="min-value">0</property>
-                                <property name="max-value">4</property>
-                                <property name="value">0</property>
-                                <property name="hexpand">true</property>
-                                <property name="valign">center</property>
-                                <offsets>
-                                  <offset name="low" value="1"/>
-                                  <offset name="high" value="2"/>
-                                  <offset name="full" value="4"/>
-                                </offsets>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkLabel" id="lbl_passphrase_strength">
-                                <property name="label" translatable="yes">Weak</property>
-                                <property name="width-chars">12</property>
-                                <property name="xalign">1</property>
-                                <style>
-                                  <class name="caption"/>
-                                </style>
-                              </object>
-                            </child>
+                            <!-- GnSecureEntry will be added here programmatically -->
                           </object>
                         </child>
 
+                        <!-- Confirm passphrase label -->
                         <child>
-                          <object class="AdwPasswordEntryRow" id="entry_confirm_passphrase">
-                            <property name="title" translatable="yes">Confirm Passphrase</property>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Confirm Passphrase</property>
+                            <property name="xalign">0</property>
+                            <property name="margin-start">4</property>
+                            <property name="margin-top">8</property>
+                            <style>
+                              <class name="caption"/>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+
+                        <!-- Secure confirm passphrase entry container -->
+                        <child>
+                          <object class="GtkBox" id="box_confirm_container">
+                            <property name="orientation">vertical</property>
+                            <property name="margin-start">4</property>
+                            <property name="margin-end">4</property>
+                            <property name="margin-bottom">4</property>
+                            <!-- GnSecureEntry will be added here programmatically -->
                           </object>
                         </child>
 

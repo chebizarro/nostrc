@@ -1,14 +1,49 @@
 <!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
   "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
-<!-- Canonical D-Bus interface for GNostr Signer (no inline XML in C) -->
+<!--
+  Canonical D-Bus interface for GNostr Signer (NIP-55L).
+
+  Bus Name:    org.nostr.Signer
+  Object Path: /org/nostr/signer
+
+  This interface provides secure Nostr key management and cryptographic
+  operations. Private keys never leave the daemon process boundary.
+
+  See docs/dbus-interface.md for comprehensive documentation.
+-->
 <node>
   <interface name="org.nostr.Signer">
-    <!-- Identity: returns current user's npub per identity selector rules -->
+
+    <!-- ==================== Identity Methods ==================== -->
+
+    <!--
+      GetPublicKey: Returns the current user's npub per identity selector rules.
+      Returns: npub (string) - Bech32-encoded public key (npub1...)
+      Errors: org.nostr.Signer.Error.Internal if no key configured
+    -->
     <method name="GetPublicKey">
       <arg name="npub" type="s" direction="out"/>
     </method>
 
-    <!-- Sign an event JSON and return signature (hex or bech32 per spec) -->
+    <!-- ==================== Signing Methods ==================== -->
+
+    <!--
+      SignEvent: Sign a Nostr event JSON and return the Schnorr signature.
+      May trigger user approval dialog if no cached ACL decision exists.
+
+      Parameters:
+        event_json  - JSON-serialized Nostr event (without signature)
+        current_user - Identity selector (npub, key_id, or empty for default)
+        app_id      - Application identifier for ACL (uses D-Bus sender if empty)
+
+      Returns: signature (string) - Hex-encoded 64-byte Schnorr signature
+
+      Errors:
+        org.nostr.Signer.Error.InvalidInput  - Malformed event JSON
+        org.nostr.Signer.Error.ApprovalDenied - User denied the request
+        org.nostr.Signer.Error.RateLimited   - Rate limit exceeded (100ms cooldown)
+        org.nostr.Signer.Error.Internal      - Signing operation failed
+    -->
     <method name="SignEvent">
       <arg name="event_json" type="s" direction="in"/>
       <arg name="current_user" type="s" direction="in"/>
@@ -16,7 +51,18 @@
       <arg name="signature" type="s" direction="out"/>
     </method>
 
-    <!-- NIP-44 default crypto; NIP-04 legacy kept for compatibility -->
+    <!-- ==================== NIP-44 Encryption (Modern, Recommended) ==================== -->
+
+    <!--
+      NIP44Encrypt: Encrypt a message using NIP-44 v2 (XChaCha20-Poly1305).
+
+      Parameters:
+        plaintext   - UTF-8 message to encrypt
+        peer_pubkey - Recipient's public key (64-char hex)
+        current_user - Identity selector
+
+      Returns: ciphertext (string) - Base64-encoded NIP-44 v2 ciphertext
+    -->
     <method name="NIP44Encrypt">
       <arg name="plaintext" type="s" direction="in"/>
       <arg name="peer_pubkey" type="s" direction="in"/>
@@ -24,6 +70,16 @@
       <arg name="ciphertext" type="s" direction="out"/>
     </method>
 
+    <!--
+      NIP44Decrypt: Decrypt a message using NIP-44 v2.
+
+      Parameters:
+        ciphertext  - Base64-encoded NIP-44 v2 ciphertext
+        peer_pubkey - Sender's public key (64-char hex)
+        current_user - Identity selector
+
+      Returns: plaintext (string) - Decrypted UTF-8 message
+    -->
     <method name="NIP44Decrypt">
       <arg name="ciphertext" type="s" direction="in"/>
       <arg name="peer_pubkey" type="s" direction="in"/>
@@ -31,6 +87,15 @@
       <arg name="plaintext" type="s" direction="out"/>
     </method>
 
+    <!-- ==================== NIP-04 Encryption (Legacy, for Compatibility) ==================== -->
+
+    <!--
+      NIP04Encrypt: Encrypt a message using NIP-04 (AES-256-CBC).
+      DEPRECATED: Prefer NIP-44 for new implementations.
+
+      Parameters: Same as NIP44Encrypt
+      Returns: ciphertext with IV appended
+    -->
     <method name="NIP04Encrypt">
       <arg name="plaintext" type="s" direction="in"/>
       <arg name="peer_pubkey" type="s" direction="in"/>
@@ -38,6 +103,10 @@
       <arg name="ciphertext" type="s" direction="out"/>
     </method>
 
+    <!--
+      NIP04Decrypt: Decrypt a message using NIP-04.
+      DEPRECATED: Prefer NIP-44 for new implementations.
+    -->
     <method name="NIP04Decrypt">
       <arg name="ciphertext" type="s" direction="in"/>
       <arg name="peer_pubkey" type="s" direction="in"/>
@@ -45,16 +114,89 @@
       <arg name="plaintext" type="s" direction="out"/>
     </method>
 
+    <!-- ==================== Zap Decryption (NIP-57) ==================== -->
+
+    <!--
+      DecryptZapEvent: Decrypt the content of a zap receipt event.
+      Tries NIP-44 first, falls back to NIP-04.
+
+      Parameters:
+        event_json   - JSON-serialized zap event
+        current_user - Identity selector
+
+      Returns: decrypted_event (string) - Event JSON with decrypted content
+    -->
     <method name="DecryptZapEvent">
       <arg name="event_json" type="s" direction="in"/>
       <arg name="current_user" type="s" direction="in"/>
       <arg name="decrypted_event" type="s" direction="out"/>
     </method>
 
+    <!-- ==================== Relay Configuration ==================== -->
+
+    <!--
+      GetRelays: Returns the list of configured relay URLs.
+      Returns: relays_json (string) - JSON array of relay URLs
+    -->
     <method name="GetRelays">
       <arg name="relays_json" type="s" direction="out"/>
     </method>
 
+    <!-- ==================== Key Management ==================== -->
+
+    <!--
+      StoreKey: Store a private key in the secure backend (libsecret/Keychain).
+      SECURITY: Requires NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1 environment variable.
+
+      Parameters:
+        key      - Private key (64-char hex or nsec1... bech32)
+        identity - Optional identity label/selector
+
+      Returns:
+        ok   (boolean) - True if stored successfully
+        npub (string)  - Derived public key (npub1...)
+
+      Errors:
+        org.nostr.Signer.Error.PermissionDenied - Key mutations disabled
+        org.nostr.Signer.Error.RateLimited      - Rate limit exceeded (500ms)
+        org.nostr.Signer.InvalidKey             - Invalid private key format
+        org.nostr.Signer.SecretServiceUnavailable - Backend unavailable
+    -->
+    <method name="StoreKey">
+      <arg name="key" type="s" direction="in"/>
+      <arg name="identity" type="s" direction="in"/>
+      <arg name="ok" type="b" direction="out"/>
+      <arg name="npub" type="s" direction="out"/>
+    </method>
+
+    <!--
+      ClearKey: Remove a private key from the secure backend.
+      SECURITY: Requires NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1 environment variable.
+
+      Parameters:
+        identity - Identity selector (npub or key_id)
+
+      Returns: ok (boolean) - True if removed successfully
+    -->
+    <method name="ClearKey">
+      <arg name="identity" type="s" direction="in"/>
+      <arg name="ok" type="b" direction="out"/>
+    </method>
+
+    <!-- ==================== User Approval ==================== -->
+
+    <!--
+      ApproveRequest: Respond to a pending approval request.
+      Called by the UI to approve or deny a signing operation.
+
+      Parameters:
+        request_id  - ID from ApprovalRequested signal
+        decision    - True to approve, false to deny
+        remember    - Save decision to ACL file
+        ttl_seconds - How long to remember (0 = forever)
+
+      Returns: ok (boolean) - True if request was found and processed
+    -->
     <method name="ApproveRequest">
       <arg name="request_id" type="s" direction="in"/>
       <arg name="decision" type="b" direction="in"/>
@@ -62,6 +204,38 @@
       <arg name="ttl_seconds" type="t" direction="in"/>
       <arg name="ok" type="b" direction="out"/>
     </method>
-    <!-- Future: Signals for approval UI lifecycle could be added here. -->
+
+    <!-- ==================== Signals ==================== -->
+
+    <!--
+      ApprovalRequested: Emitted when a signing operation requires user approval.
+
+      Arguments:
+        app_id     - Requesting application identifier
+        identity   - Target identity (npub)
+        kind       - Request type (e.g., "event")
+        preview    - Human-readable preview of the content (truncated to ~96 chars)
+        request_id - Unique ID to use with ApproveRequest
+    -->
+    <signal name="ApprovalRequested">
+      <arg type="s" name="app_id"/>
+      <arg type="s" name="identity"/>
+      <arg type="s" name="kind"/>
+      <arg type="s" name="preview"/>
+      <arg type="s" name="request_id"/>
+    </signal>
+
+    <!--
+      ApprovalCompleted: Emitted when an approval request has been resolved.
+
+      Arguments:
+        request_id - The request that was completed
+        decision   - True if approved, false if denied
+    -->
+    <signal name="ApprovalCompleted">
+      <arg type="s" name="request_id"/>
+      <arg type="b" name="decision"/>
+    </signal>
+
   </interface>
 </node>

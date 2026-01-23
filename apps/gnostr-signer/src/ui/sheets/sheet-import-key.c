@@ -1,10 +1,14 @@
 #include "sheet-import-key.h"
 #include "../app-resources.h"
+#include "../../secure-delete.h"
 
 #include <gtk/gtk.h>
 #include <adwaita.h>
 #include <gio/gio.h>
 #include <string.h>
+
+/* Clipboard clear timeout in seconds after importing sensitive data */
+#define CLIPBOARD_CLEAR_TIMEOUT_SECONDS 30
 
 struct _SheetImportKey {
   AdwDialog parent_instance;
@@ -44,7 +48,12 @@ static void clipboard_text_got(GObject *src, GAsyncResult *res, gpointer user_da
   if (g_str_has_prefix(text, "nsec1") || g_str_has_prefix(text, "ncrypt") || is_hex64(text)){
     gtk_editable_set_text(GTK_EDITABLE(self->entry_secret), text);
     gtk_widget_set_sensitive(GTK_WIDGET(self->btn_ok), TRUE);
+
+    /* Schedule clipboard clear for security - don't leave secret keys on clipboard */
+    gn_clipboard_clear_after(GDK_CLIPBOARD(src), CLIPBOARD_CLEAR_TIMEOUT_SECONDS);
   }
+  /* Securely shred the text buffer before freeing */
+  gn_secure_shred_string(text);
   g_free(text);
 }
 
@@ -145,13 +154,16 @@ static void on_ok(GtkButton *b, gpointer user_data){
   if (!self) return;
   const char *raw = gtk_editable_get_text(GTK_EDITABLE(self->entry_secret));
   if (!raw || *raw == '\0') { return; }
-  g_autofree char *secret = g_strdup(raw);
+  char *secret = g_strdup(raw);
   g_strstrip(secret);
   /* Basic validation: accept nsec..., ncrypt..., or 64-hex */
   if (!(g_str_has_prefix(secret, "nsec1") || g_str_has_prefix(secret, "ncrypt") || is_hex64(secret))){
     GtkAlertDialog *ad = gtk_alert_dialog_new("Invalid key format. Enter nsec..., 64-hex, or ncrypt...");
     gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
     g_object_unref(ad);
+    /* Securely shred the secret before freeing */
+    gn_secure_shred_string(secret);
+    g_free(secret);
     return;
   }
   /* Identity optional: pass empty string; backend will derive npub if needed */
@@ -164,6 +176,9 @@ static void on_ok(GtkButton *b, gpointer user_data){
     gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
     g_object_unref(ad);
     if (e) g_clear_error(&e);
+    /* Securely shred the secret before freeing */
+    gn_secure_shred_string(secret);
+    g_free(secret);
     return;
   }
   ImportCtx *ctx = g_new0(ImportCtx, 1);
@@ -181,6 +196,14 @@ static void on_ok(GtkButton *b, gpointer user_data){
                          NULL,
                          import_call_done,
                          ctx);
+
+  /* Securely shred the secret after sending - DBus has made its copy */
+  gn_secure_shred_string(secret);
+  g_free(secret);
+
+  /* Clear the entry field to remove secret from UI memory */
+  gtk_editable_set_text(GTK_EDITABLE(self->entry_secret), "");
+
   /* Disable buttons while request is in-flight */
   if (self->btn_ok) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_ok), FALSE);
   if (self->btn_cancel) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_cancel), FALSE);

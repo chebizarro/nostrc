@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: MIT -->
+<component type="desktop-application">
+  <id>org.gnostr.Signer</id>
+
+  <name>GNostr Signer</name>
+  <summary>Secure Nostr identity management and signing service</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <developer id="org.gnostr">
+    <name>GNostr Project</name>
+  </developer>
+
+  <description>
+    <p>
+      GNostr Signer is a secure application for managing Nostr identities and
+      signing events. It keeps your private keys safe while allowing Nostr
+      clients to request signatures through a secure D-Bus interface.
+    </p>
+    <p>Features include:</p>
+    <ul>
+      <li>Secure key storage using the system keyring (GNOME Keyring/libsecret)</li>
+      <li>Granular permission control for each application</li>
+      <li>Interactive approval dialogs for signing requests</li>
+      <li>NIP-46 remote signer (bunker) support</li>
+      <li>Multiple identity management with profiles</li>
+      <li>Backup and recovery options</li>
+      <li>Audit logging of signing operations</li>
+    </ul>
+    <p>
+      GNostr Signer implements NIP-55 (Android Signer Application) for local
+      signing and NIP-46 (Nostr Connect) for remote signing capabilities.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">org.gnostr.Signer.desktop</launchable>
+
+  <url type="homepage">https://github.com/gnostr-org/gnostr-signer</url>
+  <url type="bugtracker">https://github.com/gnostr-org/gnostr-signer/issues</url>
+  <url type="vcs-browser">https://github.com/gnostr-org/gnostr-signer</url>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#8e30eb</color>
+    <color type="primary" scheme_preference="dark">#a855f7</color>
+  </branding>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>Main window with identity overview</caption>
+      <image>https://raw.githubusercontent.com/gnostr-org/gnostr-signer/main/assets/screenshot-main.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Permission management for applications</caption>
+      <image>https://raw.githubusercontent.com/gnostr-org/gnostr-signer/main/assets/screenshot-permissions.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Settings and security options</caption>
+      <image>https://raw.githubusercontent.com/gnostr-org/gnostr-signer/main/assets/screenshot-settings.png</image>
+    </screenshot>
+  </screenshots>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.1.0" date="2025-01-22">
+      <description>
+        <p>Initial release of GNostr Signer with core functionality:</p>
+        <ul>
+          <li>Secure identity creation and management</li>
+          <li>D-Bus interface for client applications (NIP-55L)</li>
+          <li>Permission-based access control</li>
+          <li>NIP-46 bunker support for remote signing</li>
+          <li>GNOME Keyring integration for secure key storage</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+
+  <provides>
+    <binary>gnostr-signer</binary>
+    <binary>gnostr-signer-daemon</binary>
+    <dbus type="session">org.nostr.Signer</dbus>
+  </provides>
+
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+    <control>touch</control>
+  </recommends>
+
+  <supports>
+    <internet>always</internet>
+  </supports>
+
+  <categories>
+    <category>Utility</category>
+    <category>Security</category>
+    <category>Network</category>
+  </categories>
+
+  <keywords>
+    <keyword>nostr</keyword>
+    <keyword>signer</keyword>
+    <keyword>keys</keyword>
+    <keyword>identity</keyword>
+    <keyword>crypto</keyword>
+    <keyword>signing</keyword>
+    <keyword>nip46</keyword>
+    <keyword>bunker</keyword>
+  </keywords>
+
+  <custom>
+    <value key="Purism::form_factor">mobile</value>
+  </custom>
+</component>

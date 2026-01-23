@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- =================================================================== -->
+    <!-- Hardened Runtime Settings (Release/Distribution)                     -->
+    <!-- =================================================================== -->
+    <!-- Production entitlements for App Store or notarized distribution      -->
+
+    <!-- Allow loading of unsigned/ad-hoc signed libraries (needed for GTK) -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- Disable library validation (required for GTK/GLib dynamic libraries) -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- =================================================================== -->
+    <!-- Keychain Access                                                      -->
+    <!-- =================================================================== -->
+
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)org.gnostr.Signer</string>
+        <string>$(AppIdentifierPrefix)org.gnostr.shared</string>
+    </array>
+
+    <!-- =================================================================== -->
+    <!-- Network Access                                                       -->
+    <!-- =================================================================== -->
+
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- =================================================================== -->
+    <!-- Inter-Process Communication                                          -->
+    <!-- =================================================================== -->
+
+    <key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
+    <array>
+        <string>org.gnostr.Signer</string>
+        <string>org.nostr.Signer</string>
+    </array>
+
+    <!-- =================================================================== -->
+    <!-- File Access                                                          -->
+    <!-- =================================================================== -->
+
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+
+    <key>com.apple.security.files.downloads.read-only</key>
+    <true/>
+
+    <!-- Note: com.apple.security.get-task-allow is NOT included for release -->
+</dict>
+</plist>

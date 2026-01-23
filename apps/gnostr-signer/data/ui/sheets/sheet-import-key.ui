@@ -3,10 +3,17 @@
   <requires lib="gtk" version="4.12"/>
   <requires lib="adwaita" version="1.4"/>
   <template class="SheetImportKey" parent="AdwDialog">
+    <accessibility>
+      <property name="label">Add new account dialog</property>
+      <property name="description">Import an existing Nostr private key to add a new signing account</property>
+    </accessibility>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar">
+            <accessibility>
+              <property name="label">Add account header</property>
+            </accessibility>
             <property name="title-widget">
               <object class="GtkLabel">
                 <property name="label" translatable="yes">Add New Account</property>
@@ -15,11 +22,19 @@
             <child type="start">
               <object class="GtkButton" id="btn_cancel">
                 <property name="label" translatable="yes">Cancel</property>
+                <accessibility>
+                  <property name="label">Cancel</property>
+                  <property name="description">Close this dialog without adding an account</property>
+                </accessibility>
               </object>
             </child>
             <child type="end">
               <object class="GtkButton" id="btn_ok">
                 <property name="label" translatable="yes">Add</property>
+                <accessibility>
+                  <property name="label">Add account</property>
+                  <property name="description">Import the key and add this account</property>
+                </accessibility>
                 <style>
                   <class name="suggested-action"/>
                 </style>
@@ -40,6 +55,10 @@
               <object class="GtkLabel">
                 <property name="wrap">true</property>
                 <property name="label" translatable="yes">Paste your private key (hex, nsec, or ncrypt). It will be stored securely via libsecret. The public key will be saved in settings.</property>
+                <accessibility>
+                  <property name="label">Import instructions</property>
+                  <property name="description">Your private key will be stored securely. Supported formats include hex, nsec, and ncrypt.</property>
+                </accessibility>
               </object>
             </child>
 
@@ -47,6 +66,10 @@
               <object class="GtkEntry" id="entry_secret">
                 <property name="placeholder-text" translatable="yes">nsec1... or 64-hex or ncrypt...</property>
                 <property name="hexpand">true</property>
+                <accessibility>
+                  <property name="label">Private key</property>
+                  <property name="description">Enter your Nostr private key in nsec, hex, or ncrypt format</property>
+                </accessibility>
               </object>
             </child>
 
@@ -54,12 +77,20 @@
               <object class="GtkEntry" id="entry_label">
                 <property name="placeholder-text" translatable="yes">Label (optional)</property>
                 <property name="hexpand">true</property>
+                <accessibility>
+                  <property name="label">Account label</property>
+                  <property name="description">Optional friendly name for this account</property>
+                </accessibility>
               </object>
             </child>
 
             <child>
               <object class="GtkCheckButton" id="chk_link_user">
                 <property name="label" translatable="yes">Link to current Linux user</property>
+                <accessibility>
+                  <property name="label">Link to Linux user</property>
+                  <property name="description">When checked, this account will be associated with your current system user</property>
+                </accessibility>
               </object>
             </child>
           </object>

@@ -3,32 +3,123 @@
   <requires lib="gtk" version="4.12"/>
   <requires lib="adwaita" version="1.4"/>
   <template class="PageSettings" parent="AdwPreferencesPage">
+    <accessibility>
+      <property name="label">Settings page</property>
+      <property name="description">Configure application appearance, security, network, and social settings</property>
+    </accessibility>
+    <child>
+      <object class="AdwPreferencesGroup" id="group_appearance">
+        <property name="title" translatable="yes">Appearance</property>
+        <accessibility>
+          <property name="label">Appearance settings</property>
+          <property name="description">Configure visual appearance options</property>
+        </accessibility>
+        <child>
+          <object class="AdwComboRow" id="combo_theme">
+            <property name="title" translatable="yes">Theme</property>
+            <property name="subtitle" translatable="yes">Choose the app color scheme</property>
+            <accessibility>
+              <property name="description">Select the application color theme from System, Light, or Dark modes</property>
+            </accessibility>
+            <property name="model">
+              <object class="GtkStringList" id="theme_model">
+                <items>
+                  <item translatable="yes">System</item>
+                  <item translatable="yes">Light</item>
+                  <item translatable="yes">Dark</item>
+                </items>
+              </object>
+            </property>
+          </object>
+        </child>
+      </object>
+    </child>
     <child>
       <object class="AdwPreferencesGroup" id="group_security">
         <property name="title" translatable="yes">Security</property>
+        <accessibility>
+          <property name="label">Security settings</property>
+          <property name="description">Manage accounts, keys, and profile settings</property>
+        </accessibility>
         <child>
           <object class="AdwActionRow">
             <property name="title" translatable="yes">Add Account</property>
-            <child type="suffix"><object class="GtkButton" id="btn_add_account"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+            <accessibility>
+              <property name="description">Add a new signing account or import an existing key</property>
+            </accessibility>
+            <child type="suffix">
+              <object class="GtkButton" id="btn_add_account">
+                <property name="label" translatable="yes">Open</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Open add account dialog</property>
+                  <property name="description">Click to open the add account dialog</property>
+                </accessibility>
+                <style><class name="suffix-action"/></style>
+              </object>
+            </child>
           </object>
         </child>
         <child>
           <object class="AdwActionRow">
             <property name="title" translatable="yes">Select Account</property>
-            <child type="suffix"><object class="GtkButton" id="btn_select_account"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+            <accessibility>
+              <property name="description">Switch between available signing accounts</property>
+            </accessibility>
+            <child type="suffix">
+              <object class="GtkButton" id="btn_select_account">
+                <property name="label" translatable="yes">Open</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Open account selector</property>
+                  <property name="description">Click to open the account selection dialog</property>
+                </accessibility>
+                <style><class name="suffix-action"/></style>
+              </object>
+            </child>
           </object>
         </child>
         <child>
           <object class="AdwActionRow">
             <property name="title" translatable="yes">Backup Keys</property>
-            <child type="suffix"><object class="GtkButton" id="btn_backup_keys"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+            <accessibility>
+              <property name="description">Export and backup your private keys securely</property>
+            </accessibility>
+            <child type="suffix">
+              <object class="GtkButton" id="btn_backup_keys">
+                <property name="label" translatable="yes">Open</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Open key backup dialog</property>
+                  <property name="description">Click to open the key backup and export dialog</property>
+                </accessibility>
+                <style><class name="suffix-action"/></style>
+              </object>
+            </child>
           </object>
         </child>
         <child>
           <object class="AdwActionRow">
             <property name="title" translatable="yes">Edit Profile</property>
             <property name="subtitle" translatable="yes">Name, bio, avatar, NIP-05, lightning address</property>
-            <child type="suffix"><object class="GtkButton" id="btn_edit_profile"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+            <accessibility>
+              <property name="description">Edit your Nostr profile metadata including display name, bio, and identifiers</property>
+            </accessibility>
+            <child type="suffix">
+              <object class="GtkButton" id="btn_edit_profile">
+                <property name="label" translatable="yes">Open</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Open profile editor</property>
+                  <property name="description">Click to open the profile editing dialog</property>
+                </accessibility>
+                <style><class name="suffix-action"/></style>
+              </object>
+            </child>
           </object>
         </child>
       </object>
@@ -36,22 +127,66 @@
     <child>
       <object class="AdwPreferencesGroup" id="group_network">
         <property name="title" translatable="yes">Network</property>
+        <accessibility>
+          <property name="label">Network settings</property>
+          <property name="description">Configure network connections and relay settings</property>
+        </accessibility>
         <child>
           <object class="AdwActionRow">
             <property name="title" translatable="yes">Tor/Orbot setup</property>
-            <child type="suffix"><object class="GtkButton" id="btn_orbot_setup"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+            <accessibility>
+              <property name="description">Configure Tor proxy settings for enhanced privacy</property>
+            </accessibility>
+            <child type="suffix">
+              <object class="GtkButton" id="btn_orbot_setup">
+                <property name="label" translatable="yes">Open</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Open Orbot setup</property>
+                  <property name="description">Click to configure Tor and Orbot proxy settings</property>
+                </accessibility>
+                <style><class name="suffix-action"/></style>
+              </object>
+            </child>
           </object>
         </child>
         <child>
           <object class="AdwActionRow">
             <property name="title" translatable="yes">Relays</property>
-            <child type="suffix"><object class="GtkButton" id="btn_relays"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+            <accessibility>
+              <property name="description">Manage Nostr relay connections for reading and writing events</property>
+            </accessibility>
+            <child type="suffix">
+              <object class="GtkButton" id="btn_relays">
+                <property name="label" translatable="yes">Open</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Open relay configuration</property>
+                  <property name="description">Click to manage relay connections</property>
+                </accessibility>
+                <style><class name="suffix-action"/></style>
+              </object>
+            </child>
           </object>
         </child>
         <child>
           <object class="AdwActionRow">
             <property name="title" translatable="yes">Listen for new connections</property>
-            <child type="suffix"><object class="GtkSwitch" id="switch_listen"><property name="valign">center</property><property name="vexpand">false</property></object></child>
+            <accessibility>
+              <property name="description">Enable or disable listening for incoming connection requests from applications</property>
+            </accessibility>
+            <child type="suffix">
+              <object class="GtkSwitch" id="switch_listen">
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Listen for connections toggle</property>
+                  <property name="description">Toggle to enable or disable listening for new application connections</property>
+                </accessibility>
+              </object>
+            </child>
           </object>
         </child>
       </object>
@@ -60,18 +195,50 @@
       <object class="AdwPreferencesGroup" id="group_social">
         <property name="title" translatable="yes">Social</property>
         <property name="description" translatable="yes">Manage your follow and mute lists</property>
+        <accessibility>
+          <property name="label">Social settings</property>
+          <property name="description">Manage your social connections including follows and mutes</property>
+        </accessibility>
         <child>
           <object class="AdwActionRow">
             <property name="title" translatable="yes">Following</property>
             <property name="subtitle" translatable="yes">Manage accounts you follow (kind:3)</property>
-            <child type="suffix"><object class="GtkButton" id="btn_follows"><property name="label" translatable="yes">Manage</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+            <accessibility>
+              <property name="description">View and edit your list of followed accounts published as kind 3 events</property>
+            </accessibility>
+            <child type="suffix">
+              <object class="GtkButton" id="btn_follows">
+                <property name="label" translatable="yes">Manage</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Manage following list</property>
+                  <property name="description">Click to manage your list of followed accounts</property>
+                </accessibility>
+                <style><class name="suffix-action"/></style>
+              </object>
+            </child>
           </object>
         </child>
         <child>
           <object class="AdwActionRow">
             <property name="title" translatable="yes">Muted</property>
             <property name="subtitle" translatable="yes">Manage muted accounts (kind:10000)</property>
-            <child type="suffix"><object class="GtkButton" id="btn_mutes"><property name="label" translatable="yes">Manage</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+            <accessibility>
+              <property name="description">View and edit your list of muted accounts published as kind 10000 events</property>
+            </accessibility>
+            <child type="suffix">
+              <object class="GtkButton" id="btn_mutes">
+                <property name="label" translatable="yes">Manage</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Manage mute list</property>
+                  <property name="description">Click to manage your list of muted accounts</property>
+                </accessibility>
+                <style><class name="suffix-action"/></style>
+              </object>
+            </child>
           </object>
         </child>
       </object>
@@ -79,16 +246,70 @@
     <child>
       <object class="AdwPreferencesGroup" id="group_misc">
         <property name="title" translatable="yes">Other</property>
+        <accessibility>
+          <property name="label">Other settings</property>
+          <property name="description">Additional configuration options</property>
+        </accessibility>
         <child>
           <object class="AdwActionRow">
             <property name="title" translatable="yes">Logs</property>
-            <child type="suffix"><object class="GtkButton" id="btn_logs"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+            <accessibility>
+              <property name="description">View application logs for debugging and troubleshooting</property>
+            </accessibility>
+            <child type="suffix">
+              <object class="GtkButton" id="btn_logs">
+                <property name="label" translatable="yes">Open</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Open application logs</property>
+                  <property name="description">Click to view application logs</property>
+                </accessibility>
+                <style><class name="suffix-action"/></style>
+              </object>
+            </child>
           </object>
         </child>
         <child>
           <object class="AdwActionRow">
             <property name="title" translatable="yes">Sign policy</property>
-            <child type="suffix"><object class="GtkButton" id="btn_sign_policy"><property name="label" translatable="yes">Open</property><property name="valign">center</property><property name="vexpand">false</property><style><class name="suffix-action"/></style></object></child>
+            <accessibility>
+              <property name="description">Configure signing policies and approval rules</property>
+            </accessibility>
+            <child type="suffix">
+              <object class="GtkButton" id="btn_sign_policy">
+                <property name="label" translatable="yes">Open</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Open sign policy settings</property>
+                  <property name="description">Click to configure signing policies</property>
+                </accessibility>
+                <style><class name="suffix-action"/></style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwActionRow">
+            <property name="title" translatable="yes">Setup Assistant</property>
+            <property name="subtitle" translatable="yes">Re-run the introductory setup wizard</property>
+            <accessibility>
+              <property name="description">Launch the setup assistant to learn about GNostr Signer and configure your account</property>
+            </accessibility>
+            <child type="suffix">
+              <object class="GtkButton" id="btn_setup_assistant">
+                <property name="label" translatable="yes">Run</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+                <property name="action-name">app.show-onboarding</property>
+                <accessibility>
+                  <property name="label">Run setup assistant</property>
+                  <property name="description">Click to launch the setup wizard</property>
+                </accessibility>
+                <style><class name="suffix-action"/></style>
+              </object>
+            </child>
           </object>
         </child>
       </object>

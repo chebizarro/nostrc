@@ -904,6 +904,14 @@ static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex)
     return;
   }
 
+  /* CRITICAL: Use batch mode to prevent re-entrancy crashes during signal emission.
+   * Without batching, g_list_model_items_changed() can trigger GTK callbacks that
+   * call back into flush_pending_notes(), causing memory corruption. */
+  gboolean was_in_batch = self->in_batch;
+  if (!was_in_batch) {
+    begin_batch(self);
+  }
+
   for (guint i = 0; i < arr->len; i++) {
     PendingEntry *pe = &g_array_index(arr, PendingEntry, i);
     add_note_internal(self, pe->note_key, pe->created_at, NULL, NULL, 0);
@@ -912,7 +920,15 @@ static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex)
   g_array_unref(arr);
   g_free(key_str);
 
+  /* enforce_window must be called while still in batch mode to prevent
+   * re-entrancy during signal emission. end_batch will emit the consolidated
+   * items-changed signal after all modifications (including window enforcement). */
   enforce_window(self);
+
+  /* End batch mode to emit consolidated items-changed signal */
+  if (!was_in_batch) {
+    end_batch(self);
+  }
 }
 
 /* Remove a note_key from any pending queues. */

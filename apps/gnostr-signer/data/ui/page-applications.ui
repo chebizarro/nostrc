@@ -3,20 +3,42 @@
   <requires lib="gtk" version="4.12"/>
   <requires lib="adwaita" version="1.4"/>
   <template class="PageApplications" parent="AdwPreferencesPage">
+    <accessibility>
+      <property name="label">Applications page</property>
+      <property name="description">Manage connected applications that can request signatures</property>
+    </accessibility>
     <child>
       <object class="AdwPreferencesGroup">
+        <accessibility>
+          <property name="label">Application actions</property>
+          <property name="description">Add new applications or bunkers</property>
+        </accessibility>
         <child>
           <object class="GtkBox">
             <property name="orientation">horizontal</property>
             <property name="spacing">6</property>
             <child>
               <object class="GtkButton" id="btn_add_app">
-                <property name="label" translatable="yes">Add a new application</property>
+                <property name="label" translatable="yes">_Add a new application</property>
+                <property name="use-underline">true</property>
+                <property name="focusable">true</property>
+                <property name="tooltip-text" translatable="yes">Add a new application connection (Alt+A)</property>
+                <accessibility>
+                  <property name="label">Add a new application</property>
+                  <property name="description">Open dialog to connect a new application for signing requests</property>
+                </accessibility>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="btn_add_bunker">
-                <property name="label" translatable="yes">Add a nsecbunker</property>
+                <property name="label" translatable="yes">Add a nsec_bunker</property>
+                <property name="use-underline">true</property>
+                <property name="focusable">true</property>
+                <property name="tooltip-text" translatable="yes">Add a nsecbunker connection (Alt+B)</property>
+                <accessibility>
+                  <property name="label">Add a nsecbunker</property>
+                  <property name="description">Open dialog to add a new remote signer bunker connection</property>
+                </accessibility>
               </object>
             </child>
           </object>
@@ -26,12 +48,24 @@
     <child>
       <object class="AdwPreferencesGroup">
         <property name="title" translatable="yes">Approved applications</property>
+        <accessibility>
+          <property name="label">Approved applications list</property>
+          <property name="description">List of applications that have been approved to request signatures</property>
+        </accessibility>
         <child>
           <object class="GtkScrolledWindow">
             <property name="hexpand">true</property>
             <property name="vexpand">true</property>
+            <accessibility>
+              <property name="label">Applications list container</property>
+            </accessibility>
             <child>
-              <object class="GtkListView" id="list_apps"/>
+              <object class="GtkListView" id="list_apps">
+                <accessibility>
+                  <property name="label">Connected applications</property>
+                  <property name="description">List of applications approved for signing. Use arrow keys to navigate.</property>
+                </accessibility>
+              </object>
             </child>
           </object>
         </child>

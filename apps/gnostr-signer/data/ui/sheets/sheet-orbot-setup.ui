@@ -3,6 +3,10 @@
   <requires lib="gtk" version="4.12"/>
   <requires lib="adwaita" version="1.4"/>
   <template class="SheetOrbotSetup" parent="AdwDialog">
+    <accessibility>
+      <property name="label">Orbot setup dialog</property>
+      <property name="description">Configure Tor proxy settings for enhanced privacy through Orbot</property>
+    </accessibility>
     <child>
       <object class="GtkBox">
         <property name="orientation">vertical</property>
@@ -14,6 +18,9 @@
         <child>
           <object class="GtkLabel">
             <property name="label" translatable="yes">Connect through Orbot</property>
+            <accessibility>
+              <property name="label">Orbot connection heading</property>
+            </accessibility>
             <attributes><attribute name="weight" value="bold"/></attributes>
           </object>
         </child>
@@ -21,6 +28,10 @@
           <object class="GtkLabel">
             <property name="wrap">true</property>
             <property name="label" translatable="yes">To use Tor, make sure Orbot is running and configured. You can paste your proxy address and port below.</property>
+            <accessibility>
+              <property name="label">Setup instructions</property>
+              <property name="description">Instructions for configuring Tor proxy through Orbot</property>
+            </accessibility>
           </object>
         </child>
         <child>
@@ -41,6 +52,11 @@
                 <property name="tooltip-text" translatable="yes">Enter your SOCKS5 proxy address</property>
                 <property name="valign">center</property>
                 <property name="vexpand">false</property>
+                <property name="hexpand">true</property>
+                <accessibility>
+                  <property name="label">Proxy URL</property>
+                  <property name="description">Enter your SOCKS5 proxy address, typically socks5h://127.0.0.1:9050 for local Tor</property>
+                </accessibility>
               </object>
             </child>
             <child>
@@ -50,12 +66,27 @@
                 <property name="tooltip-text" translatable="yes">Save proxy settings</property>
                 <property name="valign">center</property>
                 <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Save proxy settings</property>
+                  <property name="description">Save the configured proxy URL. Keyboard shortcut: Alt+S.</property>
+                </accessibility>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
               </object>
             </child>
           </object>
         </child>
         <child>
-          <object class="GtkButton" id="btn_cancel"><property name="label" translatable="yes">_Cancel</property><property name="use-underline">true</property><property name="tooltip-text" translatable="yes">Close without changes</property></object>
+          <object class="GtkButton" id="btn_cancel">
+            <property name="label" translatable="yes">_Cancel</property>
+            <property name="use-underline">true</property>
+            <property name="tooltip-text" translatable="yes">Close without changes</property>
+            <accessibility>
+              <property name="label">Cancel</property>
+              <property name="description">Close this dialog without saving changes. Keyboard shortcut: Alt+C or Escape.</property>
+            </accessibility>
+          </object>
         </child>
       </object>
     </child>

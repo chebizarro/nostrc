@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- =================================================================== -->
+    <!-- Hardened Runtime Settings                                            -->
+    <!-- =================================================================== -->
+    <!-- These settings enable the hardened runtime while allowing necessary  -->
+    <!-- functionality for the Gnostr Signer application.                     -->
+
+    <!-- Allow loading of unsigned/ad-hoc signed libraries (needed for GTK) -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- Allow JIT compilation (may be needed for some GTK operations) -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <false/>
+
+    <!-- Disable library validation (required for GTK/GLib dynamic libraries) -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- Allow DYLD environment variables (useful for debugging) -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+
+    <!-- =================================================================== -->
+    <!-- Keychain Access                                                      -->
+    <!-- =================================================================== -->
+    <!-- The Gnostr Signer stores private keys securely in the macOS Keychain -->
+
+    <!-- Keychain access group for shared secrets between app and daemon -->
+    <key>keychain-access-groups</key>
+    <array>
+        <!-- Default app keychain access group -->
+        <string>$(AppIdentifierPrefix)org.gnostr.Signer</string>
+        <!-- Shared keychain group for daemon communication -->
+        <string>$(AppIdentifierPrefix)org.gnostr.shared</string>
+    </array>
+
+    <!-- =================================================================== -->
+    <!-- Network Access                                                       -->
+    <!-- =================================================================== -->
+    <!-- Required for connecting to Nostr relays                              -->
+
+    <!-- Allow outgoing network connections (client mode) -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- Allow incoming network connections (for local IPC/daemon) -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- =================================================================== -->
+    <!-- Inter-Process Communication                                          -->
+    <!-- =================================================================== -->
+    <!-- The app communicates with a background daemon via Unix sockets       -->
+
+    <!-- POSIX IPC (needed for Unix domain socket communication) -->
+    <key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
+    <array>
+        <string>org.gnostr.Signer</string>
+        <string>org.nostr.Signer</string>
+    </array>
+
+    <!-- =================================================================== -->
+    <!-- File Access                                                          -->
+    <!-- =================================================================== -->
+
+    <!-- Allow read/write access to user-selected files -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+
+    <!-- Allow read access to downloads folder (for importing keys) -->
+    <key>com.apple.security.files.downloads.read-only</key>
+    <true/>
+
+    <!-- =================================================================== -->
+    <!-- Security Exceptions for Development                                  -->
+    <!-- =================================================================== -->
+    <!-- These can be removed for production App Store builds                 -->
+
+    <!-- Allow debugging (remove for App Store submission) -->
+    <key>com.apple.security.get-task-allow</key>
+    <true/>
+</dict>
+</plist>

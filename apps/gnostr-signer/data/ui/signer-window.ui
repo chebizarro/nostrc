@@ -5,19 +5,36 @@
   <template class="SignerWindow" parent="AdwApplicationWindow">
     <property name="default-width">920</property>
     <property name="default-height">640</property>
+    <!-- Enable keyboard navigation for the window -->
+    <property name="focus-visible">true</property>
+    <accessibility>
+      <property name="label">GNostr Signer main window</property>
+      <property name="description">Main application window for managing Nostr signing keys and connected applications</property>
+    </accessibility>
     <child>
       <object class="AdwToolbarView" id="toolbar_view">
         <child type="top">
           <object class="AdwHeaderBar" id="header_bar">
+            <accessibility>
+              <property name="label">Main header bar</property>
+            </accessibility>
             <property name="title-widget">
               <object class="AdwViewSwitcherTitle" id="switcher_title">
                 <property name="stack">stack</property>
+                <accessibility>
+                  <property name="label">Page switcher</property>
+                  <property name="description">Switch between Permissions, Applications, and Settings pages</property>
+                </accessibility>
               </object>
             </property>
             <child type="end">
               <object class="GtkMenuButton" id="menu_btn">
                 <property name="icon-name">open-menu-symbolic</property>
                 <property name="valign">center</property>
+                <accessibility>
+                  <property name="label">Application menu</property>
+                  <property name="description">Open the application menu with additional options</property>
+                </accessibility>
               </object>
             </child>
           </object>
@@ -26,14 +43,34 @@
           <object class="AdwNavigationSplitView" id="split_view">
             <property name="min-sidebar-width">260</property>
             <property name="max-sidebar-width">320</property>
+            <accessibility>
+              <property name="label">Navigation split view</property>
+              <property name="description">Main content area with sidebar navigation</property>
+            </accessibility>
             <child type="sidebar">
               <object class="AdwNavigationPage" id="sidebar_page">
                 <property name="title" translatable="yes">Sections</property>
+                <accessibility>
+                  <property name="label">Section navigation sidebar</property>
+                  <property name="description">Navigate between different sections of the application</property>
+                </accessibility>
                 <property name="child">
                   <object class="GtkListBox" id="sidebar">
                     <property name="selection-mode">browse</property>
+                    <property name="activate-on-single-click">true</property>
+                    <style>
+                      <class name="navigation-sidebar"/>
+                    </style>
+                    <accessibility>
+                      <property name="label">Navigation sections list</property>
+                      <property name="description">List of navigation sections. Use arrow keys to navigate and Enter to select.</property>
+                    </accessibility>
                     <child>
                       <object class="GtkListBoxRow">
+                        <accessibility>
+                          <property name="label">Permissions and Connection section</property>
+                          <property name="description">Navigate to permissions and connection settings</property>
+                        </accessibility>
                         <child>
                           <object class="GtkLabel">
                             <property name="label" translatable="yes">Permissions &amp; Connection</property>
@@ -48,6 +85,10 @@
                     </child>
                     <child>
                       <object class="GtkListBoxRow">
+                        <accessibility>
+                          <property name="label">Applications section</property>
+                          <property name="description">Navigate to manage connected applications</property>
+                        </accessibility>
                         <child>
                           <object class="GtkLabel">
                             <property name="label" translatable="yes">Applications</property>
@@ -62,6 +103,10 @@
                     </child>
                     <child>
                       <object class="GtkListBoxRow">
+                        <accessibility>
+                          <property name="label">Settings section</property>
+                          <property name="description">Navigate to application settings</property>
+                        </accessibility>
                         <child>
                           <object class="GtkLabel">
                             <property name="label" translatable="yes">Settings</property>
@@ -81,8 +126,16 @@
             <child>
               <object class="AdwNavigationPage" id="content_page">
                 <property name="title" translatable="yes">GNostr Signer</property>
+                <accessibility>
+                  <property name="label">Main content area</property>
+                  <property name="description">Main content for the selected section</property>
+                </accessibility>
                 <property name="child">
                   <object class="AdwViewStack" id="stack">
+                    <accessibility>
+                      <property name="label">Content stack</property>
+                      <property name="description">Container for different page views</property>
+                    </accessibility>
                     <child>
                       <object class="AdwViewStackPage">
                         <property name="name">permissions</property>

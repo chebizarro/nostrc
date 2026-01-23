@@ -1,0 +1,27 @@
+[Desktop Entry]
+Type=Application
+Name=GNostr Signer
+GenericName=Nostr Signer
+Comment=Secure Nostr identity management and signing service
+Exec=gnostr-signer %U
+Icon=org.gnostr.Signer
+Terminal=false
+DBusActivatable=true
+Categories=Utility;Security;Network;
+Keywords=nostr;signer;keys;identity;crypto;signing;
+StartupNotify=true
+X-GNOME-UsesNotifications=true
+
+# MIME types for Nostr URIs (nostr: and bunker:)
+MimeType=x-scheme-handler/nostr;x-scheme-handler/bunker;
+
+# Desktop actions
+Actions=new-identity;settings;
+
+[Desktop Action new-identity]
+Name=New Identity
+Exec=gnostr-signer --new-identity
+
+[Desktop Action settings]
+Name=Settings
+Exec=gnostr-signer --settings

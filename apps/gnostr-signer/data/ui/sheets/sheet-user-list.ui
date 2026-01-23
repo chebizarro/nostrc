@@ -6,10 +6,17 @@
     <property name="title" translatable="yes">User List</property>
     <property name="content-width">480</property>
     <property name="content-height">600</property>
+    <accessibility>
+      <property name="label">User list management dialog</property>
+      <property name="description">Manage your follow or mute list by adding, removing, and publishing users</property>
+    </accessibility>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar">
+            <accessibility>
+              <property name="label">User list header</property>
+            </accessibility>
             <property name="title-widget">
               <object class="GtkLabel" id="lbl_title">
                 <property name="label" translatable="yes">Manage Users</property>
@@ -18,11 +25,19 @@
             <child type="start">
               <object class="GtkButton" id="btn_cancel">
                 <property name="label" translatable="yes">Cancel</property>
+                <accessibility>
+                  <property name="label">Cancel</property>
+                  <property name="description">Close without saving changes</property>
+                </accessibility>
               </object>
             </child>
             <child type="end">
               <object class="GtkButton" id="btn_publish">
                 <property name="label" translatable="yes">Save &amp; Publish</property>
+                <accessibility>
+                  <property name="label">Save and publish</property>
+                  <property name="description">Save changes and publish the updated list to relays</property>
+                </accessibility>
                 <style>
                   <class name="suggested-action"/>
                 </style>
@@ -44,6 +59,10 @@
               <object class="GtkBox">
                 <property name="orientation">vertical</property>
                 <property name="spacing">8</property>
+                <accessibility>
+                  <property name="label">Add user section</property>
+                  <property name="description">Add a new user to the list by public key</property>
+                </accessibility>
                 <child>
                   <object class="GtkBox">
                     <property name="orientation">horizontal</property>
@@ -52,11 +71,19 @@
                       <object class="GtkEntry" id="entry_pubkey">
                         <property name="placeholder-text" translatable="yes">npub1... or 64-hex pubkey</property>
                         <property name="hexpand">true</property>
+                        <accessibility>
+                          <property name="label">Public key input</property>
+                          <property name="description">Enter a Nostr public key in npub or hex format</property>
+                        </accessibility>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton" id="btn_add">
                         <property name="icon-name">list-add-symbolic</property>
+                        <accessibility>
+                          <property name="label">Add user</property>
+                          <property name="description">Add the entered public key to the list</property>
+                        </accessibility>
                         <style>
                           <class name="suggested-action"/>
                         </style>
@@ -68,6 +95,10 @@
                   <object class="GtkEntry" id="entry_petname">
                     <property name="placeholder-text" translatable="yes">Petname (optional)</property>
                     <property name="hexpand">true</property>
+                    <accessibility>
+                      <property name="label">Petname</property>
+                      <property name="description">Optional nickname for this user</property>
+                    </accessibility>
                   </object>
                 </child>
               </object>
@@ -78,15 +109,27 @@
               <object class="GtkBox">
                 <property name="orientation">horizontal</property>
                 <property name="spacing">12</property>
+                <accessibility>
+                  <property name="label">Search and sync</property>
+                  <property name="description">Search users and sync from relays</property>
+                </accessibility>
                 <child>
                   <object class="GtkSearchEntry" id="search_entry">
                     <property name="placeholder-text" translatable="yes">Search...</property>
                     <property name="hexpand">true</property>
+                    <accessibility>
+                      <property name="label">Search users</property>
+                      <property name="description">Filter the user list by searching</property>
+                    </accessibility>
                   </object>
                 </child>
                 <child>
                   <object class="GtkLabel" id="lbl_count">
                     <property name="label">0 users</property>
+                    <accessibility>
+                      <property name="label">User count</property>
+                      <property name="description">Number of users in the list</property>
+                    </accessibility>
                     <style>
                       <class name="dim-label"/>
                     </style>
@@ -96,6 +139,10 @@
                   <object class="GtkButton" id="btn_sync">
                     <property name="icon-name">emblem-synchronizing-symbolic</property>
                     <property name="tooltip-text" translatable="yes">Sync from relays</property>
+                    <accessibility>
+                      <property name="label">Sync from relays</property>
+                      <property name="description">Fetch the latest list from your relays</property>
+                    </accessibility>
                     <style>
                       <class name="flat"/>
                     </style>
@@ -109,9 +156,16 @@
               <object class="GtkScrolledWindow">
                 <property name="vexpand">true</property>
                 <property name="hscrollbar-policy">never</property>
+                <accessibility>
+                  <property name="label">User list container</property>
+                </accessibility>
                 <child>
                   <object class="GtkListBox" id="list_users">
                     <property name="selection-mode">none</property>
+                    <accessibility>
+                      <property name="label">Users list</property>
+                      <property name="description">List of users. Use keyboard to navigate and manage entries.</property>
+                    </accessibility>
                     <style>
                       <class name="boxed-list"/>
                     </style>

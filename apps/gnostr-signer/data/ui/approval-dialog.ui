@@ -6,10 +6,19 @@
     <property name="title" translatable="yes">Approval Required</property>
     <property name="content-width">480</property>
     <property name="content-height">-1</property>
+    <!-- Enable close on Escape key (treated as deny) -->
+    <property name="can-close">true</property>
+    <accessibility>
+      <property name="label">Signature approval dialog</property>
+      <property name="description">An application is requesting permission to sign an event. Review the details and approve or deny.</property>
+    </accessibility>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar">
+            <accessibility>
+              <property name="label">Approval dialog header</property>
+            </accessibility>
             <property name="title-widget">
               <object class="GtkBox">
                 <property name="orientation">horizontal</property>
@@ -19,6 +28,10 @@
                   <object class="GtkImage" id="header_icon">
                     <property name="icon-name">dialog-question-symbolic</property>
                     <property name="pixel-size">24</property>
+                    <accessibility>
+                      <property name="label">Question icon</property>
+                      <property name="description">Indicates a signature request requiring your decision</property>
+                    </accessibility>
                   </object>
                 </child>
                 <child>
@@ -49,13 +62,24 @@
                 <style>
                   <class name="boxed-list"/>
                 </style>
+                <accessibility>
+                  <property name="label">Request details</property>
+                  <property name="description">Information about the signature request including event type, requesting application, identity, and timestamp</property>
+                </accessibility>
                 <child>
                   <object class="AdwActionRow" id="row_event_type">
                     <property name="title" translatable="yes">Event Type</property>
                     <property name="subtitle" translatable="yes">Unknown</property>
+                    <accessibility>
+                      <property name="description">The type of Nostr event being signed</property>
+                    </accessibility>
                     <child type="prefix">
                       <object class="GtkImage" id="event_type_icon">
                         <property name="icon-name">mail-unread-symbolic</property>
+                        <accessibility>
+                          <property name="label">Event type icon</property>
+                          <property name="description">Decorative icon representing the event type</property>
+                        </accessibility>
                       </object>
                     </child>
                   </object>
@@ -64,9 +88,16 @@
                   <object class="AdwActionRow" id="row_app">
                     <property name="title" translatable="yes">From App</property>
                     <property name="subtitle" translatable="yes">Unknown Application</property>
+                    <accessibility>
+                      <property name="description">The application requesting the signature</property>
+                    </accessibility>
                     <child type="prefix">
                       <object class="GtkImage">
                         <property name="icon-name">application-x-executable-symbolic</property>
+                        <accessibility>
+                          <property name="label">Application icon</property>
+                          <property name="description">Decorative icon representing the requesting application</property>
+                        </accessibility>
                       </object>
                     </child>
                   </object>
@@ -75,9 +106,16 @@
                   <object class="AdwActionRow" id="row_identity">
                     <property name="title" translatable="yes">Identity</property>
                     <property name="subtitle" translatable="yes">npub...</property>
+                    <accessibility>
+                      <property name="description">The Nostr identity that will be used for signing</property>
+                    </accessibility>
                     <child type="prefix">
                       <object class="GtkImage">
                         <property name="icon-name">avatar-default-symbolic</property>
+                        <accessibility>
+                          <property name="label">Identity icon</property>
+                          <property name="description">Decorative icon representing user identity</property>
+                        </accessibility>
                       </object>
                     </child>
                   </object>
@@ -86,9 +124,16 @@
                   <object class="AdwActionRow" id="row_timestamp">
                     <property name="title" translatable="yes">Timestamp</property>
                     <property name="subtitle" translatable="yes">Now</property>
+                    <accessibility>
+                      <property name="description">When this signature request was received</property>
+                    </accessibility>
                     <child type="prefix">
                       <object class="GtkImage">
                         <property name="icon-name">preferences-system-time-symbolic</property>
+                        <accessibility>
+                          <property name="label">Time icon</property>
+                          <property name="description">Decorative icon representing timestamp</property>
+                        </accessibility>
                       </object>
                     </child>
                   </object>
@@ -100,6 +145,10 @@
             <child>
               <object class="GtkFrame" id="content_frame">
                 <property name="label" translatable="yes">Content Preview</property>
+                <accessibility>
+                  <property name="label">Event content preview</property>
+                  <property name="description">Preview of the event content that will be signed</property>
+                </accessibility>
                 <child>
                   <object class="GtkBox">
                     <property name="orientation">vertical</property>
@@ -116,6 +165,11 @@
                         <property name="max-width-chars">60</property>
                         <property name="ellipsize">end</property>
                         <property name="lines">3</property>
+                        <property name="selectable">true</property>
+                        <accessibility>
+                          <property name="label">Event content</property>
+                          <property name="description">The content of the event to be signed</property>
+                        </accessibility>
                         <style>
                           <class name="monospace"/>
                         </style>
@@ -126,6 +180,10 @@
                         <property name="label" translatable="yes">Show More</property>
                         <property name="halign">start</property>
                         <property name="visible">false</property>
+                        <accessibility>
+                          <property name="label">Show more content</property>
+                          <property name="description">Click to expand and show the full event content</property>
+                        </accessibility>
                         <style>
                           <class name="flat"/>
                           <class name="link"/>
@@ -143,6 +201,10 @@
                 <property name="orientation">horizontal</property>
                 <property name="spacing">12</property>
                 <property name="visible">false</property>
+                <accessibility>
+                  <property name="label">Identity selector</property>
+                  <property name="description">Select which identity to use for signing when multiple accounts are available</property>
+                </accessibility>
                 <child>
                   <object class="GtkLabel">
                     <property name="label" translatable="yes">Sign as:</property>
@@ -152,6 +214,10 @@
                 <child>
                   <object class="GtkDropDown" id="identity_dropdown">
                     <property name="hexpand">true</property>
+                    <accessibility>
+                      <property name="label">Select signing identity</property>
+                      <property name="description">Choose which account to use for this signature</property>
+                    </accessibility>
                   </object>
                 </child>
               </object>
@@ -162,9 +228,17 @@
               <object class="GtkBox">
                 <property name="orientation">horizontal</property>
                 <property name="spacing">12</property>
+                <accessibility>
+                  <property name="label">Remember preference options</property>
+                  <property name="description">Options to remember this decision for future requests</property>
+                </accessibility>
                 <child>
                   <object class="GtkCheckButton" id="chk_remember">
                     <property name="label" translatable="yes">Remember this decision</property>
+                    <accessibility>
+                      <property name="label">Remember this decision</property>
+                      <property name="description">Check to remember your approval or denial for future similar requests</property>
+                    </accessibility>
                   </object>
                 </child>
                 <child>
@@ -172,6 +246,10 @@
                     <property name="sensitive">false</property>
                     <property name="halign">end</property>
                     <property name="hexpand">true</property>
+                    <accessibility>
+                      <property name="label">Duration to remember</property>
+                      <property name="description">Select how long to remember this decision</property>
+                    </accessibility>
                   </object>
                 </child>
               </object>
@@ -184,10 +262,21 @@
                 <property name="spacing">12</property>
                 <property name="homogeneous">true</property>
                 <property name="margin-top">8</property>
+                <accessibility>
+                  <property name="label">Action buttons</property>
+                  <property name="description">Approve or deny this signature request</property>
+                </accessibility>
                 <child>
                   <object class="GtkButton" id="btn_deny">
-                    <property name="label" translatable="yes">Deny</property>
+                    <property name="label" translatable="yes">_Deny</property>
+                    <property name="use-underline">true</property>
                     <property name="hexpand">true</property>
+                    <property name="focusable">true</property>
+                    <property name="tooltip-text" translatable="yes">Deny this request (Alt+D, Escape)</property>
+                    <accessibility>
+                      <property name="label">Deny signature request</property>
+                      <property name="description">Click to deny this signing request. The application will not receive a signature. Keyboard shortcut: Alt+D or Escape.</property>
+                    </accessibility>
                     <style>
                       <class name="destructive-action"/>
                     </style>
@@ -195,8 +284,16 @@
                 </child>
                 <child>
                   <object class="GtkButton" id="btn_approve">
-                    <property name="label" translatable="yes">Approve</property>
+                    <property name="label" translatable="yes">_Approve</property>
+                    <property name="use-underline">true</property>
                     <property name="hexpand">true</property>
+                    <property name="focusable">true</property>
+                    <property name="receives-default">true</property>
+                    <property name="tooltip-text" translatable="yes">Approve this request (Alt+A)</property>
+                    <accessibility>
+                      <property name="label">Approve signature request</property>
+                      <property name="description">Click to approve and sign this event with your private key. Keyboard shortcut: Alt+A.</property>
+                    </accessibility>
                     <style>
                       <class name="suggested-action"/>
                     </style>

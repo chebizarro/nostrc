@@ -116,6 +116,8 @@ SettingsTheme settings_manager_get_theme(SettingsManager *sm) {
     result = SETTINGS_THEME_LIGHT;
   } else if (g_strcmp0(theme, "dark") == 0) {
     result = SETTINGS_THEME_DARK;
+  } else if (g_strcmp0(theme, "high-contrast") == 0) {
+    result = SETTINGS_THEME_HIGH_CONTRAST;
   }
 
   g_free(theme);
@@ -129,10 +131,40 @@ void settings_manager_set_theme(SettingsManager *sm, SettingsTheme theme) {
   switch (theme) {
     case SETTINGS_THEME_LIGHT: value = "light"; break;
     case SETTINGS_THEME_DARK: value = "dark"; break;
+    case SETTINGS_THEME_HIGH_CONTRAST: value = "high-contrast"; break;
     default: value = "system"; break;
   }
 
   g_settings_set_string(sm->settings, "theme", value);
+}
+
+SettingsHighContrastVariant settings_manager_get_high_contrast_variant(SettingsManager *sm) {
+  if (!sm) return SETTINGS_HC_DEFAULT;
+
+  gchar *variant = g_settings_get_string(sm->settings, "high-contrast-variant");
+  SettingsHighContrastVariant result = SETTINGS_HC_DEFAULT;
+
+  if (g_strcmp0(variant, "inverted") == 0) {
+    result = SETTINGS_HC_INVERTED;
+  } else if (g_strcmp0(variant, "yellow-on-black") == 0) {
+    result = SETTINGS_HC_YELLOW_ON_BLACK;
+  }
+
+  g_free(variant);
+  return result;
+}
+
+void settings_manager_set_high_contrast_variant(SettingsManager *sm, SettingsHighContrastVariant variant) {
+  if (!sm) return;
+
+  const gchar *value;
+  switch (variant) {
+    case SETTINGS_HC_INVERTED: value = "inverted"; break;
+    case SETTINGS_HC_YELLOW_ON_BLACK: value = "yellow-on-black"; break;
+    default: value = "default"; break;
+  }
+
+  g_settings_set_string(sm->settings, "high-contrast-variant", value);
 }
 
 void settings_manager_get_window_size(SettingsManager *sm, gint *width, gint *height) {

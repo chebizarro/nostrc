@@ -1,7 +1,11 @@
 #include "signer-window.h"
+#include "app-resources.h"
 #include "page-permissions.h"
 #include "page-applications.h"
 #include "page-settings.h"
+#include "sheets/sheet-create-profile.h"
+#include "sheets/sheet-import-profile.h"
+#include "sheets/sheet-account-backup.h"
 #include <gio/gio.h>
 
 /* GSettings schema ID for the signer app */
@@ -136,12 +140,32 @@ static void signer_window_init(SignerWindow *self) {
   /* Connect close-request to save state */
   g_signal_connect(self, "close-request", G_CALLBACK(on_close_request), NULL);
 
-  /* App menu */
+  /* App menu with keyboard shortcuts */
   if (self->menu_btn) {
     GMenu *menu = g_menu_new();
-    g_menu_append(menu, "Preferences", "app.preferences");
-    g_menu_append(menu, "About GNostr Signer", "app.about");
-    g_menu_append(menu, "Quit", "app.quit");
+
+    /* Profile section */
+    GMenu *profile_section = g_menu_new();
+    g_menu_append(profile_section, "New Profile\tCtrl+N", "app.new-profile");
+    g_menu_append(profile_section, "Import Profile\tCtrl+I", "app.import-profile");
+    g_menu_append(profile_section, "Export/Backup\tCtrl+E", "app.export");
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(profile_section));
+    g_object_unref(profile_section);
+
+    /* Security section */
+    GMenu *security_section = g_menu_new();
+    g_menu_append(security_section, "Lock Session\tCtrl+L", "app.lock");
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(security_section));
+    g_object_unref(security_section);
+
+    /* App section */
+    GMenu *app_section = g_menu_new();
+    g_menu_append(app_section, "Preferences\tCtrl+,", "app.preferences");
+    g_menu_append(app_section, "About GNostr Signer", "app.about");
+    g_menu_append(app_section, "Quit\tCtrl+Q", "app.quit");
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(app_section));
+    g_object_unref(app_section);
+
     gtk_menu_button_set_menu_model(self->menu_btn, G_MENU_MODEL(menu));
     g_object_unref(menu);
   }
@@ -187,4 +211,76 @@ GSettings *signer_window_get_gsettings(SignerWindow *self) {
  */
 GSettings *signer_get_app_settings(void) {
   return signer_window_get_settings();
+}
+
+/**
+ * signer_window_show_new_profile:
+ * @self: a #SignerWindow
+ *
+ * Opens the create new profile dialog.
+ */
+void signer_window_show_new_profile(SignerWindow *self) {
+  g_return_if_fail(SIGNER_IS_WINDOW(self));
+  SheetCreateProfile *dialog = sheet_create_profile_new();
+  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(self));
+}
+
+/**
+ * signer_window_show_import_profile:
+ * @self: a #SignerWindow
+ *
+ * Opens the import profile dialog.
+ */
+void signer_window_show_import_profile(SignerWindow *self) {
+  g_return_if_fail(SIGNER_IS_WINDOW(self));
+  SheetImportProfile *dialog = sheet_import_profile_new();
+  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(self));
+}
+
+/**
+ * signer_window_show_backup:
+ * @self: a #SignerWindow
+ *
+ * Opens the export/backup dialog.
+ */
+void signer_window_show_backup(SignerWindow *self) {
+  g_return_if_fail(SIGNER_IS_WINDOW(self));
+  SheetAccountBackup *dialog = sheet_account_backup_new();
+  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(self));
+}
+
+/**
+ * signer_window_lock_session:
+ * @self: a #SignerWindow
+ *
+ * Locks the current session, requiring re-authentication.
+ * For now, this calls the D-Bus method to lock the session.
+ */
+void signer_window_lock_session(SignerWindow *self) {
+  g_return_if_fail(SIGNER_IS_WINDOW(self));
+
+  /* Call D-Bus method to lock the session */
+  GError *err = NULL;
+  GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
+  if (!bus) {
+    g_warning("Failed to connect to session bus for lock: %s", err ? err->message : "unknown");
+    g_clear_error(&err);
+    return;
+  }
+
+  g_dbus_connection_call(bus,
+                         "org.nostr.Signer",
+                         "/org/nostr/signer",
+                         "org.nostr.Signer",
+                         "LockSession",
+                         NULL,
+                         NULL,
+                         G_DBUS_CALL_FLAGS_NONE,
+                         5000,
+                         NULL,
+                         NULL,
+                         NULL);
+
+  g_object_unref(bus);
+  g_message("Session lock requested via Ctrl+L");
 }

@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- gn-secure-entry.ui - Secure password entry widget template
+     SPDX-License-Identifier: GPL-3.0-or-later -->
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <template class="GnSecureEntry" parent="GtkWidget">
+    <child>
+      <object class="GtkBox" id="box_main">
+        <property name="orientation">vertical</property>
+        <property name="spacing">4</property>
+
+        <!-- Entry row with visibility toggle -->
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">0</property>
+            <style>
+              <class name="linked"/>
+            </style>
+            <child>
+              <object class="GtkEntry" id="entry_password">
+                <property name="hexpand">true</property>
+                <property name="visibility">false</property>
+                <property name="input-purpose">password</property>
+                <property name="enable-emoji-completion">false</property>
+                <style>
+                  <class name="gn-secure-entry-field"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_toggle_visibility">
+                <property name="tooltip-text" translatable="yes">Show password</property>
+                <property name="valign">center</property>
+                <style>
+                  <class name="flat"/>
+                </style>
+                <child>
+                  <object class="GtkImage" id="img_visibility">
+                    <property name="icon-name">view-reveal-symbolic</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Indicators container -->
+        <child>
+          <object class="GtkBox" id="box_indicators">
+            <property name="orientation">vertical</property>
+            <property name="spacing">4</property>
+            <property name="margin-start">4</property>
+            <property name="margin-end">4</property>
+
+            <!-- Strength indicator row -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <child>
+                  <object class="GtkLevelBar" id="level_strength">
+                    <property name="min-value">0</property>
+                    <property name="max-value">5</property>
+                    <property name="value">0</property>
+                    <property name="hexpand">true</property>
+                    <property name="valign">center</property>
+                    <property name="visible">false</property>
+                    <offsets>
+                      <offset name="low" value="1"/>
+                      <offset name="high" value="3"/>
+                      <offset name="full" value="5"/>
+                    </offsets>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_strength">
+                    <property name="label" translatable="yes">Weak</property>
+                    <property name="width-chars">12</property>
+                    <property name="xalign">1</property>
+                    <property name="visible">false</property>
+                    <style>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Length indicator -->
+            <child>
+              <object class="GtkLabel" id="lbl_length_indicator">
+                <property name="xalign">0</property>
+                <property name="visible">false</property>
+                <style>
+                  <class name="caption"/>
+                </style>
+              </object>
+            </child>
+
+            <!-- Caps lock warning -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">4</property>
+                <property name="visible" bind-source="lbl_caps_warning" bind-property="visible" bind-flags="sync-create"/>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">dialog-warning-symbolic</property>
+                    <property name="pixel-size">16</property>
+                    <style>
+                      <class name="warning"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_caps_warning">
+                    <property name="label" translatable="yes">Caps Lock is on</property>
+                    <property name="xalign">0</property>
+                    <property name="visible">false</property>
+                    <style>
+                      <class name="caption"/>
+                      <class name="warning"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Requirements text -->
+            <child>
+              <object class="GtkLabel" id="lbl_requirements">
+                <property name="wrap">true</property>
+                <property name="xalign">0</property>
+                <property name="visible">false</property>
+                <style>
+                  <class name="caption"/>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+
+          </object>
+        </child>
+
+      </object>
+    </child>
+  </template>
+</interface>

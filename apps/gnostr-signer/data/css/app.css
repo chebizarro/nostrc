@@ -1,6 +1,6 @@
 /* GNostr Signer application stylesheet */
 
-/* Status label styles */
+/* ===== Status label styles ===== */
 .status-ok {
   color: #2e7d32;
   font-weight: bold;
@@ -14,4 +14,203 @@
 .suffix-action {
   min-height: 28px; /* HIG comfortable touch target */
   padding: 4px 10px;
+}
+
+/* ===== Keyboard Navigation & Focus Indicators ===== */
+
+/* Enhanced focus indicators for keyboard navigation */
+*:focus-visible {
+  outline: 2px solid @accent_color;
+  outline-offset: 2px;
+}
+
+/* Focus ring for buttons */
+button:focus-visible {
+  outline: 2px solid @accent_color;
+  outline-offset: 2px;
+}
+
+/* Focus ring for suggested/destructive action buttons - higher contrast */
+button.suggested-action:focus-visible,
+button.destructive-action:focus-visible {
+  outline: 3px solid @accent_color;
+  outline-offset: 2px;
+}
+
+/* Focus indicator for entry rows */
+entry:focus-visible,
+password-entry:focus-visible,
+row.activatable:focus-visible {
+  outline: 2px solid @accent_color;
+  outline-offset: -1px;
+}
+
+/* Focus indicator for text views */
+textview:focus-visible text {
+  outline: 2px solid @accent_color;
+  outline-offset: 1px;
+}
+
+/* Focus indicator for list box rows */
+listboxrow:focus-visible {
+  outline: 2px solid @accent_color;
+  outline-offset: -2px;
+}
+
+/* Focus indicator for sidebar navigation */
+.navigation-sidebar row:focus-visible {
+  outline: 2px solid @accent_color;
+  outline-offset: -2px;
+  background-color: alpha(@accent_color, 0.1);
+}
+
+/* Focus indicator for check buttons */
+checkbutton:focus-visible {
+  outline: 2px solid @accent_color;
+  outline-offset: 2px;
+}
+
+/* Focus indicator for switches */
+switch:focus-visible {
+  outline: 2px solid @accent_color;
+  outline-offset: 3px;
+}
+
+/* Focus indicator for drop downs */
+dropdown:focus-visible {
+  outline: 2px solid @accent_color;
+  outline-offset: 2px;
+}
+
+/* Focus indicator for menu buttons */
+menubutton:focus-visible > button {
+  outline: 2px solid @accent_color;
+  outline-offset: 2px;
+}
+
+/* Focus indicator for link buttons */
+linkbutton:focus-visible {
+  outline: 2px solid @accent_color;
+  outline-offset: 2px;
+}
+
+/* ===== Keyboard Shortcut Hints ===== */
+
+/* Style for shortcut hints shown in tooltips */
+.keyboard-shortcut {
+  font-family: monospace;
+  font-size: 0.9em;
+  padding: 2px 6px;
+  background-color: alpha(@window_fg_color, 0.1);
+  border-radius: 4px;
+}
+
+/* ===== Dialog Focus Management ===== */
+
+/* Ensure dialogs have visible focus indicators */
+dialog *:focus-visible {
+  outline: 2px solid @accent_color;
+  outline-offset: 2px;
+}
+
+/* Default button styling in dialogs for Enter key activation */
+dialog button.suggested-action {
+  font-weight: bold;
+}
+
+/* ===== Action Button Grid Focus ===== */
+
+/* Focus indicator for action buttons in profile dashboard */
+.action-button:focus-visible {
+  outline: 2px solid @accent_color;
+  outline-offset: 3px;
+  border-radius: 12px;
+}
+
+/* Flowbox focus handling */
+flowboxchild:focus-visible {
+  outline: 2px solid @accent_color;
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* ===== High Contrast Mode Support ===== */
+
+@media (prefers-contrast: more) {
+  *:focus-visible {
+    outline: 3px solid @accent_color;
+    outline-offset: 3px;
+  }
+
+  button.suggested-action:focus-visible,
+  button.destructive-action:focus-visible {
+    outline: 4px solid @accent_color;
+    outline-offset: 3px;
+  }
+}
+
+/* ===== Reduced Motion Support ===== */
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0s !important;
+  }
+}
+
+/* ===== Onboarding Assistant Styles ===== */
+
+/* Passphrase strength meter colors */
+levelbar.strength-weak block.filled {
+  background-color: #c62828; /* Red - weak */
+}
+
+levelbar.strength-fair block.filled {
+  background-color: #ef6c00; /* Orange - fair */
+}
+
+levelbar.strength-good block.filled {
+  background-color: #f9a825; /* Yellow/amber - good */
+}
+
+levelbar.strength-strong block.filled {
+  background-color: #2e7d32; /* Green - strong */
+}
+
+/* Card style for path selection boxes */
+.card {
+  padding: 16px;
+  border-radius: 12px;
+  background-color: alpha(@card_bg_color, 0.8);
+  border: 1px solid alpha(@borders, 0.5);
+}
+
+.card:hover {
+  background-color: alpha(@card_bg_color, 1.0);
+  border-color: @accent_color;
+}
+
+/* Heading style for option titles */
+.heading {
+  font-weight: bold;
+  font-size: 1.1em;
+}
+
+/* Caption style for small helper text */
+.caption {
+  font-size: 0.85em;
+}
+
+/* Success icon color */
+image.success {
+  color: #2e7d32;
+}
+
+/* Warning icon color */
+image.warning {
+  color: #ef6c00;
+}
+
+/* Accent icon color */
+image.accent {
+  color: @accent_color;
 }

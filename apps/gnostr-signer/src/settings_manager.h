@@ -18,8 +18,16 @@ typedef struct _SettingsManager SettingsManager;
 typedef enum {
   SETTINGS_THEME_SYSTEM,
   SETTINGS_THEME_LIGHT,
-  SETTINGS_THEME_DARK
+  SETTINGS_THEME_DARK,
+  SETTINGS_THEME_HIGH_CONTRAST
 } SettingsTheme;
+
+/* High contrast color scheme variants */
+typedef enum {
+  SETTINGS_HC_DEFAULT,        /* Black on White */
+  SETTINGS_HC_INVERTED,       /* White on Black */
+  SETTINGS_HC_YELLOW_ON_BLACK /* Yellow on Black */
+} SettingsHighContrastVariant;
 
 /* Create a new settings manager */
 SettingsManager *settings_manager_new(void);
@@ -40,6 +48,9 @@ void settings_manager_set_identity_label(SettingsManager *sm, const gchar *npub,
 /* UI Settings */
 SettingsTheme settings_manager_get_theme(SettingsManager *sm);
 void settings_manager_set_theme(SettingsManager *sm, SettingsTheme theme);
+
+SettingsHighContrastVariant settings_manager_get_high_contrast_variant(SettingsManager *sm);
+void settings_manager_set_high_contrast_variant(SettingsManager *sm, SettingsHighContrastVariant variant);
 
 void settings_manager_get_window_size(SettingsManager *sm, gint *width, gint *height);
 void settings_manager_set_window_size(SettingsManager *sm, gint width, gint height);

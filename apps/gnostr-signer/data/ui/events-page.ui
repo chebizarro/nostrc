@@ -3,10 +3,17 @@
   <requires lib="gtk" version="4.12"/>
   <requires lib="adwaita" version="1.4"/>
   <template class="EventsPage" parent="AdwBin">
+    <accessibility>
+      <property name="label">Events page</property>
+      <property name="description">View recent signed events history</property>
+    </accessibility>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar">
+            <accessibility>
+              <property name="label">Events page header</property>
+            </accessibility>
             <property name="title-widget">
               <object class="AdwWindowTitle">
                 <property name="title" translatable="yes">Recent Events</property>
@@ -19,6 +26,10 @@
             <property name="transition-type">crossfade</property>
             <property name="vexpand">true</property>
             <property name="hexpand">true</property>
+            <accessibility>
+              <property name="label">Events content stack</property>
+              <property name="description">Shows either the empty state or the list of events</property>
+            </accessibility>
             <child>
               <object class="GtkStackPage">
                 <property name="name">empty</property>
@@ -29,6 +40,10 @@
                     <property name="description" translatable="yes">Signed events will appear here when applications request signatures through the signer.</property>
                     <property name="vexpand">true</property>
                     <property name="valign">center</property>
+                    <accessibility>
+                      <property name="label">No recent events</property>
+                      <property name="description">No events have been signed yet. Events will appear here when applications request signatures.</property>
+                    </accessibility>
                   </object>
                 </property>
               </object>
@@ -41,6 +56,10 @@
                     <property name="hscrollbar-policy">never</property>
                     <property name="vexpand">true</property>
                     <property name="hexpand">true</property>
+                    <accessibility>
+                      <property name="label">Events list container</property>
+                      <property name="description">Scrollable container for the list of signed events</property>
+                    </accessibility>
                     <child>
                       <object class="AdwClamp">
                         <property name="maximum-size">600</property>
@@ -48,6 +67,10 @@
                         <child>
                           <object class="GtkListView" id="list_view">
                             <property name="single-click-activate">true</property>
+                            <accessibility>
+                              <property name="label">Recent events list</property>
+                              <property name="description">List of recently signed events. Use arrow keys to navigate, Enter to view details.</property>
+                            </accessibility>
                             <style>
                               <class name="navigation-sidebar"/>
                             </style>

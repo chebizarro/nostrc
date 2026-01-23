@@ -1,5 +1,6 @@
 #include <gtk/gtk.h>
 #include "../accounts_store.h"
+#include "../secure-delete.h"
 #ifdef GNOSTR_HAVE_LIBSECRET
 #include "gnome/seahorse/secret_store.h"
 #endif

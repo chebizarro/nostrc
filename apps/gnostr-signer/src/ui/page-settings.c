@@ -10,6 +10,7 @@
 #include "sheets/sheet-profile-editor.h"
 #include "../secret_store.h"
 #include "../profile_store.h"
+#include "../settings_manager.h"
 
 /* Provided by settings_page.c for cross-component updates */
 extern void gnostr_settings_apply_import_success(const char *npub, const char *label);
@@ -20,6 +21,7 @@ static void on_sheet_import_success(const char *npub, const char *label, gpointe
 struct _PageSettings {
   AdwPreferencesPage parent_instance;
   /* Template children */
+  AdwComboRow *combo_theme;
   GtkButton *btn_add_account;
   GtkButton *btn_select_account;
   GtkButton *btn_backup_keys;
@@ -32,6 +34,8 @@ struct _PageSettings {
   /* Social list buttons */
   GtkButton *btn_follows;
   GtkButton *btn_mutes;
+  /* Internal state */
+  gboolean updating_theme; /* Guard against recursive updates */
 };
 
 G_DEFINE_TYPE(PageSettings, page_settings, ADW_TYPE_PREFERENCES_PAGE)
@@ -40,6 +44,34 @@ G_DEFINE_TYPE(PageSettings, page_settings, ADW_TYPE_PREFERENCES_PAGE)
 static GtkWindow *get_parent_window(GtkWidget *w){
   GtkRoot *root = gtk_widget_get_root(w);
   return root ? GTK_WINDOW(root) : NULL;
+}
+
+/* Theme combo handler - maps combo index to SettingsTheme enum */
+static void on_theme_combo_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  PageSettings *self = user_data;
+  if (!self || self->updating_theme) return;
+
+  AdwComboRow *combo = ADW_COMBO_ROW(obj);
+  guint selected = adw_combo_row_get_selected(combo);
+
+  /* Map: 0 = System, 1 = Light, 2 = Dark */
+  SettingsTheme theme;
+  switch (selected) {
+    case 1:
+      theme = SETTINGS_THEME_LIGHT;
+      break;
+    case 2:
+      theme = SETTINGS_THEME_DARK;
+      break;
+    default:
+      theme = SETTINGS_THEME_SYSTEM;
+      break;
+  }
+
+  SettingsManager *sm = settings_manager_get_default();
+  settings_manager_set_theme(sm, theme);
+  g_message("Theme preference changed to: %u", selected);
 }
 
 /* Handlers */
@@ -164,6 +196,7 @@ static void on_mutes(GtkButton *b, gpointer user_data){
 static void page_settings_class_init(PageSettingsClass *klass) {
   GtkWidgetClass *wc = GTK_WIDGET_CLASS(klass);
   gtk_widget_class_set_template_from_resource(wc, APP_RESOURCE_PATH "/ui/page-settings.ui");
+  gtk_widget_class_bind_template_child(wc, PageSettings, combo_theme);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_add_account);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_select_account);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_backup_keys);
@@ -179,6 +212,31 @@ static void page_settings_class_init(PageSettingsClass *klass) {
 
 static void page_settings_init(PageSettings *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+
+  /* Initialize theme combo with current setting */
+  self->updating_theme = TRUE;
+  SettingsManager *sm = settings_manager_get_default();
+  SettingsTheme theme = settings_manager_get_theme(sm);
+  /* Map SettingsTheme to combo index: SYSTEM=0, LIGHT=1, DARK=2 */
+  guint theme_idx;
+  switch (theme) {
+    case SETTINGS_THEME_LIGHT:
+      theme_idx = 1;
+      break;
+    case SETTINGS_THEME_DARK:
+      theme_idx = 2;
+      break;
+    case SETTINGS_THEME_SYSTEM:
+    default:
+      theme_idx = 0;
+      break;
+  }
+  adw_combo_row_set_selected(self->combo_theme, theme_idx);
+  self->updating_theme = FALSE;
+
+  /* Connect theme combo change handler */
+  g_signal_connect(self->combo_theme, "notify::selected", G_CALLBACK(on_theme_combo_changed), self);
+
   /* Handlers */
   g_signal_connect(self->btn_add_account, "clicked", G_CALLBACK(on_add_account), self);
   g_signal_connect(self->btn_select_account, "clicked", G_CALLBACK(on_select_account), self);

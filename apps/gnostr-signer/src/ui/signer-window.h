@@ -12,6 +12,38 @@ SignerWindow *signer_window_new(AdwApplication *app);
 void signer_window_show_page(SignerWindow *self, const char *name);
 
 /**
+ * signer_window_show_new_profile:
+ * @self: a #SignerWindow
+ *
+ * Opens the create new profile dialog.
+ */
+void signer_window_show_new_profile(SignerWindow *self);
+
+/**
+ * signer_window_show_import_profile:
+ * @self: a #SignerWindow
+ *
+ * Opens the import profile dialog.
+ */
+void signer_window_show_import_profile(SignerWindow *self);
+
+/**
+ * signer_window_show_backup:
+ * @self: a #SignerWindow
+ *
+ * Opens the export/backup dialog.
+ */
+void signer_window_show_backup(SignerWindow *self);
+
+/**
+ * signer_window_lock_session:
+ * @self: a #SignerWindow
+ *
+ * Locks the current session, requiring re-authentication.
+ */
+void signer_window_lock_session(SignerWindow *self);
+
+/**
  * signer_window_get_gsettings:
  * @self: a #SignerWindow
  *

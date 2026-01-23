@@ -3,16 +3,27 @@
   <requires lib="gtk" version="4.12"/>
   <requires lib="adwaita" version="1.4"/>
   <template class="WelcomePage" parent="AdwBin">
+    <accessibility>
+      <property name="label">Welcome page</property>
+      <property name="description">Initial welcome screen for setting up GNostr Signer</property>
+    </accessibility>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar">
             <property name="show-title">false</property>
+            <accessibility>
+              <property name="label">Welcome page header</property>
+            </accessibility>
             <child type="end">
               <object class="GtkButton" id="btn_settings">
                 <property name="icon-name">emblem-system-symbolic</property>
                 <property name="tooltip-text" translatable="yes">Settings</property>
                 <property name="valign">center</property>
+                <accessibility>
+                  <property name="label">Settings</property>
+                  <property name="description">Open application settings</property>
+                </accessibility>
                 <style>
                   <class name="flat"/>
                 </style>
@@ -27,17 +38,32 @@
             <property name="description" translatable="yes">Your secure key manager for Nostr. Keep your private keys safe while signing events for connected applications.</property>
             <property name="vexpand">true</property>
             <property name="valign">center</property>
+            <accessibility>
+              <property name="label">Welcome to GNostr Signer</property>
+              <property name="description">Welcome screen with options to create or import a Nostr profile</property>
+            </accessibility>
             <child>
               <object class="GtkBox">
                 <property name="orientation">vertical</property>
                 <property name="spacing">12</property>
                 <property name="halign">center</property>
                 <property name="margin-top">24</property>
+                <accessibility>
+                  <property name="label">Getting started options</property>
+                  <property name="description">Choose to create a new profile or import an existing one</property>
+                </accessibility>
                 <child>
                   <object class="GtkButton" id="btn_create_profile">
-                    <property name="label" translatable="yes">Create New Profile</property>
+                    <property name="label" translatable="yes">_Create New Profile</property>
+                    <property name="use-underline">true</property>
                     <property name="halign">center</property>
                     <property name="width-request">240</property>
+                    <property name="focusable">true</property>
+                    <property name="receives-default">true</property>
+                    <accessibility>
+                      <property name="label">Create new profile</property>
+                      <property name="description">Generate a new Nostr keypair and create a new profile. Keyboard shortcut: Alt+C.</property>
+                    </accessibility>
                     <style>
                       <class name="suggested-action"/>
                       <class name="pill"/>
@@ -46,9 +72,15 @@
                 </child>
                 <child>
                   <object class="GtkButton" id="btn_import_profile">
-                    <property name="label" translatable="yes">Import Existing Profile</property>
+                    <property name="label" translatable="yes">_Import Existing Profile</property>
+                    <property name="use-underline">true</property>
                     <property name="halign">center</property>
                     <property name="width-request">240</property>
+                    <property name="focusable">true</property>
+                    <accessibility>
+                      <property name="label">Import existing profile</property>
+                      <property name="description">Import an existing Nostr private key or recovery phrase. Keyboard shortcut: Alt+I.</property>
+                    </accessibility>
                     <style>
                       <class name="pill"/>
                     </style>

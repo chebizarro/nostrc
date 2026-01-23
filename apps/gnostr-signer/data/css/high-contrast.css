@@ -1,0 +1,728 @@
+/* GNostr Signer High Contrast Theme
+ *
+ * This stylesheet provides high contrast styling for accessibility.
+ * Designed to meet WCAG 2.1 AAA requirements (7:1 contrast ratio minimum).
+ *
+ * Supports three color schemes:
+ * - Black on White (default .high-contrast)
+ * - White on Black (.high-contrast.inverted)
+ * - Yellow on Black (.high-contrast.yellow-on-black)
+ */
+
+/* =============================================================================
+ * CSS Variables for High Contrast Themes
+ * ============================================================================= */
+
+/* Black on White (default high contrast) */
+.high-contrast {
+  --hc-bg: #ffffff;
+  --hc-fg: #000000;
+  --hc-accent: #0000cc;
+  --hc-accent-hover: #000099;
+  --hc-border: #000000;
+  --hc-focus: #000000;
+  --hc-error: #cc0000;
+  --hc-success: #006600;
+  --hc-warning: #cc6600;
+  --hc-selection-bg: #000000;
+  --hc-selection-fg: #ffffff;
+  --hc-link: #0000cc;
+  --hc-link-visited: #660099;
+  --hc-disabled-fg: #595959;
+  --hc-disabled-bg: #e0e0e0;
+}
+
+/* White on Black (inverted) */
+.high-contrast.inverted {
+  --hc-bg: #000000;
+  --hc-fg: #ffffff;
+  --hc-accent: #66ccff;
+  --hc-accent-hover: #99ddff;
+  --hc-border: #ffffff;
+  --hc-focus: #ffffff;
+  --hc-error: #ff6666;
+  --hc-success: #66ff66;
+  --hc-warning: #ffcc66;
+  --hc-selection-bg: #ffffff;
+  --hc-selection-fg: #000000;
+  --hc-link: #66ccff;
+  --hc-link-visited: #cc99ff;
+  --hc-disabled-fg: #a6a6a6;
+  --hc-disabled-bg: #1a1a1a;
+}
+
+/* Yellow on Black */
+.high-contrast.yellow-on-black {
+  --hc-bg: #000000;
+  --hc-fg: #ffff00;
+  --hc-accent: #00ffff;
+  --hc-accent-hover: #66ffff;
+  --hc-border: #ffff00;
+  --hc-focus: #00ffff;
+  --hc-error: #ff6666;
+  --hc-success: #66ff66;
+  --hc-warning: #ffcc00;
+  --hc-selection-bg: #ffff00;
+  --hc-selection-fg: #000000;
+  --hc-link: #00ffff;
+  --hc-link-visited: #ff99ff;
+  --hc-disabled-fg: #999900;
+  --hc-disabled-bg: #1a1a00;
+}
+
+/* =============================================================================
+ * Base Window and Container Styles
+ * ============================================================================= */
+
+.high-contrast,
+.high-contrast window,
+.high-contrast .background {
+  background-color: var(--hc-bg);
+  color: var(--hc-fg);
+}
+
+/* Remove all gradients and shadows */
+.high-contrast *,
+.high-contrast *:backdrop {
+  background-image: none;
+  box-shadow: none;
+  text-shadow: none;
+  -gtk-icon-shadow: none;
+}
+
+/* =============================================================================
+ * Typography
+ * ============================================================================= */
+
+.high-contrast label,
+.high-contrast .title,
+.high-contrast .subtitle {
+  color: var(--hc-fg);
+}
+
+.high-contrast .dim-label {
+  color: var(--hc-fg);
+  opacity: 1;
+}
+
+/* Ensure adequate text contrast */
+.high-contrast entry,
+.high-contrast textview,
+.high-contrast text {
+  color: var(--hc-fg);
+  background-color: var(--hc-bg);
+  caret-color: var(--hc-fg);
+}
+
+/* =============================================================================
+ * Buttons - Bold 2px Solid Borders
+ * ============================================================================= */
+
+.high-contrast button {
+  background-color: var(--hc-bg);
+  color: var(--hc-fg);
+  border: 2px solid var(--hc-border);
+  border-radius: 4px;
+  padding: 6px 12px;
+  min-height: 32px;
+  font-weight: bold;
+}
+
+.high-contrast button:hover {
+  background-color: var(--hc-fg);
+  color: var(--hc-bg);
+  border-color: var(--hc-border);
+}
+
+.high-contrast button:active,
+.high-contrast button:checked {
+  background-color: var(--hc-fg);
+  color: var(--hc-bg);
+  border-width: 3px;
+}
+
+.high-contrast button:focus {
+  outline: 3px dotted var(--hc-focus);
+  outline-offset: 2px;
+}
+
+.high-contrast button:disabled {
+  background-color: var(--hc-disabled-bg);
+  color: var(--hc-disabled-fg);
+  border-color: var(--hc-disabled-fg);
+  border-style: dashed;
+}
+
+/* Suggested action buttons */
+.high-contrast button.suggested-action {
+  background-color: var(--hc-accent);
+  color: var(--hc-bg);
+  border-color: var(--hc-accent);
+}
+
+.high-contrast button.suggested-action:hover {
+  background-color: var(--hc-accent-hover);
+  border-color: var(--hc-accent-hover);
+}
+
+/* Destructive action buttons */
+.high-contrast button.destructive-action {
+  background-color: var(--hc-error);
+  color: var(--hc-bg);
+  border-color: var(--hc-error);
+}
+
+.high-contrast button.destructive-action:hover {
+  background-color: var(--hc-bg);
+  color: var(--hc-error);
+  border-color: var(--hc-error);
+}
+
+/* Flat buttons */
+.high-contrast button.flat {
+  border: 2px solid transparent;
+}
+
+.high-contrast button.flat:hover {
+  border-color: var(--hc-border);
+}
+
+/* =============================================================================
+ * Links - Always Underlined
+ * ============================================================================= */
+
+.high-contrast link,
+.high-contrast .link,
+.high-contrast label link {
+  color: var(--hc-link);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
+
+.high-contrast link:visited,
+.high-contrast .link:visited {
+  color: var(--hc-link-visited);
+}
+
+.high-contrast link:hover,
+.high-contrast .link:hover {
+  text-decoration-thickness: 3px;
+}
+
+.high-contrast link:focus,
+.high-contrast .link:focus {
+  outline: 3px dotted var(--hc-focus);
+  outline-offset: 2px;
+}
+
+/* =============================================================================
+ * Focus Indicators - 3px Dotted Rings
+ * ============================================================================= */
+
+.high-contrast *:focus,
+.high-contrast *:focus-visible {
+  outline: 3px dotted var(--hc-focus);
+  outline-offset: 2px;
+}
+
+.high-contrast *:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Extra visible focus for keyboard navigation */
+.high-contrast entry:focus,
+.high-contrast textview:focus,
+.high-contrast text:focus {
+  outline: 3px dotted var(--hc-focus);
+  outline-offset: 2px;
+  border-color: var(--hc-focus);
+  border-width: 2px;
+}
+
+/* =============================================================================
+ * Entry Fields and Text Inputs
+ * ============================================================================= */
+
+.high-contrast entry,
+.high-contrast spinbutton {
+  background-color: var(--hc-bg);
+  color: var(--hc-fg);
+  border: 2px solid var(--hc-border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  min-height: 32px;
+}
+
+.high-contrast entry:disabled,
+.high-contrast spinbutton:disabled {
+  background-color: var(--hc-disabled-bg);
+  color: var(--hc-disabled-fg);
+  border-style: dashed;
+}
+
+.high-contrast entry selection,
+.high-contrast textview selection {
+  background-color: var(--hc-selection-bg);
+  color: var(--hc-selection-fg);
+}
+
+/* Placeholder text */
+.high-contrast entry placeholder {
+  color: var(--hc-disabled-fg);
+  font-style: italic;
+}
+
+/* =============================================================================
+ * Check Buttons and Radio Buttons
+ * ============================================================================= */
+
+.high-contrast check,
+.high-contrast radio {
+  background-color: var(--hc-bg);
+  border: 2px solid var(--hc-border);
+  min-width: 20px;
+  min-height: 20px;
+}
+
+.high-contrast check:checked,
+.high-contrast radio:checked {
+  background-color: var(--hc-fg);
+  color: var(--hc-bg);
+}
+
+.high-contrast check:focus,
+.high-contrast radio:focus {
+  outline: 3px dotted var(--hc-focus);
+  outline-offset: 2px;
+}
+
+.high-contrast check:disabled,
+.high-contrast radio:disabled {
+  border-color: var(--hc-disabled-fg);
+  border-style: dashed;
+}
+
+/* =============================================================================
+ * Switches
+ * ============================================================================= */
+
+.high-contrast switch {
+  background-color: var(--hc-bg);
+  border: 2px solid var(--hc-border);
+  border-radius: 14px;
+  min-width: 48px;
+  min-height: 24px;
+}
+
+.high-contrast switch:checked {
+  background-color: var(--hc-fg);
+}
+
+.high-contrast switch slider {
+  background-color: var(--hc-fg);
+  border: 2px solid var(--hc-border);
+  border-radius: 50%;
+  min-width: 20px;
+  min-height: 20px;
+}
+
+.high-contrast switch:checked slider {
+  background-color: var(--hc-bg);
+}
+
+.high-contrast switch:focus {
+  outline: 3px dotted var(--hc-focus);
+  outline-offset: 2px;
+}
+
+/* =============================================================================
+ * Lists and Rows
+ * ============================================================================= */
+
+.high-contrast list,
+.high-contrast listbox {
+  background-color: var(--hc-bg);
+  border: 2px solid var(--hc-border);
+}
+
+.high-contrast row,
+.high-contrast list row,
+.high-contrast listbox row {
+  background-color: var(--hc-bg);
+  color: var(--hc-fg);
+  border-bottom: 1px solid var(--hc-border);
+  padding: 8px 12px;
+  min-height: 40px;
+}
+
+.high-contrast row:hover,
+.high-contrast list row:hover {
+  background-color: var(--hc-fg);
+  color: var(--hc-bg);
+}
+
+.high-contrast row:selected,
+.high-contrast list row:selected {
+  background-color: var(--hc-fg);
+  color: var(--hc-bg);
+  border: 2px solid var(--hc-focus);
+}
+
+.high-contrast row:focus {
+  outline: 3px dotted var(--hc-focus);
+  outline-offset: -3px;
+}
+
+/* =============================================================================
+ * Header Bars and Toolbars
+ * ============================================================================= */
+
+.high-contrast headerbar,
+.high-contrast .titlebar,
+.high-contrast toolbar {
+  background-color: var(--hc-bg);
+  color: var(--hc-fg);
+  border-bottom: 2px solid var(--hc-border);
+}
+
+.high-contrast headerbar title,
+.high-contrast .titlebar title {
+  color: var(--hc-fg);
+  font-weight: bold;
+}
+
+/* =============================================================================
+ * Navigation and Sidebars
+ * ============================================================================= */
+
+.high-contrast .sidebar,
+.high-contrast .navigation-sidebar {
+  background-color: var(--hc-bg);
+  border-right: 2px solid var(--hc-border);
+}
+
+.high-contrast .sidebar row,
+.high-contrast .navigation-sidebar row {
+  border-bottom: 1px solid var(--hc-border);
+}
+
+.high-contrast .sidebar row:selected,
+.high-contrast .navigation-sidebar row:selected {
+  background-color: var(--hc-fg);
+  color: var(--hc-bg);
+}
+
+/* =============================================================================
+ * View Stacks and Pages
+ * ============================================================================= */
+
+.high-contrast stack,
+.high-contrast .view {
+  background-color: var(--hc-bg);
+}
+
+.high-contrast viewswitcher button {
+  border: 2px solid var(--hc-border);
+  margin: 2px;
+}
+
+.high-contrast viewswitcher button:checked {
+  background-color: var(--hc-fg);
+  color: var(--hc-bg);
+}
+
+/* =============================================================================
+ * Dialogs and Sheets
+ * ============================================================================= */
+
+.high-contrast dialog,
+.high-contrast messagedialog,
+.high-contrast .dialog-vbox {
+  background-color: var(--hc-bg);
+  color: var(--hc-fg);
+  border: 3px solid var(--hc-border);
+}
+
+.high-contrast dialog .dialog-action-area button {
+  min-width: 100px;
+}
+
+/* =============================================================================
+ * Drop Downs and Combo Boxes
+ * ============================================================================= */
+
+.high-contrast dropdown,
+.high-contrast combobox {
+  background-color: var(--hc-bg);
+  color: var(--hc-fg);
+  border: 2px solid var(--hc-border);
+}
+
+.high-contrast dropdown button,
+.high-contrast combobox button {
+  border: none;
+}
+
+.high-contrast dropdown popover,
+.high-contrast combobox popover {
+  background-color: var(--hc-bg);
+  border: 2px solid var(--hc-border);
+}
+
+/* =============================================================================
+ * Popovers and Menus
+ * ============================================================================= */
+
+.high-contrast popover,
+.high-contrast popover.menu,
+.high-contrast .menu,
+.high-contrast menu {
+  background-color: var(--hc-bg);
+  color: var(--hc-fg);
+  border: 2px solid var(--hc-border);
+}
+
+.high-contrast popover modelbutton,
+.high-contrast menuitem {
+  padding: 8px 12px;
+  min-height: 32px;
+}
+
+.high-contrast popover modelbutton:hover,
+.high-contrast menuitem:hover {
+  background-color: var(--hc-fg);
+  color: var(--hc-bg);
+}
+
+.high-contrast popover separator,
+.high-contrast menu separator {
+  background-color: var(--hc-border);
+  min-height: 2px;
+}
+
+/* =============================================================================
+ * Scrollbars
+ * ============================================================================= */
+
+.high-contrast scrollbar {
+  background-color: var(--hc-bg);
+  border: 1px solid var(--hc-border);
+}
+
+.high-contrast scrollbar slider {
+  background-color: var(--hc-fg);
+  border: 1px solid var(--hc-border);
+  min-width: 12px;
+  min-height: 12px;
+}
+
+.high-contrast scrollbar slider:hover {
+  background-color: var(--hc-accent);
+}
+
+/* =============================================================================
+ * Progress Bars
+ * ============================================================================= */
+
+.high-contrast progressbar {
+  background-color: var(--hc-bg);
+  border: 2px solid var(--hc-border);
+}
+
+.high-contrast progressbar progress {
+  background-color: var(--hc-fg);
+  border: none;
+  min-height: 8px;
+}
+
+/* =============================================================================
+ * Separators
+ * ============================================================================= */
+
+.high-contrast separator {
+  background-color: var(--hc-border);
+  min-width: 2px;
+  min-height: 2px;
+}
+
+/* =============================================================================
+ * Status Labels (Application Specific)
+ * ============================================================================= */
+
+.high-contrast .status-ok {
+  color: var(--hc-success);
+  font-weight: bold;
+  border: 2px solid var(--hc-success);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.high-contrast .status-error {
+  color: var(--hc-error);
+  font-weight: bold;
+  border: 2px solid var(--hc-error);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+/* =============================================================================
+ * Suffix Action Buttons (Application Specific)
+ * ============================================================================= */
+
+.high-contrast .suffix-action {
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 2px solid var(--hc-border);
+}
+
+/* =============================================================================
+ * AdwActionRow and PreferencesRow
+ * ============================================================================= */
+
+.high-contrast .action-row,
+.high-contrast .preferences-row {
+  border-bottom: 1px solid var(--hc-border);
+  min-height: 48px;
+}
+
+.high-contrast .action-row:hover,
+.high-contrast .preferences-row:hover {
+  background-color: var(--hc-fg);
+  color: var(--hc-bg);
+}
+
+/* =============================================================================
+ * AdwPreferencesGroup
+ * ============================================================================= */
+
+.high-contrast .preferences-group {
+  border: 2px solid var(--hc-border);
+  border-radius: 8px;
+  margin: 12px;
+}
+
+.high-contrast .preferences-group > box > label.title {
+  font-weight: bold;
+  font-size: 1.1em;
+  padding: 12px;
+  border-bottom: 2px solid var(--hc-border);
+}
+
+/* =============================================================================
+ * Tooltips
+ * ============================================================================= */
+
+.high-contrast tooltip,
+.high-contrast .tooltip {
+  background-color: var(--hc-fg);
+  color: var(--hc-bg);
+  border: 2px solid var(--hc-border);
+  padding: 8px;
+}
+
+/* =============================================================================
+ * InfoBars and Banners
+ * ============================================================================= */
+
+.high-contrast infobar {
+  background-color: var(--hc-bg);
+  color: var(--hc-fg);
+  border: 2px solid var(--hc-border);
+}
+
+.high-contrast infobar.warning {
+  border-color: var(--hc-warning);
+}
+
+.high-contrast infobar.error {
+  border-color: var(--hc-error);
+}
+
+.high-contrast infobar.info {
+  border-color: var(--hc-accent);
+}
+
+/* =============================================================================
+ * Cards (AdwClamp, etc.)
+ * ============================================================================= */
+
+.high-contrast .card {
+  background-color: var(--hc-bg);
+  border: 2px solid var(--hc-border);
+  border-radius: 8px;
+}
+
+/* =============================================================================
+ * Tab Views
+ * ============================================================================= */
+
+.high-contrast tabbar {
+  background-color: var(--hc-bg);
+  border-bottom: 2px solid var(--hc-border);
+}
+
+.high-contrast tabbar tab {
+  border: 2px solid var(--hc-border);
+  border-bottom: none;
+  margin: 2px 2px 0 2px;
+}
+
+.high-contrast tabbar tab:checked {
+  background-color: var(--hc-fg);
+  color: var(--hc-bg);
+}
+
+/* =============================================================================
+ * Spinners and Loading Indicators
+ * ============================================================================= */
+
+.high-contrast spinner {
+  color: var(--hc-fg);
+  min-width: 24px;
+  min-height: 24px;
+}
+
+/* =============================================================================
+ * Icons
+ * ============================================================================= */
+
+.high-contrast image,
+.high-contrast .icon {
+  color: var(--hc-fg);
+  -gtk-icon-filter: none;
+}
+
+.high-contrast button image,
+.high-contrast button .icon {
+  color: inherit;
+}
+
+/* =============================================================================
+ * No Transparency or Opacity Effects
+ * ============================================================================= */
+
+.high-contrast * {
+  opacity: 1;
+}
+
+.high-contrast *:backdrop {
+  opacity: 1;
+}
+
+/* Ensure disabled state is still visible without opacity */
+.high-contrast *:disabled {
+  opacity: 1;
+}
+
+/* =============================================================================
+ * Print Styles (when applicable)
+ * ============================================================================= */
+
+@media print {
+  .high-contrast * {
+    background-color: white !important;
+    color: black !important;
+    border-color: black !important;
+  }
+}

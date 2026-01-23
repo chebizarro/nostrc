@@ -4,9 +4,15 @@
  * - NIP-49 Encrypted Backup (ncryptsec)
  * - Mnemonic Seed Phrase (12/24 words)
  * - External Hardware Device (placeholder)
+ *
+ * Includes rate limiting for authentication attempts (nostrc-1g1).
+ * Uses secure memory for sensitive data (passphrases, mnemonics) (nostrc-6s2).
  */
 #include "sheet-import-profile.h"
 #include "../app-resources.h"
+#include "../widgets/gn-secure-entry.h"
+#include "../../rate-limiter.h"
+#include "../../secure-memory.h"
 
 #include <gtk/gtk.h>
 #include <adwaita.h>
@@ -37,9 +43,10 @@ struct _SheetImportProfile {
   /* Hardware section */
   GtkBox *box_hardware;
 
-  /* Passphrase input (shared for NIP-49 and mnemonic) */
+  /* Passphrase input (shared for NIP-49 and mnemonic) - using GnSecureEntry */
   GtkBox *box_passphrase;
-  AdwPasswordEntryRow *entry_passphrase;
+  GtkBox *box_passphrase_container;
+  GnSecureEntry *secure_passphrase;
 
   /* Status widgets */
   GtkBox *box_status;
@@ -52,6 +59,13 @@ struct _SheetImportProfile {
   /* Success callback wiring */
   SheetImportProfileSuccessCb on_success;
   gpointer on_success_ud;
+
+  /* Rate limiting */
+  GnRateLimiter *rate_limiter;
+  GtkLabel *lbl_lockout;
+  guint lockout_timer_id;
+  gulong rate_limit_handler_id;
+  gulong lockout_expired_handler_id;
 };
 
 G_DEFINE_TYPE(SheetImportProfile, sheet_import_profile, ADW_TYPE_DIALOG)
@@ -59,6 +73,8 @@ G_DEFINE_TYPE(SheetImportProfile, sheet_import_profile, ADW_TYPE_DIALOG)
 /* Forward declarations */
 static void update_import_button_sensitivity(SheetImportProfile *self);
 static void update_visible_sections(SheetImportProfile *self);
+static void update_lockout_ui(SheetImportProfile *self);
+static gboolean update_lockout_countdown(gpointer user_data);
 
 /* Set status message with optional spinner */
 static void set_status(SheetImportProfile *self, const gchar *message, gboolean spinning) {
@@ -72,6 +88,81 @@ static void set_status(SheetImportProfile *self, const gchar *message, gboolean 
     if (self->box_status) gtk_widget_set_visible(GTK_WIDGET(self->box_status), FALSE);
     if (self->spinner_status) gtk_spinner_set_spinning(self->spinner_status, FALSE);
   }
+}
+
+/* Update lockout UI to show remaining time */
+static void update_lockout_ui(SheetImportProfile *self) {
+  if (!self) return;
+
+  guint remaining = gn_rate_limiter_get_remaining_lockout(self->rate_limiter);
+
+  if (remaining > 0) {
+    /* Show lockout message */
+    g_autofree gchar *msg = g_strdup_printf("Too many attempts. Please wait %u seconds before trying again.", remaining);
+    if (self->lbl_lockout) {
+      gtk_label_set_text(self->lbl_lockout, msg);
+      gtk_widget_set_visible(GTK_WIDGET(self->lbl_lockout), TRUE);
+      gtk_widget_add_css_class(GTK_WIDGET(self->lbl_lockout), "error");
+    }
+    /* Also update the main status */
+    set_status(self, msg, FALSE);
+
+    /* Disable import button */
+    if (self->btn_import) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_import), FALSE);
+  } else {
+    /* Hide lockout message */
+    if (self->lbl_lockout) {
+      gtk_widget_set_visible(GTK_WIDGET(self->lbl_lockout), FALSE);
+    }
+    set_status(self, NULL, FALSE);
+
+    /* Re-enable import button based on input validity */
+    update_import_button_sensitivity(self);
+  }
+}
+
+/* Timer callback to update lockout countdown */
+static gboolean update_lockout_countdown(gpointer user_data) {
+  SheetImportProfile *self = (SheetImportProfile *)user_data;
+  if (!self) return G_SOURCE_REMOVE;
+
+  guint remaining = gn_rate_limiter_get_remaining_lockout(self->rate_limiter);
+
+  if (remaining > 0) {
+    update_lockout_ui(self);
+    return G_SOURCE_CONTINUE;
+  }
+
+  /* Lockout expired */
+  self->lockout_timer_id = 0;
+  update_lockout_ui(self);
+  return G_SOURCE_REMOVE;
+}
+
+/* Handler for rate limit exceeded signal */
+static void on_rate_limit_exceeded(GnRateLimiter *limiter, guint lockout_seconds, gpointer user_data) {
+  (void)limiter;
+  SheetImportProfile *self = (SheetImportProfile *)user_data;
+  if (!self) return;
+
+  g_message("Rate limit exceeded: locked out for %u seconds", lockout_seconds);
+
+  /* Start countdown timer if not already running */
+  if (self->lockout_timer_id == 0) {
+    self->lockout_timer_id = g_timeout_add_seconds(1, update_lockout_countdown, self);
+  }
+
+  update_lockout_ui(self);
+}
+
+/* Handler for lockout expired signal */
+static void on_lockout_expired(GnRateLimiter *limiter, gpointer user_data) {
+  (void)limiter;
+  SheetImportProfile *self = (SheetImportProfile *)user_data;
+  if (!self) return;
+
+  g_message("Rate limit lockout expired");
+  update_lockout_ui(self);
 }
 
 /* Helper to get text from a GtkTextView */
@@ -139,17 +230,24 @@ static void update_visible_sections(SheetImportProfile *self) {
 static gboolean has_valid_input(SheetImportProfile *self) {
   if (!self) return FALSE;
 
-  const gchar *passphrase = NULL;
-  if (self->entry_passphrase) {
-    passphrase = gtk_editable_get_text(GTK_EDITABLE(self->entry_passphrase));
+  /* Check rate limiting first */
+  if (self->rate_limiter && !gn_rate_limiter_check_allowed(self->rate_limiter)) {
+    return FALSE;
   }
 
+  gchar *passphrase = NULL;
+  if (self->secure_passphrase) {
+    passphrase = gn_secure_entry_get_text(self->secure_passphrase);
+  }
+  gboolean has_passphrase = (passphrase && *passphrase);
+
+  gboolean result = FALSE;
   switch (self->current_method) {
     case IMPORT_METHOD_NIP49: {
       g_autofree gchar *ncryptsec = get_text_view_content(self->text_ncryptsec);
       gboolean valid_ncryptsec = is_valid_ncryptsec(ncryptsec);
-      gboolean has_passphrase = (passphrase && *passphrase);
-      return valid_ncryptsec && has_passphrase;
+      result = valid_ncryptsec && has_passphrase;
+      break;
     }
 
     case IMPORT_METHOD_MNEMONIC: {
@@ -157,16 +255,25 @@ static gboolean has_valid_input(SheetImportProfile *self) {
       int expected = get_expected_word_count(self);
       gboolean valid_mnemonic = is_valid_mnemonic(mnemonic, expected);
       /* Passphrase is optional for mnemonic but we need at least the mnemonic */
-      return valid_mnemonic;
+      result = valid_mnemonic;
+      break;
     }
 
     case IMPORT_METHOD_HARDWARE:
       /* Hardware import is a placeholder - always disabled for now */
-      return FALSE;
+      result = FALSE;
+      break;
 
     default:
-      return FALSE;
+      result = FALSE;
   }
+
+  /* Securely clear passphrase */
+  if (passphrase) {
+    gn_secure_entry_free_text(passphrase);
+  }
+
+  return result;
 }
 
 /* Update import button sensitivity based on input validity */
@@ -199,8 +306,8 @@ static void on_text_buffer_changed(GtkTextBuffer *buffer, gpointer user_data) {
 }
 
 /* Passphrase entry changed handler */
-static void on_passphrase_changed(GtkEditable *editable, gpointer user_data) {
-  (void)editable;
+static void on_secure_passphrase_changed(GnSecureEntry *entry, gpointer user_data) {
+  (void)entry;
   SheetImportProfile *self = (SheetImportProfile *)user_data;
   update_import_button_sensitivity(self);
 }
@@ -217,7 +324,12 @@ static void on_word_count_changed(GObject *object, GParamSpec *pspec, gpointer u
 static void on_cancel(GtkButton *btn, gpointer user_data) {
   (void)btn;
   SheetImportProfile *self = user_data;
-  if (self) adw_dialog_close(ADW_DIALOG(self));
+  if (self) {
+    /* Clear secure entry before closing */
+    if (self->secure_passphrase)
+      gn_secure_entry_clear(self->secure_passphrase);
+    adw_dialog_close(ADW_DIALOG(self));
+  }
 }
 
 /* Context for async import operation */
@@ -231,11 +343,11 @@ typedef struct {
 
 static void import_ctx_free(ImportCtx *ctx) {
   if (!ctx) return;
-  g_free(ctx->data);
-  /* Securely clear passphrase */
+  /* Securely clear and free sensitive data */
+  gn_secure_clear_string(ctx->data);  /* Mnemonic or ncryptsec */
   if (ctx->passphrase) {
-    memset(ctx->passphrase, 0, strlen(ctx->passphrase));
-    g_free(ctx->passphrase);
+    gn_secure_entry_free_text(ctx->passphrase);
+    ctx->passphrase = NULL;
   }
   g_free(ctx);
 }
@@ -282,6 +394,15 @@ static void import_dbus_done(GObject *src, GAsyncResult *res, gpointer user_data
     g_message("ImportProfile reply ok=%s npub='%s'", ok ? "true" : "false", (npub && *npub) ? npub : "(empty)");
 
     if (ok) {
+      /* Record successful authentication attempt - resets rate limiter */
+      if (self->rate_limiter) {
+        gn_rate_limiter_record_attempt(self->rate_limiter, TRUE);
+      }
+
+      /* Clear secure entry on success */
+      if (self->secure_passphrase)
+        gn_secure_entry_clear(self->secure_passphrase);
+
       /* Copy npub to clipboard for convenience */
       if (npub && *npub) {
         GtkWidget *w = GTK_WIDGET(self);
@@ -305,9 +426,31 @@ static void import_dbus_done(GObject *src, GAsyncResult *res, gpointer user_data
 
       adw_dialog_close(ADW_DIALOG(self));
     } else {
-      GtkAlertDialog *ad = gtk_alert_dialog_new("Import failed.\n\nPlease check your input and try again.");
-      gtk_alert_dialog_show(ad, ctx->parent ? ctx->parent : GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
-      g_object_unref(ad);
+      /* Record failed authentication attempt */
+      if (self->rate_limiter) {
+        gn_rate_limiter_record_attempt(self->rate_limiter, FALSE);
+        update_lockout_ui(self);
+      }
+
+      /* Check if we're now locked out */
+      guint remaining = self->rate_limiter ? gn_rate_limiter_get_remaining_lockout(self->rate_limiter) : 0;
+      if (remaining > 0) {
+        g_autofree gchar *msg = g_strdup_printf("Import failed. Too many attempts.\n\nPlease wait %u seconds before trying again.", remaining);
+        GtkAlertDialog *ad = gtk_alert_dialog_new("%s", msg);
+        gtk_alert_dialog_show(ad, ctx->parent ? ctx->parent : GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
+        g_object_unref(ad);
+      } else {
+        guint attempts_left = self->rate_limiter ? gn_rate_limiter_get_attempts_remaining(self->rate_limiter) : 0;
+        g_autofree gchar *msg = NULL;
+        if (attempts_left > 0) {
+          msg = g_strdup_printf("Import failed.\n\nPlease check your input and try again.\n(%u attempts remaining)", attempts_left);
+        } else {
+          msg = g_strdup("Import failed.\n\nPlease check your input and try again.");
+        }
+        GtkAlertDialog *ad = gtk_alert_dialog_new("%s", msg);
+        gtk_alert_dialog_show(ad, ctx->parent ? ctx->parent : GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
+        g_object_unref(ad);
+      }
     }
   }
 
@@ -320,9 +463,19 @@ static void on_import(GtkButton *btn, gpointer user_data) {
   SheetImportProfile *self = (SheetImportProfile *)user_data;
   if (!self) return;
 
-  const gchar *passphrase = NULL;
-  if (self->entry_passphrase) {
-    passphrase = gtk_editable_get_text(GTK_EDITABLE(self->entry_passphrase));
+  /* Check rate limiting before attempting import */
+  if (self->rate_limiter && !gn_rate_limiter_check_allowed(self->rate_limiter)) {
+    guint remaining = gn_rate_limiter_get_remaining_lockout(self->rate_limiter);
+    g_autofree gchar *msg = g_strdup_printf("Too many attempts.\n\nPlease wait %u seconds before trying again.", remaining);
+    GtkAlertDialog *ad = gtk_alert_dialog_new("%s", msg);
+    gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
+    g_object_unref(ad);
+    return;
+  }
+
+  gchar *passphrase = NULL;
+  if (self->secure_passphrase) {
+    passphrase = gn_secure_entry_get_text(self->secure_passphrase);
   }
 
   g_autofree gchar *data = NULL;
@@ -337,12 +490,14 @@ static void on_import(GtkButton *btn, gpointer user_data) {
         GtkAlertDialog *ad = gtk_alert_dialog_new("Invalid ncryptsec format.\n\nPlease enter a valid NIP-49 encrypted backup string starting with 'ncryptsec1'.");
         gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
         g_object_unref(ad);
+        gn_secure_entry_free_text(passphrase);
         return;
       }
       if (!passphrase || *passphrase == '\0') {
         GtkAlertDialog *ad = gtk_alert_dialog_new("Passphrase required.\n\nPlease enter the passphrase used to encrypt this backup.");
         gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
         g_object_unref(ad);
+        gn_secure_entry_free_text(passphrase);
         return;
       }
       method_name = "NIP-49";
@@ -358,6 +513,7 @@ static void on_import(GtkButton *btn, gpointer user_data) {
           GtkAlertDialog *ad = gtk_alert_dialog_new("Invalid mnemonic.\n\nPlease enter exactly %d words.", expected);
           gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
           g_object_unref(ad);
+          gn_secure_entry_free_text(passphrase);
           return;
         }
       }
@@ -365,13 +521,16 @@ static void on_import(GtkButton *btn, gpointer user_data) {
       dbus_method = "ImportMnemonic";
       break;
 
-    case IMPORT_METHOD_HARDWARE:
+    case IMPORT_METHOD_HARDWARE: {
       GtkAlertDialog *ad = gtk_alert_dialog_new("Hardware device import is not yet implemented.");
       gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
       g_object_unref(ad);
+      gn_secure_entry_free_text(passphrase);
       return;
+    }
 
     default:
+      gn_secure_entry_free_text(passphrase);
       return;
   }
 
@@ -392,16 +551,17 @@ static void on_import(GtkButton *btn, gpointer user_data) {
     gtk_alert_dialog_show(ad, GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))));
     g_object_unref(ad);
     if (e) g_clear_error(&e);
+    gn_secure_entry_free_text(passphrase);
     return;
   }
 
-  /* Create context for async call */
+  /* Create context for async call - passphrase ownership transfers to ctx */
   ImportCtx *ctx = g_new0(ImportCtx, 1);
   ctx->self = self;
   ctx->parent = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self)));
   ctx->method = self->current_method;
   ctx->data = g_strdup(data);
-  ctx->passphrase = g_strdup(passphrase ? passphrase : "");
+  ctx->passphrase = passphrase; /* Transfer ownership */
 
   g_message("Calling %s via D-Bus method %s", method_name, dbus_method);
 
@@ -414,7 +574,7 @@ static void on_import(GtkButton *btn, gpointer user_data) {
                          "/org/nostr/signer",
                          "org.nostr.Signer",
                          dbus_method,
-                         g_variant_new("(ss)", data, passphrase ? passphrase : ""),
+                         g_variant_new("(ss)", data, ctx->passphrase ? ctx->passphrase : ""),
                          G_VARIANT_TYPE("(bs)"),
                          G_DBUS_CALL_FLAGS_NONE,
                          30000, /* 30 second timeout for key derivation */
@@ -425,8 +585,37 @@ static void on_import(GtkButton *btn, gpointer user_data) {
   g_object_unref(bus);
 }
 
+static void sheet_import_profile_dispose(GObject *obj) {
+  SheetImportProfile *self = (SheetImportProfile *)obj;
+
+  /* Clear secure entry before disposal */
+  if (self->secure_passphrase) {
+    gn_secure_entry_clear(self->secure_passphrase);
+  }
+
+  G_OBJECT_CLASS(sheet_import_profile_parent_class)->dispose(obj);
+}
+
 static void sheet_import_profile_finalize(GObject *obj) {
-  /* No allocated state to free currently */
+  SheetImportProfile *self = (SheetImportProfile *)obj;
+
+  /* Cancel lockout timer if running */
+  if (self->lockout_timer_id > 0) {
+    g_source_remove(self->lockout_timer_id);
+    self->lockout_timer_id = 0;
+  }
+
+  /* Disconnect rate limiter signals */
+  if (self->rate_limiter) {
+    if (self->rate_limit_handler_id > 0) {
+      g_signal_handler_disconnect(self->rate_limiter, self->rate_limit_handler_id);
+    }
+    if (self->lockout_expired_handler_id > 0) {
+      g_signal_handler_disconnect(self->rate_limiter, self->lockout_expired_handler_id);
+    }
+    /* Don't unref if using singleton */
+  }
+
   G_OBJECT_CLASS(sheet_import_profile_parent_class)->finalize(obj);
 }
 
@@ -434,6 +623,7 @@ static void sheet_import_profile_class_init(SheetImportProfileClass *klass) {
   GtkWidgetClass *wc = GTK_WIDGET_CLASS(klass);
   GObjectClass *oc = G_OBJECT_CLASS(klass);
 
+  oc->dispose = sheet_import_profile_dispose;
   oc->finalize = sheet_import_profile_finalize;
 
   gtk_widget_class_set_template_from_resource(wc, APP_RESOURCE_PATH "/ui/sheets/sheet-import-profile.ui");
@@ -455,7 +645,7 @@ static void sheet_import_profile_class_init(SheetImportProfileClass *klass) {
   gtk_widget_class_bind_template_child(wc, SheetImportProfile, dropdown_word_count);
   gtk_widget_class_bind_template_child(wc, SheetImportProfile, box_hardware);
   gtk_widget_class_bind_template_child(wc, SheetImportProfile, box_passphrase);
-  gtk_widget_class_bind_template_child(wc, SheetImportProfile, entry_passphrase);
+  gtk_widget_class_bind_template_child(wc, SheetImportProfile, box_passphrase_container);
 
   /* Status widgets */
   gtk_widget_class_bind_template_child(wc, SheetImportProfile, box_status);
@@ -464,10 +654,35 @@ static void sheet_import_profile_class_init(SheetImportProfileClass *klass) {
 }
 
 static void sheet_import_profile_init(SheetImportProfile *self) {
+  /* Ensure GnSecureEntry type is registered */
+  g_type_ensure(GN_TYPE_SECURE_ENTRY);
+
   gtk_widget_init_template(GTK_WIDGET(self));
 
   /* Initialize current method */
   self->current_method = IMPORT_METHOD_NIP49;
+
+  /* Initialize rate limiter (use singleton instance for shared state) */
+  self->rate_limiter = gn_rate_limiter_get_default();
+  self->rate_limit_handler_id = g_signal_connect(self->rate_limiter,
+                                                   "rate-limit-exceeded",
+                                                   G_CALLBACK(on_rate_limit_exceeded),
+                                                   self);
+  self->lockout_expired_handler_id = g_signal_connect(self->rate_limiter,
+                                                        "lockout-expired",
+                                                        G_CALLBACK(on_lockout_expired),
+                                                        self);
+
+  /* Create secure passphrase entry */
+  self->secure_passphrase = GN_SECURE_ENTRY(gn_secure_entry_new());
+  gn_secure_entry_set_placeholder_text(self->secure_passphrase, "Enter passphrase");
+  gn_secure_entry_set_show_strength_indicator(self->secure_passphrase, FALSE);
+  gn_secure_entry_set_show_caps_warning(self->secure_passphrase, TRUE);
+  gn_secure_entry_set_timeout(self->secure_passphrase, 120); /* 2 minute timeout */
+
+  if (self->box_passphrase_container) {
+    gtk_box_append(self->box_passphrase_container, GTK_WIDGET(self->secure_passphrase));
+  }
 
   /* Connect button handlers */
   if (self->btn_cancel) g_signal_connect(self->btn_cancel, "clicked", G_CALLBACK(on_cancel), self);
@@ -488,10 +703,8 @@ static void sheet_import_profile_init(SheetImportProfile *self) {
     if (buffer) g_signal_connect(buffer, "changed", G_CALLBACK(on_text_buffer_changed), self);
   }
 
-  /* Connect passphrase entry handler */
-  if (self->entry_passphrase) {
-    g_signal_connect(self->entry_passphrase, "changed", G_CALLBACK(on_passphrase_changed), self);
-  }
+  /* Connect secure passphrase entry handler */
+  g_signal_connect(self->secure_passphrase, "changed", G_CALLBACK(on_secure_passphrase_changed), self);
 
   /* Connect word count dropdown handler */
   if (self->dropdown_word_count) {
@@ -500,6 +713,12 @@ static void sheet_import_profile_init(SheetImportProfile *self) {
 
   /* Initially disable import button */
   if (self->btn_import) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_import), FALSE);
+
+  /* Check if already locked out (from previous dialog usage) */
+  if (gn_rate_limiter_is_locked_out(self->rate_limiter)) {
+    self->lockout_timer_id = g_timeout_add_seconds(1, update_lockout_countdown, self);
+    update_lockout_ui(self);
+  }
 
   /* Set initial visibility */
   update_visible_sections(self);

@@ -6,10 +6,17 @@
     <property name="title" translatable="yes">Edit Profile</property>
     <property name="content-width">520</property>
     <property name="content-height">720</property>
+    <accessibility>
+      <property name="label">Profile editor dialog</property>
+      <property name="description">Edit your Nostr profile metadata including display name, bio, images, and identifiers</property>
+    </accessibility>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar">
+            <accessibility>
+              <property name="label">Profile editor header</property>
+            </accessibility>
             <property name="title-widget">
               <object class="GtkLabel">
                 <property name="label" translatable="yes">Edit Profile</property>
@@ -18,18 +25,30 @@
             <child type="start">
               <object class="GtkButton" id="btn_cancel">
                 <property name="label" translatable="yes">Cancel</property>
+                <accessibility>
+                  <property name="label">Cancel</property>
+                  <property name="description">Close without saving changes</property>
+                </accessibility>
               </object>
             </child>
             <child type="end">
               <object class="GtkButton" id="btn_preview">
                 <property name="label" translatable="yes">Preview</property>
                 <property name="tooltip-text" translatable="yes">Preview changes before publishing</property>
+                <accessibility>
+                  <property name="label">Preview changes</property>
+                  <property name="description">Preview how your profile will appear before publishing</property>
+                </accessibility>
               </object>
             </child>
             <child type="end">
               <object class="GtkButton" id="btn_save">
                 <property name="label" translatable="yes">Sign &amp; Publish</property>
                 <property name="tooltip-text" translatable="yes">Sign with your key and publish as kind:0 event</property>
+                <accessibility>
+                  <property name="label">Sign and publish profile</property>
+                  <property name="description">Sign your profile with your private key and publish it to relays</property>
+                </accessibility>
                 <style>
                   <class name="suggested-action"/>
                 </style>
@@ -41,6 +60,9 @@
           <object class="GtkScrolledWindow">
             <property name="hscrollbar-policy">never</property>
             <property name="vexpand">true</property>
+            <accessibility>
+              <property name="label">Profile form container</property>
+            </accessibility>
             <child>
               <object class="AdwClamp">
                 <property name="maximum-size">600</property>
@@ -72,6 +94,10 @@
                             <property name="ellipsize">middle</property>
                             <property name="hexpand">true</property>
                             <property name="xalign">0</property>
+                            <accessibility>
+                              <property name="label">Public key</property>
+                              <property name="description">Your Nostr public key. Select to copy.</property>
+                            </accessibility>
                             <style>
                               <class name="monospace"/>
                             </style>
@@ -84,20 +110,33 @@
                     <child>
                       <object class="AdwPreferencesGroup">
                         <property name="title" translatable="yes">Basic Information</property>
+                        <accessibility>
+                          <property name="label">Basic information</property>
+                          <property name="description">Your display name, bio, and website</property>
+                        </accessibility>
                         <child>
                           <object class="AdwEntryRow" id="entry_name">
                             <property name="title" translatable="yes">Display Name</property>
+                            <accessibility>
+                              <property name="description">Your public display name shown on your profile</property>
+                            </accessibility>
                           </object>
                         </child>
                         <child>
                           <object class="AdwEntryRow" id="entry_about">
                             <property name="title" translatable="yes">About / Bio</property>
+                            <accessibility>
+                              <property name="description">A short biography or description about yourself</property>
+                            </accessibility>
                           </object>
                         </child>
                         <child>
                           <object class="AdwEntryRow" id="entry_website">
                             <property name="title" translatable="yes">Website</property>
                             <property name="input-hints">GTK_INPUT_HINT_NO_SPELLCHECK</property>
+                            <accessibility>
+                              <property name="description">Your personal or professional website URL</property>
+                            </accessibility>
                           </object>
                         </child>
                       </object>
@@ -108,16 +147,26 @@
                       <object class="AdwPreferencesGroup">
                         <property name="title" translatable="yes">Images</property>
                         <property name="description" translatable="yes">URLs to your profile images</property>
+                        <accessibility>
+                          <property name="label">Profile images</property>
+                          <property name="description">URLs for your avatar and banner images</property>
+                        </accessibility>
                         <child>
                           <object class="AdwEntryRow" id="entry_picture">
                             <property name="title" translatable="yes">Avatar URL</property>
                             <property name="input-hints">GTK_INPUT_HINT_NO_SPELLCHECK</property>
+                            <accessibility>
+                              <property name="description">URL to your profile picture or avatar image</property>
+                            </accessibility>
                           </object>
                         </child>
                         <child>
                           <object class="AdwEntryRow" id="entry_banner">
                             <property name="title" translatable="yes">Banner URL</property>
                             <property name="input-hints">GTK_INPUT_HINT_NO_SPELLCHECK</property>
+                            <accessibility>
+                              <property name="description">URL to your profile banner image</property>
+                            </accessibility>
                           </object>
                         </child>
                       </object>
@@ -127,16 +176,26 @@
                     <child>
                       <object class="AdwPreferencesGroup">
                         <property name="title" translatable="yes">Verification &amp; Payments</property>
+                        <accessibility>
+                          <property name="label">Verification and payments</property>
+                          <property name="description">NIP-05 verification and Lightning payment address</property>
+                        </accessibility>
                         <child>
                           <object class="AdwEntryRow" id="entry_nip05">
                             <property name="title" translatable="yes">NIP-05 Identifier</property>
                             <property name="input-hints">GTK_INPUT_HINT_NO_SPELLCHECK</property>
+                            <accessibility>
+                              <property name="description">Your NIP-05 verification identifier, like name@domain.com</property>
+                            </accessibility>
                           </object>
                         </child>
                         <child>
                           <object class="AdwEntryRow" id="entry_lud16">
                             <property name="title" translatable="yes">Lightning Address</property>
                             <property name="input-hints">GTK_INPUT_HINT_NO_SPELLCHECK</property>
+                            <accessibility>
+                              <property name="description">Your Lightning address for receiving payments, like name@wallet.com</property>
+                            </accessibility>
                           </object>
                         </child>
                       </object>
@@ -148,6 +207,10 @@
                         <property name="visible">false</property>
                         <property name="title" translatable="yes">Preview</property>
                         <property name="description" translatable="yes">This is how your profile will appear</property>
+                        <accessibility>
+                          <property name="label">Profile preview</property>
+                          <property name="description">Preview of how your profile will appear to others</property>
+                        </accessibility>
                         <child>
                           <object class="GtkBox">
                             <property name="orientation">vertical</property>
@@ -164,6 +227,10 @@
                                   <object class="AdwAvatar" id="preview_avatar">
                                     <property name="size">64</property>
                                     <property name="show-initials">true</property>
+                                    <accessibility>
+                                      <property name="label">Preview avatar</property>
+                                      <property name="description">Preview of your profile picture</property>
+                                    </accessibility>
                                   </object>
                                 </child>
                                 <child>
@@ -176,6 +243,9 @@
                                       <object class="GtkLabel" id="preview_name">
                                         <property name="xalign">0</property>
                                         <property name="ellipsize">end</property>
+                                        <accessibility>
+                                          <property name="label">Preview display name</property>
+                                        </accessibility>
                                         <style>
                                           <class name="title-2"/>
                                         </style>
@@ -185,6 +255,9 @@
                                       <object class="GtkLabel" id="preview_nip05">
                                         <property name="xalign">0</property>
                                         <property name="ellipsize">end</property>
+                                        <accessibility>
+                                          <property name="label">Preview NIP-05 identifier</property>
+                                        </accessibility>
                                         <style>
                                           <class name="dim-label"/>
                                         </style>
@@ -200,6 +273,9 @@
                                 <property name="wrap">true</property>
                                 <property name="wrap-mode">word-char</property>
                                 <property name="max-width-chars">60</property>
+                                <accessibility>
+                                  <property name="label">Preview bio</property>
+                                </accessibility>
                               </object>
                             </child>
                             <child>
@@ -209,12 +285,19 @@
                                 <child>
                                   <object class="GtkImage">
                                     <property name="icon-name">web-browser-symbolic</property>
+                                    <accessibility>
+                                      <property name="label">Website icon</property>
+                                      <property name="description">Decorative website icon</property>
+                                    </accessibility>
                                   </object>
                                 </child>
                                 <child>
                                   <object class="GtkLabel" id="preview_website">
                                     <property name="xalign">0</property>
                                     <property name="ellipsize">end</property>
+                                    <accessibility>
+                                      <property name="label">Preview website</property>
+                                    </accessibility>
                                     <style>
                                       <class name="dim-label"/>
                                     </style>
@@ -229,12 +312,19 @@
                                 <child>
                                   <object class="GtkImage">
                                     <property name="icon-name">lightning-bolt-symbolic</property>
+                                    <accessibility>
+                                      <property name="label">Lightning icon</property>
+                                      <property name="description">Decorative Lightning payment icon</property>
+                                    </accessibility>
                                   </object>
                                 </child>
                                 <child>
                                   <object class="GtkLabel" id="preview_lud16">
                                     <property name="xalign">0</property>
                                     <property name="ellipsize">end</property>
+                                    <accessibility>
+                                      <property name="label">Preview Lightning address</property>
+                                    </accessibility>
                                     <style>
                                       <class name="dim-label"/>
                                     </style>
@@ -254,14 +344,24 @@
                         <property name="orientation">horizontal</property>
                         <property name="spacing">8</property>
                         <property name="halign">center</property>
+                        <accessibility>
+                          <property name="label">Publishing status</property>
+                          <property name="description">Status indicator for profile publishing</property>
+                        </accessibility>
                         <child>
                           <object class="GtkSpinner" id="spinner_status">
                             <property name="spinning">false</property>
+                            <accessibility>
+                              <property name="label">Loading indicator</property>
+                            </accessibility>
                           </object>
                         </child>
                         <child>
                           <object class="GtkLabel" id="lbl_status">
                             <property name="label" translatable="yes">Signing and publishing...</property>
+                            <accessibility>
+                              <property name="label">Status message</property>
+                            </accessibility>
                             <style>
                               <class name="dim-label"/>
                             </style>

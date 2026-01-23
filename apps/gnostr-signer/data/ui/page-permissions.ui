@@ -3,17 +3,32 @@
   <requires lib="gtk" version="4.12"/>
   <requires lib="adwaita" version="1.4"/>
   <template class="PagePermissions" parent="AdwPreferencesPage">
+    <accessibility>
+      <property name="label">Permissions and connection page</property>
+      <property name="description">Configure approval policies and network connectivity options</property>
+    </accessibility>
     <child>
       <object class="AdwPreferencesGroup" id="group_policy">
         <property name="title" translatable="yes">Approval policy</property>
+        <accessibility>
+          <property name="label">Approval policy settings</property>
+          <property name="description">Choose how signature requests are approved</property>
+        </accessibility>
         <child>
           <object class="AdwActionRow" id="row_basic">
             <property name="title" translatable="yes">Approve basic actions</property>
             <property name="subtitle" translatable="yes">Recommended for most people. This will minimize interruptions.</property>
+            <accessibility>
+              <property name="description">Select this option to automatically approve basic signing actions with minimal interruptions</property>
+            </accessibility>
             <child type="suffix">
               <object class="GtkCheckButton" id="radio_basic">
                 <property name="group">radio_manual</property>
                 <property name="active">true</property>
+                <accessibility>
+                  <property name="label">Approve basic actions automatically</property>
+                  <property name="description">When selected, basic signing requests are approved automatically</property>
+                </accessibility>
               </object>
             </child>
           </object>
@@ -22,9 +37,16 @@
           <object class="AdwActionRow" id="row_manual">
             <property name="title" translatable="yes">Manually approve each app</property>
             <property name="subtitle" translatable="yes">Recommended if you want control over each app.</property>
+            <accessibility>
+              <property name="description">Select this option to manually approve each signing request for maximum control</property>
+            </accessibility>
             <child type="suffix">
               <object class="GtkCheckButton" id="radio_manual">
                 <property name="active">false</property>
+                <accessibility>
+                  <property name="label">Manually approve each application</property>
+                  <property name="description">When selected, you must manually approve each signing request</property>
+                </accessibility>
               </object>
             </child>
           </object>
@@ -34,13 +56,24 @@
     <child>
       <object class="AdwPreferencesGroup" id="group_conn">
         <property name="title" translatable="yes">Connectivity</property>
+        <accessibility>
+          <property name="label">Network connectivity settings</property>
+          <property name="description">Configure network and privacy options</property>
+        </accessibility>
         <child>
           <object class="AdwActionRow" id="row_orbot">
             <property name="title" translatable="yes">Connect through your Orbot setup</property>
+            <accessibility>
+              <property name="description">Enable to route connections through the Tor network for enhanced privacy</property>
+            </accessibility>
             <child type="suffix">
               <object class="GtkSwitch" id="switch_orbot">
                 <property name="valign">center</property>
                 <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">Enable Orbot connection</property>
+                  <property name="description">Toggle to enable or disable routing through Orbot Tor proxy</property>
+                </accessibility>
               </object>
             </child>
             <child>
@@ -54,6 +87,10 @@
                         <property name="label" translatable="yes">Configure Orbot</property>
                         <property name="uri">about:blank</property>
                         <property name="visible">false</property>
+                        <accessibility>
+                          <property name="label">Configure Orbot settings</property>
+                          <property name="description">Open Orbot configuration dialog to set up proxy settings</property>
+                        </accessibility>
                       </object>
                     </child>
                   </object>

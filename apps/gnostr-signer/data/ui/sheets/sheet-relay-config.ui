@@ -6,10 +6,17 @@
     <property name="title" translatable="yes">Relay Configuration</property>
     <property name="content-width">500</property>
     <property name="content-height">550</property>
+    <accessibility>
+      <property name="label">Relay configuration dialog</property>
+      <property name="description">Configure which Nostr relays to use for reading and writing events</property>
+    </accessibility>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar">
+            <accessibility>
+              <property name="label">Relay configuration header</property>
+            </accessibility>
             <property name="title-widget">
               <object class="GtkLabel">
                 <property name="label" translatable="yes">Relay Configuration</property>
@@ -18,11 +25,19 @@
             <child type="start">
               <object class="GtkButton" id="btn_cancel">
                 <property name="label" translatable="yes">Cancel</property>
+                <accessibility>
+                  <property name="label">Cancel</property>
+                  <property name="description">Close without saving changes</property>
+                </accessibility>
               </object>
             </child>
             <child type="end">
               <object class="GtkButton" id="btn_publish">
                 <property name="label" translatable="yes">Save &amp; Publish</property>
+                <accessibility>
+                  <property name="label">Save and publish</property>
+                  <property name="description">Save relay configuration and publish NIP-65 relay list</property>
+                </accessibility>
                 <style>
                   <class name="suggested-action"/>
                 </style>
@@ -44,15 +59,27 @@
               <object class="GtkBox">
                 <property name="orientation">horizontal</property>
                 <property name="spacing">8</property>
+                <accessibility>
+                  <property name="label">Add relay</property>
+                  <property name="description">Add a new relay URL</property>
+                </accessibility>
                 <child>
                   <object class="GtkEntry" id="entry_url">
                     <property name="placeholder-text" translatable="yes">wss://relay.example.com</property>
                     <property name="hexpand">true</property>
+                    <accessibility>
+                      <property name="label">Relay URL</property>
+                      <property name="description">Enter a WebSocket relay URL starting with wss://</property>
+                    </accessibility>
                   </object>
                 </child>
                 <child>
                   <object class="GtkButton" id="btn_add">
                     <property name="icon-name">list-add-symbolic</property>
+                    <accessibility>
+                      <property name="label">Add relay</property>
+                      <property name="description">Add the entered relay URL to your list</property>
+                    </accessibility>
                     <style>
                       <class name="suggested-action"/>
                     </style>
@@ -72,6 +99,10 @@
                     <property name="wrap">true</property>
                     <property name="xalign">0</property>
                     <property name="hexpand">true</property>
+                    <accessibility>
+                      <property name="label">Relay configuration instructions</property>
+                      <property name="description">Instructions for configuring relays and fetching relay information</property>
+                    </accessibility>
                     <style>
                       <class name="dim-label"/>
                     </style>
@@ -81,12 +112,20 @@
                   <object class="GtkButton" id="btn_fetch_info">
                     <property name="label" translatable="yes">Fetch Info</property>
                     <property name="tooltip-text" translatable="yes">Fetch NIP-11 relay information for all relays</property>
+                    <accessibility>
+                      <property name="label">Fetch relay information</property>
+                      <property name="description">Fetch NIP-11 metadata from all configured relays</property>
+                    </accessibility>
                   </object>
                 </child>
                 <child>
                   <object class="GtkButton" id="btn_test_all">
                     <property name="label" translatable="yes">Test All</property>
                     <property name="tooltip-text" translatable="yes">Test connection to all relays</property>
+                    <accessibility>
+                      <property name="label">Test all relays</property>
+                      <property name="description">Test WebSocket connections to all configured relays</property>
+                    </accessibility>
                   </object>
                 </child>
               </object>
@@ -97,9 +136,16 @@
               <object class="GtkScrolledWindow">
                 <property name="vexpand">true</property>
                 <property name="hscrollbar-policy">never</property>
+                <accessibility>
+                  <property name="label">Relay list container</property>
+                </accessibility>
                 <child>
                   <object class="GtkListBox" id="list_relays">
                     <property name="selection-mode">none</property>
+                    <accessibility>
+                      <property name="label">Configured relays</property>
+                      <property name="description">List of configured relays. Toggle read and write permissions for each relay.</property>
+                    </accessibility>
                     <style>
                       <class name="boxed-list"/>
                     </style>

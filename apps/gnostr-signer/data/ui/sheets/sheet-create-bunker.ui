@@ -3,6 +3,10 @@
   <requires lib="gtk" version="4.12"/>
   <requires lib="adwaita" version="1.4"/>
   <template class="SheetCreateBunker" parent="AdwDialog">
+    <accessibility>
+      <property name="label">Create nsecbunker dialog</property>
+      <property name="description">Create a new nsecbunker connection with a name and relay URL</property>
+    </accessibility>
     <child>
       <object class="GtkBox">
         <property name="orientation">vertical</property>
@@ -14,6 +18,9 @@
         <child>
           <object class="GtkLabel">
             <property name="label" translatable="yes">Create nsecbunker</property>
+            <accessibility>
+              <property name="label">Create nsecbunker heading</property>
+            </accessibility>
             <attributes><attribute name="weight" value="bold"/></attributes>
           </object>
         </child>
@@ -35,6 +42,11 @@
                 <property name="tooltip-text" translatable="yes">Enter a display name</property>
                 <property name="valign">center</property>
                 <property name="vexpand">false</property>
+                <property name="hexpand">true</property>
+                <accessibility>
+                  <property name="label">Bunker name</property>
+                  <property name="description">Enter a friendly name for this bunker connection</property>
+                </accessibility>
               </object>
             </child>
           </object>
@@ -57,6 +69,11 @@
                 <property name="tooltip-text" translatable="yes">Enter the bunker relay URL</property>
                 <property name="valign">center</property>
                 <property name="vexpand">false</property>
+                <property name="hexpand">true</property>
+                <accessibility>
+                  <property name="label">Relay URL</property>
+                  <property name="description">Enter the WebSocket relay URL for this bunker, starting with wss://</property>
+                </accessibility>
               </object>
             </child>
           </object>
@@ -68,6 +85,13 @@
             <property name="tooltip-text" translatable="yes">Create the bunker</property>
             <property name="valign">center</property>
             <property name="vexpand">false</property>
+            <accessibility>
+              <property name="label">Create bunker</property>
+              <property name="description">Create the nsecbunker connection with the specified settings. Keyboard shortcut: Alt+C.</property>
+            </accessibility>
+            <style>
+              <class name="suggested-action"/>
+            </style>
           </object>
         </child>
         <child>
@@ -77,6 +101,10 @@
             <property name="tooltip-text" translatable="yes">Close without changes</property>
             <property name="valign">center</property>
             <property name="vexpand">false</property>
+            <accessibility>
+              <property name="label">Cancel</property>
+              <property name="description">Close this dialog without creating a bunker. Keyboard shortcut: Alt+C or Escape.</property>
+            </accessibility>
           </object>
         </child>
       </object>

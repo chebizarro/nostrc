@@ -2,8 +2,15 @@
  *
  * Wraps the nip55l signer_ops for UI-friendly operations with additional
  * features like listing all identities and generating new keys.
+ *
+ * Uses secure memory for handling private keys to prevent:
+ * - Keys being swapped to disk
+ * - Keys remaining in memory after use
+ * - Timing attacks via constant-time comparison
  */
 #include "secret_store.h"
+#include "secure-memory.h"
+#include "secure-delete.h"
 #include <nostr/nip55l/signer_ops.h>
 #include <nostr/nip55l/error.h>
 #include <nostr/nip19/nip19.h>
@@ -35,6 +42,20 @@ static gboolean is_hex_64(const gchar *s) {
   return TRUE;
 }
 
+/* Convert binary to hex string in secure memory */
+static gchar *bin_to_hex_secure(const guint8 *buf, gsize len) {
+  static const gchar hexd[16] = "0123456789abcdef";
+  gchar *out = (gchar*)gn_secure_alloc(len * 2 + 1);
+  if (!out) return NULL;
+  for (gsize i = 0; i < len; i++) {
+    out[2*i] = hexd[(buf[i] >> 4) & 0xF];
+    out[2*i+1] = hexd[buf[i] & 0xF];
+  }
+  out[len*2] = '\0';
+  return out;
+}
+
+/* Legacy bin_to_hex for non-sensitive data */
 static gchar *bin_to_hex(const guint8 *buf, gsize len) {
   static const gchar hexd[16] = "0123456789abcdef";
   gchar *out = g_malloc(len * 2 + 1);
@@ -98,10 +119,12 @@ SecretStoreResult secret_store_add(const gchar *key,
                                    gboolean link_to_user) {
   if (!key || !*key) return SECRET_STORE_ERR_INVALID_KEY;
 
-  /* Normalize key to hex */
+  /* Normalize key to hex using secure memory */
   gchar *sk_hex = NULL;
   if (is_hex_64(key)) {
-    sk_hex = g_strdup(key);
+    /* Use secure memory for secret key hex */
+    sk_hex = gn_secure_strdup(key);
+    if (!sk_hex) return SECRET_STORE_ERR_BACKEND;
     /* Convert to lowercase */
     for (gsize i = 0; sk_hex[i]; i++) {
       sk_hex[i] = g_ascii_tolower(sk_hex[i]);
@@ -111,11 +134,13 @@ SecretStoreResult secret_store_add(const gchar *key,
     if (nostr_nip19_decode_nsec(key, sk) != 0) {
       return SECRET_STORE_ERR_INVALID_KEY;
     }
-    sk_hex = bin_to_hex(sk, 32);
-    memset(sk, 0, sizeof(sk));
+    sk_hex = bin_to_hex_secure(sk, 32);
+    gn_secure_clear_buffer(sk);  /* Securely zero the buffer */
+    if (!sk_hex) return SECRET_STORE_ERR_BACKEND;
   } else if (g_str_has_prefix(key, "ncrypt")) {
     /* ncrypt keys need special handling - for now pass through */
-    sk_hex = g_strdup(key);
+    sk_hex = gn_secure_strdup(key);
+    if (!sk_hex) return SECRET_STORE_ERR_BACKEND;
   } else {
     return SECRET_STORE_ERR_INVALID_KEY;
   }
@@ -123,23 +148,21 @@ SecretStoreResult secret_store_add(const gchar *key,
   /* Derive public key */
   gchar *pk_hex = nostr_key_get_public(sk_hex);
   if (!pk_hex) {
-    g_free(sk_hex);
+    gn_secure_strfree(sk_hex);
     return SECRET_STORE_ERR_BACKEND;
   }
 
   guint8 pk[32];
   if (!nostr_hex2bin(pk, pk_hex, 32)) {
     g_free(pk_hex);
-    memset(sk_hex, 0, strlen(sk_hex));
-    g_free(sk_hex);
+    gn_secure_strfree(sk_hex);
     return SECRET_STORE_ERR_INVALID_KEY;
   }
   g_free(pk_hex);
 
   gchar *npub = NULL;
   if (nostr_nip19_encode_npub(pk, &npub) != 0 || !npub) {
-    memset(sk_hex, 0, strlen(sk_hex));
-    g_free(sk_hex);
+    gn_secure_strfree(sk_hex);
     return SECRET_STORE_ERR_BACKEND;
   }
 
@@ -162,8 +185,8 @@ SecretStoreResult secret_store_add(const gchar *key,
                                            "owner_username", "",
                                            NULL);
 
-  memset(sk_hex, 0, strlen(sk_hex));
-  g_free(sk_hex);
+  /* Securely zero and free the secret key hex */
+  gn_secure_strfree(sk_hex);
 
   if (err) {
     g_warning("secret_store_add: %s", err->message);
@@ -177,8 +200,7 @@ SecretStoreResult secret_store_add(const gchar *key,
   /* macOS Keychain implementation */
   guint8 skb[32];
   if (!nostr_hex2bin(skb, sk_hex, 32)) {
-    memset(sk_hex, 0, strlen(sk_hex));
-    g_free(sk_hex);
+    gn_secure_strfree(sk_hex);
     g_free(npub);
     return SECRET_STORE_ERR_INVALID_KEY;
   }
@@ -190,9 +212,9 @@ SecretStoreResult secret_store_add(const gchar *key,
   CFStringRef labelCF = label ? CFStringCreateWithCString(NULL, label, kCFStringEncodingUTF8) : NULL;
   CFDataRef secretData = CFDataCreate(NULL, skb, 32);
 
-  memset(skb, 0, sizeof(skb));
-  memset(sk_hex, 0, strlen(sk_hex));
-  g_free(sk_hex);
+  /* Securely zero the secret key buffers */
+  gn_secure_clear_buffer(skb);
+  gn_secure_strfree(sk_hex);
 
   CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
   CFDictionarySetValue(query, kSecAttrService, service);
@@ -216,8 +238,7 @@ SecretStoreResult secret_store_add(const gchar *key,
 
   return (st == errSecSuccess) ? SECRET_STORE_OK : SECRET_STORE_ERR_BACKEND;
 #else
-  memset(sk_hex, 0, strlen(sk_hex));
-  g_free(sk_hex);
+  gn_secure_strfree(sk_hex);
   g_free(npub);
   return SECRET_STORE_ERR_BACKEND;
 #endif
@@ -398,7 +419,15 @@ SecretStoreResult secret_store_generate(const gchar *label,
   *out_npub = NULL;
 
   /* Generate new keypair using libnostr */
-  gchar *sk_hex = nostr_key_generate_private();
+  gchar *sk_hex_raw = nostr_key_generate_private();
+  if (!sk_hex_raw) {
+    return SECRET_STORE_ERR_BACKEND;
+  }
+
+  /* Copy to secure memory immediately and clear original */
+  gchar *sk_hex = gn_secure_strdup(sk_hex_raw);
+  gn_secure_clear_string(sk_hex_raw);  /* Zero and free the original */
+
   if (!sk_hex) {
     return SECRET_STORE_ERR_BACKEND;
   }
@@ -406,15 +435,13 @@ SecretStoreResult secret_store_generate(const gchar *label,
   /* Store it */
   SecretStoreResult rc = secret_store_add(sk_hex, label, link_to_user);
   if (rc != SECRET_STORE_OK) {
-    memset(sk_hex, 0, strlen(sk_hex));
-    free(sk_hex);
+    gn_secure_strfree(sk_hex);
     return rc;
   }
 
   /* Derive npub to return */
   gchar *pk_hex = nostr_key_get_public(sk_hex);
-  memset(sk_hex, 0, strlen(sk_hex));
-  free(sk_hex);
+  gn_secure_strfree(sk_hex);
 
   if (!pk_hex) {
     return SECRET_STORE_ERR_BACKEND;
@@ -564,21 +591,25 @@ SecretStoreResult secret_store_get_secret(const gchar *selector,
     return SECRET_STORE_ERR_NOT_FOUND;
   }
 
-  /* Convert hex to nsec */
+  /* Convert hex to nsec - use secure memory for the secret key */
   if (is_hex_64(secret)) {
     guint8 sk[32];
     if (nostr_hex2bin(sk, secret, 32)) {
       gchar *nsec = NULL;
       if (nostr_nip19_encode_nsec(sk, &nsec) == 0 && nsec) {
-        *out_nsec = g_strdup(nsec);
-        free(nsec);
+        /* Return nsec in secure memory */
+        *out_nsec = gn_secure_strdup(nsec);
+        gn_secure_clear_string(nsec);  /* Zero and free the original */
       }
-      memset(sk, 0, sizeof(sk));
+      gn_secure_clear_buffer(sk);  /* Securely zero the buffer */
     }
   } else if (g_str_has_prefix(secret, "nsec1")) {
-    *out_nsec = g_strdup(secret);
+    /* Return nsec in secure memory */
+    *out_nsec = gn_secure_strdup(secret);
   }
 
+  /* Securely clear the secret before freeing */
+  gn_secure_zero(secret, strlen(secret));
   secret_password_free(secret);
   return *out_nsec ? SECRET_STORE_OK : SECRET_STORE_ERR_BACKEND;
 

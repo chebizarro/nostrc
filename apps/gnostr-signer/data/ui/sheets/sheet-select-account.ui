@@ -6,10 +6,17 @@
     <property name="title" translatable="yes">Select Account</property>
     <property name="content-width">400</property>
     <property name="content-height">480</property>
+    <accessibility>
+      <property name="label">Select account dialog</property>
+      <property name="description">Choose an account to switch to or add a new account</property>
+    </accessibility>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar">
+            <accessibility>
+              <property name="label">Account selection header</property>
+            </accessibility>
             <property name="title-widget">
               <object class="GtkLabel">
                 <property name="label" translatable="yes">Accounts</property>
@@ -18,6 +25,10 @@
             <child type="start">
               <object class="GtkButton" id="btn_cancel">
                 <property name="label" translatable="yes">Close</property>
+                <accessibility>
+                  <property name="label">Close</property>
+                  <property name="description">Close this dialog</property>
+                </accessibility>
               </object>
             </child>
           </object>
@@ -37,6 +48,10 @@
                 <property name="label" translatable="yes">Select an account to switch to, or add a new one.</property>
                 <property name="wrap">true</property>
                 <property name="xalign">0</property>
+                <accessibility>
+                  <property name="label">Instructions</property>
+                  <property name="description">Select an existing account or create a new one</property>
+                </accessibility>
                 <style>
                   <class name="dim-label"/>
                 </style>
@@ -48,6 +63,9 @@
               <object class="GtkScrolledWindow">
                 <property name="vexpand">true</property>
                 <property name="hscrollbar-policy">never</property>
+                <accessibility>
+                  <property name="label">Accounts list container</property>
+                </accessibility>
                 <child>
                   <object class="GtkBox">
                     <property name="orientation">vertical</property>
@@ -55,6 +73,10 @@
                     <child>
                       <object class="GtkListBox" id="list_accounts">
                         <property name="selection-mode">none</property>
+                        <accessibility>
+                          <property name="label">Available accounts</property>
+                          <property name="description">List of your Nostr accounts. Click to select and switch.</property>
+                        </accessibility>
                         <style>
                           <class name="boxed-list"/>
                         </style>
@@ -67,6 +89,10 @@
                         <property name="visible">false</property>
                         <property name="margin-top">24</property>
                         <property name="margin-bottom">24</property>
+                        <accessibility>
+                          <property name="label">No accounts message</property>
+                          <property name="description">You have no accounts yet. Use the buttons below to create or import one.</property>
+                        </accessibility>
                         <style>
                           <class name="dim-label"/>
                         </style>
@@ -83,10 +109,18 @@
                 <property name="orientation">horizontal</property>
                 <property name="spacing">8</property>
                 <property name="halign">center</property>
+                <accessibility>
+                  <property name="label">Account actions</property>
+                  <property name="description">Create a new account or import an existing key</property>
+                </accessibility>
                 <child>
                   <object class="GtkButton" id="btn_add_new">
                     <property name="label" translatable="yes">Generate New</property>
                     <property name="tooltip-text" translatable="yes">Generate a new keypair</property>
+                    <accessibility>
+                      <property name="label">Generate new account</property>
+                      <property name="description">Create a new Nostr keypair and account</property>
+                    </accessibility>
                     <style>
                       <class name="suggested-action"/>
                     </style>
@@ -96,6 +130,10 @@
                   <object class="GtkButton" id="btn_import">
                     <property name="label" translatable="yes">Import Key</property>
                     <property name="tooltip-text" translatable="yes">Import an existing nsec key</property>
+                    <accessibility>
+                      <property name="label">Import existing key</property>
+                      <property name="description">Import an existing Nostr private key</property>
+                    </accessibility>
                   </object>
                 </child>
               </object>

@@ -2,6 +2,7 @@
 <gresources>
   <gresource prefix="/org/gnostr/signer">
     <file>css/app.css</file>
+    <file>css/high-contrast.css</file>
     <file preprocess="xml-stripblanks">ui/signer-window.ui</file>
     <file preprocess="xml-stripblanks">ui/sidebar.ui</file>
     <file preprocess="xml-stripblanks">ui/page-permissions.ui</file>
@@ -20,8 +21,10 @@
     <file preprocess="xml-stripblanks">ui/sheets/sheet-user-list.ui</file>
     <file preprocess="xml-stripblanks">ui/sheets/sheet-event-details.ui</file>
     <file preprocess="xml-stripblanks">ui/widgets/app-row.ui</file>
+    <file preprocess="xml-stripblanks">ui/widgets/gn-secure-entry.ui</file>
     <file preprocess="xml-stripblanks">ui/widgets/identity-row.ui</file>
     <file preprocess="xml-stripblanks">ui/widgets/relay-row.ui</file>
     <file preprocess="xml-stripblanks">ui/approval-dialog.ui</file>
+    <file preprocess="xml-stripblanks">ui/onboarding-assistant.ui</file>
   </gresource>
 </gresources>

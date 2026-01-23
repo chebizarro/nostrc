@@ -8,6 +8,7 @@
 #include "accounts_store.h"
 #include "secret_store.h"
 #include "settings_manager.h"
+#include "secure-delete.h"
 #include <string.h>
 
 /* Change callback entry */
@@ -245,6 +246,16 @@ gboolean accounts_store_remove(AccountsStore *as, const gchar *id) {
   gboolean removed = g_hash_table_remove(as->map, id);
 
   if (removed) {
+    /* Securely delete any local files associated with this identity
+     * Note: This does NOT delete from secure storage (Keychain/libsecret)
+     * That must be done separately via secret_store_remove()
+     */
+    GnDeleteResult del_result = gn_secure_delete_identity_files(id);
+    if (del_result != GN_DELETE_OK) {
+      g_warning("accounts_store_remove: secure delete of identity files failed for %s: %s",
+                id, gn_delete_result_to_string(del_result));
+    }
+
     emit_change(as, ACCOUNTS_CHANGE_REMOVED, id);
 
     if (as->active && g_strcmp0(as->active, id) == 0) {
