@@ -37,6 +37,7 @@
 
 /* libnostr for crypto operations */
 #include <keys.h>
+#include <nostr-event.h>
 #include <nostr/nip19/nip19.h>
 #include <nostr-utils.h>
 
@@ -417,7 +418,10 @@ create_secure_enclave_key(CFStringRef label, CFErrorRef *error)
   /* We'll use this to derive a master secret, then use software
    * secp256k1 for actual Nostr signing */
   CFDictionarySetValue(attrs, kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom);
-  CFDictionarySetValue(attrs, kSecAttrKeySizeInBits, (__bridge CFNumberRef)@256);
+  int key_size = 256;
+  CFNumberRef key_size_ref = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &key_size);
+  CFDictionarySetValue(attrs, kSecAttrKeySizeInBits, key_size_ref);
+  CFRelease(key_size_ref);
   CFDictionarySetValue(attrs, kSecAttrTokenID, kSecAttrTokenIDSecureEnclave);
   CFDictionarySetValue(attrs, kSecPrivateKeyAttrs, private_attrs);
 

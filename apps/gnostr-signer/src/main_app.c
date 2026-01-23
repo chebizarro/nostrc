@@ -6,6 +6,7 @@
 #include "settings_manager.h"
 #include "startup-timing.h"
 #include "secure-mem.h"
+#include "i18n.h"
 #include "ui/signer-window.h"
 #include "ui/onboarding-assistant.h"
 
@@ -831,6 +832,9 @@ int main(int argc, char **argv) {
   /* Initialize secure memory subsystem for handling sensitive data
    * (private keys, passwords, session tokens, etc.) */
   gnostr_secure_mem_init();
+
+  /* Initialize internationalization before GTK */
+  gn_i18n_init();
 
   g_set_prgname("gnostr-signer");
   AdwApplication *app = adw_application_new("org.gnostr.Signer", G_APPLICATION_DEFAULT_FLAGS);
