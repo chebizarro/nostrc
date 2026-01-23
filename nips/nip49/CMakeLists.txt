@@ -30,11 +30,15 @@ else()
   target_link_libraries(nostr_nip49_core PUBLIC nostr nip19 sodium)
 endif()
 
-# Only build GLib wrapper if nostr_glib target exists
-if (TARGET nostr_glib)
+# Build GLib wrapper when GLib is available (for GTK apps like gnostr-signer)
+find_package(PkgConfig QUIET)
+if (PkgConfig_FOUND)
+  pkg_check_modules(GLIB2 QUIET glib-2.0)
+endif()
+if (GLIB2_FOUND)
   add_library(nostr_nip49_glib ${NIP49_GLIB_SRC})
-  target_include_directories(nostr_nip49_glib PUBLIC ${NIP49_INC})
-  target_link_libraries(nostr_nip49_glib PUBLIC nostr_glib nostr_nip49_core)
+  target_include_directories(nostr_nip49_glib PUBLIC ${NIP49_INC} ${GLIB2_INCLUDE_DIRS})
+  target_link_libraries(nostr_nip49_glib PUBLIC nostr_nip49_core ${GLIB2_LIBRARIES})
 endif()
 
 # Install headers

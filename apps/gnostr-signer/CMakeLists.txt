@@ -95,11 +95,12 @@ if (TARGET gnostr-secret)
   target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_LIBSECRET=1)
 endif()
 
-# Link libsecret directly for secret-storage.c when available
+# Note: GNOSTR_HAVE_LIBSECRET is only defined when gnostr-secret target exists
+# (above), because settings_page.c uses functions from that library.
+# We still link libsecret directly for secret-storage.c basic operations.
 if (LIBSECRET_FOUND AND NOT TARGET gnostr-secret)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::LIBSECRET)
-  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_LIBSECRET=1)
-  message(STATUS "gnostr-signer: libsecret linked directly for secure key storage")
+  message(STATUS "gnostr-signer: libsecret linked (without gnostr-secret helpers)")
 elseif(APPLE)
   # macOS: Link Security.framework for Keychain support
   find_library(SECURITY_FRAMEWORK Security REQUIRED)
