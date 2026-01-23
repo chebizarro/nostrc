@@ -135,7 +135,13 @@ static void set_status(SheetCreateAccount *self, const gchar *message, gboolean 
   if (!self) return;
 
   if (message && *message) {
-    if (self->lbl_status) gtk_label_set_text(self->lbl_status, message);
+    if (self->lbl_status) {
+      gtk_label_set_text(self->lbl_status, message);
+      /* Announce status change to screen readers via live region */
+      gtk_accessible_update_property(GTK_ACCESSIBLE(self->lbl_status),
+                                     GTK_ACCESSIBLE_PROPERTY_LABEL, message,
+                                     -1);
+    }
     if (self->spinner_status) gtk_spinner_set_spinning(self->spinner_status, spinning);
     if (self->box_status) gtk_widget_set_visible(GTK_WIDGET(self->box_status), TRUE);
   } else {

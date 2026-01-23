@@ -157,20 +157,63 @@
 
 ## Accessibility
 
+### Completed
+- [x] Add screen reader support (ATK/AT-SPI labels on all interactive elements)
+- [x] Implement keyboard navigation (keyboard-nav.c)
+- [x] Add descriptive labels for UI elements (all .ui files)
+- [x] Live region announcements for status changes
+- [x] Proper role assignments (button, entry, list, etc.)
+- [x] Announce dialog titles and content
+- [x] Logical focus order
+
 ### High Priority
-- [ ] Add screen reader support
-- [ ] Implement keyboard navigation
 - [ ] Add high contrast theme
 
 ### Medium Priority
 - [ ] Add support for custom font sizes
-- [ ] Implement proper focus handling
-- [ ] Add descriptive labels for UI elements
+- [ ] Implement proper focus handling for complex widgets
 
 ### Low Priority
 - [ ] Add support for custom color schemes
 - [ ] Implement text-to-speech
 - [ ] Add support for alternative input methods
+
+### Testing with Orca Screen Reader
+
+To test accessibility with the Orca screen reader:
+
+1. **Install Orca** (if not already installed):
+   ```bash
+   # On Fedora/RHEL
+   sudo dnf install orca
+   # On Ubuntu/Debian
+   sudo apt install orca
+   ```
+
+2. **Enable AT-SPI** (required for screen readers):
+   ```bash
+   gsettings set org.gnome.desktop.interface toolkit-accessibility true
+   ```
+
+3. **Start Orca**:
+   ```bash
+   orca
+   ```
+   Or press Super+Alt+S on GNOME to toggle Orca.
+
+4. **Test the following areas**:
+   - All buttons should announce their labels and actions
+   - Form fields should announce their purpose and current value
+   - Status messages should be announced automatically (live regions)
+   - Navigation between pages should announce the new page context
+   - Dialogs should announce their title and purpose when opened
+   - Lists should announce their items and selection state
+
+5. **Key Orca shortcuts**:
+   - Insert+H: Orca help
+   - Insert+F1: Where am I (detailed info about focused element)
+   - Caps Lock+Tab: Toggle Orca
+   - Arrow keys: Navigate between elements
 
 ## Maintenance
 

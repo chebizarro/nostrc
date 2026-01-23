@@ -1,0 +1,215 @@
+# Fuzz testing workflow for gnostr-signer security-critical components
+#
+# Runs fuzzing on:
+# - NIP-49 encryption/decryption
+# - BIP-39 mnemonic parsing
+# - JSON event parsing
+#
+# Issue: nostrc-p7f6
+#
+# This workflow runs:
+# - On manual trigger (workflow_dispatch)
+# - Weekly on Sundays for continuous fuzzing
+# - On PRs touching security-critical files
+
+name: gnostr-signer Fuzz Testing
+
+on:
+  workflow_dispatch:
+    inputs:
+      fuzz_duration:
+        description: 'Fuzz duration per target (seconds)'
+        required: false
+        default: '300'
+      target:
+        description: 'Specific target (nip49, bip39, json-event, or all)'
+        required: false
+        default: 'all'
+  schedule:
+    # Run weekly on Sundays at 3:00 UTC
+    - cron: '0 3 * * 0'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'apps/gnostr-signer/src/backup-recovery.c'
+      - 'apps/gnostr-signer/src/backup-recovery.h'
+      - 'apps/gnostr-signer/src/bunker_service.c'
+      - 'apps/gnostr-signer/src/bunker_service.h'
+      - 'nips/nip49/**'
+      - 'libnostr/src/crypto/bip39*'
+      - 'apps/gnostr-signer/tests/fuzz/**'
+
+env:
+  # Default duration for scheduled runs and PRs (shorter for PRs)
+  DEFAULT_FUZZ_DURATION: 60
+
+jobs:
+  fuzz-test:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [nip49, bip39, json-event]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Filter targets for manual run
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.target != 'all'
+        run: |
+          if [ "${{ matrix.target }}" != "${{ github.event.inputs.target }}" ]; then
+            echo "Skipping ${{ matrix.target }} - only running ${{ github.event.inputs.target }}"
+            exit 0
+          fi
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config clang llvm \
+            libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
+            libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev \
+            libnsync-dev libjson-glib-dev
+
+      - name: Configure with fuzz targets
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_FUZZ_TARGETS=ON \
+            -DFUZZ_ENGINE=LIBFUZZER \
+            -DENABLE_NIP19=ON \
+            -DENABLE_NIP49=ON
+
+      - name: Build fuzz targets
+        run: |
+          cmake --build build --target fuzz-${{ matrix.target }}
+
+      - name: Determine fuzz duration
+        id: duration
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            DURATION="${{ github.event.inputs.fuzz_duration }}"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            DURATION=60  # Shorter for PRs
+          else
+            DURATION=300  # Longer for scheduled runs
+          fi
+          echo "duration=${DURATION}" >> $GITHUB_OUTPUT
+
+      - name: Run fuzz-${{ matrix.target }}
+        run: |
+          set -e
+          FUZZ_BIN="build/apps/gnostr-signer/tests/fuzz/fuzz-${{ matrix.target }}"
+          CORPUS_DIR="build/apps/gnostr-signer/tests/fuzz/corpus/${{ matrix.target }}"
+          ARTIFACTS_DIR="fuzz-artifacts-${{ matrix.target }}"
+
+          mkdir -p "${ARTIFACTS_DIR}"
+
+          echo "Running fuzz-${{ matrix.target }} for ${{ steps.duration.outputs.duration }} seconds..."
+
+          # Run the fuzzer
+          ${FUZZ_BIN} "${CORPUS_DIR}" \
+            -max_total_time=${{ steps.duration.outputs.duration }} \
+            -artifact_prefix="${ARTIFACTS_DIR}/" \
+            -print_final_stats=1 \
+            2>&1 | tee "fuzz-${{ matrix.target }}.log"
+
+          # Check for crashes
+          if ls "${ARTIFACTS_DIR}"/crash-* 1> /dev/null 2>&1; then
+            echo "::error::Crashes found in fuzz-${{ matrix.target }}"
+            exit 1
+          fi
+
+          echo "Fuzzing completed successfully for ${{ matrix.target }}"
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.target }}
+          path: |
+            fuzz-artifacts-${{ matrix.target }}/
+            fuzz-${{ matrix.target }}.log
+          if-no-files-found: ignore
+
+      - name: Upload updated corpus
+        if: success() && github.event_name == 'schedule'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-corpus-${{ matrix.target }}
+          path: build/apps/gnostr-signer/tests/fuzz/corpus/${{ matrix.target }}/
+          if-no-files-found: ignore
+
+  coverage-report:
+    name: Generate coverage report
+    runs-on: ubuntu-latest
+    needs: fuzz-test
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config clang llvm \
+            libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
+            libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev \
+            libnsync-dev libjson-glib-dev lcov
+
+      - name: Download all corpus artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fuzz-corpus-*
+          path: downloaded-corpus
+          merge-multiple: false
+
+      - name: Configure with coverage
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_FUZZ_TARGETS=ON \
+            -DFUZZ_ENGINE=LIBFUZZER \
+            -DENABLE_NIP19=ON \
+            -DENABLE_NIP49=ON \
+            -DCMAKE_C_FLAGS="-fprofile-instr-generate -fcoverage-mapping"
+
+      - name: Build fuzz targets
+        run: cmake --build build --target fuzz-targets
+
+      - name: Run corpus for coverage
+        run: |
+          for target in nip49 bip39 json-event; do
+            FUZZ_BIN="build/apps/gnostr-signer/tests/fuzz/fuzz-${target}"
+            CORPUS_DIR="downloaded-corpus/fuzz-corpus-${target}"
+            if [ -d "${CORPUS_DIR}" ] && [ -x "${FUZZ_BIN}" ]; then
+              LLVM_PROFILE_FILE="fuzz-${target}.profraw" ${FUZZ_BIN} "${CORPUS_DIR}" -runs=0 || true
+            fi
+          done
+
+      - name: Merge coverage data
+        run: |
+          llvm-profdata merge -sparse fuzz-*.profraw -o fuzz.profdata || true
+
+      - name: Generate coverage report
+        run: |
+          for target in nip49 bip39 json-event; do
+            FUZZ_BIN="build/apps/gnostr-signer/tests/fuzz/fuzz-${target}"
+            if [ -x "${FUZZ_BIN}" ]; then
+              llvm-cov report "${FUZZ_BIN}" -instr-profile=fuzz.profdata 2>/dev/null || true
+            fi
+          done

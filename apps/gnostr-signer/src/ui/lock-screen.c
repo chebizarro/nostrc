@@ -448,6 +448,10 @@ gn_lock_screen_show_error(GnLockScreen *self, const gchar *message)
 
   gtk_label_set_text(self->lbl_error, message);
   gtk_widget_set_visible(GTK_WIDGET(self->lbl_error), TRUE);
+  /* Announce error to screen readers via live region */
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->lbl_error),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, message,
+                                 -1);
 }
 
 void

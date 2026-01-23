@@ -277,10 +277,33 @@ set_tests_properties(signer/secure-mem PROPERTIES
 )
 
 # ==============================================================================
+# Test: Social Recovery (Shamir's Secret Sharing)
+# Issue: nostrc-e9a
+# ==============================================================================
+add_executable(test-social-recovery
+    test-social-recovery.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/social-recovery.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/secure-mem.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/backup-recovery.c
+)
+target_include_directories(test-social-recovery PRIVATE ${SIGNER_INCLUDE_DIRS})
+target_link_libraries(test-social-recovery PRIVATE ${SIGNER_TEST_LIBS})
+target_link_directories(test-social-recovery PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_compile_features(test-social-recovery PRIVATE c_std_11)
+apply_test_sanitizers(test-social-recovery)
+
+add_test(NAME signer/social-recovery COMMAND test-social-recovery)
+set_tests_properties(signer/social-recovery PROPERTIES
+    TIMEOUT 60
+    LABELS "signer;social-recovery;security;unit"
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr-signer"
+)
+
+# ==============================================================================
 # All signer tests target (convenience)
 # ==============================================================================
 add_custom_target(signer-tests
-    DEPENDS test-crypto test-identity test-session test-bunker test-dbus test-rate-limiter test-ui test-hsm-provider test-core test-secure-mem
+    DEPENDS test-crypto test-identity test-session test-bunker test-dbus test-rate-limiter test-ui test-hsm-provider test-core test-secure-mem test-social-recovery
     COMMENT "Building all gnostr-signer tests"
 )
 

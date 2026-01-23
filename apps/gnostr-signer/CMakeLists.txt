@@ -73,6 +73,32 @@ if (GNOSTR_SIGNER_WITH_HW_WALLET)
   endif()
 endif()
 
+# Optional libqrencode for QR code generation
+pkg_check_modules(QRENCODE QUIET IMPORTED_TARGET libqrencode)
+if (QRENCODE_FOUND)
+  message(STATUS "libqrencode found - QR code generation enabled")
+else()
+  message(STATUS "libqrencode not found - QR code generation disabled")
+  message(STATUS "  Install libqrencode: brew install qrencode (macOS), apt install libqrencode-dev (Linux)")
+endif()
+
+# Optional zbar for QR code scanning
+pkg_check_modules(ZBAR QUIET IMPORTED_TARGET zbar)
+if (ZBAR_FOUND)
+  message(STATUS "zbar found - QR code scanning enabled")
+else()
+  message(STATUS "zbar not found - QR code scanning disabled")
+  message(STATUS "  Install zbar: brew install zbar (macOS), apt install libzbar-dev (Linux)")
+endif()
+
+# Optional GStreamer for camera-based QR scanning
+pkg_check_modules(GST QUIET IMPORTED_TARGET gstreamer-1.0 gstreamer-video-1.0)
+if (GST_FOUND)
+  message(STATUS "GStreamer found - Camera QR scanning enabled")
+else()
+  message(STATUS "GStreamer not found - Camera QR scanning disabled (clipboard/file scanning still available)")
+endif()
+
 # Main GTK4 application (UI shell)
 file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/ui/sheets/*.c src/ui/widgets/*.c)
 if (NOT APP_SRC)
@@ -184,6 +210,27 @@ if (GNOSTR_SIGNER_WITH_HW_WALLET AND HIDAPI_FOUND)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::HIDAPI)
   target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_HIDAPI=1)
   message(STATUS "gnostr-signer: Hardware wallet support enabled (Ledger/Trezor)")
+endif()
+
+# Link libqrencode for QR code generation if available
+if (QRENCODE_FOUND)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::QRENCODE)
+  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE HAVE_QRENCODE=1)
+  message(STATUS "gnostr-signer: QR code generation enabled")
+endif()
+
+# Link zbar for QR code scanning if available
+if (ZBAR_FOUND)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::ZBAR)
+  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE HAVE_ZBAR=1)
+  message(STATUS "gnostr-signer: QR code scanning enabled")
+endif()
+
+# Link GStreamer for camera-based QR scanning if available
+if (GST_FOUND)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GST)
+  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE HAVE_GSTREAMER=1)
+  message(STATUS "gnostr-signer: Camera QR scanning enabled")
 endif()
 
 # Link math library on Linux (for fmin, fmax, etc.)

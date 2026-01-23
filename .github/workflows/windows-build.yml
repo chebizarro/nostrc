@@ -1,0 +1,158 @@
+# =============================================================================
+# GitHub Actions Workflow: Windows Build
+# =============================================================================
+#
+# Builds GNostr Signer for Windows using MSYS2/MinGW-w64 and creates an
+# NSIS installer package.
+#
+# Triggers:
+#   - Push to main/master branch
+#   - Pull requests targeting main/master
+#   - Manual workflow dispatch
+#   - Release tags (v*)
+#
+# =============================================================================
+
+name: Windows Build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      debug_enabled:
+        description: 'Run with debug logging'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    name: Build Windows Installer
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            base-devel
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-gtk4
+            mingw-w64-x86_64-libadwaita
+            mingw-w64-x86_64-glib2
+            mingw-w64-x86_64-json-glib
+            mingw-w64-x86_64-libsodium
+            mingw-w64-x86_64-libsecp256k1
+            mingw-w64-x86_64-libsecret
+            mingw-w64-x86_64-nsync
+            mingw-w64-x86_64-nsis
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION="0.0.0-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Building version: ${VERSION}"
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_INSTALL_PREFIX=build/install \
+            -DBUILD_TESTING=OFF \
+            -DBUILD_SIGNER_TESTS=OFF \
+            -DBUILD_NATIVE_HOST=ON \
+            -DBUILD_WINDOWS_INSTALLER=ON \
+            -DGNOSTR_SIGNER_VERSION=${{ steps.version.outputs.version }}
+
+      - name: Build
+        run: |
+          cmake --build build --parallel $(nproc)
+
+      - name: Bundle dependencies
+        run: |
+          cd apps/gnostr-signer/packaging/windows
+          ./bundle-deps.sh --build-dir ../../../../build --output-dir ../../../../build/deps
+
+      - name: Create NSIS installer
+        run: |
+          cd apps/gnostr-signer/packaging/windows
+          makensis \
+            -DVERSION=${{ steps.version.outputs.version }} \
+            -DARCH=x64 \
+            -DBUILD_DIR=../../../../build \
+            -DDEPS_DIR=../../../../build/deps \
+            gnostr-signer.nsi
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GNostrSigner-${{ steps.version.outputs.version }}-x64-setup
+          path: apps/gnostr-signer/packaging/windows/GNostrSigner-*.exe
+          if-no-files-found: error
+
+      - name: Upload portable build
+        uses: actions/upload-artifact@v4
+        with:
+          name: GNostrSigner-${{ steps.version.outputs.version }}-x64-portable
+          path: |
+            build/apps/gnostr-signer/gnostr-signer.exe
+            build/apps/gnostr-signer/gnostr-signer-daemon.exe
+            build/deps/
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: GNostrSigner-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Calculate checksums
+        run: |
+          cd artifacts
+          sha256sum *.exe > SHA256SUMS.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/*.exe
+            artifacts/SHA256SUMS.txt
+          generate_release_notes: true
+          draft: true
