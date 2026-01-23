@@ -12,6 +12,7 @@
 #include "multisig_store.h"
 #include "secure-memory.h"
 #include "secure-mem.h"
+#include <glib/gstdio.h>
 #include <json-glib/json-glib.h>
 #include <string.h>
 #include <time.h>

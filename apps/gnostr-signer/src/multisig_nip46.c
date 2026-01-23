@@ -293,12 +293,7 @@ gboolean multisig_nip46_connect(MultisigNip46Client *client,
   g_hash_table_replace(client->connections, g_strdup(npub), conn);
 
   /* Create NIP-46 client session */
-  NostrNip46ClientCallbacks cbs = {
-    .response_cb = nip46_response_cb,
-    .user_data = conn
-  };
-
-  conn->session = nostr_nip46_client_new(&cbs);
+  conn->session = nostr_nip46_client_new();
   if (!conn->session) {
     set_connection_state(client, conn, REMOTE_SIGNER_ERROR, "Failed to create session");
     g_free(secret);
@@ -307,11 +302,13 @@ gboolean multisig_nip46_connect(MultisigNip46Client *client,
     return FALSE;
   }
 
-  /* Initiate connection */
+  /* Initiate connection - new API: (session, bunker_uri, perms_csv)
+   * Note: secret and our_identity_npub are embedded in the bunker URI */
+  (void)secret;
+  (void)our_identity_npub;
   int rc = nostr_nip46_client_connect(conn->session,
                                        bunker_uri,
-                                       secret,
-                                       our_identity_npub);
+                                       NULL /* permissions */);
   g_free(secret);
 
   if (rc != 0) {
@@ -376,8 +373,9 @@ gboolean multisig_nip46_request_signature(MultisigNip46Client *client,
   g_free(conn->pending_session_id);
   conn->pending_session_id = g_strdup(session_id);
 
-  /* Send sign_event request */
-  int rc = nostr_nip46_client_sign_event(conn->session, event_json);
+  /* Send sign_event request - new API has output parameter */
+  char *signed_event_json = NULL;
+  int rc = nostr_nip46_client_sign_event(conn->session, event_json, &signed_event_json);
 
   if (rc != 0) {
     g_free(conn->pending_session_id);
@@ -386,6 +384,12 @@ gboolean multisig_nip46_request_signature(MultisigNip46Client *client,
     g_set_error(error, MULTISIG_WALLET_ERROR, MULTISIG_ERR_REMOTE_FAILED,
                 "Failed to send sign request");
     return FALSE;
+  }
+
+  /* TODO: Process signed_event_json response through callbacks */
+  if (signed_event_json) {
+    g_message("multisig_nip46: got signed event from %s", signer_npub);
+    free(signed_event_json);
   }
 
   g_message("multisig_nip46: sent sign_event request to %s for session %s",

@@ -11,7 +11,7 @@
 #include "../../multisig_wallet.h"
 #include "../../multisig_coordinator.h"
 #include "../../accounts_store.h"
-#include "../../secure-mem.h"
+#include "../../secure-memory.h"
 
 #include <gtk/gtk.h>
 #include <adwaita.h>

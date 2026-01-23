@@ -309,6 +309,45 @@ gn_hsm_provider_logout(GnHsmProvider *self, guint64 slot_id)
 }
 
 /* ============================================================================
+ * Async Thread Functions (portable - no GCC statement expressions)
+ * ============================================================================ */
+
+static void
+detect_devices_thread_func(GTask *task, gpointer src, gpointer td, GCancellable *c)
+{
+  (void)td;
+  (void)c;
+  GError *error = NULL;
+  GPtrArray *devices = gn_hsm_provider_detect_devices(GN_HSM_PROVIDER(src), &error);
+  if (error)
+    g_task_return_error(task, error);
+  else
+    g_task_return_pointer(task, devices, (GDestroyNotify)g_ptr_array_unref);
+}
+
+static void
+sign_event_thread_func(GTask *task, gpointer src, gpointer td, GCancellable *c)
+{
+  (void)c;
+  gchar **p = (gchar **)td;
+  guint64 sid = g_ascii_strtoull(p[2], NULL, 10);
+  GError *error = NULL;
+  gchar *result = gn_hsm_provider_sign_event(GN_HSM_PROVIDER(src),
+                                              sid, p[0], p[1], &error);
+  if (error)
+    g_task_return_error(task, error);
+  else
+    g_task_return_pointer(task, result, g_free);
+}
+
+static gpointer
+create_hsm_manager_once(gpointer data)
+{
+  (void)data;
+  return g_object_new(GN_TYPE_HSM_MANAGER, NULL);
+}
+
+/* ============================================================================
  * Async Operations
  * ============================================================================ */
 
@@ -326,19 +365,7 @@ gn_hsm_provider_detect_devices_async(GnHsmProvider *self,
   } else {
     /* Fallback: run sync in a task */
     GTask *task = g_task_new(self, cancellable, callback, user_data);
-    g_task_run_in_thread(task, (GTaskThreadFunc)({
-      void inner(GTask *t, gpointer src, gpointer td, GCancellable *c) {
-        (void)td;
-        (void)c;
-        GError *error = NULL;
-        GPtrArray *devices = gn_hsm_provider_detect_devices(GN_HSM_PROVIDER(src), &error);
-        if (error)
-          g_task_return_error(t, error);
-        else
-          g_task_return_pointer(t, devices, (GDestroyNotify)g_ptr_array_unref);
-      }
-      inner;
-    }));
+    g_task_run_in_thread(task, detect_devices_thread_func);
     g_object_unref(task);
   }
 }
@@ -386,21 +413,7 @@ gn_hsm_provider_sign_event_async(GnHsmProvider *self,
     params[2] = g_strdup_printf("%" G_GUINT64_FORMAT, slot_id);
     g_task_set_task_data(task, params, (GDestroyNotify)g_strfreev);
 
-    g_task_run_in_thread(task, (GTaskThreadFunc)({
-      void inner(GTask *t, gpointer src, gpointer td, GCancellable *c) {
-        (void)c;
-        gchar **p = (gchar **)td;
-        guint64 sid = g_ascii_strtoull(p[2], NULL, 10);
-        GError *error = NULL;
-        gchar *result = gn_hsm_provider_sign_event(GN_HSM_PROVIDER(src),
-                                                    sid, p[0], p[1], &error);
-        if (error)
-          g_task_return_error(t, error);
-        else
-          g_task_return_pointer(t, result, g_free);
-      }
-      inner;
-    }));
+    g_task_run_in_thread(task, sign_event_thread_func);
     g_object_unref(task);
   }
 }
@@ -513,13 +526,7 @@ GnHsmManager *
 gn_hsm_manager_get_default(void)
 {
   static GOnce once = G_ONCE_INIT;
-  g_once(&once, (GThreadFunc)({
-    gpointer inner(gpointer data) {
-      (void)data;
-      return g_object_new(GN_TYPE_HSM_MANAGER, NULL);
-    }
-    inner;
-  }), NULL);
+  g_once(&once, create_hsm_manager_once, NULL);
   return GN_HSM_MANAGER(once.retval);
 }
 

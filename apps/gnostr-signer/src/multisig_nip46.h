@@ -15,6 +15,7 @@
 
 #include <glib.h>
 #include "multisig_wallet.h"
+#include "multisig_coordinator.h"
 
 G_BEGIN_DECLS
 

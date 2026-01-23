@@ -24,7 +24,8 @@
 #ifdef __APPLE__
   #include <CoreFoundation/CoreFoundation.h>
   #include <Security/Security.h>
-  #include <LocalAuthentication/LocalAuthentication.h>
+  /* Note: LocalAuthentication requires Objective-C compilation.
+   * If biometric auth is needed, implement in a separate .m file. */
 #endif
 
 #ifdef _WIN32

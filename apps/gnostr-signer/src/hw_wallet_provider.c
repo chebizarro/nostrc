@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "hw_wallet_provider.h"
+#include <stdio.h>
 #include <string.h>
 
 #ifdef GNOSTR_HAVE_HIDAPI
@@ -245,6 +246,64 @@ gn_hw_wallet_provider_sign_hash(GnHwWalletProvider *self,
                           hash, hash_len, signature_out, signature_len, error);
 }
 
+/* ============================================================================
+ * Async Thread Functions (portable - no GCC statement expressions)
+ * ============================================================================ */
+
+static void
+get_public_key_thread_func(GTask *task, gpointer src, gpointer td, GCancellable *c)
+{
+  (void)c;
+  gchar **p = (gchar **)td;
+  gboolean confirm = (p[2][0] == '1');
+  guint8 pubkey[33];
+  gsize pubkey_len = sizeof(pubkey);
+  GError *error = NULL;
+  if (gn_hw_wallet_provider_get_public_key(GN_HW_WALLET_PROVIDER(src),
+                                            p[0], p[1], pubkey, &pubkey_len,
+                                            confirm, &error)) {
+    GBytes *bytes = g_bytes_new(pubkey, pubkey_len);
+    g_task_return_pointer(task, bytes, (GDestroyNotify)g_bytes_unref);
+  } else {
+    g_task_return_error(task, error);
+  }
+}
+
+static void
+sign_hash_thread_func(GTask *task, gpointer src, gpointer td, GCancellable *c)
+{
+  (void)c;
+  gchar **p = (gchar **)td;
+  /* Decode hash from hex */
+  gsize hlen = strlen(p[2]) / 2;
+  guint8 *h = g_malloc(hlen);
+  for (gsize i = 0; i < hlen; i++) {
+    guint hi, lo;
+    sscanf(p[2] + i * 2, "%1x%1x", &hi, &lo);
+    h[i] = (hi << 4) | lo;
+  }
+
+  guint8 sig[64];
+  gsize sig_len = sizeof(sig);
+  GError *error = NULL;
+  if (gn_hw_wallet_provider_sign_hash(GN_HW_WALLET_PROVIDER(src),
+                                      p[0], p[1], h, hlen,
+                                      sig, &sig_len, &error)) {
+    GBytes *bytes = g_bytes_new(sig, sig_len);
+    g_task_return_pointer(task, bytes, (GDestroyNotify)g_bytes_unref);
+  } else {
+    g_task_return_error(task, error);
+  }
+  g_free(h);
+}
+
+static gpointer
+create_hw_wallet_manager_once(gpointer data)
+{
+  (void)data;
+  return g_object_new(GN_TYPE_HW_WALLET_MANAGER, NULL);
+}
+
 /* Async operations */
 void
 gn_hw_wallet_provider_get_public_key_async(GnHwWalletProvider *self,
@@ -272,25 +331,7 @@ gn_hw_wallet_provider_get_public_key_async(GnHwWalletProvider *self,
     params[2] = g_strdup_printf("%d", confirm_on_device ? 1 : 0);
     g_task_set_task_data(task, params, (GDestroyNotify)g_strfreev);
 
-    g_task_run_in_thread(task, (GTaskThreadFunc)({
-      void inner(GTask *t, gpointer src, gpointer td, GCancellable *c) {
-        (void)c;
-        gchar **p = (gchar **)td;
-        gboolean confirm = (p[2][0] == '1');
-        guint8 pubkey[33];
-        gsize pubkey_len = sizeof(pubkey);
-        GError *error = NULL;
-        if (gn_hw_wallet_provider_get_public_key(GN_HW_WALLET_PROVIDER(src),
-                                                  p[0], p[1], pubkey, &pubkey_len,
-                                                  confirm, &error)) {
-          GBytes *bytes = g_bytes_new(pubkey, pubkey_len);
-          g_task_return_pointer(t, bytes, (GDestroyNotify)g_bytes_unref);
-        } else {
-          g_task_return_error(t, error);
-        }
-      }
-      inner;
-    }));
+    g_task_run_in_thread(task, get_public_key_thread_func);
     g_object_unref(task);
   }
 }
@@ -360,34 +401,7 @@ gn_hw_wallet_provider_sign_hash_async(GnHwWalletProvider *self,
     params[3] = NULL;
     g_task_set_task_data(task, params, (GDestroyNotify)g_strfreev);
 
-    g_task_run_in_thread(task, (GTaskThreadFunc)({
-      void inner(GTask *t, gpointer src, gpointer td, GCancellable *c) {
-        (void)c;
-        gchar **p = (gchar **)td;
-        /* Decode hash from hex */
-        gsize hlen = strlen(p[2]) / 2;
-        guint8 *h = g_malloc(hlen);
-        for (gsize i = 0; i < hlen; i++) {
-          guint hi, lo;
-          sscanf(p[2] + i * 2, "%1x%1x", &hi, &lo);
-          h[i] = (hi << 4) | lo;
-        }
-
-        guint8 sig[64];
-        gsize sig_len = sizeof(sig);
-        GError *error = NULL;
-        if (gn_hw_wallet_provider_sign_hash(GN_HW_WALLET_PROVIDER(src),
-                                            p[0], p[1], h, hlen,
-                                            sig, &sig_len, &error)) {
-          GBytes *bytes = g_bytes_new(sig, sig_len);
-          g_task_return_pointer(t, bytes, (GDestroyNotify)g_bytes_unref);
-        } else {
-          g_task_return_error(t, error);
-        }
-        g_free(h);
-      }
-      inner;
-    }));
+    g_task_run_in_thread(task, sign_hash_thread_func);
     g_object_unref(task);
   }
 }
@@ -564,13 +578,7 @@ GnHwWalletManager *
 gn_hw_wallet_manager_get_default(void)
 {
   static GOnce once = G_ONCE_INIT;
-  g_once(&once, (GThreadFunc)({
-    gpointer inner(gpointer data) {
-      (void)data;
-      return g_object_new(GN_TYPE_HW_WALLET_MANAGER, NULL);
-    }
-    inner;
-  }), NULL);
+  g_once(&once, create_hw_wallet_manager_once, NULL);
   return GN_HW_WALLET_MANAGER(once.retval);
 }
 
