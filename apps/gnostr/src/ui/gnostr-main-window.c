@@ -3739,12 +3739,13 @@ static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
     gn_nostr_event_model_flush_pending(self->event_model);
   }
 
-  /* nostrc-9f4: Defer scroll to idle to avoid GTK4 ListView crash.
-   * The model flush schedules items_changed via g_idle_add, so we need to
-   * scroll AFTER that emission completes. Using g_idle_add_full with lower
-   * priority ensures our scroll runs after the model's default-priority idle.
-   * We ref the window to ensure it stays valid until the idle runs. */
-  g_idle_add_full(G_PRIORITY_LOW, scroll_to_top_idle, g_object_ref(self), NULL);
+  /* nostrc-9f4: Defer scroll using timeout to avoid GTK4 ListView crash.
+   * When flush_pending is called synchronously, GTK's internal ListView
+   * processing (tile management, widget recycling) continues asynchronously.
+   * Using a timeout instead of idle ensures GTK has multiple main loop
+   * iterations to complete its internal updates before we scroll.
+   * We ref the window to ensure it stays valid until the timeout fires. */
+  g_timeout_add(50, scroll_to_top_idle, g_object_ref(self));
 
   /* Hide indicator */
   if (self->new_notes_revealer && GTK_IS_REVEALER(self->new_notes_revealer)) {
