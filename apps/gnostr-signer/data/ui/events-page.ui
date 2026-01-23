@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="EventsPage" parent="AdwBin">
+    <child>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="title-widget">
+              <object class="AdwWindowTitle">
+                <property name="title" translatable="yes">Recent Events</property>
+              </object>
+            </property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkStack" id="stack">
+            <property name="transition-type">crossfade</property>
+            <property name="vexpand">true</property>
+            <property name="hexpand">true</property>
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">empty</property>
+                <property name="child">
+                  <object class="AdwStatusPage" id="empty_state">
+                    <property name="icon-name">document-open-recent-symbolic</property>
+                    <property name="title" translatable="yes">No Recent Events</property>
+                    <property name="description" translatable="yes">Signed events will appear here when applications request signatures through the signer.</property>
+                    <property name="vexpand">true</property>
+                    <property name="valign">center</property>
+                  </object>
+                </property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">list</property>
+                <property name="child">
+                  <object class="GtkScrolledWindow">
+                    <property name="hscrollbar-policy">never</property>
+                    <property name="vexpand">true</property>
+                    <property name="hexpand">true</property>
+                    <child>
+                      <object class="AdwClamp">
+                        <property name="maximum-size">600</property>
+                        <property name="tightening-threshold">400</property>
+                        <child>
+                          <object class="GtkListView" id="list_view">
+                            <property name="single-click-activate">true</property>
+                            <style>
+                              <class name="navigation-sidebar"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

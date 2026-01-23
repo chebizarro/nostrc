@@ -7,17 +7,21 @@
     <file preprocess="xml-stripblanks">ui/page-permissions.ui</file>
     <file preprocess="xml-stripblanks">ui/page-applications.ui</file>
     <file preprocess="xml-stripblanks">ui/page-settings.ui</file>
+    <file preprocess="xml-stripblanks">ui/events-page.ui</file>
     <file preprocess="xml-stripblanks">ui/sheets/sheet-select-account.ui</file>
     <file preprocess="xml-stripblanks">ui/sheets/sheet-account-backup.ui</file>
     <file preprocess="xml-stripblanks">ui/sheets/sheet-add-application.ui</file>
     <file preprocess="xml-stripblanks">ui/sheets/sheet-create-bunker.ui</file>
     <file preprocess="xml-stripblanks">ui/sheets/sheet-orbot-setup.ui</file>
     <file preprocess="xml-stripblanks">ui/sheets/sheet-import-key.ui</file>
+    <file preprocess="xml-stripblanks">ui/sheets/sheet-create-profile.ui</file>
     <file preprocess="xml-stripblanks">ui/sheets/sheet-profile-editor.ui</file>
     <file preprocess="xml-stripblanks">ui/sheets/sheet-relay-config.ui</file>
     <file preprocess="xml-stripblanks">ui/sheets/sheet-user-list.ui</file>
+    <file preprocess="xml-stripblanks">ui/sheets/sheet-event-details.ui</file>
     <file preprocess="xml-stripblanks">ui/widgets/app-row.ui</file>
     <file preprocess="xml-stripblanks">ui/widgets/identity-row.ui</file>
     <file preprocess="xml-stripblanks">ui/widgets/relay-row.ui</file>
+    <file preprocess="xml-stripblanks">ui/approval-dialog.ui</file>
   </gresource>
 </gresources>

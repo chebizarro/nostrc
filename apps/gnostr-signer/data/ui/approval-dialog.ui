@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="GnostrApprovalDialog" parent="AdwDialog">
+    <property name="title" translatable="yes">Approval Required</property>
+    <property name="content-width">480</property>
+    <property name="content-height">-1</property>
+    <child>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="title-widget">
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <property name="halign">center</property>
+                <child>
+                  <object class="GtkImage" id="header_icon">
+                    <property name="icon-name">dialog-question-symbolic</property>
+                    <property name="pixel-size">24</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="header_title">
+                    <property name="label" translatable="yes">Signature Request</property>
+                    <attributes>
+                      <attribute name="weight" value="bold"/>
+                    </attributes>
+                  </object>
+                </child>
+              </object>
+            </property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="spacing">16</property>
+            <property name="margin-top">16</property>
+            <property name="margin-bottom">16</property>
+            <property name="margin-start">16</property>
+            <property name="margin-end">16</property>
+
+            <!-- Event Metadata Section -->
+            <child>
+              <object class="GtkListBox" id="metadata_list">
+                <property name="selection-mode">none</property>
+                <style>
+                  <class name="boxed-list"/>
+                </style>
+                <child>
+                  <object class="AdwActionRow" id="row_event_type">
+                    <property name="title" translatable="yes">Event Type</property>
+                    <property name="subtitle" translatable="yes">Unknown</property>
+                    <child type="prefix">
+                      <object class="GtkImage" id="event_type_icon">
+                        <property name="icon-name">mail-unread-symbolic</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwActionRow" id="row_app">
+                    <property name="title" translatable="yes">From App</property>
+                    <property name="subtitle" translatable="yes">Unknown Application</property>
+                    <child type="prefix">
+                      <object class="GtkImage">
+                        <property name="icon-name">application-x-executable-symbolic</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwActionRow" id="row_identity">
+                    <property name="title" translatable="yes">Identity</property>
+                    <property name="subtitle" translatable="yes">npub...</property>
+                    <child type="prefix">
+                      <object class="GtkImage">
+                        <property name="icon-name">avatar-default-symbolic</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwActionRow" id="row_timestamp">
+                    <property name="title" translatable="yes">Timestamp</property>
+                    <property name="subtitle" translatable="yes">Now</property>
+                    <child type="prefix">
+                      <object class="GtkImage">
+                        <property name="icon-name">preferences-system-time-symbolic</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Event Content Preview -->
+            <child>
+              <object class="GtkFrame" id="content_frame">
+                <property name="label" translatable="yes">Content Preview</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">8</property>
+                    <property name="margin-top">8</property>
+                    <property name="margin-bottom">8</property>
+                    <property name="margin-start">8</property>
+                    <property name="margin-end">8</property>
+                    <child>
+                      <object class="GtkLabel" id="content_preview">
+                        <property name="wrap">true</property>
+                        <property name="wrap-mode">word-char</property>
+                        <property name="xalign">0</property>
+                        <property name="max-width-chars">60</property>
+                        <property name="ellipsize">end</property>
+                        <property name="lines">3</property>
+                        <style>
+                          <class name="monospace"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_expand">
+                        <property name="label" translatable="yes">Show More</property>
+                        <property name="halign">start</property>
+                        <property name="visible">false</property>
+                        <style>
+                          <class name="flat"/>
+                          <class name="link"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Identity Selector (when multiple accounts available) -->
+            <child>
+              <object class="GtkBox" id="identity_selector_box">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">12</property>
+                <property name="visible">false</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Sign as:</property>
+                    <property name="halign">start</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkDropDown" id="identity_dropdown">
+                    <property name="hexpand">true</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Remember preference row -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="GtkCheckButton" id="chk_remember">
+                    <property name="label" translatable="yes">Remember this decision</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkDropDown" id="ttl_dropdown">
+                    <property name="sensitive">false</property>
+                    <property name="halign">end</property>
+                    <property name="hexpand">true</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Action Buttons -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">12</property>
+                <property name="homogeneous">true</property>
+                <property name="margin-top">8</property>
+                <child>
+                  <object class="GtkButton" id="btn_deny">
+                    <property name="label" translatable="yes">Deny</property>
+                    <property name="hexpand">true</property>
+                    <style>
+                      <class name="destructive-action"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_approve">
+                    <property name="label" translatable="yes">Approve</property>
+                    <property name="hexpand">true</property>
+                    <style>
+                      <class name="suggested-action"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

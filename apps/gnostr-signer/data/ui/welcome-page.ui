@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="WelcomePage" parent="AdwBin">
+    <child>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="show-title">false</property>
+            <child type="end">
+              <object class="GtkButton" id="btn_settings">
+                <property name="icon-name">emblem-system-symbolic</property>
+                <property name="tooltip-text" translatable="yes">Settings</property>
+                <property name="valign">center</property>
+                <style>
+                  <class name="flat"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwStatusPage">
+            <property name="icon-name">security-high-symbolic</property>
+            <property name="title" translatable="yes">Welcome to GNostr Signer</property>
+            <property name="description" translatable="yes">Your secure key manager for Nostr. Keep your private keys safe while signing events for connected applications.</property>
+            <property name="vexpand">true</property>
+            <property name="valign">center</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <property name="halign">center</property>
+                <property name="margin-top">24</property>
+                <child>
+                  <object class="GtkButton" id="btn_create_profile">
+                    <property name="label" translatable="yes">Create New Profile</property>
+                    <property name="halign">center</property>
+                    <property name="width-request">240</property>
+                    <style>
+                      <class name="suggested-action"/>
+                      <class name="pill"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_import_profile">
+                    <property name="label" translatable="yes">Import Existing Profile</property>
+                    <property name="halign">center</property>
+                    <property name="width-request">240</property>
+                    <style>
+                      <class name="pill"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

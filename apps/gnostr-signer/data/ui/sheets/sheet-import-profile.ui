@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="SheetImportProfile" parent="AdwDialog">
+    <property name="title" translatable="yes">Import Profile</property>
+    <property name="content-width">520</property>
+    <property name="content-height">680</property>
+    <child>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="title-widget">
+              <object class="GtkLabel">
+                <property name="label" translatable="yes">Import Profile</property>
+              </object>
+            </property>
+            <child type="start">
+              <object class="GtkButton" id="btn_cancel">
+                <property name="label" translatable="yes">Cancel</property>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkButton" id="btn_import">
+                <property name="label" translatable="yes">Import</property>
+                <property name="tooltip-text" translatable="yes">Import the profile using the selected method</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vexpand">true</property>
+            <child>
+              <object class="AdwClamp">
+                <property name="maximum-size">500</property>
+                <property name="margin-top">16</property>
+                <property name="margin-bottom">16</property>
+                <property name="margin-start">16</property>
+                <property name="margin-end">16</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">16</property>
+
+                    <!-- Introduction text -->
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="wrap">true</property>
+                        <property name="xalign">0</property>
+                        <property name="label" translatable="yes">Import an existing Nostr profile using one of the methods below. Your private key will be stored securely.</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+
+                    <!-- Import Method Selection Group -->
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Import Method</property>
+
+                        <!-- NIP-49 Encrypted Backup -->
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">NIP-49 Encrypted Backup</property>
+                            <property name="subtitle" translatable="yes">Import from an ncryptsec backup string</property>
+                            <child type="prefix">
+                              <object class="GtkCheckButton" id="radio_nip49">
+                                <property name="valign">center</property>
+                                <property name="active">true</property>
+                              </object>
+                            </child>
+                            <property name="activatable-widget">radio_nip49</property>
+                          </object>
+                        </child>
+
+                        <!-- Mnemonic Seed Phrase -->
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Mnemonic Seed Phrase</property>
+                            <property name="subtitle" translatable="yes">Import from a 12 or 24 word recovery phrase</property>
+                            <child type="prefix">
+                              <object class="GtkCheckButton" id="radio_mnemonic">
+                                <property name="valign">center</property>
+                                <property name="group">radio_nip49</property>
+                              </object>
+                            </child>
+                            <property name="activatable-widget">radio_mnemonic</property>
+                          </object>
+                        </child>
+
+                        <!-- Hardware Device -->
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">External Hardware Device</property>
+                            <property name="subtitle" translatable="yes">Import from a hardware security key (coming soon)</property>
+                            <child type="prefix">
+                              <object class="GtkCheckButton" id="radio_hardware">
+                                <property name="valign">center</property>
+                                <property name="group">radio_nip49</property>
+                              </object>
+                            </child>
+                            <property name="activatable-widget">radio_hardware</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- NIP-49 Input Section -->
+                    <child>
+                      <object class="GtkBox" id="box_nip49">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">12</property>
+                        <child>
+                          <object class="AdwPreferencesGroup">
+                            <property name="title" translatable="yes">Encrypted Backup</property>
+                            <property name="description" translatable="yes">Paste your ncryptsec1... backup string below</property>
+                            <child>
+                              <object class="GtkFrame">
+                                <property name="margin-top">8</property>
+                                <child>
+                                  <object class="GtkScrolledWindow">
+                                    <property name="min-content-height">100</property>
+                                    <property name="max-content-height">150</property>
+                                    <child>
+                                      <object class="GtkTextView" id="text_ncryptsec">
+                                        <property name="wrap-mode">word-char</property>
+                                        <property name="accepts-tab">false</property>
+                                        <property name="top-margin">8</property>
+                                        <property name="bottom-margin">8</property>
+                                        <property name="left-margin">8</property>
+                                        <property name="right-margin">8</property>
+                                        <property name="monospace">true</property>
+                                        <style>
+                                          <class name="view"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Mnemonic Input Section -->
+                    <child>
+                      <object class="GtkBox" id="box_mnemonic">
+                        <property name="visible">false</property>
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">12</property>
+                        <child>
+                          <object class="AdwPreferencesGroup">
+                            <property name="title" translatable="yes">Seed Phrase</property>
+                            <property name="description" translatable="yes">Enter your recovery words separated by spaces</property>
+
+                            <!-- Word count selector -->
+                            <child>
+                              <object class="AdwComboRow">
+                                <property name="title" translatable="yes">Word Count</property>
+                                <property name="model">
+                                  <object class="GtkStringList">
+                                    <items>
+                                      <item translatable="yes">12 words</item>
+                                      <item translatable="yes">24 words</item>
+                                    </items>
+                                  </object>
+                                </property>
+                                <child>
+                                  <object class="GtkDropDown" id="dropdown_word_count">
+                                    <property name="visible">false</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Mnemonic text area -->
+                            <child>
+                              <object class="GtkFrame">
+                                <property name="margin-top">8</property>
+                                <child>
+                                  <object class="GtkScrolledWindow">
+                                    <property name="min-content-height">100</property>
+                                    <property name="max-content-height">150</property>
+                                    <child>
+                                      <object class="GtkTextView" id="text_mnemonic">
+                                        <property name="wrap-mode">word</property>
+                                        <property name="accepts-tab">false</property>
+                                        <property name="top-margin">8</property>
+                                        <property name="bottom-margin">8</property>
+                                        <property name="left-margin">8</property>
+                                        <property name="right-margin">8</property>
+                                        <style>
+                                          <class name="view"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Hardware Device Section (Placeholder) -->
+                    <child>
+                      <object class="GtkBox" id="box_hardware">
+                        <property name="visible">false</property>
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">12</property>
+                        <child>
+                          <object class="AdwPreferencesGroup">
+                            <property name="title" translatable="yes">Hardware Device</property>
+                            <child>
+                              <object class="AdwStatusPage">
+                                <property name="icon-name">security-high-symbolic</property>
+                                <property name="title" translatable="yes">Coming Soon</property>
+                                <property name="description" translatable="yes">Hardware device support is not yet available. This feature will allow you to import keys from hardware security devices like YubiKey.</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Passphrase Section (shared for NIP-49 and Mnemonic) -->
+                    <child>
+                      <object class="GtkBox" id="box_passphrase">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">12</property>
+                        <child>
+                          <object class="AdwPreferencesGroup">
+                            <property name="title" translatable="yes">Decryption</property>
+                            <property name="description" translatable="yes">Enter the passphrase used to protect your backup</property>
+                            <child>
+                              <object class="AdwPasswordEntryRow" id="entry_passphrase">
+                                <property name="title" translatable="yes">Passphrase</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Status/Progress indicator -->
+                    <child>
+                      <object class="GtkBox" id="box_status">
+                        <property name="visible">false</property>
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <property name="halign">center</property>
+                        <property name="margin-top">8</property>
+                        <child>
+                          <object class="GtkSpinner" id="spinner_status">
+                            <property name="spinning">false</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="lbl_status">
+                            <property name="label" translatable="yes">Importing profile...</property>
+                            <style>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

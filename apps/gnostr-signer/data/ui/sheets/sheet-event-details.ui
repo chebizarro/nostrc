@@ -1,0 +1,273 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="SheetEventDetails" parent="AdwDialog">
+    <property name="title" translatable="yes">Event Details</property>
+    <property name="content-width">520</property>
+    <property name="content-height">640</property>
+    <child>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="title-widget">
+              <object class="GtkLabel">
+                <property name="label" translatable="yes">Event Details</property>
+              </object>
+            </property>
+            <child type="start">
+              <object class="GtkButton" id="btn_close">
+                <property name="label" translatable="yes">Close</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vexpand">true</property>
+            <child>
+              <object class="AdwClamp">
+                <property name="maximum-size">600</property>
+                <property name="margin-top">16</property>
+                <property name="margin-bottom">16</property>
+                <property name="margin-start">16</property>
+                <property name="margin-end">16</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">16</property>
+
+                    <!-- Event Type Group -->
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Event Type</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">12</property>
+                            <property name="margin-top">8</property>
+                            <property name="margin-bottom">8</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Kind:</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="lbl_kind">
+                                <property name="label">0</property>
+                                <style>
+                                  <class name="monospace"/>
+                                  <class name="title-3"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="lbl_kind_name">
+                                <property name="label" translatable="yes">Metadata</property>
+                                <property name="hexpand">true</property>
+                                <property name="xalign">0</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Date/Time Group -->
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Date/Time</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">8</property>
+                            <property name="margin-top">8</property>
+                            <property name="margin-bottom">8</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">appointment-symbolic</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="lbl_datetime">
+                                <property name="label">2024-01-01 12:00:00</property>
+                                <property name="selectable">true</property>
+                                <style>
+                                  <class name="monospace"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Identifiers Group -->
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Identifiers</property>
+                        <property name="description" translatable="yes">Click copy buttons to copy full values</property>
+
+                        <!-- Public Key Row -->
+                        <child>
+                          <object class="AdwActionRow" id="row_pubkey">
+                            <property name="title" translatable="yes">Public Key</property>
+                            <property name="subtitle">npub1...</property>
+                            <property name="subtitle-selectable">true</property>
+                            <style>
+                              <class name="property"/>
+                            </style>
+                            <child type="suffix">
+                              <object class="GtkButton" id="btn_copy_pubkey">
+                                <property name="icon-name">edit-copy-symbolic</property>
+                                <property name="tooltip-text" translatable="yes">Copy public key to clipboard</property>
+                                <property name="valign">center</property>
+                                <style>
+                                  <class name="flat"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                        <!-- Event ID Row -->
+                        <child>
+                          <object class="AdwActionRow" id="row_event_id">
+                            <property name="title" translatable="yes">Event ID</property>
+                            <property name="subtitle">note1...</property>
+                            <property name="subtitle-selectable">true</property>
+                            <style>
+                              <class name="property"/>
+                            </style>
+                            <child type="suffix">
+                              <object class="GtkButton" id="btn_copy_event_id">
+                                <property name="icon-name">edit-copy-symbolic</property>
+                                <property name="tooltip-text" translatable="yes">Copy event ID to clipboard</property>
+                                <property name="valign">center</property>
+                                <style>
+                                  <class name="flat"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                        <!-- Signature Row -->
+                        <child>
+                          <object class="AdwActionRow" id="row_signature">
+                            <property name="title" translatable="yes">Signature</property>
+                            <property name="subtitle">sig...</property>
+                            <property name="subtitle-selectable">true</property>
+                            <style>
+                              <class name="property"/>
+                            </style>
+                            <child type="suffix">
+                              <object class="GtkButton" id="btn_copy_signature">
+                                <property name="icon-name">edit-copy-symbolic</property>
+                                <property name="tooltip-text" translatable="yes">Copy signature to clipboard</property>
+                                <property name="valign">center</property>
+                                <style>
+                                  <class name="flat"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Content Expander -->
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Content</property>
+                        <child>
+                          <object class="GtkExpander" id="expander_content">
+                            <property name="label" translatable="yes">Show Content</property>
+                            <property name="margin-top">8</property>
+                            <property name="margin-bottom">8</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <child>
+                              <object class="GtkScrolledWindow">
+                                <property name="hscrollbar-policy">automatic</property>
+                                <property name="vscrollbar-policy">automatic</property>
+                                <property name="min-content-height">60</property>
+                                <property name="max-content-height">200</property>
+                                <property name="margin-top">8</property>
+                                <child>
+                                  <object class="GtkLabel" id="lbl_content">
+                                    <property name="label">(empty)</property>
+                                    <property name="wrap">true</property>
+                                    <property name="wrap-mode">word-char</property>
+                                    <property name="selectable">true</property>
+                                    <property name="xalign">0</property>
+                                    <property name="yalign">0</property>
+                                    <style>
+                                      <class name="monospace"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Tags Expander -->
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Tags</property>
+                        <child>
+                          <object class="GtkExpander" id="expander_tags">
+                            <property name="label" translatable="yes">Show Tags</property>
+                            <property name="margin-top">8</property>
+                            <property name="margin-bottom">8</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <child>
+                              <object class="GtkScrolledWindow">
+                                <property name="hscrollbar-policy">never</property>
+                                <property name="vscrollbar-policy">automatic</property>
+                                <property name="min-content-height">60</property>
+                                <property name="max-content-height">200</property>
+                                <property name="margin-top">8</property>
+                                <child>
+                                  <object class="GtkListBox" id="list_tags">
+                                    <property name="selection-mode">none</property>
+                                    <style>
+                                      <class name="boxed-list"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>
