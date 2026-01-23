@@ -122,9 +122,64 @@ set_tests_properties(signer/session PROPERTIES
 )
 
 # ==============================================================================
+# Test: NIP-46 Bunker service (remote signing)
+# ==============================================================================
+add_executable(test-bunker test-bunker.c)
+target_include_directories(test-bunker PRIVATE ${SIGNER_INCLUDE_DIRS})
+target_link_libraries(test-bunker PRIVATE ${SIGNER_TEST_LIBS})
+target_link_directories(test-bunker PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_compile_features(test-bunker PRIVATE c_std_11)
+apply_test_sanitizers(test-bunker)
+
+add_test(NAME signer/bunker COMMAND test-bunker)
+set_tests_properties(signer/bunker PROPERTIES
+    TIMEOUT 30
+    LABELS "signer;bunker;nip46;unit"
+)
+
+# ==============================================================================
+# Test: D-Bus interface integration tests
+# Uses GTestDBus for isolated session bus testing
+# Issue: nostrc-991
+# ==============================================================================
+add_executable(test-dbus test-dbus.c)
+target_include_directories(test-dbus PRIVATE ${SIGNER_INCLUDE_DIRS})
+target_link_libraries(test-dbus PRIVATE ${SIGNER_TEST_LIBS})
+target_link_directories(test-dbus PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_compile_features(test-dbus PRIVATE c_std_11)
+apply_test_sanitizers(test-dbus)
+
+add_test(NAME signer/dbus COMMAND test-dbus)
+set_tests_properties(signer/dbus PROPERTIES
+    TIMEOUT 120
+    LABELS "signer;dbus;integration"
+    ENVIRONMENT "GSETTINGS_BACKEND=memory;G_DEBUG=fatal-warnings"
+)
+
+# ==============================================================================
+# Test: Rate limiter (brute force attack prevention)
+# Issue: nostrc-1g1
+# ==============================================================================
+add_executable(test-rate-limiter
+    test-rate-limiter.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/rate-limiter.c
+)
+target_include_directories(test-rate-limiter PRIVATE ${SIGNER_INCLUDE_DIRS})
+target_link_libraries(test-rate-limiter PRIVATE ${SIGNER_TEST_LIBS})
+target_link_directories(test-rate-limiter PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_compile_features(test-rate-limiter PRIVATE c_std_11)
+apply_test_sanitizers(test-rate-limiter)
+
+add_test(NAME signer/rate-limiter COMMAND test-rate-limiter)
+set_tests_properties(signer/rate-limiter PROPERTIES
+    TIMEOUT 30
+    LABELS "signer;rate-limiter;security;unit"
+)
+
+# ==============================================================================
 # All signer tests target (convenience)
 # ==============================================================================
 add_custom_target(signer-tests
-    DEPENDS test-crypto test-identity test-session
+    DEPENDS test-crypto test-identity test-session test-bunker test-dbus test-rate-limiter
     COMMENT "Building all gnostr-signer tests"
 )
