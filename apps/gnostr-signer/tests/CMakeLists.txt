@@ -86,6 +86,7 @@ add_test(NAME signer/crypto COMMAND test-crypto)
 set_tests_properties(signer/crypto PROPERTIES
     TIMEOUT 60
     LABELS "signer;crypto;unit"
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr-signer"
 )
 
 # ==============================================================================
@@ -102,6 +103,7 @@ add_test(NAME signer/identity COMMAND test-identity)
 set_tests_properties(signer/identity PROPERTIES
     TIMEOUT 30
     LABELS "signer;identity;unit"
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr-signer"
 )
 
 # ==============================================================================
@@ -118,7 +120,7 @@ add_test(NAME signer/session COMMAND test-session)
 set_tests_properties(signer/session PROPERTIES
     TIMEOUT 30
     LABELS "signer;session;unit"
-    ENVIRONMENT "GSETTINGS_BACKEND=memory"
+    ENVIRONMENT "GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr-signer"
 )
 
 # ==============================================================================
@@ -135,6 +137,7 @@ add_test(NAME signer/bunker COMMAND test-bunker)
 set_tests_properties(signer/bunker PROPERTIES
     TIMEOUT 30
     LABELS "signer;bunker;nip46;unit"
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr-signer"
 )
 
 # ==============================================================================
@@ -153,7 +156,7 @@ add_test(NAME signer/dbus COMMAND test-dbus)
 set_tests_properties(signer/dbus PROPERTIES
     TIMEOUT 120
     LABELS "signer;dbus;integration"
-    ENVIRONMENT "GSETTINGS_BACKEND=memory;G_DEBUG=fatal-warnings"
+    ENVIRONMENT "GSETTINGS_BACKEND=memory;G_DEBUG=fatal-warnings;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr-signer"
 )
 
 # ==============================================================================
@@ -174,6 +177,7 @@ add_test(NAME signer/rate-limiter COMMAND test-rate-limiter)
 set_tests_properties(signer/rate-limiter PROPERTIES
     TIMEOUT 30
     LABELS "signer;rate-limiter;security;unit"
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr-signer"
 )
 
 # ==============================================================================

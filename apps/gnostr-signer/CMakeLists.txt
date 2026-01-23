@@ -147,13 +147,26 @@ if (ENABLE_TCP_IPC)
 endif()
 
 # Compile GSettings schema for development/testing
-add_custom_target(gnostr-signer-schemas ALL
-  COMMAND ${CMAKE_COMMAND} -E copy
-    ${CMAKE_CURRENT_SOURCE_DIR}/data/org.gnostr.Signer.gschema.xml
-    ${CMAKE_CURRENT_BINARY_DIR}/org.gnostr.Signer.gschema.xml
-  COMMAND glib-compile-schemas ${CMAKE_CURRENT_BINARY_DIR}
-  COMMENT "Compiling GSettings schemas for gnostr-signer"
-  VERBATIM)
+set(SIGNER_SCHEMA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/data)
+set(SIGNER_SCHEMA_FILE ${SIGNER_SCHEMA_DIR}/org.gnostr.Signer.gschema.xml)
+set(SIGNER_SCHEMA_OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/gschemas.compiled)
+
+find_program(GLIB_COMPILE_SCHEMAS glib-compile-schemas)
+if(GLIB_COMPILE_SCHEMAS)
+  add_custom_command(
+    OUTPUT ${SIGNER_SCHEMA_OUTPUT}
+    COMMAND ${GLIB_COMPILE_SCHEMAS}
+            ${SIGNER_SCHEMA_DIR}
+            --targetdir=${CMAKE_CURRENT_BINARY_DIR}
+    DEPENDS ${SIGNER_SCHEMA_FILE}
+    COMMENT "Compiling GSettings schemas for gnostr-signer"
+    VERBATIM
+  )
+  add_custom_target(gnostr-signer-schemas ALL DEPENDS ${SIGNER_SCHEMA_OUTPUT})
+  add_dependencies(${APP_SIGNER_BIN} gnostr-signer-schemas)
+else()
+  message(WARNING "glib-compile-schemas not found - GSettings schemas will not be compiled")
+endif()
 
 # Data install (schemas, dbus, desktop)
 install(TARGETS ${APP_SIGNER_BIN} gnostr-signer-daemon RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
