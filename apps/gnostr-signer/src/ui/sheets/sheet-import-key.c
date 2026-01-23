@@ -185,12 +185,9 @@ static void on_scan_qr(GtkButton *b, gpointer user_data) {
   SheetQrScanner *scanner = sheet_qr_scanner_new();
   sheet_qr_scanner_set_on_success(scanner, on_qr_scan_success, self);
 
-  GtkWidget *parent = gtk_widget_get_root(GTK_WIDGET(self));
-  if (parent && ADW_IS_DIALOG(parent)) {
-    adw_dialog_present(ADW_DIALOG(scanner), parent);
-  } else {
-    adw_dialog_present(ADW_DIALOG(scanner), GTK_WIDGET(self));
-  }
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  GtkWidget *parent = root ? GTK_WIDGET(root) : GTK_WIDGET(self);
+  adw_dialog_present(ADW_DIALOG(scanner), parent);
 }
 
 static void on_ok(GtkButton *b, gpointer user_data){
