@@ -1532,8 +1532,12 @@ static void settings_dialog_setup_display_panel(SettingsDialogCtx *ctx) {
 static void settings_dialog_setup_account_panel(SettingsDialogCtx *ctx) {
   if (!ctx || !ctx->builder || !ctx->main_window) return;
 
-  gboolean is_logged_in = (ctx->main_window->user_pubkey_hex != NULL &&
-                           ctx->main_window->user_pubkey_hex[0] != '\0');
+  /* Check login state from GSettings for consistency with update_login_ui_state() */
+  GSettings *acct_settings = g_settings_new("org.gnostr.Client");
+  char *acct_npub = acct_settings ? g_settings_get_string(acct_settings, "current-npub") : NULL;
+  gboolean is_logged_in = (acct_npub && *acct_npub);
+  g_free(acct_npub);
+  if (acct_settings) g_object_unref(acct_settings);
 
   /* Toggle login required / account content visibility */
   GtkWidget *account_login_required = GTK_WIDGET(gtk_builder_get_object(ctx->builder, "account_login_required"));
@@ -2278,8 +2282,14 @@ static void on_settings_clicked(GtkButton *btn, gpointer user_data) {
   ctx->builder = builder;
   ctx->main_window = self;
 
-  /* Check if user is logged in and update mute list visibility */
-  gboolean is_logged_in = (self->user_pubkey_hex != NULL && self->user_pubkey_hex[0] != '\0');
+  /* Check if user is logged in and update mute list visibility.
+   * Use GSettings directly for consistency with update_login_ui_state() */
+  GSettings *mute_settings = g_settings_new("org.gnostr.Client");
+  char *mute_npub = mute_settings ? g_settings_get_string(mute_settings, "current-npub") : NULL;
+  gboolean is_logged_in = (mute_npub && *mute_npub);
+  g_free(mute_npub);
+  if (mute_settings) g_object_unref(mute_settings);
+
   GtkWidget *mute_login_required = GTK_WIDGET(gtk_builder_get_object(builder, "mute_login_required"));
   GtkWidget *mute_content = GTK_WIDGET(gtk_builder_get_object(builder, "mute_content"));
   if (mute_login_required) gtk_widget_set_visible(mute_login_required, !is_logged_in);
