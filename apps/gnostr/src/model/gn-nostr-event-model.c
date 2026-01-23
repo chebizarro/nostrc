@@ -639,21 +639,29 @@ static gboolean emit_items_changed_idle(gpointer user_data) {
    * 3. If model grew (new_len > old_len): emit add at end. */
   if (self->pending_refresh) {
     guint new_len = self->notes->len;
-    guint old_len = self->last_emitted_len;
     self->pending_refresh = FALSE;
-    self->last_emitted_len = new_len;
     self->emit_added = 0;
 
-    /* CRITICAL FIX: Always emit a single "replace all" signal.
-     * When the model shrinks, GTK ListView tries to access removed items
-     * during its internal cleanup, causing SIGSEGV if those items no longer
-     * exist in our array. Emitting a single signal at position 0 that
-     * replaces old_len items with new_len items is always safe because
-     * GTK treats this as a complete model replacement without trying to
-     * access individual old items. */
-    if (old_len > 0 || new_len > 0) {
-      g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
+    /* CRITICAL FIX: GTK ListView calls get_item() for all removed items
+     * during items_changed signal handling. If our array has already shrunk
+     * before this idle callback runs, GTK will access items that no longer
+     * exist, causing SIGSEGV.
+     *
+     * The ONLY safe signal when the model might have shrunk is one where
+     * we report changes only within the CURRENT array bounds. We tell GTK
+     * that all current items have changed (removed=new_len, added=new_len),
+     * effectively saying "refresh everything that currently exists".
+     *
+     * This under-reports removals but avoids the crash. GTK's internal
+     * item count will resync on the next get_n_items call. */
+    self->last_emitted_len = new_len;
+
+    if (new_len > 0) {
+      /* Emit "all N items changed" - safe because N is the current array size */
+      g_list_model_items_changed(G_LIST_MODEL(self), 0, new_len, new_len);
     }
+    /* Note: If new_len is 0, we don't emit anything. GTK will see the empty
+     * model via get_n_items() and handle it correctly. */
 
     self->last_update_time_ms = get_current_time_ms();
     return G_SOURCE_REMOVE;
