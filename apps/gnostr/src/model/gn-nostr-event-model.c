@@ -747,12 +747,18 @@ static void end_batch(GnNostrEventModel *self) {
   self->in_batch = FALSE;
 
   guint new_len = self->notes->len;
-  guint old_len = self->batch_start_len;
+  /* CRITICAL: Use last_emitted_len (what GTK thinks the length is), NOT batch_start_len.
+   * If items were added before batch started but idle hadn't fired yet, batch_start_len
+   * could be larger than last_emitted_len. Using batch_start_len would tell GTK to
+   * release tiles for items it never knew about, causing the "tile != NULL" assertion
+   * crash in gtk_list_item_manager_release_items. */
+  guint old_len = self->last_emitted_len;
 
   if (new_len != old_len) {
     /* Emit full model refresh: "old_len items at position 0 replaced with new_len items"
      * This is the only correct signal when items were inserted at various positions. */
     g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
+    self->last_emitted_len = new_len;
   }
 }
 
