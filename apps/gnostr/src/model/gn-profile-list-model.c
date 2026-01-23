@@ -456,8 +456,10 @@ load_profiles_in_thread(GTask *task, gpointer source_object, gpointer task_data,
 static void
 load_profiles_complete(GObject *source, GAsyncResult *result, gpointer user_data)
 {
-    (void)source;
-    GnProfileListModel *self = GN_PROFILE_LIST_MODEL(user_data);
+    (void)user_data;
+    /* Get self from source_object where GTask holds a reference */
+    GnProfileListModel *self = GN_PROFILE_LIST_MODEL(source);
+    if (!GN_IS_PROFILE_LIST_MODEL(self)) return;
 
     GError *error = NULL;
     LoadProfilesData *data = g_task_propagate_pointer(G_TASK(result), &error);
@@ -524,7 +526,9 @@ gn_profile_list_model_load_profiles(GnProfileListModel *self)
     self->is_loading = TRUE;
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_IS_LOADING]);
 
-    GTask *task = g_task_new(NULL, NULL, load_profiles_complete, self);
+    /* Pass self as source_object so GTask holds a reference and we can safely
+     * access it in the callback even if the caller drops their reference */
+    GTask *task = g_task_new(self, NULL, load_profiles_complete, NULL);
     g_task_run_in_thread(task, load_profiles_in_thread);
     g_object_unref(task);
 }

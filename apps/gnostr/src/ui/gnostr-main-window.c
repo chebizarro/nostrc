@@ -228,9 +228,7 @@ static gboolean apply_profiles_idle(gpointer user_data) {
     update_meta_from_profile_json(self, it->pubkey_hex, it->content_json);
     applied++;
   }
-  if (applied > 0) {
-    g_debug("[PROFILE] Applied %u profiles to UI", applied);
-  }
+  (void)applied; /* Suppress unused warning; profile updates are routine */
   idle_apply_profiles_ctx_free(c);
   return G_SOURCE_REMOVE;
 }
