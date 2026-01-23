@@ -1778,6 +1778,62 @@ static gchar *extract_hashtag(const char *t, gchar **suffix) {
   return g_strndup(start, end);
 }
 
+/* NIP-27: Check if nostr token is a profile mention (npub/nprofile) */
+static gboolean token_is_nostr_profile(const char *t) {
+  if (!t) return FALSE;
+  const char *entity = t;
+  if (g_str_has_prefix(t, "nostr:")) entity = t + 6;
+  return g_str_has_prefix(entity, "npub1") || g_str_has_prefix(entity, "nprofile1");
+}
+
+/* NIP-27: Check if nostr token is an event mention (note/nevent/naddr) */
+static gboolean token_is_nostr_event(const char *t) {
+  if (!t) return FALSE;
+  const char *entity = t;
+  if (g_str_has_prefix(t, "nostr:")) entity = t + 6;
+  return g_str_has_prefix(entity, "note1") || g_str_has_prefix(entity, "nevent1") ||
+         g_str_has_prefix(entity, "naddr1");
+}
+
+/* NIP-27: Format nostr mention for display (truncated bech32 with prefix)
+ * Returns a newly allocated string. Caller must free.
+ * Profile mentions: @npub1abc...xyz (first 8 + last 4 chars of bech32)
+ * Event mentions: 📝note1abc...xyz (first 9 + last 4 chars of bech32)
+ */
+static gchar *format_nostr_mention_display(const char *t) {
+  if (!t) return NULL;
+
+  /* Strip nostr: prefix if present */
+  const char *entity = t;
+  if (g_str_has_prefix(t, "nostr:")) entity = t + 6;
+
+  size_t len = strlen(entity);
+
+  if (token_is_nostr_profile(t)) {
+    /* Profile mention: @npub1abc...xyz or @nprofile1abc...xyz */
+    if (len > 16) {
+      /* Truncate: show first 8 chars + ... + last 4 chars */
+      return g_strdup_printf("@%.*s…%s", 8, entity, entity + len - 4);
+    } else {
+      return g_strdup_printf("@%s", entity);
+    }
+  } else if (token_is_nostr_event(t)) {
+    /* Event mention: show with note emoji */
+    if (len > 17) {
+      /* Truncate: show first 9 chars + ... + last 4 chars */
+      return g_strdup_printf("📝%.*s…%s", 9, entity, entity + len - 4);
+    } else {
+      return g_strdup_printf("📝%s", entity);
+    }
+  }
+
+  /* Fallback: return truncated version */
+  if (len > 20) {
+    return g_strdup_printf("%.*s…%s", 12, entity, entity + len - 4);
+  }
+  return g_strdup(entity);
+}
+
 void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *content) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
 
@@ -1795,7 +1851,41 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
       gboolean is_url = token_is_url(t);
       gboolean is_nostr = token_is_nostr(t);
       gboolean is_hashtag = token_is_hashtag(t);
-      if (is_url || is_nostr) {
+      if (is_nostr) {
+        /* NIP-27: Handle nostr mentions with formatted display text */
+        gchar *suffix = NULL;
+        gchar *clean = extract_clean_url(t, &suffix);
+        if (clean && *clean) {
+          /* Ensure nostr: prefix for href */
+          gchar *href = g_str_has_prefix(clean, "nostr:") ? g_strdup(clean) : g_strdup_printf("nostr:%s", clean);
+          gchar *esc_href = g_markup_escape_text(href, -1);
+          /* Format display text based on mention type (NIP-27) */
+          gchar *display = format_nostr_mention_display(clean);
+          gchar *esc_display = g_markup_escape_text(display ? display : clean, -1);
+          /* Add CSS class for styling via span - profile vs event mentions */
+          if (token_is_nostr_profile(clean)) {
+            g_string_append_printf(out, "<a href=\"%s\" title=\"%s\">%s</a>", esc_href, esc_href, esc_display);
+          } else {
+            g_string_append_printf(out, "<a href=\"%s\" title=\"%s\">%s</a>", esc_href, esc_href, esc_display);
+          }
+          g_free(display);
+          g_free(esc_href);
+          g_free(esc_display);
+          g_free(href);
+          if (suffix && *suffix) {
+            gchar *esc_suffix = g_markup_escape_text(suffix, -1);
+            g_string_append(out, esc_suffix);
+            g_free(esc_suffix);
+          }
+        } else {
+          gchar *esc = g_markup_escape_text(t, -1);
+          g_string_append(out, esc);
+          g_free(esc);
+        }
+        g_free(clean);
+        g_free(suffix);
+      } else if (is_url) {
+        /* Handle regular URLs */
         gchar *suffix = NULL;
         gchar *clean = extract_clean_url(t, &suffix);
         if (clean && *clean) {
@@ -2033,14 +2123,58 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
     for (guint i = 0; tokens && tokens[i]; i++) {
       const char *t = tokens[i];
       if (t[0] == '\0') { g_string_append(out, " "); continue; }
-      gboolean is_link = g_str_has_prefix(t, "http://") || g_str_has_prefix(t, "https://") ||
-          g_str_has_prefix(t, "nostr:") || g_str_has_prefix(t, "note1") || g_str_has_prefix(t, "npub1") ||
-          g_str_has_prefix(t, "nevent1") || g_str_has_prefix(t, "nprofile1") || g_str_has_prefix(t, "naddr1");
+      gboolean is_url = token_is_url(t);
+      gboolean is_nostr = token_is_nostr(t);
       gboolean is_hashtag = token_is_hashtag(t);
-      if (is_link) {
-        gchar *esc = g_markup_escape_text(t, -1);
-        g_string_append_printf(out, "<a href=\"%s\">%s</a>", esc, esc);
-        g_free(esc);
+      if (is_nostr) {
+        /* NIP-27: Handle nostr mentions with formatted display text */
+        gchar *suffix = NULL;
+        gchar *clean = extract_clean_url(t, &suffix);
+        if (clean && *clean) {
+          gchar *href = g_str_has_prefix(clean, "nostr:") ? g_strdup(clean) : g_strdup_printf("nostr:%s", clean);
+          gchar *esc_href = g_markup_escape_text(href, -1);
+          gchar *display = format_nostr_mention_display(clean);
+          gchar *esc_display = g_markup_escape_text(display ? display : clean, -1);
+          g_string_append_printf(out, "<a href=\"%s\" title=\"%s\">%s</a>", esc_href, esc_href, esc_display);
+          g_free(display);
+          g_free(esc_href);
+          g_free(esc_display);
+          g_free(href);
+          if (suffix && *suffix) {
+            gchar *esc_suffix = g_markup_escape_text(suffix, -1);
+            g_string_append(out, esc_suffix);
+            g_free(esc_suffix);
+          }
+        } else {
+          gchar *esc = g_markup_escape_text(t, -1);
+          g_string_append(out, esc);
+          g_free(esc);
+        }
+        g_free(clean);
+        g_free(suffix);
+      } else if (is_url) {
+        gchar *suffix = NULL;
+        gchar *clean = extract_clean_url(t, &suffix);
+        if (clean && *clean) {
+          gchar *href = g_str_has_prefix(clean, "www.") ? g_strdup_printf("https://%s", clean) : g_strdup(clean);
+          gchar *esc_href = g_markup_escape_text(href, -1);
+          gchar *esc_display = g_markup_escape_text(clean, -1);
+          g_string_append_printf(out, "<a href=\"%s\">%s</a>", esc_href, esc_display);
+          g_free(esc_href);
+          g_free(esc_display);
+          g_free(href);
+          if (suffix && *suffix) {
+            gchar *esc_suffix = g_markup_escape_text(suffix, -1);
+            g_string_append(out, esc_suffix);
+            g_free(esc_suffix);
+          }
+        } else {
+          gchar *esc = g_markup_escape_text(t, -1);
+          g_string_append(out, esc);
+          g_free(esc);
+        }
+        g_free(clean);
+        g_free(suffix);
       } else if (is_hashtag) {
         gchar *suffix = NULL;
         gchar *tag = extract_hashtag(t, &suffix);
