@@ -786,7 +786,7 @@ gn_secret_storage_list_keys(GError **error)
         CFIndex len = CFStringGetLength(commentRef);
         CFIndex maxSize = CFStringGetMaximumSizeForEncoding(len, kCFStringEncodingUTF8) + 1;
         gchar *comment = g_malloc(maxSize);
-        if (CFStringGetCString(comment, comment, maxSize, kCFStringEncodingUTF8)) {
+        if (CFStringGetCString(commentRef, comment, maxSize, kCFStringEncodingUTF8)) {
           /* Parse comment: "npub:xxx;created:yyy;type:zzz" */
           gchar **parts = g_strsplit(comment, ";", -1);
           for (int j = 0; parts && parts[j]; j++) {

@@ -1063,19 +1063,26 @@ static void update_item_profile_from_cache(ThreadEventItem *item) {
   GnostrProfileMeta *meta = gnostr_profile_provider_get(item->pubkey_hex);
   if (!meta) return;
 
-  /* Update fields only if they're not already set or profile has better data */
-  if (meta->display_name && *meta->display_name && !item->display_name) {
+  /* Always update profile fields when we have new data.
+   * This ensures late-arriving profiles are properly displayed.
+   * (nostrc-k8pd fix) */
+  if (meta->display_name && *meta->display_name) {
+    g_free(item->display_name);
     item->display_name = g_strdup(meta->display_name);
   } else if (meta->name && *meta->name && !item->display_name) {
+    g_free(item->display_name);
     item->display_name = g_strdup(meta->name);
   }
-  if (meta->name && *meta->name && !item->handle) {
+  if (meta->name && *meta->name) {
+    g_free(item->handle);
     item->handle = g_strdup_printf("@%s", meta->name);
   }
-  if (meta->picture && *meta->picture && !item->avatar_url) {
+  if (meta->picture && *meta->picture) {
+    g_free(item->avatar_url);
     item->avatar_url = g_strdup(meta->picture);
   }
-  if (meta->nip05 && *meta->nip05 && !item->nip05) {
+  if (meta->nip05 && *meta->nip05) {
+    g_free(item->nip05);
     item->nip05 = g_strdup(meta->nip05);
   }
 
