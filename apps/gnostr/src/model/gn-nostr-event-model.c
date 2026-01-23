@@ -643,17 +643,25 @@ static gboolean emit_items_changed_idle(gpointer user_data) {
     self->pending_refresh = FALSE;
     self->emit_added = 0;
 
-    /* CRITICAL: The 'removed' parameter must match what GTK previously knew.
-     * If GTK thinks there are old_len items and we say "remove X, add Y",
-     * GTK calculates new length as: old_len - X + Y.
+    /* CRITICAL: GTK4 ListView calls get_item() for removed items during signal
+     * processing. If we emit items_changed(0, old_len, new_len) and old_len > new_len,
+     * GTK will try to access items beyond new_len, causing SIGSEGV.
      *
-     * By using (removed=old_len, added=new_len), GTK computes:
-     *   new_length = old_len - old_len + new_len = new_len
-     *
-     * This correctly handles both growth and shrinkage. GTK won't try to
-     * access items beyond new_len because get_item() bounds checks. */
+     * Safe strategy:
+     * 1. If model shrunk: emit removal from END first (GTK won't access those)
+     * 2. Then refresh remaining items by re-adding them
+     * 3. If model grew: emit addition at end */
 
-    if (old_len > 0 || new_len > 0) {
+    if (old_len > new_len) {
+      /* Model shrunk - first remove items from the end (safe) */
+      guint removed_count = old_len - new_len;
+      g_list_model_items_changed(G_LIST_MODEL(self), new_len, removed_count, 0);
+      /* Now GTK thinks there are new_len items */
+      old_len = new_len;
+    }
+
+    if (new_len > 0) {
+      /* Refresh all current items - tell GTK they all changed */
       g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
     }
 
