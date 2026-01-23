@@ -5,9 +5,21 @@
   <template class="AppRow" parent="AdwActionRow">
     <property name="title" translatable="yes">Application</property>
     <property name="subtitle" translatable="yes">App details</property>
+    <accessibility>
+      <property name="label">Connected application</property>
+      <property name="description">A connected application that can request signatures. Activate to view details or use the Remove button to disconnect.</property>
+    </accessibility>
     <child type="suffix">
       <object class="GtkButton" id="btn_remove">
         <property name="label" translatable="yes">Remove</property>
+        <property name="valign">center</property>
+        <accessibility>
+          <property name="label">Remove application</property>
+          <property name="description">Remove this application and revoke its signing permissions</property>
+        </accessibility>
+        <style>
+          <class name="destructive-action"/>
+        </style>
       </object>
     </child>
   </template>

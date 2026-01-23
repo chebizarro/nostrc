@@ -8,10 +8,17 @@
     <property name="content-height">680</property>
     <!-- Enable close on Escape key -->
     <property name="can-close">true</property>
+    <accessibility>
+      <property name="label">Import profile dialog</property>
+      <property name="description">Import an existing Nostr profile using encrypted backup, seed phrase, or hardware device</property>
+    </accessibility>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar">
+            <accessibility>
+              <property name="label">Import profile header</property>
+            </accessibility>
             <property name="title-widget">
               <object class="GtkLabel">
                 <property name="label" translatable="yes">Import Profile</property>
@@ -22,6 +29,10 @@
                 <property name="label" translatable="yes">_Cancel</property>
                 <property name="use-underline">true</property>
                 <property name="focusable">true</property>
+                <accessibility>
+                  <property name="label">Cancel</property>
+                  <property name="description">Close without importing. Keyboard shortcut: Alt+C or Escape.</property>
+                </accessibility>
               </object>
             </child>
             <child type="end">
@@ -30,6 +41,10 @@
                 <property name="use-underline">true</property>
                 <property name="tooltip-text" translatable="yes">Import the profile using the selected method (Alt+I)</property>
                 <property name="focusable">true</property>
+                <accessibility>
+                  <property name="label">Import profile</property>
+                  <property name="description">Import the profile using the selected method. Keyboard shortcut: Alt+I.</property>
+                </accessibility>
                 <style>
                   <class name="suggested-action"/>
                 </style>
@@ -41,6 +56,9 @@
           <object class="GtkScrolledWindow">
             <property name="hscrollbar-policy">never</property>
             <property name="vexpand">true</property>
+            <accessibility>
+              <property name="label">Import form container</property>
+            </accessibility>
             <child>
               <object class="AdwClamp">
                 <property name="maximum-size">500</property>
@@ -59,6 +77,10 @@
                         <property name="wrap">true</property>
                         <property name="xalign">0</property>
                         <property name="label" translatable="yes">Import an existing Nostr profile using one of the methods below. Your private key will be stored securely.</property>
+                        <accessibility>
+                          <property name="label">Instructions</property>
+                          <property name="description">Choose an import method. Your key will be securely stored.</property>
+                        </accessibility>
                         <style>
                           <class name="dim-label"/>
                         </style>
@@ -69,16 +91,27 @@
                     <child>
                       <object class="AdwPreferencesGroup">
                         <property name="title" translatable="yes">Import Method</property>
+                        <accessibility>
+                          <property name="label">Import method selection</property>
+                          <property name="description">Choose how to import your profile</property>
+                        </accessibility>
 
                         <!-- NIP-49 Encrypted Backup -->
                         <child>
                           <object class="AdwActionRow">
                             <property name="title" translatable="yes">NIP-49 Encrypted Backup</property>
                             <property name="subtitle" translatable="yes">Import from an ncryptsec backup string</property>
+                            <accessibility>
+                              <property name="description">Select to import using an encrypted ncryptsec backup</property>
+                            </accessibility>
                             <child type="prefix">
                               <object class="GtkCheckButton" id="radio_nip49">
                                 <property name="valign">center</property>
                                 <property name="active">true</property>
+                                <accessibility>
+                                  <property name="label">NIP-49 encrypted backup</property>
+                                  <property name="description">Import from an encrypted backup string</property>
+                                </accessibility>
                               </object>
                             </child>
                             <property name="activatable-widget">radio_nip49</property>
@@ -90,10 +123,17 @@
                           <object class="AdwActionRow">
                             <property name="title" translatable="yes">Mnemonic Seed Phrase</property>
                             <property name="subtitle" translatable="yes">Import from a 12 or 24 word recovery phrase</property>
+                            <accessibility>
+                              <property name="description">Select to import using a recovery seed phrase</property>
+                            </accessibility>
                             <child type="prefix">
                               <object class="GtkCheckButton" id="radio_mnemonic">
                                 <property name="valign">center</property>
                                 <property name="group">radio_nip49</property>
+                                <accessibility>
+                                  <property name="label">Mnemonic seed phrase</property>
+                                  <property name="description">Import from a 12 or 24 word recovery phrase</property>
+                                </accessibility>
                               </object>
                             </child>
                             <property name="activatable-widget">radio_mnemonic</property>
@@ -105,10 +145,17 @@
                           <object class="AdwActionRow">
                             <property name="title" translatable="yes">External Hardware Device</property>
                             <property name="subtitle" translatable="yes">Import from a hardware security key (coming soon)</property>
+                            <accessibility>
+                              <property name="description">Select to import from a hardware security device. This feature is coming soon.</property>
+                            </accessibility>
                             <child type="prefix">
                               <object class="GtkCheckButton" id="radio_hardware">
                                 <property name="valign">center</property>
                                 <property name="group">radio_nip49</property>
+                                <accessibility>
+                                  <property name="label">Hardware device</property>
+                                  <property name="description">Import from a hardware security key</property>
+                                </accessibility>
                               </object>
                             </child>
                             <property name="activatable-widget">radio_hardware</property>
@@ -126,6 +173,10 @@
                           <object class="AdwPreferencesGroup">
                             <property name="title" translatable="yes">Encrypted Backup</property>
                             <property name="description" translatable="yes">Paste your ncryptsec1... backup string below</property>
+                            <accessibility>
+                              <property name="label">Encrypted backup input</property>
+                              <property name="description">Enter your ncryptsec encrypted backup string</property>
+                            </accessibility>
                             <child>
                               <object class="GtkFrame">
                                 <property name="margin-top">8</property>
@@ -142,6 +193,10 @@
                                         <property name="left-margin">8</property>
                                         <property name="right-margin">8</property>
                                         <property name="monospace">true</property>
+                                        <accessibility>
+                                          <property name="label">Encrypted backup text</property>
+                                          <property name="description">Paste your ncryptsec1 encrypted backup string here</property>
+                                        </accessibility>
                                         <style>
                                           <class name="view"/>
                                         </style>
@@ -166,11 +221,18 @@
                           <object class="AdwPreferencesGroup">
                             <property name="title" translatable="yes">Seed Phrase</property>
                             <property name="description" translatable="yes">Enter your recovery words separated by spaces</property>
+                            <accessibility>
+                              <property name="label">Seed phrase input</property>
+                              <property name="description">Enter your recovery mnemonic words</property>
+                            </accessibility>
 
                             <!-- Word count selector -->
                             <child>
                               <object class="AdwComboRow">
                                 <property name="title" translatable="yes">Word Count</property>
+                                <accessibility>
+                                  <property name="description">Select whether your seed phrase has 12 or 24 words</property>
+                                </accessibility>
                                 <property name="model">
                                   <object class="GtkStringList">
                                     <items>
@@ -203,6 +265,10 @@
                                         <property name="bottom-margin">8</property>
                                         <property name="left-margin">8</property>
                                         <property name="right-margin">8</property>
+                                        <accessibility>
+                                          <property name="label">Seed phrase words</property>
+                                          <property name="description">Enter your recovery words separated by spaces</property>
+                                        </accessibility>
                                         <style>
                                           <class name="view"/>
                                         </style>
@@ -226,11 +292,19 @@
                         <child>
                           <object class="AdwPreferencesGroup">
                             <property name="title" translatable="yes">Hardware Device</property>
+                            <accessibility>
+                              <property name="label">Hardware device section</property>
+                              <property name="description">Hardware device import is coming soon</property>
+                            </accessibility>
                             <child>
                               <object class="AdwStatusPage">
                                 <property name="icon-name">security-high-symbolic</property>
                                 <property name="title" translatable="yes">Coming Soon</property>
                                 <property name="description" translatable="yes">Hardware device support is not yet available. This feature will allow you to import keys from hardware security devices like YubiKey.</property>
+                                <accessibility>
+                                  <property name="label">Hardware import coming soon</property>
+                                  <property name="description">Hardware security device import is not yet available</property>
+                                </accessibility>
                               </object>
                             </child>
                           </object>
@@ -247,6 +321,10 @@
                           <object class="AdwPreferencesGroup">
                             <property name="title" translatable="yes">Decryption</property>
                             <property name="description" translatable="yes">Enter the passphrase used to protect your backup</property>
+                            <accessibility>
+                              <property name="label">Decryption settings</property>
+                              <property name="description">Enter your passphrase to decrypt the backup</property>
+                            </accessibility>
 
                             <!-- Passphrase label -->
                             <child>
@@ -269,6 +347,10 @@
                                 <property name="margin-start">4</property>
                                 <property name="margin-end">4</property>
                                 <property name="margin-bottom">8</property>
+                                <accessibility>
+                                  <property name="label">Passphrase input container</property>
+                                  <property name="description">Secure entry for your decryption passphrase</property>
+                                </accessibility>
                                 <!-- GnSecureEntry will be added here programmatically -->
                               </object>
                             </child>
@@ -285,14 +367,24 @@
                         <property name="spacing">8</property>
                         <property name="halign">center</property>
                         <property name="margin-top">8</property>
+                        <accessibility>
+                          <property name="label">Import status</property>
+                          <property name="description">Status indicator for profile import</property>
+                        </accessibility>
                         <child>
                           <object class="GtkSpinner" id="spinner_status">
                             <property name="spinning">false</property>
+                            <accessibility>
+                              <property name="label">Loading indicator</property>
+                            </accessibility>
                           </object>
                         </child>
                         <child>
                           <object class="GtkLabel" id="lbl_status">
                             <property name="label" translatable="yes">Importing profile...</property>
+                            <accessibility>
+                              <property name="label">Status message</property>
+                            </accessibility>
                             <style>
                               <class name="dim-label"/>
                             </style>

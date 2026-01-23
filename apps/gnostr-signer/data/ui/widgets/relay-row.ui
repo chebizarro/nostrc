@@ -5,10 +5,18 @@
   <template class="RelayRow" parent="AdwActionRow">
     <property name="title" translatable="yes">Relay URL</property>
     <property name="subtitle" translatable="yes">Status</property>
+    <accessibility>
+      <property name="label">Relay connection</property>
+      <property name="description">A configured Nostr relay. Use the toggle to enable or disable this relay connection.</property>
+    </accessibility>
     <child type="suffix">
       <object class="GtkSwitch" id="switch_enabled">
         <property name="valign">center</property>
         <property name="vexpand">false</property>
+        <accessibility>
+          <property name="label">Enable relay</property>
+          <property name="description">Toggle to enable or disable this relay connection</property>
+        </accessibility>
       </object>
     </child>
   </template>
