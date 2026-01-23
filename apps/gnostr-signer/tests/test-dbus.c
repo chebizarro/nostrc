@@ -476,7 +476,6 @@ fixture_setup(DbusFixture *fix, gconstpointer user_data)
         fix->conn,
         TEST_BUS_NAME,
         G_BUS_NAME_OWNER_FLAGS_NONE,
-        on_bus_acquired,
         on_name_acquired,
         on_name_lost,
         fix,
@@ -539,7 +538,7 @@ fixture_teardown(DbusFixture *fix, gconstpointer user_data)
 
     /* Clean up temp directory */
     if (fix->acl_dir) {
-        g_rmdir(fix->acl_dir);
+        rmdir(fix->acl_dir);
         g_free(fix->acl_dir);
     }
 
