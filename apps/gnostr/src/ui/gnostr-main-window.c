@@ -2977,9 +2977,7 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
   /* Removed noisy debug */
   self->profile_fetch_source_id = 0;
   
-  /* CRITICAL FIX: Don't fetch profiles if pool isn't initialized with relays
-   * Without GNOSTR_LIVE=TRUE, the pool and relays aren't set up, and profile
-   * fetching will fail anyway. Skip it to avoid hanging on relay config loading. */
+  /* Don't fetch profiles if pool isn't initialized with relays yet */
   if (!self->pool) {
     g_debug("[PROFILE] Pool not initialized, skipping fetch");
     /* Clear the queue since we can't process it */
@@ -3492,23 +3490,16 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   /* CRITICAL: Initialize pool and relays BEFORE timeline prepopulation!
    * Timeline prepopulation triggers profile fetches, which need relays in the pool.
    * If we prepopulate first, profile fetches will skip all relays (not in pool yet). */
-  {
-    const char *live = g_getenv("GNOSTR_LIVE");
-    /* Default to live mode unless explicitly disabled with "0" or "FALSE" */
-    gboolean enable_live = !live || (g_strcmp0(live, "0") != 0 && g_ascii_strcasecmp(live, "FALSE") != 0);
-    if (enable_live) {
-      start_pool_live(self);
-      /* Also start profile subscription if identity is configured */
-      start_profile_subscription(self);
+  start_pool_live(self);
+  /* Also start profile subscription if identity is configured */
+  start_profile_subscription(self);
 
-      /* NOTE: Periodic refresh disabled - nostrdb ingestion drives UI updates via GnNostrEventModel.
-       * This avoids duplicate processing and high memory usage. Initial refresh occurs in
-       * initial_refresh_timeout_cb, and subsequent updates stream from nostrdb watchers. */
-    }
-  }
+  /* NOTE: Periodic refresh disabled - nostrdb ingestion drives UI updates via GnNostrEventModel.
+   * This avoids duplicate processing and high memory usage. Initial refresh occurs in
+   * initial_refresh_timeout_cb, and subsequent updates stream from nostrdb watchers. */
 
   /* Start gift wrap (NIP-59) subscription if user is signed in.
-   * This is a nostrdb subscription (not relay), so it works regardless of GNOSTR_LIVE.
+   * This is a nostrdb subscription (not relay).
    * Gift wraps are encrypted messages addressed to the current user. */
   start_gift_wrap_subscription(self);
   

@@ -253,7 +253,6 @@ async function main() {
     ...process.env,
     GDK_BACKEND: "broadway",
     BROADWAY_DISPLAY: `:${display}`,
-    GNOSTR_LIVE: "FALSE",
     GNOSTR_E2E: "1",
     GNOSTR_DB_DIR: dbDir,
     GNOSTR_CONFIG_PATH: configPath,
