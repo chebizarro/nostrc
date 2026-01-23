@@ -6,6 +6,7 @@
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
+#include <json-glib/json-glib.h>
 #include "gnostr-avatar-cache.h"
 #include "../util/nip05.h"
 #include "../util/imeta.h"
@@ -287,26 +288,64 @@ static void ensure_ndb_initialized(void) {
   g_free(dbdir);
 }
 
+/* Helper: pretty-print JSON string with indentation */
+static char *pretty_print_json(const char *json_str) {
+  if (!json_str) return NULL;
+
+  JsonParser *parser = json_parser_new();
+  GError *error = NULL;
+
+  if (!json_parser_load_from_data(parser, json_str, -1, &error)) {
+    g_warning("Failed to parse JSON for pretty printing: %s",
+              error ? error->message : "unknown error");
+    if (error) g_error_free(error);
+    g_object_unref(parser);
+    return g_strdup(json_str); /* Return original if parsing fails */
+  }
+
+  JsonNode *root = json_parser_get_root(parser);
+  if (!root) {
+    g_object_unref(parser);
+    return g_strdup(json_str);
+  }
+
+  JsonGenerator *generator = json_generator_new();
+  json_generator_set_pretty(generator, TRUE);
+  json_generator_set_indent(generator, 2);
+  json_generator_set_root(generator, root);
+
+  char *pretty_json = json_generator_to_data(generator, NULL);
+
+  g_object_unref(generator);
+  g_object_unref(parser);
+
+  return pretty_json;
+}
+
 static void show_json_viewer(GnostrNoteCardRow *self) {
   if (!self || !self->id_hex) {
     g_warning("No event ID available to fetch JSON");
     return;
   }
-  
+
   /* Ensure DB is initialized (safe if already initialized) */
   ensure_ndb_initialized();
-  
+
   /* Fetch event JSON from NostrDB using nontxn helper with built-in retries */
   char *event_json = NULL;
   int json_len = 0;
-  
+
   int rc = storage_ndb_get_note_by_id_nontxn(self->id_hex, &event_json, &json_len);
 
   if (rc != 0 || !event_json) {
-    g_warning("Failed to fetch event JSON from NostrDB (id=%s, rc=%d)", 
+    g_warning("Failed to fetch event JSON from NostrDB (id=%s, rc=%d)",
               self->id_hex, rc);
     return;
   }
+
+  /* Pretty-print the JSON for readability */
+  char *pretty_json = pretty_print_json(event_json);
+  free(event_json); /* Free the original */
 
   /* Get the toplevel window */
   GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
@@ -321,25 +360,24 @@ static void show_json_viewer(GnostrNoteCardRow *self) {
 
   /* Create scrolled window */
   GtkWidget *scrolled = gtk_scrolled_window_new();
-  gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled), 
+  gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
                                  GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
 
   /* Create text view */
   GtkWidget *text_view = gtk_text_view_new();
   gtk_text_view_set_editable(GTK_TEXT_VIEW(text_view), FALSE);
   gtk_text_view_set_monospace(GTK_TEXT_VIEW(text_view), TRUE);
-  gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_view), GTK_WRAP_NONE);
+  gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_view), GTK_WRAP_WORD_CHAR);
   gtk_widget_set_margin_start(text_view, 12);
   gtk_widget_set_margin_end(text_view, 12);
   gtk_widget_set_margin_top(text_view, 12);
   gtk_widget_set_margin_bottom(text_view, 12);
 
-  /* Set the JSON content */
+  /* Set the pretty-printed JSON content */
   GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
-  gtk_text_buffer_set_text(buffer, event_json, -1);
-  
-  /* Free the fetched JSON (allocated with malloc in storage_ndb_get_note_by_id_nontxn) */
-  free(event_json);
+  gtk_text_buffer_set_text(buffer, pretty_json ? pretty_json : "", -1);
+
+  g_free(pretty_json);
 
   /* Assemble the dialog */
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), text_view);
