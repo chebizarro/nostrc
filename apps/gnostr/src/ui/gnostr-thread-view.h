@@ -75,6 +75,16 @@ const char *gnostr_thread_view_get_focus_event_id(GnostrThreadView *self);
  */
 const char *gnostr_thread_view_get_thread_root_id(GnostrThreadView *self);
 
+/**
+ * gnostr_thread_view_update_profiles:
+ * @self: a #GnostrThreadView
+ *
+ * Updates profile information for displayed notes by re-checking
+ * the profile provider cache. Call this after profiles have been
+ * fetched from relays.
+ */
+void gnostr_thread_view_update_profiles(GnostrThreadView *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_THREAD_VIEW_H */

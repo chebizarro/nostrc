@@ -2859,6 +2859,17 @@ static void on_thread_view_open_profile(GnostrThreadView *view, const char *pubk
   gnostr_main_window_open_profile(GTK_WIDGET(self), pubkey_hex);
 }
 
+/* Handler for need-profile signal from thread view - fetches profile from relays */
+static void on_thread_view_need_profile(GnostrThreadView *view, const char *pubkey_hex, gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  (void)view;
+
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
+  if (strlen(pubkey_hex) != 64) return;
+
+  enqueue_profile_author(self, pubkey_hex);
+}
+
 /* Public: Mute a user (adds to mute list and refreshes timeline) */
 void gnostr_main_window_mute_user(GtkWidget *window, const char *pubkey_hex) {
   if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
@@ -3416,6 +3427,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                      G_CALLBACK(on_thread_view_close_requested), self);
     g_signal_connect(self->thread_view, "open-profile",
                      G_CALLBACK(on_thread_view_open_profile), self);
+    g_signal_connect(self->thread_view, "need-profile",
+                     G_CALLBACK(on_thread_view_need_profile), self);
   }
   /* Connect discover page signals (nostrc-dr3) */
   if (self->page_discover && GNOSTR_IS_PAGE_DISCOVER(self->page_discover)) {
@@ -5386,13 +5399,21 @@ static gboolean hex_to_bytes32(const char *hex, uint8_t out[32]) {
 /* Parses content_json and stores in profile provider, then updates the event model */
 static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pubkey_hex, const char *content_json) {
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex || !content_json) return;
-  
+
   /* Update profile provider cache */
   gnostr_profile_provider_update(pubkey_hex, content_json);
-  
+
   /* Update GnNostrEventModel items */
   extern void gn_nostr_event_model_update_profile(GObject *model, const char *pubkey_hex, const char *content_json);
   if (self->event_model) {
     gn_nostr_event_model_update_profile(G_OBJECT(self->event_model), pubkey_hex, content_json);
+  }
+
+  /* Update thread view if visible */
+  if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
+    if (self->thread_revealer && GTK_IS_REVEALER(self->thread_revealer) &&
+        gtk_revealer_get_reveal_child(GTK_REVEALER(self->thread_revealer))) {
+      gnostr_thread_view_update_profiles(GNOSTR_THREAD_VIEW(self->thread_view));
+    }
   }
 }

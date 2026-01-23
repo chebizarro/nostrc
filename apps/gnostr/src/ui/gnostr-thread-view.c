@@ -1,6 +1,7 @@
 #include "gnostr-thread-view.h"
 #include "note_card_row.h"
 #include "gnostr-avatar-cache.h"
+#include "gnostr-profile-provider.h"
 #include "../storage_ndb.h"
 #include "../util/relays.h"
 #include "../util/utils.h"
@@ -100,6 +101,7 @@ enum {
   SIGNAL_CLOSE_REQUESTED,
   SIGNAL_NOTE_ACTIVATED,
   SIGNAL_OPEN_PROFILE,
+  SIGNAL_NEED_PROFILE,
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -287,6 +289,13 @@ static void gnostr_thread_view_class_init(GnostrThreadViewClass *klass) {
 
   signals[SIGNAL_OPEN_PROFILE] = g_signal_new(
     "open-profile",
+    G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST,
+    0, NULL, NULL, NULL,
+    G_TYPE_NONE, 1, G_TYPE_STRING);
+
+  signals[SIGNAL_NEED_PROFILE] = g_signal_new(
+    "need-profile",
     G_TYPE_FROM_CLASS(klass),
     G_SIGNAL_RUN_LAST,
     0, NULL, NULL, NULL,
@@ -490,7 +499,8 @@ static ThreadEventItem *add_event_from_json(GnostrThreadView *self, const char *
   return item;
 }
 
-/* Internal: fetch profile for pubkey from nostrdb */
+/* Internal: fetch profile for pubkey using profile provider.
+ * If not found in cache/nostrdb, emits "need-profile" signal to request fetch from relays. */
 static void fetch_profile_for_event(GnostrThreadView *self, ThreadEventItem *item) {
   if (!item || !item->pubkey_hex) return;
 
@@ -500,39 +510,26 @@ static void fetch_profile_for_event(GnostrThreadView *self, ThreadEventItem *ite
   }
   g_hash_table_insert(self->profiles_requested, g_strdup(item->pubkey_hex), GINT_TO_POINTER(1));
 
-  /* Try to load from nostrdb */
-  unsigned char pk32[32];
-  if (!hex_to_bytes_32(item->pubkey_hex, pk32)) return;
-
-  void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
-
-  char *profile_json = NULL;
-  int len = 0;
-  if (storage_ndb_get_profile_by_pubkey(txn, pk32, &profile_json, &len) == 0 && profile_json) {
-    /* Parse profile JSON */
-    json_error_t err;
-    json_t *root = json_loads(profile_json, 0, &err);
-    if (root) {
-      json_t *val;
-      if ((val = json_object_get(root, "display_name")) && json_is_string(val)) {
-        item->display_name = g_strdup(json_string_value(val));
-      } else if ((val = json_object_get(root, "name")) && json_is_string(val)) {
-        item->display_name = g_strdup(json_string_value(val));
-      }
-      if ((val = json_object_get(root, "name")) && json_is_string(val)) {
-        item->handle = g_strdup_printf("@%s", json_string_value(val));
-      }
-      if ((val = json_object_get(root, "picture")) && json_is_string(val)) {
-        item->avatar_url = g_strdup(json_string_value(val));
-      }
-      if ((val = json_object_get(root, "nip05")) && json_is_string(val)) {
-        item->nip05 = g_strdup(json_string_value(val));
-      }
-      json_decref(root);
+  /* Try to get profile from provider (checks cache + nostrdb) */
+  GnostrProfileMeta *meta = gnostr_profile_provider_get(item->pubkey_hex);
+  if (meta) {
+    /* Profile found - populate the item */
+    if (meta->display_name && *meta->display_name) {
+      item->display_name = g_strdup(meta->display_name);
+    } else if (meta->name && *meta->name) {
+      item->display_name = g_strdup(meta->name);
     }
+    if (meta->name && *meta->name) {
+      item->handle = g_strdup_printf("@%s", meta->name);
+    }
+    if (meta->picture && *meta->picture) {
+      item->avatar_url = g_strdup(meta->picture);
+    }
+    gnostr_profile_meta_free(meta);
+  } else {
+    /* Profile not in cache/db - request fetch from relays */
+    g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, item->pubkey_hex);
   }
-  storage_ndb_end_query(txn);
 }
 
 /* Compare function for sorting by created_at */
@@ -1054,4 +1051,72 @@ static void load_thread(GnostrThreadView *self) {
 
   /* Fetch more from relays */
   fetch_thread_from_relays(self);
+}
+
+/* Internal: update profile info for a single ThreadEventItem from provider cache */
+static void update_item_profile_from_cache(ThreadEventItem *item) {
+  if (!item || !item->pubkey_hex) return;
+
+  GnostrProfileMeta *meta = gnostr_profile_provider_get(item->pubkey_hex);
+  if (!meta) return;
+
+  /* Update fields only if they're not already set or profile has better data */
+  if (meta->display_name && *meta->display_name && !item->display_name) {
+    item->display_name = g_strdup(meta->display_name);
+  } else if (meta->name && *meta->name && !item->display_name) {
+    item->display_name = g_strdup(meta->name);
+  }
+  if (meta->name && *meta->name && !item->handle) {
+    item->handle = g_strdup_printf("@%s", meta->name);
+  }
+  if (meta->picture && *meta->picture && !item->avatar_url) {
+    item->avatar_url = g_strdup(meta->picture);
+  }
+
+  gnostr_profile_meta_free(meta);
+}
+
+/* Internal: update a single note card widget with profile info */
+static void update_note_card_profile(GnostrNoteCardRow *row, ThreadEventItem *item) {
+  if (!row || !item) return;
+
+  const char *display = item->display_name;
+  const char *handle = item->handle;
+
+  if (!display && !handle && item->pubkey_hex) {
+    /* Fallback to truncated pubkey */
+    char fallback[20];
+    snprintf(fallback, sizeof(fallback), "%.8s...", item->pubkey_hex);
+    gnostr_note_card_row_set_author(row, fallback, NULL, item->avatar_url);
+  } else {
+    gnostr_note_card_row_set_author(row, display, handle, item->avatar_url);
+  }
+
+  if (item->nip05 && item->pubkey_hex) {
+    gnostr_note_card_row_set_nip05(row, item->nip05, item->pubkey_hex);
+  }
+}
+
+void gnostr_thread_view_update_profiles(GnostrThreadView *self) {
+  g_return_if_fail(GNOSTR_IS_THREAD_VIEW(self));
+
+  if (!self->thread_list_box || !self->sorted_events) return;
+
+  /* Iterate through displayed cards and update profile info */
+  GtkWidget *child = gtk_widget_get_first_child(self->thread_list_box);
+  guint idx = 0;
+
+  while (child && idx < self->sorted_events->len) {
+    if (GNOSTR_IS_NOTE_CARD_ROW(child)) {
+      ThreadEventItem *item = g_ptr_array_index(self->sorted_events, idx);
+      if (item) {
+        /* Re-fetch profile from cache */
+        update_item_profile_from_cache(item);
+        /* Update the card */
+        update_note_card_profile(GNOSTR_NOTE_CARD_ROW(child), item);
+      }
+      idx++;
+    }
+    child = gtk_widget_get_next_sibling(child);
+  }
 }

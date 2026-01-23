@@ -88,6 +88,7 @@ static guint signals[N_SIGNALS];
 static void fetch_event_from_local(GnostrNoteEmbed *self, const unsigned char id32[32]);
 static void fetch_event_from_relays(GnostrNoteEmbed *self, const char *id_hex);
 static void fetch_profile_from_local(GnostrNoteEmbed *self, const unsigned char pk32[32]);
+static void fetch_profile_from_relays(GnostrNoteEmbed *self, const char *pubkey_hex);
 static void update_ui_state(GnostrNoteEmbed *self);
 
 static void gnostr_note_embed_dispose(GObject *obj) {
@@ -1018,12 +1019,167 @@ static void fetch_event_from_main_pool(GnostrNoteEmbed *self, const char *id_hex
   nostr_filter_free(filter);
 }
 
+/* Forward declaration for profile fallback */
+static void fetch_profile_from_main_pool(GnostrNoteEmbed *self, const char *pubkey_hex);
+
+/* Callback for profile relay query */
+static void on_profile_relay_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GnostrNoteEmbed *self = GNOSTR_NOTE_EMBED(user_data);
+
+  if (!GNOSTR_IS_NOTE_EMBED(self)) return;
+
+  GError *err = NULL;
+  GPtrArray *results = gnostr_simple_pool_fetch_profiles_by_authors_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+
+  if (err) {
+    if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      /* If hints were tried and failed (but main pool not yet), fall back to main pool */
+      if (self->hints_attempted && !self->main_pool_attempted && self->relay_hints_count > 0) {
+        g_error_free(err);
+        fetch_profile_from_main_pool(self, self->target_id);
+        return;
+      }
+      /* Show basic profile with just pubkey on error */
+      gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
+    }
+    g_error_free(err);
+    return;
+  }
+
+  if (!results || results->len == 0) {
+    /* If hints were tried and found nothing (but main pool not yet), fall back to main pool */
+    if (self->hints_attempted && !self->main_pool_attempted && self->relay_hints_count > 0) {
+      if (results) g_ptr_array_unref(results);
+      fetch_profile_from_main_pool(self, self->target_id);
+      return;
+    }
+    /* Show basic profile with just pubkey */
+    gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
+    if (results) g_ptr_array_unref(results);
+    return;
+  }
+
+  const char *json = (const char*)g_ptr_array_index(results, 0);
+  if (!json) {
+    gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
+    g_ptr_array_unref(results);
+    return;
+  }
+
+  /* Ingest into local store */
+  storage_ndb_ingest_event_json(json, NULL);
+
+  /* Parse profile and display */
+  char *display_name = NULL;
+  char *handle = NULL;
+  char *about = NULL;
+  char *picture = NULL;
+
+  NostrEvent *evt = nostr_event_new();
+  if (evt && nostr_event_deserialize(evt, json) == 0) {
+    const char *content = nostr_event_get_content(evt);
+    if (content && *content) {
+      json_error_t jerr;
+      json_t *root = json_loads(content, 0, &jerr);
+      if (root) {
+        json_t *val;
+        if ((val = json_object_get(root, "display_name")) && json_is_string(val)) {
+          const char *dn = json_string_value(val);
+          if (dn && *dn) display_name = g_strdup(dn);
+        }
+        if (!display_name && (val = json_object_get(root, "name")) && json_is_string(val)) {
+          const char *nm = json_string_value(val);
+          if (nm && *nm) display_name = g_strdup(nm);
+        }
+        if ((val = json_object_get(root, "name")) && json_is_string(val)) {
+          const char *nm = json_string_value(val);
+          if (nm && *nm) handle = g_strdup(nm);
+        }
+        if ((val = json_object_get(root, "about")) && json_is_string(val)) {
+          const char *ab = json_string_value(val);
+          if (ab && *ab) about = g_strdup(ab);
+        }
+        if ((val = json_object_get(root, "picture")) && json_is_string(val)) {
+          const char *pic = json_string_value(val);
+          if (pic && *pic) picture = g_strdup(pic);
+        }
+        json_decref(root);
+      }
+    }
+  }
+  if (evt) nostr_event_free(evt);
+
+  gnostr_note_embed_set_profile(self, display_name, handle, about, picture, self->target_id);
+
+  g_free(display_name);
+  g_free(handle);
+  g_free(about);
+  g_free(picture);
+  g_ptr_array_unref(results);
+}
+
+/* Fetch profile from relays - try hints first, then main pool */
+static void fetch_profile_from_relays(GnostrNoteEmbed *self, const char *pubkey_hex) {
+  if (!pubkey_hex) {
+    gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
+    return;
+  }
+
+  /* Ensure pool is initialized */
+  ensure_embed_pool_initialized();
+
+  /* If we have relay hints and haven't tried them yet, use hints only first */
+  if (self->relay_hints && self->relay_hints_count > 0 && !self->hints_attempted) {
+    self->hints_attempted = TRUE;
+
+    const char **url_arr = g_new0(const char*, self->relay_hints_count);
+    for (size_t i = 0; i < self->relay_hints_count; i++) {
+      url_arr[i] = self->relay_hints[i];
+    }
+
+    const char *authors[1] = { pubkey_hex };
+
+    gnostr_simple_pool_fetch_profiles_by_authors_async(embed_pool, url_arr, self->relay_hints_count,
+                                                        authors, 1, 1,
+                                                        self->cancellable, on_profile_relay_query_done, self);
+
+    g_free(url_arr);
+    return;
+  }
+
+  /* No hints or hints already tried - use main pool */
+  fetch_profile_from_main_pool(self, pubkey_hex);
+}
+
+/* Fetch profile from main relay pool (fallback) */
+static void fetch_profile_from_main_pool(GnostrNoteEmbed *self, const char *pubkey_hex) {
+  self->main_pool_attempted = TRUE;
+
+  /* Get read-capable relays for fetching (NIP-65) */
+  GPtrArray *urls = gnostr_get_read_relay_urls();
+
+  /* Convert GPtrArray to const char** */
+  const char **url_arr = g_new0(const char*, urls->len);
+  for (guint i = 0; i < urls->len; i++) {
+    url_arr[i] = (const char*)g_ptr_array_index(urls, i);
+  }
+
+  const char *authors[1] = { pubkey_hex };
+
+  gnostr_simple_pool_fetch_profiles_by_authors_async(embed_pool, url_arr, urls->len,
+                                                      authors, 1, 1,
+                                                      self->cancellable, on_profile_relay_query_done, self);
+
+  g_free(url_arr);
+  g_ptr_array_free(urls, TRUE);
+}
+
 /* Local database fetch for profiles */
 static void fetch_profile_from_local(GnostrNoteEmbed *self, const unsigned char pk32[32]) {
   void *txn = NULL;
   if (storage_ndb_begin_query(&txn) != 0 || !txn) {
-    /* Show basic profile with just pubkey */
-    gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
+    /* Try relays since local query failed */
+    fetch_profile_from_relays(self, self->target_id);
     return;
   }
 
@@ -1083,8 +1239,10 @@ static void fetch_profile_from_local(GnostrNoteEmbed *self, const unsigned char 
     g_free(about);
     g_free(picture);
   } else {
-    /* Not in cache, show basic profile with just pubkey */
-    gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
+    /* Not in local cache, try relays */
+    storage_ndb_end_query(txn);
+    fetch_profile_from_relays(self, self->target_id);
+    return;
   }
 
   storage_ndb_end_query(txn);
