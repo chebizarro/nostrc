@@ -109,6 +109,10 @@ struct _GnNostrEventModel {
   /* Deferred timeline event processing to prevent GTK4 re-entrancy */
   GArray *pending_timeline;       /* uint64_t note_keys of timeline events to process */
   guint timeline_idle_id;         /* Pending idle source for timeline processing */
+
+  /* Deferred profile event processing to prevent GTK4 re-entrancy */
+  GArray *pending_profiles;       /* uint64_t note_keys of profile events to process */
+  guint profiles_idle_id;         /* Pending idle source for profile processing */
 };
 
 typedef struct {
@@ -1130,16 +1134,28 @@ static void gn_nostr_event_model_list_model_iface_init(GListModelInterface *ifac
 
 /* -------------------- Subscriptions -------------------- */
 
-static void on_sub_profiles_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
-  (void)subid;
+/* Idle handler to process pending profile events. Deferred to avoid GTK4 re-entrancy
+ * crashes when model changes are emitted from nostrdb subscription callbacks. */
+static gboolean process_pending_profiles_idle(gpointer user_data) {
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
-  if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
+  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return G_SOURCE_REMOVE;
+
+  self->profiles_idle_id = 0;
+
+  if (!self->pending_profiles || self->pending_profiles->len == 0) {
+    return G_SOURCE_REMOVE;
+  }
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+    g_array_set_size(self->pending_profiles, 0);
+    return G_SOURCE_REMOVE;
+  }
+
+  guint n_keys = self->pending_profiles->len;
 
   for (guint i = 0; i < n_keys; i++) {
-    uint64_t note_key = note_keys[i];
+    uint64_t note_key = g_array_index(self->pending_profiles, uint64_t, i);
     storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
     if (!note) continue;
 
@@ -1164,6 +1180,28 @@ static void on_sub_profiles_batch(uint64_t subid, const uint64_t *note_keys, gui
   }
 
   storage_ndb_end_query(txn);
+
+  /* Clear processed profile keys */
+  g_array_set_size(self->pending_profiles, 0);
+
+  return G_SOURCE_REMOVE;
+}
+
+static void on_sub_profiles_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
+  (void)subid;
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
+
+  /* Queue profile keys for deferred processing to avoid GTK4 re-entrancy crashes.
+   * Processing happens in an idle handler when GTK is in a stable state. */
+  for (guint i = 0; i < n_keys; i++) {
+    g_array_append_val(self->pending_profiles, note_keys[i]);
+  }
+
+  /* Schedule idle processing if not already scheduled */
+  if (self->profiles_idle_id == 0) {
+    self->profiles_idle_id = g_idle_add(process_pending_profiles_idle, self);
+  }
 }
 
 /* Idle handler to process pending timeline events. Deferred to avoid GTK4 re-entrancy
@@ -1398,6 +1436,13 @@ static void gn_nostr_event_model_finalize(GObject *object) {
   }
   if (self->pending_timeline) g_array_unref(self->pending_timeline);
 
+  /* Clean up deferred profile processing */
+  if (self->profiles_idle_id > 0) {
+    g_source_remove(self->profiles_idle_id);
+    self->profiles_idle_id = 0;
+  }
+  if (self->pending_profiles) g_array_unref(self->pending_profiles);
+
   G_OBJECT_CLASS(gn_nostr_event_model_parent_class)->finalize(object);
 }
 
@@ -1508,6 +1553,10 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
   /* Deferred timeline processing */
   self->pending_timeline = g_array_new(FALSE, FALSE, sizeof(uint64_t));
   self->timeline_idle_id = 0;
+
+  /* Deferred profile processing */
+  self->pending_profiles = g_array_new(FALSE, FALSE, sizeof(uint64_t));
+  self->profiles_idle_id = 0;
 
   /* Install lifetime subscriptions via dispatcher (marshals to main loop) */
   self->sub_profiles = gn_ndb_subscribe(FILTER_PROFILES, on_sub_profiles_batch, self, NULL);
