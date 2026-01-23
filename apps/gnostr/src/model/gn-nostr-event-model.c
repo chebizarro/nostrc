@@ -828,7 +828,23 @@ static void enforce_window(GnNostrEventModel *self) {
   guint to_remove = self->notes->len - cap;
   guint old_len = self->notes->len;
 
-  /* Remove oldest entries (tail) and their cached state. */
+  /* CRITICAL: Emit removal signal BEFORE removing items from array.
+   * GTK's ListView calls get_item() during signal processing, so items
+   * must still exist when the signal is emitted. */
+  if (!self->in_batch) {
+    /* Cancel any pending idle emission - we're emitting now */
+    if (self->emit_idle_id > 0) {
+      g_source_remove(self->emit_idle_id);
+      self->emit_idle_id = 0;
+    }
+    /* Emit removal from end - items at positions cap to old_len-1 */
+    g_list_model_items_changed(G_LIST_MODEL(self), cap, to_remove, 0);
+    self->last_emitted_len = cap;
+    self->pending_refresh = FALSE;
+    self->emit_added = 0;
+  }
+
+  /* Now remove items - they're no longer referenced by ListView */
   for (guint i = 0; i < to_remove; i++) {
     guint idx = old_len - 1 - i;
     NoteEntry *old = &g_array_index(self->notes, NoteEntry, idx);
@@ -842,11 +858,6 @@ static void enforce_window(GnNostrEventModel *self) {
   }
 
   g_array_set_size(self->notes, cap);
-
-  /* nostrc-h40: Always use idle-scheduled refresh to prevent GTK4 crashes.
-   * enforce_window can be called from various code paths (batch processing,
-   * profile updates, etc.) and direct emission causes segfaults. */
-  schedule_model_refresh(self);
 }
 
 /* Pending queue: pubkey -> array of PendingEntry. Returns TRUE if this pubkey had no pending queue before. */
@@ -933,15 +944,26 @@ static gboolean remove_note_by_key(GnNostrEventModel *self, uint64_t note_key) {
     NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
     if (entry->note_key != note_key) continue;
 
+    /* CRITICAL: Emit removal signal BEFORE removing from array.
+     * GTK's ListView calls get_item() during signal processing. */
+    if (!self->in_batch) {
+      if (self->emit_idle_id > 0) {
+        g_source_remove(self->emit_idle_id);
+        self->emit_idle_id = 0;
+      }
+      g_list_model_items_changed(G_LIST_MODEL(self), i, 1, 0);
+      self->last_emitted_len = self->notes->len - 1;
+      self->pending_refresh = FALSE;
+      self->emit_added = 0;
+    }
+
     /* Cleanup caches */
     cache_lru_remove_key(self, note_key);
     g_hash_table_remove(self->thread_info, &note_key);
     g_hash_table_remove(self->item_cache, &note_key);
 
-    /* Remove visible entry and schedule model refresh */
+    /* Remove visible entry */
     g_array_remove_index(self->notes, i);
-    /* nostrc-h40: Use idle-scheduled refresh instead of direct emission */
-    schedule_model_refresh(self);
 
     return TRUE;
   }
@@ -1590,14 +1612,24 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
     return;
   }
 
+  /* CRITICAL: Emit removal signal BEFORE clearing array.
+   * GTK's ListView needs items to exist during signal processing. */
+  if (!self->in_batch) {
+    if (self->emit_idle_id > 0) {
+      g_source_remove(self->emit_idle_id);
+      self->emit_idle_id = 0;
+    }
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, 0);
+    self->last_emitted_len = 0;
+    self->pending_refresh = FALSE;
+    self->emit_added = 0;
+  }
+
   g_array_set_size(self->notes, 0);
   g_hash_table_remove_all(self->item_cache);
   g_queue_clear(self->cache_lru);
   g_hash_table_remove_all(self->thread_info);
   g_hash_table_remove_all(self->pending_by_author);
-
-  /* nostrc-h40: Use idle-scheduled refresh instead of direct emission */
-  schedule_model_refresh(self);
 
   g_debug("[MODEL] Cleared %u items", old_size);
 }
@@ -1716,6 +1748,19 @@ void gn_nostr_event_model_trim_newer(GnNostrEventModel *self, guint keep_count) 
 
   guint to_remove = self->notes->len - keep_count;
 
+  /* CRITICAL: Emit removal signal BEFORE removing from array.
+   * Removing from front (position 0), GTK needs items to exist during signal. */
+  if (!self->in_batch) {
+    if (self->emit_idle_id > 0) {
+      g_source_remove(self->emit_idle_id);
+      self->emit_idle_id = 0;
+    }
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, to_remove, 0);
+    self->last_emitted_len = keep_count;
+    self->pending_refresh = FALSE;
+    self->emit_added = 0;
+  }
+
   /* Remove newest entries (head) and their cached state */
   for (guint i = 0; i < to_remove; i++) {
     NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
@@ -1727,8 +1772,6 @@ void gn_nostr_event_model_trim_newer(GnNostrEventModel *self, guint keep_count) 
 
   /* Remove from front of array */
   g_array_remove_range(self->notes, 0, to_remove);
-  /* nostrc-h40: Use idle-scheduled refresh instead of direct emission */
-  schedule_model_refresh(self);
 
   g_debug("[MODEL] Trimmed %u newer items, %u remaining", to_remove, self->notes->len);
 }
@@ -1889,6 +1932,19 @@ void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count) 
   guint to_remove = self->notes->len - keep_count;
   guint start_idx = keep_count; /* Remove from end */
 
+  /* CRITICAL: Emit removal signal BEFORE removing from array.
+   * Removing from end (position start_idx), GTK needs items to exist during signal. */
+  if (!self->in_batch) {
+    if (self->emit_idle_id > 0) {
+      g_source_remove(self->emit_idle_id);
+      self->emit_idle_id = 0;
+    }
+    g_list_model_items_changed(G_LIST_MODEL(self), start_idx, to_remove, 0);
+    self->last_emitted_len = keep_count;
+    self->pending_refresh = FALSE;
+    self->emit_added = 0;
+  }
+
   /* Remove oldest entries (tail) and their cached state */
   for (guint i = start_idx; i < self->notes->len; i++) {
     NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
@@ -1900,8 +1956,6 @@ void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count) 
 
   /* Remove from end of array */
   g_array_remove_range(self->notes, start_idx, to_remove);
-  /* nostrc-h40: Use idle-scheduled refresh instead of direct emission */
-  schedule_model_refresh(self);
 
   g_debug("[MODEL] Trimmed %u older items, %u remaining", to_remove, self->notes->len);
 }
