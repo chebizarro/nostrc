@@ -15,6 +15,7 @@
 #include <gtk/gtk.h>
 #include <time.h>
 #include "../accounts_store.h"
+#include "../client_session.h"
 
 // Callback signature for decision results
 // decision: TRUE=Approve, FALSE=Deny; remember: TRUE to persist policy;
@@ -214,7 +215,7 @@ static void do_finish(GnostrApprovalDialog *self, gboolean decision) {
     case 3:
     default:
       ttl_seconds = 0;
-      break; /* Forever */
+      break; /* Forever (persistent) */
     }
   }
 
@@ -226,6 +227,38 @@ static void do_finish(GnostrApprovalDialog *self, gboolean decision) {
       if (idx >= n)
         idx = 0;
       selected = gtk_string_list_get_string(self->identity_model, idx);
+    }
+  }
+
+  /* If approved with "Remember", create a client session */
+  if (decision && remember && self->client_pubkey && selected) {
+    GnClientSessionManager *csm = gn_client_session_manager_get_default();
+
+    /* Get app name from row_app subtitle */
+    const char *app_name = adw_action_row_get_subtitle(self->row_app);
+
+    /* Determine if session should be persistent (Forever option) */
+    gboolean persistent = (ttl_seconds == 0);
+
+    /* Grant signing permission for remembered approvals */
+    guint permissions = GN_PERM_SIGN_EVENT;
+
+    /* Convert ttl_seconds: 0 means forever (-1 internally), otherwise use value */
+    gint64 ttl = (ttl_seconds == 0) ? -1 : (gint64)ttl_seconds;
+
+    GnClientSession *session = gn_client_session_manager_create_session(
+      csm,
+      self->client_pubkey,
+      selected,
+      app_name,
+      permissions,
+      persistent,
+      ttl
+    );
+
+    if (session) {
+      g_debug("approval-dialog: Created client session for %s -> %s (ttl=%ld)",
+              self->client_pubkey, selected, (long)ttl_seconds);
     }
   }
 
@@ -704,11 +737,31 @@ gboolean gnostr_show_approval_dialog_with_session(GtkWidget *parent,
                                                   AccountsStore *as,
                                                   GnostrApprovalCallback cb,
                                                   gpointer user_data) {
-  /* Include client_session.h to check for existing sessions */
-  /* Note: This creates a dependency - the bunker_service should
-   * call this instead of directly showing approval dialogs */
+  /* Check for existing active session */
+  if (client_pubkey && identity_npub) {
+    GnClientSessionManager *csm = gn_client_session_manager_get_default();
 
-  /* For now, just show the dialog with client pubkey set */
+    if (gn_client_session_manager_has_active_session(csm, client_pubkey, identity_npub)) {
+      GnClientSession *session = gn_client_session_manager_get_session(
+        csm, client_pubkey, identity_npub);
+
+      if (session && gn_client_session_has_permission(session, GN_PERM_SIGN_EVENT)) {
+        /* Auto-approve: update activity and call callback immediately */
+        gn_client_session_manager_touch_session(csm, client_pubkey, identity_npub);
+
+        g_debug("approval-dialog: Auto-approved via existing session for %s", client_pubkey);
+
+        if (cb) {
+          /* remember=TRUE since this is from a remembered session, ttl=0 (unchanged) */
+          cb(TRUE, TRUE, identity_npub, 0, user_data);
+        }
+
+        return FALSE;  /* Dialog was NOT shown - auto-approved */
+      }
+    }
+  }
+
+  /* No active session - show the dialog */
   GnostrApprovalDialog *dialog = gnostr_approval_dialog_new();
 
   gnostr_approval_dialog_set_client_pubkey(dialog, client_pubkey);

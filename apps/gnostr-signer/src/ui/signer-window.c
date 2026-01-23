@@ -4,14 +4,18 @@
 #include "page-applications.h"
 #include "page-sessions.h"
 #include "page-settings.h"
+#include "lock-screen.h"
 #include "sheets/sheet-create-profile.h"
 #include "sheets/sheet-import-profile.h"
 #include "sheets/sheet-account-backup.h"
 #include "sheets/sheet-backup.h"
+#include "sheets/sheet-create-account.h"
 #include "../secret_store.h"
 #include "../startup-timing.h"
+#include "../session-manager.h"
 #include <gio/gio.h>
 #include <gdk/gdkkeysyms.h>
+#include <time.h>
 
 /* GSettings schema ID for the signer app */
 #define SIGNER_GSETTINGS_ID "org.gnostr.Signer"
@@ -19,6 +23,8 @@
 struct _SignerWindow {
   AdwApplicationWindow parent_instance;
   /* Template children */
+  GtkStack *main_stack;
+  GnLockScreen *lock_screen;
   AdwToolbarView *toolbar_view;
   AdwHeaderBar *header_bar;
   AdwViewSwitcherTitle *switcher_title;
@@ -36,6 +42,11 @@ struct _SignerWindow {
   /* Startup optimization: lazy loading state */
   gboolean deferred_init_scheduled;
   gboolean page_data_loaded;
+  /* Session management */
+  gulong session_locked_handler;
+  gulong session_unlocked_handler;
+  gulong session_timeout_warning_handler;
+  gint64 locked_at_time;
 };
 
 G_DEFINE_TYPE(SignerWindow, signer_window, ADW_TYPE_APPLICATION_WINDOW)
@@ -108,6 +119,22 @@ static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpoint
 
 static void signer_window_dispose(GObject *object) {
   SignerWindow *self = SIGNER_WINDOW(object);
+
+  /* Disconnect session manager signals */
+  GnSessionManager *sm = gn_session_manager_get_default();
+  if (self->session_locked_handler > 0) {
+    g_signal_handler_disconnect(sm, self->session_locked_handler);
+    self->session_locked_handler = 0;
+  }
+  if (self->session_unlocked_handler > 0) {
+    g_signal_handler_disconnect(sm, self->session_unlocked_handler);
+    self->session_unlocked_handler = 0;
+  }
+  if (self->session_timeout_warning_handler > 0) {
+    g_signal_handler_disconnect(sm, self->session_timeout_warning_handler);
+    self->session_timeout_warning_handler = 0;
+  }
+
   /* Save state on dispose as a backup */
   signer_window_save_state(self);
   g_clear_object(&self->settings);
@@ -124,6 +151,7 @@ static void signer_window_class_init(SignerWindowClass *klass) {
 
   /* Ensure custom page types are registered before template instantiation */
   STARTUP_TIME_BEGIN(STARTUP_PHASE_PAGES);
+  g_type_ensure(GN_TYPE_LOCK_SCREEN);
   g_type_ensure(TYPE_PAGE_PERMISSIONS);
   g_type_ensure(TYPE_PAGE_APPLICATIONS);
   g_type_ensure(GN_TYPE_PAGE_SESSIONS);
@@ -131,6 +159,8 @@ static void signer_window_class_init(SignerWindowClass *klass) {
   STARTUP_TIME_END(STARTUP_PHASE_PAGES);
 
   gtk_widget_class_set_template_from_resource(widget_class, APP_RESOURCE_PATH "/ui/signer-window.ui");
+  gtk_widget_class_bind_template_child(widget_class, SignerWindow, main_stack);
+  gtk_widget_class_bind_template_child(widget_class, SignerWindow, lock_screen);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, toolbar_view);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, header_bar);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, switcher_title);
@@ -272,6 +302,65 @@ static void setup_window_shortcuts(SignerWindow *self) {
   gtk_widget_add_controller(GTK_WIDGET(self), controller);
 }
 
+/* Session manager signal handlers */
+static void on_session_locked(GnSessionManager *sm, GnLockReason reason, gpointer user_data) {
+  (void)sm;
+  SignerWindow *self = SIGNER_WINDOW(user_data);
+
+  /* Record lock time and show lock screen */
+  self->locked_at_time = (gint64)time(NULL);
+  gn_lock_screen_set_lock_reason(self->lock_screen, reason);
+  gn_lock_screen_set_locked_at(self->lock_screen, self->locked_at_time);
+  gn_lock_screen_clear_error(self->lock_screen);
+  gn_lock_screen_clear_password(self->lock_screen);
+
+  /* Switch to lock screen */
+  gtk_stack_set_visible_child_name(self->main_stack, "locked");
+  gn_lock_screen_focus_password(self->lock_screen);
+
+  g_debug("Window: session locked (reason=%d)", reason);
+}
+
+static void on_session_unlocked(GnSessionManager *sm, gpointer user_data) {
+  (void)sm;
+  SignerWindow *self = SIGNER_WINDOW(user_data);
+
+  /* Clear lock screen state */
+  gn_lock_screen_clear_password(self->lock_screen);
+  gn_lock_screen_clear_error(self->lock_screen);
+
+  /* Switch to main content */
+  gtk_stack_set_visible_child_name(self->main_stack, "unlocked");
+
+  g_debug("Window: session unlocked");
+}
+
+static void on_session_timeout_warning(GnSessionManager *sm, guint seconds_remaining, gpointer user_data) {
+  (void)sm;
+  SignerWindow *self = SIGNER_WINDOW(user_data);
+
+  /* Show a toast warning about impending timeout */
+  AdwToast *toast = adw_toast_new_format("Session will lock in %u seconds", seconds_remaining);
+  adw_toast_set_timeout(toast, 3);
+
+  /* Find a toast overlay in the window or create notification */
+  g_debug("Window: session timeout warning - %u seconds remaining", seconds_remaining);
+
+  /* For now just log - could show in-app notification */
+  (void)toast;
+  g_object_unref(toast);
+}
+
+static void on_lock_screen_unlock_requested(GnLockScreen *lock_screen, gpointer user_data) {
+  (void)lock_screen;
+  SignerWindow *self = SIGNER_WINDOW(user_data);
+
+  /* The lock screen already called authenticate() - if we get here, it succeeded */
+  /* Switch to main content (the session manager will emit unlocked signal) */
+  (void)self;
+  g_debug("Window: unlock requested from lock screen");
+}
+
 /* Deferred initialization for non-critical page data */
 static gboolean signer_window_deferred_page_init(gpointer user_data) {
   SignerWindow *self = SIGNER_WINDOW(user_data);
@@ -302,6 +391,10 @@ static void signer_window_init(SignerWindow *self) {
   /* Initialize state */
   self->deferred_init_scheduled = FALSE;
   self->page_data_loaded = FALSE;
+  self->session_locked_handler = 0;
+  self->session_unlocked_handler = 0;
+  self->session_timeout_warning_handler = 0;
+  self->locked_at_time = 0;
 
   /* Initialize GSettings for persistence */
   self->settings = signer_window_get_settings();
@@ -314,6 +407,29 @@ static void signer_window_init(SignerWindow *self) {
 
   /* Setup keyboard shortcuts using GtkShortcutController */
   setup_window_shortcuts(self);
+
+  /* Connect to session manager signals */
+  GnSessionManager *sm = gn_session_manager_get_default();
+  self->session_locked_handler = g_signal_connect(sm, "session-locked",
+                                                   G_CALLBACK(on_session_locked), self);
+  self->session_unlocked_handler = g_signal_connect(sm, "session-unlocked",
+                                                     G_CALLBACK(on_session_unlocked), self);
+  self->session_timeout_warning_handler = g_signal_connect(sm, "timeout-warning",
+                                                            G_CALLBACK(on_session_timeout_warning), self);
+
+  /* Connect to lock screen unlock signal */
+  g_signal_connect(self->lock_screen, "unlock-requested",
+                   G_CALLBACK(on_lock_screen_unlock_requested), self);
+
+  /* Set initial lock state based on session manager */
+  if (gn_session_manager_is_locked(sm)) {
+    self->locked_at_time = (gint64)time(NULL);
+    gn_lock_screen_set_lock_reason(self->lock_screen, GN_LOCK_REASON_STARTUP);
+    gn_lock_screen_set_locked_at(self->lock_screen, self->locked_at_time);
+    gtk_stack_set_visible_child_name(self->main_stack, "locked");
+  } else {
+    gtk_stack_set_visible_child_name(self->main_stack, "unlocked");
+  }
 
   /* Schedule deferred page data initialization using g_idle_add
    * This runs after the window is displayed, improving perceived startup time */
@@ -422,6 +538,18 @@ void signer_window_show_import_profile(SignerWindow *self) {
 }
 
 /**
+ * signer_window_show_create_account:
+ * @self: a #SignerWindow
+ *
+ * Opens the account creation wizard dialog.
+ */
+void signer_window_show_create_account(SignerWindow *self) {
+  g_return_if_fail(SIGNER_IS_WINDOW(self));
+  SheetCreateAccount *dialog = sheet_create_account_new();
+  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(self));
+}
+
+/**
  * signer_window_show_backup:
  * @self: a #SignerWindow
  *
@@ -449,33 +577,29 @@ void signer_window_show_backup(SignerWindow *self) {
  * @self: a #SignerWindow
  *
  * Locks the current session, requiring re-authentication.
- * For now, this calls the D-Bus method to lock the session.
+ * Uses the session manager for in-process lock management.
  */
 void signer_window_lock_session(SignerWindow *self) {
   g_return_if_fail(SIGNER_IS_WINDOW(self));
 
-  /* Call D-Bus method to lock the session */
-  GError *err = NULL;
-  GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
-  if (!bus) {
-    g_warning("Failed to connect to session bus for lock: %s", err ? err->message : "unknown");
-    g_clear_error(&err);
-    return;
-  }
+  /* Lock via session manager - this will emit the locked signal */
+  GnSessionManager *sm = gn_session_manager_get_default();
+  gn_session_manager_lock(sm, GN_LOCK_REASON_MANUAL);
 
-  g_dbus_connection_call(bus,
-                         "org.nostr.Signer",
-                         "/org/nostr/signer",
-                         "org.nostr.Signer",
-                         "LockSession",
-                         NULL,
-                         NULL,
-                         G_DBUS_CALL_FLAGS_NONE,
-                         5000,
-                         NULL,
-                         NULL,
-                         NULL);
+  g_message("Session locked via Ctrl+L");
+}
 
-  g_object_unref(bus);
-  g_message("Session lock requested via Ctrl+L");
+/**
+ * signer_window_is_locked:
+ * @self: a #SignerWindow
+ *
+ * Returns whether the window is currently showing the lock screen.
+ *
+ * Returns: %TRUE if locked
+ */
+gboolean signer_window_is_locked(SignerWindow *self) {
+  g_return_val_if_fail(SIGNER_IS_WINDOW(self), TRUE);
+
+  const gchar *visible = gtk_stack_get_visible_child_name(self->main_stack);
+  return g_strcmp0(visible, "locked") == 0;
 }

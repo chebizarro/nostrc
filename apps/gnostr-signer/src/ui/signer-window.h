@@ -28,6 +28,16 @@ void signer_window_show_new_profile(SignerWindow *self);
 void signer_window_show_import_profile(SignerWindow *self);
 
 /**
+ * signer_window_show_create_account:
+ * @self: a #SignerWindow
+ *
+ * Opens the account creation wizard dialog.
+ * This wizard guides users through creating a new Nostr identity
+ * with BIP-39 seed phrase generation and verification.
+ */
+void signer_window_show_create_account(SignerWindow *self);
+
+/**
  * signer_window_show_backup:
  * @self: a #SignerWindow
  *
@@ -42,6 +52,16 @@ void signer_window_show_backup(SignerWindow *self);
  * Locks the current session, requiring re-authentication.
  */
 void signer_window_lock_session(SignerWindow *self);
+
+/**
+ * signer_window_is_locked:
+ * @self: a #SignerWindow
+ *
+ * Returns whether the window is currently showing the lock screen.
+ *
+ * Returns: %TRUE if the session is locked
+ */
+gboolean signer_window_is_locked(SignerWindow *self);
 
 /**
  * signer_window_get_gsettings:

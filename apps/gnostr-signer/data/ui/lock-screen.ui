@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="GnLockScreen" parent="GtkBox">
+    <property name="orientation">vertical</property>
+    <property name="spacing">24</property>
+    <property name="valign">center</property>
+    <property name="halign">center</property>
+    <property name="vexpand">true</property>
+    <property name="hexpand">true</property>
+    <property name="margin-top">48</property>
+    <property name="margin-bottom">48</property>
+    <property name="margin-start">48</property>
+    <property name="margin-end">48</property>
+    <accessibility>
+      <property name="label">Lock screen</property>
+      <property name="description">The session is locked. Enter your password to unlock and access your keys.</property>
+    </accessibility>
+
+    <!-- Lock Icon and Title -->
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">16</property>
+        <property name="halign">center</property>
+        <child>
+          <object class="GtkImage" id="icon_lock">
+            <property name="icon-name">system-lock-screen-symbolic</property>
+            <property name="pixel-size">64</property>
+            <accessibility>
+              <property name="label">Lock icon</property>
+              <property name="description">Indicates the session is currently locked</property>
+            </accessibility>
+            <style>
+              <class name="dim-label"/>
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="lbl_title">
+            <property name="label" translatable="yes">Session Locked</property>
+            <attributes>
+              <attribute name="weight" value="bold"/>
+              <attribute name="scale" value="1.5"/>
+            </attributes>
+            <accessibility>
+              <property name="description">Title indicating the current lock state</property>
+            </accessibility>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="lbl_subtitle">
+            <property name="label" translatable="yes">Enter your password to unlock</property>
+            <accessibility>
+              <property name="description">Instructions for unlocking the session</property>
+            </accessibility>
+            <style>
+              <class name="dim-label"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+
+    <!-- Password Entry Section -->
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">12</property>
+        <property name="halign">center</property>
+        <property name="width-request">300</property>
+        <child>
+          <object class="AdwPasswordEntryRow" id="entry_password">
+            <property name="title" translatable="yes">Password</property>
+            <accessibility>
+              <property name="label">Password entry</property>
+              <property name="description">Enter your unlock password here</property>
+            </accessibility>
+            <style>
+              <class name="boxed-list"/>
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="lbl_error">
+            <property name="visible">false</property>
+            <property name="wrap">true</property>
+            <property name="max-width-chars">40</property>
+            <accessibility>
+              <property name="label">Error message</property>
+              <property name="description">Displays error messages when unlock fails</property>
+            </accessibility>
+            <style>
+              <class name="error"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+
+    <!-- Unlock Button -->
+    <child>
+      <object class="GtkButton" id="btn_unlock">
+        <property name="label" translatable="yes">_Unlock</property>
+        <property name="use-underline">true</property>
+        <property name="halign">center</property>
+        <property name="width-request">200</property>
+        <accessibility>
+          <property name="label">Unlock session</property>
+          <property name="description">Click to unlock the session with the entered password</property>
+        </accessibility>
+        <style>
+          <class name="suggested-action"/>
+          <class name="pill"/>
+        </style>
+      </object>
+    </child>
+
+    <!-- Session Info -->
+    <child>
+      <object class="GtkBox" id="box_session_info">
+        <property name="orientation">vertical</property>
+        <property name="spacing">4</property>
+        <property name="halign">center</property>
+        <property name="visible">false</property>
+        <accessibility>
+          <property name="label">Session information</property>
+          <property name="description">Additional information about the locked session</property>
+        </accessibility>
+        <child>
+          <object class="GtkLabel" id="lbl_lock_reason">
+            <property name="label" translatable="yes">Locked due to inactivity</property>
+            <style>
+              <class name="dim-label"/>
+              <class name="caption"/>
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="lbl_locked_at">
+            <property name="label" translatable="yes">Locked at 12:00</property>
+            <style>
+              <class name="dim-label"/>
+              <class name="caption"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+
+  </template>
+</interface>

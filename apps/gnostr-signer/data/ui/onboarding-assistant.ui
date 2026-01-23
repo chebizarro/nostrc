@@ -698,7 +698,134 @@
                                     </object>
                                 </child>
 
-                                <!-- Page 5: Backup Reminder -->
+                                <!-- Page 5: Seed Phrase Display (for new profiles) -->
+                                <child>
+                                    <object class="GtkBox" id="page_seed_phrase">
+                                        <property name="orientation">vertical</property>
+                                        <property name="spacing">16</property>
+                                        <property name="valign">center</property>
+                                        <property name="halign">center</property>
+                                        <property name="margin-start">24</property>
+                                        <property name="margin-end">24</property>
+
+                                        <child>
+                                            <object class="GtkImage">
+                                                <property name="icon-name">dialog-warning-symbolic</property>
+                                                <property name="pixel-size">48</property>
+                                                <property name="margin-bottom">8</property>
+                                                <style>
+                                                    <class name="warning" />
+                                                </style>
+                                            </object>
+                                        </child>
+
+                                        <child>
+                                            <object class="GtkLabel">
+                                                <property name="label" translatable="yes">Your Recovery Phrase</property>
+                                                <style>
+                                                    <class name="title-2" />
+                                                </style>
+                                            </object>
+                                        </child>
+
+                                        <child>
+                                            <object class="GtkLabel">
+                                                <property name="label" translatable="yes">Write down these words in order and keep them safe. This is the ONLY way to recover your key.</property>
+                                                <property name="wrap">true</property>
+                                                <property name="max-width-chars">50</property>
+                                                <property name="justify">center</property>
+                                                <style>
+                                                    <class name="dim-label" />
+                                                </style>
+                                            </object>
+                                        </child>
+
+                                        <child>
+                                            <object class="GtkBox">
+                                                <property name="orientation">vertical</property>
+                                                <property name="spacing">12</property>
+                                                <property name="margin-top">16</property>
+                                                <property name="halign">center</property>
+                                                <property name="width-request">400</property>
+
+                                                <!-- Seed phrase display frame -->
+                                                <child>
+                                                    <object class="GtkFrame">
+                                                        <style>
+                                                            <class name="card" />
+                                                        </style>
+                                                        <child>
+                                                            <object class="GtkBox">
+                                                                <property name="orientation">vertical</property>
+                                                                <property name="spacing">8</property>
+                                                                <property name="margin-start">16</property>
+                                                                <property name="margin-end">16</property>
+                                                                <property name="margin-top">16</property>
+                                                                <property name="margin-bottom">16</property>
+
+                                                                <!-- Seed phrase grid container -->
+                                                                <child>
+                                                                    <object class="GtkFlowBox" id="seed_phrase_grid">
+                                                                        <property name="homogeneous">true</property>
+                                                                        <property name="selection-mode">none</property>
+                                                                        <property name="max-children-per-line">4</property>
+                                                                        <property name="min-children-per-line">3</property>
+                                                                        <property name="row-spacing">8</property>
+                                                                        <property name="column-spacing">12</property>
+                                                                    </object>
+                                                                </child>
+                                                            </object>
+                                                        </child>
+                                                    </object>
+                                                </child>
+
+                                                <!-- Copy button -->
+                                                <child>
+                                                    <object class="GtkButton" id="btn_copy_seed">
+                                                        <property name="halign">center</property>
+                                                        <child>
+                                                            <object class="GtkBox">
+                                                                <property name="orientation">horizontal</property>
+                                                                <property name="spacing">8</property>
+                                                                <child>
+                                                                    <object class="GtkImage">
+                                                                        <property name="icon-name">edit-copy-symbolic</property>
+                                                                    </object>
+                                                                </child>
+                                                                <child>
+                                                                    <object class="GtkLabel">
+                                                                        <property name="label" translatable="yes">Copy to Clipboard</property>
+                                                                    </object>
+                                                                </child>
+                                                            </object>
+                                                        </child>
+                                                    </object>
+                                                </child>
+
+                                                <child>
+                                                    <object class="AdwBanner" id="seed_warning_banner">
+                                                        <property name="title" translatable="yes">Never share your recovery phrase with anyone. Anyone with these words can access your identity.</property>
+                                                        <property name="revealed">true</property>
+                                                        <style>
+                                                            <class name="error" />
+                                                        </style>
+                                                    </object>
+                                                </child>
+
+                                                <!-- Confirmation checkbox -->
+                                                <child>
+                                                    <object class="GtkCheckButton" id="seed_written_down">
+                                                        <property name="label" translatable="yes">I have written down my recovery phrase and stored it safely</property>
+                                                        <property name="halign">center</property>
+                                                        <property name="margin-top">8</property>
+                                                    </object>
+                                                </child>
+                                            </object>
+                                        </child>
+                                    </object>
+                                </child>
+
+                                <!-- Page 6: Backup Reminder -->
                                 <child>
                                     <object class="GtkBox" id="page_backup_reminder">
                                         <property name="orientation">vertical</property>

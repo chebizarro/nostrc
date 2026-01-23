@@ -355,6 +355,7 @@ gn_session_manager_class_init(GnSessionManagerClass *klass)
   /**
    * GnSessionManager::session-locked:
    * @self: The session manager
+   * @reason: The reason for locking (GnLockReason)
    *
    * Emitted when the session is locked, either manually or due to timeout.
    */
@@ -365,7 +366,8 @@ gn_session_manager_class_init(GnSessionManagerClass *klass)
                  0,
                  NULL, NULL,
                  NULL,
-                 G_TYPE_NONE, 0);
+                 G_TYPE_NONE, 1,
+                 G_TYPE_INT);
 
   /**
    * GnSessionManager::session-unlocked:
@@ -468,7 +470,7 @@ on_timeout_expired(gpointer user_data)
     self->timeout_source_id = 0;
 
     g_signal_emit(self, signals[SIGNAL_SESSION_EXPIRED], 0);
-    g_signal_emit(self, signals[SIGNAL_SESSION_LOCKED], 0);
+    g_signal_emit(self, signals[SIGNAL_SESSION_LOCKED], 0, (gint)GN_LOCK_REASON_TIMEOUT);
 
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_STATE]);
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_REMAINING_TIME]);
@@ -648,14 +650,14 @@ gn_session_manager_set_timeout(GnSessionManager *self, guint seconds)
 }
 
 void
-gn_session_manager_lock(GnSessionManager *self)
+gn_session_manager_lock(GnSessionManager *self, GnLockReason reason)
 {
   g_return_if_fail(GN_IS_SESSION_MANAGER(self));
 
   if (self->state == GN_SESSION_STATE_LOCKED)
     return;
 
-  g_debug("session-manager: Locking session");
+  g_debug("session-manager: Locking session (reason=%d)", reason);
 
   gn_session_manager_stop_timer(self);
 
@@ -663,9 +665,17 @@ gn_session_manager_lock(GnSessionManager *self)
   self->session_started = 0;
   self->last_activity = 0;
 
-  g_signal_emit(self, signals[SIGNAL_SESSION_LOCKED], 0);
+  g_signal_emit(self, signals[SIGNAL_SESSION_LOCKED], 0, (gint)reason);
   g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_STATE]);
   g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_REMAINING_TIME]);
+}
+
+gboolean
+gn_session_manager_is_locked(GnSessionManager *self)
+{
+  g_return_val_if_fail(GN_IS_SESSION_MANAGER(self), TRUE);
+
+  return self->state != GN_SESSION_STATE_AUTHENTICATED;
 }
 
 void

@@ -6,6 +6,7 @@
 #include "backup-recovery.h"
 #include "secure-mem.h"
 
+#include <json-glib/json-glib.h>
 #include <nostr/nip49/nip49.h>
 #include <nostr/nip49/nip49_g.h>
 #include <nostr/nip19/nip19.h>
@@ -485,4 +486,348 @@ gboolean gn_backup_get_npub(const gchar *nsec,
 
   *out_npub = npub;
   return TRUE;
+}
+
+/* ============================================================
+ * Backup File Format with Metadata
+ * ============================================================ */
+
+void gn_backup_metadata_free(GnBackupMetadata *meta) {
+  if (!meta) return;
+
+  /* Securely clear ncryptsec before freeing */
+  if (meta->ncryptsec) {
+    gnostr_secure_clear(meta->ncryptsec, strlen(meta->ncryptsec));
+    g_free(meta->ncryptsec);
+  }
+
+  g_free(meta->identity_name);
+  g_free(meta->npub);
+  g_free(meta->created_at);
+  g_free(meta);
+}
+
+/* Helper: Get current ISO 8601 timestamp */
+static gchar *get_iso8601_timestamp(void) {
+  GDateTime *now = g_date_time_new_now_utc();
+  gchar *timestamp = g_date_time_format_iso8601(now);
+  g_date_time_unref(now);
+  return timestamp;
+}
+
+/* Helper: Convert security level to string */
+static const gchar *security_level_to_string(GnBackupSecurityLevel level) {
+  switch (level) {
+    case GN_BACKUP_SECURITY_FAST: return "fast";
+    case GN_BACKUP_SECURITY_NORMAL: return "normal";
+    case GN_BACKUP_SECURITY_HIGH: return "high";
+    case GN_BACKUP_SECURITY_PARANOID: return "paranoid";
+    default: return "normal";
+  }
+}
+
+/* Helper: Parse security level from string */
+static GnBackupSecurityLevel security_level_from_string(const gchar *str) {
+  if (!str) return GN_BACKUP_SECURITY_NORMAL;
+  if (g_strcmp0(str, "fast") == 0) return GN_BACKUP_SECURITY_FAST;
+  if (g_strcmp0(str, "high") == 0) return GN_BACKUP_SECURITY_HIGH;
+  if (g_strcmp0(str, "paranoid") == 0) return GN_BACKUP_SECURITY_PARANOID;
+  return GN_BACKUP_SECURITY_NORMAL;
+}
+
+gboolean gn_backup_create_metadata_json(const gchar *nsec,
+                                          const gchar *password,
+                                          GnBackupSecurityLevel security,
+                                          const gchar *identity_name,
+                                          gchar **out_json,
+                                          GError **error) {
+  g_return_val_if_fail(out_json != NULL, FALSE);
+  *out_json = NULL;
+
+  /* Create encrypted backup */
+  gchar *ncryptsec = NULL;
+  if (!gn_backup_export_nip49(nsec, password, security, &ncryptsec, error)) {
+    return FALSE;
+  }
+
+  /* Get npub */
+  gchar *npub = NULL;
+  if (!gn_backup_get_npub(nsec, &npub, error)) {
+    g_free(ncryptsec);
+    return FALSE;
+  }
+
+  /* Get timestamp */
+  gchar *created_at = get_iso8601_timestamp();
+
+  /* Build JSON object */
+  JsonBuilder *builder = json_builder_new();
+  json_builder_begin_object(builder);
+
+  json_builder_set_member_name(builder, "version");
+  json_builder_add_int_value(builder, 1);
+
+  json_builder_set_member_name(builder, "format");
+  json_builder_add_string_value(builder, "gnostr-backup");
+
+  json_builder_set_member_name(builder, "created_at");
+  json_builder_add_string_value(builder, created_at);
+
+  if (identity_name && *identity_name) {
+    json_builder_set_member_name(builder, "identity_name");
+    json_builder_add_string_value(builder, identity_name);
+  }
+
+  json_builder_set_member_name(builder, "npub");
+  json_builder_add_string_value(builder, npub);
+
+  json_builder_set_member_name(builder, "ncryptsec");
+  json_builder_add_string_value(builder, ncryptsec);
+
+  json_builder_set_member_name(builder, "security_level");
+  json_builder_add_string_value(builder, security_level_to_string(security));
+
+  json_builder_end_object(builder);
+
+  /* Generate JSON string */
+  JsonGenerator *gen = json_generator_new();
+  json_generator_set_pretty(gen, TRUE);
+  json_generator_set_indent(gen, 2);
+  JsonNode *root = json_builder_get_root(builder);
+  json_generator_set_root(gen, root);
+
+  *out_json = json_generator_to_data(gen, NULL);
+
+  /* Cleanup */
+  json_node_unref(root);
+  g_object_unref(gen);
+  g_object_unref(builder);
+  g_free(created_at);
+  g_free(npub);
+
+  /* Securely clear ncryptsec */
+  gnostr_secure_clear(ncryptsec, strlen(ncryptsec));
+  g_free(ncryptsec);
+
+  return TRUE;
+}
+
+gboolean gn_backup_parse_metadata_json(const gchar *json,
+                                         GnBackupMetadata **out_metadata,
+                                         GError **error) {
+  g_return_val_if_fail(out_metadata != NULL, FALSE);
+  *out_metadata = NULL;
+
+  if (!json || !*json) {
+    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_ENCRYPTED,
+                "Empty JSON input");
+    return FALSE;
+  }
+
+  /* Parse JSON */
+  JsonParser *parser = json_parser_new();
+  GError *parse_error = NULL;
+
+  if (!json_parser_load_from_data(parser, json, -1, &parse_error)) {
+    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_ENCRYPTED,
+                "Invalid JSON: %s", parse_error->message);
+    g_error_free(parse_error);
+    g_object_unref(parser);
+    return FALSE;
+  }
+
+  JsonNode *root = json_parser_get_root(parser);
+  if (!JSON_NODE_HOLDS_OBJECT(root)) {
+    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_ENCRYPTED,
+                "Invalid backup format: expected JSON object");
+    g_object_unref(parser);
+    return FALSE;
+  }
+
+  JsonObject *obj = json_node_get_object(root);
+
+  /* Validate format */
+  const gchar *format = NULL;
+  if (json_object_has_member(obj, "format")) {
+    format = json_object_get_string_member(obj, "format");
+  }
+  if (!format || g_strcmp0(format, "gnostr-backup") != 0) {
+    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_ENCRYPTED,
+                "Invalid backup format: expected 'gnostr-backup'");
+    g_object_unref(parser);
+    return FALSE;
+  }
+
+  /* Get ncryptsec (required) */
+  if (!json_object_has_member(obj, "ncryptsec")) {
+    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_ENCRYPTED,
+                "Invalid backup: missing 'ncryptsec' field");
+    g_object_unref(parser);
+    return FALSE;
+  }
+
+  const gchar *ncryptsec = json_object_get_string_member(obj, "ncryptsec");
+  if (!ncryptsec || !gn_backup_validate_ncryptsec(ncryptsec)) {
+    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_ENCRYPTED,
+                "Invalid backup: invalid 'ncryptsec' format");
+    g_object_unref(parser);
+    return FALSE;
+  }
+
+  /* Create metadata structure */
+  GnBackupMetadata *meta = g_new0(GnBackupMetadata, 1);
+  meta->ncryptsec = g_strdup(ncryptsec);
+
+  /* Optional fields */
+  if (json_object_has_member(obj, "version")) {
+    meta->version = (gint)json_object_get_int_member(obj, "version");
+  } else {
+    meta->version = 1;
+  }
+
+  if (json_object_has_member(obj, "identity_name")) {
+    meta->identity_name = g_strdup(json_object_get_string_member(obj, "identity_name"));
+  }
+
+  if (json_object_has_member(obj, "npub")) {
+    meta->npub = g_strdup(json_object_get_string_member(obj, "npub"));
+  }
+
+  if (json_object_has_member(obj, "created_at")) {
+    meta->created_at = g_strdup(json_object_get_string_member(obj, "created_at"));
+  }
+
+  if (json_object_has_member(obj, "security_level")) {
+    const gchar *level_str = json_object_get_string_member(obj, "security_level");
+    meta->security_level = security_level_from_string(level_str);
+  } else {
+    meta->security_level = GN_BACKUP_SECURITY_NORMAL;
+  }
+
+  g_object_unref(parser);
+  *out_metadata = meta;
+  return TRUE;
+}
+
+gboolean gn_backup_export_to_file_with_metadata(const gchar *nsec,
+                                                  const gchar *password,
+                                                  GnBackupSecurityLevel security,
+                                                  const gchar *identity_name,
+                                                  const gchar *filepath,
+                                                  GError **error) {
+  if (!filepath || !*filepath) {
+    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_FILE_IO,
+                "File path is required");
+    return FALSE;
+  }
+
+  /* Create JSON with metadata */
+  gchar *json = NULL;
+  if (!gn_backup_create_metadata_json(nsec, password, security, identity_name, &json, error)) {
+    return FALSE;
+  }
+
+  /* Write to file */
+  GError *file_error = NULL;
+  gboolean ok = g_file_set_contents(filepath, json, -1, &file_error);
+
+  /* Securely clear and free JSON */
+  gnostr_secure_clear(json, strlen(json));
+  g_free(json);
+
+  if (!ok) {
+    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_FILE_IO,
+                "Failed to write file: %s", file_error->message);
+    g_error_free(file_error);
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
+gboolean gn_backup_import_from_file_with_metadata(const gchar *filepath,
+                                                    const gchar *password,
+                                                    gchar **out_nsec,
+                                                    GnBackupMetadata **out_metadata,
+                                                    GError **error) {
+  g_return_val_if_fail(out_nsec != NULL, FALSE);
+  *out_nsec = NULL;
+  if (out_metadata) *out_metadata = NULL;
+
+  if (!filepath || !*filepath) {
+    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_FILE_IO,
+                "File path is required");
+    return FALSE;
+  }
+
+  /* Read file contents */
+  gchar *contents = NULL;
+  gsize length = 0;
+  GError *file_error = NULL;
+
+  if (!g_file_get_contents(filepath, &contents, &length, &file_error)) {
+    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_FILE_IO,
+                "Failed to read file: %s", file_error->message);
+    g_error_free(file_error);
+    return FALSE;
+  }
+
+  /* Trim whitespace */
+  g_strstrip(contents);
+
+  gboolean success = FALSE;
+  gchar *ncryptsec_to_decrypt = NULL;
+
+  /* Check if this is JSON format or plain ncryptsec */
+  if (contents[0] == '{') {
+    /* JSON format with metadata */
+    GnBackupMetadata *meta = NULL;
+    GError *parse_error = NULL;
+
+    if (!gn_backup_parse_metadata_json(contents, &meta, &parse_error)) {
+      /* Securely clear contents before freeing */
+      gnostr_secure_clear(contents, length);
+      g_free(contents);
+      g_propagate_error(error, parse_error);
+      return FALSE;
+    }
+
+    ncryptsec_to_decrypt = g_strdup(meta->ncryptsec);
+
+    if (out_metadata) {
+      *out_metadata = meta;
+    } else {
+      gn_backup_metadata_free(meta);
+    }
+  } else if (g_str_has_prefix(contents, "ncryptsec1")) {
+    /* Legacy plain ncryptsec format */
+    ncryptsec_to_decrypt = g_strdup(contents);
+  } else {
+    g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_ENCRYPTED,
+                "Unrecognized backup format");
+    gnostr_secure_clear(contents, length);
+    g_free(contents);
+    return FALSE;
+  }
+
+  /* Securely clear file contents */
+  gnostr_secure_clear(contents, length);
+  g_free(contents);
+
+  /* Decrypt the ncryptsec */
+  success = gn_backup_import_nip49(ncryptsec_to_decrypt, password, out_nsec, error);
+
+  /* Securely clear ncryptsec */
+  if (ncryptsec_to_decrypt) {
+    gnostr_secure_clear(ncryptsec_to_decrypt, strlen(ncryptsec_to_decrypt));
+    g_free(ncryptsec_to_decrypt);
+  }
+
+  /* If decryption failed and we have metadata, free it */
+  if (!success && out_metadata && *out_metadata) {
+    gn_backup_metadata_free(*out_metadata);
+    *out_metadata = NULL;
+  }
+
+  return success;
 }

@@ -1,0 +1,868 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="SheetCreateAccount" parent="AdwDialog">
+    <property name="title" translatable="yes">Create Account</property>
+    <property name="content-width">500</property>
+    <property name="content-height">600</property>
+    <property name="can-close">true</property>
+    <accessibility>
+      <property name="label">Create account wizard</property>
+      <property name="description">Step-by-step wizard to create a new Nostr identity</property>
+    </accessibility>
+    <child>
+      <object class="AdwNavigationView" id="nav_view">
+        <!-- Step 1: Display Name -->
+        <child>
+          <object class="AdwNavigationPage" id="page_display_name">
+            <property name="title" translatable="yes">Your Name</property>
+            <property name="tag">step-display-name</property>
+            <child>
+              <object class="AdwToolbarView">
+                <child type="top">
+                  <object class="AdwHeaderBar">
+                    <property name="show-back-button">false</property>
+                    <property name="title-widget">
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Step 1 of 5</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </property>
+                    <child type="end">
+                      <object class="GtkButton" id="btn_step1_next">
+                        <property name="label" translatable="yes">_Next</property>
+                        <property name="use-underline">true</property>
+                        <style>
+                          <class name="suggested-action"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkScrolledWindow">
+                    <property name="hscrollbar-policy">never</property>
+                    <property name="vexpand">true</property>
+                    <child>
+                      <object class="AdwClamp">
+                        <property name="maximum-size">500</property>
+                        <property name="margin-top">24</property>
+                        <property name="margin-bottom">24</property>
+                        <property name="margin-start">24</property>
+                        <property name="margin-end">24</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">24</property>
+                            <property name="valign">center</property>
+                            <property name="vexpand">true</property>
+
+                            <!-- Icon -->
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">avatar-default-symbolic</property>
+                                <property name="pixel-size">80</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Title -->
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">What should we call you?</property>
+                                <style>
+                                  <class name="title-1"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Description -->
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="wrap">true</property>
+                                <property name="justify">center</property>
+                                <property name="label" translatable="yes">Choose a display name for your Nostr identity. This is optional and can be changed later.</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Display name entry -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <child>
+                                  <object class="AdwEntryRow" id="entry_display_name">
+                                    <property name="title" translatable="yes">Display Name</property>
+                                    <property name="input-hints">GTK_INPUT_HINT_SPELLCHECK</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Step 2: Password -->
+        <child>
+          <object class="AdwNavigationPage" id="page_password">
+            <property name="title" translatable="yes">Password</property>
+            <property name="tag">step-password</property>
+            <child>
+              <object class="AdwToolbarView">
+                <child type="top">
+                  <object class="AdwHeaderBar">
+                    <property name="show-back-button">false</property>
+                    <property name="title-widget">
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Step 2 of 5</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </property>
+                    <child type="start">
+                      <object class="GtkButton" id="btn_step2_back">
+                        <property name="icon-name">go-previous-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Go back</property>
+                      </object>
+                    </child>
+                    <child type="end">
+                      <object class="GtkButton" id="btn_step2_next">
+                        <property name="label" translatable="yes">_Next</property>
+                        <property name="use-underline">true</property>
+                        <property name="sensitive">false</property>
+                        <style>
+                          <class name="suggested-action"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkScrolledWindow">
+                    <property name="hscrollbar-policy">never</property>
+                    <property name="vexpand">true</property>
+                    <child>
+                      <object class="AdwClamp">
+                        <property name="maximum-size">500</property>
+                        <property name="margin-top">24</property>
+                        <property name="margin-bottom">24</property>
+                        <property name="margin-start">24</property>
+                        <property name="margin-end">24</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">24</property>
+
+                            <!-- Icon -->
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">dialog-password-symbolic</property>
+                                <property name="pixel-size">64</property>
+                                <property name="halign">center</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Title -->
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Create a Password</property>
+                                <property name="halign">center</property>
+                                <style>
+                                  <class name="title-1"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Description -->
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="wrap">true</property>
+                                <property name="justify">center</property>
+                                <property name="label" translatable="yes">This password protects your private key stored on this device. Use at least 8 characters with a mix of letters, numbers, and symbols.</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Password section -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">Password</property>
+
+                                <!-- Password label -->
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Password</property>
+                                    <property name="xalign">0</property>
+                                    <property name="margin-start">4</property>
+                                    <property name="margin-top">8</property>
+                                    <style>
+                                      <class name="caption"/>
+                                      <class name="dim-label"/>
+                                    </style>
+                                  </object>
+                                </child>
+
+                                <!-- Secure password entry container -->
+                                <child>
+                                  <object class="GtkBox" id="box_password_container">
+                                    <property name="orientation">vertical</property>
+                                    <property name="margin-start">4</property>
+                                    <property name="margin-end">4</property>
+                                    <property name="margin-bottom">8</property>
+                                  </object>
+                                </child>
+
+                                <!-- Strength indicator -->
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">4</property>
+                                    <property name="margin-start">4</property>
+                                    <property name="margin-end">4</property>
+                                    <property name="margin-bottom">12</property>
+                                    <child>
+                                      <object class="GtkLevelBar" id="password_strength">
+                                        <property name="min-value">0</property>
+                                        <property name="max-value">1</property>
+                                        <property name="value">0</property>
+                                        <property name="mode">continuous</property>
+                                        <offsets>
+                                          <offset name="low" value="0.25"/>
+                                          <offset name="high" value="0.5"/>
+                                          <offset name="full" value="0.75"/>
+                                        </offsets>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="lbl_password_hint">
+                                        <property name="label" translatable="yes">Enter a password</property>
+                                        <property name="xalign">0</property>
+                                        <style>
+                                          <class name="caption"/>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+
+                                <!-- Confirm password label -->
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Confirm Password</property>
+                                    <property name="xalign">0</property>
+                                    <property name="margin-start">4</property>
+                                    <property name="margin-top">8</property>
+                                    <style>
+                                      <class name="caption"/>
+                                      <class name="dim-label"/>
+                                    </style>
+                                  </object>
+                                </child>
+
+                                <!-- Secure confirm entry container -->
+                                <child>
+                                  <object class="GtkBox" id="box_confirm_container">
+                                    <property name="orientation">vertical</property>
+                                    <property name="margin-start">4</property>
+                                    <property name="margin-end">4</property>
+                                    <property name="margin-bottom">4</property>
+                                  </object>
+                                </child>
+
+                                <!-- Password match indicator -->
+                                <child>
+                                  <object class="GtkLabel" id="lbl_password_match">
+                                    <property name="label" translatable="yes">Passwords match</property>
+                                    <property name="visible">false</property>
+                                    <property name="xalign">1</property>
+                                    <property name="margin-end">12</property>
+                                    <style>
+                                      <class name="caption"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Step 3: Seed Phrase -->
+        <child>
+          <object class="AdwNavigationPage" id="page_seed_phrase">
+            <property name="title" translatable="yes">Seed Phrase</property>
+            <property name="tag">step-seed-phrase</property>
+            <child>
+              <object class="AdwToolbarView">
+                <child type="top">
+                  <object class="AdwHeaderBar">
+                    <property name="show-back-button">false</property>
+                    <property name="title-widget">
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Step 3 of 5</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </property>
+                    <child type="start">
+                      <object class="GtkButton" id="btn_step3_back">
+                        <property name="icon-name">go-previous-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Go back</property>
+                      </object>
+                    </child>
+                    <child type="end">
+                      <object class="GtkButton" id="btn_step3_next">
+                        <property name="label" translatable="yes">_Next</property>
+                        <property name="use-underline">true</property>
+                        <property name="sensitive">false</property>
+                        <style>
+                          <class name="suggested-action"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkScrolledWindow">
+                    <property name="hscrollbar-policy">never</property>
+                    <property name="vexpand">true</property>
+                    <child>
+                      <object class="AdwClamp">
+                        <property name="maximum-size">500</property>
+                        <property name="margin-top">24</property>
+                        <property name="margin-bottom">24</property>
+                        <property name="margin-start">24</property>
+                        <property name="margin-end">24</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">16</property>
+
+                            <!-- Warning banner -->
+                            <child>
+                              <object class="AdwBanner" id="banner_seed_warning">
+                                <property name="revealed">false</property>
+                                <property name="title">Seed phrase copied to clipboard</property>
+                              </object>
+                            </child>
+
+                            <!-- Icon -->
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">document-edit-symbolic</property>
+                                <property name="pixel-size">64</property>
+                                <property name="halign">center</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Title -->
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Your Recovery Phrase</property>
+                                <property name="halign">center</property>
+                                <style>
+                                  <class name="title-1"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Description -->
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="wrap">true</property>
+                                <property name="justify">center</property>
+                                <property name="label" translatable="yes">Write down these words in order and keep them safe. This is the ONLY way to recover your identity if you lose access to this device.</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Seed phrase display -->
+                            <child>
+                              <object class="GtkFrame">
+                                <property name="margin-top">8</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin-top">16</property>
+                                    <property name="margin-bottom">16</property>
+                                    <property name="margin-start">16</property>
+                                    <property name="margin-end">16</property>
+                                    <child>
+                                      <object class="GtkLabel" id="lbl_seed_phrase">
+                                        <property name="label">Loading...</property>
+                                        <property name="wrap">true</property>
+                                        <property name="selectable">true</property>
+                                        <property name="xalign">0</property>
+                                        <style>
+                                          <class name="monospace"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Copy button -->
+                            <child>
+                              <object class="GtkButton" id="btn_copy_seed">
+                                <property name="label" translatable="yes">Copy to Clipboard</property>
+                                <property name="halign">center</property>
+                                <child>
+                                  <object class="GtkImage">
+                                    <property name="icon-name">edit-copy-symbolic</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Warning message -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">8</property>
+                                <property name="halign">center</property>
+                                <child>
+                                  <object class="GtkImage">
+                                    <property name="icon-name">dialog-warning-symbolic</property>
+                                    <style>
+                                      <class name="warning"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="wrap">true</property>
+                                    <property name="label" translatable="yes">Never share these words with anyone!</property>
+                                    <style>
+                                      <class name="warning"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Confirmation checkbox -->
+                            <child>
+                              <object class="GtkCheckButton" id="chk_seed_saved">
+                                <property name="label" translatable="yes">I have written down my recovery phrase and stored it safely</property>
+                                <property name="margin-top">16</property>
+                              </object>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Step 4: Verify -->
+        <child>
+          <object class="AdwNavigationPage" id="page_verify">
+            <property name="title" translatable="yes">Verify</property>
+            <property name="tag">step-verify</property>
+            <child>
+              <object class="AdwToolbarView">
+                <child type="top">
+                  <object class="AdwHeaderBar">
+                    <property name="show-back-button">false</property>
+                    <property name="title-widget">
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Step 4 of 5</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </property>
+                    <child type="start">
+                      <object class="GtkButton" id="btn_step4_back">
+                        <property name="icon-name">go-previous-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Go back</property>
+                      </object>
+                    </child>
+                    <child type="end">
+                      <object class="GtkButton" id="btn_step4_next">
+                        <property name="label" translatable="yes">_Verify</property>
+                        <property name="use-underline">true</property>
+                        <property name="sensitive">false</property>
+                        <style>
+                          <class name="suggested-action"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkScrolledWindow">
+                    <property name="hscrollbar-policy">never</property>
+                    <property name="vexpand">true</property>
+                    <child>
+                      <object class="AdwClamp">
+                        <property name="maximum-size">500</property>
+                        <property name="margin-top">24</property>
+                        <property name="margin-bottom">24</property>
+                        <property name="margin-start">24</property>
+                        <property name="margin-end">24</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">24</property>
+
+                            <!-- Error banner -->
+                            <child>
+                              <object class="AdwBanner" id="banner_verify_error">
+                                <property name="revealed">false</property>
+                                <property name="title">Words don't match</property>
+                                <style>
+                                  <class name="error"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Icon -->
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">emblem-ok-symbolic</property>
+                                <property name="pixel-size">64</property>
+                                <property name="halign">center</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Title -->
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Verify Your Phrase</property>
+                                <property name="halign">center</property>
+                                <style>
+                                  <class name="title-1"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Instruction -->
+                            <child>
+                              <object class="GtkLabel" id="lbl_verify_instruction">
+                                <property name="wrap">true</property>
+                                <property name="justify">center</property>
+                                <property name="label" translatable="yes">Enter the following words from your recovery phrase to confirm you saved it correctly.</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Verification inputs -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <!-- Word 1 -->
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin-bottom">8</property>
+                                    <child>
+                                      <object class="GtkLabel" id="lbl_word1_position">
+                                        <property name="label">Word #1</property>
+                                        <property name="width-chars">10</property>
+                                        <property name="xalign">0</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="AdwEntryRow" id="entry_verify_word1">
+                                        <property name="title" translatable="yes">Enter word</property>
+                                        <property name="hexpand">true</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+
+                                <!-- Word 2 -->
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin-bottom">8</property>
+                                    <child>
+                                      <object class="GtkLabel" id="lbl_word2_position">
+                                        <property name="label">Word #2</property>
+                                        <property name="width-chars">10</property>
+                                        <property name="xalign">0</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="AdwEntryRow" id="entry_verify_word2">
+                                        <property name="title" translatable="yes">Enter word</property>
+                                        <property name="hexpand">true</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+
+                                <!-- Word 3 -->
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">8</property>
+                                    <child>
+                                      <object class="GtkLabel" id="lbl_word3_position">
+                                        <property name="label">Word #3</property>
+                                        <property name="width-chars">10</property>
+                                        <property name="xalign">0</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="AdwEntryRow" id="entry_verify_word3">
+                                        <property name="title" translatable="yes">Enter word</property>
+                                        <property name="hexpand">true</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Step 5: Success -->
+        <child>
+          <object class="AdwNavigationPage" id="page_success">
+            <property name="title" translatable="yes">Success</property>
+            <property name="tag">step-success</property>
+            <child>
+              <object class="AdwToolbarView">
+                <child type="top">
+                  <object class="AdwHeaderBar">
+                    <property name="show-back-button">false</property>
+                    <property name="title-widget">
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Step 5 of 5</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </property>
+                    <child type="end">
+                      <object class="GtkButton" id="btn_finish">
+                        <property name="label" translatable="yes">_Done</property>
+                        <property name="use-underline">true</property>
+                        <style>
+                          <class name="suggested-action"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkScrolledWindow">
+                    <property name="hscrollbar-policy">never</property>
+                    <property name="vexpand">true</property>
+                    <child>
+                      <object class="AdwClamp">
+                        <property name="maximum-size">500</property>
+                        <property name="margin-top">24</property>
+                        <property name="margin-bottom">24</property>
+                        <property name="margin-start">24</property>
+                        <property name="margin-end">24</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">24</property>
+                            <property name="valign">center</property>
+                            <property name="vexpand">true</property>
+
+                            <!-- Success icon -->
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">emblem-ok-symbolic</property>
+                                <property name="pixel-size">80</property>
+                                <style>
+                                  <class name="success"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Title -->
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Account Created!</property>
+                                <style>
+                                  <class name="title-1"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Avatar and name -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">8</property>
+                                <property name="halign">center</property>
+                                <child>
+                                  <object class="AdwAvatar" id="avatar_success">
+                                    <property name="size">64</property>
+                                    <property name="text">User</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="lbl_display_name_result">
+                                    <property name="label">Anonymous</property>
+                                    <style>
+                                      <class name="title-3"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Npub display -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">Your Public Key</property>
+                                <property name="description" translatable="yes">Share this with others to let them find you on Nostr</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin-top">8</property>
+                                    <property name="margin-bottom">8</property>
+                                    <property name="margin-start">8</property>
+                                    <property name="margin-end">8</property>
+                                    <child>
+                                      <object class="GtkLabel" id="lbl_npub">
+                                        <property name="label">npub1...</property>
+                                        <property name="hexpand">true</property>
+                                        <property name="xalign">0</property>
+                                        <property name="selectable">true</property>
+                                        <property name="ellipsize">middle</property>
+                                        <style>
+                                          <class name="monospace"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="btn_copy_npub">
+                                        <property name="icon-name">edit-copy-symbolic</property>
+                                        <property name="tooltip-text" translatable="yes">Copy to clipboard</property>
+                                        <style>
+                                          <class name="flat"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Info -->
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="wrap">true</property>
+                                <property name="justify">center</property>
+                                <property name="label" translatable="yes">Your private key is securely stored on this device. Remember to keep your recovery phrase safe!</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+
+    <!-- Status box (hidden by default) -->
+    <child>
+      <object class="GtkBox" id="box_status">
+        <property name="visible">false</property>
+        <property name="orientation">horizontal</property>
+        <property name="spacing">8</property>
+        <property name="halign">center</property>
+        <property name="valign">end</property>
+        <property name="margin-bottom">16</property>
+        <child>
+          <object class="GtkSpinner" id="spinner_status">
+            <property name="spinning">false</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="lbl_status">
+            <property name="label">Status...</property>
+            <style>
+              <class name="dim-label"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

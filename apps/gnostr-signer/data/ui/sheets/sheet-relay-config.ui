@@ -88,6 +88,38 @@
               </object>
             </child>
 
+            <!-- Identity indicator (for per-identity config) -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Identity:</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_identity">
+                    <property name="label">Global</property>
+                    <property name="hexpand">true</property>
+                    <property name="xalign">0</property>
+                    <property name="selectable">true</property>
+                    <property name="ellipsize">middle</property>
+                    <accessibility>
+                      <property name="label">Current identity</property>
+                      <property name="description">The identity whose relay list is being configured</property>
+                    </accessibility>
+                    <style>
+                      <class name="monospace"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
             <!-- Info and test buttons -->
             <child>
               <object class="GtkBox">
@@ -106,6 +138,16 @@
                     <style>
                       <class name="dim-label"/>
                     </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_reset_defaults">
+                    <property name="label" translatable="yes">Reset</property>
+                    <property name="tooltip-text" translatable="yes">Reset relay list to default relays</property>
+                    <accessibility>
+                      <property name="label">Reset to defaults</property>
+                      <property name="description">Reset the relay list to the default bootstrap relays</property>
+                    </accessibility>
                   </object>
                 </child>
                 <child>

@@ -8,8 +8,9 @@
  * - Security overview of key protection
  * - Create or Import key path selection
  * - Passphrase setup with strength meter (for create flow)
- * - Import method selection (for import flow)
- * - Backup reminder
+ * - BIP-39 seed phrase generation and display (for create flow)
+ * - Import method selection (NIP-49 / mnemonic / file) for import flow
+ * - Backup reminder with mandatory acknowledgment
  * - Ready/Get Started summary
  */
 #pragma once

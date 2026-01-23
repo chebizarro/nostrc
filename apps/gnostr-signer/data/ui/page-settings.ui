@@ -35,6 +35,89 @@
       </object>
     </child>
     <child>
+      <object class="AdwPreferencesGroup" id="group_session">
+        <property name="title" translatable="yes">Session</property>
+        <property name="description" translatable="yes">Auto-lock and app session settings</property>
+        <accessibility>
+          <property name="label">Session settings</property>
+          <property name="description">Configure auto-lock timeout and client session behavior</property>
+        </accessibility>
+        <child>
+          <object class="AdwComboRow" id="combo_lock_timeout">
+            <property name="title" translatable="yes">Auto-lock timeout</property>
+            <property name="subtitle" translatable="yes">Lock session after inactivity</property>
+            <accessibility>
+              <property name="description">Select how long to wait before automatically locking the session</property>
+            </accessibility>
+            <property name="model">
+              <object class="GtkStringList" id="lock_timeout_model">
+                <items>
+                  <item translatable="yes">Never</item>
+                  <item translatable="yes">1 minute</item>
+                  <item translatable="yes">5 minutes</item>
+                  <item translatable="yes">15 minutes</item>
+                  <item translatable="yes">30 minutes</item>
+                  <item translatable="yes">1 hour</item>
+                </items>
+              </object>
+            </property>
+          </object>
+        </child>
+        <child>
+          <object class="AdwSwitchRow" id="switch_lock_on_idle">
+            <property name="title" translatable="yes">Lock on system idle</property>
+            <property name="subtitle" translatable="yes">Also lock when the screen locks</property>
+            <accessibility>
+              <property name="description">Enable to automatically lock when the system goes idle or screen locks</property>
+            </accessibility>
+          </object>
+        </child>
+        <child>
+          <object class="AdwComboRow" id="combo_client_session_timeout">
+            <property name="title" translatable="yes">App session timeout</property>
+            <property name="subtitle" translatable="yes">How long remembered apps stay approved</property>
+            <accessibility>
+              <property name="description">Select how long client application approvals remain valid</property>
+            </accessibility>
+            <property name="model">
+              <object class="GtkStringList" id="client_session_timeout_model">
+                <items>
+                  <item translatable="yes">10 minutes</item>
+                  <item translatable="yes">15 minutes</item>
+                  <item translatable="yes">30 minutes</item>
+                  <item translatable="yes">1 hour</item>
+                  <item translatable="yes">4 hours</item>
+                  <item translatable="yes">24 hours</item>
+                  <item translatable="yes">Forever</item>
+                </items>
+              </object>
+            </property>
+          </object>
+        </child>
+        <child>
+          <object class="AdwActionRow">
+            <property name="title" translatable="yes">Manage active sessions</property>
+            <property name="subtitle" translatable="yes">View and revoke app approvals</property>
+            <accessibility>
+              <property name="description">Open the sessions page to view and manage active application sessions</property>
+            </accessibility>
+            <child type="suffix">
+              <object class="GtkButton" id="btn_manage_sessions">
+                <property name="label" translatable="yes">View</property>
+                <property name="valign">center</property>
+                <property name="vexpand">false</property>
+                <accessibility>
+                  <property name="label">View active sessions</property>
+                  <property name="description">Click to view and manage active app sessions</property>
+                </accessibility>
+                <style><class name="suffix-action"/></style>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
       <object class="AdwPreferencesGroup" id="group_security">
         <property name="title" translatable="yes">Security</property>
         <accessibility>

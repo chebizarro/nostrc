@@ -2,6 +2,7 @@
  *
  * Manages relay list per NIP-65 (kind:10002 relay list metadata).
  * Each relay has read/write permissions.
+ * Supports per-identity relay lists (nostrc-5ju).
  */
 #pragma once
 
@@ -18,7 +19,12 @@ typedef struct {
   gboolean write;       /* Allow writing to this relay */
 } RelayEntry;
 
-/* Create a new relay store */
+/* Create a new relay store for a specific identity (npub).
+ * If identity is NULL, uses a global relay store.
+ */
+RelayStore *relay_store_new_for_identity(const gchar *identity);
+
+/* Create a new relay store (global/shared) */
 RelayStore *relay_store_new(void);
 
 /* Free the relay store */
@@ -88,5 +94,17 @@ GPtrArray *relay_store_get_read_relays(RelayStore *rs);
 
 /* Get write relays */
 GPtrArray *relay_store_get_write_relays(RelayStore *rs);
+
+/* Get the identity associated with this store (NULL for global) */
+const gchar *relay_store_get_identity(RelayStore *rs);
+
+/* Check if an identity has a custom relay list configured */
+gboolean relay_store_identity_has_config(const gchar *identity);
+
+/* Copy relays from another store (useful for inheriting defaults) */
+void relay_store_copy_from(RelayStore *dest, RelayStore *src);
+
+/* Reset to defaults (clear current and populate with bootstrap relays) */
+void relay_store_reset_to_defaults(RelayStore *rs);
 
 G_END_DECLS

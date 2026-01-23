@@ -148,6 +148,106 @@ gboolean gn_backup_import_from_file(const gchar *filepath,
                                      gchar **out_nsec,
                                      GError **error);
 
+/* ============================================================
+ * Backup File Format with Metadata
+ * ============================================================
+ *
+ * These functions export/import backup files in a JSON format that
+ * includes metadata alongside the encrypted key:
+ *
+ * {
+ *   "version": 1,
+ *   "format": "gnostr-backup",
+ *   "created_at": "2025-01-23T12:00:00Z",
+ *   "identity_name": "My Nostr Key",
+ *   "npub": "npub1...",
+ *   "ncryptsec": "ncryptsec1...",
+ *   "security_level": "normal"
+ * }
+ */
+
+/* Metadata structure for backup files */
+typedef struct {
+  gchar *identity_name;    /* User-friendly name for the identity */
+  gchar *npub;             /* Public key (npub1...) */
+  gchar *created_at;       /* ISO 8601 timestamp */
+  gchar *ncryptsec;        /* The encrypted key */
+  GnBackupSecurityLevel security_level;
+  gint version;            /* Format version */
+} GnBackupMetadata;
+
+/* Free a GnBackupMetadata structure */
+void gn_backup_metadata_free(GnBackupMetadata *meta);
+
+/* Export a private key to a file with metadata.
+ *
+ * Creates a JSON file containing the encrypted key and metadata.
+ *
+ * @nsec: Private key in nsec1... bech32 format or 64-character hex
+ * @password: Password for encryption (UTF-8)
+ * @security: Security level
+ * @identity_name: (nullable): User-friendly name for the identity
+ * @filepath: Path to output file
+ * @error: (out): Error information
+ *
+ * Returns: TRUE on success, FALSE on error
+ */
+gboolean gn_backup_export_to_file_with_metadata(const gchar *nsec,
+                                                  const gchar *password,
+                                                  GnBackupSecurityLevel security,
+                                                  const gchar *identity_name,
+                                                  const gchar *filepath,
+                                                  GError **error);
+
+/* Import a private key from a backup file (with or without metadata).
+ *
+ * This function handles both the new JSON format with metadata and
+ * the legacy plain ncryptsec format for backwards compatibility.
+ *
+ * @filepath: Path to input file
+ * @password: Password for decryption (UTF-8)
+ * @out_nsec: (out): Output nsec string (caller frees with g_free)
+ * @out_metadata: (out) (optional): Output metadata (caller frees with gn_backup_metadata_free)
+ * @error: (out): Error information
+ *
+ * Returns: TRUE on success, FALSE on error
+ */
+gboolean gn_backup_import_from_file_with_metadata(const gchar *filepath,
+                                                    const gchar *password,
+                                                    gchar **out_nsec,
+                                                    GnBackupMetadata **out_metadata,
+                                                    GError **error);
+
+/* Create backup metadata as a JSON string (for display or custom storage).
+ *
+ * @nsec: Private key to derive npub from
+ * @password: Password for encryption
+ * @security: Security level
+ * @identity_name: (nullable): User-friendly name
+ * @out_json: (out): Output JSON string (caller frees with g_free)
+ * @error: (out): Error information
+ *
+ * Returns: TRUE on success, FALSE on error
+ */
+gboolean gn_backup_create_metadata_json(const gchar *nsec,
+                                          const gchar *password,
+                                          GnBackupSecurityLevel security,
+                                          const gchar *identity_name,
+                                          gchar **out_json,
+                                          GError **error);
+
+/* Parse backup metadata from a JSON string.
+ *
+ * @json: JSON string to parse
+ * @out_metadata: (out): Output metadata (caller frees with gn_backup_metadata_free)
+ * @error: (out): Error information
+ *
+ * Returns: TRUE on success, FALSE on error
+ */
+gboolean gn_backup_parse_metadata_json(const gchar *json,
+                                         GnBackupMetadata **out_metadata,
+                                         GError **error);
+
 /* Validate a NIP-49 encrypted string format (without decrypting).
  *
  * @encrypted: String to validate

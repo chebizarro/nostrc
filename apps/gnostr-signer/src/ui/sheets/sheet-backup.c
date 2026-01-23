@@ -13,6 +13,7 @@
 #include "../../backup-recovery.h"
 #include "../../secret_store.h"
 #include "../../secure-delete.h"
+#include "../../accounts_store.h"
 
 #include <gtk/gtk.h>
 #include <adwaita.h>
@@ -249,6 +250,18 @@ static void on_create_backup(GtkButton *btn, gpointer user_data) {
   show_toast(self, "Backup created successfully!");
 }
 
+/* Get identity name from accounts store */
+static gchar *get_identity_name(SheetBackup *self) {
+  if (!self || !self->current_npub) return NULL;
+
+  /* Try to get from accounts store */
+  AccountsStore *accounts = accounts_store_get_default();
+  if (accounts) {
+    return accounts_store_get_display_name(accounts, self->current_npub);
+  }
+  return NULL;
+}
+
 /* File save dialog callback */
 static void on_save_file_response(GObject *source, GAsyncResult *result, gpointer user_data) {
   SheetBackup *self = SHEET_BACKUP(user_data);
@@ -292,14 +305,21 @@ static void on_save_file_response(GObject *source, GAsyncResult *result, gpointe
     return;
   }
 
-  /* Export to file */
+  /* Export to file with metadata */
   gchar *filepath = g_file_get_path(file);
   g_object_unref(file);
 
   GError *export_error = NULL;
   GnBackupSecurityLevel security = get_security_level(self);
 
-  gboolean ok = gn_backup_export_to_file(nsec, password, security, filepath, &export_error);
+  /* Get identity name for metadata */
+  gchar *identity_name = get_identity_name(self);
+
+  /* Use the new metadata-aware export function */
+  gboolean ok = gn_backup_export_to_file_with_metadata(nsec, password, security,
+                                                         identity_name, filepath,
+                                                         &export_error);
+  g_free(identity_name);
   g_free(filepath);
 
   if (!ok) {
@@ -335,13 +355,30 @@ static void on_save_to_file(GtkButton *btn, gpointer user_data) {
   GtkFileDialog *dialog = gtk_file_dialog_new();
   gtk_file_dialog_set_title(dialog, "Save Encrypted Backup");
 
-  /* Suggest filename */
-  gchar *suggested_name = g_strdup_printf("nostr-backup-%s.ncryptsec",
-                                           self->current_npub ? self->current_npub + 5 : "key");
-  /* Truncate npub for filename */
-  if (strlen(suggested_name) > 40) suggested_name[40] = '\0';
+  /* Suggest filename - use .json for new metadata format */
+  gchar *npub_short = NULL;
+  if (self->current_npub && strlen(self->current_npub) > 12) {
+    npub_short = g_strndup(self->current_npub + 5, 8);
+  } else {
+    npub_short = g_strdup("key");
+  }
+  gchar *suggested_name = g_strdup_printf("nostr-backup-%s.json", npub_short);
+  g_free(npub_short);
+
   gtk_file_dialog_set_initial_name(dialog, suggested_name);
   g_free(suggested_name);
+
+  /* Add file filter - use JSON for new format with metadata */
+  GtkFileFilter *filter = gtk_file_filter_new();
+  gtk_file_filter_set_name(filter, "Nostr Backup Files (JSON)");
+  gtk_file_filter_add_pattern(filter, "*.json");
+
+  GListStore *filters = g_list_store_new(GTK_TYPE_FILE_FILTER);
+  g_list_store_append(filters, filter);
+  g_object_unref(filter);
+
+  gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters));
+  g_object_unref(filters);
 
   /* Show save dialog */
   gtk_file_dialog_save(dialog,
@@ -495,9 +532,48 @@ static void on_load_file_response(GObject *source, GAsyncResult *result, gpointe
   }
   g_free(filepath);
 
-  /* Trim and set to entry */
+  /* Trim whitespace */
   g_strstrip(contents);
-  gtk_editable_set_text(GTK_EDITABLE(self->entry_ncryptsec), contents);
+
+  /* Check if this is JSON format with metadata */
+  if (contents[0] == '{') {
+    /* Parse JSON to extract ncryptsec */
+    GnBackupMetadata *meta = NULL;
+    GError *parse_error = NULL;
+
+    if (gn_backup_parse_metadata_json(contents, &meta, &parse_error)) {
+      /* Set the ncryptsec from metadata */
+      gtk_editable_set_text(GTK_EDITABLE(self->entry_ncryptsec), meta->ncryptsec);
+
+      /* Show info about loaded backup */
+      if (meta->identity_name && *meta->identity_name) {
+        gchar *info = g_strdup_printf("Loaded backup for: %s", meta->identity_name);
+        show_toast(self, info);
+        g_free(info);
+      } else if (meta->npub) {
+        gchar *info = g_strdup_printf("Loaded backup for: %.12s...", meta->npub);
+        show_toast(self, info);
+        g_free(info);
+      }
+
+      gn_backup_metadata_free(meta);
+    } else {
+      /* JSON parse failed, show error */
+      show_error(self, "Invalid Backup File",
+                 parse_error ? parse_error->message : "Could not parse backup file");
+      g_clear_error(&parse_error);
+    }
+  } else if (g_str_has_prefix(contents, "ncryptsec1")) {
+    /* Legacy plain ncryptsec format */
+    gtk_editable_set_text(GTK_EDITABLE(self->entry_ncryptsec), contents);
+  } else {
+    show_error(self, "Invalid Backup File",
+               "The file does not contain a valid backup. "
+               "Expected ncryptsec1... or JSON backup format.");
+  }
+
+  /* Securely clear contents before freeing */
+  gn_secure_shred_string(contents);
   g_free(contents);
 }
 
@@ -512,7 +588,8 @@ static void on_load_from_file(GtkButton *btn, gpointer user_data) {
 
   /* Add file filter for backup files */
   GtkFileFilter *filter = gtk_file_filter_new();
-  gtk_file_filter_set_name(filter, "NIP-49 Backup Files");
+  gtk_file_filter_set_name(filter, "Nostr Backup Files");
+  gtk_file_filter_add_pattern(filter, "*.json");
   gtk_file_filter_add_pattern(filter, "*.ncryptsec");
   gtk_file_filter_add_pattern(filter, "*.txt");
 

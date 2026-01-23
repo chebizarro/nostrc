@@ -37,6 +37,22 @@ typedef enum {
 } GnSessionState;
 
 /**
+ * GnLockReason:
+ * @GN_LOCK_REASON_MANUAL: User manually locked the session
+ * @GN_LOCK_REASON_TIMEOUT: Session locked due to inactivity timeout
+ * @GN_LOCK_REASON_STARTUP: Session locked at application startup
+ * @GN_LOCK_REASON_SYSTEM_IDLE: Session locked due to system idle
+ *
+ * The reason the session was locked.
+ */
+typedef enum {
+  GN_LOCK_REASON_MANUAL,
+  GN_LOCK_REASON_TIMEOUT,
+  GN_LOCK_REASON_STARTUP,
+  GN_LOCK_REASON_SYSTEM_IDLE
+} GnLockReason;
+
+/**
  * gn_session_manager_new:
  *
  * Creates a new session manager instance.
@@ -122,13 +138,25 @@ void gn_session_manager_set_timeout(GnSessionManager *self, guint seconds);
 /**
  * gn_session_manager_lock:
  * @self: A #GnSessionManager
+ * @reason: The reason for locking
  *
  * Manually locks the session.
  *
  * This clears any cached credentials and emits the "session-locked"
- * signal. Re-authentication will be required for further operations.
+ * signal with the specified reason. Re-authentication will be required
+ * for further operations.
  */
-void gn_session_manager_lock(GnSessionManager *self);
+void gn_session_manager_lock(GnSessionManager *self, GnLockReason reason);
+
+/**
+ * gn_session_manager_is_locked:
+ * @self: A #GnSessionManager
+ *
+ * Checks if the session is currently locked.
+ *
+ * Returns: %TRUE if session is locked and requires authentication
+ */
+gboolean gn_session_manager_is_locked(GnSessionManager *self);
 
 /**
  * gn_session_manager_extend:

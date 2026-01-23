@@ -7,17 +7,44 @@
 struct _RelayStore {
   GPtrArray *relays;    /* Array of RelayEntry* */
   gchar *config_path;
+  gchar *identity;      /* npub for per-identity store, NULL for global */
   GHashTable *status_map; /* url -> RelayConnectionStatus */
 };
+
+/* Get config directory for gnostr-signer */
+static gchar *get_config_dir(void) {
+  const gchar *conf = g_get_user_config_dir();
+  gchar *dir = g_build_filename(conf, "gnostr-signer", NULL);
+  g_mkdir_with_parents(dir, 0700);
+  return dir;
+}
+
+/* Build config path for a specific identity (or global if identity is NULL) */
+static gchar *build_config_path(const gchar *identity) {
+  gchar *dir = get_config_dir();
+  gchar *path;
+
+  if (identity && *identity) {
+    /* Per-identity relay config: relays/<npub>.json */
+    gchar *relays_dir = g_build_filename(dir, "relays", NULL);
+    g_mkdir_with_parents(relays_dir, 0700);
+    gchar *filename = g_strdup_printf("%s.json", identity);
+    path = g_build_filename(relays_dir, filename, NULL);
+    g_free(filename);
+    g_free(relays_dir);
+  } else {
+    /* Global relay config: relays.json */
+    path = g_build_filename(dir, "relays.json", NULL);
+  }
+
+  g_free(dir);
+  return path;
+}
 
 static const gchar *config_path(void) {
   static gchar *p = NULL;
   if (!p) {
-    const gchar *conf = g_get_user_config_dir();
-    gchar *dir = g_build_filename(conf, "gnostr-signer", NULL);
-    g_mkdir_with_parents(dir, 0700);
-    p = g_build_filename(dir, "relays.json", NULL);
-    g_free(dir);
+    p = build_config_path(NULL);
   }
   return p;
 }
@@ -29,9 +56,14 @@ void relay_entry_free(RelayEntry *entry) {
 }
 
 RelayStore *relay_store_new(void) {
+  return relay_store_new_for_identity(NULL);
+}
+
+RelayStore *relay_store_new_for_identity(const gchar *identity) {
   RelayStore *rs = g_new0(RelayStore, 1);
   rs->relays = g_ptr_array_new_with_free_func((GDestroyNotify)relay_entry_free);
-  rs->config_path = g_strdup(config_path());
+  rs->identity = identity ? g_strdup(identity) : NULL;
+  rs->config_path = build_config_path(identity);
   rs->status_map = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   return rs;
 }
@@ -40,6 +72,7 @@ void relay_store_free(RelayStore *rs) {
   if (!rs) return;
   g_ptr_array_unref(rs->relays);
   g_free(rs->config_path);
+  g_free(rs->identity);
   if (rs->status_map) g_hash_table_destroy(rs->status_map);
   g_free(rs);
 }
@@ -470,4 +503,46 @@ void relay_store_test_connection(const gchar *url, RelayTestCallback cb, gpointe
     cb(url, RELAY_STATUS_ERROR, user_data);
     relay_test_data_free(data);
   }
+}
+
+const gchar *relay_store_get_identity(RelayStore *rs) {
+  if (!rs) return NULL;
+  return rs->identity;
+}
+
+gboolean relay_store_identity_has_config(const gchar *identity) {
+  if (!identity || !*identity) return FALSE;
+
+  gchar *path = build_config_path(identity);
+  gboolean exists = g_file_test(path, G_FILE_TEST_EXISTS);
+  g_free(path);
+  return exists;
+}
+
+void relay_store_copy_from(RelayStore *dest, RelayStore *src) {
+  if (!dest || !src) return;
+
+  /* Clear destination */
+  g_ptr_array_set_size(dest->relays, 0);
+
+  /* Copy all relays from source */
+  for (guint i = 0; i < src->relays->len; i++) {
+    RelayEntry *entry = g_ptr_array_index(src->relays, i);
+    relay_store_add(dest, entry->url, entry->read, entry->write);
+  }
+}
+
+void relay_store_reset_to_defaults(RelayStore *rs) {
+  if (!rs) return;
+
+  /* Clear current relays */
+  g_ptr_array_set_size(rs->relays, 0);
+
+  /* Add defaults */
+  GPtrArray *defaults = relay_store_get_defaults();
+  for (guint i = 0; i < defaults->len; i++) {
+    RelayEntry *entry = g_ptr_array_index(defaults, i);
+    relay_store_add(rs, entry->url, entry->read, entry->write);
+  }
+  g_ptr_array_unref(defaults);
 }

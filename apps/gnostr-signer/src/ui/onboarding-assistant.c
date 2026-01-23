@@ -8,6 +8,8 @@
 #include "app-resources.h"
 #include "../accounts_store.h"
 #include "../secret_store.h"
+#include "../backup-recovery.h"
+#include "../secure-mem.h"
 #include "widgets/gn-secure-entry.h"
 #include <gio/gio.h>
 #include <string.h>
@@ -24,6 +26,7 @@ typedef enum {
   STEP_CHOOSE_PATH,
   STEP_CREATE_PASSPHRASE,
   STEP_IMPORT_METHOD,
+  STEP_SEED_PHRASE,      /* New: Display generated seed phrase */
   STEP_BACKUP_REMINDER,
   STEP_READY,
   STEP_COUNT
@@ -52,6 +55,7 @@ struct _OnboardingAssistant {
   GtkWidget *page_choose_path;
   GtkWidget *page_create_passphrase;
   GtkWidget *page_import_method;
+  GtkWidget *page_seed_phrase;
   GtkWidget *page_backup_reminder;
   GtkWidget *page_ready;
 
@@ -87,6 +91,11 @@ struct _OnboardingAssistant {
   /* Backup checkbox */
   GtkCheckButton *backup_understood;
 
+  /* Seed phrase display widgets */
+  GtkFlowBox *seed_phrase_grid;
+  GtkButton *btn_copy_seed;
+  GtkCheckButton *seed_written_down;
+
   /* Status widgets */
   GtkBox *box_status;
   GtkSpinner *spinner_status;
@@ -97,6 +106,8 @@ struct _OnboardingAssistant {
   OnboardingStep current_step;
   gboolean profile_created;
   gchar *created_npub;
+  gchar *generated_mnemonic;  /* BIP-39 seed phrase for backup */
+  gchar *generated_nsec;      /* Private key derived from mnemonic */
 
   /* Callback */
   OnboardingAssistantFinishedCb on_finished;
@@ -112,6 +123,10 @@ static void update_passphrase_strength(OnboardingAssistant *self);
 static void set_status(OnboardingAssistant *self, const gchar *message, gboolean spinning);
 static gboolean perform_profile_creation(OnboardingAssistant *self);
 static gboolean perform_profile_import(OnboardingAssistant *self);
+static void populate_seed_phrase_grid(OnboardingAssistant *self);
+static void clear_seed_phrase_data(OnboardingAssistant *self);
+static gboolean restore_copy_button_cb(gpointer user_data);
+static gboolean generate_seed_phrase_and_key(OnboardingAssistant *self);
 
 /* Helper to get GSettings if schema is available */
 static GSettings *get_signer_settings(void) {
@@ -178,6 +193,179 @@ static void set_status(OnboardingAssistant *self, const gchar *message, gboolean
     if (self->box_status) gtk_widget_set_visible(GTK_WIDGET(self->box_status), FALSE);
     if (self->spinner_status) gtk_spinner_set_spinning(self->spinner_status, FALSE);
   }
+}
+
+/* Securely clear generated seed phrase data */
+static void clear_seed_phrase_data(OnboardingAssistant *self) {
+  if (!self) return;
+
+  if (self->generated_mnemonic) {
+    gnostr_secure_clear(self->generated_mnemonic, strlen(self->generated_mnemonic));
+    g_free(self->generated_mnemonic);
+    self->generated_mnemonic = NULL;
+  }
+
+  if (self->generated_nsec) {
+    gnostr_secure_clear(self->generated_nsec, strlen(self->generated_nsec));
+    g_free(self->generated_nsec);
+    self->generated_nsec = NULL;
+  }
+}
+
+/* Create a widget for a single seed word with its index */
+static GtkWidget *create_seed_word_widget(int index, const gchar *word) {
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+  gtk_widget_add_css_class(box, "seed-word-box");
+
+  /* Index label */
+  gchar *idx_text = g_strdup_printf("%d.", index);
+  GtkWidget *idx_label = gtk_label_new(idx_text);
+  g_free(idx_text);
+  gtk_widget_add_css_class(idx_label, "dim-label");
+  gtk_widget_add_css_class(idx_label, "caption");
+  gtk_widget_set_size_request(idx_label, 24, -1);
+  gtk_label_set_xalign(GTK_LABEL(idx_label), 1.0);
+  gtk_box_append(GTK_BOX(box), idx_label);
+
+  /* Word label */
+  GtkWidget *word_label = gtk_label_new(word);
+  gtk_widget_add_css_class(word_label, "monospace");
+  gtk_label_set_xalign(GTK_LABEL(word_label), 0.0);
+  gtk_widget_set_hexpand(word_label, TRUE);
+  gtk_box_append(GTK_BOX(box), word_label);
+
+  return box;
+}
+
+/* Populate the seed phrase grid with words */
+static void populate_seed_phrase_grid(OnboardingAssistant *self) {
+  if (!self || !self->seed_phrase_grid || !self->generated_mnemonic) return;
+
+  /* Clear existing children */
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->seed_phrase_grid))) != NULL) {
+    gtk_flow_box_remove(self->seed_phrase_grid, child);
+  }
+
+  /* Split mnemonic into words */
+  gchar **words = g_strsplit(self->generated_mnemonic, " ", -1);
+  if (!words) return;
+
+  int index = 1;
+  for (gchar **w = words; *w; w++, index++) {
+    if (**w) {  /* Skip empty strings */
+      GtkWidget *word_widget = create_seed_word_widget(index, *w);
+      gtk_flow_box_append(self->seed_phrase_grid, word_widget);
+    }
+  }
+
+  g_strfreev(words);
+}
+
+/* Copy seed phrase to clipboard with timeout for auto-clear */
+static gboolean clear_clipboard_timeout(gpointer user_data) {
+  GdkDisplay *display = GDK_DISPLAY(user_data);
+  if (display) {
+    GdkClipboard *clipboard = gdk_display_get_clipboard(display);
+    if (clipboard) {
+      /* Set empty content to clear the seed phrase */
+      gdk_clipboard_set_text(clipboard, "");
+      g_debug("Clipboard auto-cleared after timeout");
+    }
+  }
+  return G_SOURCE_REMOVE;
+}
+
+static void on_copy_seed_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  OnboardingAssistant *self = ONBOARDING_ASSISTANT(user_data);
+  if (!self || !self->generated_mnemonic) return;
+
+  GdkDisplay *display = gtk_widget_get_display(GTK_WIDGET(self));
+  if (!display) return;
+
+  GdkClipboard *clipboard = gdk_display_get_clipboard(display);
+  if (clipboard) {
+    gdk_clipboard_set_text(clipboard, self->generated_mnemonic);
+
+    /* Show feedback */
+    if (self->btn_copy_seed) {
+      /* Temporarily change button label to show success */
+      GtkWidget *original_child = gtk_button_get_child(self->btn_copy_seed);
+      if (original_child) {
+        gtk_widget_set_visible(original_child, FALSE);
+      }
+      gtk_button_set_label(self->btn_copy_seed, "Copied! (Will clear in 60s)");
+
+      /* Schedule clipboard clear after 60 seconds */
+      g_timeout_add_seconds(60, clear_clipboard_timeout, display);
+
+      /* Restore button after 3 seconds */
+      g_timeout_add_seconds(3, (GSourceFunc)restore_copy_button_cb, self);
+    }
+
+    g_debug("Seed phrase copied to clipboard");
+  }
+}
+
+/* Lambda-like function to restore copy button */
+static gboolean restore_copy_button_cb(gpointer user_data) {
+  OnboardingAssistant *self = ONBOARDING_ASSISTANT(user_data);
+  if (self && self->btn_copy_seed) {
+    gtk_button_set_label(self->btn_copy_seed, NULL);
+    GtkWidget *child = gtk_button_get_child(self->btn_copy_seed);
+    if (child) {
+      gtk_widget_set_visible(child, TRUE);
+    }
+  }
+  return G_SOURCE_REMOVE;
+}
+
+/* Handle seed_written_down checkbox toggle */
+static void on_seed_written_toggled(GtkCheckButton *btn, gpointer user_data) {
+  (void)btn;
+  OnboardingAssistant *self = ONBOARDING_ASSISTANT(user_data);
+  update_navigation_buttons(self);
+}
+
+/* Generate a BIP-39 mnemonic and derive the private key */
+static gboolean generate_seed_phrase_and_key(OnboardingAssistant *self) {
+  if (!self) return FALSE;
+
+  /* Clear any existing seed phrase data */
+  clear_seed_phrase_data(self);
+
+  GError *error = NULL;
+  gchar *mnemonic = NULL;
+  gchar *nsec = NULL;
+
+  /* Generate 12-word mnemonic (standard for most wallets) */
+  if (!gn_backup_generate_mnemonic(12, NULL, &mnemonic, &nsec, &error)) {
+    g_warning("Failed to generate mnemonic: %s", error ? error->message : "unknown");
+    GtkAlertDialog *ad = gtk_alert_dialog_new("Failed to generate recovery phrase: %s",
+                                               error ? error->message : "Unknown error");
+    gtk_alert_dialog_show(ad, GTK_WINDOW(self));
+    g_object_unref(ad);
+    g_clear_error(&error);
+    return FALSE;
+  }
+
+  /* Store in secure memory */
+  self->generated_mnemonic = g_strdup(mnemonic);
+  self->generated_nsec = g_strdup(nsec);
+
+  /* Securely clear the temporary buffers */
+  if (mnemonic) {
+    gnostr_secure_clear(mnemonic, strlen(mnemonic));
+    g_free(mnemonic);
+  }
+  if (nsec) {
+    gnostr_secure_clear(nsec, strlen(nsec));
+    g_free(nsec);
+  }
+
+  g_debug("Generated seed phrase successfully");
+  return TRUE;
 }
 
 /* Helper to get text from a GtkTextView */
@@ -271,7 +459,7 @@ static void on_create_profile_done(GObject *src, GAsyncResult *res, gpointer use
   create_profile_ctx_free(ctx);
 }
 
-/* Perform actual profile creation via D-Bus */
+/* Perform actual profile creation - generate mnemonic locally first */
 static gboolean perform_profile_creation(OnboardingAssistant *self) {
   if (!self) return FALSE;
 
@@ -301,10 +489,67 @@ static gboolean perform_profile_creation(OnboardingAssistant *self) {
     return FALSE;
   }
 
-  /* Disable navigation while processing */
+  /* Show status while generating */
+  set_status(self, "Generating key...", TRUE);
+
+  /* Generate seed phrase and derive key locally */
+  if (!generate_seed_phrase_and_key(self)) {
+    set_status(self, NULL, FALSE);
+    gn_secure_entry_free_text(passphrase);
+    return FALSE;
+  }
+
+  /* Get the npub from the generated nsec */
+  gchar *npub = NULL;
+  GError *error = NULL;
+  if (!gn_backup_get_npub(self->generated_nsec, &npub, &error)) {
+    g_warning("Failed to derive npub: %s", error ? error->message : "unknown");
+    GtkAlertDialog *ad = gtk_alert_dialog_new("Failed to derive public key: %s",
+                                               error ? error->message : "Unknown error");
+    gtk_alert_dialog_show(ad, GTK_WINDOW(self));
+    g_object_unref(ad);
+    g_clear_error(&error);
+    set_status(self, NULL, FALSE);
+    gn_secure_entry_free_text(passphrase);
+    clear_seed_phrase_data(self);
+    return FALSE;
+  }
+
+  /* Store the npub */
+  g_free(self->created_npub);
+  self->created_npub = npub;
+
+  /* Clear status */
+  set_status(self, NULL, FALSE);
+
+  /* Clear secure entries */
+  if (self->secure_passphrase)
+    gn_secure_entry_clear(self->secure_passphrase);
+  if (self->secure_passphrase_confirm)
+    gn_secure_entry_clear(self->secure_passphrase_confirm);
+  gn_secure_entry_free_text(passphrase);
+
+  /* Mark profile as created (key generation successful) */
+  self->profile_created = TRUE;
+
+  g_debug("Key generated successfully: %s", self->created_npub);
+
+  /* Proceed to seed phrase display step */
+  go_to_step(self, STEP_SEED_PHRASE);
+
+  return TRUE;
+}
+
+/* Store the generated key to secure storage after user confirms seed phrase */
+static void store_generated_key_async_done(GObject *src, GAsyncResult *res, gpointer user_data);
+
+static gboolean store_generated_key(OnboardingAssistant *self) {
+  if (!self || !self->generated_nsec) return FALSE;
+
+  /* Disable navigation while storing */
   if (self->btn_next) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_next), FALSE);
   if (self->btn_back) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_back), FALSE);
-  set_status(self, "Creating profile...", TRUE);
+  set_status(self, "Storing key securely...", TRUE);
 
   /* Get D-Bus connection */
   GError *e = NULL;
@@ -318,32 +563,77 @@ static gboolean perform_profile_creation(OnboardingAssistant *self) {
     gtk_alert_dialog_show(ad, GTK_WINDOW(self));
     g_object_unref(ad);
     if (e) g_clear_error(&e);
-    gn_secure_entry_free_text(passphrase);
     return FALSE;
   }
 
-  /* Create context for async call */
-  CreateProfileCtx *ctx = g_new0(CreateProfileCtx, 1);
-  ctx->self = self;
-  ctx->display_name = g_strdup(display_name);
-  ctx->passphrase = passphrase; /* Transfer ownership */
+  /* Get display name */
+  const gchar *display_name = "";
+  if (self->entry_profile_name) {
+    display_name = gtk_editable_get_text(GTK_EDITABLE(self->entry_profile_name));
+  }
 
-  /* Call CreateProfile D-Bus method */
+  /* Call ImportNsec D-Bus method to store the generated key */
   g_dbus_connection_call(bus,
                          "org.nostr.Signer",
                          "/org/nostr/signer",
                          "org.nostr.Signer",
-                         "CreateProfile",
-                         g_variant_new("(ssssb)", display_name, ctx->passphrase, "", "", FALSE),
+                         "ImportNsec",
+                         g_variant_new("(ss)", self->generated_nsec, display_name),
                          G_VARIANT_TYPE("(bs)"),
                          G_DBUS_CALL_FLAGS_NONE,
                          10000,
                          NULL,
-                         on_create_profile_done,
-                         ctx);
+                         store_generated_key_async_done,
+                         self);
 
   g_object_unref(bus);
-  return TRUE; /* Async - will proceed in callback */
+  return TRUE;
+}
+
+static void store_generated_key_async_done(GObject *src, GAsyncResult *res, gpointer user_data) {
+  (void)src;
+  OnboardingAssistant *self = ONBOARDING_ASSISTANT(user_data);
+  if (!self) return;
+
+  GError *err = NULL;
+  GVariant *ret = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &err);
+
+  set_status(self, NULL, FALSE);
+
+  /* Re-enable navigation */
+  if (self->btn_next) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_next), TRUE);
+  if (self->btn_back) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_back), TRUE);
+
+  gboolean ok = FALSE;
+  const char *npub_in = NULL;
+
+  if (err) {
+    g_warning("ImportNsec D-Bus error: %s", err->message);
+    GtkAlertDialog *ad = gtk_alert_dialog_new("Failed to store key: %s", err->message);
+    gtk_alert_dialog_show(ad, GTK_WINDOW(self));
+    g_object_unref(ad);
+    g_clear_error(&err);
+    return;
+  }
+
+  if (ret) {
+    g_variant_get(ret, "(bs)", &ok, &npub_in);
+    g_variant_unref(ret);
+
+    if (ok) {
+      g_debug("Key stored successfully");
+
+      /* Clear the sensitive data now that it's stored */
+      clear_seed_phrase_data(self);
+
+      /* Proceed to backup reminder */
+      go_to_step(self, STEP_BACKUP_REMINDER);
+    } else {
+      GtkAlertDialog *ad = gtk_alert_dialog_new("Failed to store key.\n\nPlease try again.");
+      gtk_alert_dialog_show(ad, GTK_WINDOW(self));
+      g_object_unref(ad);
+    }
+  }
 }
 
 /* Context for async profile import */
@@ -599,17 +889,21 @@ static void update_passphrase_strength(OnboardingAssistant *self) {
 
 /* Get the step index to navigate to based on step enum */
 static int get_carousel_position_for_step(OnboardingAssistant *self, OnboardingStep step) {
-  /* Steps 0-2 are always shown */
+  (void)self; /* Used for future path-dependent logic */
+
+  /* Steps 0-2 are always shown: Welcome, Security, Choose Path */
   if (step <= STEP_CHOOSE_PATH) return (int)step;
 
-  /* Steps 3-4 depend on chosen path */
-  if (step == STEP_CREATE_PASSPHRASE || step == STEP_IMPORT_METHOD) {
-    return 3; /* Both are at position 3, but we swap which page is visible */
-  }
+  /* Steps 3-4 depend on chosen path: Create Passphrase (3) or Import Method (4) */
+  if (step == STEP_CREATE_PASSPHRASE) return 3;
+  if (step == STEP_IMPORT_METHOD) return 4;
 
-  /* Steps 5-6 are backup and ready */
-  if (step == STEP_BACKUP_REMINDER) return 4;
-  if (step == STEP_READY) return 5;
+  /* Step 5: Seed Phrase (only for create path, but in carousel order) */
+  if (step == STEP_SEED_PHRASE) return 5;
+
+  /* Steps 6-7: Backup Reminder and Ready */
+  if (step == STEP_BACKUP_REMINDER) return 6;
+  if (step == STEP_READY) return 7;
 
   return 0;
 }
@@ -623,8 +917,11 @@ static OnboardingStep get_next_step(OnboardingAssistant *self) {
     case STEP_CHOOSE_PATH:
       return (self->chosen_path == PATH_CREATE) ? STEP_CREATE_PASSPHRASE : STEP_IMPORT_METHOD;
     case STEP_CREATE_PASSPHRASE:
-    case STEP_IMPORT_METHOD:
+      return STEP_SEED_PHRASE; /* Show seed phrase after creating profile */
+    case STEP_SEED_PHRASE:
       return STEP_BACKUP_REMINDER;
+    case STEP_IMPORT_METHOD:
+      return STEP_BACKUP_REMINDER; /* Import goes directly to backup reminder */
     case STEP_BACKUP_REMINDER:
       return STEP_READY;
     case STEP_READY:
@@ -644,8 +941,15 @@ static OnboardingStep get_prev_step(OnboardingAssistant *self) {
     case STEP_CREATE_PASSPHRASE:
     case STEP_IMPORT_METHOD:
       return STEP_CHOOSE_PATH;
+    case STEP_SEED_PHRASE:
+      return STEP_CREATE_PASSPHRASE; /* Back from seed phrase goes to create */
     case STEP_BACKUP_REMINDER:
-      return (self->chosen_path == PATH_CREATE) ? STEP_CREATE_PASSPHRASE : STEP_IMPORT_METHOD;
+      /* Back depends on which path was taken */
+      if (self->chosen_path == PATH_CREATE) {
+        return STEP_SEED_PHRASE;
+      } else {
+        return STEP_IMPORT_METHOD;
+      }
     case STEP_READY:
       return STEP_BACKUP_REMINDER;
     default:
@@ -731,6 +1035,11 @@ static gboolean can_proceed_from_step(OnboardingAssistant *self) {
       return has_data;
     }
 
+    case STEP_SEED_PHRASE:
+      /* Must confirm seed phrase has been written down */
+      return self->seed_written_down &&
+             gtk_check_button_get_active(self->seed_written_down);
+
     case STEP_BACKUP_REMINDER:
       /* Must acknowledge backup importance */
       return self->backup_understood &&
@@ -778,9 +1087,15 @@ static void go_to_step(OnboardingAssistant *self, OnboardingStep step) {
     case STEP_CHOOSE_PATH: target_page = self->page_choose_path; break;
     case STEP_CREATE_PASSPHRASE: target_page = self->page_create_passphrase; break;
     case STEP_IMPORT_METHOD: target_page = self->page_import_method; break;
+    case STEP_SEED_PHRASE: target_page = self->page_seed_phrase; break;
     case STEP_BACKUP_REMINDER: target_page = self->page_backup_reminder; break;
     case STEP_READY: target_page = self->page_ready; break;
     default: target_page = self->page_welcome; break;
+  }
+
+  /* When entering seed phrase step, populate the grid */
+  if (step == STEP_SEED_PHRASE && self->generated_mnemonic) {
+    populate_seed_phrase_grid(self);
   }
 
   if (target_page && self->carousel) {
@@ -814,8 +1129,14 @@ static void on_btn_next_clicked(GtkButton *btn, gpointer user_data) {
 
   /* Handle steps that require async operations */
   if (self->current_step == STEP_CREATE_PASSPHRASE && self->chosen_path == PATH_CREATE) {
-    /* Perform actual profile creation - async, will proceed to next step on success */
+    /* Generate mnemonic and derive key - will proceed to seed phrase step on success */
     perform_profile_creation(self);
+    return;
+  }
+
+  if (self->current_step == STEP_SEED_PHRASE) {
+    /* User confirmed seed phrase - now store the key securely */
+    store_generated_key(self);
     return;
   }
 
@@ -918,6 +1239,9 @@ static void onboarding_assistant_dispose(GObject *object) {
     gn_secure_entry_clear(self->secure_import_passphrase);
   }
 
+  /* Securely clear seed phrase data */
+  clear_seed_phrase_data(self);
+
   g_clear_pointer(&self->created_npub, g_free);
 
   G_OBJECT_CLASS(onboarding_assistant_parent_class)->dispose(object);
@@ -943,6 +1267,7 @@ static void onboarding_assistant_class_init(OnboardingAssistantClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, OnboardingAssistant, page_choose_path);
   gtk_widget_class_bind_template_child(widget_class, OnboardingAssistant, page_create_passphrase);
   gtk_widget_class_bind_template_child(widget_class, OnboardingAssistant, page_import_method);
+  gtk_widget_class_bind_template_child(widget_class, OnboardingAssistant, page_seed_phrase);
   gtk_widget_class_bind_template_child(widget_class, OnboardingAssistant, page_backup_reminder);
   gtk_widget_class_bind_template_child(widget_class, OnboardingAssistant, page_ready);
 
@@ -972,6 +1297,11 @@ static void onboarding_assistant_class_init(OnboardingAssistantClass *klass) {
 
   /* Backup checkbox */
   gtk_widget_class_bind_template_child(widget_class, OnboardingAssistant, backup_understood);
+
+  /* Seed phrase display widgets */
+  gtk_widget_class_bind_template_child(widget_class, OnboardingAssistant, seed_phrase_grid);
+  gtk_widget_class_bind_template_child(widget_class, OnboardingAssistant, btn_copy_seed);
+  gtk_widget_class_bind_template_child(widget_class, OnboardingAssistant, seed_written_down);
 
   /* Status widgets */
   gtk_widget_class_bind_template_child(widget_class, OnboardingAssistant, box_status);
@@ -1013,6 +1343,8 @@ static void onboarding_assistant_init(OnboardingAssistant *self) {
   self->on_finished_data = NULL;
   self->profile_created = FALSE;
   self->created_npub = NULL;
+  self->generated_mnemonic = NULL;
+  self->generated_nsec = NULL;
 
   /* Create secure passphrase entry for profile creation */
   if (self->box_passphrase_container) {
@@ -1082,6 +1414,12 @@ static void onboarding_assistant_init(OnboardingAssistant *self) {
   /* Backup checkbox */
   if (self->backup_understood)
     g_signal_connect(self->backup_understood, "toggled", G_CALLBACK(on_backup_toggled), self);
+
+  /* Seed phrase page */
+  if (self->btn_copy_seed)
+    g_signal_connect(self->btn_copy_seed, "clicked", G_CALLBACK(on_copy_seed_clicked), self);
+  if (self->seed_written_down)
+    g_signal_connect(self->seed_written_down, "toggled", G_CALLBACK(on_seed_written_toggled), self);
 
   /* Carousel page change */
   if (self->carousel)

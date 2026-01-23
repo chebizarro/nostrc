@@ -32,7 +32,7 @@ GType page_settings_get_type(void);
 GType gn_page_sessions_get_type(void);
 
 /* Mock signer window structure */
-typedef struct {
+struct _MockSignerWindow {
   AdwApplicationWindow parent_instance;
   AdwViewStack *stack;
   GtkListBox *sidebar;
@@ -41,11 +41,7 @@ typedef struct {
   GtkWidget *page_sessions;
   GtkWidget *page_settings;
   GSettings *settings;
-} MockSignerWindow;
-
-typedef struct {
-  AdwApplicationWindowClass parent_class;
-} MockSignerWindowClass;
+};
 
 G_DECLARE_FINAL_TYPE(MockSignerWindow, mock_signer_window, MOCK, SIGNER_WINDOW, AdwApplicationWindow)
 G_DEFINE_TYPE(MockSignerWindow, mock_signer_window, ADW_TYPE_APPLICATION_WINDOW)
@@ -108,7 +104,7 @@ static MockSignerWindow *mock_signer_window_new(AdwApplication *app) {
  * =========================================================================== */
 
 /* Mock approval dialog */
-typedef struct {
+struct _MockApprovalDialog {
   AdwDialog parent_instance;
   GtkWidget *approve_btn;
   GtkWidget *deny_btn;
@@ -116,11 +112,7 @@ typedef struct {
   gboolean decision_made;
   gboolean approved;
   gboolean remember;
-} MockApprovalDialog;
-
-typedef struct {
-  AdwDialogClass parent_class;
-} MockApprovalDialogClass;
+};
 
 G_DECLARE_FINAL_TYPE(MockApprovalDialog, mock_approval_dialog, MOCK, APPROVAL_DIALOG, AdwDialog)
 G_DEFINE_TYPE(MockApprovalDialog, mock_approval_dialog, ADW_TYPE_DIALOG)
@@ -171,7 +163,7 @@ static MockApprovalDialog *mock_approval_dialog_new(void) {
  * Mock Create Profile Dialog with Password Validation
  * =========================================================================== */
 
-typedef struct {
+struct _MockCreateProfileDialog {
   AdwDialog parent_instance;
   GtkWidget *entry_display_name;
   GtkWidget *entry_passphrase;
@@ -181,11 +173,7 @@ typedef struct {
   GtkWidget *match_label;
   gboolean passwords_match;
   gboolean passphrase_valid;
-} MockCreateProfileDialog;
-
-typedef struct {
-  AdwDialogClass parent_class;
-} MockCreateProfileDialogClass;
+};
 
 G_DECLARE_FINAL_TYPE(MockCreateProfileDialog, mock_create_profile_dialog, MOCK, CREATE_PROFILE_DIALOG, AdwDialog)
 G_DEFINE_TYPE(MockCreateProfileDialog, mock_create_profile_dialog, ADW_TYPE_DIALOG)

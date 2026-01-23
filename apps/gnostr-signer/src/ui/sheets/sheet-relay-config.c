@@ -1,11 +1,16 @@
-/* sheet-relay-config.c - Relay configuration dialog implementation */
+/* sheet-relay-config.c - Relay configuration dialog implementation
+ *
+ * Supports per-identity relay lists (nostrc-5ju).
+ */
 #include "sheet-relay-config.h"
 #include "../app-resources.h"
 #include "../../relay_store.h"
 #include "../../relay_info.h"
+#include "../../accounts_store.h"
 
 /* Forward declarations */
 static void on_info_button_clicked(GtkButton *btn, gpointer user_data);
+static void populate_list(SheetRelayConfig *self);
 
 struct _SheetRelayConfig {
   AdwDialog parent_instance;
@@ -16,11 +21,14 @@ struct _SheetRelayConfig {
   GtkButton *btn_add;
   GtkButton *btn_test_all;
   GtkButton *btn_fetch_info;
+  GtkButton *btn_reset_defaults;
   GtkEntry *entry_url;
   GtkListBox *list_relays;
+  GtkLabel *lbl_identity;
 
   /* State */
   RelayStore *store;
+  gchar *identity;  /* npub for per-identity config, NULL for global */
   SheetRelayConfigSaveCb on_publish;
   gpointer on_publish_ud;
 };
@@ -82,11 +90,22 @@ static void on_publish(GtkButton *btn, gpointer user_data) {
 
   if (self->on_publish) {
     gchar *event_json = relay_store_build_event_json(self->store);
-    self->on_publish(event_json, self->on_publish_ud);
+    self->on_publish(event_json, self->identity, self->on_publish_ud);
     g_free(event_json);
   }
 
   adw_dialog_close(ADW_DIALOG(self));
+}
+
+static void on_reset_defaults(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  SheetRelayConfig *self = user_data;
+
+  /* Reset store to defaults */
+  relay_store_reset_to_defaults(self->store);
+
+  /* Repopulate the list */
+  populate_list(self);
 }
 
 static void on_row_remove(GtkButton *btn, gpointer user_data) {
@@ -483,6 +502,7 @@ static void on_fetch_info(GtkButton *btn, gpointer user_data) {
 static void sheet_relay_config_finalize(GObject *obj) {
   SheetRelayConfig *self = SHEET_RELAY_CONFIG(obj);
   relay_store_free(self->store);
+  g_free(self->identity);
   G_OBJECT_CLASS(sheet_relay_config_parent_class)->finalize(obj);
 }
 
@@ -498,15 +518,18 @@ static void sheet_relay_config_class_init(SheetRelayConfigClass *klass) {
   gtk_widget_class_bind_template_child(wc, SheetRelayConfig, btn_add);
   gtk_widget_class_bind_template_child(wc, SheetRelayConfig, btn_test_all);
   gtk_widget_class_bind_template_child(wc, SheetRelayConfig, btn_fetch_info);
+  gtk_widget_class_bind_template_child(wc, SheetRelayConfig, btn_reset_defaults);
   gtk_widget_class_bind_template_child(wc, SheetRelayConfig, entry_url);
   gtk_widget_class_bind_template_child(wc, SheetRelayConfig, list_relays);
+  gtk_widget_class_bind_template_child(wc, SheetRelayConfig, lbl_identity);
 }
 
 static void sheet_relay_config_init(SheetRelayConfig *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
 
-  self->store = relay_store_new();
-  relay_store_load(self->store);
+  /* Store and identity will be set in _new_for_identity or after construction */
+  self->store = NULL;
+  self->identity = NULL;
 
   g_signal_connect(self->btn_cancel, "clicked", G_CALLBACK(on_cancel), self);
   g_signal_connect(self->btn_publish, "clicked", G_CALLBACK(on_publish), self);
@@ -515,13 +538,74 @@ static void sheet_relay_config_init(SheetRelayConfig *self) {
   if (self->btn_fetch_info) {
     g_signal_connect(self->btn_fetch_info, "clicked", G_CALLBACK(on_fetch_info), self);
   }
+  if (self->btn_reset_defaults) {
+    g_signal_connect(self->btn_reset_defaults, "clicked", G_CALLBACK(on_reset_defaults), self);
+  }
   g_signal_connect(self->entry_url, "activate", G_CALLBACK(on_entry_activate), self);
+}
+
+/* Helper to setup the store and populate the list */
+static void setup_store_and_populate(SheetRelayConfig *self, const gchar *identity) {
+  /* Free any existing store */
+  if (self->store) {
+    relay_store_free(self->store);
+    self->store = NULL;
+  }
+  g_free(self->identity);
+  self->identity = identity ? g_strdup(identity) : NULL;
+
+  /* Create store for identity */
+  self->store = relay_store_new_for_identity(identity);
+  relay_store_load(self->store);
+
+  /* If identity-specific store is empty and identity is set,
+   * inherit from global defaults on first edit */
+  if (identity && relay_store_count(self->store) == 0) {
+    /* Check if there's a global config to inherit from */
+    RelayStore *global = relay_store_new();
+    relay_store_load(global);
+    if (relay_store_count(global) > 0) {
+      relay_store_copy_from(self->store, global);
+    } else {
+      /* No global config either, use bootstrap defaults */
+      relay_store_reset_to_defaults(self->store);
+    }
+    relay_store_free(global);
+  }
+
+  /* Update dialog title based on identity */
+  if (identity) {
+    AccountsStore *accounts = accounts_store_get_default();
+    gchar *display_name = accounts_store_get_display_name(accounts, identity);
+    gchar *title = g_strdup_printf("Relays for %s", display_name ? display_name : identity);
+    adw_dialog_set_title(ADW_DIALOG(self), title);
+    g_free(title);
+    g_free(display_name);
+
+    /* Update identity label if present */
+    if (self->lbl_identity) {
+      gtk_label_set_text(self->lbl_identity, identity);
+    }
+  } else {
+    adw_dialog_set_title(ADW_DIALOG(self), "Relay Configuration");
+    if (self->lbl_identity) {
+      gtk_label_set_text(self->lbl_identity, "Global");
+    }
+  }
 
   populate_list(self);
 }
 
 SheetRelayConfig *sheet_relay_config_new(void) {
-  return g_object_new(TYPE_SHEET_RELAY_CONFIG, NULL);
+  SheetRelayConfig *self = g_object_new(TYPE_SHEET_RELAY_CONFIG, NULL);
+  setup_store_and_populate(self, NULL);
+  return self;
+}
+
+SheetRelayConfig *sheet_relay_config_new_for_identity(const gchar *identity) {
+  SheetRelayConfig *self = g_object_new(TYPE_SHEET_RELAY_CONFIG, NULL);
+  setup_store_and_populate(self, identity);
+  return self;
 }
 
 void sheet_relay_config_set_on_publish(SheetRelayConfig *self,
@@ -530,4 +614,9 @@ void sheet_relay_config_set_on_publish(SheetRelayConfig *self,
   g_return_if_fail(self != NULL);
   self->on_publish = cb;
   self->on_publish_ud = user_data;
+}
+
+const gchar *sheet_relay_config_get_identity(SheetRelayConfig *self) {
+  g_return_val_if_fail(self != NULL, NULL);
+  return self->identity;
 }
