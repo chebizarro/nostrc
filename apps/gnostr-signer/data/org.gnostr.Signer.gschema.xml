@@ -148,6 +148,13 @@
       <description>Event kinds to auto-approve without prompting (notes, reposts, reactions).</description>
     </key>
 
+    <!-- Client Session Settings (nostrc-09n) -->
+    <key name="client-session-timeout-sec" type="i">
+      <default>900</default>
+      <summary>Client session timeout</summary>
+      <description>Seconds of inactivity before a client session expires. Default is 15 minutes (900 seconds). 0 disables timeout.</description>
+    </key>
+
     <!-- Logging Settings -->
     <key name="log-signing-requests" type="b">
       <default>true</default>

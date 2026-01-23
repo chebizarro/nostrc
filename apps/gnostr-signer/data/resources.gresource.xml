@@ -8,6 +8,7 @@
     <file preprocess="xml-stripblanks">ui/page-permissions.ui</file>
     <file preprocess="xml-stripblanks">ui/page-applications.ui</file>
     <file preprocess="xml-stripblanks">ui/page-settings.ui</file>
+    <file preprocess="xml-stripblanks">ui/page-sessions.ui</file>
     <file preprocess="xml-stripblanks">ui/events-page.ui</file>
     <file preprocess="xml-stripblanks">ui/sheets/sheet-select-account.ui</file>
     <file preprocess="xml-stripblanks">ui/sheets/sheet-account-backup.ui</file>

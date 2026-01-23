@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="GnPageSessions" parent="AdwPreferencesPage">
+    <property name="title" translatable="yes">Active Sessions</property>
+    <property name="icon-name">network-server-symbolic</property>
+    <accessibility>
+      <property name="label">Active sessions page</property>
+      <property name="description">Manage active NIP-46 client sessions for remote signing applications</property>
+    </accessibility>
+
+    <!-- Session Timeout Configuration -->
+    <child>
+      <object class="AdwPreferencesGroup">
+        <property name="title" translatable="yes">Session Settings</property>
+        <property name="description" translatable="yes">Configure how long client sessions remain active</property>
+        <accessibility>
+          <property name="label">Session settings group</property>
+        </accessibility>
+        <child>
+          <object class="AdwSpinRow" id="spin_timeout">
+            <property name="title" translatable="yes">Session Timeout</property>
+            <property name="subtitle" translatable="yes">Minutes of inactivity before session expires (0 = no timeout)</property>
+            <property name="adjustment">
+              <object class="GtkAdjustment">
+                <property name="lower">0</property>
+                <property name="upper">1440</property>
+                <property name="step-increment">5</property>
+                <property name="page-increment">15</property>
+                <property name="value">15</property>
+              </object>
+            </property>
+            <accessibility>
+              <property name="label">Session timeout in minutes</property>
+              <property name="description">Set the number of minutes before inactive sessions expire</property>
+            </accessibility>
+          </object>
+        </child>
+      </object>
+    </child>
+
+    <!-- Session Statistics and Actions -->
+    <child>
+      <object class="AdwPreferencesGroup">
+        <property name="title" translatable="yes">Session Management</property>
+        <accessibility>
+          <property name="label">Session management group</property>
+        </accessibility>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">12</property>
+            <property name="margin-top">6</property>
+            <property name="margin-bottom">6</property>
+            <child>
+              <object class="GtkLabel" id="lbl_active_count">
+                <property name="label" translatable="yes">0 active / 0 total</property>
+                <property name="hexpand">true</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+                <accessibility>
+                  <property name="label">Session count</property>
+                  <property name="description">Number of active and total sessions</property>
+                </accessibility>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="btn_revoke_all">
+                <property name="label" translatable="yes">Revoke All</property>
+                <property name="sensitive">false</property>
+                <property name="tooltip-text" translatable="yes">Revoke all active sessions</property>
+                <style>
+                  <class name="destructive-action"/>
+                </style>
+                <accessibility>
+                  <property name="label">Revoke all sessions</property>
+                  <property name="description">Terminate all active client sessions immediately</property>
+                </accessibility>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+
+    <!-- Session List -->
+    <child>
+      <object class="AdwPreferencesGroup">
+        <property name="title" translatable="yes">Connected Applications</property>
+        <property name="description" translatable="yes">Applications currently authorized to request signatures</property>
+        <accessibility>
+          <property name="label">Connected applications list</property>
+          <property name="description">List of applications with active signing sessions</property>
+        </accessibility>
+        <child>
+          <object class="GtkStack" id="empty_stack">
+            <property name="transition-type">crossfade</property>
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">empty</property>
+                <property name="child">
+                  <object class="AdwStatusPage">
+                    <property name="icon-name">network-offline-symbolic</property>
+                    <property name="title" translatable="yes">No Active Sessions</property>
+                    <property name="description" translatable="yes">Applications will appear here when they connect and are authorized to sign events</property>
+                    <accessibility>
+                      <property name="label">No active sessions</property>
+                    </accessibility>
+                  </object>
+                </property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">list</property>
+                <property name="child">
+                  <object class="GtkScrolledWindow">
+                    <property name="hexpand">true</property>
+                    <property name="vexpand">true</property>
+                    <property name="min-content-height">200</property>
+                    <property name="max-content-height">400</property>
+                    <accessibility>
+                      <property name="label">Session list container</property>
+                    </accessibility>
+                    <child>
+                      <object class="GtkListBox" id="session_list">
+                        <property name="selection-mode">none</property>
+                        <style>
+                          <class name="boxed-list"/>
+                        </style>
+                        <accessibility>
+                          <property name="label">Active sessions list</property>
+                          <property name="description">List of connected applications. Use arrow keys to navigate.</property>
+                        </accessibility>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+
+    <!-- Session Legend -->
+    <child>
+      <object class="AdwPreferencesGroup">
+        <property name="title" translatable="yes">Status Legend</property>
+        <accessibility>
+          <property name="label">Session status legend</property>
+        </accessibility>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">24</property>
+            <property name="margin-top">6</property>
+            <property name="margin-bottom">6</property>
+            <property name="halign">center</property>
+            <child>
+              <object class="GtkBox">
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">media-playback-start-symbolic</property>
+                    <style>
+                      <class name="success"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Active</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">starred-symbolic</property>
+                    <style>
+                      <class name="success"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Remembered</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">appointment-soon-symbolic</property>
+                    <style>
+                      <class name="warning"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Expired</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">action-unavailable-symbolic</property>
+                    <style>
+                      <class name="error"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Revoked</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

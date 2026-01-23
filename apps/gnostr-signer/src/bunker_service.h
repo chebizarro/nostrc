@@ -118,4 +118,17 @@ void bunker_connection_free(BunkerConnection *conn);
 /* Free a sign request */
 void bunker_sign_request_free(BunkerSignRequest *req);
 
+/* Create a client session after approval (nostrc-09n)
+ * Call this when user approves a request with "remember" checked
+ * @client_pubkey: Client's public key (hex)
+ * @app_name: Application name (optional)
+ * @persistent: Whether to persist across restarts
+ * @ttl_seconds: Session TTL (0 for default, -1 for never expires)
+ */
+void bunker_service_create_client_session(BunkerService *bs,
+                                          const gchar *client_pubkey,
+                                          const gchar *app_name,
+                                          gboolean persistent,
+                                          gint64 ttl_seconds);
+
 G_END_DECLS

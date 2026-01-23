@@ -54,6 +54,9 @@ struct _GnostrApprovalDialog {
   GtkStringList *identity_model;
   gchar *full_content;
   gboolean content_expanded;
+
+  /* Session integration */
+  gchar *client_pubkey;    /* Client's public key for session management */
 };
 
 G_DEFINE_FINAL_TYPE(GnostrApprovalDialog, gnostr_approval_dialog, ADW_TYPE_DIALOG)
@@ -259,6 +262,7 @@ static void gnostr_approval_dialog_dispose(GObject *object) {
   GnostrApprovalDialog *self = GNOSTR_APPROVAL_DIALOG(object);
 
   g_clear_pointer(&self->full_content, g_free);
+  g_clear_pointer(&self->client_pubkey, g_free);
   g_clear_object(&self->identity_model);
 
   G_OBJECT_CLASS(gnostr_approval_dialog_parent_class)->dispose(object);
@@ -309,6 +313,24 @@ static void gnostr_approval_dialog_class_init(GnostrApprovalDialogClass *klass) 
                                        btn_approve);
 }
 
+/* Callback for Ctrl+A keyboard shortcut (Approve) */
+static gboolean on_shortcut_approve(GtkWidget *widget, GVariant *args, gpointer user_data) {
+  (void)widget; (void)args; (void)user_data;
+  GnostrApprovalDialog *self = GNOSTR_APPROVAL_DIALOG(widget);
+  if (gtk_widget_get_sensitive(GTK_WIDGET(self->btn_approve))) {
+    do_finish(self, TRUE);
+  }
+  return TRUE;
+}
+
+/* Callback for Ctrl+D keyboard shortcut (Deny) */
+static gboolean on_shortcut_deny(GtkWidget *widget, GVariant *args, gpointer user_data) {
+  (void)widget; (void)args; (void)user_data;
+  GnostrApprovalDialog *self = GNOSTR_APPROVAL_DIALOG(widget);
+  do_finish(self, FALSE);
+  return TRUE;
+}
+
 static void gnostr_approval_dialog_init(GnostrApprovalDialog *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
 
@@ -337,6 +359,24 @@ static void gnostr_approval_dialog_init(GnostrApprovalDialog *self) {
                    self);
   g_signal_connect(self->btn_deny, "clicked", G_CALLBACK(on_deny_clicked),
                    self);
+
+  /* Setup keyboard shortcuts using GtkShortcutController */
+  GtkEventController *shortcut_ctrl = gtk_shortcut_controller_new();
+  gtk_shortcut_controller_set_scope(GTK_SHORTCUT_CONTROLLER(shortcut_ctrl), GTK_SHORTCUT_SCOPE_LOCAL);
+
+  /* Ctrl+A: Approve */
+  GtkShortcutTrigger *approve_trigger = gtk_shortcut_trigger_parse_string("<Primary>a");
+  GtkShortcutAction *approve_action = gtk_callback_action_new(on_shortcut_approve, NULL, NULL);
+  GtkShortcut *approve_shortcut = gtk_shortcut_new(approve_trigger, approve_action);
+  gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(shortcut_ctrl), approve_shortcut);
+
+  /* Ctrl+D: Deny */
+  GtkShortcutTrigger *deny_trigger = gtk_shortcut_trigger_parse_string("<Primary>d");
+  GtkShortcutAction *deny_action = gtk_callback_action_new(on_shortcut_deny, NULL, NULL);
+  GtkShortcut *deny_shortcut = gtk_shortcut_new(deny_trigger, deny_action);
+  gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(shortcut_ctrl), deny_shortcut);
+
+  gtk_widget_add_controller(GTK_WIDGET(self), shortcut_ctrl);
 }
 
 /**
@@ -606,4 +646,59 @@ void gnostr_show_approval_dialog_full(GtkWidget *parent,
   gnostr_approval_dialog_set_callback(dialog, cb, user_data);
 
   adw_dialog_present(ADW_DIALOG(dialog), parent);
+}
+
+/**
+ * gnostr_approval_dialog_set_client_pubkey:
+ * @self: a #GnostrApprovalDialog
+ * @client_pubkey: the client's public key (hex format)
+ *
+ * Sets the client public key for session management integration.
+ */
+void gnostr_approval_dialog_set_client_pubkey(GnostrApprovalDialog *self,
+                                              const char *client_pubkey) {
+  g_return_if_fail(GNOSTR_IS_APPROVAL_DIALOG(self));
+
+  g_free(self->client_pubkey);
+  self->client_pubkey = g_strdup(client_pubkey);
+}
+
+/**
+ * gnostr_show_approval_dialog_with_session:
+ *
+ * Shows approval dialog with session management integration.
+ * If an active session exists for the client+identity, this may
+ * auto-approve based on session state.
+ *
+ * Returns: %TRUE if dialog was shown, %FALSE if auto-approved by session
+ */
+gboolean gnostr_show_approval_dialog_with_session(GtkWidget *parent,
+                                                  const char *client_pubkey,
+                                                  const char *identity_npub,
+                                                  const char *app_name,
+                                                  const char *content,
+                                                  int event_kind,
+                                                  guint64 timestamp,
+                                                  AccountsStore *as,
+                                                  GnostrApprovalCallback cb,
+                                                  gpointer user_data) {
+  /* Include client_session.h to check for existing sessions */
+  /* Note: This creates a dependency - the bunker_service should
+   * call this instead of directly showing approval dialogs */
+
+  /* For now, just show the dialog with client pubkey set */
+  GnostrApprovalDialog *dialog = gnostr_approval_dialog_new();
+
+  gnostr_approval_dialog_set_client_pubkey(dialog, client_pubkey);
+  gnostr_approval_dialog_set_app_name(dialog, app_name);
+  gnostr_approval_dialog_set_identity(dialog, identity_npub);
+  gnostr_approval_dialog_set_content(dialog, content);
+  gnostr_approval_dialog_set_timestamp(dialog, timestamp);
+  gnostr_approval_dialog_set_event_type(dialog, event_kind);
+  gnostr_approval_dialog_set_accounts(dialog, as, identity_npub);
+  gnostr_approval_dialog_set_callback(dialog, cb, user_data);
+
+  adw_dialog_present(ADW_DIALOG(dialog), parent);
+
+  return TRUE;  /* Dialog was shown */
 }

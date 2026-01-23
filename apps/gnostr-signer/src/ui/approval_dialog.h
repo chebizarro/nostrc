@@ -153,6 +153,49 @@ void gnostr_show_approval_dialog_full(GtkWidget *parent,
                                       GnostrApprovalCallback cb,
                                       gpointer user_data);
 
+/**
+ * gnostr_approval_dialog_set_client_pubkey:
+ * @self: a #GnostrApprovalDialog
+ * @client_pubkey: the client's public key (hex format)
+ *
+ * Sets the client public key for session management integration.
+ * This allows the dialog to check for existing sessions and
+ * create new sessions when "remember" is selected.
+ */
+void gnostr_approval_dialog_set_client_pubkey(GnostrApprovalDialog *self,
+                                              const char *client_pubkey);
+
+/**
+ * gnostr_show_approval_dialog_with_session:
+ * @parent: the parent widget
+ * @client_pubkey: the client's public key (hex)
+ * @identity_npub: the requesting identity npub
+ * @app_name: the requesting application name
+ * @content: the event content
+ * @event_kind: the Nostr event kind
+ * @timestamp: the event timestamp (0 for current time)
+ * @as: the accounts store
+ * @cb: callback for the decision
+ * @user_data: user data for callback
+ *
+ * Shows approval dialog with session management integration.
+ * If an active session exists for the client+identity, this may
+ * auto-approve based on session state. The callback will include
+ * session creation when "remember" is checked.
+ *
+ * Returns: %TRUE if dialog was shown, %FALSE if auto-approved by session
+ */
+gboolean gnostr_show_approval_dialog_with_session(GtkWidget *parent,
+                                                  const char *client_pubkey,
+                                                  const char *identity_npub,
+                                                  const char *app_name,
+                                                  const char *content,
+                                                  int event_kind,
+                                                  guint64 timestamp,
+                                                  AccountsStore *as,
+                                                  GnostrApprovalCallback cb,
+                                                  gpointer user_data);
+
 G_END_DECLS
 
 #endif /* GNOSTR_APPROVAL_DIALOG_H */

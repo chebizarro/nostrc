@@ -104,6 +104,24 @@
                     <child>
                       <object class="GtkListBoxRow">
                         <accessibility>
+                          <property name="label">Active Sessions section</property>
+                          <property name="description">Navigate to manage active client sessions</property>
+                        </accessibility>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Active Sessions</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">8</property>
+                            <property name="margin-bottom">8</property>
+                            <property name="xalign">0</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkListBoxRow">
+                        <accessibility>
                           <property name="label">Settings section</property>
                           <property name="description">Navigate to application settings</property>
                         </accessibility>
@@ -151,6 +169,15 @@
                         <property name="title" translatable="yes">Applications</property>
                         <property name="child">
                           <object class="PageApplications" id="page_applications"/>
+                        </property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwViewStackPage">
+                        <property name="name">sessions</property>
+                        <property name="title" translatable="yes">Active Sessions</property>
+                        <property name="child">
+                          <object class="GnPageSessions" id="page_sessions"/>
                         </property>
                       </object>
                     </child>

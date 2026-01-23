@@ -2,11 +2,15 @@
  *
  * Integrates with the nip46 library for protocol handling.
  * Uses secure memory for handling sensitive data like signatures.
+ * Includes rate limiting to prevent brute force attacks (nostrc-1g1).
+ * Includes session management for client approval tracking (nostrc-09n).
  */
 #include "bunker_service.h"
 #include "secret_store.h"
 #include "settings_manager.h"
 #include "secure-memory.h"
+#include "rate-limiter.h"
+#include "client_session.h"
 
 #include <nostr/nip46/nip46_bunker.h>
 #include <nostr/nip46/nip46_uri.h>
@@ -86,6 +90,20 @@ static int bunker_authorize_cb(const char *client_pubkey_hex,
   BunkerService *bs = (BunkerService*)user_data;
   if (!bs) return 0;
 
+  /* Check rate limiting first (nostrc-1g1) */
+  GnRateLimiter *limiter = gn_rate_limiter_get_default();
+  guint remaining_seconds = 0;
+  GnRateLimitStatus rate_status = gn_rate_limiter_check_client(limiter,
+                                                                client_pubkey_hex,
+                                                                &remaining_seconds);
+
+  if (rate_status != GN_RATE_LIMIT_ALLOWED) {
+    gchar *error_msg = gn_rate_limiter_format_error_message(rate_status, remaining_seconds);
+    g_message("bunker: rejecting rate-limited client %s: %s", client_pubkey_hex, error_msg);
+    g_free(error_msg);
+    return 0;
+  }
+
   /* Check allowed pubkeys */
   if (bs->allowed_pubkeys && bs->allowed_pubkeys[0]) {
     gboolean found = FALSE;
@@ -96,10 +114,15 @@ static int bunker_authorize_cb(const char *client_pubkey_hex,
       }
     }
     if (!found) {
+      /* Record failed attempt for rate limiting */
+      gn_rate_limiter_record_client_attempt(limiter, client_pubkey_hex, FALSE);
       g_message("bunker: rejecting unauthorized client %s", client_pubkey_hex);
       return 0;
     }
   }
+
+  /* Successful authorization - reset rate limit for this client */
+  gn_rate_limiter_record_client_attempt(limiter, client_pubkey_hex, TRUE);
 
   /* Create connection entry */
   BunkerConnection *conn = g_new0(BunkerConnection, 1);
@@ -120,7 +143,9 @@ static int bunker_authorize_cb(const char *client_pubkey_hex,
   return 1;
 }
 
-static char *bunker_sign_cb(const char *event_json, void *user_data) {
+static char *bunker_sign_cb(const char *event_json,
+                            const char *client_pubkey_hex,
+                            void *user_data) {
   BunkerService *bs = (BunkerService*)user_data;
   if (!bs || !event_json) return NULL;
 
@@ -138,7 +163,7 @@ static char *bunker_sign_cb(const char *event_json, void *user_data) {
     }
   }
 
-  /* Check auto-approve */
+  /* Check auto-approve based on event kind */
   gboolean auto_approve = FALSE;
   if (bs->auto_approve_kinds) {
     for (gint i = 0; bs->auto_approve_kinds[i]; i++) {
@@ -150,10 +175,26 @@ static char *bunker_sign_cb(const char *event_json, void *user_data) {
     }
   }
 
+  /* Check for active client session (nostrc-09n) */
+  if (!auto_approve && client_pubkey_hex) {
+    GnClientSessionManager *sess_mgr = gn_client_session_manager_get_default();
+    if (gn_client_session_manager_has_active_session(sess_mgr,
+                                                      client_pubkey_hex,
+                                                      bs->identity_npub)) {
+      /* Active session exists - auto-approve and touch session */
+      gn_client_session_manager_touch_session(sess_mgr,
+                                               client_pubkey_hex,
+                                               bs->identity_npub);
+      auto_approve = TRUE;
+      g_debug("bunker: auto-approved via active session for %s", client_pubkey_hex);
+    }
+  }
+
   if (!auto_approve && bs->auth_cb) {
     /* Create request for UI prompt */
     BunkerSignRequest *req = g_new0(BunkerSignRequest, 1);
     req->request_id = g_strdup_printf("bunker_%ld_%d", (long)time(NULL), g_random_int());
+    req->client_pubkey = g_strdup(client_pubkey_hex);
     req->method = g_strdup("sign_event");
     req->event_json = g_strdup(event_json);
     req->event_kind = kind;
@@ -483,4 +524,41 @@ void bunker_service_authorize_response(BunkerService *bs,
   /* This would be used for async UI approval flow */
 
   g_hash_table_remove(bs->pending_requests, request_id);
+}
+
+void bunker_service_create_client_session(BunkerService *bs,
+                                          const gchar *client_pubkey,
+                                          const gchar *app_name,
+                                          gboolean persistent,
+                                          gint64 ttl_seconds) {
+  if (!bs || !client_pubkey) return;
+
+  /* Get connection info if available */
+  BunkerConnection *conn = g_hash_table_lookup(bs->connections, client_pubkey);
+  const gchar *name = app_name ? app_name : (conn ? conn->app_name : NULL);
+
+  /* Create session via session manager (nostrc-09n) */
+  GnClientSessionManager *sess_mgr = gn_client_session_manager_get_default();
+
+  /* Convert permissions to bitmask */
+  guint perms = GN_PERM_CONNECT | GN_PERM_SIGN_EVENT | GN_PERM_GET_PUBLIC_KEY;
+  if (conn && conn->permissions) {
+    for (gint i = 0; conn->permissions[i]; i++) {
+      if (g_strcmp0(conn->permissions[i], "encrypt") == 0)
+        perms |= GN_PERM_ENCRYPT;
+      if (g_strcmp0(conn->permissions[i], "decrypt") == 0)
+        perms |= GN_PERM_DECRYPT;
+    }
+  }
+
+  gn_client_session_manager_create_session(sess_mgr,
+                                            client_pubkey,
+                                            bs->identity_npub,
+                                            name,
+                                            perms,
+                                            persistent,
+                                            ttl_seconds);
+
+  g_debug("bunker: created client session for %s (persistent=%d, ttl=%ld)",
+          client_pubkey, persistent, (long)ttl_seconds);
 }
