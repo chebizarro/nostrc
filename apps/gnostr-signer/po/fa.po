@@ -1,0 +1,519 @@
+# Persian/Farsi translations for gnostr-signer
+# Copyright (C) 2024 The gnostr-signer Authors
+# This file is distributed under the same license as the gnostr-signer package.
+#
+# Note: This is a right-to-left (RTL) language
+msgid ""
+msgstr ""
+"Project-Id-Version: gnostr-signer 0.1.0\n"
+"Report-Msgid-Bugs-To: https://github.com/gnostr/gnostr-signer/issues\n"
+"POT-Creation-Date: 2024-01-23 00:00+0000\n"
+"PO-Revision-Date: 2024-01-23 00:00+0000\n"
+"Last-Translator: \n"
+"Language-Team: Persian\n"
+"Language: fa\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+"X-Text-Direction: RTL\n"
+
+msgid "GNostr Signer"
+msgstr "امضاکننده GNostr"
+
+msgid "A secure Nostr key manager and remote signer"
+msgstr "مدیر کلید امن Nostr و امضاکننده از راه دور"
+
+msgid "Welcome to GNostr Signer"
+msgstr "به امضاکننده GNostr خوش آمدید"
+
+msgid "Securely manage your Nostr identities"
+msgstr "هویت‌های Nostr خود را به صورت امن مدیریت کنید"
+
+msgid "Create New Profile"
+msgstr "ایجاد پروفایل جدید"
+
+msgid "Import Existing Profile"
+msgstr "وارد کردن پروفایل موجود"
+
+msgid "Connect Hardware Wallet"
+msgstr "اتصال کیف پول سخت‌افزاری"
+
+msgid "Session Locked"
+msgstr "نشست قفل شده است"
+
+msgid "Enter your password to unlock"
+msgstr "رمز عبور خود را برای باز کردن قفل وارد کنید"
+
+msgid "Password"
+msgstr "رمز عبور"
+
+msgid "Unlock"
+msgstr "باز کردن قفل"
+
+msgid "Forgot Password?"
+msgstr "رمز عبور را فراموش کرده‌اید؟"
+
+msgid "Signature Request"
+msgstr "درخواست امضا"
+
+msgid "An application is requesting to sign an event"
+msgstr "یک برنامه درخواست امضای یک رویداد را دارد"
+
+msgid "Application"
+msgstr "برنامه"
+
+msgid "Event Type"
+msgstr "نوع رویداد"
+
+msgid "Content Preview"
+msgstr "پیش‌نمایش محتوا"
+
+msgid "Deny"
+msgstr "رد کردن"
+
+msgid "Approve"
+msgstr "تأیید"
+
+msgid "Remember this decision"
+msgstr "به خاطر سپردن این تصمیم"
+
+msgid "Home"
+msgstr "خانه"
+
+msgid "Identities"
+msgstr "هویت‌ها"
+
+msgid "Permissions"
+msgstr "مجوزها"
+
+msgid "Sessions"
+msgstr "نشست‌ها"
+
+msgid "History"
+msgstr "تاریخچه"
+
+msgid "Settings"
+msgstr "تنظیمات"
+
+msgid "Appearance"
+msgstr "ظاهر"
+
+msgid "Theme"
+msgstr "پوسته"
+
+msgid "System"
+msgstr "سیستم"
+
+msgid "Light"
+msgstr "روشن"
+
+msgid "Dark"
+msgstr "تاریک"
+
+msgid "High Contrast"
+msgstr "کنتراست بالا"
+
+msgid "Language"
+msgstr "زبان"
+
+msgid "Security"
+msgstr "امنیت"
+
+msgid "Auto-lock Timeout"
+msgstr "زمان قفل خودکار"
+
+msgid "minutes"
+msgstr "دقیقه"
+
+msgid "Require Password"
+msgstr "نیاز به رمز عبور"
+
+msgid "Change Password"
+msgstr "تغییر رمز عبور"
+
+msgid "Network"
+msgstr "شبکه"
+
+msgid "Use Tor"
+msgstr "استفاده از Tor"
+
+msgid "Bootstrap Relays"
+msgstr "رله‌های راه‌اندازی"
+
+msgid "Advanced"
+msgstr "پیشرفته"
+
+msgid "Hardware Keystore"
+msgstr "ذخیره‌ساز کلید سخت‌افزاری"
+
+msgid "Enable hardware-backed key storage"
+msgstr "فعال‌سازی ذخیره‌سازی کلید با پشتیبانی سخت‌افزاری"
+
+msgid "Profile"
+msgstr "پروفایل"
+
+msgid "Public Key"
+msgstr "کلید عمومی"
+
+msgid "Copy"
+msgstr "کپی"
+
+msgid "View Events"
+msgstr "مشاهده رویدادها"
+
+msgid "Manage Relays"
+msgstr "مدیریت رله‌ها"
+
+msgid "Backup Keys"
+msgstr "پشتیبان‌گیری کلیدها"
+
+msgid "Delegations"
+msgstr "واگذاری‌ها"
+
+msgid "Sign Message"
+msgstr "امضای پیام"
+
+msgid "Create Profile"
+msgstr "ایجاد پروفایل"
+
+msgid "Display Name"
+msgstr "نام نمایشی"
+
+msgid "Enter a name for this identity"
+msgstr "یک نام برای این هویت وارد کنید"
+
+msgid "Passphrase"
+msgstr "عبارت عبور"
+
+msgid "Create a strong passphrase"
+msgstr "یک عبارت عبور قوی ایجاد کنید"
+
+msgid "Confirm Passphrase"
+msgstr "تأیید عبارت عبور"
+
+msgid "Recovery Hint"
+msgstr "راهنمای بازیابی"
+
+msgid "Optional hint to help remember your passphrase"
+msgstr "راهنمای اختیاری برای به خاطر سپردن عبارت عبور"
+
+msgid "Use Hardware Key"
+msgstr "استفاده از کلید سخت‌افزاری"
+
+msgid "Create"
+msgstr "ایجاد"
+
+msgid "Cancel"
+msgstr "لغو"
+
+msgid "Import Profile"
+msgstr "وارد کردن پروفایل"
+
+msgid "Import Method"
+msgstr "روش وارد کردن"
+
+msgid "NIP-49 Encrypted Backup"
+msgstr "پشتیبان رمزنگاری شده NIP-49"
+
+msgid "Paste your encrypted backup key (ncryptsec...)"
+msgstr "کلید پشتیبان رمزنگاری شده خود را بچسبانید (ncryptsec...)"
+
+msgid "Mnemonic Seed Phrase"
+msgstr "عبارت بذر یادآور"
+
+msgid "Enter your 12 or 24 word seed phrase"
+msgstr "عبارت بذر ۱۲ یا ۲۴ کلمه‌ای خود را وارد کنید"
+
+msgid "Hardware Device"
+msgstr "دستگاه سخت‌افزاری"
+
+msgid "Connect your Ledger or Trezor device"
+msgstr "دستگاه Ledger یا Trezor خود را متصل کنید"
+
+msgid "Import"
+msgstr "وارد کردن"
+
+msgid "Export Encrypted Backup"
+msgstr "صدور پشتیبان رمزنگاری شده"
+
+msgid "Show Recovery Phrase"
+msgstr "نمایش عبارت بازیابی"
+
+msgid "Warning: Never share your recovery phrase or backup key with anyone"
+msgstr "هشدار: هرگز عبارت بازیابی یا کلید پشتیبان خود را با کسی به اشتراک نگذارید"
+
+msgid "Event History"
+msgstr "تاریخچه رویدادها"
+
+msgid "No events yet"
+msgstr "هنوز رویدادی نیست"
+
+msgid "Signed events will appear here"
+msgstr "رویدادهای امضا شده اینجا نمایش داده می‌شوند"
+
+msgid "Clear History"
+msgstr "پاک کردن تاریخچه"
+
+msgid "Export"
+msgstr "صدور"
+
+msgid "Keyboard Shortcuts"
+msgstr "میانبرهای صفحه‌کلید"
+
+msgid "General"
+msgstr "عمومی"
+
+msgid "Lock Session"
+msgstr "قفل کردن نشست"
+
+msgid "Quit"
+msgstr "خروج"
+
+msgid "Show Shortcuts"
+msgstr "نمایش میانبرها"
+
+msgid "Navigation"
+msgstr "ناوبری"
+
+msgid "Next Tab"
+msgstr "زبانه بعدی"
+
+msgid "Previous Tab"
+msgstr "زبانه قبلی"
+
+msgid "Social Recovery"
+msgstr "بازیابی اجتماعی"
+
+msgid "Set up trusted guardians to help recover your keys"
+msgstr "قیم‌های مورد اعتماد را برای کمک به بازیابی کلیدهایتان تنظیم کنید"
+
+msgid "Add Guardian"
+msgstr "افزودن قیم"
+
+msgid "Threshold"
+msgstr "آستانه"
+
+msgid "Number of guardians required to recover"
+msgstr "تعداد قیم‌های لازم برای بازیابی"
+
+msgid "Grant signing permissions to other keys"
+msgstr "اعطای مجوز امضا به کلیدهای دیگر"
+
+msgid "Create Delegation"
+msgstr "ایجاد واگذاری"
+
+msgid "Delegatee Public Key"
+msgstr "کلید عمومی نماینده"
+
+msgid "Allowed Event Kinds"
+msgstr "انواع رویدادهای مجاز"
+
+msgid "Valid From"
+msgstr "معتبر از"
+
+msgid "Valid Until"
+msgstr "معتبر تا"
+
+msgid "Revoke"
+msgstr "لغو"
+
+msgid "Hardware Wallet"
+msgstr "کیف پول سخت‌افزاری"
+
+msgid "Connect your hardware wallet"
+msgstr "کیف پول سخت‌افزاری خود را متصل کنید"
+
+msgid "Scanning for devices..."
+msgstr "در حال جستجوی دستگاه‌ها..."
+
+msgid "No devices found"
+msgstr "دستگاهی یافت نشد"
+
+msgid "Connect"
+msgstr "اتصال"
+
+msgid "QR Code"
+msgstr "کد QR"
+
+msgid "Scan this code to import"
+msgstr "این کد را برای وارد کردن اسکن کنید"
+
+msgid "Copy to Clipboard"
+msgstr "کپی به کلیپ‌بورد"
+
+msgid "English"
+msgstr "انگلیسی"
+
+msgid "System Default"
+msgstr "پیش‌فرض سیستم"
+
+msgid "Japanese"
+msgstr "ژاپنی"
+
+msgid "Spanish"
+msgstr "اسپانیایی"
+
+msgid "Portuguese (Brazil)"
+msgstr "پرتغالی (برزیل)"
+
+msgid "Indonesian"
+msgstr "اندونزیایی"
+
+msgid "Persian"
+msgstr "فارسی"
+
+msgid "About"
+msgstr "درباره"
+
+msgid "Version"
+msgstr "نسخه"
+
+msgid "A secure NIP-46 remote signer for Nostr"
+msgstr "امضاکننده از راه دور امن NIP-46 برای Nostr"
+
+msgid "Website"
+msgstr "وب‌سایت"
+
+msgid "Report an Issue"
+msgstr "گزارش مشکل"
+
+msgid "License"
+msgstr "مجوز"
+
+msgid "Session locked due to inactivity"
+msgstr "نشست به دلیل عدم فعالیت قفل شد"
+
+msgid "Session locked by user"
+msgstr "نشست توسط کاربر قفل شد"
+
+msgid "Incorrect password"
+msgstr "رمز عبور نادرست"
+
+msgid "Too many failed attempts. Please wait."
+msgstr "تعداد تلاش‌های ناموفق زیاد است. لطفاً صبر کنید."
+
+msgid "Connection established"
+msgstr "اتصال برقرار شد"
+
+msgid "Connection failed"
+msgstr "اتصال ناموفق بود"
+
+msgid "Request approved"
+msgstr "درخواست تأیید شد"
+
+msgid "Request denied"
+msgstr "درخواست رد شد"
+
+msgid "Welcome"
+msgstr "خوش آمدید"
+
+msgid "Let's set up your secure key management"
+msgstr "بیایید مدیریت امن کلید شما را تنظیم کنیم"
+
+msgid "Create Your First Identity"
+msgstr "اولین هویت خود را ایجاد کنید"
+
+msgid "Or import an existing one"
+msgstr "یا یک هویت موجود را وارد کنید"
+
+msgid "Setup Complete"
+msgstr "تنظیمات کامل شد"
+
+msgid "You're all set to start using GNostr Signer"
+msgstr "شما آماده شروع استفاده از امضاکننده GNostr هستید"
+
+msgid "Get Started"
+msgstr "شروع کنید"
+
+msgid "Next"
+msgstr "بعدی"
+
+msgid "Back"
+msgstr "قبلی"
+
+msgid "Skip"
+msgstr "رد شدن"
+
+msgid "Save"
+msgstr "ذخیره"
+
+msgid "Delete"
+msgstr "حذف"
+
+msgid "Edit"
+msgstr "ویرایش"
+
+msgid "Close"
+msgstr "بستن"
+
+msgid "OK"
+msgstr "تأیید"
+
+msgid "Yes"
+msgstr "بله"
+
+msgid "No"
+msgstr "خیر"
+
+msgid "Confirm"
+msgstr "تأیید"
+
+msgid "Error"
+msgstr "خطا"
+
+msgid "Warning"
+msgstr "هشدار"
+
+msgid "Success"
+msgstr "موفقیت"
+
+msgid "Loading..."
+msgstr "در حال بارگذاری..."
+
+msgid "Please wait..."
+msgstr "لطفاً صبر کنید..."
+
+msgid "second"
+msgid_plural "seconds"
+msgstr[0] "ثانیه"
+msgstr[1] "ثانیه"
+
+msgid "minute"
+msgid_plural "minutes"
+msgstr[0] "دقیقه"
+msgstr[1] "دقیقه"
+
+msgid "hour"
+msgid_plural "hours"
+msgstr[0] "ساعت"
+msgstr[1] "ساعت"
+
+msgid "day"
+msgid_plural "days"
+msgstr[0] "روز"
+msgstr[1] "روز"
+
+msgid "Note"
+msgstr "یادداشت"
+
+msgid "Direct Message"
+msgstr "پیام مستقیم"
+
+msgid "Reaction"
+msgstr "واکنش"
+
+msgid "Repost"
+msgstr "بازنشر"
+
+msgid "Zap Request"
+msgstr "درخواست Zap"
+
+msgid "Profile Update"
+msgstr "به‌روزرسانی پروفایل"
+
+msgid "Contact List"
+msgstr "لیست مخاطبین"
+
+msgid "Relay List"
+msgstr "لیست رله‌ها"

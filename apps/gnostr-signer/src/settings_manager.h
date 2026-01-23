@@ -258,4 +258,28 @@ void settings_manager_disconnect_changed(SettingsManager *sm, gulong handler_id)
 /* Get singleton instance */
 SettingsManager *settings_manager_get_default(void);
 
+/* ============================================================================
+ * Internationalization Settings
+ * ============================================================================ */
+
+/**
+ * settings_manager_get_language:
+ * @sm: A #SettingsManager
+ *
+ * Gets the user's preferred language code.
+ *
+ * Returns: (transfer full): Language code (e.g., "ja", "es") or NULL for system default.
+ *          Free with g_free().
+ */
+gchar *settings_manager_get_language(SettingsManager *sm);
+
+/**
+ * settings_manager_set_language:
+ * @sm: A #SettingsManager
+ * @lang: Language code (e.g., "ja", "es") or NULL for system default
+ *
+ * Sets the user's preferred language.
+ */
+void settings_manager_set_language(SettingsManager *sm, const gchar *lang);
+
 G_END_DECLS

@@ -34,6 +34,12 @@
       <description>Always use high contrast theme regardless of system settings. When false, high contrast is only used when the system requests it or theme is set to 'high-contrast'.</description>
     </key>
 
+    <key name="language" type="s">
+      <default>''</default>
+      <summary>Preferred language</summary>
+      <description>Language code for the UI (e.g., 'ja', 'es', 'pt_BR', 'id', 'fa'). Empty string uses system default.</description>
+    </key>
+
     <key name="window-width" type="i">
       <default>920</default>
       <summary>Window width</summary>

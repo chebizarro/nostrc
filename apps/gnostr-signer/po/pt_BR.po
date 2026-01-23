@@ -1,0 +1,517 @@
+# Brazilian Portuguese translations for gnostr-signer
+# Copyright (C) 2024 The gnostr-signer Authors
+# This file is distributed under the same license as the gnostr-signer package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: gnostr-signer 0.1.0\n"
+"Report-Msgid-Bugs-To: https://github.com/gnostr/gnostr-signer/issues\n"
+"POT-Creation-Date: 2024-01-23 00:00+0000\n"
+"PO-Revision-Date: 2024-01-23 00:00+0000\n"
+"Last-Translator: \n"
+"Language-Team: Portuguese (Brazil)\n"
+"Language: pt_BR\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "GNostr Signer"
+msgstr "GNostr Signer"
+
+msgid "A secure Nostr key manager and remote signer"
+msgstr "Um gerenciador de chaves Nostr seguro e assinador remoto"
+
+msgid "Welcome to GNostr Signer"
+msgstr "Bem-vindo ao GNostr Signer"
+
+msgid "Securely manage your Nostr identities"
+msgstr "Gerencie suas identidades Nostr com segurança"
+
+msgid "Create New Profile"
+msgstr "Criar novo perfil"
+
+msgid "Import Existing Profile"
+msgstr "Importar perfil existente"
+
+msgid "Connect Hardware Wallet"
+msgstr "Conectar carteira de hardware"
+
+msgid "Session Locked"
+msgstr "Sessão bloqueada"
+
+msgid "Enter your password to unlock"
+msgstr "Digite sua senha para desbloquear"
+
+msgid "Password"
+msgstr "Senha"
+
+msgid "Unlock"
+msgstr "Desbloquear"
+
+msgid "Forgot Password?"
+msgstr "Esqueceu a senha?"
+
+msgid "Signature Request"
+msgstr "Solicitação de assinatura"
+
+msgid "An application is requesting to sign an event"
+msgstr "Um aplicativo está solicitando assinar um evento"
+
+msgid "Application"
+msgstr "Aplicativo"
+
+msgid "Event Type"
+msgstr "Tipo de evento"
+
+msgid "Content Preview"
+msgstr "Visualização do conteúdo"
+
+msgid "Deny"
+msgstr "Negar"
+
+msgid "Approve"
+msgstr "Aprovar"
+
+msgid "Remember this decision"
+msgstr "Lembrar esta decisão"
+
+msgid "Home"
+msgstr "Início"
+
+msgid "Identities"
+msgstr "Identidades"
+
+msgid "Permissions"
+msgstr "Permissões"
+
+msgid "Sessions"
+msgstr "Sessões"
+
+msgid "History"
+msgstr "Histórico"
+
+msgid "Settings"
+msgstr "Configurações"
+
+msgid "Appearance"
+msgstr "Aparência"
+
+msgid "Theme"
+msgstr "Tema"
+
+msgid "System"
+msgstr "Sistema"
+
+msgid "Light"
+msgstr "Claro"
+
+msgid "Dark"
+msgstr "Escuro"
+
+msgid "High Contrast"
+msgstr "Alto contraste"
+
+msgid "Language"
+msgstr "Idioma"
+
+msgid "Security"
+msgstr "Segurança"
+
+msgid "Auto-lock Timeout"
+msgstr "Tempo limite de bloqueio automático"
+
+msgid "minutes"
+msgstr "minutos"
+
+msgid "Require Password"
+msgstr "Exigir senha"
+
+msgid "Change Password"
+msgstr "Alterar senha"
+
+msgid "Network"
+msgstr "Rede"
+
+msgid "Use Tor"
+msgstr "Usar Tor"
+
+msgid "Bootstrap Relays"
+msgstr "Relays de inicialização"
+
+msgid "Advanced"
+msgstr "Avançado"
+
+msgid "Hardware Keystore"
+msgstr "Armazenamento de chaves de hardware"
+
+msgid "Enable hardware-backed key storage"
+msgstr "Habilitar armazenamento de chaves com suporte de hardware"
+
+msgid "Profile"
+msgstr "Perfil"
+
+msgid "Public Key"
+msgstr "Chave pública"
+
+msgid "Copy"
+msgstr "Copiar"
+
+msgid "View Events"
+msgstr "Ver eventos"
+
+msgid "Manage Relays"
+msgstr "Gerenciar relays"
+
+msgid "Backup Keys"
+msgstr "Backup de chaves"
+
+msgid "Delegations"
+msgstr "Delegações"
+
+msgid "Sign Message"
+msgstr "Assinar mensagem"
+
+msgid "Create Profile"
+msgstr "Criar perfil"
+
+msgid "Display Name"
+msgstr "Nome de exibição"
+
+msgid "Enter a name for this identity"
+msgstr "Digite um nome para esta identidade"
+
+msgid "Passphrase"
+msgstr "Frase secreta"
+
+msgid "Create a strong passphrase"
+msgstr "Crie uma frase secreta forte"
+
+msgid "Confirm Passphrase"
+msgstr "Confirmar frase secreta"
+
+msgid "Recovery Hint"
+msgstr "Dica de recuperação"
+
+msgid "Optional hint to help remember your passphrase"
+msgstr "Dica opcional para ajudar a lembrar sua frase secreta"
+
+msgid "Use Hardware Key"
+msgstr "Usar chave de hardware"
+
+msgid "Create"
+msgstr "Criar"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Import Profile"
+msgstr "Importar perfil"
+
+msgid "Import Method"
+msgstr "Método de importação"
+
+msgid "NIP-49 Encrypted Backup"
+msgstr "Backup criptografado NIP-49"
+
+msgid "Paste your encrypted backup key (ncryptsec...)"
+msgstr "Cole sua chave de backup criptografada (ncryptsec...)"
+
+msgid "Mnemonic Seed Phrase"
+msgstr "Frase semente mnemônica"
+
+msgid "Enter your 12 or 24 word seed phrase"
+msgstr "Digite sua frase semente de 12 ou 24 palavras"
+
+msgid "Hardware Device"
+msgstr "Dispositivo de hardware"
+
+msgid "Connect your Ledger or Trezor device"
+msgstr "Conecte seu dispositivo Ledger ou Trezor"
+
+msgid "Import"
+msgstr "Importar"
+
+msgid "Export Encrypted Backup"
+msgstr "Exportar backup criptografado"
+
+msgid "Show Recovery Phrase"
+msgstr "Mostrar frase de recuperação"
+
+msgid "Warning: Never share your recovery phrase or backup key with anyone"
+msgstr "Aviso: Nunca compartilhe sua frase de recuperação ou chave de backup com ninguém"
+
+msgid "Event History"
+msgstr "Histórico de eventos"
+
+msgid "No events yet"
+msgstr "Nenhum evento ainda"
+
+msgid "Signed events will appear here"
+msgstr "Eventos assinados aparecerão aqui"
+
+msgid "Clear History"
+msgstr "Limpar histórico"
+
+msgid "Export"
+msgstr "Exportar"
+
+msgid "Keyboard Shortcuts"
+msgstr "Atalhos de teclado"
+
+msgid "General"
+msgstr "Geral"
+
+msgid "Lock Session"
+msgstr "Bloquear sessão"
+
+msgid "Quit"
+msgstr "Sair"
+
+msgid "Show Shortcuts"
+msgstr "Mostrar atalhos"
+
+msgid "Navigation"
+msgstr "Navegação"
+
+msgid "Next Tab"
+msgstr "Próxima aba"
+
+msgid "Previous Tab"
+msgstr "Aba anterior"
+
+msgid "Social Recovery"
+msgstr "Recuperação social"
+
+msgid "Set up trusted guardians to help recover your keys"
+msgstr "Configure guardiões de confiança para ajudar a recuperar suas chaves"
+
+msgid "Add Guardian"
+msgstr "Adicionar guardião"
+
+msgid "Threshold"
+msgstr "Limite"
+
+msgid "Number of guardians required to recover"
+msgstr "Número de guardiões necessários para recuperar"
+
+msgid "Grant signing permissions to other keys"
+msgstr "Conceder permissões de assinatura a outras chaves"
+
+msgid "Create Delegation"
+msgstr "Criar delegação"
+
+msgid "Delegatee Public Key"
+msgstr "Chave pública do delegado"
+
+msgid "Allowed Event Kinds"
+msgstr "Tipos de eventos permitidos"
+
+msgid "Valid From"
+msgstr "Válido de"
+
+msgid "Valid Until"
+msgstr "Válido até"
+
+msgid "Revoke"
+msgstr "Revogar"
+
+msgid "Hardware Wallet"
+msgstr "Carteira de hardware"
+
+msgid "Connect your hardware wallet"
+msgstr "Conecte sua carteira de hardware"
+
+msgid "Scanning for devices..."
+msgstr "Procurando dispositivos..."
+
+msgid "No devices found"
+msgstr "Nenhum dispositivo encontrado"
+
+msgid "Connect"
+msgstr "Conectar"
+
+msgid "QR Code"
+msgstr "Código QR"
+
+msgid "Scan this code to import"
+msgstr "Escaneie este código para importar"
+
+msgid "Copy to Clipboard"
+msgstr "Copiar para a área de transferência"
+
+msgid "English"
+msgstr "Inglês"
+
+msgid "System Default"
+msgstr "Padrão do sistema"
+
+msgid "Japanese"
+msgstr "Japonês"
+
+msgid "Spanish"
+msgstr "Espanhol"
+
+msgid "Portuguese (Brazil)"
+msgstr "Português (Brasil)"
+
+msgid "Indonesian"
+msgstr "Indonésio"
+
+msgid "Persian"
+msgstr "Persa"
+
+msgid "About"
+msgstr "Sobre"
+
+msgid "Version"
+msgstr "Versão"
+
+msgid "A secure NIP-46 remote signer for Nostr"
+msgstr "Um assinador remoto NIP-46 seguro para Nostr"
+
+msgid "Website"
+msgstr "Site"
+
+msgid "Report an Issue"
+msgstr "Reportar um problema"
+
+msgid "License"
+msgstr "Licença"
+
+msgid "Session locked due to inactivity"
+msgstr "Sessão bloqueada por inatividade"
+
+msgid "Session locked by user"
+msgstr "Sessão bloqueada pelo usuário"
+
+msgid "Incorrect password"
+msgstr "Senha incorreta"
+
+msgid "Too many failed attempts. Please wait."
+msgstr "Muitas tentativas falhas. Por favor, aguarde."
+
+msgid "Connection established"
+msgstr "Conexão estabelecida"
+
+msgid "Connection failed"
+msgstr "Falha na conexão"
+
+msgid "Request approved"
+msgstr "Solicitação aprovada"
+
+msgid "Request denied"
+msgstr "Solicitação negada"
+
+msgid "Welcome"
+msgstr "Bem-vindo"
+
+msgid "Let's set up your secure key management"
+msgstr "Vamos configurar seu gerenciamento seguro de chaves"
+
+msgid "Create Your First Identity"
+msgstr "Crie sua primeira identidade"
+
+msgid "Or import an existing one"
+msgstr "Ou importe uma existente"
+
+msgid "Setup Complete"
+msgstr "Configuração concluída"
+
+msgid "You're all set to start using GNostr Signer"
+msgstr "Você está pronto para começar a usar o GNostr Signer"
+
+msgid "Get Started"
+msgstr "Começar"
+
+msgid "Next"
+msgstr "Próximo"
+
+msgid "Back"
+msgstr "Voltar"
+
+msgid "Skip"
+msgstr "Pular"
+
+msgid "Save"
+msgstr "Salvar"
+
+msgid "Delete"
+msgstr "Excluir"
+
+msgid "Edit"
+msgstr "Editar"
+
+msgid "Close"
+msgstr "Fechar"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Yes"
+msgstr "Sim"
+
+msgid "No"
+msgstr "Não"
+
+msgid "Confirm"
+msgstr "Confirmar"
+
+msgid "Error"
+msgstr "Erro"
+
+msgid "Warning"
+msgstr "Aviso"
+
+msgid "Success"
+msgstr "Sucesso"
+
+msgid "Loading..."
+msgstr "Carregando..."
+
+msgid "Please wait..."
+msgstr "Por favor, aguarde..."
+
+msgid "second"
+msgid_plural "seconds"
+msgstr[0] "segundo"
+msgstr[1] "segundos"
+
+msgid "minute"
+msgid_plural "minutes"
+msgstr[0] "minuto"
+msgstr[1] "minutos"
+
+msgid "hour"
+msgid_plural "hours"
+msgstr[0] "hora"
+msgstr[1] "horas"
+
+msgid "day"
+msgid_plural "days"
+msgstr[0] "dia"
+msgstr[1] "dias"
+
+msgid "Note"
+msgstr "Nota"
+
+msgid "Direct Message"
+msgstr "Mensagem direta"
+
+msgid "Reaction"
+msgstr "Reação"
+
+msgid "Repost"
+msgstr "Repost"
+
+msgid "Zap Request"
+msgstr "Solicitação de Zap"
+
+msgid "Profile Update"
+msgstr "Atualização de perfil"
+
+msgid "Contact List"
+msgstr "Lista de contatos"
+
+msgid "Relay List"
+msgstr "Lista de relays"

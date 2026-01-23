@@ -1,0 +1,513 @@
+# Indonesian translations for gnostr-signer
+# Copyright (C) 2024 The gnostr-signer Authors
+# This file is distributed under the same license as the gnostr-signer package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: gnostr-signer 0.1.0\n"
+"Report-Msgid-Bugs-To: https://github.com/gnostr/gnostr-signer/issues\n"
+"POT-Creation-Date: 2024-01-23 00:00+0000\n"
+"PO-Revision-Date: 2024-01-23 00:00+0000\n"
+"Last-Translator: \n"
+"Language-Team: Indonesian\n"
+"Language: id\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "GNostr Signer"
+msgstr "GNostr Signer"
+
+msgid "A secure Nostr key manager and remote signer"
+msgstr "Pengelola kunci Nostr yang aman dan penanda tangan jarak jauh"
+
+msgid "Welcome to GNostr Signer"
+msgstr "Selamat datang di GNostr Signer"
+
+msgid "Securely manage your Nostr identities"
+msgstr "Kelola identitas Nostr Anda dengan aman"
+
+msgid "Create New Profile"
+msgstr "Buat profil baru"
+
+msgid "Import Existing Profile"
+msgstr "Impor profil yang ada"
+
+msgid "Connect Hardware Wallet"
+msgstr "Hubungkan dompet perangkat keras"
+
+msgid "Session Locked"
+msgstr "Sesi terkunci"
+
+msgid "Enter your password to unlock"
+msgstr "Masukkan kata sandi untuk membuka kunci"
+
+msgid "Password"
+msgstr "Kata sandi"
+
+msgid "Unlock"
+msgstr "Buka kunci"
+
+msgid "Forgot Password?"
+msgstr "Lupa kata sandi?"
+
+msgid "Signature Request"
+msgstr "Permintaan tanda tangan"
+
+msgid "An application is requesting to sign an event"
+msgstr "Sebuah aplikasi meminta untuk menandatangani sebuah event"
+
+msgid "Application"
+msgstr "Aplikasi"
+
+msgid "Event Type"
+msgstr "Jenis event"
+
+msgid "Content Preview"
+msgstr "Pratinjau konten"
+
+msgid "Deny"
+msgstr "Tolak"
+
+msgid "Approve"
+msgstr "Setuju"
+
+msgid "Remember this decision"
+msgstr "Ingat keputusan ini"
+
+msgid "Home"
+msgstr "Beranda"
+
+msgid "Identities"
+msgstr "Identitas"
+
+msgid "Permissions"
+msgstr "Izin"
+
+msgid "Sessions"
+msgstr "Sesi"
+
+msgid "History"
+msgstr "Riwayat"
+
+msgid "Settings"
+msgstr "Pengaturan"
+
+msgid "Appearance"
+msgstr "Tampilan"
+
+msgid "Theme"
+msgstr "Tema"
+
+msgid "System"
+msgstr "Sistem"
+
+msgid "Light"
+msgstr "Terang"
+
+msgid "Dark"
+msgstr "Gelap"
+
+msgid "High Contrast"
+msgstr "Kontras tinggi"
+
+msgid "Language"
+msgstr "Bahasa"
+
+msgid "Security"
+msgstr "Keamanan"
+
+msgid "Auto-lock Timeout"
+msgstr "Batas waktu kunci otomatis"
+
+msgid "minutes"
+msgstr "menit"
+
+msgid "Require Password"
+msgstr "Memerlukan kata sandi"
+
+msgid "Change Password"
+msgstr "Ubah kata sandi"
+
+msgid "Network"
+msgstr "Jaringan"
+
+msgid "Use Tor"
+msgstr "Gunakan Tor"
+
+msgid "Bootstrap Relays"
+msgstr "Relay bootstrap"
+
+msgid "Advanced"
+msgstr "Lanjutan"
+
+msgid "Hardware Keystore"
+msgstr "Penyimpanan kunci perangkat keras"
+
+msgid "Enable hardware-backed key storage"
+msgstr "Aktifkan penyimpanan kunci berbasis perangkat keras"
+
+msgid "Profile"
+msgstr "Profil"
+
+msgid "Public Key"
+msgstr "Kunci publik"
+
+msgid "Copy"
+msgstr "Salin"
+
+msgid "View Events"
+msgstr "Lihat event"
+
+msgid "Manage Relays"
+msgstr "Kelola relay"
+
+msgid "Backup Keys"
+msgstr "Cadangkan kunci"
+
+msgid "Delegations"
+msgstr "Delegasi"
+
+msgid "Sign Message"
+msgstr "Tanda tangani pesan"
+
+msgid "Create Profile"
+msgstr "Buat profil"
+
+msgid "Display Name"
+msgstr "Nama tampilan"
+
+msgid "Enter a name for this identity"
+msgstr "Masukkan nama untuk identitas ini"
+
+msgid "Passphrase"
+msgstr "Frasa sandi"
+
+msgid "Create a strong passphrase"
+msgstr "Buat frasa sandi yang kuat"
+
+msgid "Confirm Passphrase"
+msgstr "Konfirmasi frasa sandi"
+
+msgid "Recovery Hint"
+msgstr "Petunjuk pemulihan"
+
+msgid "Optional hint to help remember your passphrase"
+msgstr "Petunjuk opsional untuk membantu mengingat frasa sandi Anda"
+
+msgid "Use Hardware Key"
+msgstr "Gunakan kunci perangkat keras"
+
+msgid "Create"
+msgstr "Buat"
+
+msgid "Cancel"
+msgstr "Batal"
+
+msgid "Import Profile"
+msgstr "Impor profil"
+
+msgid "Import Method"
+msgstr "Metode impor"
+
+msgid "NIP-49 Encrypted Backup"
+msgstr "Cadangan terenkripsi NIP-49"
+
+msgid "Paste your encrypted backup key (ncryptsec...)"
+msgstr "Tempel kunci cadangan terenkripsi Anda (ncryptsec...)"
+
+msgid "Mnemonic Seed Phrase"
+msgstr "Frasa benih mnemonik"
+
+msgid "Enter your 12 or 24 word seed phrase"
+msgstr "Masukkan frasa benih 12 atau 24 kata Anda"
+
+msgid "Hardware Device"
+msgstr "Perangkat keras"
+
+msgid "Connect your Ledger or Trezor device"
+msgstr "Hubungkan perangkat Ledger atau Trezor Anda"
+
+msgid "Import"
+msgstr "Impor"
+
+msgid "Export Encrypted Backup"
+msgstr "Ekspor cadangan terenkripsi"
+
+msgid "Show Recovery Phrase"
+msgstr "Tampilkan frasa pemulihan"
+
+msgid "Warning: Never share your recovery phrase or backup key with anyone"
+msgstr "Peringatan: Jangan pernah membagikan frasa pemulihan atau kunci cadangan Anda kepada siapa pun"
+
+msgid "Event History"
+msgstr "Riwayat event"
+
+msgid "No events yet"
+msgstr "Belum ada event"
+
+msgid "Signed events will appear here"
+msgstr "Event yang ditandatangani akan muncul di sini"
+
+msgid "Clear History"
+msgstr "Hapus riwayat"
+
+msgid "Export"
+msgstr "Ekspor"
+
+msgid "Keyboard Shortcuts"
+msgstr "Pintasan keyboard"
+
+msgid "General"
+msgstr "Umum"
+
+msgid "Lock Session"
+msgstr "Kunci sesi"
+
+msgid "Quit"
+msgstr "Keluar"
+
+msgid "Show Shortcuts"
+msgstr "Tampilkan pintasan"
+
+msgid "Navigation"
+msgstr "Navigasi"
+
+msgid "Next Tab"
+msgstr "Tab berikutnya"
+
+msgid "Previous Tab"
+msgstr "Tab sebelumnya"
+
+msgid "Social Recovery"
+msgstr "Pemulihan sosial"
+
+msgid "Set up trusted guardians to help recover your keys"
+msgstr "Siapkan wali tepercaya untuk membantu memulihkan kunci Anda"
+
+msgid "Add Guardian"
+msgstr "Tambah wali"
+
+msgid "Threshold"
+msgstr "Ambang batas"
+
+msgid "Number of guardians required to recover"
+msgstr "Jumlah wali yang diperlukan untuk pemulihan"
+
+msgid "Grant signing permissions to other keys"
+msgstr "Berikan izin penandatanganan ke kunci lain"
+
+msgid "Create Delegation"
+msgstr "Buat delegasi"
+
+msgid "Delegatee Public Key"
+msgstr "Kunci publik penerima delegasi"
+
+msgid "Allowed Event Kinds"
+msgstr "Jenis event yang diizinkan"
+
+msgid "Valid From"
+msgstr "Berlaku dari"
+
+msgid "Valid Until"
+msgstr "Berlaku sampai"
+
+msgid "Revoke"
+msgstr "Cabut"
+
+msgid "Hardware Wallet"
+msgstr "Dompet perangkat keras"
+
+msgid "Connect your hardware wallet"
+msgstr "Hubungkan dompet perangkat keras Anda"
+
+msgid "Scanning for devices..."
+msgstr "Memindai perangkat..."
+
+msgid "No devices found"
+msgstr "Tidak ada perangkat ditemukan"
+
+msgid "Connect"
+msgstr "Hubungkan"
+
+msgid "QR Code"
+msgstr "Kode QR"
+
+msgid "Scan this code to import"
+msgstr "Pindai kode ini untuk mengimpor"
+
+msgid "Copy to Clipboard"
+msgstr "Salin ke papan klip"
+
+msgid "English"
+msgstr "Inggris"
+
+msgid "System Default"
+msgstr "Default sistem"
+
+msgid "Japanese"
+msgstr "Jepang"
+
+msgid "Spanish"
+msgstr "Spanyol"
+
+msgid "Portuguese (Brazil)"
+msgstr "Portugis (Brasil)"
+
+msgid "Indonesian"
+msgstr "Indonesia"
+
+msgid "Persian"
+msgstr "Persia"
+
+msgid "About"
+msgstr "Tentang"
+
+msgid "Version"
+msgstr "Versi"
+
+msgid "A secure NIP-46 remote signer for Nostr"
+msgstr "Penanda tangan jarak jauh NIP-46 yang aman untuk Nostr"
+
+msgid "Website"
+msgstr "Situs web"
+
+msgid "Report an Issue"
+msgstr "Laporkan masalah"
+
+msgid "License"
+msgstr "Lisensi"
+
+msgid "Session locked due to inactivity"
+msgstr "Sesi terkunci karena tidak aktif"
+
+msgid "Session locked by user"
+msgstr "Sesi dikunci oleh pengguna"
+
+msgid "Incorrect password"
+msgstr "Kata sandi salah"
+
+msgid "Too many failed attempts. Please wait."
+msgstr "Terlalu banyak percobaan gagal. Silakan tunggu."
+
+msgid "Connection established"
+msgstr "Koneksi berhasil"
+
+msgid "Connection failed"
+msgstr "Koneksi gagal"
+
+msgid "Request approved"
+msgstr "Permintaan disetujui"
+
+msgid "Request denied"
+msgstr "Permintaan ditolak"
+
+msgid "Welcome"
+msgstr "Selamat datang"
+
+msgid "Let's set up your secure key management"
+msgstr "Mari siapkan pengelolaan kunci aman Anda"
+
+msgid "Create Your First Identity"
+msgstr "Buat identitas pertama Anda"
+
+msgid "Or import an existing one"
+msgstr "Atau impor yang sudah ada"
+
+msgid "Setup Complete"
+msgstr "Pengaturan selesai"
+
+msgid "You're all set to start using GNostr Signer"
+msgstr "Anda siap untuk mulai menggunakan GNostr Signer"
+
+msgid "Get Started"
+msgstr "Mulai"
+
+msgid "Next"
+msgstr "Berikutnya"
+
+msgid "Back"
+msgstr "Kembali"
+
+msgid "Skip"
+msgstr "Lewati"
+
+msgid "Save"
+msgstr "Simpan"
+
+msgid "Delete"
+msgstr "Hapus"
+
+msgid "Edit"
+msgstr "Edit"
+
+msgid "Close"
+msgstr "Tutup"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Yes"
+msgstr "Ya"
+
+msgid "No"
+msgstr "Tidak"
+
+msgid "Confirm"
+msgstr "Konfirmasi"
+
+msgid "Error"
+msgstr "Kesalahan"
+
+msgid "Warning"
+msgstr "Peringatan"
+
+msgid "Success"
+msgstr "Berhasil"
+
+msgid "Loading..."
+msgstr "Memuat..."
+
+msgid "Please wait..."
+msgstr "Silakan tunggu..."
+
+msgid "second"
+msgid_plural "seconds"
+msgstr[0] "detik"
+
+msgid "minute"
+msgid_plural "minutes"
+msgstr[0] "menit"
+
+msgid "hour"
+msgid_plural "hours"
+msgstr[0] "jam"
+
+msgid "day"
+msgid_plural "days"
+msgstr[0] "hari"
+
+msgid "Note"
+msgstr "Catatan"
+
+msgid "Direct Message"
+msgstr "Pesan langsung"
+
+msgid "Reaction"
+msgstr "Reaksi"
+
+msgid "Repost"
+msgstr "Repost"
+
+msgid "Zap Request"
+msgstr "Permintaan Zap"
+
+msgid "Profile Update"
+msgstr "Pembaruan profil"
+
+msgid "Contact List"
+msgstr "Daftar kontak"
+
+msgid "Relay List"
+msgstr "Daftar relay"

@@ -522,3 +522,19 @@ gboolean settings_manager_is_hardware_keystore_identity(SettingsManager *sm, con
 
   return FALSE;
 }
+
+/* ============================================================================
+ * Internationalization Settings
+ * ============================================================================ */
+
+gchar *settings_manager_get_language(SettingsManager *sm) {
+  if (!sm || !sm->settings)
+    return NULL;
+  return g_settings_get_string(sm->settings, "language");
+}
+
+void settings_manager_set_language(SettingsManager *sm, const gchar *lang) {
+  if (!sm || !sm->settings)
+    return;
+  g_settings_set_string(sm->settings, "language", lang ? lang : "");
+}

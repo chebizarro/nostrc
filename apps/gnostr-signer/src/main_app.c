@@ -51,6 +51,9 @@ static void update_high_contrast_css(gboolean enable);
 static void on_system_high_contrast_changed(GObject *obj, GParamSpec *pspec, gpointer user_data);
 static gboolean should_use_high_contrast(void);
 
+/* Global application instance for callbacks that need it */
+static GtkApplication *global_app = NULL;
+
 static void set_status(AppUI *ui, const char *text, const char *css_key) {
   gtk_label_set_text(ui->status, text);
   GtkWidget *w = GTK_WIDGET(ui->status);
@@ -713,9 +716,6 @@ static void on_app_quit(GSimpleAction *action, GVariant *param, gpointer user_da
   GtkApplication *app = GTK_APPLICATION(user_data);
   g_application_quit(G_APPLICATION(app));
 }
-
-/* Global reference to the application for theme changes */
-static GtkApplication *global_app = NULL;
 
 /* Apply theme preference to AdwStyleManager and handle high-contrast */
 static void apply_theme_preference(SettingsTheme theme) {

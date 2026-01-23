@@ -20,6 +20,11 @@ app_id = 'org.gnostr.Signer'
 app_name = 'GNostr Signer'
 app_bin = 'gnostr-signer'
 
+# i18n configuration
+i18n = import('i18n')
+gettext_package = 'gnostr-signer'
+localedir = get_option('prefix') / get_option('localedir')
+
 # Required dependencies
 gtk4_dep = dependency('gtk4', version: '>= 4.0')
 glib_dep = dependency('glib-2.0', version: '>= 2.56')
@@ -67,6 +72,7 @@ app_sources = files(
   'src/accounts_store.c',
   'src/bunker_service.c',
   'src/cache-manager.c',
+  'src/i18n.c',
   'src/memory-profile.c',
   'src/policy_store.c',
   'src/profile_store.c',
@@ -139,6 +145,8 @@ executable(app_bin,
     '-DAPP_ID="@0@"'.format(app_id),
     '-DAPP_NAME="@0@"'.format(app_name),
     '-DAPP_RESOURCE_PATH="/org/gnostr/signer"',
+    '-DGETTEXT_PACKAGE="@0@"'.format(gettext_package),
+    '-DLOCALEDIR="@0@"'.format(localedir),
     libsecret_dep.found() ? '-DGNOSTR_HAVE_LIBSECRET=1' : [],
   ].flatten(),
   install: true,
@@ -159,8 +167,16 @@ install_data('packaging/appimage/gnostr-signer.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 
+# Process translations
+subdir('po')
+
 # Summary
 summary({
   'libsecret': libsecret_dep.found() ? 'yes' : 'no',
   'Keychain': host_machine.system() == 'darwin' ? 'yes' : 'no',
 }, section: 'Secure Storage')
+
+summary({
+  'Translations': true,
+  'Languages': 'en, ja, es, pt_BR, id, fa',
+}, section: 'Internationalization')

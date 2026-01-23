@@ -34,6 +34,28 @@
           </object>
         </child>
         <child>
+          <object class="AdwComboRow" id="combo_language">
+            <property name="title" translatable="yes">Language</property>
+            <property name="subtitle" translatable="yes">Choose the app display language</property>
+            <accessibility>
+              <property name="description">Select the application display language. Changes take effect on next restart.</property>
+            </accessibility>
+            <property name="model">
+              <object class="GtkStringList" id="language_model">
+                <items>
+                  <item translatable="yes">System Default</item>
+                  <item>English</item>
+                  <item>日本語</item>
+                  <item>Español</item>
+                  <item>Português (Brasil)</item>
+                  <item>Bahasa Indonesia</item>
+                  <item>فارسی</item>
+                </items>
+              </object>
+            </property>
+          </object>
+        </child>
+        <child>
           <object class="AdwSwitchRow" id="switch_force_high_contrast">
             <property name="title" translatable="yes">Force High Contrast</property>
             <property name="subtitle" translatable="yes">Use high contrast regardless of system settings</property>

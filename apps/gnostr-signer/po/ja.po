@@ -1,0 +1,513 @@
+# Japanese translations for gnostr-signer
+# Copyright (C) 2024 The gnostr-signer Authors
+# This file is distributed under the same license as the gnostr-signer package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: gnostr-signer 0.1.0\n"
+"Report-Msgid-Bugs-To: https://github.com/gnostr/gnostr-signer/issues\n"
+"POT-Creation-Date: 2024-01-23 00:00+0000\n"
+"PO-Revision-Date: 2024-01-23 00:00+0000\n"
+"Last-Translator: \n"
+"Language-Team: Japanese\n"
+"Language: ja\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "GNostr Signer"
+msgstr "GNostr サイナー"
+
+msgid "A secure Nostr key manager and remote signer"
+msgstr "安全なNostr鍵管理とリモート署名ツール"
+
+msgid "Welcome to GNostr Signer"
+msgstr "GNostr サイナーへようこそ"
+
+msgid "Securely manage your Nostr identities"
+msgstr "Nostr IDを安全に管理"
+
+msgid "Create New Profile"
+msgstr "新しいプロフィールを作成"
+
+msgid "Import Existing Profile"
+msgstr "既存のプロフィールをインポート"
+
+msgid "Connect Hardware Wallet"
+msgstr "ハードウェアウォレットを接続"
+
+msgid "Session Locked"
+msgstr "セッションがロックされました"
+
+msgid "Enter your password to unlock"
+msgstr "パスワードを入力してロックを解除"
+
+msgid "Password"
+msgstr "パスワード"
+
+msgid "Unlock"
+msgstr "ロック解除"
+
+msgid "Forgot Password?"
+msgstr "パスワードを忘れた場合"
+
+msgid "Signature Request"
+msgstr "署名リクエスト"
+
+msgid "An application is requesting to sign an event"
+msgstr "アプリケーションがイベントへの署名を要求しています"
+
+msgid "Application"
+msgstr "アプリケーション"
+
+msgid "Event Type"
+msgstr "イベントタイプ"
+
+msgid "Content Preview"
+msgstr "コンテンツプレビュー"
+
+msgid "Deny"
+msgstr "拒否"
+
+msgid "Approve"
+msgstr "承認"
+
+msgid "Remember this decision"
+msgstr "この決定を記憶する"
+
+msgid "Home"
+msgstr "ホーム"
+
+msgid "Identities"
+msgstr "ID"
+
+msgid "Permissions"
+msgstr "権限"
+
+msgid "Sessions"
+msgstr "セッション"
+
+msgid "History"
+msgstr "履歴"
+
+msgid "Settings"
+msgstr "設定"
+
+msgid "Appearance"
+msgstr "外観"
+
+msgid "Theme"
+msgstr "テーマ"
+
+msgid "System"
+msgstr "システム"
+
+msgid "Light"
+msgstr "ライト"
+
+msgid "Dark"
+msgstr "ダーク"
+
+msgid "High Contrast"
+msgstr "ハイコントラスト"
+
+msgid "Language"
+msgstr "言語"
+
+msgid "Security"
+msgstr "セキュリティ"
+
+msgid "Auto-lock Timeout"
+msgstr "自動ロックタイムアウト"
+
+msgid "minutes"
+msgstr "分"
+
+msgid "Require Password"
+msgstr "パスワードを要求"
+
+msgid "Change Password"
+msgstr "パスワードを変更"
+
+msgid "Network"
+msgstr "ネットワーク"
+
+msgid "Use Tor"
+msgstr "Torを使用"
+
+msgid "Bootstrap Relays"
+msgstr "ブートストラップリレー"
+
+msgid "Advanced"
+msgstr "詳細設定"
+
+msgid "Hardware Keystore"
+msgstr "ハードウェアキーストア"
+
+msgid "Enable hardware-backed key storage"
+msgstr "ハードウェア支援キー保存を有効化"
+
+msgid "Profile"
+msgstr "プロフィール"
+
+msgid "Public Key"
+msgstr "公開鍵"
+
+msgid "Copy"
+msgstr "コピー"
+
+msgid "View Events"
+msgstr "イベントを表示"
+
+msgid "Manage Relays"
+msgstr "リレーを管理"
+
+msgid "Backup Keys"
+msgstr "鍵をバックアップ"
+
+msgid "Delegations"
+msgstr "委任"
+
+msgid "Sign Message"
+msgstr "メッセージに署名"
+
+msgid "Create Profile"
+msgstr "プロフィールを作成"
+
+msgid "Display Name"
+msgstr "表示名"
+
+msgid "Enter a name for this identity"
+msgstr "このIDの名前を入力"
+
+msgid "Passphrase"
+msgstr "パスフレーズ"
+
+msgid "Create a strong passphrase"
+msgstr "強力なパスフレーズを作成"
+
+msgid "Confirm Passphrase"
+msgstr "パスフレーズを確認"
+
+msgid "Recovery Hint"
+msgstr "リカバリーヒント"
+
+msgid "Optional hint to help remember your passphrase"
+msgstr "パスフレーズを思い出すためのヒント（オプション）"
+
+msgid "Use Hardware Key"
+msgstr "ハードウェアキーを使用"
+
+msgid "Create"
+msgstr "作成"
+
+msgid "Cancel"
+msgstr "キャンセル"
+
+msgid "Import Profile"
+msgstr "プロフィールをインポート"
+
+msgid "Import Method"
+msgstr "インポート方法"
+
+msgid "NIP-49 Encrypted Backup"
+msgstr "NIP-49暗号化バックアップ"
+
+msgid "Paste your encrypted backup key (ncryptsec...)"
+msgstr "暗号化バックアップキーを貼り付け (ncryptsec...)"
+
+msgid "Mnemonic Seed Phrase"
+msgstr "ニーモニックシードフレーズ"
+
+msgid "Enter your 12 or 24 word seed phrase"
+msgstr "12または24単語のシードフレーズを入力"
+
+msgid "Hardware Device"
+msgstr "ハードウェアデバイス"
+
+msgid "Connect your Ledger or Trezor device"
+msgstr "LedgerまたはTrezorデバイスを接続"
+
+msgid "Import"
+msgstr "インポート"
+
+msgid "Export Encrypted Backup"
+msgstr "暗号化バックアップをエクスポート"
+
+msgid "Show Recovery Phrase"
+msgstr "リカバリーフレーズを表示"
+
+msgid "Warning: Never share your recovery phrase or backup key with anyone"
+msgstr "警告：リカバリーフレーズやバックアップキーを他人と共有しないでください"
+
+msgid "Event History"
+msgstr "イベント履歴"
+
+msgid "No events yet"
+msgstr "イベントがありません"
+
+msgid "Signed events will appear here"
+msgstr "署名されたイベントがここに表示されます"
+
+msgid "Clear History"
+msgstr "履歴を消去"
+
+msgid "Export"
+msgstr "エクスポート"
+
+msgid "Keyboard Shortcuts"
+msgstr "キーボードショートカット"
+
+msgid "General"
+msgstr "一般"
+
+msgid "Lock Session"
+msgstr "セッションをロック"
+
+msgid "Quit"
+msgstr "終了"
+
+msgid "Show Shortcuts"
+msgstr "ショートカットを表示"
+
+msgid "Navigation"
+msgstr "ナビゲーション"
+
+msgid "Next Tab"
+msgstr "次のタブ"
+
+msgid "Previous Tab"
+msgstr "前のタブ"
+
+msgid "Social Recovery"
+msgstr "ソーシャルリカバリー"
+
+msgid "Set up trusted guardians to help recover your keys"
+msgstr "キーの復元を支援する信頼できるガーディアンを設定"
+
+msgid "Add Guardian"
+msgstr "ガーディアンを追加"
+
+msgid "Threshold"
+msgstr "しきい値"
+
+msgid "Number of guardians required to recover"
+msgstr "復元に必要なガーディアン数"
+
+msgid "Grant signing permissions to other keys"
+msgstr "他のキーに署名権限を付与"
+
+msgid "Create Delegation"
+msgstr "委任を作成"
+
+msgid "Delegatee Public Key"
+msgstr "委任先の公開鍵"
+
+msgid "Allowed Event Kinds"
+msgstr "許可されたイベント種類"
+
+msgid "Valid From"
+msgstr "有効期間開始"
+
+msgid "Valid Until"
+msgstr "有効期間終了"
+
+msgid "Revoke"
+msgstr "取り消し"
+
+msgid "Hardware Wallet"
+msgstr "ハードウェアウォレット"
+
+msgid "Connect your hardware wallet"
+msgstr "ハードウェアウォレットを接続"
+
+msgid "Scanning for devices..."
+msgstr "デバイスをスキャン中..."
+
+msgid "No devices found"
+msgstr "デバイスが見つかりません"
+
+msgid "Connect"
+msgstr "接続"
+
+msgid "QR Code"
+msgstr "QRコード"
+
+msgid "Scan this code to import"
+msgstr "このコードをスキャンしてインポート"
+
+msgid "Copy to Clipboard"
+msgstr "クリップボードにコピー"
+
+msgid "English"
+msgstr "英語"
+
+msgid "System Default"
+msgstr "システムデフォルト"
+
+msgid "Japanese"
+msgstr "日本語"
+
+msgid "Spanish"
+msgstr "スペイン語"
+
+msgid "Portuguese (Brazil)"
+msgstr "ポルトガル語（ブラジル）"
+
+msgid "Indonesian"
+msgstr "インドネシア語"
+
+msgid "Persian"
+msgstr "ペルシア語"
+
+msgid "About"
+msgstr "バージョン情報"
+
+msgid "Version"
+msgstr "バージョン"
+
+msgid "A secure NIP-46 remote signer for Nostr"
+msgstr "Nostr用の安全なNIP-46リモート署名ツール"
+
+msgid "Website"
+msgstr "ウェブサイト"
+
+msgid "Report an Issue"
+msgstr "問題を報告"
+
+msgid "License"
+msgstr "ライセンス"
+
+msgid "Session locked due to inactivity"
+msgstr "無操作のためセッションがロックされました"
+
+msgid "Session locked by user"
+msgstr "ユーザーによりセッションがロックされました"
+
+msgid "Incorrect password"
+msgstr "パスワードが正しくありません"
+
+msgid "Too many failed attempts. Please wait."
+msgstr "試行回数が多すぎます。しばらくお待ちください。"
+
+msgid "Connection established"
+msgstr "接続が確立されました"
+
+msgid "Connection failed"
+msgstr "接続に失敗しました"
+
+msgid "Request approved"
+msgstr "リクエストが承認されました"
+
+msgid "Request denied"
+msgstr "リクエストが拒否されました"
+
+msgid "Welcome"
+msgstr "ようこそ"
+
+msgid "Let's set up your secure key management"
+msgstr "安全なキー管理を設定しましょう"
+
+msgid "Create Your First Identity"
+msgstr "最初のIDを作成"
+
+msgid "Or import an existing one"
+msgstr "または既存のものをインポート"
+
+msgid "Setup Complete"
+msgstr "セットアップ完了"
+
+msgid "You're all set to start using GNostr Signer"
+msgstr "GNostr サイナーを使用する準備ができました"
+
+msgid "Get Started"
+msgstr "始める"
+
+msgid "Next"
+msgstr "次へ"
+
+msgid "Back"
+msgstr "戻る"
+
+msgid "Skip"
+msgstr "スキップ"
+
+msgid "Save"
+msgstr "保存"
+
+msgid "Delete"
+msgstr "削除"
+
+msgid "Edit"
+msgstr "編集"
+
+msgid "Close"
+msgstr "閉じる"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Yes"
+msgstr "はい"
+
+msgid "No"
+msgstr "いいえ"
+
+msgid "Confirm"
+msgstr "確認"
+
+msgid "Error"
+msgstr "エラー"
+
+msgid "Warning"
+msgstr "警告"
+
+msgid "Success"
+msgstr "成功"
+
+msgid "Loading..."
+msgstr "読み込み中..."
+
+msgid "Please wait..."
+msgstr "お待ちください..."
+
+msgid "second"
+msgid_plural "seconds"
+msgstr[0] "秒"
+
+msgid "minute"
+msgid_plural "minutes"
+msgstr[0] "分"
+
+msgid "hour"
+msgid_plural "hours"
+msgstr[0] "時間"
+
+msgid "day"
+msgid_plural "days"
+msgstr[0] "日"
+
+msgid "Note"
+msgstr "ノート"
+
+msgid "Direct Message"
+msgstr "ダイレクトメッセージ"
+
+msgid "Reaction"
+msgstr "リアクション"
+
+msgid "Repost"
+msgstr "リポスト"
+
+msgid "Zap Request"
+msgstr "Zapリクエスト"
+
+msgid "Profile Update"
+msgstr "プロフィール更新"
+
+msgid "Contact List"
+msgstr "連絡先リスト"
+
+msgid "Relay List"
+msgstr "リレーリスト"

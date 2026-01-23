@@ -17,6 +17,7 @@
 #include "../session-manager.h"
 #include "../client_session.h"
 #include "../startup-timing.h"
+#include "../i18n.h"
 
 /* Provided by settings_page.c for cross-component updates */
 extern void gnostr_settings_apply_import_success(const char *npub, const char *label);
@@ -28,6 +29,7 @@ struct _PageSettings {
   AdwPreferencesPage parent_instance;
   /* Template children */
   AdwComboRow *combo_theme;
+  AdwComboRow *combo_language;
   AdwSwitchRow *switch_force_high_contrast;
   AdwComboRow *combo_high_contrast_variant;
   GtkButton *btn_add_account;
@@ -51,6 +53,7 @@ struct _PageSettings {
   GtkButton *btn_manage_sessions;
   /* Internal state */
   gboolean updating_theme; /* Guard against recursive updates */
+  gboolean updating_language; /* Guard against recursive updates */
   gboolean updating_high_contrast; /* Guard against recursive updates */
   gboolean updating_lock_timeout; /* Guard against recursive updates */
   gboolean updating_client_session_timeout; /* Guard against recursive updates */
@@ -94,6 +97,42 @@ static void on_theme_combo_changed(GObject *obj, GParamSpec *pspec, gpointer use
   SettingsManager *sm = settings_manager_get_default();
   settings_manager_set_theme(sm, theme);
   g_message("Theme preference changed to: %u", selected);
+}
+
+/* Language codes mapping to combo indices:
+ * 0 = System Default, 1 = en, 2 = ja, 3 = es, 4 = pt_BR, 5 = id, 6 = fa */
+static const gchar *language_codes[] = { NULL, "en", "ja", "es", "pt_BR", "id", "fa" };
+static const gsize language_count = G_N_ELEMENTS(language_codes);
+
+static guint language_to_index(const gchar *lang) {
+  if (!lang || !*lang) return 0; /* System default */
+  for (gsize i = 1; i < language_count; i++) {
+    if (g_str_equal(language_codes[i], lang)) return (guint)i;
+  }
+  return 0; /* Unknown language = system default */
+}
+
+/* Language combo handler */
+static void on_language_combo_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  PageSettings *self = user_data;
+  if (!self || self->updating_language) return;
+
+  AdwComboRow *combo = ADW_COMBO_ROW(obj);
+  guint selected = adw_combo_row_get_selected(combo);
+
+  if (selected < language_count) {
+    const gchar *lang = language_codes[selected];
+    gn_i18n_set_language(lang);
+
+    /* Show restart prompt */
+    GtkAlertDialog *ad = gtk_alert_dialog_new(
+      _("Language changed. Please restart the application for changes to take effect."));
+    gtk_alert_dialog_show(ad, get_parent_window(GTK_WIDGET(self)));
+    g_object_unref(ad);
+
+    g_message("Language preference changed to: %s", lang ? lang : "system default");
+  }
 }
 
 /* Force high contrast switch handler */
@@ -468,6 +507,7 @@ static void page_settings_class_init(PageSettingsClass *klass) {
 
   gtk_widget_class_set_template_from_resource(wc, APP_RESOURCE_PATH "/ui/page-settings.ui");
   gtk_widget_class_bind_template_child(wc, PageSettings, combo_theme);
+  gtk_widget_class_bind_template_child(wc, PageSettings, combo_language);
   gtk_widget_class_bind_template_child(wc, PageSettings, switch_force_high_contrast);
   gtk_widget_class_bind_template_child(wc, PageSettings, combo_high_contrast_variant);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_add_account);
@@ -498,10 +538,15 @@ static void page_settings_init(PageSettings *self) {
   /* Initialize GSettings */
   self->settings = g_settings_new("org.gnostr.Signer");
 
-  /* Initialize theme combo with current setting (settings already loaded, fast) */
+  /* Initialize theme and language combos with current settings */
   self->updating_theme = TRUE;
+  self->updating_language = TRUE;
   self->updating_high_contrast = TRUE;
   SettingsManager *sm = settings_manager_get_default();
+
+  /* Initialize language combo with current setting */
+  const gchar *current_lang = gn_i18n_get_language();
+  adw_combo_row_set_selected(self->combo_language, language_to_index(current_lang));
   SettingsTheme theme = settings_manager_get_theme(sm);
   /* Map SettingsTheme to combo index: SYSTEM=0, LIGHT=1, DARK=2, HIGH_CONTRAST=3 */
   guint theme_idx;
@@ -544,6 +589,7 @@ static void page_settings_init(PageSettings *self) {
   adw_combo_row_set_selected(self->combo_high_contrast_variant, hc_variant_idx);
 
   self->updating_theme = FALSE;
+  self->updating_language = FALSE;
   self->updating_high_contrast = FALSE;
 
   /* Initialize session settings from GSettings */
@@ -567,8 +613,9 @@ static void page_settings_init(PageSettings *self) {
   self->updating_lock_timeout = FALSE;
   self->updating_client_session_timeout = FALSE;
 
-  /* Connect theme combo change handler */
+  /* Connect theme and language combo change handlers */
   g_signal_connect(self->combo_theme, "notify::selected", G_CALLBACK(on_theme_combo_changed), self);
+  g_signal_connect(self->combo_language, "notify::selected", G_CALLBACK(on_language_combo_changed), self);
   g_signal_connect(self->switch_force_high_contrast, "notify::active", G_CALLBACK(on_force_high_contrast_changed), self);
   g_signal_connect(self->combo_high_contrast_variant, "notify::selected", G_CALLBACK(on_high_contrast_variant_changed), self);
 

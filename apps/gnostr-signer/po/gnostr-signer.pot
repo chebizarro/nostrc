@@ -1,0 +1,670 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) 2024 The gnostr-signer Authors
+# This file is distributed under the same license as the gnostr-signer package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: gnostr-signer 0.1.0\n"
+"Report-Msgid-Bugs-To: https://github.com/gnostr/gnostr-signer/issues\n"
+"POT-Creation-Date: 2024-01-23 00:00+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: src/main_app.c
+msgid "GNostr Signer"
+msgstr ""
+
+#: src/main_app.c
+msgid "A secure Nostr key manager and remote signer"
+msgstr ""
+
+#: data/ui/welcome-page.ui
+msgid "Welcome to GNostr Signer"
+msgstr ""
+
+#: data/ui/welcome-page.ui
+msgid "Securely manage your Nostr identities"
+msgstr ""
+
+#: data/ui/welcome-page.ui
+msgid "Create New Profile"
+msgstr ""
+
+#: data/ui/welcome-page.ui
+msgid "Import Existing Profile"
+msgstr ""
+
+#: data/ui/welcome-page.ui
+msgid "Connect Hardware Wallet"
+msgstr ""
+
+#: data/ui/lock-screen.ui
+msgid "Session Locked"
+msgstr ""
+
+#: data/ui/lock-screen.ui
+msgid "Enter your password to unlock"
+msgstr ""
+
+#: data/ui/lock-screen.ui
+msgid "Password"
+msgstr ""
+
+#: data/ui/lock-screen.ui
+msgid "Unlock"
+msgstr ""
+
+#: data/ui/lock-screen.ui
+msgid "Forgot Password?"
+msgstr ""
+
+#: data/ui/approval-dialog.ui
+msgid "Signature Request"
+msgstr ""
+
+#: data/ui/approval-dialog.ui
+msgid "An application is requesting to sign an event"
+msgstr ""
+
+#: data/ui/approval-dialog.ui
+msgid "Application"
+msgstr ""
+
+#: data/ui/approval-dialog.ui
+msgid "Event Type"
+msgstr ""
+
+#: data/ui/approval-dialog.ui
+msgid "Content Preview"
+msgstr ""
+
+#: data/ui/approval-dialog.ui
+msgid "Deny"
+msgstr ""
+
+#: data/ui/approval-dialog.ui
+msgid "Approve"
+msgstr ""
+
+#: data/ui/approval-dialog.ui
+msgid "Remember this decision"
+msgstr ""
+
+#: data/ui/signer-window.ui
+msgid "Home"
+msgstr ""
+
+#: data/ui/signer-window.ui
+msgid "Identities"
+msgstr ""
+
+#: data/ui/signer-window.ui
+msgid "Permissions"
+msgstr ""
+
+#: data/ui/signer-window.ui
+msgid "Sessions"
+msgstr ""
+
+#: data/ui/signer-window.ui
+msgid "History"
+msgstr ""
+
+#: data/ui/signer-window.ui
+msgid "Settings"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "Appearance"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "Theme"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "System"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "Light"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "Dark"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "High Contrast"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "Language"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "Security"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "Auto-lock Timeout"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "minutes"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "Require Password"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "Change Password"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "Network"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "Use Tor"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "Bootstrap Relays"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "Advanced"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "Hardware Keystore"
+msgstr ""
+
+#: data/ui/page-settings.ui
+msgid "Enable hardware-backed key storage"
+msgstr ""
+
+#: data/ui/profile-dashboard.ui
+msgid "Profile"
+msgstr ""
+
+#: data/ui/profile-dashboard.ui
+msgid "Public Key"
+msgstr ""
+
+#: data/ui/profile-dashboard.ui
+msgid "Copy"
+msgstr ""
+
+#: data/ui/profile-dashboard.ui
+msgid "View Events"
+msgstr ""
+
+#: data/ui/profile-dashboard.ui
+msgid "Manage Relays"
+msgstr ""
+
+#: data/ui/profile-dashboard.ui
+msgid "Backup Keys"
+msgstr ""
+
+#: data/ui/profile-dashboard.ui
+msgid "Delegations"
+msgstr ""
+
+#: data/ui/profile-dashboard.ui
+msgid "Sign Message"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-profile.ui
+msgid "Create Profile"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-profile.ui
+msgid "Display Name"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-profile.ui
+msgid "Enter a name for this identity"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-profile.ui
+msgid "Passphrase"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-profile.ui
+msgid "Create a strong passphrase"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-profile.ui
+msgid "Confirm Passphrase"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-profile.ui
+msgid "Recovery Hint"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-profile.ui
+msgid "Optional hint to help remember your passphrase"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-profile.ui
+msgid "Use Hardware Key"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-profile.ui
+msgid "Create"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-profile.ui
+msgid "Cancel"
+msgstr ""
+
+#: data/ui/sheets/sheet-import-key.ui
+msgid "Import Profile"
+msgstr ""
+
+#: data/ui/sheets/sheet-import-key.ui
+msgid "Import Method"
+msgstr ""
+
+#: data/ui/sheets/sheet-import-key.ui
+msgid "NIP-49 Encrypted Backup"
+msgstr ""
+
+#: data/ui/sheets/sheet-import-key.ui
+msgid "Paste your encrypted backup key (ncryptsec...)"
+msgstr ""
+
+#: data/ui/sheets/sheet-import-key.ui
+msgid "Mnemonic Seed Phrase"
+msgstr ""
+
+#: data/ui/sheets/sheet-import-key.ui
+msgid "Enter your 12 or 24 word seed phrase"
+msgstr ""
+
+#: data/ui/sheets/sheet-import-key.ui
+msgid "Hardware Device"
+msgstr ""
+
+#: data/ui/sheets/sheet-import-key.ui
+msgid "Connect your Ledger or Trezor device"
+msgstr ""
+
+#: data/ui/sheets/sheet-import-key.ui
+msgid "Import"
+msgstr ""
+
+#: data/ui/sheets/sheet-backup.ui
+msgid "Backup Keys"
+msgstr ""
+
+#: data/ui/sheets/sheet-backup.ui
+msgid "Export Encrypted Backup"
+msgstr ""
+
+#: data/ui/sheets/sheet-backup.ui
+msgid "Show Recovery Phrase"
+msgstr ""
+
+#: data/ui/sheets/sheet-backup.ui
+msgid "Warning: Never share your recovery phrase or backup key with anyone"
+msgstr ""
+
+#: data/ui/page-history.ui
+msgid "Event History"
+msgstr ""
+
+#: data/ui/page-history.ui
+msgid "No events yet"
+msgstr ""
+
+#: data/ui/page-history.ui
+msgid "Signed events will appear here"
+msgstr ""
+
+#: data/ui/page-history.ui
+msgid "Clear History"
+msgstr ""
+
+#: data/ui/page-history.ui
+msgid "Export"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui
+msgid "Keyboard Shortcuts"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui
+msgid "General"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui
+msgid "Lock Session"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui
+msgid "Quit"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui
+msgid "Show Shortcuts"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui
+msgid "Navigation"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui
+msgid "Next Tab"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui
+msgid "Previous Tab"
+msgstr ""
+
+#: data/ui/sheets/sheet-social-recovery.ui
+msgid "Social Recovery"
+msgstr ""
+
+#: data/ui/sheets/sheet-social-recovery.ui
+msgid "Set up trusted guardians to help recover your keys"
+msgstr ""
+
+#: data/ui/sheets/sheet-social-recovery.ui
+msgid "Add Guardian"
+msgstr ""
+
+#: data/ui/sheets/sheet-social-recovery.ui
+msgid "Threshold"
+msgstr ""
+
+#: data/ui/sheets/sheet-social-recovery.ui
+msgid "Number of guardians required to recover"
+msgstr ""
+
+#: data/ui/sheets/sheet-delegation.ui
+msgid "Delegations"
+msgstr ""
+
+#: data/ui/sheets/sheet-delegation.ui
+msgid "Grant signing permissions to other keys"
+msgstr ""
+
+#: data/ui/sheets/sheet-delegation.ui
+msgid "Create Delegation"
+msgstr ""
+
+#: data/ui/sheets/sheet-delegation.ui
+msgid "Delegatee Public Key"
+msgstr ""
+
+#: data/ui/sheets/sheet-delegation.ui
+msgid "Allowed Event Kinds"
+msgstr ""
+
+#: data/ui/sheets/sheet-delegation.ui
+msgid "Valid From"
+msgstr ""
+
+#: data/ui/sheets/sheet-delegation.ui
+msgid "Valid Until"
+msgstr ""
+
+#: data/ui/sheets/sheet-delegation.ui
+msgid "Revoke"
+msgstr ""
+
+#: data/ui/sheets/sheet-hw-wallet.ui
+msgid "Hardware Wallet"
+msgstr ""
+
+#: data/ui/sheets/sheet-hw-wallet.ui
+msgid "Connect your hardware wallet"
+msgstr ""
+
+#: data/ui/sheets/sheet-hw-wallet.ui
+msgid "Scanning for devices..."
+msgstr ""
+
+#: data/ui/sheets/sheet-hw-wallet.ui
+msgid "No devices found"
+msgstr ""
+
+#: data/ui/sheets/sheet-hw-wallet.ui
+msgid "Connect"
+msgstr ""
+
+#: data/ui/sheets/sheet-qr-display.ui
+msgid "QR Code"
+msgstr ""
+
+#: data/ui/sheets/sheet-qr-display.ui
+msgid "Scan this code to import"
+msgstr ""
+
+#: data/ui/sheets/sheet-qr-display.ui
+msgid "Copy to Clipboard"
+msgstr ""
+
+#: src/i18n.c
+msgid "English"
+msgstr ""
+
+#: src/i18n.c
+msgid "System Default"
+msgstr ""
+
+#. Language names - displayed in native script
+#: src/i18n.c
+msgid "Japanese"
+msgstr ""
+
+#: src/i18n.c
+msgid "Spanish"
+msgstr ""
+
+#: src/i18n.c
+msgid "Portuguese (Brazil)"
+msgstr ""
+
+#: src/i18n.c
+msgid "Indonesian"
+msgstr ""
+
+#: src/i18n.c
+msgid "Persian"
+msgstr ""
+
+#: src/ui/about_dialog.c
+msgid "About"
+msgstr ""
+
+#: src/ui/about_dialog.c
+msgid "Version"
+msgstr ""
+
+#: src/ui/about_dialog.c
+msgid "A secure NIP-46 remote signer for Nostr"
+msgstr ""
+
+#: src/ui/about_dialog.c
+msgid "Website"
+msgstr ""
+
+#: src/ui/about_dialog.c
+msgid "Report an Issue"
+msgstr ""
+
+#: src/ui/about_dialog.c
+msgid "License"
+msgstr ""
+
+#: src/session-manager.c
+msgid "Session locked due to inactivity"
+msgstr ""
+
+#: src/session-manager.c
+msgid "Session locked by user"
+msgstr ""
+
+#: src/session-manager.c
+msgid "Incorrect password"
+msgstr ""
+
+#: src/session-manager.c
+msgid "Too many failed attempts. Please wait."
+msgstr ""
+
+#: src/bunker_service.c
+msgid "Connection established"
+msgstr ""
+
+#: src/bunker_service.c
+msgid "Connection failed"
+msgstr ""
+
+#: src/bunker_service.c
+msgid "Request approved"
+msgstr ""
+
+#: src/bunker_service.c
+msgid "Request denied"
+msgstr ""
+
+#. Onboarding messages
+#: src/ui/onboarding-assistant.c
+msgid "Welcome"
+msgstr ""
+
+#: src/ui/onboarding-assistant.c
+msgid "Let's set up your secure key management"
+msgstr ""
+
+#: src/ui/onboarding-assistant.c
+msgid "Create Your First Identity"
+msgstr ""
+
+#: src/ui/onboarding-assistant.c
+msgid "Or import an existing one"
+msgstr ""
+
+#: src/ui/onboarding-assistant.c
+msgid "Setup Complete"
+msgstr ""
+
+#: src/ui/onboarding-assistant.c
+msgid "You're all set to start using GNostr Signer"
+msgstr ""
+
+#: src/ui/onboarding-assistant.c
+msgid "Get Started"
+msgstr ""
+
+#: src/ui/onboarding-assistant.c
+msgid "Next"
+msgstr ""
+
+#: src/ui/onboarding-assistant.c
+msgid "Back"
+msgstr ""
+
+#: src/ui/onboarding-assistant.c
+msgid "Skip"
+msgstr ""
+
+#. Common actions
+msgid "Save"
+msgstr ""
+
+msgid "Delete"
+msgstr ""
+
+msgid "Edit"
+msgstr ""
+
+msgid "Close"
+msgstr ""
+
+msgid "OK"
+msgstr ""
+
+msgid "Yes"
+msgstr ""
+
+msgid "No"
+msgstr ""
+
+msgid "Confirm"
+msgstr ""
+
+msgid "Error"
+msgstr ""
+
+msgid "Warning"
+msgstr ""
+
+msgid "Success"
+msgstr ""
+
+msgid "Loading..."
+msgstr ""
+
+msgid "Please wait..."
+msgstr ""
+
+#. Time units
+msgid "second"
+msgid_plural "seconds"
+msgstr[0] ""
+msgstr[1] ""
+
+msgid "minute"
+msgid_plural "minutes"
+msgstr[0] ""
+msgstr[1] ""
+
+msgid "hour"
+msgid_plural "hours"
+msgstr[0] ""
+msgstr[1] ""
+
+msgid "day"
+msgid_plural "days"
+msgstr[0] ""
+msgstr[1] ""
+
+#. Event types
+msgid "Note"
+msgstr ""
+
+msgid "Direct Message"
+msgstr ""
+
+msgid "Reaction"
+msgstr ""
+
+msgid "Repost"
+msgstr ""
+
+msgid "Zap Request"
+msgstr ""
+
+msgid "Profile Update"
+msgstr ""
+
+msgid "Contact List"
+msgstr ""
+
+msgid "Relay List"
+msgstr ""
