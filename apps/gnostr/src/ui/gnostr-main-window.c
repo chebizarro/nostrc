@@ -3808,7 +3808,7 @@ GnostrMainWindow *gnostr_main_window_new(AdwApplication *app) {
 }
 
 /* ---- GObject type boilerplate and template binding ---- */
-G_DEFINE_FINAL_TYPE(GnostrMainWindow, gnostr_main_window, GTK_TYPE_APPLICATION_WINDOW)
+G_DEFINE_FINAL_TYPE(GnostrMainWindow, gnostr_main_window, ADW_TYPE_APPLICATION_WINDOW)
 
 static void gnostr_main_window_dispose(GObject *object) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(object);
