@@ -28,6 +28,7 @@
 /* Platform-specific includes */
 #ifdef __linux__
 #include <linux/fs.h>
+#include <sys/sysmacros.h>  /* For major() and minor() macros */
 #include <sys/ioctl.h>
 #endif
 

@@ -747,19 +747,25 @@ static void end_batch(GnNostrEventModel *self) {
   self->in_batch = FALSE;
 
   guint new_len = self->notes->len;
-  /* CRITICAL: Use last_emitted_len (what GTK thinks the length is), NOT batch_start_len.
-   * If items were added before batch started but idle hadn't fired yet, batch_start_len
-   * could be larger than last_emitted_len. Using batch_start_len would tell GTK to
-   * release tiles for items it never knew about, causing the "tile != NULL" assertion
-   * crash in gtk_list_item_manager_release_items. */
+  /* Use last_emitted_len (what GTK thinks the length is).
+   * Removals are now emitted synchronously in enforce_window, so
+   * last_emitted_len should already reflect any removals. */
   guint old_len = self->last_emitted_len;
 
-  if (new_len != old_len) {
-    /* Emit full model refresh: "old_len items at position 0 replaced with new_len items"
-     * This is the only correct signal when items were inserted at various positions. */
+  if (new_len > old_len) {
+    /* Model grew - emit additions. Since items were inserted at various
+     * sorted positions, we emit a full refresh. */
     g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
     self->last_emitted_len = new_len;
+  } else if (new_len < old_len) {
+    /* Model shrunk but last_emitted_len wasn't updated - this shouldn't
+     * happen since enforce_window now emits synchronously. Just update
+     * tracking to prevent future issues. */
+    g_warning("end_batch: model shrunk (%u -> %u) without emission - fixing tracking",
+              old_len, new_len);
+    self->last_emitted_len = new_len;
   }
+  /* If new_len == old_len, no emission needed */
 }
 
 /* nostrc-yi2: Defer note insertion (when user is not at top) */
@@ -841,19 +847,23 @@ static void enforce_window(GnNostrEventModel *self) {
 
   /* CRITICAL: Emit removal signal BEFORE removing items from array.
    * GTK's ListView calls get_item() during signal processing, so items
-   * must still exist when the signal is emitted. */
-  if (!self->in_batch) {
-    /* Cancel any pending idle emission - we're emitting now */
-    if (self->emit_idle_id > 0) {
-      g_source_remove(self->emit_idle_id);
-      self->emit_idle_id = 0;
-    }
-    /* Emit removal from end - items at positions cap to old_len-1 */
-    g_list_model_items_changed(G_LIST_MODEL(self), cap, to_remove, 0);
-    self->last_emitted_len = cap;
-    self->pending_refresh = FALSE;
-    self->emit_added = 0;
+   * must still exist when the signal is emitted.
+   *
+   * This MUST happen even in batch mode - GTK4 requires items to exist
+   * during removal signals. Additions can be batched, but removals cannot.
+   * If we defer removal signals, GTK crashes when end_batch tries to emit
+   * because the items are already gone from our array. */
+
+  /* Cancel any pending idle emission - we're emitting now */
+  if (self->emit_idle_id > 0) {
+    g_source_remove(self->emit_idle_id);
+    self->emit_idle_id = 0;
   }
+  /* Emit removal from end - items at positions cap to old_len-1 */
+  g_list_model_items_changed(G_LIST_MODEL(self), cap, to_remove, 0);
+  self->last_emitted_len = cap;
+  self->pending_refresh = FALSE;
+  self->emit_added = 0;
 
   /* Now remove items - they're no longer referenced by ListView */
   for (guint i = 0; i < to_remove; i++) {
