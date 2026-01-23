@@ -25,6 +25,8 @@
 #include <time.h>
 /* Metadata helpers */
 #include <jansson.h>
+/* NIP-19 bech32 encoding */
+#include <nostr/nip19/nip19.h>
 /* SimplePool GObject wrapper for live streaming/backfill */
 #include "nostr_simple_pool.h"
 #include "nostr-event.h"
@@ -2570,6 +2572,28 @@ static void on_discover_open_profile(GnostrPageDiscover *page, const char *pubke
   on_note_card_open_profile(NULL, pubkey_hex, self);
 }
 
+static void on_discover_copy_npub(GnostrPageDiscover *page, const char *pubkey_hex, gpointer user_data) {
+  (void)page;
+  (void)user_data;
+  if (!pubkey_hex || strlen(pubkey_hex) != 64) return;
+
+  /* Convert hex pubkey to bytes */
+  uint8_t pubkey_bytes[32];
+  for (int i = 0; i < 32; i++) {
+    unsigned int byte;
+    if (sscanf(pubkey_hex + i * 2, "%2x", &byte) != 1) return;
+    pubkey_bytes[i] = (uint8_t)byte;
+  }
+
+  /* Encode as npub */
+  char *npub = NULL;
+  if (nostr_nip19_encode_npub(pubkey_bytes, &npub) == 0 && npub) {
+    GdkClipboard *clipboard = gdk_display_get_clipboard(gdk_display_get_default());
+    gdk_clipboard_set_text(clipboard, npub);
+    free(npub);
+  }
+}
+
 static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
@@ -3439,6 +3463,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   if (self->page_discover && GNOSTR_IS_PAGE_DISCOVER(self->page_discover)) {
     g_signal_connect(self->page_discover, "open-profile",
                      G_CALLBACK(on_discover_open_profile), self);
+    g_signal_connect(self->page_discover, "copy-npub-requested",
+                     G_CALLBACK(on_discover_copy_npub), self);
   }
   /* Connect stack visible-child-name signal to load discover profiles on demand */
   if (self->stack && GTK_IS_STACK(self->stack)) {
