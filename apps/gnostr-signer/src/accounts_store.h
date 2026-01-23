@@ -7,9 +7,11 @@
  * - Multiple identities with labels
  * - Active identity selection
  * - Integration with GSettings for persistence
+ * - Key type metadata for multi-algorithm support (nostrc-bq0)
  */
 #pragma once
 #include <glib.h>
+#include "key_provider.h"
 
 G_BEGIN_DECLS
 
@@ -19,6 +21,8 @@ typedef struct {
   gchar *id;           /* identity selector: npub */
   gchar *label;        /* user-defined display label */
   gboolean has_secret; /* whether secret key is available in secure storage */
+  gboolean watch_only; /* TRUE if this is a watch-only account (public key only) */
+  GnKeyType key_type;  /* cryptographic key type (nostrc-bq0) */
 } AccountEntry;
 
 /* Create a new accounts store */
@@ -88,8 +92,57 @@ gboolean accounts_store_import_key(AccountsStore *as, const gchar *key,
 gboolean accounts_store_generate_key(AccountsStore *as, const gchar *label,
                                      gchar **out_npub);
 
+/* Generate a new keypair with specific key type (nostrc-bq0).
+ * @label: optional display label
+ * @key_type: cryptographic key type to use
+ * @out_npub: output npub (caller frees)
+ */
+gboolean accounts_store_generate_key_with_type(AccountsStore *as,
+                                               const gchar *label,
+                                               GnKeyType key_type,
+                                               gchar **out_npub);
+
+/* Import a key with specific key type (nostrc-bq0).
+ * @key: nsec or hex private key
+ * @label: optional display label
+ * @key_type: cryptographic key type (or GN_KEY_TYPE_UNKNOWN for auto-detect)
+ * @out_npub: output npub (caller frees)
+ */
+gboolean accounts_store_import_key_with_type(AccountsStore *as,
+                                             const gchar *key,
+                                             const gchar *label,
+                                             GnKeyType key_type,
+                                             gchar **out_npub);
+
+/* Get the key type for an account (nostrc-bq0).
+ * @id: account identifier (npub)
+ * Returns: The key type, or GN_KEY_TYPE_SECP256K1 as default
+ */
+GnKeyType accounts_store_get_key_type(AccountsStore *as, const gchar *id);
+
+/* Set the key type for an account (nostrc-bq0).
+ * @id: account identifier (npub)
+ * @key_type: the key type to set
+ * Returns: TRUE on success
+ */
+gboolean accounts_store_set_key_type(AccountsStore *as,
+                                     const gchar *id,
+                                     GnKeyType key_type);
+
 /* Get the display name for an account (label if set, else truncated npub) */
 gchar *accounts_store_get_display_name(AccountsStore *as, const gchar *id);
+
+/* Import a public key only (watch-only account).
+ * @pubkey: npub or hex public key
+ * @label: optional display label
+ * @out_npub: output npub (caller frees)
+ * Returns TRUE on success
+ */
+gboolean accounts_store_import_pubkey(AccountsStore *as, const gchar *pubkey,
+                                      const gchar *label, gchar **out_npub);
+
+/* Check if an account is watch-only (no private key, explicitly imported as pubkey) */
+gboolean accounts_store_is_watch_only(AccountsStore *as, const gchar *id);
 
 /* Change notification callback types */
 typedef enum {

@@ -283,32 +283,193 @@
                       </object>
                     </child>
 
-                    <!-- Hardware Device Section (Placeholder) -->
+                    <!-- Hardware Device Section (HSM Support) -->
                     <child>
                       <object class="GtkBox" id="box_hardware">
                         <property name="visible">false</property>
                         <property name="orientation">vertical</property>
                         <property name="spacing">12</property>
+
+                        <!-- HSM Status Banner -->
                         <child>
-                          <object class="AdwPreferencesGroup">
-                            <property name="title" translatable="yes">Hardware Device</property>
+                          <object class="AdwBanner" id="banner_hsm_status">
+                            <property name="title" translatable="yes">Scanning for hardware devices...</property>
+                            <property name="revealed">true</property>
                             <accessibility>
-                              <property name="label">Hardware device section</property>
-                              <property name="description">Hardware device import is coming soon</property>
+                              <property name="label">HSM status banner</property>
+                              <property name="description">Shows the status of hardware device detection</property>
                             </accessibility>
+                          </object>
+                        </child>
+
+                        <!-- Device Selection Group -->
+                        <child>
+                          <object class="AdwPreferencesGroup" id="group_hsm_devices">
+                            <property name="title" translatable="yes">Available Devices</property>
+                            <property name="description" translatable="yes">Select a hardware security module to use</property>
+                            <accessibility>
+                              <property name="label">Hardware device selection</property>
+                              <property name="description">List of detected hardware security devices</property>
+                            </accessibility>
+
+                            <!-- Device list will be populated programmatically -->
                             <child>
-                              <object class="AdwStatusPage">
-                                <property name="icon-name">security-high-symbolic</property>
-                                <property name="title" translatable="yes">Coming Soon</property>
-                                <property name="description" translatable="yes">Hardware device support is not yet available. This feature will allow you to import keys from hardware security devices like YubiKey.</property>
+                              <object class="GtkListBox" id="listbox_hsm_devices">
+                                <property name="selection-mode">single</property>
+                                <property name="activate-on-single-click">true</property>
                                 <accessibility>
-                                  <property name="label">Hardware import coming soon</property>
-                                  <property name="description">Hardware security device import is not yet available</property>
+                                  <property name="label">Device list</property>
+                                  <property name="description">Select a hardware security device from this list</property>
+                                </accessibility>
+                                <style>
+                                  <class name="boxed-list"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Refresh button -->
+                            <child>
+                              <object class="GtkButton" id="btn_hsm_refresh">
+                                <property name="halign">end</property>
+                                <property name="margin-top">8</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="spacing">6</property>
+                                    <child>
+                                      <object class="GtkImage">
+                                        <property name="icon-name">view-refresh-symbolic</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Refresh Devices</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <accessibility>
+                                  <property name="label">Refresh device list</property>
+                                  <property name="description">Scan for hardware security devices again</property>
                                 </accessibility>
                               </object>
                             </child>
                           </object>
                         </child>
+
+                        <!-- Key Selection Group -->
+                        <child>
+                          <object class="AdwPreferencesGroup" id="group_hsm_keys">
+                            <property name="title" translatable="yes">Keys on Device</property>
+                            <property name="description" translatable="yes">Select an existing key or generate a new one</property>
+                            <property name="visible">false</property>
+                            <accessibility>
+                              <property name="label">Key selection</property>
+                              <property name="description">Choose a key from the selected device</property>
+                            </accessibility>
+
+                            <!-- Key list -->
+                            <child>
+                              <object class="GtkListBox" id="listbox_hsm_keys">
+                                <property name="selection-mode">single</property>
+                                <property name="activate-on-single-click">true</property>
+                                <accessibility>
+                                  <property name="label">Key list</property>
+                                  <property name="description">Select a key from the hardware device</property>
+                                </accessibility>
+                                <style>
+                                  <class name="boxed-list"/>
+                                </style>
+                              </object>
+                            </child>
+
+                            <!-- Generate new key button -->
+                            <child>
+                              <object class="GtkButton" id="btn_hsm_generate_key">
+                                <property name="halign">center</property>
+                                <property name="margin-top">12</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="spacing">6</property>
+                                    <child>
+                                      <object class="GtkImage">
+                                        <property name="icon-name">list-add-symbolic</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Generate New Key on Device</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <accessibility>
+                                  <property name="label">Generate new key</property>
+                                  <property name="description">Create a new Nostr key pair on the hardware device</property>
+                                </accessibility>
+                                <style>
+                                  <class name="suggested-action"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                        <!-- PIN Entry Group -->
+                        <child>
+                          <object class="AdwPreferencesGroup" id="group_hsm_pin">
+                            <property name="title" translatable="yes">Device PIN</property>
+                            <property name="description" translatable="yes">Enter your device PIN to access keys</property>
+                            <property name="visible">false</property>
+                            <accessibility>
+                              <property name="label">PIN entry</property>
+                              <property name="description">Enter the PIN for your hardware security device</property>
+                            </accessibility>
+
+                            <!-- PIN entry container (GnSecureEntry added programmatically) -->
+                            <child>
+                              <object class="GtkBox" id="box_hsm_pin_container">
+                                <property name="orientation">vertical</property>
+                                <property name="margin-start">4</property>
+                                <property name="margin-end">4</property>
+                                <property name="margin-bottom">8</property>
+                                <accessibility>
+                                  <property name="label">PIN input container</property>
+                                </accessibility>
+                              </object>
+                            </child>
+
+                            <!-- Unlock button -->
+                            <child>
+                              <object class="GtkButton" id="btn_hsm_unlock">
+                                <property name="label" translatable="yes">Unlock Device</property>
+                                <property name="halign">end</property>
+                                <property name="margin-top">8</property>
+                                <accessibility>
+                                  <property name="label">Unlock device</property>
+                                  <property name="description">Authenticate with the hardware device using your PIN</property>
+                                </accessibility>
+                                <style>
+                                  <class name="suggested-action"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                        <!-- No devices found placeholder -->
+                        <child>
+                          <object class="AdwStatusPage" id="status_no_hsm">
+                            <property name="visible">false</property>
+                            <property name="icon-name">dialog-warning-symbolic</property>
+                            <property name="title" translatable="yes">No Devices Found</property>
+                            <property name="description" translatable="yes">No hardware security devices were detected. Make sure your device is connected and try refreshing.</property>
+                            <accessibility>
+                              <property name="label">No devices found</property>
+                              <property name="description">No hardware security devices are connected</property>
+                            </accessibility>
+                          </object>
+                        </child>
+
                       </object>
                     </child>
 

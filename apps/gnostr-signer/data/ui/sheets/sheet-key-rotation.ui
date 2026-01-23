@@ -1,0 +1,374 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="adwaita" version="1.4"/>
+  <template class="SheetKeyRotation" parent="AdwDialog">
+    <property name="title" translatable="yes">Key Rotation</property>
+    <property name="can-close">true</property>
+    <property name="content-width">480</property>
+    <property name="content-height">580</property>
+    <accessibility>
+      <property name="label">Key rotation dialog</property>
+      <property name="description">Rotate your Nostr identity to a new keypair while maintaining continuity</property>
+    </accessibility>
+    <child>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <child type="start">
+              <object class="GtkButton" id="btn_cancel">
+                <property name="label" translatable="yes">Cancel</property>
+                <accessibility>
+                  <property name="label">Cancel key rotation</property>
+                </accessibility>
+              </object>
+            </child>
+          </object>
+        </child>
+        <property name="content">
+          <object class="GtkStack" id="stack_main">
+            <property name="transition-type">slide-left-right</property>
+            <!-- Info Page -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">info</property>
+                <property name="child">
+                  <object class="GtkScrolledWindow">
+                    <property name="hscrollbar-policy">never</property>
+                    <property name="vscrollbar-policy">automatic</property>
+                    <child>
+                      <object class="AdwClamp">
+                        <property name="maximum-size">420</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">18</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">18</property>
+                            <property name="margin-bottom">18</property>
+                            <!-- Warning Banner -->
+                            <child>
+                              <object class="AdwBanner" id="banner_warning">
+                                <property name="title" translatable="yes">Key rotation creates a new identity. Make sure you understand the implications.</property>
+                                <property name="revealed">true</property>
+                                <style>
+                                  <class name="warning"/>
+                                </style>
+                              </object>
+                            </child>
+                            <!-- Current Account Info -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">Current Identity</property>
+                                <property name="description" translatable="yes">The key that will be rotated to a new keypair.</property>
+                                <child>
+                                  <object class="AdwActionRow">
+                                    <property name="title" translatable="yes">Public Key</property>
+                                    <child type="suffix">
+                                      <object class="GtkLabel" id="lbl_current_npub">
+                                        <property name="label">npub1...</property>
+                                        <property name="selectable">true</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                          <class name="monospace"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwActionRow">
+                                    <property name="title" translatable="yes">Label</property>
+                                    <child type="suffix">
+                                      <object class="GtkLabel" id="lbl_current_label">
+                                        <property name="label">(no label)</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- New Key Options -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">New Identity</property>
+                                <property name="description" translatable="yes">Configure the new keypair that will replace your current one.</property>
+                                <child>
+                                  <object class="AdwEntryRow" id="entry_new_label">
+                                    <property name="title" translatable="yes">Label for New Key</property>
+                                    <accessibility>
+                                      <property name="description">Optional label for the new identity</property>
+                                    </accessibility>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- Migration Options -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">Migration Options</property>
+                                <child>
+                                  <object class="AdwActionRow">
+                                    <property name="title" translatable="yes">Publish Migration Event</property>
+                                    <property name="subtitle" translatable="yes">Announce the key change to your relays (kind 1776)</property>
+                                    <child type="suffix">
+                                      <object class="GtkCheckButton" id="chk_publish">
+                                        <property name="valign">center</property>
+                                        <property name="active">true</property>
+                                        <accessibility>
+                                          <property name="label">Publish migration event</property>
+                                        </accessibility>
+                                      </object>
+                                    </child>
+                                    <property name="activatable-widget">chk_publish</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwActionRow">
+                                    <property name="title" translatable="yes">Keep Old Key</property>
+                                    <property name="subtitle" translatable="yes">Retain access to old key for recovery (recommended)</property>
+                                    <child type="suffix">
+                                      <object class="GtkCheckButton" id="chk_keep_old">
+                                        <property name="valign">center</property>
+                                        <property name="active">true</property>
+                                        <accessibility>
+                                          <property name="label">Keep old key accessible</property>
+                                        </accessibility>
+                                      </object>
+                                    </child>
+                                    <property name="activatable-widget">chk_keep_old</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- What Happens Section -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">What Happens</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="wrap">true</property>
+                                    <property name="xalign">0</property>
+                                    <property name="margin-start">12</property>
+                                    <property name="margin-end">12</property>
+                                    <property name="margin-top">6</property>
+                                    <property name="margin-bottom">6</property>
+                                    <property name="label" translatable="yes">1. A new keypair will be generated
+2. A migration event (kind 1776) will be created
+3. The migration event will be signed with your old key
+4. The new key will be stored in secure storage
+5. The migration event can be published to announce the change</property>
+                                    <style>
+                                      <class name="dim-label"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- Start Button -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">horizontal</property>
+                                <property name="halign">center</property>
+                                <property name="margin-top">12</property>
+                                <child>
+                                  <object class="GtkButton" id="btn_start_rotation">
+                                    <property name="label" translatable="yes">Start Key Rotation</property>
+                                    <property name="sensitive">false</property>
+                                    <style>
+                                      <class name="suggested-action"/>
+                                      <class name="pill"/>
+                                    </style>
+                                    <accessibility>
+                                      <property name="label">Start the key rotation process</property>
+                                    </accessibility>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+            <!-- Progress Page -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">progress</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="valign">center</property>
+                    <property name="halign">center</property>
+                    <property name="spacing">24</property>
+                    <property name="margin-start">24</property>
+                    <property name="margin-end">24</property>
+                    <child>
+                      <object class="GtkSpinner" id="spinner_progress">
+                        <property name="width-request">48</property>
+                        <property name="height-request">48</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="lbl_progress_status">
+                        <property name="label" translatable="yes">Rotating key...</property>
+                        <style>
+                          <class name="title-2"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkProgressBar" id="progress_bar">
+                        <property name="width-request">300</property>
+                        <property name="show-text">false</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Please wait while your key is being rotated.
+Do not close this dialog.</property>
+                        <property name="wrap">true</property>
+                        <property name="justify">center</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+            <!-- Result Page -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">result</property>
+                <property name="child">
+                  <object class="GtkScrolledWindow">
+                    <property name="hscrollbar-policy">never</property>
+                    <property name="vscrollbar-policy">automatic</property>
+                    <child>
+                      <object class="AdwClamp">
+                        <property name="maximum-size">420</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">18</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">18</property>
+                            <property name="margin-bottom">18</property>
+                            <!-- Status -->
+                            <child>
+                              <object class="AdwStatusPage" id="status_result">
+                                <property name="icon-name">emblem-ok-symbolic</property>
+                                <property name="title" translatable="yes">Key Rotation Complete</property>
+                                <property name="description" translatable="yes">Your identity has been migrated to a new key.</property>
+                              </object>
+                            </child>
+                            <!-- New Key Info -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">New Identity</property>
+                                <child>
+                                  <object class="AdwActionRow">
+                                    <property name="title" translatable="yes">New Public Key</property>
+                                    <child type="suffix">
+                                      <object class="GtkLabel" id="lbl_new_npub">
+                                        <property name="label">npub1...</property>
+                                        <property name="selectable">true</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                          <class name="monospace"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- Migration Event -->
+                            <child>
+                              <object class="AdwPreferencesGroup">
+                                <property name="title" translatable="yes">Migration Event</property>
+                                <property name="description" translatable="yes">Publish this event to announce your key migration to followers.</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">12</property>
+                                    <property name="margin-start">12</property>
+                                    <property name="margin-end">12</property>
+                                    <property name="margin-top">6</property>
+                                    <property name="margin-bottom">6</property>
+                                    <child>
+                                      <object class="GtkScrolledWindow">
+                                        <property name="height-request">120</property>
+                                        <property name="hscrollbar-policy">automatic</property>
+                                        <property name="vscrollbar-policy">automatic</property>
+                                        <child>
+                                          <object class="GtkLabel" id="lbl_migration_event">
+                                            <property name="wrap">true</property>
+                                            <property name="wrap-mode">word-char</property>
+                                            <property name="selectable">true</property>
+                                            <property name="xalign">0</property>
+                                            <property name="yalign">0</property>
+                                            <style>
+                                              <class name="monospace"/>
+                                            </style>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="btn_copy_event">
+                                        <property name="label" translatable="yes">Copy Migration Event</property>
+                                        <property name="halign">center</property>
+                                        <accessibility>
+                                          <property name="label">Copy migration event to clipboard</property>
+                                        </accessibility>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- Close Button -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">horizontal</property>
+                                <property name="halign">center</property>
+                                <property name="margin-top">12</property>
+                                <child>
+                                  <object class="GtkButton" id="btn_close">
+                                    <property name="label" translatable="yes">Done</property>
+                                    <style>
+                                      <class name="suggested-action"/>
+                                      <class name="pill"/>
+                                    </style>
+                                    <accessibility>
+                                      <property name="label">Close the dialog</property>
+                                    </accessibility>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+          </object>
+        </property>
+      </object>
+    </child>
+  </template>
+</interface>

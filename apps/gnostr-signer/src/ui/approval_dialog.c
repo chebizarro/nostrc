@@ -519,6 +519,7 @@ void gnostr_approval_dialog_set_content(GnostrApprovalDialog *self,
  * @selected_npub: the initially selected npub, or NULL
  *
  * Populates the identity dropdown with available accounts.
+ * Watch-only accounts are excluded since they cannot sign.
  */
 void gnostr_approval_dialog_set_accounts(GnostrApprovalDialog *self,
                                          AccountsStore *as,
@@ -530,12 +531,26 @@ void gnostr_approval_dialog_set_accounts(GnostrApprovalDialog *self,
 
   guint selected_idx = 0;
   guint count = 0;
+  gboolean selected_is_watch_only = FALSE;
 
   if (as) {
     GPtrArray *items = accounts_store_list(as);
     if (items) {
       for (guint i = 0; i < items->len; i++) {
         AccountEntry *e = g_ptr_array_index(items, i);
+
+        /* Skip watch-only accounts - they cannot sign */
+        if (e->watch_only) {
+          /* Check if the requested identity is watch-only */
+          if (selected_npub && g_strcmp0(selected_npub, e->id) == 0) {
+            selected_is_watch_only = TRUE;
+          }
+          g_free(e->id);
+          g_free(e->label);
+          g_free(e);
+          continue;
+        }
+
         gtk_string_list_append(self->identity_model, e->id);
         if (selected_npub && g_strcmp0(selected_npub, e->id) == 0) {
           selected_idx = count;
@@ -549,8 +564,8 @@ void gnostr_approval_dialog_set_accounts(GnostrApprovalDialog *self,
     }
   }
 
-  /* If no accounts but we have a selected npub, add it */
-  if (count == 0 && selected_npub && *selected_npub) {
+  /* If no accounts but we have a selected npub, add it (unless it's watch-only) */
+  if (count == 0 && selected_npub && *selected_npub && !selected_is_watch_only) {
     gtk_string_list_append(self->identity_model, selected_npub);
     count = 1;
     selected_idx = 0;
@@ -563,8 +578,15 @@ void gnostr_approval_dialog_set_accounts(GnostrApprovalDialog *self,
   /* Show selector only if multiple accounts */
   gtk_widget_set_visible(GTK_WIDGET(self->identity_selector_box), count > 1);
 
-  /* Disable approve if no identity available */
+  /* Disable approve if no signable identity available */
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), count > 0);
+
+  /* Show warning if selected identity is watch-only */
+  if (selected_is_watch_only && count == 0) {
+    /* Update header to show watch-only warning */
+    gtk_label_set_text(self->header_title, "Cannot sign (Watch-only account)");
+    gtk_widget_add_css_class(GTK_WIDGET(self->header_title), "warning");
+  }
 }
 
 /**

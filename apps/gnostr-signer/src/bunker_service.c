@@ -6,6 +6,7 @@
  * Includes session management for client approval tracking (nostrc-09n).
  */
 #include "bunker_service.h"
+#include "accounts_store.h"
 #include "secret_store.h"
 #include "settings_manager.h"
 #include "secure-memory.h"
@@ -289,6 +290,14 @@ gboolean bunker_service_start(BunkerService *bs,
 
   if (bs->state == BUNKER_STATE_RUNNING) {
     return TRUE;
+  }
+
+  /* Check if identity is watch-only - cannot start bunker for watch-only accounts */
+  AccountsStore *as = accounts_store_get_default();
+  if (accounts_store_is_watch_only(as, identity)) {
+    set_state(bs, BUNKER_STATE_ERROR, "Cannot start bunker for watch-only account (no private key)");
+    g_warning("bunker: cannot start for watch-only identity %s", identity);
+    return FALSE;
   }
 
   set_state(bs, BUNKER_STATE_STARTING, NULL);

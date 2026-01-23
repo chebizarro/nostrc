@@ -4,13 +4,20 @@
  * - ~/.config/gnostr-signer/accounts.ini (primary storage)
  * - GSettings for default-identity and account-order (integration)
  * Integrates with secret_store for secure key operations.
+ * Supports multiple key types via key_provider (nostrc-bq0).
  */
 #include "accounts_store.h"
 #include "secret_store.h"
 #include "settings_manager.h"
 #include "secure-delete.h"
 #include "secure-mem.h"
+#include "secure-memory.h"
+#include "key_provider.h"
+#include "key_provider_secp256k1.h"
+#include <nostr/nip19/nip19.h>
 #include <string.h>
+#include <ctype.h>
+#include <stdio.h>
 
 /* Change callback entry */
 typedef struct {
@@ -21,6 +28,8 @@ typedef struct {
 
 struct _AccountsStore {
   GHashTable *map;   /* id -> label */
+  GHashTable *watch_only_set;  /* Set of watch-only account IDs */
+  GHashTable *key_types;       /* id -> GnKeyType (nostrc-bq0) */
   gchar *active;
   gchar *path;
   SettingsManager *settings;  /* GSettings integration */
@@ -61,6 +70,8 @@ static void change_handler_free(gpointer data) {
 AccountsStore *accounts_store_new(void) {
   AccountsStore *as = g_new0(AccountsStore, 1);
   as->map = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  as->watch_only_set = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  as->key_types = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   as->path = g_strdup(config_path());
   as->settings = settings_manager_get_default();
   as->handlers = g_ptr_array_new_with_free_func(change_handler_free);
@@ -80,6 +91,8 @@ AccountsStore *accounts_store_get_default(void) {
 void accounts_store_free(AccountsStore *as) {
   if (!as) return;
   if (as->map) g_hash_table_destroy(as->map);
+  if (as->watch_only_set) g_hash_table_destroy(as->watch_only_set);
+  if (as->key_types) g_hash_table_destroy(as->key_types);
   if (as->handlers) g_ptr_array_unref(as->handlers);
   g_free(as->active);
   g_free(as->path);
@@ -131,6 +144,36 @@ void accounts_store_load(AccountsStore *as) {
   }
   g_strfreev(keys);
 
+  /* Load watch-only accounts group */
+  nkeys = 0;
+  keys = g_key_file_get_keys(kf, "watch_only", &nkeys, NULL);
+  for (gsize i = 0; i < nkeys; i++) {
+    const gchar *id = keys[i];
+    g_hash_table_add(as->watch_only_set, g_strdup(id));
+    /* Also add to main map if not already there */
+    if (!g_hash_table_contains(as->map, id)) {
+      gchar *label = g_key_file_get_string(kf, "watch_only", id, NULL);
+      g_hash_table_replace(as->map, g_strdup(id), label ? label : g_strdup(""));
+    }
+  }
+  g_strfreev(keys);
+
+  /* Load key types group (nostrc-bq0) */
+  nkeys = 0;
+  keys = g_key_file_get_keys(kf, "key_types", &nkeys, NULL);
+  for (gsize i = 0; i < nkeys; i++) {
+    const gchar *id = keys[i];
+    gchar *type_str = g_key_file_get_string(kf, "key_types", id, NULL);
+    if (type_str) {
+      GnKeyType type = gn_key_type_from_string(type_str);
+      if (type != GN_KEY_TYPE_UNKNOWN) {
+        g_hash_table_replace(as->key_types, g_strdup(id), GINT_TO_POINTER(type));
+      }
+      g_free(type_str);
+    }
+  }
+  g_strfreev(keys);
+
   /* Load active state */
   gchar *active = g_key_file_get_string(kf, "state", "active", NULL);
   if (active) {
@@ -170,8 +213,25 @@ void accounts_store_save(AccountsStore *as) {
   gpointer key, val;
   g_hash_table_iter_init(&it, as->map);
   while (g_hash_table_iter_next(&it, &key, &val)) {
-    g_key_file_set_string(kf, "accounts", (const gchar*)key, (const gchar*)val);
+    const gchar *id = (const gchar*)key;
+    const gchar *label = (const gchar*)val;
+    /* Write to appropriate group based on watch-only status */
+    if (g_hash_table_contains(as->watch_only_set, id)) {
+      g_key_file_set_string(kf, "watch_only", id, label);
+    } else {
+      g_key_file_set_string(kf, "accounts", id, label);
+    }
     g_ptr_array_add(order_arr, (gpointer)key);
+  }
+
+  /* Write key types (nostrc-bq0) */
+  g_hash_table_iter_init(&it, as->key_types);
+  while (g_hash_table_iter_next(&it, &key, &val)) {
+    const gchar *id = (const gchar*)key;
+    GnKeyType type = GPOINTER_TO_INT(val);
+    if (type != GN_KEY_TYPE_UNKNOWN) {
+      g_key_file_set_string(kf, "key_types", id, gn_key_type_to_string(type));
+    }
   }
 
   /* Write state */
@@ -296,6 +356,13 @@ GPtrArray *accounts_store_list(AccountsStore *as) {
     e->id = g_strdup((const gchar*)key);
     e->label = g_strdup((const gchar*)val);
 
+    /* Check if this is a watch-only account */
+    e->watch_only = g_hash_table_contains(as->watch_only_set, e->id);
+
+    /* Get key type (default to secp256k1 for Nostr) */
+    gpointer key_type_ptr = g_hash_table_lookup(as->key_types, e->id);
+    e->key_type = key_type_ptr ? GPOINTER_TO_INT(key_type_ptr) : GN_KEY_TYPE_SECP256K1;
+
     /* Check if secret exists - nsec is in secure memory, must free securely */
     gchar *nsec = NULL;
     e->has_secret = (secret_store_get_secret(e->id, &nsec) == SECRET_STORE_OK);
@@ -383,6 +450,13 @@ AccountEntry *accounts_store_find(AccountsStore *as, const gchar *query) {
       AccountEntry *e = g_new0(AccountEntry, 1);
       e->id = g_strdup(id);
       e->label = g_strdup(label);
+
+      /* Check if this is a watch-only account */
+      e->watch_only = g_hash_table_contains(as->watch_only_set, id);
+
+      /* Get key type (default to secp256k1 for Nostr) */
+      gpointer key_type_ptr = g_hash_table_lookup(as->key_types, id);
+      e->key_type = key_type_ptr ? GPOINTER_TO_INT(key_type_ptr) : GN_KEY_TYPE_SECP256K1;
 
       /* nsec is in secure memory, must free securely */
       gchar *nsec = NULL;
@@ -497,6 +571,102 @@ gchar *accounts_store_get_display_name(AccountsStore *as, const gchar *id) {
   return g_strdup(id);
 }
 
+/* Helper to check if a string is 64-character hex */
+static gboolean is_hex64(const char *s) {
+  if (!s) return FALSE;
+  size_t n = strlen(s);
+  if (n != 64) return FALSE;
+  for (size_t i = 0; i < n; i++) {
+    char c = s[i];
+    if (!isxdigit((unsigned char)c)) return FALSE;
+  }
+  return TRUE;
+}
+
+/* Helper to convert hex to bytes */
+static gboolean hex_to_bytes(const char *hex, uint8_t *out, size_t out_len) {
+  size_t hex_len = strlen(hex);
+  if (hex_len != out_len * 2) return FALSE;
+  for (size_t i = 0; i < out_len; i++) {
+    unsigned int byte;
+    if (sscanf(hex + 2*i, "%2x", &byte) != 1) return FALSE;
+    out[i] = (uint8_t)byte;
+  }
+  return TRUE;
+}
+
+gboolean accounts_store_import_pubkey(AccountsStore *as, const gchar *pubkey,
+                                      const gchar *label, gchar **out_npub) {
+  if (!as || !pubkey || !*pubkey) return FALSE;
+  if (out_npub) *out_npub = NULL;
+
+  gchar *npub = NULL;
+  uint8_t pubkey_bytes[32];
+
+  /* Parse input: can be npub or 64-char hex */
+  if (g_str_has_prefix(pubkey, "npub1")) {
+    /* Validate and normalize npub */
+    if (nostr_nip19_decode_npub(pubkey, pubkey_bytes) != 0) {
+      g_warning("accounts_store_import_pubkey: invalid npub format");
+      return FALSE;
+    }
+    /* Re-encode to normalize */
+    if (nostr_nip19_encode_npub(pubkey_bytes, &npub) != 0 || !npub) {
+      g_warning("accounts_store_import_pubkey: failed to encode npub");
+      return FALSE;
+    }
+  } else if (is_hex64(pubkey)) {
+    /* Convert hex to bytes and encode as npub */
+    if (!hex_to_bytes(pubkey, pubkey_bytes, 32)) {
+      g_warning("accounts_store_import_pubkey: invalid hex pubkey");
+      return FALSE;
+    }
+    if (nostr_nip19_encode_npub(pubkey_bytes, &npub) != 0 || !npub) {
+      g_warning("accounts_store_import_pubkey: failed to encode npub from hex");
+      return FALSE;
+    }
+  } else {
+    g_warning("accounts_store_import_pubkey: unrecognized format (expected npub1... or 64-hex)");
+    return FALSE;
+  }
+
+  /* Check if already exists */
+  if (g_hash_table_contains(as->map, npub)) {
+    g_warning("accounts_store_import_pubkey: account already exists");
+    g_free(npub);
+    return FALSE;
+  }
+
+  /* Add to our tracking as watch-only */
+  g_hash_table_insert(as->map, g_strdup(npub), g_strdup(label ? label : ""));
+  g_hash_table_add(as->watch_only_set, g_strdup(npub));
+
+  /* Set as active if this is the first account */
+  gboolean was_first = !as->active;
+  if (was_first) {
+    as->active = g_strdup(npub);
+  }
+
+  /* Emit change notification */
+  emit_change(as, ACCOUNTS_CHANGE_ADDED, npub);
+  if (was_first) {
+    emit_change(as, ACCOUNTS_CHANGE_ACTIVE, npub);
+  }
+
+  if (out_npub) {
+    *out_npub = npub;
+  } else {
+    g_free(npub);
+  }
+
+  return TRUE;
+}
+
+gboolean accounts_store_is_watch_only(AccountsStore *as, const gchar *id) {
+  if (!as || !id) return FALSE;
+  return g_hash_table_contains(as->watch_only_set, id);
+}
+
 guint accounts_store_connect_changed(AccountsStore *as, AccountsChangedCb cb,
                                      gpointer user_data) {
   if (!as || !cb) return 0;
@@ -578,4 +748,141 @@ void accounts_store_sync_with_secrets_async(AccountsStore *as,
 
   /* Use async secret store list */
   secret_store_list_async(sync_secrets_list_cb, data);
+}
+
+/* ======== Key type API (nostrc-bq0) ======== */
+
+GnKeyType accounts_store_get_key_type(AccountsStore *as, const gchar *id) {
+  if (!as || !id) return GN_KEY_TYPE_SECP256K1;
+
+  gpointer key_type_ptr = g_hash_table_lookup(as->key_types, id);
+  if (key_type_ptr) {
+    return GPOINTER_TO_INT(key_type_ptr);
+  }
+
+  /* Default to secp256k1 for Nostr compatibility */
+  return GN_KEY_TYPE_SECP256K1;
+}
+
+gboolean accounts_store_set_key_type(AccountsStore *as,
+                                     const gchar *id,
+                                     GnKeyType key_type) {
+  if (!as || !id || !*id) return FALSE;
+
+  /* Verify account exists */
+  if (!g_hash_table_contains(as->map, id)) {
+    return FALSE;
+  }
+
+  g_hash_table_replace(as->key_types, g_strdup(id), GINT_TO_POINTER(key_type));
+  return TRUE;
+}
+
+gboolean accounts_store_generate_key_with_type(AccountsStore *as,
+                                               const gchar *label,
+                                               GnKeyType key_type,
+                                               gchar **out_npub) {
+  if (!as) return FALSE;
+  if (out_npub) *out_npub = NULL;
+
+  /* For secp256k1, use existing secret_store_generate */
+  if (key_type == GN_KEY_TYPE_SECP256K1 || key_type == GN_KEY_TYPE_UNKNOWN) {
+    gchar *npub = NULL;
+    SecretStoreResult rc = secret_store_generate(label, TRUE, &npub);
+    if (rc != SECRET_STORE_OK || !npub) {
+      g_warning("accounts_store_generate_key_with_type: secret_store_generate failed: %d", rc);
+      return FALSE;
+    }
+
+    /* Add to our tracking */
+    accounts_store_add(as, npub, label);
+
+    /* Store key type */
+    g_hash_table_replace(as->key_types, g_strdup(npub), GINT_TO_POINTER(GN_KEY_TYPE_SECP256K1));
+
+    if (out_npub) {
+      *out_npub = npub;
+    } else {
+      g_free(npub);
+    }
+
+    return TRUE;
+  }
+
+  /* For other key types, use the key provider interface */
+  GnKeyProvider *provider = gn_key_provider_get_for_type(key_type);
+  if (!provider) {
+    g_warning("accounts_store_generate_key_with_type: no provider for key type %s",
+              gn_key_type_to_string(key_type));
+    return FALSE;
+  }
+
+  /* Generate private key via provider */
+  gsize sk_size = gn_key_provider_get_private_key_size(provider);
+  guint8 *sk = g_malloc(sk_size);
+  gsize sk_len = 0;
+  GError *error = NULL;
+
+  if (!gn_key_provider_generate_private_key(provider, sk, &sk_len, &error)) {
+    g_warning("accounts_store_generate_key_with_type: generation failed: %s",
+              error ? error->message : "unknown error");
+    g_clear_error(&error);
+    g_free(sk);
+    return FALSE;
+  }
+
+  /* For now, only secp256k1 is fully supported for storage.
+   * Other key types would need additional NIP definitions for encoding.
+   * This is a placeholder for future expansion. */
+  g_warning("accounts_store_generate_key_with_type: key type %s not yet supported for storage",
+            gn_key_type_to_string(key_type));
+
+  /* Securely clear the key */
+  gn_secure_clear_buffer(sk);
+  g_free(sk);
+
+  return FALSE;
+}
+
+gboolean accounts_store_import_key_with_type(AccountsStore *as,
+                                             const gchar *key,
+                                             const gchar *label,
+                                             GnKeyType key_type,
+                                             gchar **out_npub) {
+  if (!as || !key || !*key) return FALSE;
+  if (out_npub) *out_npub = NULL;
+
+  /* Auto-detect if unknown */
+  GnKeyType detected_type = key_type;
+  if (detected_type == GN_KEY_TYPE_UNKNOWN) {
+    /* Default to secp256k1 for nsec and hex keys */
+    if (g_str_has_prefix(key, "nsec1") || is_hex64(key)) {
+      detected_type = GN_KEY_TYPE_SECP256K1;
+    }
+    /* Future: add detection for other key formats */
+  }
+
+  /* For secp256k1, use existing import function */
+  if (detected_type == GN_KEY_TYPE_SECP256K1) {
+    gchar *npub = NULL;
+    if (!accounts_store_import_key(as, key, label, &npub)) {
+      return FALSE;
+    }
+
+    /* Store key type */
+    g_hash_table_replace(as->key_types, g_strdup(npub), GINT_TO_POINTER(GN_KEY_TYPE_SECP256K1));
+
+    if (out_npub) {
+      *out_npub = npub;
+    } else {
+      g_free(npub);
+    }
+
+    return TRUE;
+  }
+
+  /* Other key types not yet supported for import */
+  g_warning("accounts_store_import_key_with_type: key type %s not yet supported",
+            gn_key_type_to_string(detected_type));
+  return FALSE;
 }

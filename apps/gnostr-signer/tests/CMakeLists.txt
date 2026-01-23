@@ -206,9 +206,40 @@ set_tests_properties(signer/ui PROPERTIES
 )
 
 # ==============================================================================
+# Test: HSM provider (Hardware Security Module abstraction)
+# Issue: nostrc-n30
+# ==============================================================================
+add_executable(test-hsm-provider
+    test_hsm_provider.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/hsm_provider.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/hsm_provider_mock.c
+)
+target_include_directories(test-hsm-provider PRIVATE
+    ${SIGNER_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/nips/nip19/include
+)
+target_link_libraries(test-hsm-provider PRIVATE
+    ${SIGNER_TEST_LIBS}
+)
+# Link nip19 for npub encoding
+if(TARGET nip19)
+    target_link_libraries(test-hsm-provider PRIVATE nip19)
+endif()
+target_link_directories(test-hsm-provider PRIVATE ${SECP256K1_LIBRARY_DIRS})
+target_compile_features(test-hsm-provider PRIVATE c_std_11)
+apply_test_sanitizers(test-hsm-provider)
+
+add_test(NAME signer/hsm-provider COMMAND test-hsm-provider)
+set_tests_properties(signer/hsm-provider PROPERTIES
+    TIMEOUT 30
+    LABELS "signer;hsm;security;unit"
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr-signer"
+)
+
+# ==============================================================================
 # All signer tests target (convenience)
 # ==============================================================================
 add_custom_target(signer-tests
-    DEPENDS test-crypto test-identity test-session test-bunker test-dbus test-rate-limiter test-ui
+    DEPENDS test-crypto test-identity test-session test-bunker test-dbus test-rate-limiter test-ui test-hsm-provider
     COMMENT "Building all gnostr-signer tests"
 )

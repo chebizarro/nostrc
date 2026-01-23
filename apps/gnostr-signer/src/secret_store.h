@@ -5,14 +5,29 @@
  * - Linux: libsecret (GNOME Keyring / KDE Wallet)
  * - macOS: Security.framework Keychain
  *
- * Keys are stored with metadata (npub, label, owner) for multi-account support.
+ * Keys are stored with metadata (npub, label, owner, fingerprint) for
+ * multi-account support with flexible lookup by npub, key_id, or fingerprint.
+ *
+ * Schema attributes:
+ * - key_id: Primary identifier (typically the npub)
+ * - npub: Bech32-encoded public key (npub1...)
+ * - fingerprint: First 8 hex chars of pubkey for quick lookup
+ * - label: User-friendly display name
+ * - hardware: "true" if hardware key reference
+ * - owner_uid/owner_username: Unix user association
+ * - created_at: ISO 8601 timestamp
  */
 #pragma once
 
 #include <glib.h>
+#include <gio/gio.h>  /* For GTask, GAsyncResult, GCancellable */
 #include <sys/types.h>
 
 G_BEGIN_DECLS
+
+/* Error domain for GError integration */
+#define SECRET_STORE_ERROR (secret_store_error_quark())
+GQuark secret_store_error_quark(void);
 
 /* Result codes */
 typedef enum {
@@ -45,7 +60,10 @@ SecretStoreResult secret_store_add(const gchar *key,
                                    gboolean link_to_user);
 
 /* Remove a key from secure storage.
- * @selector: npub or key_id
+ * @selector: npub, key_id, or fingerprint (8-char hex prefix)
+ *
+ * Uses libsecret's secret_password_clear_sync for secure deletion.
+ * Attempts lookup by npub first, then key_id, then fingerprint.
  */
 SecretStoreResult secret_store_remove(const gchar *selector);
 
@@ -56,6 +74,16 @@ GPtrArray *secret_store_list(void);
 
 /* Free a SecretStoreEntry */
 void secret_store_entry_free(SecretStoreEntry *entry);
+
+/* Lookup identity by fingerprint (pubkey hex prefix).
+ * @fingerprint: Hex prefix of pubkey (4-64 chars, typically 8)
+ * @out_entry: Output entry (caller must free with secret_store_entry_free)
+ *
+ * Returns the first matching entry. Useful for quick lookup when full
+ * npub is not available.
+ */
+SecretStoreResult secret_store_lookup_by_fingerprint(const gchar *fingerprint,
+                                                      SecretStoreEntry **out_entry);
 
 /* Get the secret key for a given selector.
  * @selector: npub or key_id
@@ -144,5 +172,81 @@ typedef void (*SecretStoreAvailableCallback)(gboolean available, gpointer user_d
  * Asynchronously check if the secret store backend is available.
  */
 void secret_store_check_available_async(SecretStoreAvailableCallback callback, gpointer user_data);
+
+/* ======== GIO-style Async API ======== */
+
+/**
+ * secret_store_add_async:
+ * @key: nsec1... or 64-hex or ncrypt...
+ * @label: Optional display label
+ * @link_to_user: If TRUE, associate with current Unix user
+ * @cancellable: (nullable): Optional GCancellable
+ * @callback: Callback when operation completes
+ * @user_data: Data for callback
+ *
+ * Asynchronously store a private key. The key is copied to secure memory
+ * immediately and cleared from the task data when complete.
+ */
+void secret_store_add_async(const gchar *key,
+                            const gchar *label,
+                            gboolean link_to_user,
+                            GCancellable *cancellable,
+                            GAsyncReadyCallback callback,
+                            gpointer user_data);
+
+/**
+ * secret_store_add_finish:
+ * @result: GAsyncResult from callback
+ * @error: (out) (optional): Location for error
+ *
+ * Finish an async add operation.
+ * Returns: Result code (also sets @error on failure)
+ */
+SecretStoreResult secret_store_add_finish(GAsyncResult *result, GError **error);
+
+/**
+ * secret_store_remove_async:
+ * @selector: npub, key_id, or fingerprint
+ * @cancellable: (nullable): Optional GCancellable
+ * @callback: Callback when operation completes
+ * @user_data: Data for callback
+ *
+ * Asynchronously remove a key from secure storage.
+ */
+void secret_store_remove_async(const gchar *selector,
+                               GCancellable *cancellable,
+                               GAsyncReadyCallback callback,
+                               gpointer user_data);
+
+/**
+ * secret_store_remove_finish:
+ * @result: GAsyncResult from callback
+ * @error: (out) (optional): Location for error
+ *
+ * Finish an async remove operation.
+ * Returns: Result code (also sets @error on failure)
+ */
+SecretStoreResult secret_store_remove_finish(GAsyncResult *result, GError **error);
+
+/* ======== Error Utilities ======== */
+
+/**
+ * secret_store_result_to_string:
+ * @result: A SecretStoreResult code
+ *
+ * Get a human-readable string for a result code.
+ * Returns: Static string describing the result
+ */
+const gchar *secret_store_result_to_string(SecretStoreResult result);
+
+/**
+ * secret_store_result_to_gerror:
+ * @result: A SecretStoreResult code
+ * @error: (out) (optional): Location to store error
+ *
+ * Convert a result code to a GError. Does nothing if result is OK or error is NULL.
+ * The error domain is SECRET_STORE_ERROR and the code is the result value.
+ */
+void secret_store_result_to_gerror(SecretStoreResult result, GError **error);
 
 G_END_DECLS

@@ -25,6 +25,7 @@
         <file preprocess="xml-stripblanks">ui/sheets/sheet-change-password.ui</file>
         <file preprocess="xml-stripblanks">ui/sheets/sheet-sign-message.ui</file>
         <file preprocess="xml-stripblanks">ui/sheets/sheet-backup.ui</file>
+        <file preprocess="xml-stripblanks">ui/sheets/sheet-key-rotation.ui</file>
         <file preprocess="xml-stripblanks">ui/widgets/app-row.ui</file>
         <file preprocess="xml-stripblanks">ui/widgets/gn-secure-entry.ui</file>
         <file preprocess="xml-stripblanks">ui/widgets/identity-row.ui</file>

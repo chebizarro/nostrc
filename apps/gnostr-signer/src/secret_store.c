@@ -69,20 +69,59 @@ static gchar *bin_to_hex(const guint8 *buf, gsize len) {
   return out;
 }
 
+/* Get fingerprint (first 8 hex chars of pubkey) from npub
+ * Available for both libsecret and Keychain backends.
+ */
+static gchar *npub_to_fingerprint(const gchar *npub) {
+  if (!npub || !g_str_has_prefix(npub, "npub1")) {
+    return NULL;
+  }
+
+  guint8 pk[32];
+  if (nostr_nip19_decode_npub(npub, pk) != 0) {
+    return NULL;
+  }
+
+  /* Use first 4 bytes = 8 hex chars */
+  return bin_to_hex(pk, 4);
+}
+
 #ifdef GNOSTR_HAVE_LIBSECRET
+/* Schema for storing Nostr identity keys in the secret service.
+ *
+ * Attributes:
+ * - key_id: Primary identifier (typically the npub)
+ * - npub: Bech32-encoded public key (npub1...)
+ * - fingerprint: First 8 characters of hex pubkey for quick lookup
+ * - label: User-friendly display name
+ * - hardware: "true" if this is a hardware key reference
+ * - owner_uid: Unix UID of the key owner (empty if unset)
+ * - owner_username: Unix username of the key owner (empty if unset)
+ * - created_at: ISO 8601 timestamp of when the key was stored
+ */
 static const SecretSchema IDENTITY_SCHEMA = {
   "org.gnostr.Signer/identity",
   SECRET_SCHEMA_NONE,
   {
-    { "key_id",   SECRET_SCHEMA_ATTRIBUTE_STRING },
-    { "npub",     SECRET_SCHEMA_ATTRIBUTE_STRING },
-    { "label",    SECRET_SCHEMA_ATTRIBUTE_STRING },
-    { "hardware", SECRET_SCHEMA_ATTRIBUTE_STRING },
+    { "key_id",         SECRET_SCHEMA_ATTRIBUTE_STRING },
+    { "npub",           SECRET_SCHEMA_ATTRIBUTE_STRING },
+    { "fingerprint",    SECRET_SCHEMA_ATTRIBUTE_STRING },
+    { "label",          SECRET_SCHEMA_ATTRIBUTE_STRING },
+    { "hardware",       SECRET_SCHEMA_ATTRIBUTE_STRING },
     { "owner_uid",      SECRET_SCHEMA_ATTRIBUTE_STRING },
     { "owner_username", SECRET_SCHEMA_ATTRIBUTE_STRING },
+    { "created_at",     SECRET_SCHEMA_ATTRIBUTE_STRING },
     { NULL, 0 }
   }
 };
+
+/* Get current ISO 8601 timestamp */
+static gchar *get_iso8601_timestamp(void) {
+  GDateTime *now = g_date_time_new_now_utc();
+  gchar *timestamp = g_date_time_format_iso8601(now);
+  g_date_time_unref(now);
+  return timestamp;
+}
 #endif
 
 gboolean secret_store_is_available(void) {
@@ -173,6 +212,17 @@ SecretStoreResult secret_store_add(const gchar *key,
   gchar uid_buf[32];
   g_snprintf(uid_buf, sizeof(uid_buf), "%u", (unsigned)getuid());
 
+  /* Generate fingerprint from npub for quick lookup */
+  gchar *fingerprint = npub_to_fingerprint(npub);
+  if (!fingerprint) {
+    gn_secure_strfree(sk_hex);
+    g_free(npub);
+    return SECRET_STORE_ERR_BACKEND;
+  }
+
+  /* Get current timestamp */
+  gchar *created_at = get_iso8601_timestamp();
+
   gboolean ok = secret_password_store_sync(&IDENTITY_SCHEMA,
                                            SECRET_COLLECTION_DEFAULT,
                                            label && *label ? label : "Gnostr Identity Key",
@@ -181,14 +231,18 @@ SecretStoreResult secret_store_add(const gchar *key,
                                            &err,
                                            "key_id", npub,
                                            "npub", npub,
+                                           "fingerprint", fingerprint,
                                            "label", label ? label : "",
                                            "hardware", "false",
                                            "owner_uid", link_to_user ? uid_buf : "",
                                            "owner_username", "",
+                                           "created_at", created_at ? created_at : "",
                                            NULL);
 
   /* Securely zero and free the secret key hex */
   gn_secure_strfree(sk_hex);
+  g_free(fingerprint);
+  g_free(created_at);
 
   if (err) {
     g_warning("secret_store_add: %s", err->message);
@@ -249,10 +303,103 @@ SecretStoreResult secret_store_add(const gchar *key,
 SecretStoreResult secret_store_remove(const gchar *selector) {
   if (!selector || !*selector) return SECRET_STORE_ERR_INVALID_KEY;
 
+#ifdef GNOSTR_HAVE_LIBSECRET
+  GError *err = NULL;
+  gboolean cleared = FALSE;
+
+  /* Try clearing by npub first */
+  cleared = secret_password_clear_sync(&IDENTITY_SCHEMA, NULL, &err,
+                                       "npub", selector,
+                                       NULL);
+  if (err) {
+    g_debug("secret_store_remove: clear by npub failed: %s", err->message);
+    g_clear_error(&err);
+  }
+
+  if (cleared) {
+    return SECRET_STORE_OK;
+  }
+
+  /* Try by key_id */
+  cleared = secret_password_clear_sync(&IDENTITY_SCHEMA, NULL, &err,
+                                       "key_id", selector,
+                                       NULL);
+  if (err) {
+    g_debug("secret_store_remove: clear by key_id failed: %s", err->message);
+    g_clear_error(&err);
+  }
+
+  if (cleared) {
+    return SECRET_STORE_OK;
+  }
+
+  /* Try by fingerprint (8-char hex prefix) */
+  if (strlen(selector) == 8 && is_hex_64(selector) == FALSE) {
+    /* Check if it looks like a fingerprint (8 hex chars) */
+    gboolean is_fingerprint = TRUE;
+    for (gsize i = 0; i < 8; i++) {
+      gchar c = selector[i];
+      if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+        is_fingerprint = FALSE;
+        break;
+      }
+    }
+
+    if (is_fingerprint) {
+      /* Normalize to lowercase */
+      gchar fp_lower[9];
+      for (gsize i = 0; i < 8; i++) {
+        fp_lower[i] = g_ascii_tolower(selector[i]);
+      }
+      fp_lower[8] = '\0';
+
+      cleared = secret_password_clear_sync(&IDENTITY_SCHEMA, NULL, &err,
+                                           "fingerprint", fp_lower,
+                                           NULL);
+      if (err) {
+        g_debug("secret_store_remove: clear by fingerprint failed: %s", err->message);
+        g_clear_error(&err);
+      }
+
+      if (cleared) {
+        return SECRET_STORE_OK;
+      }
+    }
+  }
+
+  return SECRET_STORE_ERR_NOT_FOUND;
+
+#elif defined(GNOSTR_HAVE_KEYCHAIN)
+  /* macOS Keychain implementation */
+  CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  CFStringRef service = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+  CFStringRef account = CFStringCreateWithCString(NULL, selector, kCFStringEncodingUTF8);
+
+  CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(query, kSecAttrService, service);
+  CFDictionarySetValue(query, kSecAttrAccount, account);
+
+  OSStatus st = SecItemDelete(query);
+
+  if (service) CFRelease(service);
+  if (account) CFRelease(account);
+  CFRelease(query);
+
+  if (st == errSecSuccess) {
+    return SECRET_STORE_OK;
+  } else if (st == errSecItemNotFound) {
+    return SECRET_STORE_ERR_NOT_FOUND;
+  }
+  return SECRET_STORE_ERR_BACKEND;
+
+#else
+  /* Fallback to nip55l implementation */
   int rc = nostr_nip55l_clear_key(selector);
   if (rc == 0) return SECRET_STORE_OK;
   if (rc == NOSTR_SIGNER_ERROR_NOT_FOUND) return SECRET_STORE_ERR_NOT_FOUND;
   return SECRET_STORE_ERR_BACKEND;
+#endif
 }
 
 void secret_store_entry_free(SecretStoreEntry *entry) {
@@ -657,6 +804,189 @@ SecretStoreResult secret_store_get_secret(const gchar *selector,
 #endif
 }
 
+SecretStoreResult secret_store_lookup_by_fingerprint(const gchar *fingerprint,
+                                                      SecretStoreEntry **out_entry) {
+  if (!fingerprint || !out_entry) return SECRET_STORE_ERR_INVALID_KEY;
+  *out_entry = NULL;
+
+  /* Validate and normalize fingerprint */
+  gsize len = strlen(fingerprint);
+  if (len < 4 || len > 64) return SECRET_STORE_ERR_INVALID_KEY;
+
+  gchar *fp_lower = g_ascii_strdown(fingerprint, len);
+
+  /* Validate hex */
+  for (gsize i = 0; i < len; i++) {
+    gchar c = fp_lower[i];
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+      g_free(fp_lower);
+      return SECRET_STORE_ERR_INVALID_KEY;
+    }
+  }
+
+#ifdef GNOSTR_HAVE_LIBSECRET
+  GError *err = NULL;
+  SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, &err);
+  if (err || !service) {
+    if (err) g_clear_error(&err);
+    g_free(fp_lower);
+    return SECRET_STORE_ERR_BACKEND;
+  }
+
+  /* Search by fingerprint attribute (for exact 8-char match) */
+  GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
+
+  /* If fingerprint is exactly 8 chars, search by fingerprint attribute */
+  if (len == 8) {
+    g_hash_table_insert(attrs, (gpointer)"fingerprint", (gpointer)fp_lower);
+  }
+
+  GList *items = secret_service_search_sync(service, &IDENTITY_SCHEMA, attrs,
+                                            SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK,
+                                            NULL, &err);
+  g_hash_table_unref(attrs);
+
+  if (err) {
+    g_debug("secret_store_lookup_by_fingerprint: search failed: %s", err->message);
+    g_clear_error(&err);
+  }
+
+  /* If no results with fingerprint attribute, search all and filter */
+  if (!items && len != 8) {
+    attrs = g_hash_table_new(g_str_hash, g_str_equal);
+    items = secret_service_search_sync(service, &IDENTITY_SCHEMA, attrs,
+                                       SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK,
+                                       NULL, &err);
+    g_hash_table_unref(attrs);
+    if (err) g_clear_error(&err);
+  }
+
+  SecretStoreEntry *found = NULL;
+  for (GList *it = items; it && !found; it = it->next) {
+    SecretItem *item = SECRET_ITEM(it->data);
+    GHashTable *item_attrs = secret_item_get_attributes(item);
+
+    const gchar *npub = g_hash_table_lookup(item_attrs, "npub");
+    const gchar *fp_attr = g_hash_table_lookup(item_attrs, "fingerprint");
+
+    gboolean matches = FALSE;
+
+    /* Check fingerprint attribute */
+    if (fp_attr && *fp_attr) {
+      matches = g_str_has_prefix(fp_attr, fp_lower);
+    }
+
+    /* If no fingerprint attribute, derive from npub */
+    if (!matches && npub) {
+      gchar *derived_fp = npub_to_fingerprint(npub);
+      if (derived_fp) {
+        matches = g_str_has_prefix(derived_fp, fp_lower);
+        g_free(derived_fp);
+      }
+    }
+
+    if (matches) {
+      found = g_new0(SecretStoreEntry, 1);
+      found->npub = npub ? g_strdup(npub) : NULL;
+      found->key_id = g_strdup(g_hash_table_lookup(item_attrs, "key_id"));
+      found->label = g_strdup(g_hash_table_lookup(item_attrs, "label"));
+
+      const gchar *owner_uid = g_hash_table_lookup(item_attrs, "owner_uid");
+      const gchar *owner_username = g_hash_table_lookup(item_attrs, "owner_username");
+
+      if (owner_uid && *owner_uid) {
+        found->has_owner = TRUE;
+        found->owner_uid = (uid_t)g_ascii_strtoull(owner_uid, NULL, 10);
+        found->owner_username = owner_username ? g_strdup(owner_username) : NULL;
+      }
+    }
+
+    g_hash_table_unref(item_attrs);
+  }
+
+  g_list_free_full(items, g_object_unref);
+  g_object_unref(service);
+  g_free(fp_lower);
+
+  if (found) {
+    *out_entry = found;
+    return SECRET_STORE_OK;
+  }
+  return SECRET_STORE_ERR_NOT_FOUND;
+
+#elif defined(GNOSTR_HAVE_KEYCHAIN)
+  /* macOS: Query all items and filter by fingerprint */
+  CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  CFStringRef svc = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+
+  CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(query, kSecAttrService, svc);
+  CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitAll);
+  CFDictionarySetValue(query, kSecReturnAttributes, kCFBooleanTrue);
+
+  CFTypeRef result = NULL;
+  OSStatus st = SecItemCopyMatching(query, &result);
+
+  SecretStoreEntry *found = NULL;
+
+  if (st == errSecSuccess && result) {
+    CFArrayRef items = (CFArrayRef)result;
+    CFIndex count = CFArrayGetCount(items);
+
+    for (CFIndex i = 0; i < count && !found; i++) {
+      CFDictionaryRef item = CFArrayGetValueAtIndex(items, i);
+      CFStringRef account = CFDictionaryGetValue(item, kSecAttrAccount);
+
+      if (account) {
+        CFIndex acc_len = CFStringGetLength(account);
+        CFIndex maxSize = CFStringGetMaximumSizeForEncoding(acc_len, kCFStringEncodingUTF8) + 1;
+        gchar *acc_buf = g_malloc(maxSize);
+
+        if (CFStringGetCString(account, acc_buf, maxSize, kCFStringEncodingUTF8)) {
+          /* Account is npub, derive fingerprint */
+          gchar *derived_fp = npub_to_fingerprint(acc_buf);
+          if (derived_fp && g_str_has_prefix(derived_fp, fp_lower)) {
+            found = g_new0(SecretStoreEntry, 1);
+            found->npub = g_strdup(acc_buf);
+            found->key_id = g_strdup(acc_buf);
+
+            CFStringRef label = CFDictionaryGetValue(item, kSecAttrLabel);
+            if (label) {
+              CFIndex lbl_len = CFStringGetLength(label);
+              CFIndex lbl_max = CFStringGetMaximumSizeForEncoding(lbl_len, kCFStringEncodingUTF8) + 1;
+              gchar *lbl_buf = g_malloc(lbl_max);
+              if (CFStringGetCString(label, lbl_buf, lbl_max, kCFStringEncodingUTF8)) {
+                found->label = lbl_buf;
+              } else {
+                g_free(lbl_buf);
+              }
+            }
+          }
+          g_free(derived_fp);
+        }
+        g_free(acc_buf);
+      }
+    }
+    CFRelease(result);
+  }
+
+  if (svc) CFRelease(svc);
+  CFRelease(query);
+  g_free(fp_lower);
+
+  if (found) {
+    *out_entry = found;
+    return SECRET_STORE_OK;
+  }
+  return SECRET_STORE_ERR_NOT_FOUND;
+
+#else
+  g_free(fp_lower);
+  return SECRET_STORE_ERR_BACKEND;
+#endif
+}
+
 /* ======== Async API implementation ======== */
 
 typedef struct {
@@ -755,4 +1085,147 @@ void secret_store_check_available_async(SecretStoreAvailableCallback callback,
   g_task_set_name(task, "secret_store_check_available_async");
   g_task_run_in_thread(task, available_async_thread_func);
   g_object_unref(task);
+}
+
+/* ======== Async Add Implementation ======== */
+
+typedef struct {
+  gchar *key;
+  gchar *label;
+  gboolean link_to_user;
+} AddAsyncTaskData;
+
+static void add_async_task_data_free(gpointer data) {
+  AddAsyncTaskData *task_data = data;
+  if (task_data->key) {
+    gn_secure_zero(task_data->key, strlen(task_data->key));
+    g_free(task_data->key);
+  }
+  g_free(task_data->label);
+  g_free(task_data);
+}
+
+static void add_async_thread_func(GTask *task, gpointer source_object,
+                                  gpointer task_data, GCancellable *cancellable) {
+  (void)source_object;
+  (void)cancellable;
+
+  AddAsyncTaskData *data = task_data;
+  SecretStoreResult result = secret_store_add(data->key, data->label, data->link_to_user);
+  g_task_return_int(task, (gssize)result);
+}
+
+void secret_store_add_async(const gchar *key,
+                            const gchar *label,
+                            gboolean link_to_user,
+                            GCancellable *cancellable,
+                            GAsyncReadyCallback callback,
+                            gpointer user_data) {
+  if (!key || !*key) {
+    GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+    g_task_return_int(task, (gssize)SECRET_STORE_ERR_INVALID_KEY);
+    g_object_unref(task);
+    return;
+  }
+
+  AddAsyncTaskData *task_data = g_new0(AddAsyncTaskData, 1);
+  task_data->key = g_strdup(key);
+  task_data->label = g_strdup(label);
+  task_data->link_to_user = link_to_user;
+
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+  g_task_set_name(task, "secret_store_add_async");
+  g_task_set_task_data(task, task_data, add_async_task_data_free);
+  g_task_run_in_thread(task, add_async_thread_func);
+  g_object_unref(task);
+}
+
+SecretStoreResult secret_store_add_finish(GAsyncResult *result, GError **error) {
+  GTask *task = G_TASK(result);
+  gssize ret = g_task_propagate_int(task, error);
+  return (SecretStoreResult)ret;
+}
+
+/* ======== Async Remove Implementation ======== */
+
+typedef struct {
+  gchar *selector;
+} RemoveAsyncTaskData;
+
+static void remove_async_task_data_free(gpointer data) {
+  RemoveAsyncTaskData *task_data = data;
+  g_free(task_data->selector);
+  g_free(task_data);
+}
+
+static void remove_async_thread_func(GTask *task, gpointer source_object,
+                                     gpointer task_data, GCancellable *cancellable) {
+  (void)source_object;
+  (void)cancellable;
+
+  RemoveAsyncTaskData *data = task_data;
+  SecretStoreResult result = secret_store_remove(data->selector);
+  g_task_return_int(task, (gssize)result);
+}
+
+void secret_store_remove_async(const gchar *selector,
+                               GCancellable *cancellable,
+                               GAsyncReadyCallback callback,
+                               gpointer user_data) {
+  if (!selector || !*selector) {
+    GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+    g_task_return_int(task, (gssize)SECRET_STORE_ERR_INVALID_KEY);
+    g_object_unref(task);
+    return;
+  }
+
+  RemoveAsyncTaskData *task_data = g_new0(RemoveAsyncTaskData, 1);
+  task_data->selector = g_strdup(selector);
+
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+  g_task_set_name(task, "secret_store_remove_async");
+  g_task_set_task_data(task, task_data, remove_async_task_data_free);
+  g_task_run_in_thread(task, remove_async_thread_func);
+  g_object_unref(task);
+}
+
+SecretStoreResult secret_store_remove_finish(GAsyncResult *result, GError **error) {
+  GTask *task = G_TASK(result);
+  gssize ret = g_task_propagate_int(task, error);
+  return (SecretStoreResult)ret;
+}
+
+/* ======== GError Domain and Utilities ======== */
+
+G_DEFINE_QUARK(secret-store-error-quark, secret_store_error)
+
+const gchar *secret_store_result_to_string(SecretStoreResult result) {
+  switch (result) {
+    case SECRET_STORE_OK:
+      return "Success";
+    case SECRET_STORE_ERR_INVALID_KEY:
+      return "Invalid key format";
+    case SECRET_STORE_ERR_NOT_FOUND:
+      return "Key not found";
+    case SECRET_STORE_ERR_BACKEND:
+      return "Backend error";
+    case SECRET_STORE_ERR_PERMISSION:
+      return "Permission denied";
+    case SECRET_STORE_ERR_DUPLICATE:
+      return "Duplicate key";
+    default:
+      return "Unknown error";
+  }
+}
+
+void secret_store_result_to_gerror(SecretStoreResult result, GError **error) {
+  if (result == SECRET_STORE_OK || error == NULL) {
+    return;
+  }
+
+  g_set_error(error,
+              SECRET_STORE_ERROR,
+              (gint)result,
+              "%s",
+              secret_store_result_to_string(result));
 }

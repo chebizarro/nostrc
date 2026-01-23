@@ -3,7 +3,7 @@
  * Provides a UI for importing an existing Nostr profile with multiple methods:
  * - NIP-49 Encrypted Backup (ncryptsec)
  * - Mnemonic Seed Phrase (12/24 words)
- * - External Hardware Device (placeholder)
+ * - Hardware Security Module (HSM via PKCS#11)
  */
 #pragma once
 
@@ -18,7 +18,7 @@ G_DECLARE_FINAL_TYPE(SheetImportProfile, sheet_import_profile, SHEET, IMPORT_PRO
 typedef enum {
   IMPORT_METHOD_NIP49 = 0,      /* NIP-49 Encrypted Backup (ncryptsec) */
   IMPORT_METHOD_MNEMONIC = 1,   /* BIP-39 Mnemonic Seed Phrase */
-  IMPORT_METHOD_HARDWARE = 2    /* External Hardware Device */
+  IMPORT_METHOD_HARDWARE = 2    /* Hardware Security Module (HSM) */
 } ImportMethod;
 
 /* Callback invoked when profile is successfully imported.

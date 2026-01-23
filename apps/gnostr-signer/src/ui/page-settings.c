@@ -9,6 +9,7 @@
 #include "sheets/sheet-user-list.h"
 #include "sheets/sheet-relay-config.h"
 #include "sheets/sheet-profile-editor.h"
+#include "sheets/sheet-key-rotation.h"
 #include "../secret_store.h"
 #include "../profile_store.h"
 #include "../settings_manager.h"
@@ -28,6 +29,7 @@ struct _PageSettings {
   GtkButton *btn_select_account;
   GtkButton *btn_backup_keys;
   GtkButton *btn_edit_profile;
+  GtkButton *btn_key_rotation;
   GtkButton *btn_orbot_setup;
   GtkButton *btn_relays;
   GtkButton *btn_logs;
@@ -167,6 +169,36 @@ static void on_edit_profile(GtkButton *b, gpointer user_data){
   adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
 }
 
+/* Key rotation completion callback */
+static void on_key_rotation_complete(const gchar *old_npub, const gchar *new_npub, gpointer ud) {
+  (void)ud;
+  g_message("Key rotation complete: %s -> %s", old_npub, new_npub);
+  /* The accounts_store is already updated by the rotation module */
+}
+
+static void on_key_rotation(GtkButton *b, gpointer user_data){
+  (void)b; PageSettings *self = user_data; if (!self) return;
+
+  /* Get the currently active npub */
+  gchar *npub = NULL;
+  SecretStoreResult rc = secret_store_get_public_key(NULL, &npub);
+
+  if (rc != SECRET_STORE_OK || !npub || !*npub) {
+    GtkAlertDialog *ad = gtk_alert_dialog_new("No account selected. Please select or add an account first.");
+    gtk_alert_dialog_show(ad, get_parent_window(GTK_WIDGET(self)));
+    g_object_unref(ad);
+    return;
+  }
+
+  /* Create and present the key rotation dialog */
+  SheetKeyRotation *dlg = sheet_key_rotation_new();
+  sheet_key_rotation_set_account(dlg, npub);
+  sheet_key_rotation_set_on_complete(dlg, on_key_rotation_complete, NULL);
+  g_free(npub);
+
+  adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
+}
+
 static void on_orbot_setup(GtkButton *b, gpointer user_data){
   (void)b; PageSettings *self = user_data; if (!self) return;
   SheetOrbotSetup *dlg = sheet_orbot_setup_new();
@@ -219,6 +251,7 @@ static void page_settings_class_init(PageSettingsClass *klass) {
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_select_account);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_backup_keys);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_edit_profile);
+  gtk_widget_class_bind_template_child(wc, PageSettings, btn_key_rotation);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_orbot_setup);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_relays);
   gtk_widget_class_bind_template_child(wc, PageSettings, btn_logs);
@@ -268,6 +301,7 @@ static void page_settings_init(PageSettings *self) {
   g_signal_connect(self->btn_select_account, "clicked", G_CALLBACK(on_select_account), self);
   g_signal_connect(self->btn_backup_keys, "clicked", G_CALLBACK(on_backup_keys), self);
   g_signal_connect(self->btn_edit_profile, "clicked", G_CALLBACK(on_edit_profile), self);
+  g_signal_connect(self->btn_key_rotation, "clicked", G_CALLBACK(on_key_rotation), self);
   g_signal_connect(self->btn_orbot_setup, "clicked", G_CALLBACK(on_orbot_setup), self);
   g_signal_connect(self->btn_relays, "clicked", G_CALLBACK(on_relays), self);
   g_signal_connect(self->btn_logs, "clicked", G_CALLBACK(on_logs), self);

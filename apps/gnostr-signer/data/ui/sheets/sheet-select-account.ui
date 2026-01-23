@@ -136,6 +136,16 @@
                     </accessibility>
                   </object>
                 </child>
+                <child>
+                  <object class="GtkButton" id="btn_import_pubkey">
+                    <property name="label" translatable="yes">Watch Only</property>
+                    <property name="tooltip-text" translatable="yes">Import a public key for watch-only access</property>
+                    <accessibility>
+                      <property name="label">Import public key (watch-only)</property>
+                      <property name="description">Import a Nostr public key to monitor activity without signing capability</property>
+                    </accessibility>
+                  </object>
+                </child>
               </object>
             </child>
 

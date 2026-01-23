@@ -20,12 +20,31 @@ pkg_check_modules(ADWAITA REQUIRED IMPORTED_TARGET libadwaita-1)
 pkg_check_modules(JSON_GLIB REQUIRED IMPORTED_TARGET json-glib-1.0)
 pkg_check_modules(LIBSECRET QUIET IMPORTED_TARGET libsecret-1)
 
-# Optional libsodium for secure memory operations
+# Optional libsodium for secure memory operations and Ed25519 support
 pkg_check_modules(SODIUM QUIET IMPORTED_TARGET libsodium)
 if (SODIUM_FOUND)
-  message(STATUS "libsodium found - secure memory will use sodium APIs")
+  message(STATUS "libsodium found - secure memory will use sodium APIs, Ed25519 enabled")
 else()
-  message(STATUS "libsodium not found - secure memory will use system fallbacks")
+  message(STATUS "libsodium not found - secure memory will use system fallbacks, Ed25519 disabled")
+endif()
+
+# Optional libsecp256k1 for direct Schnorr signature operations
+pkg_check_modules(SECP256K1 QUIET IMPORTED_TARGET libsecp256k1)
+if (SECP256K1_FOUND)
+  message(STATUS "libsecp256k1 found - direct secp256k1 operations enabled")
+else()
+  message(STATUS "libsecp256k1 not found - using libnostr for secp256k1 operations")
+endif()
+
+# Optional PKCS#11 support for hardware security modules (HSM)
+option(GNOSTR_SIGNER_WITH_PKCS11 "Enable PKCS#11 HSM support" ON)
+if (GNOSTR_SIGNER_WITH_PKCS11)
+  pkg_check_modules(P11KIT QUIET IMPORTED_TARGET p11-kit-1)
+  if (P11KIT_FOUND)
+    message(STATUS "p11-kit found - PKCS#11 HSM support enabled")
+  else()
+    message(STATUS "p11-kit not found - PKCS#11 HSM support disabled (mock provider only)")
+  endif()
 endif()
 
 # Main GTK4 application (UI shell)
@@ -111,10 +130,23 @@ elseif(APPLE)
   message(STATUS "gnostr-signer: Security.framework linked for Keychain support")
 endif()
 
-# Link libsodium for secure memory if available
+# Link libsodium for secure memory and Ed25519 if available
 if (SODIUM_FOUND)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::SODIUM)
-  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_SODIUM=1)
+  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_SODIUM=1 HAVE_SODIUM=1)
+endif()
+
+# Link libsecp256k1 for direct Schnorr operations if available
+if (SECP256K1_FOUND)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::SECP256K1)
+  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE HAVE_SECP256K1=1)
+endif()
+
+# Link p11-kit for PKCS#11 HSM support if available
+if (GNOSTR_SIGNER_WITH_PKCS11 AND P11KIT_FOUND)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::P11KIT)
+  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_PKCS11=1)
+  message(STATUS "gnostr-signer: PKCS#11 HSM support enabled")
 endif()
 
 # Link math library on Linux (for fmin, fmax, etc.)
@@ -204,6 +236,15 @@ if (GTK_UPDATE_ICON_CACHE)
     COMMAND ${GTK_UPDATE_ICON_CACHE} -f -t ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor || true
     COMMENT "Updating icon cache"
   )
+endif()
+
+# ==============================================================================
+# NIP-07 Native Messaging Host
+# ==============================================================================
+# Native messaging host for browser extension support (Chrome/Firefox)
+option(BUILD_NATIVE_HOST "Build NIP-07 native messaging host" ON)
+if (BUILD_NATIVE_HOST)
+  add_subdirectory(native-host)
 endif()
 
 # ==============================================================================
