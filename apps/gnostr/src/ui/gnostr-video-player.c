@@ -854,8 +854,7 @@ void gnostr_video_player_set_fullscreen(GnostrVideoPlayer *self, gboolean fullsc
       gtk_button_set_icon_name(GTK_BUTTON(self->btn_fullscreen), "view-restore-symbolic");
     }
 
-    /* Show toast with Escape key hint */
-    GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+    /* Show toast with Escape key hint (reuse root from above) */
     if (root && GTK_IS_WINDOW(root)) {
       gnostr_main_window_show_toast(GTK_WIDGET(root), _("Press Esc to exit fullscreen"));
     }
