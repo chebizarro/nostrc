@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.30)
+cmake_minimum_required(VERSION 3.22)
 project(nostrc C)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -167,7 +167,8 @@ if (GO_ENABLE_TSAN)
   add_compile_definitions(NOSTR_CHANNEL_ATOMIC_TRY=0)
 endif()
 
-if (EXISTS ${CMAKE_SOURCE_DIR}/apps/relayd/CMakeLists.txt)
+option(BUILD_RELAYD "Build the relayd application (requires nsync)" ON)
+if (BUILD_RELAYD AND EXISTS ${CMAKE_SOURCE_DIR}/apps/relayd/CMakeLists.txt)
   add_subdirectory(apps/relayd)
 endif()
 # Global hardening flags (GCC/Clang); keep portable and avoid breaking MSVC

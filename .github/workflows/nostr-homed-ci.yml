@@ -75,7 +75,7 @@ jobs:
 
       - name: Configure
         run: |
-          cmake -S . -B build -G Ninja -DENABLE_NOSTR_HOMED=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake -S . -B build -G Ninja -DENABLE_NOSTR_HOMED=ON -DBUILD_RELAYD=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
       - name: Build
         run: cmake --build build -j
@@ -112,7 +112,7 @@ jobs:
 
       - name: Build on host
         run: |
-          cmake -S . -B build -G Ninja -DENABLE_NOSTR_HOMED=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake -S . -B build -G Ninja -DENABLE_NOSTR_HOMED=ON -DBUILD_RELAYD=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo
           cmake --build build -j
 
       - name: Pull systemd image
