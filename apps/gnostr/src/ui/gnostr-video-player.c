@@ -806,13 +806,12 @@ void gnostr_video_player_set_fullscreen(GnostrVideoPlayer *self, gboolean fullsc
     GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
     GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
 
-    /* Create fullscreen window */
+    /* Create fullscreen window - don't set transient_for as it can constrain
+     * the fullscreen window to the parent's monitor/size on some WMs */
     self->fullscreen_window = gtk_window_new();
     gtk_window_set_title(GTK_WINDOW(self->fullscreen_window), _("Video"));
     gtk_window_set_decorated(GTK_WINDOW(self->fullscreen_window), FALSE);
-    if (parent) {
-      gtk_window_set_transient_for(GTK_WINDOW(self->fullscreen_window), parent);
-    }
+    (void)parent;  /* Intentionally not setting transient_for */
 
     /* Create overlay for fullscreen */
     self->fullscreen_overlay = gtk_overlay_new();
@@ -845,9 +844,9 @@ void gnostr_video_player_set_fullscreen(GnostrVideoPlayer *self, gboolean fullsc
     g_signal_connect(self->fullscreen_window, "close-request",
                      G_CALLBACK(on_fullscreen_window_close_request), self);
 
-    /* Show fullscreen */
-    gtk_window_fullscreen(GTK_WINDOW(self->fullscreen_window));
+    /* Show fullscreen - present first to ensure window is realized, then fullscreen */
     gtk_window_present(GTK_WINDOW(self->fullscreen_window));
+    gtk_window_fullscreen(GTK_WINDOW(self->fullscreen_window));
 
     /* Update button icon */
     if (GTK_IS_BUTTON(self->btn_fullscreen)) {
