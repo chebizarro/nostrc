@@ -238,12 +238,9 @@ static void on_show_qr(GtkButton *btn, gpointer user_data) {
   SheetQrDisplay *qr_dialog = sheet_qr_display_new();
   sheet_qr_display_set_npub(qr_dialog, self->current_npub);
 
-  GtkWidget *parent = gtk_widget_get_root(GTK_WIDGET(self));
-  if (parent && ADW_IS_DIALOG(parent)) {
-    adw_dialog_present(ADW_DIALOG(qr_dialog), parent);
-  } else {
-    adw_dialog_present(ADW_DIALOG(qr_dialog), GTK_WIDGET(self));
-  }
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  GtkWidget *parent = root ? GTK_WIDGET(root) : GTK_WIDGET(self);
+  adw_dialog_present(ADW_DIALOG(qr_dialog), parent);
 }
 
 /* Handler: Create NIP-49 encrypted backup */
