@@ -30,9 +30,12 @@ else()
   target_link_libraries(nostr_nip49_core PUBLIC nostr nip19 sodium)
 endif()
 
-add_library(nostr_nip49_glib ${NIP49_GLIB_SRC})
-target_include_directories(nostr_nip49_glib PUBLIC ${NIP49_INC})
-target_link_libraries(nostr_nip49_glib PUBLIC nostr_glib nostr_nip49_core)
+# Only build GLib wrapper if nostr_glib target exists
+if (TARGET nostr_glib)
+  add_library(nostr_nip49_glib ${NIP49_GLIB_SRC})
+  target_include_directories(nostr_nip49_glib PUBLIC ${NIP49_INC})
+  target_link_libraries(nostr_nip49_glib PUBLIC nostr_glib nostr_nip49_core)
+endif()
 
 # Install headers
 install(DIRECTORY ${NIP49_INC}/ DESTINATION include/nostr/nip49)
