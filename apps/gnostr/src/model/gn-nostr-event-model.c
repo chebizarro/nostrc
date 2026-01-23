@@ -88,31 +88,6 @@ struct _GnNostrEventModel {
   guint debounce_source_id;       /* Pending debounce timeout */
   gint64 last_update_time_ms;     /* Timestamp of last items-changed emission */
   guint pending_new_count;        /* Count of new items waiting (for indicator) */
-
-  /* nostrc-apq: Idle-scheduled emission to prevent GTK4 ListView re-entrancy crashes */
-  guint emit_idle_id;             /* Pending g_idle_add source for items_changed */
-  guint emit_start;               /* Start position for batched emission */
-  guint emit_added;               /* Number of items added in batched emission */
-  gboolean in_batch;              /* TRUE while processing a batch - suppress emissions */
-  guint batch_start_len;          /* Length of notes array when batch started */
-  gboolean pending_refresh;       /* TRUE if model needs full refresh emission */
-  guint last_emitted_len;         /* Length at last emission (for calculating diff) */
-
-  /* Deferred trim to prevent GTK4 re-entrancy when called from scroll callbacks */
-  guint pending_trim_to;          /* Target count for deferred trim (0 = no pending) */
-  guint trim_idle_id;             /* Pending idle source for trim operation */
-
-  /* Deferred delete event processing to prevent GTK4 re-entrancy */
-  GArray *pending_deletes;        /* uint64_t note_keys of kind=5 events to process */
-  guint delete_idle_id;           /* Pending idle source for delete processing */
-
-  /* Deferred timeline event processing to prevent GTK4 re-entrancy */
-  GArray *pending_timeline;       /* uint64_t note_keys of timeline events to process */
-  guint timeline_idle_id;         /* Pending idle source for timeline processing */
-
-  /* Deferred profile event processing to prevent GTK4 re-entrancy */
-  GArray *pending_profiles;       /* uint64_t note_keys of profile events to process */
-  guint profiles_idle_id;         /* Pending idle source for profile processing */
 };
 
 typedef struct {
@@ -184,13 +159,6 @@ static void defer_note_insertion(GnNostrEventModel *self, uint64_t note_key, gin
 static gboolean flush_deferred_notes_cb(gpointer user_data);
 static void schedule_deferred_flush(GnNostrEventModel *self);
 static gint64 get_current_time_ms(void);
-
-/* nostrc-apq: Idle-scheduled emission to prevent GTK4 re-entrancy */
-static gboolean emit_items_changed_idle(gpointer user_data);
-static void schedule_items_changed(GnNostrEventModel *self, guint position, guint added);
-static void schedule_model_refresh(GnNostrEventModel *self);
-static void begin_batch(GnNostrEventModel *self);
-static void end_batch(GnNostrEventModel *self);
 
 /* Subscription callbacks */
 static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
@@ -487,19 +455,13 @@ static gboolean has_note_key(GnNostrEventModel *self, uint64_t key) {
   return FALSE;
 }
 
-/* Parse NIP-10 tags for threading (best-effort; used on refresh paths that have full event JSON)
- * Supports both marked e-tags (root/reply markers) and deprecated positional scheme.
- * Positional rules: first unmarked e-tag = root, last unmarked e-tag = reply (if different) */
+/* Parse NIP-10 tags for threading (best-effort; used on refresh paths that have full event JSON) */
 static void parse_nip10_tags(NostrEvent *evt, char **root_id, char **reply_id) {
   *root_id = NULL;
   *reply_id = NULL;
 
   NostrTags *tags = (NostrTags*)nostr_event_get_tags(evt);
   if (!tags) return;
-
-  /* Track unmarked e-tags for positional fallback */
-  const char *first_unmarked_e = NULL;
-  const char *last_unmarked_e = NULL;
 
   for (size_t i = 0; i < nostr_tags_size(tags); i++) {
     NostrTag *tag = nostr_tags_get(tags, i);
@@ -514,27 +476,12 @@ static void parse_nip10_tags(NostrEvent *evt, char **root_id, char **reply_id) {
     const char *marker = (nostr_tag_size(tag) >= 4) ? nostr_tag_get(tag, 3) : NULL;
 
     if (marker && strcmp(marker, "root") == 0) {
-      g_free(*root_id);
       *root_id = g_strdup(event_id);
     } else if (marker && strcmp(marker, "reply") == 0) {
-      g_free(*reply_id);
       *reply_id = g_strdup(event_id);
-    } else if (marker == NULL || *marker == '\0') {
-      /* Unmarked e-tag - track for positional fallback */
-      if (!first_unmarked_e) {
-        first_unmarked_e = event_id;
-      }
-      last_unmarked_e = event_id;
+    } else if (!*root_id && i == 0) {
+      *root_id = g_strdup(event_id);
     }
-    /* Skip "mention" markers - they don't establish reply hierarchy */
-  }
-
-  /* Apply positional fallback for unmarked e-tags (deprecated NIP-10 scheme) */
-  if (!*root_id && first_unmarked_e) {
-    *root_id = g_strdup(first_unmarked_e);
-  }
-  if (!*reply_id && last_unmarked_e && last_unmarked_e != first_unmarked_e) {
-    *reply_id = g_strdup(last_unmarked_e);
   }
 }
 
@@ -550,12 +497,7 @@ static gboolean flush_deferred_notes_cb(gpointer user_data) {
 
   self->debounce_source_id = 0;  /* Mark as not pending */
 
-  /* Defensive: ensure both arrays are valid */
-  if (!self->deferred_notes || !self->notes) {
-    return G_SOURCE_REMOVE;
-  }
-
-  if (self->deferred_notes->len == 0) {
+  if (!self->deferred_notes || self->deferred_notes->len == 0) {
     return G_SOURCE_REMOVE;
   }
 
@@ -606,12 +548,11 @@ static gboolean flush_deferred_notes_cb(gpointer user_data) {
   /* Clear deferred queue */
   g_array_set_size(self->deferred_notes, 0);
 
-  /* Update timestamp and schedule model refresh */
+  /* Update timestamp and emit batch signal */
   self->last_update_time_ms = now_ms;
   if (inserted > 0) {
-    /* nostrc-h40: Use idle-scheduled refresh instead of direct emission.
-     * Items were inserted at various positions, so full refresh is appropriate. */
-    schedule_model_refresh(self);
+    /* Emit a single items-changed for all insertions (position 0, added inserted) */
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, inserted);
   }
 
   /* Clear pending count and notify */
@@ -627,161 +568,6 @@ static void schedule_deferred_flush(GnNostrEventModel *self) {
     return;  /* Already scheduled */
   }
   self->debounce_source_id = g_timeout_add(DEBOUNCE_INTERVAL_MS, flush_deferred_notes_cb, self);
-}
-
-/* nostrc-apq: Emit items_changed from idle handler to prevent GTK4 re-entrancy crashes.
- * GTK4's ListView can crash if items_changed is emitted while it's still processing
- * a previous change. By deferring to idle, we ensure GTK finishes before next emit. */
-static gboolean emit_items_changed_idle(gpointer user_data) {
-  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
-  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return G_SOURCE_REMOVE;
-
-  self->emit_idle_id = 0;
-
-  /* nostrc-h40: Handle full refresh for model changes (additions + removals)
-   *
-   * CRITICAL: When items are removed from the model array BEFORE this idle
-   * callback runs, last_emitted_len can exceed notes->len. GTK4's ListView
-   * will crash if we emit items_changed(0, old_len, new_len) where old_len
-   * exceeds the actual array length, because it tries to access all "removed"
-   * items during its internal cleanup.
-   *
-   * Strategy: Emit changes in a safe order that keeps GTK's internal state
-   * consistent with our array:
-   * 1. If model shrunk (old_len > new_len): first tell GTK items were removed
-   *    from the END (position new_len, count old_len - new_len). This is safe
-   *    because GTK won't try to access the removed items.
-   * 2. Then refresh remaining items if needed.
-   * 3. If model grew (new_len > old_len): emit add at end. */
-  if (self->pending_refresh) {
-    guint old_len = self->last_emitted_len;  /* What GTK thinks the length is */
-    guint new_len = self->notes->len;        /* Actual current length */
-    self->pending_refresh = FALSE;
-    self->emit_added = 0;
-
-    /* CRITICAL: If model shrunk since we scheduled this idle callback, the items
-     * have ALREADY been removed from the array. GTK4's ListView crashes when we
-     * emit any removal signal because it tries to access the removed items
-     * (which no longer exist) during signal processing.
-     *
-     * Since removals are now emitted synchronously BEFORE items are removed
-     * (in enforce_window, remove_note_by_key, trim_*, clear), the only case
-     * where old_len > new_len in THIS callback is a race/edge case we can't
-     * safely handle. Just update tracking and skip emission. */
-
-    if (old_len > new_len) {
-      /* Model shrunk - removals were already emitted synchronously.
-       * Just update tracking to match reality. */
-      self->last_emitted_len = new_len;
-      self->last_update_time_ms = get_current_time_ms();
-      return G_SOURCE_REMOVE;
-    }
-
-    if (new_len > old_len) {
-      /* Model grew - emit addition at end */
-      guint added = new_len - old_len;
-      g_list_model_items_changed(G_LIST_MODEL(self), old_len, 0, added);
-    } else if (new_len > 0 && new_len == old_len) {
-      /* Same size - refresh all items (content may have changed) */
-      g_list_model_items_changed(G_LIST_MODEL(self), 0, new_len, new_len);
-    }
-
-    /* Update tracking AFTER emission */
-    self->last_emitted_len = new_len;
-
-    self->last_update_time_ms = get_current_time_ms();
-    return G_SOURCE_REMOVE;
-  }
-
-  if (self->emit_added > 0) {
-    /* Emit a single batched signal for all items added since last emit */
-    g_list_model_items_changed(G_LIST_MODEL(self), self->emit_start, 0, self->emit_added);
-    self->emit_added = 0;
-    self->last_emitted_len = self->notes->len;
-    self->last_update_time_ms = get_current_time_ms();
-  }
-
-  return G_SOURCE_REMOVE;
-}
-
-/* Schedule an items_changed emission for the next idle iteration.
- * Coalesces multiple rapid insertions into a single signal. */
-static void schedule_items_changed(GnNostrEventModel *self, guint position, guint added) {
-  /* In batch mode, don't schedule - end_batch will handle emission */
-  if (self->in_batch) return;
-
-  if (self->emit_idle_id == 0) {
-    /* First item in this batch - record position */
-    self->emit_start = position;
-    self->emit_added = added;
-    self->emit_idle_id = g_idle_add(emit_items_changed_idle, self);
-  } else {
-    /* Subsequent items - extend the range if needed */
-    guint new_start = MIN(self->emit_start, position);
-    guint old_end = self->emit_start + self->emit_added;
-    guint new_end = MAX(old_end, position + added);
-    self->emit_start = new_start;
-    self->emit_added = new_end - new_start;
-  }
-}
-
-/* nostrc-h40: Schedule a full model refresh via idle handler.
- * Used when items are removed or model changes in ways that can't be
- * expressed as simple insertions. Always safe - emits full refresh. */
-static void schedule_model_refresh(GnNostrEventModel *self) {
-  if (!self) return;
-
-  /* In batch mode, end_batch will handle emission */
-  if (self->in_batch) return;
-
-  self->pending_refresh = TRUE;
-
-  if (self->emit_idle_id == 0) {
-    self->emit_idle_id = g_idle_add(emit_items_changed_idle, self);
-  }
-}
-
-/* Begin batch mode - suppress all emissions until end_batch is called.
- * This prevents GTK4 ListView re-entrancy crashes during rapid updates. */
-static void begin_batch(GnNostrEventModel *self) {
-  if (!self) return;
-  self->in_batch = TRUE;
-  self->batch_start_len = self->notes->len;
-  /* Cancel any pending idle emission - we'll emit at end of batch */
-  if (self->emit_idle_id > 0) {
-    g_source_remove(self->emit_idle_id);
-    self->emit_idle_id = 0;
-  }
-  self->emit_added = 0;
-}
-
-/* End batch mode and emit a single comprehensive items-changed signal.
- * Since items are inserted at various sorted positions during batch,
- * we emit a "full refresh" signal telling GTK the entire model changed. */
-static void end_batch(GnNostrEventModel *self) {
-  if (!self || !self->in_batch) return;
-  self->in_batch = FALSE;
-
-  guint new_len = self->notes->len;
-  /* Use last_emitted_len (what GTK thinks the length is).
-   * Removals are now emitted synchronously in enforce_window, so
-   * last_emitted_len should already reflect any removals. */
-  guint old_len = self->last_emitted_len;
-
-  if (new_len > old_len) {
-    /* Model grew - emit additions. Since items were inserted at various
-     * sorted positions, we emit a full refresh. */
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
-    self->last_emitted_len = new_len;
-  } else if (new_len < old_len) {
-    /* Model shrunk but last_emitted_len wasn't updated - this shouldn't
-     * happen since enforce_window now emits synchronously. Just update
-     * tracking to prevent future issues. */
-    g_warning("end_batch: model shrunk (%u -> %u) without emission - fixing tracking",
-              old_len, new_len);
-    self->last_emitted_len = new_len;
-  }
-  /* If new_len == old_len, no emission needed */
 }
 
 /* nostrc-yi2: Defer note insertion (when user is not at top) */
@@ -844,10 +630,16 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
   NoteEntry entry = { .note_key = note_key, .created_at = created_at };
   g_array_insert_val(self->notes, pos, entry);
 
-  /* nostrc-apq: Always use idle-scheduled emission to prevent GTK4 re-entrancy.
-   * Direct g_list_model_items_changed calls can crash GTK4's ListView if
-   * emitted during batch processing while GTK is still updating from previous emit. */
-  schedule_items_changed(self, pos, 1);
+  /* nostrc-yi2: Rate-limited emit - debounce rapid updates */
+  gint64 now_ms = get_current_time_ms();
+  gint64 elapsed = now_ms - self->last_update_time_ms;
+  if (elapsed >= MIN_UPDATE_INTERVAL_MS || self->last_update_time_ms == 0) {
+    self->last_update_time_ms = now_ms;
+    g_list_model_items_changed(G_LIST_MODEL(self), pos, 0, 1);
+  } else {
+    /* Schedule debounced flush */
+    schedule_deferred_flush(self);
+  }
 }
 
 /* Enforce window size (~100 items) and evict oldest, including cache cleanup. */
@@ -861,27 +653,7 @@ static void enforce_window(GnNostrEventModel *self) {
   guint to_remove = self->notes->len - cap;
   guint old_len = self->notes->len;
 
-  /* CRITICAL: Emit removal signal BEFORE removing items from array.
-   * GTK's ListView calls get_item() during signal processing, so items
-   * must still exist when the signal is emitted.
-   *
-   * This MUST happen even in batch mode - GTK4 requires items to exist
-   * during removal signals. Additions can be batched, but removals cannot.
-   * If we defer removal signals, GTK crashes when end_batch tries to emit
-   * because the items are already gone from our array. */
-
-  /* Cancel any pending idle emission - we're emitting now */
-  if (self->emit_idle_id > 0) {
-    g_source_remove(self->emit_idle_id);
-    self->emit_idle_id = 0;
-  }
-  /* Emit removal from end - items at positions cap to old_len-1 */
-  g_list_model_items_changed(G_LIST_MODEL(self), cap, to_remove, 0);
-  self->last_emitted_len = cap;
-  self->pending_refresh = FALSE;
-  self->emit_added = 0;
-
-  /* Now remove items - they're no longer referenced by ListView */
+  /* Remove oldest entries (tail) and their cached state. */
   for (guint i = 0; i < to_remove; i++) {
     guint idx = old_len - 1 - i;
     NoteEntry *old = &g_array_index(self->notes, NoteEntry, idx);
@@ -895,6 +667,7 @@ static void enforce_window(GnNostrEventModel *self) {
   }
 
   g_array_set_size(self->notes, cap);
+  g_list_model_items_changed(G_LIST_MODEL(self), cap, to_remove, 0);
 }
 
 /* Pending queue: pubkey -> array of PendingEntry. Returns TRUE if this pubkey had no pending queue before. */
@@ -936,14 +709,6 @@ static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex)
     return;
   }
 
-  /* CRITICAL: Use batch mode to prevent re-entrancy crashes during signal emission.
-   * Without batching, g_list_model_items_changed() can trigger GTK callbacks that
-   * call back into flush_pending_notes(), causing memory corruption. */
-  gboolean was_in_batch = self->in_batch;
-  if (!was_in_batch) {
-    begin_batch(self);
-  }
-
   for (guint i = 0; i < arr->len; i++) {
     PendingEntry *pe = &g_array_index(arr, PendingEntry, i);
     add_note_internal(self, pe->note_key, pe->created_at, NULL, NULL, 0);
@@ -952,15 +717,7 @@ static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex)
   g_array_unref(arr);
   g_free(key_str);
 
-  /* enforce_window must be called while still in batch mode to prevent
-   * re-entrancy during signal emission. end_batch will emit the consolidated
-   * items-changed signal after all modifications (including window enforcement). */
   enforce_window(self);
-
-  /* End batch mode to emit consolidated items-changed signal */
-  if (!was_in_batch) {
-    end_batch(self);
-  }
 }
 
 /* Remove a note_key from any pending queues. */
@@ -997,26 +754,14 @@ static gboolean remove_note_by_key(GnNostrEventModel *self, uint64_t note_key) {
     NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
     if (entry->note_key != note_key) continue;
 
-    /* CRITICAL: Emit removal signal BEFORE removing from array.
-     * GTK's ListView calls get_item() during signal processing. */
-    if (!self->in_batch) {
-      if (self->emit_idle_id > 0) {
-        g_source_remove(self->emit_idle_id);
-        self->emit_idle_id = 0;
-      }
-      g_list_model_items_changed(G_LIST_MODEL(self), i, 1, 0);
-      self->last_emitted_len = self->notes->len - 1;
-      self->pending_refresh = FALSE;
-      self->emit_added = 0;
-    }
-
     /* Cleanup caches */
     cache_lru_remove_key(self, note_key);
     g_hash_table_remove(self->thread_info, &note_key);
     g_hash_table_remove(self->item_cache, &note_key);
 
-    /* Remove visible entry */
+    /* Remove visible entry and emit change */
     g_array_remove_index(self->notes, i);
+    g_list_model_items_changed(G_LIST_MODEL(self), i, 1, 0);
 
     return TRUE;
   }
@@ -1134,28 +879,16 @@ static void gn_nostr_event_model_list_model_iface_init(GListModelInterface *ifac
 
 /* -------------------- Subscriptions -------------------- */
 
-/* Idle handler to process pending profile events. Deferred to avoid GTK4 re-entrancy
- * crashes when model changes are emitted from nostrdb subscription callbacks. */
-static gboolean process_pending_profiles_idle(gpointer user_data) {
+static void on_sub_profiles_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
+  (void)subid;
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
-  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return G_SOURCE_REMOVE;
-
-  self->profiles_idle_id = 0;
-
-  if (!self->pending_profiles || self->pending_profiles->len == 0) {
-    return G_SOURCE_REMOVE;
-  }
+  if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
 
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
-    g_array_set_size(self->pending_profiles, 0);
-    return G_SOURCE_REMOVE;
-  }
-
-  guint n_keys = self->pending_profiles->len;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
 
   for (guint i = 0; i < n_keys; i++) {
-    uint64_t note_key = g_array_index(self->pending_profiles, uint64_t, i);
+    uint64_t note_key = note_keys[i];
     storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
     if (!note) continue;
 
@@ -1180,58 +913,24 @@ static gboolean process_pending_profiles_idle(gpointer user_data) {
   }
 
   storage_ndb_end_query(txn);
-
-  /* Clear processed profile keys */
-  g_array_set_size(self->pending_profiles, 0);
-
-  return G_SOURCE_REMOVE;
 }
 
-static void on_sub_profiles_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
+static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
   (void)subid;
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
   if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
 
-  /* Queue profile keys for deferred processing to avoid GTK4 re-entrancy crashes.
-   * Processing happens in an idle handler when GTK is in a stable state. */
-  for (guint i = 0; i < n_keys; i++) {
-    g_array_append_val(self->pending_profiles, note_keys[i]);
-  }
-
-  /* Schedule idle processing if not already scheduled */
-  if (self->profiles_idle_id == 0) {
-    self->profiles_idle_id = g_idle_add(process_pending_profiles_idle, self);
-  }
-}
-
-/* Idle handler to process pending timeline events. Deferred to avoid GTK4 re-entrancy
- * crashes when model changes are emitted from nostrdb subscription callbacks. */
-static gboolean process_pending_timeline_idle(gpointer user_data) {
-  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
-  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return G_SOURCE_REMOVE;
-
-  self->timeline_idle_id = 0;
-
-  if (!self->pending_timeline || self->pending_timeline->len == 0) {
-    return G_SOURCE_REMOVE;
-  }
-
-  /* Begin batch mode to suppress emissions during processing */
-  begin_batch(self);
 
   void *txn = NULL;
   if (storage_ndb_begin_query(&txn) != 0 || !txn) {
     g_warning("[TIMELINE] failed to begin query");
-    end_batch(self);
-    g_array_set_size(self->pending_timeline, 0);
-    return G_SOURCE_REMOVE;
+    return;
   }
 
   guint added = 0, filtered = 0, pending = 0, no_note = 0;
-  guint n_keys = self->pending_timeline->len;
 
   for (guint i = 0; i < n_keys; i++) {
-    uint64_t note_key = g_array_index(self->pending_timeline, uint64_t, i);
+    uint64_t note_key = note_keys[i];
     storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
 
     if (!note) continue;
@@ -1275,52 +974,20 @@ static gboolean process_pending_timeline_idle(gpointer user_data) {
 
   storage_ndb_end_query(txn);
 
-  /* Clear processed timeline keys */
-  g_array_set_size(self->pending_timeline, 0);
 
   enforce_window(self);
-
-  /* End batch mode and emit single comprehensive signal */
-  end_batch(self);
-
-  return G_SOURCE_REMOVE;
 }
 
-static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
+static void on_sub_deletes_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
   (void)subid;
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
   if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
 
-  /* Queue timeline keys for deferred processing to avoid GTK4 re-entrancy crashes.
-   * Processing happens in an idle handler when GTK is in a stable state. */
-  for (guint i = 0; i < n_keys; i++) {
-    g_array_append_val(self->pending_timeline, note_keys[i]);
-  }
-
-  /* Schedule idle processing if not already scheduled */
-  if (self->timeline_idle_id == 0) {
-    self->timeline_idle_id = g_idle_add(process_pending_timeline_idle, self);
-  }
-}
-
-/* Idle handler to process pending delete events. Deferred to avoid GTK4 re-entrancy
- * crashes when model changes are emitted from nostrdb subscription callbacks. */
-static gboolean process_pending_deletes_idle(gpointer user_data) {
-  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
-  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return G_SOURCE_REMOVE;
-
-  self->delete_idle_id = 0;
-
-  if (!self->pending_deletes || self->pending_deletes->len == 0) {
-    return G_SOURCE_REMOVE;
-  }
-
   void *txn = NULL;
-  if (storage_ndb_begin_query(&txn) != 0 || !txn) return G_SOURCE_REMOVE;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
 
-  /* Process all pending delete keys */
-  for (guint i = 0; i < self->pending_deletes->len; i++) {
-    uint64_t del_key = g_array_index(self->pending_deletes, uint64_t, i);
+  for (guint i = 0; i < n_keys; i++) {
+    uint64_t del_key = note_keys[i];
     storage_ndb_note *note = storage_ndb_get_note_ptr(txn, del_key);
     if (!note) continue;
 
@@ -1348,28 +1015,6 @@ static gboolean process_pending_deletes_idle(gpointer user_data) {
   }
 
   storage_ndb_end_query(txn);
-
-  /* Clear processed deletes */
-  g_array_set_size(self->pending_deletes, 0);
-
-  return G_SOURCE_REMOVE;
-}
-
-static void on_sub_deletes_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
-  (void)subid;
-  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
-  if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
-
-  /* Queue delete keys for deferred processing to avoid GTK4 re-entrancy crashes.
-   * Processing happens in an idle handler when GTK is in a stable state. */
-  for (guint i = 0; i < n_keys; i++) {
-    g_array_append_val(self->pending_deletes, note_keys[i]);
-  }
-
-  /* Schedule idle processing if not already scheduled */
-  if (self->delete_idle_id == 0) {
-    self->delete_idle_id = g_idle_add(process_pending_deletes_idle, self);
-  }
 }
 
 /* -------------------- GObject boilerplate -------------------- */
@@ -1409,39 +1054,6 @@ static void gn_nostr_event_model_finalize(GObject *object) {
     self->debounce_source_id = 0;
   }
   if (self->deferred_notes) g_array_unref(self->deferred_notes);
-
-  /* nostrc-apq: Clean up idle emission */
-  if (self->emit_idle_id > 0) {
-    g_source_remove(self->emit_idle_id);
-    self->emit_idle_id = 0;
-  }
-
-  /* Clean up deferred trim */
-  if (self->trim_idle_id > 0) {
-    g_source_remove(self->trim_idle_id);
-    self->trim_idle_id = 0;
-  }
-
-  /* Clean up deferred delete processing */
-  if (self->delete_idle_id > 0) {
-    g_source_remove(self->delete_idle_id);
-    self->delete_idle_id = 0;
-  }
-  if (self->pending_deletes) g_array_unref(self->pending_deletes);
-
-  /* Clean up deferred timeline processing */
-  if (self->timeline_idle_id > 0) {
-    g_source_remove(self->timeline_idle_id);
-    self->timeline_idle_id = 0;
-  }
-  if (self->pending_timeline) g_array_unref(self->pending_timeline);
-
-  /* Clean up deferred profile processing */
-  if (self->profiles_idle_id > 0) {
-    g_source_remove(self->profiles_idle_id);
-    self->profiles_idle_id = 0;
-  }
-  if (self->pending_profiles) g_array_unref(self->pending_profiles);
 
   G_OBJECT_CLASS(gn_nostr_event_model_parent_class)->finalize(object);
 }
@@ -1532,31 +1144,6 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
   self->debounce_source_id = 0;
   self->last_update_time_ms = 0;
   self->pending_new_count = 0;
-
-  /* nostrc-apq: Initialize idle emission fields */
-  self->emit_idle_id = 0;
-  self->emit_start = 0;
-  self->emit_added = 0;
-  self->in_batch = FALSE;
-  self->batch_start_len = 0;
-  self->pending_refresh = FALSE;
-  self->last_emitted_len = 0;
-
-  /* Deferred trim */
-  self->pending_trim_to = 0;
-  self->trim_idle_id = 0;
-
-  /* Deferred delete processing */
-  self->pending_deletes = g_array_new(FALSE, FALSE, sizeof(uint64_t));
-  self->delete_idle_id = 0;
-
-  /* Deferred timeline processing */
-  self->pending_timeline = g_array_new(FALSE, FALSE, sizeof(uint64_t));
-  self->timeline_idle_id = 0;
-
-  /* Deferred profile processing */
-  self->pending_profiles = g_array_new(FALSE, FALSE, sizeof(uint64_t));
-  self->profiles_idle_id = 0;
 
   /* Install lifetime subscriptions via dispatcher (marshals to main loop) */
   self->sub_profiles = gn_ndb_subscribe(FILTER_PROFILES, on_sub_profiles_batch, self, NULL);
@@ -1803,24 +1390,13 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
     return;
   }
 
-  /* CRITICAL: Emit removal signal BEFORE clearing array.
-   * GTK's ListView needs items to exist during signal processing. */
-  if (!self->in_batch) {
-    if (self->emit_idle_id > 0) {
-      g_source_remove(self->emit_idle_id);
-      self->emit_idle_id = 0;
-    }
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, 0);
-    self->last_emitted_len = 0;
-    self->pending_refresh = FALSE;
-    self->emit_added = 0;
-  }
-
   g_array_set_size(self->notes, 0);
   g_hash_table_remove_all(self->item_cache);
   g_queue_clear(self->cache_lru);
   g_hash_table_remove_all(self->thread_info);
   g_hash_table_remove_all(self->pending_by_author);
+
+  g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, 0);
 
   g_debug("[MODEL] Cleared %u items", old_size);
 }
@@ -1939,19 +1515,6 @@ void gn_nostr_event_model_trim_newer(GnNostrEventModel *self, guint keep_count) 
 
   guint to_remove = self->notes->len - keep_count;
 
-  /* CRITICAL: Emit removal signal BEFORE removing from array.
-   * Removing from front (position 0), GTK needs items to exist during signal. */
-  if (!self->in_batch) {
-    if (self->emit_idle_id > 0) {
-      g_source_remove(self->emit_idle_id);
-      self->emit_idle_id = 0;
-    }
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, to_remove, 0);
-    self->last_emitted_len = keep_count;
-    self->pending_refresh = FALSE;
-    self->emit_added = 0;
-  }
-
   /* Remove newest entries (head) and their cached state */
   for (guint i = 0; i < to_remove; i++) {
     NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
@@ -1963,6 +1526,7 @@ void gn_nostr_event_model_trim_newer(GnNostrEventModel *self, guint keep_count) 
 
   /* Remove from front of array */
   g_array_remove_range(self->notes, 0, to_remove);
+  g_list_model_items_changed(G_LIST_MODEL(self), 0, to_remove, 0);
 
   g_debug("[MODEL] Trimmed %u newer items, %u remaining", to_remove, self->notes->len);
 }
@@ -2116,23 +1680,12 @@ gint64 gn_nostr_event_model_get_newest_timestamp(GnNostrEventModel *self) {
   return newest->created_at;
 }
 
-/* Internal: Execute the actual trim (called from idle handler) */
-static void do_trim_older(GnNostrEventModel *self, guint keep_count) {
+void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
   if (self->notes->len <= keep_count) return;
 
   guint to_remove = self->notes->len - keep_count;
   guint start_idx = keep_count; /* Remove from end */
-
-  /* CRITICAL: Emit removal signal BEFORE removing from array.
-   * Removing from end (position start_idx), GTK needs items to exist during signal. */
-  if (self->emit_idle_id > 0) {
-    g_source_remove(self->emit_idle_id);
-    self->emit_idle_id = 0;
-  }
-  g_list_model_items_changed(G_LIST_MODEL(self), start_idx, to_remove, 0);
-  self->last_emitted_len = keep_count;
-  self->pending_refresh = FALSE;
-  self->emit_added = 0;
 
   /* Remove oldest entries (tail) and their cached state */
   for (guint i = start_idx; i < self->notes->len; i++) {
@@ -2145,38 +1698,9 @@ static void do_trim_older(GnNostrEventModel *self, guint keep_count) {
 
   /* Remove from end of array */
   g_array_remove_range(self->notes, start_idx, to_remove);
+  g_list_model_items_changed(G_LIST_MODEL(self), start_idx, to_remove, 0);
 
   g_debug("[MODEL] Trimmed %u older items, %u remaining", to_remove, self->notes->len);
-}
-
-/* Idle handler for deferred trim */
-static gboolean trim_idle_cb(gpointer user_data) {
-  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
-  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return G_SOURCE_REMOVE;
-
-  self->trim_idle_id = 0;
-  guint keep_count = self->pending_trim_to;
-  self->pending_trim_to = 0;
-
-  if (keep_count > 0) {
-    do_trim_older(self, keep_count);
-  }
-
-  return G_SOURCE_REMOVE;
-}
-
-void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count) {
-  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
-  if (self->notes->len <= keep_count) return;
-
-  /* Defer trim to idle to prevent GTK4 re-entrancy crashes.
-   * This function is often called from scroll callbacks, and emitting
-   * items_changed during scroll handling crashes GTK's ListView. */
-  self->pending_trim_to = keep_count;
-
-  if (self->trim_idle_id == 0) {
-    self->trim_idle_id = g_idle_add(trim_idle_cb, self);
-  }
 }
 
 guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
