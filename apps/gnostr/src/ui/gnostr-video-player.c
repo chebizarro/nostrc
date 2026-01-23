@@ -7,6 +7,7 @@
  */
 
 #include "gnostr-video-player.h"
+#include "gnostr-main-window.h"
 #include <glib/gi18n.h>
 
 /* Controls auto-hide timeout in seconds */
@@ -851,6 +852,12 @@ void gnostr_video_player_set_fullscreen(GnostrVideoPlayer *self, gboolean fullsc
     /* Update button icon */
     if (GTK_IS_BUTTON(self->btn_fullscreen)) {
       gtk_button_set_icon_name(GTK_BUTTON(self->btn_fullscreen), "view-restore-symbolic");
+    }
+
+    /* Show toast with Escape key hint */
+    GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+    if (root && GTK_IS_WINDOW(root)) {
+      gnostr_main_window_show_toast(GTK_WIDGET(root), _("Press Esc to exit fullscreen"));
     }
   } else {
     /* Exit fullscreen */

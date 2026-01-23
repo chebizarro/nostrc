@@ -39,10 +39,10 @@
                     </child>
                   </object>
                 </child>
-                <!-- Spacer for avatar overflow: avatar is 144px, half (72px) extends below banner -->
+                <!-- Minimal spacer for avatar overflow (avatar extends beyond this visually) -->
                 <child>
                   <object class="GtkBox">
-                    <property name="height-request">72</property>
+                    <property name="height-request">8</property>
                   </object>
                 </child>
               </object>
@@ -129,14 +129,14 @@
           </object>
         </child>
 
-        <!-- Profile info section (name, handle) -->
+        <!-- Profile info section (name, handle) - positioned beside avatar -->
         <child>
           <object class="GtkBox">
             <property name="orientation">vertical</property>
             <property name="spacing">2</property>
-            <property name="margin-start">16</property>
+            <property name="margin-start">170</property>
             <property name="margin-end">16</property>
-            <property name="margin-top">4</property>
+            <property name="margin-top">0</property>
             <property name="margin-bottom">4</property>
             <child>
               <object class="GtkLabel" id="lbl_display_name">
@@ -165,13 +165,13 @@
           </object>
         </child>
 
-        <!-- Action buttons for other profiles -->
+        <!-- Action buttons for other profiles - aligned with profile name -->
         <child>
           <object class="GtkBox" id="other_profile_actions">
             <property name="orientation">horizontal</property>
             <property name="spacing">8</property>
             <property name="homogeneous">true</property>
-            <property name="margin-start">16</property>
+            <property name="margin-start">170</property>
             <property name="margin-end">16</property>
             <property name="margin-bottom">12</property>
             <child>
@@ -194,12 +194,12 @@
           </object>
         </child>
 
-        <!-- Edit Profile button for own profile -->
+        <!-- Edit Profile button for own profile - aligned with profile name -->
         <child>
           <object class="GtkBox" id="own_profile_actions">
             <property name="orientation">horizontal</property>
             <property name="spacing">8</property>
-            <property name="margin-start">16</property>
+            <property name="margin-start">170</property>
             <property name="margin-end">16</property>
             <property name="margin-bottom">12</property>
             <property name="visible">false</property>
