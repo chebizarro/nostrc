@@ -241,7 +241,7 @@
       </object>
     </child>
 
-    <!-- Legend -->
+    <!-- Legend - uses FlowBox for responsive wrapping on narrow screens -->
     <child>
       <object class="AdwPreferencesGroup">
         <property name="title" translatable="yes">Status Legend</property>
@@ -249,92 +249,116 @@
           <property name="label">Result status legend</property>
         </accessibility>
         <child>
-          <object class="GtkBox">
-            <property name="orientation">horizontal</property>
-            <property name="spacing">24</property>
+          <object class="GtkFlowBox">
+            <property name="selection-mode">none</property>
+            <property name="homogeneous">false</property>
+            <property name="row-spacing">8</property>
+            <property name="column-spacing">24</property>
             <property name="margin-top">6</property>
             <property name="margin-bottom">6</property>
             <property name="halign">center</property>
+            <property name="max-children-per-line">4</property>
+            <property name="min-children-per-line">2</property>
             <child>
-              <object class="GtkBox">
-                <property name="spacing">6</property>
+              <object class="GtkFlowBoxChild">
+                <property name="focusable">false</property>
                 <child>
-                  <object class="GtkImage">
-                    <property name="icon-name">emblem-ok-symbolic</property>
-                    <style>
-                      <class name="success"/>
-                    </style>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label" translatable="yes">Success</property>
-                    <style>
-                      <class name="dim-label"/>
-                    </style>
+                  <object class="GtkBox">
+                    <property name="spacing">6</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">emblem-ok-symbolic</property>
+                        <style>
+                          <class name="success"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Success</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
                   </object>
                 </child>
               </object>
             </child>
             <child>
-              <object class="GtkBox">
-                <property name="spacing">6</property>
+              <object class="GtkFlowBoxChild">
+                <property name="focusable">false</property>
                 <child>
-                  <object class="GtkImage">
-                    <property name="icon-name">action-unavailable-symbolic</property>
-                    <style>
-                      <class name="warning"/>
-                    </style>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label" translatable="yes">Denied</property>
-                    <style>
-                      <class name="dim-label"/>
-                    </style>
-                  </object>
-                </child>
-              </object>
-            </child>
-            <child>
-              <object class="GtkBox">
-                <property name="spacing">6</property>
-                <child>
-                  <object class="GtkImage">
-                    <property name="icon-name">dialog-error-symbolic</property>
-                    <style>
-                      <class name="error"/>
-                    </style>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label" translatable="yes">Error</property>
-                    <style>
-                      <class name="dim-label"/>
-                    </style>
+                  <object class="GtkBox">
+                    <property name="spacing">6</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">action-unavailable-symbolic</property>
+                        <style>
+                          <class name="warning"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Denied</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
                   </object>
                 </child>
               </object>
             </child>
             <child>
-              <object class="GtkBox">
-                <property name="spacing">6</property>
+              <object class="GtkFlowBoxChild">
+                <property name="focusable">false</property>
                 <child>
-                  <object class="GtkImage">
-                    <property name="icon-name">appointment-soon-symbolic</property>
-                    <style>
-                      <class name="warning"/>
-                    </style>
+                  <object class="GtkBox">
+                    <property name="spacing">6</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">dialog-error-symbolic</property>
+                        <style>
+                          <class name="error"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Error</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
                   </object>
                 </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkFlowBoxChild">
+                <property name="focusable">false</property>
                 <child>
-                  <object class="GtkLabel">
-                    <property name="label" translatable="yes">Timeout</property>
-                    <style>
-                      <class name="dim-label"/>
-                    </style>
+                  <object class="GtkBox">
+                    <property name="spacing">6</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">appointment-soon-symbolic</property>
+                        <style>
+                          <class name="warning"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Timeout</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
                   </object>
                 </child>
               </object>

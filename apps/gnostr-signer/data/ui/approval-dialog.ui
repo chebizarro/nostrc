@@ -6,8 +6,11 @@
     <property name="title" translatable="yes">Approval Required</property>
     <property name="content-width">480</property>
     <property name="content-height">-1</property>
+    <!-- Minimum width for narrow screens -->
+    <property name="width-request">300</property>
     <!-- Enable close on Escape key (treated as deny) -->
     <property name="can-close">true</property>
+    <property name="follows-content-size">true</property>
     <accessibility>
       <property name="label">Signature approval dialog</property>
       <property name="description">An application is requesting permission to sign an event. Review the details and approve or deny.</property>
@@ -47,6 +50,16 @@
           </object>
         </child>
         <child>
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="propagate-natural-height">true</property>
+            <property name="max-content-height">500</property>
+            <child>
+              <object class="AdwClamp">
+                <property name="maximum-size">480</property>
+                <property name="tightening-threshold">360</property>
+                <child>
           <object class="GtkBox">
             <property name="orientation">vertical</property>
             <property name="spacing">16</property>
@@ -302,6 +315,10 @@
               </object>
             </child>
 
+          </object>
+                </child>
+              </object>
+            </child>
           </object>
         </child>
       </object>

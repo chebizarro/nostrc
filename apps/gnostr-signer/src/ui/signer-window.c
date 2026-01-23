@@ -31,6 +31,7 @@ struct _SignerWindow {
   AdwHeaderBar *header_bar;
   AdwViewSwitcherTitle *switcher_title;
   AdwNavigationSplitView *split_view;
+  GtkToggleButton *sidebar_toggle_btn;
   GtkMenuButton *menu_btn;
   GtkListBox *sidebar;
   AdwViewStack *stack;
@@ -118,6 +119,24 @@ static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpoint
   int idx = gtk_list_box_row_get_index(row);
   const char *names[] = { "permissions", "applications", "sessions", "history", "settings" };
   if (idx >= 0 && idx < 5) adw_view_stack_set_visible_child_name(self->stack, names[idx]);
+
+  /* On narrow screens when sidebar is collapsed, selecting a row should close the sidebar */
+  if (self->split_view && adw_navigation_split_view_get_collapsed(self->split_view)) {
+    adw_navigation_split_view_set_show_content(self->split_view, TRUE);
+    if (self->sidebar_toggle_btn) {
+      gtk_toggle_button_set_active(self->sidebar_toggle_btn, FALSE);
+    }
+  }
+}
+
+/* Handle sidebar toggle button click for responsive navigation */
+static void on_sidebar_toggle_clicked(GtkToggleButton *button, gpointer user_data) {
+  SignerWindow *self = SIGNER_WINDOW(user_data);
+  if (!self || !self->split_view) return;
+
+  gboolean active = gtk_toggle_button_get_active(button);
+  /* When toggle is active, show sidebar; when inactive, show content */
+  adw_navigation_split_view_set_show_content(self->split_view, !active);
 }
 
 static void signer_window_dispose(GObject *object) {
@@ -169,6 +188,7 @@ static void signer_window_class_init(SignerWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, header_bar);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, switcher_title);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, split_view);
+  gtk_widget_class_bind_template_child(widget_class, SignerWindow, sidebar_toggle_btn);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, menu_btn);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, sidebar);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, stack);
@@ -504,6 +524,12 @@ static void signer_window_init(SignerWindow *self) {
   GtkListBoxRow *first = gtk_list_box_get_row_at_index(self->sidebar, 0);
   if (first) gtk_list_box_select_row(self->sidebar, first);
   if (self->stack) adw_view_stack_set_visible_child_name(self->stack, "permissions");
+
+  /* Connect sidebar toggle button for responsive navigation */
+  if (self->sidebar_toggle_btn) {
+    g_signal_connect(self->sidebar_toggle_btn, "toggled",
+                     G_CALLBACK(on_sidebar_toggle_clicked), self);
+  }
 
   /* Setup enhanced keyboard navigation for sidebar */
   static const char *page_names[] = { "permissions", "applications", "sessions", "history", "settings", NULL };

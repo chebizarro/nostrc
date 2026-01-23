@@ -18,18 +18,20 @@
     <child>
       <object class="AdwBreakpoint" id="breakpoint_mobile">
         <condition>max-width: 500px</condition>
-        <!-- On narrow screens: collapse sidebar, show bottom bar -->
+        <!-- On narrow screens: collapse sidebar, show bottom bar, reveal toggle button -->
         <setter object="split_view" property="collapsed">true</setter>
         <setter object="bottom_bar" property="reveal">true</setter>
         <setter object="switcher_title" property="title-visible">true</setter>
+        <setter object="sidebar_toggle_btn" property="visible">true</setter>
       </object>
     </child>
     <child>
       <object class="AdwBreakpoint" id="breakpoint_tablet">
         <condition>max-width: 800px</condition>
-        <!-- On medium screens: sidebar overlay mode -->
+        <!-- On medium screens: sidebar overlay mode, show toggle button -->
         <setter object="split_view" property="collapsed">true</setter>
         <setter object="bottom_bar" property="reveal">false</setter>
+        <setter object="sidebar_toggle_btn" property="visible">true</setter>
       </object>
     </child>
 
