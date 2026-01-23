@@ -17,6 +17,16 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
   GnostrMainWindow *win = gnostr_main_window_new(app);
   gtk_window_present(GTK_WINDOW(win));
 
+  /* Create system tray icon now that GTK is fully initialized.
+   * Must be done here (not before g_application_run) to avoid
+   * macOS Core Graphics assertion failures. */
+  if (!g_tray_icon && gnostr_tray_icon_is_available()) {
+    g_tray_icon = gnostr_tray_icon_new(app);
+    if (g_tray_icon) {
+      g_debug("System tray icon enabled");
+    }
+  }
+
   /* Associate window with tray icon for show/hide functionality */
   if (g_tray_icon) {
     gnostr_tray_icon_set_window(g_tray_icon, GTK_WINDOW(win));
@@ -53,14 +63,6 @@ int main(int argc, char **argv) {
   const char *quit_accels[] = { "<Primary>q", NULL };
   gtk_application_set_accels_for_action(app, "app.quit", quit_accels);
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
-
-  /* Create system tray icon (Linux only, optional) */
-  if (gnostr_tray_icon_is_available()) {
-    g_tray_icon = gnostr_tray_icon_new(app);
-    if (g_tray_icon) {
-      g_message("System tray icon enabled");
-    }
-  }
 
   /* Initialize subscription dispatcher BEFORE storage to register callback */
   gn_ndb_dispatcher_init();

@@ -63,6 +63,8 @@ target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/ni
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/libnostr/include)
 # Link against core to resolve owner APIs
 target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB nostr_nip55l_core nip04)
+# Ensure library directories are passed to linker (macOS fix)
+target_link_directories(${APP_SIGNER_BIN} PRIVATE ${GLIB_LIBRARY_DIRS})
 # Link NIP-46 core for bunker service
 if (TARGET nostr_nip46_core)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE nostr_nip46_core)
