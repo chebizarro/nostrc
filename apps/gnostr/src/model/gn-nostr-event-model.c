@@ -643,26 +643,31 @@ static gboolean emit_items_changed_idle(gpointer user_data) {
     self->pending_refresh = FALSE;
     self->emit_added = 0;
 
-    /* CRITICAL: GTK4 ListView calls get_item() for removed items during signal
-     * processing. If we emit items_changed(0, old_len, new_len) and old_len > new_len,
-     * GTK will try to access items beyond new_len, causing SIGSEGV.
+    /* CRITICAL: If model shrunk since we scheduled this idle callback, the items
+     * have ALREADY been removed from the array. GTK4's ListView crashes when we
+     * emit any removal signal because it tries to access the removed items
+     * (which no longer exist) during signal processing.
      *
-     * Safe strategy:
-     * 1. If model shrunk: emit removal from END first (GTK won't access those)
-     * 2. Then refresh remaining items by re-adding them
-     * 3. If model grew: emit addition at end */
+     * Since removals are now emitted synchronously BEFORE items are removed
+     * (in enforce_window, remove_note_by_key, trim_*, clear), the only case
+     * where old_len > new_len in THIS callback is a race/edge case we can't
+     * safely handle. Just update tracking and skip emission. */
 
     if (old_len > new_len) {
-      /* Model shrunk - first remove items from the end (safe) */
-      guint removed_count = old_len - new_len;
-      g_list_model_items_changed(G_LIST_MODEL(self), new_len, removed_count, 0);
-      /* Now GTK thinks there are new_len items */
-      old_len = new_len;
+      /* Model shrunk - removals were already emitted synchronously.
+       * Just update tracking to match reality. */
+      self->last_emitted_len = new_len;
+      self->last_update_time_ms = get_current_time_ms();
+      return G_SOURCE_REMOVE;
     }
 
-    if (new_len > 0) {
-      /* Refresh all current items - tell GTK they all changed */
-      g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
+    if (new_len > old_len) {
+      /* Model grew - emit addition at end */
+      guint added = new_len - old_len;
+      g_list_model_items_changed(G_LIST_MODEL(self), old_len, 0, added);
+    } else if (new_len > 0 && new_len == old_len) {
+      /* Same size - refresh all items (content may have changed) */
+      g_list_model_items_changed(G_LIST_MODEL(self), 0, new_len, new_len);
     }
 
     /* Update tracking AFTER emission */
