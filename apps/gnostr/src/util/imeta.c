@@ -112,7 +112,8 @@ GnostrMediaType gnostr_imeta_get_media_type_from_url(const char *url) {
 
   /* Check image extensions */
   static const char *image_exts[] = {
-    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg", ".avif", ".heic", ".heif"
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg", ".avif", ".heic", ".heif",
+    ".ico", ".tiff", ".tif"
   };
   for (size_t i = 0; i < G_N_ELEMENTS(image_exts); i++) {
     if (strcmp(ext, image_exts[i]) == 0) {

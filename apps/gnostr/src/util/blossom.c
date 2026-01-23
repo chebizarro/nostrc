@@ -86,6 +86,9 @@ const char *gnostr_blossom_detect_mime_type(const char *file_path) {
   if (g_ascii_strcasecmp(ext, "webp") == 0) return "image/webp";
   if (g_ascii_strcasecmp(ext, "svg") == 0) return "image/svg+xml";
   if (g_ascii_strcasecmp(ext, "avif") == 0) return "image/avif";
+  if (g_ascii_strcasecmp(ext, "ico") == 0) return "image/x-icon";
+  if (g_ascii_strcasecmp(ext, "bmp") == 0) return "image/bmp";
+  if (g_ascii_strcasecmp(ext, "tiff") == 0 || g_ascii_strcasecmp(ext, "tif") == 0) return "image/tiff";
 
   /* Video types */
   if (g_ascii_strcasecmp(ext, "mp4") == 0) return "video/mp4";

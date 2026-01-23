@@ -305,6 +305,11 @@ static void on_attach_clicked(GnostrComposer *self, GtkButton *button) {
   gtk_file_filter_add_mime_type(filter_images, "image/gif");
   gtk_file_filter_add_mime_type(filter_images, "image/webp");
   gtk_file_filter_add_mime_type(filter_images, "image/avif");
+  gtk_file_filter_add_mime_type(filter_images, "image/svg+xml");
+  gtk_file_filter_add_mime_type(filter_images, "image/x-icon");
+  gtk_file_filter_add_mime_type(filter_images, "image/vnd.microsoft.icon");
+  gtk_file_filter_add_mime_type(filter_images, "image/bmp");
+  gtk_file_filter_add_mime_type(filter_images, "image/tiff");
 
   GtkFileFilter *filter_video = gtk_file_filter_new();
   gtk_file_filter_set_name(filter_video, "Videos");

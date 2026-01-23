@@ -1741,7 +1741,7 @@ static gboolean is_media_url(const char *url) {
   if (!url || !*url) return FALSE;
 
   /* Common image extensions */
-  const char *image_exts[] = { ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".bmp", NULL };
+  const char *image_exts[] = { ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".bmp", ".svg", ".ico", ".tiff", ".tif", NULL };
   /* Common video extensions */
   const char *video_exts[] = { ".mp4", ".webm", ".mov", ".avi", ".mkv", NULL };
 

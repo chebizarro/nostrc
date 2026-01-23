@@ -1495,7 +1495,7 @@ static gchar *escape_markup(const char *s) {
 static gboolean is_image_url(const char *u) {
   if (!u) return FALSE;
   gchar *lower = g_ascii_strdown(u, -1);
-  const char *exts[] = {".jpg",".jpeg",".png",".gif",".webp",".bmp",".svg"};
+  const char *exts[] = {".jpg",".jpeg",".png",".gif",".webp",".bmp",".svg",".avif",".ico",".tiff",".tif",".heic",".heif"};
   gboolean result = FALSE;
   for (guint i=0; i<G_N_ELEMENTS(exts); i++) {
     if (g_str_has_suffix(lower, exts[i])) {
