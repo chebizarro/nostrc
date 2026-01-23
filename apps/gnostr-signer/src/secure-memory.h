@@ -15,6 +15,7 @@
 #pragma once
 
 #include <glib.h>
+#include <glib-object.h>
 #include <stddef.h>
 #include <stdbool.h>
 
