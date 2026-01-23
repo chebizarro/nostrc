@@ -2477,20 +2477,11 @@ static void update_login_ui_state(GnostrMainWindow *self) {
   }
 
   /* If user just logged out and is currently on a disabled tab, switch to Timeline */
-  if (!signed_in && self->stack && GTK_IS_STACK(self->stack)) {
-    GtkWidget *visible_child = gtk_stack_get_visible_child(GTK_STACK(self->stack));
+  if (!signed_in && self->stack && ADW_IS_VIEW_STACK(self->stack)) {
+    GtkWidget *visible_child = adw_view_stack_get_visible_child(ADW_VIEW_STACK(self->stack));
     if (visible_child == self->notifications_view || visible_child == self->dm_inbox) {
-      /* Switch to Timeline tab (first child) */
-      GtkWidget *timeline_child = gtk_stack_get_child_by_name(GTK_STACK(self->stack), "Timeline");
-      if (!timeline_child) {
-        /* Fallback: use the timeline widget directly */
-        timeline_child = gtk_widget_get_parent(self->timeline);
-        if (timeline_child && GTK_IS_OVERLAY(timeline_child)) {
-          gtk_stack_set_visible_child(GTK_STACK(self->stack), timeline_child);
-        }
-      } else {
-        gtk_stack_set_visible_child(GTK_STACK(self->stack), timeline_child);
-      }
+      /* Switch to Timeline tab */
+      adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "timeline");
     }
   }
 
@@ -2605,12 +2596,18 @@ static void on_discover_copy_npub(GnostrPageDiscover *page, const char *pubkey_h
   }
 }
 
-static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, gpointer user_data) {
+static void on_stack_visible_child_changed(GObject *stack, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!GNOSTR_IS_MAIN_WINDOW(self) || !GTK_IS_STACK(stack)) return;
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
-  GtkWidget *visible_child = gtk_stack_get_visible_child(stack);
+  /* Get visible child - works with both GtkStack and AdwViewStack */
+  GtkWidget *visible_child = NULL;
+  if (ADW_IS_VIEW_STACK(stack)) {
+    visible_child = adw_view_stack_get_visible_child(ADW_VIEW_STACK(stack));
+  } else if (GTK_IS_STACK(stack)) {
+    visible_child = gtk_stack_get_visible_child(GTK_STACK(stack));
+  }
 
   /* When Discover page becomes visible, load profiles */
   if (visible_child == self->page_discover) {
@@ -2756,9 +2753,9 @@ void gnostr_main_window_request_reply(GtkWidget *window, const char *id_hex, con
   }
   g_free(display_name);
 
-  /* Switch to composer tab */
-  if (self->stack && GTK_IS_STACK(self->stack)) {
-    gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "compose");
+  /* Switch to timeline tab (composer is shown at bottom of timeline) */
+  if (self->stack && ADW_IS_VIEW_STACK(self->stack)) {
+    adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "timeline");
   }
 }
 
@@ -2833,9 +2830,9 @@ void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, con
   g_free(display_name);
   g_free(nostr_uri);
 
-  /* Switch to composer tab */
-  if (self->stack && GTK_IS_STACK(self->stack)) {
-    gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "compose");
+  /* Switch to timeline tab (composer is shown at bottom of timeline) */
+  if (self->stack && ADW_IS_VIEW_STACK(self->stack)) {
+    adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "timeline");
   }
 }
 
@@ -3524,7 +3521,7 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                      G_CALLBACK(on_discover_copy_npub), self);
   }
   /* Connect stack visible-child-name signal to load discover profiles on demand */
-  if (self->stack && GTK_IS_STACK(self->stack)) {
+  if (self->stack && ADW_IS_VIEW_STACK(self->stack)) {
     g_signal_connect(self->stack, "notify::visible-child",
                      G_CALLBACK(on_stack_visible_child_changed), self);
   }
@@ -3542,8 +3539,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   /* Initialize login UI state from saved settings */
   update_login_ui_state(self);
   /* Ensure Timeline page is visible initially */
-  if (self->stack && self->timeline && GTK_IS_STACK(self->stack)) {
-    gtk_stack_set_visible_child(GTK_STACK(self->stack), self->timeline);
+  if (self->stack && ADW_IS_VIEW_STACK(self->stack)) {
+    adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "timeline");
   }
   
   /* CRITICAL: Initialize pool and relays BEFORE timeline prepopulation!
@@ -4118,8 +4115,8 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
     }
 
     /* Switch to timeline tab */
-    if (self->stack && GTK_IS_STACK(self->stack)) {
-      gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "timeline");
+    if (self->stack && ADW_IS_VIEW_STACK(self->stack)) {
+      adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "timeline");
     }
   } else {
     if (limit_skip_count > 0 && limit_warnings->len > 0) {
