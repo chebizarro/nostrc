@@ -895,7 +895,10 @@ on_model_loading_changed(GnProfileListModel *model, GParamSpec *pspec, GnostrPag
 {
     (void)model;
     (void)pspec;
-    update_content_state(self);
+    /* Only update content state if we're in People mode */
+    if (!self->is_live_mode && !self->is_articles_mode) {
+        update_content_state(self);
+    }
 }
 
 static void
@@ -905,7 +908,10 @@ on_model_items_changed(GListModel *model, guint position, guint removed, guint a
     (void)position;
     (void)removed;
     (void)added;
-    update_content_state(self);
+    /* Only update content state if we're in People mode */
+    if (!self->is_live_mode && !self->is_articles_mode) {
+        update_content_state(self);
+    }
 }
 
 /* --- GObject Implementation --- */
@@ -1189,13 +1195,19 @@ gnostr_page_discover_init(GnostrPageDiscover *self)
                          G_CALLBACK(on_refresh_live_clicked), self);
     }
 
-    /* Default to People mode */
+    /* Default to People mode - call switch function directly since
+     * btn_mode_people may already be active from UI template, which
+     * means gtk_toggle_button_set_active won't emit the toggled signal */
     if (self->btn_mode_people) {
         gtk_toggle_button_set_active(self->btn_mode_people, TRUE);
     }
+    switch_to_people_mode(self);
 
-    /* Start with loading state */
-    gtk_stack_set_visible_child_name(self->content_stack, "loading");
+    /* Ensure loading state is shown (switch_to_people_mode calls update_content_state
+     * which may set a different state if model is not loading) */
+    if (gn_profile_list_model_is_loading(self->profile_model)) {
+        gtk_stack_set_visible_child_name(self->content_stack, "loading");
+    }
 }
 
 GnostrPageDiscover *
