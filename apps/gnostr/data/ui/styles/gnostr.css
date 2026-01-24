@@ -32,6 +32,13 @@
   opacity: 0.7;
 }
 
+/* NIP-14: Subject heading styling */
+.note-subject {
+  font-weight: bold;
+  font-size: 1.1em;
+  color: @theme_fg_color;
+}
+
 .note-content {
   line-height: 1.3;
 }
@@ -1328,4 +1335,88 @@ profile-row.muted .profile-row-avatar {
 .profile-row-actions {
   min-width: 32px;
   min-height: 32px;
+}
+
+/* ===== NIP-30 Custom Emoji Styles ===== */
+
+/* Container for custom emoji display */
+.custom-emoji-box {
+  margin-top: 6px;
+  margin-bottom: 4px;
+  padding: 4px 0;
+}
+
+/* Individual emoji item (image + shortcode label) */
+.custom-emoji-item {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: alpha(@theme_bg_color, 0.4);
+  border: 1px solid alpha(@theme_fg_color, 0.08);
+  transition: all 150ms ease;
+}
+
+.custom-emoji-item:hover {
+  background: alpha(@theme_bg_color, 0.6);
+  border-color: alpha(@theme_fg_color, 0.12);
+}
+
+/* Custom emoji image */
+.custom-emoji {
+  min-width: 24px;
+  min-height: 24px;
+  border-radius: 4px;
+}
+
+/* Custom emoji shortcode label */
+.custom-emoji-label {
+  font-size: 11px;
+  color: alpha(@theme_fg_color, 0.7);
+  font-family: monospace;
+}
+
+/* NIP-36: Sensitive content warning styles */
+.sensitive-content {
+  /* Add subtle border to indicate sensitive content */
+  border-color: alpha(@warning_color, 0.5);
+}
+
+.sensitive-warning-box {
+  padding: 24px;
+  background: alpha(@theme_bg_color, 0.95);
+  border-radius: 8px;
+  border: 1px solid alpha(@warning_color, 0.3);
+}
+
+.sensitive-warning-icon {
+  color: @warning_color;
+  opacity: 0.9;
+}
+
+.sensitive-warning-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: alpha(@theme_fg_color, 0.9);
+}
+
+.sensitive-show-button {
+  margin-top: 8px;
+  padding: 8px 16px;
+}
+
+/* Blur effect for content under the overlay */
+.content-blurred {
+  filter: blur(8px);
+  opacity: 0.6;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* Warning style for composer sensitive toggle when active */
+.warning {
+  color: @warning_color;
+}
+
+.warning:checked {
+  background: alpha(@warning_color, 0.2);
+  color: @warning_color;
 }

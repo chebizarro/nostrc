@@ -143,6 +143,68 @@
               </object>
             </child>
 
+            <!-- NIP-36 Sensitive Content Overlay (shown when content has content-warning tag) -->
+            <child>
+              <object class="GtkOverlay" id="sensitive_content_overlay">
+                <property name="visible">false</property>
+                <!-- Sensitive content warning label (shown at top before blur) -->
+                <child>
+                  <object class="GtkBox" id="sensitive_warning_box">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">8</property>
+                    <property name="valign">center</property>
+                    <property name="halign">center</property>
+                    <style>
+                      <class name="sensitive-warning-box"/>
+                    </style>
+                    <child>
+                      <object class="GtkImage" id="sensitive_warning_icon">
+                        <property name="icon-name">dialog-warning-symbolic</property>
+                        <property name="pixel-size">32</property>
+                        <style>
+                          <class name="sensitive-warning-icon"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="sensitive_warning_label">
+                        <property name="label">Sensitive Content</property>
+                        <property name="wrap">true</property>
+                        <property name="max-width-chars">40</property>
+                        <property name="justify">center</property>
+                        <style>
+                          <class name="sensitive-warning-label"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_show_sensitive">
+                        <property name="label">Show Content</property>
+                        <property name="halign">center</property>
+                        <style>
+                          <class name="sensitive-show-button"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- NIP-14 Subject (email-like subject line, hidden by default) -->
+            <child>
+              <object class="GtkLabel" id="subject_label">
+                <property name="visible">false</property>
+                <property name="wrap">true</property>
+                <property name="xalign">0.0</property>
+                <property name="use-markup">true</property>
+                <property name="margin-bottom">4</property>
+                <style>
+                  <class name="note-subject"/>
+                </style>
+              </object>
+            </child>
+
             <!-- Content -->
             <child>
               <object class="GtkLabel" id="content_label">

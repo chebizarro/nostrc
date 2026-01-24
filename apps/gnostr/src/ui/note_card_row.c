@@ -11,6 +11,7 @@
 #include "../util/nip05.h"
 #include "../util/imeta.h"
 #include "../util/zap.h"
+#include "../util/custom_emoji.h"
 #include "../storage_ndb.h"
 #include <nostr/nip19/nip19.h>
 #ifdef HAVE_SOUP3
@@ -43,6 +44,7 @@ struct _GnostrNoteCardRow {
   GtkWidget *lbl_handle;
   GtkWidget *lbl_timestamp;
   GtkWidget *content_label;
+  GtkWidget *emoji_box;  /* NIP-30: Custom emoji display box */
   GtkWidget *media_box;
   GtkWidget *embed_box;
   GtkWidget *og_preview_container;
@@ -109,6 +111,16 @@ struct _GnostrNoteCardRow {
   /* NIP-18 Quote state */
   gchar *quoted_event_id;
   GtkWidget *quote_embed_box;  /* Container for quoted note preview */
+  /* NIP-14 Subject tag */
+  GtkWidget *subject_label;  /* Subject heading for email-like subject lines */
+  /* NIP-36 Sensitive content state */
+  gboolean is_sensitive;              /* TRUE if note has content-warning tag */
+  gboolean sensitive_content_revealed; /* TRUE if user clicked to reveal */
+  gchar *content_warning_reason;      /* Optional reason from content-warning tag */
+  GtkWidget *sensitive_content_overlay; /* Overlay for blur/reveal UI */
+  GtkWidget *sensitive_warning_box;   /* Box with warning icon/text/button */
+  GtkWidget *sensitive_warning_label; /* Label showing "Sensitive Content: reason" */
+  GtkWidget *btn_show_sensitive;      /* Button to reveal sensitive content */
 };
 
 G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
@@ -183,13 +195,20 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_CARD_ROW);
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
   self->lbl_display = NULL; self->lbl_handle = NULL; self->lbl_timestamp = NULL; self->content_label = NULL;
-  self->media_box = NULL; self->embed_box = NULL; self->og_preview_container = NULL; self->actions_box = NULL;
+  self->emoji_box = NULL; self->media_box = NULL; self->embed_box = NULL; self->og_preview_container = NULL; self->actions_box = NULL;
   self->btn_repost = NULL; self->btn_like = NULL; self->btn_bookmark = NULL; self->btn_thread = NULL;
   self->reply_indicator_box = NULL; self->reply_indicator_label = NULL;
   self->reply_count_box = NULL; self->reply_count_label = NULL;
   /* NIP-18 repost widgets */
   self->repost_indicator_box = NULL; self->repost_indicator_label = NULL;
   self->lbl_repost_count = NULL; self->quote_embed_box = NULL;
+  /* NIP-14 subject widget */
+  self->subject_label = NULL;
+  /* NIP-36 sensitive content widgets */
+  self->sensitive_content_overlay = NULL;
+  self->sensitive_warning_box = NULL;
+  self->sensitive_warning_label = NULL;
+  self->btn_show_sensitive = NULL;
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->dispose(obj);
 }
 
@@ -208,6 +227,8 @@ static void gnostr_note_card_row_finalize(GObject *obj) {
   g_clear_pointer(&self->reposter_pubkey, g_free);
   g_clear_pointer(&self->reposter_display_name, g_free);
   g_clear_pointer(&self->quoted_event_id, g_free);
+  /* NIP-36 sensitive content state cleanup */
+  g_clear_pointer(&self->content_warning_reason, g_free);
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->finalize(obj);
 }
 
@@ -961,6 +982,36 @@ static void on_reply_count_clicked(GtkGestureClick *gesture, gint n_press, gdoub
   g_signal_emit(self, signals[SIGNAL_VIEW_THREAD_REQUESTED], 0, self->id_hex);
 }
 
+/* NIP-36: Callback when user clicks "Show Content" button for sensitive content */
+static void on_show_sensitive_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (!self) return;
+
+  /* Mark sensitive content as revealed */
+  self->sensitive_content_revealed = TRUE;
+
+  /* Hide the overlay and show the content */
+  if (self->sensitive_content_overlay && GTK_IS_WIDGET(self->sensitive_content_overlay)) {
+    gtk_widget_set_visible(self->sensitive_content_overlay, FALSE);
+  }
+
+  /* Remove blur CSS class from content */
+  if (self->content_label && GTK_IS_WIDGET(self->content_label)) {
+    gtk_widget_remove_css_class(self->content_label, "content-blurred");
+    gtk_widget_set_visible(self->content_label, TRUE);
+  }
+  if (self->media_box && GTK_IS_WIDGET(self->media_box)) {
+    gtk_widget_remove_css_class(self->media_box, "content-blurred");
+  }
+  if (self->embed_box && GTK_IS_WIDGET(self->embed_box)) {
+    gtk_widget_remove_css_class(self->embed_box, "content-blurred");
+  }
+  if (self->og_preview_container && GTK_IS_WIDGET(self->og_preview_container)) {
+    gtk_widget_remove_css_class(self->og_preview_container, "content-blurred");
+  }
+}
+
 static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   GtkWidgetClass *wclass = GTK_WIDGET_CLASS(klass);
   GObjectClass *gclass = G_OBJECT_CLASS(klass);
@@ -996,6 +1047,13 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, embed_box);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, og_preview_container);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, actions_box);
+  /* NIP-14 subject label */
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, subject_label);
+  /* NIP-36 sensitive content widgets */
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, sensitive_content_overlay);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, sensitive_warning_box);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, sensitive_warning_label);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_show_sensitive);
 
   signals[SIGNAL_OPEN_NOSTR_TARGET] = g_signal_new("open-nostr-target",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
@@ -1151,6 +1209,13 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
   gtk_gesture_single_set_touch_only(GTK_GESTURE_SINGLE(long_press), TRUE);
   g_signal_connect(long_press, "pressed", G_CALLBACK(on_long_press), self);
   gtk_widget_add_controller(GTK_WIDGET(self), GTK_EVENT_CONTROLLER(long_press));
+
+  /* NIP-36: Connect sensitive content reveal button */
+  if (GTK_IS_BUTTON(self->btn_show_sensitive)) {
+    g_signal_connect(self->btn_show_sensitive, "clicked", G_CALLBACK(on_show_sensitive_clicked), self);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_show_sensitive),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Show Sensitive Content", -1);
+  }
 
 #ifdef HAVE_SOUP3
   self->avatar_cancellable = g_cancellable_new();
@@ -1852,6 +1917,61 @@ static gboolean token_is_nostr_event(const char *t) {
          g_str_has_prefix(entity, "naddr1");
 }
 
+/* NIP-14: Extract subject tag from tags JSON array
+ * Returns newly allocated string or NULL if no subject found.
+ * Caller must free the returned string.
+ */
+static gchar *extract_subject_from_tags_json(const char *tags_json) {
+  if (!tags_json || !*tags_json) return NULL;
+
+  JsonParser *parser = json_parser_new();
+  GError *error = NULL;
+
+  if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
+    g_debug("NIP-14: Failed to parse tags JSON: %s", error ? error->message : "unknown");
+    if (error) g_error_free(error);
+    g_object_unref(parser);
+    return NULL;
+  }
+
+  JsonNode *root = json_parser_get_root(parser);
+  if (!root || !JSON_NODE_HOLDS_ARRAY(root)) {
+    g_object_unref(parser);
+    return NULL;
+  }
+
+  JsonArray *tags = json_node_get_array(root);
+  guint n_tags = json_array_get_length(tags);
+  gchar *subject = NULL;
+
+  for (guint i = 0; i < n_tags && !subject; i++) {
+    JsonNode *tag_node = json_array_get_element(tags, i);
+    if (!tag_node || !JSON_NODE_HOLDS_ARRAY(tag_node)) continue;
+
+    JsonArray *tag = json_node_get_array(tag_node);
+    if (json_array_get_length(tag) < 2) continue;
+
+    const char *tag_name = json_array_get_string_element(tag, 0);
+    if (tag_name && g_strcmp0(tag_name, "subject") == 0) {
+      const char *subject_value = json_array_get_string_element(tag, 1);
+      if (subject_value && *subject_value) {
+        /* Truncate to 80 chars per NIP-14 recommendation */
+        if (strlen(subject_value) > 80) {
+          subject = g_strndup(subject_value, 77);
+          gchar *truncated = g_strdup_printf("%s...", subject);
+          g_free(subject);
+          subject = truncated;
+        } else {
+          subject = g_strdup(subject_value);
+        }
+      }
+    }
+  }
+
+  g_object_unref(parser);
+  return subject;
+}
+
 /* NIP-27: Format nostr mention for display (truncated bech32 with prefix)
  * Returns a newly allocated string. Caller must free.
  * Profile mentions: @npub1abc...xyz (first 8 + last 4 chars of bech32)
@@ -2166,11 +2286,41 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
   g_clear_pointer(&self->content_text, g_free);
   self->content_text = g_strdup(content);
 
+  /* NIP-14: Extract and display subject tag if present */
+  if (tags_json && *tags_json) {
+    gchar *subject = extract_subject_from_tags_json(tags_json);
+    if (subject && self->subject_label && GTK_IS_LABEL(self->subject_label)) {
+      gchar *escaped = g_markup_escape_text(subject, -1);
+      gtk_label_set_markup(GTK_LABEL(self->subject_label), escaped);
+      gtk_widget_set_visible(self->subject_label, TRUE);
+      g_free(escaped);
+      g_debug("NIP-14: Displaying subject: %s", subject);
+    } else if (self->subject_label && GTK_IS_WIDGET(self->subject_label)) {
+      gtk_widget_set_visible(self->subject_label, FALSE);
+    }
+    g_free(subject);
+  } else if (self->subject_label && GTK_IS_WIDGET(self->subject_label)) {
+    gtk_widget_set_visible(self->subject_label, FALSE);
+  }
+
   GnostrImetaList *imeta_list = NULL;
+  GnostrEmojiList *emoji_list = NULL;
   if (tags_json && *tags_json) {
     imeta_list = gnostr_imeta_parse_tags_json(tags_json);
     if (imeta_list) {
       g_debug("note_card: Parsed %zu imeta tags from event", imeta_list->count);
+    }
+    /* NIP-30: Parse custom emoji tags */
+    emoji_list = gnostr_emoji_parse_tags_json(tags_json);
+    if (emoji_list) {
+      g_debug("note_card: Parsed %zu custom emoji tags from event", emoji_list->count);
+      /* Prefetch all emoji images to cache */
+      for (size_t i = 0; i < emoji_list->count; i++) {
+        GnostrCustomEmoji *emoji = emoji_list->items[i];
+        if (emoji && emoji->url) {
+          gnostr_emoji_cache_prefetch(emoji->url);
+        }
+      }
     }
   }
 
@@ -2346,6 +2496,127 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
   }
 
   gnostr_imeta_list_free(imeta_list);
+
+  /* NIP-30: Display custom emoji images in emoji_box */
+  if (emoji_list && emoji_list->count > 0 && content) {
+    /* Create emoji_box if it doesn't exist (dynamically created since not in template) */
+    if (!self->emoji_box) {
+      self->emoji_box = gtk_flow_box_new();
+      gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(self->emoji_box), FALSE);
+      gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(self->emoji_box), GTK_SELECTION_NONE);
+      gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(self->emoji_box), 1);
+      gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(self->emoji_box), 20);
+      gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(self->emoji_box), 4);
+      gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(self->emoji_box), 4);
+      gtk_widget_set_halign(self->emoji_box, GTK_ALIGN_START);
+      gtk_widget_add_css_class(self->emoji_box, "custom-emoji-box");
+
+      /* Insert emoji_box after content_label if possible */
+      if (self->content_label && GTK_IS_WIDGET(self->content_label)) {
+        GtkWidget *parent = gtk_widget_get_parent(self->content_label);
+        if (parent && GTK_IS_BOX(parent)) {
+          /* Find position of content_label and insert after it */
+          GtkWidget *child = gtk_widget_get_first_child(parent);
+          int pos = 0;
+          while (child) {
+            if (child == self->content_label) {
+              /* Insert after content_label */
+              gtk_box_insert_child_after(GTK_BOX(parent), self->emoji_box, self->content_label);
+              break;
+            }
+            child = gtk_widget_get_next_sibling(child);
+            pos++;
+          }
+        }
+      }
+    }
+
+    /* Clear existing emoji widgets */
+    if (self->emoji_box && GTK_IS_FLOW_BOX(self->emoji_box)) {
+      GtkWidget *child = gtk_widget_get_first_child(self->emoji_box);
+      while (child) {
+        GtkWidget *next = gtk_widget_get_next_sibling(child);
+        gtk_flow_box_remove(GTK_FLOW_BOX(self->emoji_box), child);
+        child = next;
+      }
+      gtk_widget_set_visible(self->emoji_box, FALSE);
+
+      /* Check which emojis are actually used in content and display them */
+      GHashTable *used_emojis = g_hash_table_new(g_str_hash, g_str_equal);
+
+      /* Find :shortcode: patterns in content */
+      const char *p = content;
+      while (*p) {
+        if (*p == ':') {
+          const char *start = p + 1;
+          const char *end = start;
+          /* Find closing colon */
+          while (*end && *end != ':' && *end != ' ' && *end != '\n' && *end != '\t') {
+            char c = *end;
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                  (c >= '0' && c <= '9') || c == '_' || c == '-')) {
+              break;
+            }
+            end++;
+          }
+          if (*end == ':' && end > start) {
+            gchar *shortcode = g_strndup(start, end - start);
+            GnostrCustomEmoji *emoji = gnostr_emoji_find_by_shortcode(emoji_list, shortcode);
+            if (emoji && !g_hash_table_contains(used_emojis, shortcode)) {
+              g_hash_table_add(used_emojis, shortcode);
+
+              /* Create container box for emoji + label */
+              GtkWidget *emoji_item = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+              gtk_widget_add_css_class(emoji_item, "custom-emoji-item");
+
+              /* Create picture for the emoji */
+              GtkWidget *picture = gtk_picture_new();
+              gtk_picture_set_content_fit(GTK_PICTURE(picture), GTK_CONTENT_FIT_CONTAIN);
+              gtk_widget_set_size_request(picture, 24, 24);
+              gtk_widget_add_css_class(picture, "custom-emoji");
+
+              /* Try to load from cache */
+              GdkTexture *cached = gnostr_emoji_try_load_cached(emoji->url);
+              if (cached) {
+                gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(cached));
+                g_object_unref(cached);
+              }
+              /* Note: If not cached, the prefetch above will load it async
+               * Future improvement: add callback to update picture when loaded */
+
+              gtk_box_append(GTK_BOX(emoji_item), picture);
+
+              /* Add shortcode label */
+              gchar *label_text = g_strdup_printf(":%s:", shortcode);
+              GtkWidget *label = gtk_label_new(label_text);
+              gtk_widget_add_css_class(label, "custom-emoji-label");
+              gtk_label_set_xalign(GTK_LABEL(label), 0);
+              gtk_box_append(GTK_BOX(emoji_item), label);
+              g_free(label_text);
+
+              /* Set tooltip with full URL */
+              gtk_widget_set_tooltip_text(emoji_item, emoji->url);
+
+              gtk_flow_box_append(GTK_FLOW_BOX(self->emoji_box), emoji_item);
+              gtk_widget_set_visible(self->emoji_box, TRUE);
+            } else {
+              g_free(shortcode);
+            }
+            p = end + 1;
+            continue;
+          }
+        }
+        p++;
+      }
+
+      g_hash_table_unref(used_emojis);
+    }
+  } else if (self->emoji_box && GTK_IS_WIDGET(self->emoji_box)) {
+    /* No custom emojis - hide the box */
+    gtk_widget_set_visible(self->emoji_box, FALSE);
+  }
+
+  gnostr_emoji_list_free(emoji_list);
 
   /* Detect NIP-19/21 nostr: references and create embedded note widgets */
   if (self->embed_box && GTK_IS_WIDGET(self->embed_box)) {
@@ -2953,5 +3224,111 @@ void gnostr_note_card_row_set_quote_info(GnostrNoteCardRow *self,
 
     gtk_widget_set_visible(self->quote_embed_box, TRUE);
     gtk_widget_set_visible(self->embed_box, TRUE);
+  }
+}
+
+/* NIP-36: Set content-warning for sensitive/NSFW content */
+void gnostr_note_card_row_set_content_warning(GnostrNoteCardRow *self,
+                                               const char *content_warning_reason) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  /* Store the content warning state and reason */
+  g_clear_pointer(&self->content_warning_reason, g_free);
+  self->is_sensitive = (content_warning_reason != NULL);
+  self->content_warning_reason = g_strdup(content_warning_reason);
+  self->sensitive_content_revealed = FALSE;
+
+  /* Check GSettings for auto-show preference */
+  gboolean auto_show = FALSE;
+  GSettings *display_settings = g_settings_new("org.gnostr.Display");
+  if (display_settings) {
+    auto_show = g_settings_get_boolean(display_settings, "auto-show-sensitive");
+    g_object_unref(display_settings);
+  }
+
+  if (self->is_sensitive && !auto_show) {
+    /* Show the sensitive content overlay and blur the content */
+    if (GTK_IS_WIDGET(self->sensitive_content_overlay)) {
+      gtk_widget_set_visible(self->sensitive_content_overlay, TRUE);
+    }
+
+    /* Update the warning label with the reason if provided */
+    if (GTK_IS_LABEL(self->sensitive_warning_label)) {
+      if (content_warning_reason && *content_warning_reason) {
+        gchar *label_text = g_strdup_printf("Sensitive Content: %s", content_warning_reason);
+        gtk_label_set_text(GTK_LABEL(self->sensitive_warning_label), label_text);
+        g_free(label_text);
+      } else {
+        gtk_label_set_text(GTK_LABEL(self->sensitive_warning_label), "Sensitive Content");
+      }
+    }
+
+    /* Add blur CSS class to content elements */
+    if (GTK_IS_WIDGET(self->content_label)) {
+      gtk_widget_add_css_class(self->content_label, "content-blurred");
+    }
+    if (GTK_IS_WIDGET(self->media_box)) {
+      gtk_widget_add_css_class(self->media_box, "content-blurred");
+    }
+    if (GTK_IS_WIDGET(self->embed_box)) {
+      gtk_widget_add_css_class(self->embed_box, "content-blurred");
+    }
+    if (GTK_IS_WIDGET(self->og_preview_container)) {
+      gtk_widget_add_css_class(self->og_preview_container, "content-blurred");
+    }
+
+    /* Add CSS class to the whole note card for styling */
+    gtk_widget_add_css_class(GTK_WIDGET(self), "sensitive-content");
+  } else {
+    /* Hide the overlay and remove blur classes */
+    if (GTK_IS_WIDGET(self->sensitive_content_overlay)) {
+      gtk_widget_set_visible(self->sensitive_content_overlay, FALSE);
+    }
+    if (GTK_IS_WIDGET(self->content_label)) {
+      gtk_widget_remove_css_class(self->content_label, "content-blurred");
+    }
+    if (GTK_IS_WIDGET(self->media_box)) {
+      gtk_widget_remove_css_class(self->media_box, "content-blurred");
+    }
+    if (GTK_IS_WIDGET(self->embed_box)) {
+      gtk_widget_remove_css_class(self->embed_box, "content-blurred");
+    }
+    if (GTK_IS_WIDGET(self->og_preview_container)) {
+      gtk_widget_remove_css_class(self->og_preview_container, "content-blurred");
+    }
+    gtk_widget_remove_css_class(GTK_WIDGET(self), "sensitive-content");
+  }
+}
+
+/* NIP-36: Check if content is currently blurred (sensitive content hidden) */
+gboolean gnostr_note_card_row_is_content_blurred(GnostrNoteCardRow *self) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return FALSE;
+  return self->is_sensitive && !self->sensitive_content_revealed;
+}
+
+/* NIP-36: Reveal sensitive content (show hidden content) */
+void gnostr_note_card_row_reveal_sensitive_content(GnostrNoteCardRow *self) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  /* Mark as revealed and trigger the same logic as clicking the button */
+  self->sensitive_content_revealed = TRUE;
+
+  /* Hide the overlay */
+  if (GTK_IS_WIDGET(self->sensitive_content_overlay)) {
+    gtk_widget_set_visible(self->sensitive_content_overlay, FALSE);
+  }
+
+  /* Remove blur CSS class from content */
+  if (GTK_IS_WIDGET(self->content_label)) {
+    gtk_widget_remove_css_class(self->content_label, "content-blurred");
+  }
+  if (GTK_IS_WIDGET(self->media_box)) {
+    gtk_widget_remove_css_class(self->media_box, "content-blurred");
+  }
+  if (GTK_IS_WIDGET(self->embed_box)) {
+    gtk_widget_remove_css_class(self->embed_box, "content-blurred");
+  }
+  if (GTK_IS_WIDGET(self->og_preview_container)) {
+    gtk_widget_remove_css_class(self->og_preview_container, "content-blurred");
   }
 }

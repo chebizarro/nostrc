@@ -37,6 +37,10 @@ struct _GnNostrEventItem {
   /* NIP-25: Reaction count (likes) */
   guint like_count;
   gboolean is_liked;  /* Whether current user has liked this event */
+
+  /* NIP-40: Expiration timestamp (cached) */
+  gint64 expiration;
+  gboolean expiration_loaded;
 };
 
 G_DEFINE_TYPE(GnNostrEventItem, gn_nostr_event_item, G_TYPE_OBJECT)
@@ -59,6 +63,8 @@ enum {
   PROP_SKIP_ANIMATION,
   PROP_LIKE_COUNT,
   PROP_IS_LIKED,
+  PROP_EXPIRATION,
+  PROP_IS_EXPIRED,
   N_PROPS
 };
 
@@ -103,10 +109,29 @@ static gboolean ensure_note_loaded(GnNostrEventItem *self)
 
     /* Cache tags JSON for NIP-92 imeta support */
     self->cached_tags_json = storage_ndb_note_tags_json(note);
+
+    /* NIP-40: Cache expiration timestamp */
+    self->expiration = storage_ndb_note_get_expiration(note);
+    self->expiration_loaded = TRUE;
   }
 
   storage_ndb_end_query(txn);
   return (self->cached_event_id != NULL);
+}
+
+/* Helper: Ensure expiration is loaded (may load full note if needed) */
+static void ensure_expiration_loaded(GnNostrEventItem *self)
+{
+  if (self->expiration_loaded) return;
+
+  /* Try to load just the expiration without full note load */
+  if (self->note_key == 0) {
+    self->expiration_loaded = TRUE;
+    return;
+  }
+
+  /* Load full note data which includes expiration */
+  ensure_note_loaded(self);
 }
 
 static void gn_nostr_event_item_finalize(GObject *object) {
@@ -182,6 +207,19 @@ static void gn_nostr_event_item_get_property(GObject *object, guint prop_id, GVa
     case PROP_IS_LIKED:
       g_value_set_boolean(value, self->is_liked);
       break;
+    case PROP_EXPIRATION:
+      ensure_expiration_loaded(self);
+      g_value_set_int64(value, self->expiration);
+      break;
+    case PROP_IS_EXPIRED:
+      ensure_expiration_loaded(self);
+      if (self->expiration == 0) {
+        g_value_set_boolean(value, FALSE);
+      } else {
+        gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+        g_value_set_boolean(value, self->expiration < now);
+      }
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
   }
@@ -251,6 +289,12 @@ static void gn_nostr_event_item_class_init(GnNostrEventItemClass *klass) {
   properties[PROP_IS_LIKED] = g_param_spec_boolean("is-liked", "Is Liked",
                                                     "Whether current user has liked this event", FALSE,
                                                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_EXPIRATION] = g_param_spec_int64("expiration", "Expiration",
+                                                    "NIP-40 expiration Unix timestamp (0 if none)", 0, G_MAXINT64, 0,
+                                                    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_IS_EXPIRED] = g_param_spec_boolean("is-expired", "Is Expired",
+                                                      "Whether the event has expired (NIP-40)", FALSE,
+                                                      G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
   g_object_class_install_properties(object_class, N_PROPS, properties);
 }
@@ -495,4 +539,19 @@ void gn_nostr_event_item_set_is_liked(GnNostrEventItem *self, gboolean is_liked)
     self->is_liked = is_liked;
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_IS_LIKED]);
   }
+}
+
+/* NIP-40: Expiration timestamp support */
+gint64 gn_nostr_event_item_get_expiration(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), 0);
+  ensure_expiration_loaded(self);
+  return self->expiration;
+}
+
+gboolean gn_nostr_event_item_get_is_expired(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), FALSE);
+  ensure_expiration_loaded(self);
+  if (self->expiration == 0) return FALSE;
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  return (self->expiration < now);
 }

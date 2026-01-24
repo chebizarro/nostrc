@@ -68,6 +68,48 @@ gsize gnostr_composer_get_uploaded_media_count(GnostrComposer *self);
  */
 void gnostr_composer_clear_uploaded_media(GnostrComposer *self);
 
+/* NIP-14: Subject tag support */
+/**
+ * Get the current subject text from the composer.
+ * Returns the subject text or NULL if empty.
+ * The returned string is owned by the entry widget; do not free.
+ */
+const char *gnostr_composer_get_subject(GnostrComposer *self);
+
+/* NIP-40: Expiration timestamp support */
+/**
+ * Set expiration timestamp for the next post.
+ * @param expiration_secs: Unix timestamp when the note should expire, or 0 for no expiration.
+ */
+void gnostr_composer_set_expiration(GnostrComposer *self, gint64 expiration_secs);
+
+/**
+ * Get the currently set expiration timestamp.
+ * Returns 0 if no expiration is set.
+ */
+gint64 gnostr_composer_get_expiration(GnostrComposer *self);
+
+/**
+ * Clear the expiration setting.
+ */
+void gnostr_composer_clear_expiration(GnostrComposer *self);
+
+/**
+ * Check if an expiration is set.
+ */
+gboolean gnostr_composer_has_expiration(GnostrComposer *self);
+
+/* NIP-36: Content warning / sensitive content support */
+/**
+ * Check if the note is marked as sensitive (content-warning).
+ */
+gboolean gnostr_composer_is_sensitive(GnostrComposer *self);
+
+/**
+ * Set whether the note should be marked as sensitive.
+ */
+void gnostr_composer_set_sensitive(GnostrComposer *self, gboolean sensitive);
+
 G_END_DECLS
 
 #endif /* GNOSTR_COMPOSER_H */

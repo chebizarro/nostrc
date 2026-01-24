@@ -47,6 +47,28 @@
             </child>
           </object>
         </child>
+        <!-- NIP-14 Subject input (optional, for email-like subject lines) -->
+        <child>
+          <object class="GtkBox" id="subject_box">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">6</property>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Subject:</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkEntry" id="subject_entry">
+                <property name="hexpand">true</property>
+                <property name="placeholder-text">Optional subject line (NIP-14)</property>
+                <property name="max-length">80</property>
+              </object>
+            </child>
+          </object>
+        </child>
         <child>
           <object class="GtkTextView" id="text_view"/>
         </child>
@@ -86,6 +108,18 @@
                 <property name="tooltip-text">Attach image or file</property>
                 <property name="has-frame">false</property>
                 <signal name="clicked" handler="on_attach_clicked" swapped="yes"/>
+                <style>
+                  <class name="flat"/>
+                </style>
+              </object>
+            </child>
+            <!-- NIP-36: Sensitive content toggle button -->
+            <child>
+              <object class="GtkToggleButton" id="btn_sensitive">
+                <property name="icon-name">dialog-warning-symbolic</property>
+                <property name="tooltip-text">Mark as sensitive content (NIP-36)</property>
+                <property name="has-frame">false</property>
+                <signal name="toggled" handler="on_sensitive_toggled" swapped="yes"/>
                 <style>
                   <class name="flat"/>
                 </style>

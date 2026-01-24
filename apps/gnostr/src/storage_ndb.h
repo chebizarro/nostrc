@@ -122,6 +122,22 @@ guint storage_ndb_count_reactions(const char *event_id_hex);
  * Returns TRUE if the user has reacted, FALSE otherwise. */
 gboolean storage_ndb_user_has_reacted(const char *event_id_hex, const char *user_pubkey_hex);
 
+/* ============== NIP-40 Expiration Timestamp API ============== */
+
+/* Get expiration timestamp from note tags.
+ * Returns 0 if no expiration tag is present, otherwise returns the Unix timestamp. */
+gint64 storage_ndb_note_get_expiration(storage_ndb_note *note);
+
+/* Check if an event is expired (NIP-40).
+ * Returns TRUE if the event has an expiration tag and the timestamp has passed.
+ * Returns FALSE if no expiration tag or not yet expired. */
+gboolean storage_ndb_note_is_expired(storage_ndb_note *note);
+
+/* Check if an event is expired given its note_key.
+ * Convenience function that handles transaction management internally.
+ * Returns TRUE if expired, FALSE otherwise. */
+gboolean storage_ndb_is_event_expired(uint64_t note_key);
+
 #ifdef __cplusplus
 }
 #endif

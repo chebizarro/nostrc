@@ -934,6 +934,9 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
     int kind = (int)kind_u32;
     if (kind != 1 && kind != 6) { filtered++; continue; }
 
+    /* NIP-40: Filter out expired events */
+    if (storage_ndb_note_is_expired(note)) { filtered++; continue; }
+
     gint64 created_at = (gint64)storage_ndb_note_created_at(note);
 
     const unsigned char *pk32 = storage_ndb_note_pubkey(note);
@@ -1298,8 +1301,15 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
           continue;
         }
 
-        uint64_t note_key = storage_ndb_get_note_key_by_id(txn, id32, NULL);
+        storage_ndb_note *note_ptr = NULL;
+        uint64_t note_key = storage_ndb_get_note_key_by_id(txn, id32, &note_ptr);
         if (note_key == 0) {
+          nostr_event_free(evt);
+          continue;
+        }
+
+        /* NIP-40: Filter out expired events */
+        if (note_ptr && storage_ndb_note_is_expired(note_ptr)) {
           nostr_event_free(evt);
           continue;
         }
@@ -1611,8 +1621,15 @@ guint gn_nostr_event_model_load_older(GnNostrEventModel *self, guint count) {
           continue;
         }
 
-        uint64_t note_key = storage_ndb_get_note_key_by_id(txn, id32, NULL);
+        storage_ndb_note *note_ptr = NULL;
+        uint64_t note_key = storage_ndb_get_note_key_by_id(txn, id32, &note_ptr);
         if (note_key == 0) {
+          nostr_event_free(evt);
+          continue;
+        }
+
+        /* NIP-40: Filter out expired events */
+        if (note_ptr && storage_ndb_note_is_expired(note_ptr)) {
           nostr_event_free(evt);
           continue;
         }
@@ -1795,8 +1812,15 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
           continue;
         }
 
-        uint64_t note_key = storage_ndb_get_note_key_by_id(txn, id32, NULL);
+        storage_ndb_note *note_ptr = NULL;
+        uint64_t note_key = storage_ndb_get_note_key_by_id(txn, id32, &note_ptr);
         if (note_key == 0) {
+          nostr_event_free(evt);
+          continue;
+        }
+
+        /* NIP-40: Filter out expired events */
+        if (note_ptr && storage_ndb_note_is_expired(note_ptr)) {
           nostr_event_free(evt);
           continue;
         }

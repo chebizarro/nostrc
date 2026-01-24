@@ -19,6 +19,7 @@
 #include <sys/stat.h>
 #include <gio/gio.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include <json-glib/json-glib.h>
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -1050,6 +1051,22 @@ static void on_note_card_delete_note_requested_relay(GnostrNoteCardRow *row, con
   (void)user_data;
 }
 
+/* NIP-56: Handler for report-note-requested signal - relay to main window */
+static void on_note_card_report_note_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+  /* Relay the signal up to the main window */
+  GtkWidget *widget = GTK_WIDGET(row);
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
+      /* Found the main window, call method to report note */
+      extern void gnostr_main_window_request_report_note(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
+      gnostr_main_window_request_report_note(widget, id_hex, pubkey_hex);
+      break;
+    }
+  }
+  (void)user_data;
+}
+
 /* Callback when profile is loaded for an event item - show the row */
 static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
@@ -1126,6 +1143,8 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
   g_signal_connect(row, "bookmark-toggled", G_CALLBACK(on_note_card_bookmark_toggled_cb), NULL);
   /* Connect the delete-note-requested signal (NIP-09) */
   g_signal_connect(row, "delete-note-requested", G_CALLBACK(on_note_card_delete_note_requested_relay), NULL);
+  /* Connect the report-note-requested signal (NIP-56) */
+  g_signal_connect(row, "report-note-requested", G_CALLBACK(on_note_card_report_note_requested_relay), NULL);
 
   gtk_list_item_set_child(item, row);
 }
@@ -1281,6 +1300,68 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
   inflight_detach_row(row);
 }
 
+/**
+ * parse_content_warning_from_tags_json:
+ * @tags_json: JSON array string of event tags
+ *
+ * Parses the tags array to find a "content-warning" tag (NIP-36).
+ * Format: ["content-warning", "optional reason"]
+ *
+ * Returns: (transfer full) (nullable): The content-warning reason string,
+ *          empty string if tag exists without reason, or NULL if not present.
+ */
+static gchar *parse_content_warning_from_tags_json(const char *tags_json) {
+  if (!tags_json || !*tags_json) return NULL;
+
+  JsonParser *parser = json_parser_new();
+  GError *error = NULL;
+
+  if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
+    g_warning("Failed to parse tags JSON for content-warning: %s",
+              error ? error->message : "unknown error");
+    if (error) g_error_free(error);
+    g_object_unref(parser);
+    return NULL;
+  }
+
+  JsonNode *root = json_parser_get_root(parser);
+  if (!root || !JSON_NODE_HOLDS_ARRAY(root)) {
+    g_object_unref(parser);
+    return NULL;
+  }
+
+  JsonArray *tags = json_node_get_array(root);
+  guint n_tags = json_array_get_length(tags);
+
+  for (guint i = 0; i < n_tags; i++) {
+    JsonNode *tag_node = json_array_get_element(tags, i);
+    if (!tag_node || !JSON_NODE_HOLDS_ARRAY(tag_node)) continue;
+
+    JsonArray *tag = json_node_get_array(tag_node);
+    guint tag_len = json_array_get_length(tag);
+    if (tag_len < 1) continue;
+
+    const gchar *tag_name = json_array_get_string_element(tag, 0);
+    if (!tag_name) continue;
+
+    /* NIP-36: Look for "content-warning" tag */
+    if (g_strcmp0(tag_name, "content-warning") == 0) {
+      gchar *reason = NULL;
+      if (tag_len >= 2) {
+        const gchar *reason_str = json_array_get_string_element(tag, 1);
+        reason = g_strdup(reason_str ? reason_str : "");
+      } else {
+        reason = g_strdup("");  /* Tag exists but no reason provided */
+      }
+      g_object_unref(parser);
+      return reason;
+    }
+  }
+
+  g_object_unref(parser);
+  return NULL;
+}
+
 static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
   GObject *obj = gtk_list_item_get_item(item);
@@ -1372,6 +1453,13 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     }
     if (tags_json) {
       gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
+
+      /* NIP-36: Check for content-warning tag */
+      gchar *content_warning = parse_content_warning_from_tags_json(tags_json);
+      if (content_warning) {
+        gnostr_note_card_row_set_content_warning(GNOSTR_NOTE_CARD_ROW(row), content_warning);
+        g_free(content_warning);
+      }
     } else {
       gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
     }

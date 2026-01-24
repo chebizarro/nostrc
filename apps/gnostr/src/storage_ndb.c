@@ -535,3 +535,70 @@ gboolean storage_ndb_user_has_reacted(const char *event_id_hex, const char *user
 
   return has_reacted;
 }
+
+/* ============== NIP-40 Expiration Timestamp API ============== */
+
+/* Get expiration timestamp from note tags.
+ * Returns 0 if no expiration tag is present, otherwise returns the Unix timestamp.
+ * This function iterates through the note's tags looking for an "expiration" tag. */
+gint64 storage_ndb_note_get_expiration(storage_ndb_note *note)
+{
+  if (!note) return 0;
+
+  struct ndb_tags *tags = ndb_note_tags(note);
+  if (!tags || ndb_tags_count(tags) == 0) return 0;
+
+  struct ndb_iterator iter;
+  ndb_tags_iterate_start(note, &iter);
+
+  while (ndb_tags_iterate_next(&iter)) {
+    struct ndb_tag *tag = iter.tag;
+    int nelem = ndb_tag_count(tag);
+    if (nelem < 2) continue;
+
+    struct ndb_str key = ndb_tag_str(note, tag, 0);
+    if (!key.str) continue;
+
+    /* Check for "expiration" tag (NIP-40) */
+    if (strcmp(key.str, "expiration") == 0) {
+      struct ndb_str value = ndb_tag_str(note, tag, 1);
+      if (value.str) {
+        gint64 expiration = g_ascii_strtoll(value.str, NULL, 10);
+        return expiration;
+      }
+    }
+  }
+
+  return 0;
+}
+
+/* Check if an event is expired (NIP-40).
+ * Returns TRUE if the event has an expiration tag and the timestamp has passed.
+ * Returns FALSE if the event has no expiration tag or is not yet expired. */
+gboolean storage_ndb_note_is_expired(storage_ndb_note *note)
+{
+  if (!note) return FALSE;
+
+  gint64 expiration = storage_ndb_note_get_expiration(note);
+  if (expiration == 0) return FALSE;  /* No expiration tag */
+
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  return (expiration < now);
+}
+
+/* Check if an event is expired given its note_key.
+ * Convenience function that handles transaction management internally.
+ * Returns TRUE if expired, FALSE otherwise. */
+gboolean storage_ndb_is_event_expired(uint64_t note_key)
+{
+  if (note_key == 0) return FALSE;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return FALSE;
+
+  storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
+  gboolean expired = storage_ndb_note_is_expired(note);
+
+  storage_ndb_end_query(txn);
+  return expired;
+}

@@ -109,6 +109,16 @@ void gnostr_note_card_row_set_quote_info(GnostrNoteCardRow *self,
                                           const char *quoted_content,
                                           const char *quoted_author_name);
 
+/* NIP-36 Sensitive Content: set content-warning for sensitive/NSFW content */
+void gnostr_note_card_row_set_content_warning(GnostrNoteCardRow *self,
+                                               const char *content_warning_reason);
+
+/* NIP-36: Check if content is currently blurred (sensitive content hidden) */
+gboolean gnostr_note_card_row_is_content_blurred(GnostrNoteCardRow *self);
+
+/* NIP-36: Reveal sensitive content (show hidden content) */
+void gnostr_note_card_row_reveal_sensitive_content(GnostrNoteCardRow *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_NOTE_CARD_ROW_H */

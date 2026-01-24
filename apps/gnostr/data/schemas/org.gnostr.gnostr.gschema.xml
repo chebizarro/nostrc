@@ -96,6 +96,15 @@
         Disabling reduces bandwidth and may improve privacy.
       </description>
     </key>
+    <key name="auto-show-sensitive" type="b">
+      <default>false</default>
+      <summary>Auto-show sensitive content (NIP-36)</summary>
+      <description>
+        Whether to automatically show content marked as sensitive/NSFW
+        without requiring a click. When disabled, sensitive content is
+        blurred with a "Show sensitive content" button overlay.
+      </description>
+    </key>
   </schema>
   <!-- Client identity and login-related settings -->
   <schema id="org.gnostr.Client" path="/org/gnostr/client/">

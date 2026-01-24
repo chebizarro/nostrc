@@ -17,6 +17,9 @@ struct _GnostrComposer {
   GtkWidget *upload_progress_box;     /* container for upload progress */
   GtkWidget *upload_spinner;          /* spinner during upload */
   GtkWidget *upload_status_label;     /* upload status text */
+  /* NIP-14 Subject input */
+  GtkWidget *subject_box;             /* container for subject entry */
+  GtkWidget *subject_entry;           /* optional subject text entry */
   /* Reply context for NIP-10 threading */
   char *reply_to_id;       /* event ID being replied to (hex) */
   char *root_id;           /* thread root event ID (hex), may equal reply_to_id */
@@ -30,6 +33,11 @@ struct _GnostrComposer {
   gboolean upload_in_progress;        /* TRUE while uploading */
   /* Uploaded media metadata for NIP-92 imeta tags */
   GPtrArray *uploaded_media;          /* array of GnostrComposerMedia* */
+  /* NIP-40: Expiration timestamp */
+  gint64 expiration;                  /* Unix timestamp for expiration (0 = no expiration) */
+  /* NIP-36 Content Warning */
+  GtkWidget *btn_sensitive;           /* toggle button for sensitive content */
+  gboolean is_sensitive;              /* TRUE if note should have content-warning */
 };
 
 G_DEFINE_TYPE(GnostrComposer, gnostr_composer, GTK_TYPE_WIDGET)
@@ -65,6 +73,9 @@ static void gnostr_composer_dispose(GObject *obj) {
   self->upload_progress_box = NULL;
   self->upload_spinner = NULL;
   self->upload_status_label = NULL;
+  /* NIP-14 subject widgets */
+  self->subject_box = NULL;
+  self->subject_entry = NULL;
   G_OBJECT_CLASS(gnostr_composer_parent_class)->dispose(obj);
 }
 
@@ -346,6 +357,22 @@ static void on_attach_clicked(GnostrComposer *self, GtkButton *button) {
   g_object_unref(dialog);
 }
 
+/* NIP-36: Callback when sensitive toggle button is toggled */
+static void on_sensitive_toggled(GnostrComposer *self, GtkToggleButton *button) {
+  (void)button;
+  if (!GNOSTR_IS_COMPOSER(self)) return;
+
+  gboolean active = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_sensitive));
+  self->is_sensitive = active;
+
+  /* Update button styling to indicate active state */
+  if (active) {
+    gtk_widget_add_css_class(GTK_WIDGET(self->btn_sensitive), "warning");
+  } else {
+    gtk_widget_remove_css_class(GTK_WIDGET(self->btn_sensitive), "warning");
+  }
+}
+
 static void gnostr_composer_class_init(GnostrComposerClass *klass) {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
   GObjectClass *gobj_class = G_OBJECT_CLASS(klass);
@@ -363,9 +390,15 @@ static void gnostr_composer_class_init(GnostrComposerClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrComposer, upload_progress_box);
   gtk_widget_class_bind_template_child(widget_class, GnostrComposer, upload_spinner);
   gtk_widget_class_bind_template_child(widget_class, GnostrComposer, upload_status_label);
+  /* NIP-14 Subject input */
+  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, subject_box);
+  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, subject_entry);
+  /* NIP-36 Sensitive content toggle */
+  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, btn_sensitive);
   gtk_widget_class_bind_template_callback(widget_class, on_post_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_cancel_reply_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_attach_clicked);
+  gtk_widget_class_bind_template_callback(widget_class, on_sensitive_toggled);
 
   signals[SIGNAL_POST_REQUESTED] =
       g_signal_new("post-requested",
@@ -389,6 +422,12 @@ static void gnostr_composer_init(GnostrComposer *self) {
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_attach),
                                    GTK_ACCESSIBLE_PROPERTY_LABEL, "Composer Attach Media", -1);
   }
+  /* NIP-36: Initialize sensitive content toggle */
+  if (self->btn_sensitive) {
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_sensitive),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Mark as Sensitive", -1);
+  }
+  self->is_sensitive = FALSE;
   self->upload_in_progress = FALSE;
   self->upload_cancellable = NULL;
   g_message("composer init: self=%p root=%p text_view=%p btn_post=%p btn_attach=%p",
@@ -408,11 +447,23 @@ void gnostr_composer_clear(GnostrComposer *self) {
   if (!self->text_view || !GTK_IS_TEXT_VIEW(self->text_view)) return;
   GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));
   gtk_text_buffer_set_text(buf, "", 0);
+  /* NIP-14: Clear subject entry */
+  if (self->subject_entry && GTK_IS_ENTRY(self->subject_entry)) {
+    gtk_editable_set_text(GTK_EDITABLE(self->subject_entry), "");
+  }
   /* Also clear reply and quote context */
   gnostr_composer_clear_reply_context(self);
   gnostr_composer_clear_quote_context(self);
   /* Clear uploaded media metadata */
   gnostr_composer_clear_uploaded_media(self);
+  /* NIP-40: Clear expiration */
+  gnostr_composer_clear_expiration(self);
+  /* NIP-36: Reset sensitive content toggle */
+  self->is_sensitive = FALSE;
+  if (GTK_IS_TOGGLE_BUTTON(self->btn_sensitive)) {
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_sensitive), FALSE);
+    gtk_widget_remove_css_class(GTK_WIDGET(self->btn_sensitive), "warning");
+  }
 }
 
 void gnostr_composer_set_reply_context(GnostrComposer *self,
@@ -638,5 +689,59 @@ void gnostr_composer_clear_uploaded_media(GnostrComposer *self) {
   g_return_if_fail(GNOSTR_IS_COMPOSER(self));
   if (self->uploaded_media) {
     g_ptr_array_set_size(self->uploaded_media, 0);
+  }
+}
+
+/* NIP-14: Get subject text from entry
+ * Returns the current subject text, or NULL if empty.
+ * The returned string is owned by the entry; do not free.
+ */
+const char *gnostr_composer_get_subject(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+  if (!self->subject_entry || !GTK_IS_ENTRY(self->subject_entry)) return NULL;
+  const char *text = gtk_editable_get_text(GTK_EDITABLE(self->subject_entry));
+  /* Return NULL for empty string */
+  if (!text || !*text) return NULL;
+  return text;
+}
+
+/* NIP-40: Expiration timestamp support */
+void gnostr_composer_set_expiration(GnostrComposer *self, gint64 expiration_secs) {
+  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+  self->expiration = expiration_secs;
+  g_message("composer: set expiration to %" G_GINT64_FORMAT, expiration_secs);
+}
+
+gint64 gnostr_composer_get_expiration(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), 0);
+  return self->expiration;
+}
+
+void gnostr_composer_clear_expiration(GnostrComposer *self) {
+  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+  self->expiration = 0;
+}
+
+gboolean gnostr_composer_has_expiration(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), FALSE);
+  return self->expiration > 0;
+}
+
+/* NIP-36: Content warning / sensitive content support */
+gboolean gnostr_composer_is_sensitive(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), FALSE);
+  return self->is_sensitive;
+}
+
+void gnostr_composer_set_sensitive(GnostrComposer *self, gboolean sensitive) {
+  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+  self->is_sensitive = sensitive;
+  if (GTK_IS_TOGGLE_BUTTON(self->btn_sensitive)) {
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_sensitive), sensitive);
+    if (sensitive) {
+      gtk_widget_add_css_class(GTK_WIDGET(self->btn_sensitive), "warning");
+    } else {
+      gtk_widget_remove_css_class(GTK_WIDGET(self->btn_sensitive), "warning");
+    }
   }
 }
