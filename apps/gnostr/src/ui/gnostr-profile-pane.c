@@ -11,6 +11,7 @@
 #include "../util/relays.h"
 #include "../util/nip58_badges.h"
 #include "../util/user_status.h"
+#include "../util/nip39_identity.h"
 #include "../storage_ndb.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
@@ -319,6 +320,7 @@ struct _GnostrProfilePane {
   char *current_avatar_url;      /* Avatar URL for posts */
   GtkWidget *nip05_badge;        /* Verification badge widget */
   GtkWidget *nip05_row;          /* NIP-05 metadata row */
+  GtkWidget *bot_badge;          /* NIP-24 Bot indicator badge */
   GCancellable *nip05_cancellable;
   GCancellable *posts_cancellable;
   GCancellable *nip65_cancellable;
@@ -355,6 +357,11 @@ struct _GnostrProfilePane {
   GnostrUserStatus *current_music_status;    /* Cached music status */
   GCancellable *status_cancellable;   /* For status fetch */
   gboolean status_loaded;             /* Whether status has been fetched */
+
+  /* NIP-39 External Identity state */
+  char *current_event_json;           /* Full event JSON (for accessing tags) */
+  GPtrArray *external_identities;     /* GnostrExternalIdentity* array */
+  GtkWidget *identities_box;          /* Container for identity display */
 };
 
 G_DEFINE_TYPE(GnostrProfilePane, gnostr_profile_pane, GTK_TYPE_WIDGET)
@@ -467,10 +474,12 @@ static void gnostr_profile_pane_finalize(GObject *obj) {
   g_clear_pointer(&self->current_pubkey, g_free);
   g_clear_pointer(&self->own_pubkey, g_free);
   g_clear_pointer(&self->current_profile_json, g_free);
+  g_clear_pointer(&self->current_event_json, g_free);
   g_clear_pointer(&self->current_nip05, g_free);
   g_clear_pointer(&self->current_display_name, g_free);
   g_clear_pointer(&self->current_handle, g_free);
   g_clear_pointer(&self->current_avatar_url, g_free);
+  g_clear_pointer(&self->external_identities, g_ptr_array_unref);
   G_OBJECT_CLASS(gnostr_profile_pane_parent_class)->finalize(obj);
 }
 
@@ -516,6 +525,11 @@ static void on_edit_profile_clicked(GtkButton *btn, gpointer user_data) {
   /* Populate with current profile data */
   if (self->current_profile_json && *self->current_profile_json) {
     gnostr_profile_edit_set_profile_json(edit_dialog, self->current_profile_json);
+  }
+
+  /* Populate external identities from full event JSON (NIP-39) */
+  if (self->current_event_json && *self->current_event_json) {
+    gnostr_profile_edit_set_event_json(edit_dialog, self->current_event_json);
   }
 
   /* Connect to profile-saved signal */
@@ -669,6 +683,7 @@ static void gnostr_profile_pane_class_init(GnostrProfilePaneClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, avatar_image);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, avatar_initials);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, lbl_display_name);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, bot_badge);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, lbl_handle);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, lbl_bio);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, metadata_box);
@@ -858,6 +873,11 @@ void gnostr_profile_pane_clear(GnostrProfilePane *self) {
   self->nip05_row = NULL;
   self->nip05_badge = NULL;
   g_clear_pointer(&self->current_nip05, g_free);
+
+  /* Hide NIP-24 bot badge */
+  if (self->bot_badge) {
+    gtk_widget_set_visible(self->bot_badge, FALSE);
+  }
   if (self->nip05_cancellable) {
     g_cancellable_cancel(self->nip05_cancellable);
     g_clear_object(&self->nip05_cancellable);
@@ -966,6 +986,17 @@ void gnostr_profile_pane_clear(GnostrProfilePane *self) {
       gtk_box_remove(GTK_BOX(parent), self->badges_box);
     }
     self->badges_box = NULL;
+  }
+
+  /* Clear NIP-39 external identity state */
+  g_clear_pointer(&self->current_event_json, g_free);
+  g_clear_pointer(&self->external_identities, g_ptr_array_unref);
+  if (self->identities_box) {
+    GtkWidget *parent = gtk_widget_get_parent(self->identities_box);
+    if (parent && GTK_IS_BOX(parent)) {
+      gtk_box_remove(GTK_BOX(parent), self->identities_box);
+    }
+    self->identities_box = NULL;
   }
 
   /* Reset to About tab */
@@ -1310,6 +1341,76 @@ static void add_nip05_row(GnostrProfilePane *self, const char *nip05, const char
   }
 }
 
+/* ============== NIP-39 External Identity Display ============== */
+
+/* Display external identities from "i" tags */
+static void display_external_identities(GnostrProfilePane *self) {
+  if (!self->external_identities || self->external_identities->len == 0) {
+    g_debug("profile_pane: no external identities to display");
+    return;
+  }
+
+  /* Remove existing identities box if any */
+  if (self->identities_box) {
+    GtkWidget *parent = gtk_widget_get_parent(self->identities_box);
+    if (parent && GTK_IS_BOX(parent)) {
+      gtk_box_remove(GTK_BOX(parent), self->identities_box);
+    }
+    self->identities_box = NULL;
+  }
+
+  /* Create container for identities */
+  self->identities_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+  gtk_widget_add_css_class(self->identities_box, "profile-identities");
+  gtk_widget_set_margin_top(self->identities_box, 8);
+
+  /* Add section header */
+  GtkWidget *header = gtk_label_new("External Identities");
+  gtk_label_set_xalign(GTK_LABEL(header), 0.0);
+  gtk_widget_add_css_class(header, "heading");
+  gtk_widget_add_css_class(header, "dim-label");
+  gtk_widget_set_margin_bottom(header, 4);
+  gtk_box_append(GTK_BOX(self->identities_box), header);
+
+  /* Add identity rows */
+  for (guint i = 0; i < self->external_identities->len; i++) {
+    GnostrExternalIdentity *identity = g_ptr_array_index(self->external_identities, i);
+    if (!identity) continue;
+
+    GtkWidget *row = gnostr_nip39_create_identity_row(identity);
+    if (row) {
+      gtk_box_append(GTK_BOX(self->identities_box), row);
+    }
+  }
+
+  /* Add identities box to metadata_box (which is in about_content) */
+  if (self->metadata_box && GTK_IS_BOX(self->metadata_box)) {
+    gtk_box_append(GTK_BOX(self->metadata_box), self->identities_box);
+    gtk_widget_set_visible(self->metadata_box, TRUE);
+  }
+
+  g_debug("profile_pane: displayed %u external identities", self->external_identities->len);
+}
+
+/* Parse external identities from the current event JSON */
+static void parse_external_identities(GnostrProfilePane *self) {
+  /* Clear existing identities */
+  g_clear_pointer(&self->external_identities, g_ptr_array_unref);
+
+  if (!self->current_event_json || !*self->current_event_json) {
+    g_debug("profile_pane: no event JSON available for identity parsing");
+    return;
+  }
+
+  self->external_identities = gnostr_nip39_parse_identities_from_event(self->current_event_json);
+
+  if (self->external_identities) {
+    g_debug("profile_pane: parsed %u external identities from event",
+            self->external_identities->len);
+    display_external_identities(self);
+  }
+}
+
 #ifdef HAVE_SOUP3
 /* Helper: Insert into image_cache with LRU eviction */
 static void image_cache_insert(GnostrProfilePane *self, const char *url, GdkTexture *texture) {
@@ -1546,7 +1647,7 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
     return;
   }
   
-  /* Extract fields */
+  /* Extract fields - NIP-01 standard plus NIP-24 extra metadata */
   const char *name = NULL;
   const char *display_name = NULL;
   const char *about = NULL;
@@ -1556,7 +1657,8 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
   const char *website = NULL;
   const char *lud06 = NULL;
   const char *lud16 = NULL;
-  
+  gboolean is_bot = FALSE;  /* NIP-24: bot indicator */
+
   json_t *val;
   if ((val = json_object_get(profile_json, "name")) && json_is_string(val))
     name = json_string_value(val);
@@ -1576,10 +1678,27 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
     lud06 = json_string_value(val);
   if ((val = json_object_get(profile_json, "lud16")) && json_is_string(val))
     lud16 = json_string_value(val);
+  /* NIP-24: Parse bot field - can be boolean true or string "true" */
+  if ((val = json_object_get(profile_json, "bot"))) {
+    if (json_is_boolean(val)) {
+      is_bot = json_boolean_value(val);
+    } else if (json_is_string(val)) {
+      const char *bot_str = json_string_value(val);
+      is_bot = (bot_str && g_ascii_strcasecmp(bot_str, "true") == 0);
+    }
+  }
   
   /* Update display name */
   const char *final_display = display_name ? display_name : (name ? name : "Anonymous");
   gtk_label_set_text(GTK_LABEL(self->lbl_display_name), final_display);
+
+  /* NIP-24: Show/hide bot indicator badge */
+  if (self->bot_badge) {
+    gtk_widget_set_visible(self->bot_badge, is_bot);
+    if (is_bot) {
+      gtk_widget_set_tooltip_text(self->bot_badge, "This account is a bot");
+    }
+  }
 
   /* Store profile info for posts */
   g_free(self->current_display_name);
@@ -1648,11 +1767,11 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
     add_metadata_row(self, "network-wireless-symbolic", "Lightning", lud06, FALSE);
   }
   
-  /* Show any additional fields */
+  /* Show any additional fields (skip NIP-01/NIP-24 standard fields) */
   const char *key;
   json_t *value;
   json_object_foreach(profile_json, key, value) {
-    if (json_is_string(value) && 
+    if (json_is_string(value) &&
         strcmp(key, "name") != 0 &&
         strcmp(key, "display_name") != 0 &&
         strcmp(key, "about") != 0 &&
@@ -1661,7 +1780,8 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
         strcmp(key, "nip05") != 0 &&
         strcmp(key, "website") != 0 &&
         strcmp(key, "lud06") != 0 &&
-        strcmp(key, "lud16") != 0) {
+        strcmp(key, "lud16") != 0 &&
+        strcmp(key, "bot") != 0) {  /* NIP-24: exclude bot from additional fields */
       const char *str_val = json_string_value(value);
       if (str_val && *str_val) {
         add_metadata_row(self, "text-x-generic-symbolic", key, str_val, FALSE);
@@ -2415,6 +2535,7 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
 
   /* Find the most recent kind:0 event */
   char *best_content = NULL;
+  char *best_event_json = NULL;
   gint64 best_created_at = 0;
 
   for (guint i = 0; i < results->len; i++) {
@@ -2430,6 +2551,9 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
         g_free(best_content);
         const char *content = nostr_event_get_content(evt);
         best_content = content ? g_strdup(content) : NULL;
+        /* Store full event JSON for NIP-39 identity parsing */
+        g_free(best_event_json);
+        best_event_json = g_strdup(event_json);
       }
     }
     if (evt) nostr_event_free(evt);
@@ -2438,9 +2562,19 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
   if (best_content && *best_content) {
     g_debug("profile_pane: updating UI with network profile for %.8s (created_at=%" G_GINT64_FORMAT ")",
             self->current_pubkey ? self->current_pubkey : "(null)", best_created_at);
+
+    /* Store full event JSON for NIP-39 identity parsing */
+    g_free(self->current_event_json);
+    self->current_event_json = best_event_json;
+    best_event_json = NULL;  /* Ownership transferred */
+
     gnostr_profile_pane_update_from_json(self, best_content);
+
+    /* Parse NIP-39 external identities from the event tags */
+    parse_external_identities(self);
   }
   g_free(best_content);
+  g_free(best_event_json);
 
   g_ptr_array_unref(results);
 }
@@ -2477,8 +2611,16 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
           const char *content = nostr_event_get_content(evt);
           if (content && *content) {
             g_debug("profile_pane: loaded profile from nostrdb cache for %.8s", self->current_pubkey);
+
+            /* Store full event JSON for NIP-39 identity parsing */
+            g_free(self->current_event_json);
+            self->current_event_json = g_strdup(event_json);
+
             gnostr_profile_pane_update_from_json(self, content);
             self->profile_loaded_from_cache = TRUE;
+
+            /* Parse NIP-39 external identities from the event tags */
+            parse_external_identities(self);
           }
         }
         if (evt) nostr_event_free(evt);

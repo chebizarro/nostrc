@@ -278,7 +278,7 @@
                   </object>
                 </child>
 
-                <!-- Lightning Address -->
+                <!-- Lightning Address (lud16) -->
                 <child>
                   <object class="GtkBox">
                     <property name="orientation">vertical</property>
@@ -301,12 +301,138 @@
                     </child>
                     <child>
                       <object class="GtkLabel">
-                        <property name="label">For receiving lightning tips</property>
+                        <property name="label">For receiving lightning tips (email-like format)</property>
                         <property name="xalign">0</property>
                         <property name="wrap">true</property>
                         <style>
                           <class name="caption"/>
                           <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- LNURL Pay (lud06) - NIP-24 -->
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">4</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">LNURL Pay (Advanced)</property>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkEntry" id="entry_lud06">
+                        <property name="placeholder-text">lnurl1...</property>
+                        <property name="hexpand">true</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Bech32-encoded LNURL pay address (optional)</property>
+                        <property name="xalign">0</property>
+                        <property name="wrap">true</property>
+                        <style>
+                          <class name="caption"/>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Bot Indicator - NIP-24 -->
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">12</property>
+                    <property name="margin-top">8</property>
+                    <child>
+                      <object class="GtkSwitch" id="switch_bot">
+                        <property name="valign">center</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">2</property>
+                        <property name="hexpand">true</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">Bot Account</property>
+                            <property name="xalign">0</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">Enable if this account is automated</property>
+                            <property name="xalign">0</property>
+                            <property name="wrap">true</property>
+                            <style>
+                              <class name="caption"/>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- External Identities - NIP-39 -->
+                <child>
+                  <object class="GtkBox" id="identities_section">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">8</property>
+                    <property name="margin-top">16</property>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">External Identities (NIP-39)</property>
+                            <property name="xalign">0</property>
+                            <property name="hexpand">true</property>
+                            <style>
+                              <class name="heading"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="btn_add_identity">
+                            <property name="icon-name">list-add-symbolic</property>
+                            <property name="tooltip-text">Add external identity</property>
+                            <style>
+                              <class name="flat"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Link your accounts from other platforms to prove ownership.</property>
+                        <property name="xalign">0</property>
+                        <property name="wrap">true</property>
+                        <style>
+                          <class name="dim-label"/>
+                          <class name="caption"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox" id="identities_list">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">4</property>
+                        <style>
+                          <class name="card"/>
                         </style>
                       </object>
                     </child>
