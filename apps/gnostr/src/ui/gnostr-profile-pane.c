@@ -1,5 +1,6 @@
 #include "gnostr-profile-pane.h"
 #include "gnostr-profile-edit.h"
+#include "gnostr-status-dialog.h"
 #include "note_card_row.h"
 #include <glib.h>
 #include <glib/gi18n.h>
@@ -8,6 +9,8 @@
 #include "gnostr-avatar-cache.h"
 #include "../util/nip05.h"
 #include "../util/relays.h"
+#include "../util/nip58_badges.h"
+#include "../util/user_status.h"
 #include "../storage_ndb.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
@@ -267,6 +270,7 @@ struct _GnostrProfilePane {
   GtkWidget *other_profile_actions;
   GtkWidget *own_profile_actions;
   GtkWidget *btn_edit_profile;
+  GtkWidget *btn_set_status;
 
   /* Tab widgets */
   GtkWidget *tab_switcher;
@@ -336,6 +340,21 @@ struct _GnostrProfilePane {
   /* Profile fetch state */
   GCancellable *profile_cancellable;  /* For network profile fetch */
   gboolean profile_loaded_from_cache; /* Whether we showed cached data */
+
+  /* NIP-58 Badge state */
+  GtkWidget *badges_box;              /* Container for badge icons */
+  GPtrArray *profile_badges;          /* GnostrProfileBadge* array */
+  GCancellable *badges_cancellable;   /* For badge fetch */
+  gboolean badges_loaded;             /* Whether badges have been fetched */
+
+  /* NIP-38 User Status state */
+  GtkWidget *status_box;              /* Container for status display */
+  GtkWidget *status_general_row;      /* General status row widget */
+  GtkWidget *status_music_row;        /* Music status row widget */
+  GnostrUserStatus *current_general_status;  /* Cached general status */
+  GnostrUserStatus *current_music_status;    /* Cached music status */
+  GCancellable *status_cancellable;   /* For status fetch */
+  gboolean status_loaded;             /* Whether status has been fetched */
 };
 
 G_DEFINE_TYPE(GnostrProfilePane, gnostr_profile_pane, GTK_TYPE_WIDGET)
@@ -358,6 +377,9 @@ static void load_posts_with_relays(GnostrProfilePane *self, GPtrArray *relay_url
 static void load_media(GnostrProfilePane *self);
 static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, gpointer user_data);
 static void fetch_profile_from_cache_or_network(GnostrProfilePane *self);
+static void load_badges(GnostrProfilePane *self);
+static void on_badges_fetched(GPtrArray *badges, gpointer user_data);
+static void fetch_user_status(GnostrProfilePane *self);
 
 static void gnostr_profile_pane_dispose(GObject *obj) {
   GnostrProfilePane *self = GNOSTR_PROFILE_PANE(obj);
@@ -366,6 +388,13 @@ static void gnostr_profile_pane_dispose(GObject *obj) {
     g_cancellable_cancel(self->profile_cancellable);
     g_clear_object(&self->profile_cancellable);
   }
+  /* Cancel NIP-58 badge loading */
+  if (self->badges_cancellable) {
+    g_cancellable_cancel(self->badges_cancellable);
+    g_clear_object(&self->badges_cancellable);
+  }
+  /* Clear badge data */
+  g_clear_pointer(&self->profile_badges, g_ptr_array_unref);
   /* Cancel NIP-05 verification if in progress */
   if (self->nip05_cancellable) {
     g_cancellable_cancel(self->nip05_cancellable);
@@ -419,6 +448,16 @@ static void gnostr_profile_pane_dispose(GObject *obj) {
   g_clear_object(&self->media_model);
 
   g_clear_object(&self->simple_pool);
+
+  /* Cancel NIP-38 user status loading */
+  if (self->status_cancellable) {
+    g_cancellable_cancel(self->status_cancellable);
+    g_clear_object(&self->status_cancellable);
+  }
+  /* Clear user status data */
+  g_clear_pointer(&self->current_general_status, gnostr_user_status_free);
+  g_clear_pointer(&self->current_music_status, gnostr_user_status_free);
+
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_PROFILE_PANE);
   G_OBJECT_CLASS(gnostr_profile_pane_parent_class)->dispose(obj);
 }
@@ -484,6 +523,38 @@ static void on_edit_profile_clicked(GtkButton *btn, gpointer user_data) {
 
   /* Show the dialog */
   gtk_window_present(GTK_WINDOW(edit_dialog));
+}
+
+/* Callback when status dialog updates status */
+static void on_status_dialog_status_updated(GnostrStatusDialog *dialog, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  (void)dialog;
+
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+
+  /* Refresh user status display */
+  fetch_user_status(self);
+}
+
+static void on_set_status_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  (void)btn;
+
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+
+  /* Create status dialog */
+  GnostrStatusDialog *status_dialog = gnostr_status_dialog_new();
+
+  /* Pre-fill with current status if available */
+  const gchar *general = self->current_general_status ? self->current_general_status->content : NULL;
+  const gchar *music = self->current_music_status ? self->current_music_status->content : NULL;
+  gnostr_status_dialog_set_current_status(status_dialog, general, music);
+
+  /* Connect to status-updated signal */
+  g_signal_connect(status_dialog, "status-updated", G_CALLBACK(on_status_dialog_status_updated), self);
+
+  /* Present the dialog */
+  gnostr_status_dialog_present(status_dialog, GTK_WIDGET(self));
 }
 
 static void on_load_more_clicked(GtkButton *btn, gpointer user_data) {
@@ -610,6 +681,7 @@ static void gnostr_profile_pane_class_init(GnostrProfilePaneClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, other_profile_actions);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, own_profile_actions);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_edit_profile);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_set_status);
 
   /* Tab widgets */
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, tab_switcher);
@@ -639,6 +711,7 @@ static void gnostr_profile_pane_class_init(GnostrProfilePaneClass *klass) {
 
   gtk_widget_class_bind_template_callback(wclass, on_close_clicked);
   gtk_widget_class_bind_template_callback(wclass, on_edit_profile_clicked);
+  gtk_widget_class_bind_template_callback(wclass, on_set_status_clicked);
 
   signals[SIGNAL_CLOSE_REQUESTED] = g_signal_new(
     "close-requested",
@@ -664,6 +737,11 @@ static void gnostr_profile_pane_init(GnostrProfilePane *self) {
   /* Connect edit profile button */
   if (self->btn_edit_profile) {
     g_signal_connect(self->btn_edit_profile, "clicked", G_CALLBACK(on_edit_profile_clicked), self);
+  }
+
+  /* Connect set status button (NIP-38) */
+  if (self->btn_set_status) {
+    g_signal_connect(self->btn_set_status, "clicked", G_CALLBACK(on_set_status_clicked), self);
   }
 
   /* Connect load more button */
@@ -853,6 +931,43 @@ void gnostr_profile_pane_clear(GnostrProfilePane *self) {
 
   g_clear_pointer(&self->current_pubkey, g_free);
 
+  /* Clear NIP-38 user status state */
+  if (self->status_cancellable) {
+    g_cancellable_cancel(self->status_cancellable);
+    g_clear_object(&self->status_cancellable);
+  }
+  g_clear_pointer(&self->current_general_status, gnostr_user_status_free);
+  g_clear_pointer(&self->current_music_status, gnostr_user_status_free);
+  self->status_loaded = FALSE;
+
+  /* Remove status widgets */
+  if (self->status_box) {
+    GtkWidget *parent = gtk_widget_get_parent(self->status_box);
+    if (parent && GTK_IS_BOX(parent)) {
+      gtk_box_remove(GTK_BOX(parent), self->status_box);
+    }
+    self->status_box = NULL;
+    self->status_general_row = NULL;
+    self->status_music_row = NULL;
+  }
+
+  /* Clear NIP-58 badge state */
+  if (self->badges_cancellable) {
+    g_cancellable_cancel(self->badges_cancellable);
+    g_clear_object(&self->badges_cancellable);
+  }
+  g_clear_pointer(&self->profile_badges, g_ptr_array_unref);
+  self->badges_loaded = FALSE;
+
+  /* Remove badge widgets */
+  if (self->badges_box) {
+    GtkWidget *parent = gtk_widget_get_parent(self->badges_box);
+    if (parent && GTK_IS_BOX(parent)) {
+      gtk_box_remove(GTK_BOX(parent), self->badges_box);
+    }
+    self->badges_box = NULL;
+  }
+
   /* Reset to About tab */
   if (self->content_stack) {
     gtk_stack_set_visible_child_name(GTK_STACK(self->content_stack), "about");
@@ -897,6 +1012,212 @@ static void add_metadata_row(GnostrProfilePane *self, const char *icon_name, con
 
   gtk_box_append(GTK_BOX(self->metadata_box), row);
   gtk_widget_set_visible(self->metadata_box, TRUE);
+}
+
+/* ============== NIP-38 User Status Display ============== */
+
+/* Create a status row widget */
+static GtkWidget *create_status_row(const char *icon_name, const char *label,
+                                     const char *content, const char *link_url) {
+  GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_margin_top(row, 4);
+  gtk_widget_set_margin_bottom(row, 4);
+
+  /* Icon */
+  GtkWidget *icon = gtk_image_new_from_icon_name(icon_name);
+  gtk_widget_add_css_class(icon, "accent");
+  gtk_box_append(GTK_BOX(row), icon);
+
+  /* Label */
+  GtkWidget *lbl = gtk_label_new(label);
+  gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+  gtk_widget_add_css_class(lbl, "dim-label");
+  gtk_box_append(GTK_BOX(row), lbl);
+
+  /* Content with optional link */
+  if (link_url && *link_url) {
+    char *markup = g_markup_printf_escaped("<a href=\"%s\">%s</a>", link_url, content);
+    GtkWidget *val = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(val), markup);
+    gtk_label_set_xalign(GTK_LABEL(val), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(val), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_hexpand(val, TRUE);
+    gtk_box_append(GTK_BOX(row), val);
+    g_free(markup);
+  } else {
+    GtkWidget *val = gtk_label_new(content);
+    gtk_label_set_xalign(GTK_LABEL(val), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(val), PANGO_ELLIPSIZE_END);
+    gtk_label_set_selectable(GTK_LABEL(val), TRUE);
+    gtk_widget_set_hexpand(val, TRUE);
+    gtk_box_append(GTK_BOX(row), val);
+  }
+
+  return row;
+}
+
+/* Ensure status_box exists and is added to the about_content */
+static void ensure_status_box(GnostrProfilePane *self) {
+  if (self->status_box) return;
+
+  self->status_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+  gtk_widget_add_css_class(self->status_box, "profile-status-box");
+  gtk_widget_set_margin_top(self->status_box, 8);
+  gtk_widget_set_margin_bottom(self->status_box, 8);
+
+  /* Insert after bio (lbl_bio) but before metadata_box in about_content */
+  if (self->about_content && GTK_IS_BOX(self->about_content)) {
+    /* Find position after bio */
+    GtkWidget *sibling = NULL;
+    if (self->lbl_bio && gtk_widget_get_visible(self->lbl_bio)) {
+      sibling = self->lbl_bio;
+    }
+
+    if (sibling) {
+      gtk_box_insert_child_after(GTK_BOX(self->about_content), self->status_box, sibling);
+    } else {
+      /* Prepend if no bio */
+      gtk_box_prepend(GTK_BOX(self->about_content), self->status_box);
+    }
+  }
+}
+
+/* Update the status display with current status data */
+static void update_status_display(GnostrProfilePane *self) {
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+
+  /* Check if we have any status to display */
+  gboolean has_general = self->current_general_status &&
+                          self->current_general_status->content &&
+                          *self->current_general_status->content;
+  gboolean has_music = self->current_music_status &&
+                        self->current_music_status->content &&
+                        *self->current_music_status->content;
+
+  if (!has_general && !has_music) {
+    /* No status to show - hide/remove status box */
+    if (self->status_box) {
+      gtk_widget_set_visible(self->status_box, FALSE);
+    }
+    return;
+  }
+
+  /* Ensure status box exists */
+  ensure_status_box(self);
+
+  /* Clear existing rows */
+  if (self->status_general_row) {
+    gtk_box_remove(GTK_BOX(self->status_box), self->status_general_row);
+    self->status_general_row = NULL;
+  }
+  if (self->status_music_row) {
+    gtk_box_remove(GTK_BOX(self->status_box), self->status_music_row);
+    self->status_music_row = NULL;
+  }
+
+  /* Add general status row */
+  if (has_general) {
+    self->status_general_row = create_status_row(
+      "user-status-symbolic",  /* fallback icon */
+      "Status",
+      self->current_general_status->content,
+      self->current_general_status->link_url);
+    gtk_box_append(GTK_BOX(self->status_box), self->status_general_row);
+  }
+
+  /* Add music status row */
+  if (has_music) {
+    self->status_music_row = create_status_row(
+      "audio-x-generic-symbolic",
+      "Listening",
+      self->current_music_status->content,
+      self->current_music_status->link_url);
+    gtk_box_append(GTK_BOX(self->status_box), self->status_music_row);
+  }
+
+  gtk_widget_set_visible(self->status_box, TRUE);
+}
+
+/* Callback when user status is fetched */
+static void on_user_status_fetched(GPtrArray *statuses, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+
+  if (!GNOSTR_IS_PROFILE_PANE(self)) {
+    if (statuses) g_ptr_array_unref(statuses);
+    return;
+  }
+
+  self->status_loaded = TRUE;
+
+  if (!statuses || statuses->len == 0) {
+    g_debug("profile_pane: no user status found for %s",
+            self->current_pubkey ? self->current_pubkey : "(null)");
+    if (statuses) g_ptr_array_unref(statuses);
+    return;
+  }
+
+  g_debug("profile_pane: received %u user statuses for %s",
+          statuses->len, self->current_pubkey ? self->current_pubkey : "(null)");
+
+  /* Process statuses */
+  for (guint i = 0; i < statuses->len; i++) {
+    GnostrUserStatus *status = g_ptr_array_index(statuses, i);
+    if (!status) continue;
+
+    /* Skip expired statuses */
+    if (gnostr_user_status_is_expired(status)) {
+      g_debug("profile_pane: skipping expired %s status",
+              gnostr_user_status_type_to_string(status->type));
+      continue;
+    }
+
+    /* Store by type (keep newest) */
+    if (status->type == GNOSTR_STATUS_GENERAL) {
+      if (!self->current_general_status ||
+          status->created_at > self->current_general_status->created_at) {
+        g_clear_pointer(&self->current_general_status, gnostr_user_status_free);
+        self->current_general_status = gnostr_user_status_copy(status);
+        g_debug("profile_pane: updated general status: %s",
+                status->content ? status->content : "(empty)");
+      }
+    } else if (status->type == GNOSTR_STATUS_MUSIC) {
+      if (!self->current_music_status ||
+          status->created_at > self->current_music_status->created_at) {
+        g_clear_pointer(&self->current_music_status, gnostr_user_status_free);
+        self->current_music_status = gnostr_user_status_copy(status);
+        g_debug("profile_pane: updated music status: %s",
+                status->content ? status->content : "(empty)");
+      }
+    }
+  }
+
+  g_ptr_array_unref(statuses);
+
+  /* Update UI */
+  update_status_display(self);
+}
+
+/* Fetch user status for the current profile */
+static void fetch_user_status(GnostrProfilePane *self) {
+  if (!self->current_pubkey || !*self->current_pubkey) {
+    g_debug("profile_pane: no pubkey set, cannot fetch status");
+    return;
+  }
+
+  /* Cancel any pending fetch */
+  if (self->status_cancellable) {
+    g_cancellable_cancel(self->status_cancellable);
+    g_clear_object(&self->status_cancellable);
+  }
+  self->status_cancellable = g_cancellable_new();
+
+  g_debug("profile_pane: fetching user status for %.8s...", self->current_pubkey);
+
+  gnostr_user_status_fetch_async(
+    self->current_pubkey,
+    self->status_cancellable,
+    on_user_status_fetched,
+    self);
 }
 
 /* NIP-05 verification callback */
@@ -2206,6 +2527,9 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
 
   g_free(urls);
   g_ptr_array_unref(relay_urls);
+
+  /* Step 3: Also fetch NIP-38 user status in parallel */
+  fetch_user_status(self);
 }
 
 /* Handle tab switch */
@@ -2281,6 +2605,11 @@ void gnostr_profile_pane_update_from_json(GnostrProfilePane *self, const char *p
 
   /* Update button visibility after profile is loaded */
   update_action_buttons_visibility(self);
+
+  /* Fetch NIP-58 badges if not already loaded */
+  if (!self->badges_loaded && self->current_pubkey) {
+    load_badges(self);
+  }
 }
 
 void gnostr_profile_pane_set_own_pubkey(GnostrProfilePane *self, const char *own_pubkey_hex) {
@@ -2315,4 +2644,218 @@ void gnostr_profile_pane_refresh(GnostrProfilePane *self) {
 gboolean gnostr_profile_pane_is_profile_cached(GnostrProfilePane *self) {
   g_return_val_if_fail(GNOSTR_IS_PROFILE_PANE(self), FALSE);
   return self->profile_loaded_from_cache;
+}
+
+/* ============== NIP-58 Badge Display ============== */
+
+/* Badge icon size in pixels */
+#define BADGE_ICON_SIZE 32
+
+/* Maximum badges to display */
+#define MAX_VISIBLE_BADGES 8
+
+/* Create a badge icon widget with click handler for popover */
+static GtkWidget *
+create_badge_icon(GnostrProfilePane *self, GnostrProfileBadge *badge)
+{
+  (void)self; /* May be used for popover parent in future */
+
+  if (!badge || !badge->definition) return NULL;
+
+  GnostrBadgeDefinition *def = badge->definition;
+
+  /* Create a clickable frame for the badge */
+  GtkWidget *button = gtk_button_new();
+  gtk_widget_add_css_class(button, "flat");
+  gtk_widget_add_css_class(button, "profile-badge-icon");
+  gtk_widget_set_size_request(button, BADGE_ICON_SIZE, BADGE_ICON_SIZE);
+
+  /* Create the badge image */
+  GtkWidget *picture = gtk_picture_new();
+  gtk_picture_set_content_fit(GTK_PICTURE(picture), GTK_CONTENT_FIT_COVER);
+  gtk_picture_set_can_shrink(GTK_PICTURE(picture), TRUE);
+  gtk_widget_set_size_request(picture, BADGE_ICON_SIZE, BADGE_ICON_SIZE);
+
+  /* Use thumbnail if available, otherwise image */
+  const char *image_url = def->thumb_url ? def->thumb_url : def->image_url;
+  if (image_url && *image_url) {
+    /* Try to load from cache */
+    GdkTexture *cached = gnostr_badge_get_cached_image(image_url);
+    if (cached) {
+      gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(cached));
+      g_object_unref(cached);
+    } else {
+      /* Download async using avatar cache infrastructure */
+      gnostr_avatar_download_async(image_url, picture, NULL);
+    }
+  } else {
+    /* No image - show a placeholder icon */
+    GtkWidget *icon = gtk_image_new_from_icon_name("starred-symbolic");
+    gtk_image_set_pixel_size(GTK_IMAGE(icon), BADGE_ICON_SIZE - 8);
+    gtk_button_set_child(GTK_BUTTON(button), icon);
+
+    /* Set tooltip with badge name */
+    if (def->name && *def->name) {
+      gtk_widget_set_tooltip_text(button, def->name);
+    }
+    return button;
+  }
+
+  gtk_button_set_child(GTK_BUTTON(button), picture);
+
+  /* Set tooltip with badge name and description */
+  if (def->name && *def->name) {
+    GString *tooltip = g_string_new(def->name);
+    if (def->description && *def->description) {
+      g_string_append_printf(tooltip, "\n%s", def->description);
+    }
+    gtk_widget_set_tooltip_text(button, tooltip->str);
+    g_string_free(tooltip, TRUE);
+  }
+
+  return button;
+}
+
+/* Build the badges display box */
+static void
+build_badges_display(GnostrProfilePane *self)
+{
+  if (!self->profile_badges || self->profile_badges->len == 0) {
+    g_debug("profile_pane: no badges to display");
+    return;
+  }
+
+  /* Remove existing badges box if any */
+  if (self->badges_box) {
+    GtkWidget *parent = gtk_widget_get_parent(self->badges_box);
+    if (parent && GTK_IS_BOX(parent)) {
+      gtk_box_remove(GTK_BOX(parent), self->badges_box);
+    }
+    self->badges_box = NULL;
+  }
+
+  /* Create container for badges */
+  self->badges_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+  gtk_widget_add_css_class(self->badges_box, "profile-badges");
+  gtk_widget_set_margin_top(self->badges_box, 8);
+  gtk_widget_set_margin_bottom(self->badges_box, 4);
+  gtk_widget_set_halign(self->badges_box, GTK_ALIGN_START);
+
+  /* Add badge label */
+  GtkWidget *label = gtk_label_new("Badges:");
+  gtk_widget_add_css_class(label, "dim-label");
+  gtk_widget_set_margin_end(label, 4);
+  gtk_box_append(GTK_BOX(self->badges_box), label);
+
+  /* Add badge icons (up to max visible) */
+  guint count = MIN(self->profile_badges->len, MAX_VISIBLE_BADGES);
+  for (guint i = 0; i < count; i++) {
+    GnostrProfileBadge *badge = g_ptr_array_index(self->profile_badges, i);
+    GtkWidget *icon = create_badge_icon(self, badge);
+    if (icon) {
+      gtk_box_append(GTK_BOX(self->badges_box), icon);
+    }
+  }
+
+  /* If there are more badges, show a "more" indicator */
+  if (self->profile_badges->len > MAX_VISIBLE_BADGES) {
+    gchar *more_text = g_strdup_printf("+%u", self->profile_badges->len - MAX_VISIBLE_BADGES);
+    GtkWidget *more_label = gtk_label_new(more_text);
+    gtk_widget_add_css_class(more_label, "dim-label");
+    gtk_widget_set_margin_start(more_label, 4);
+    gtk_box_append(GTK_BOX(self->badges_box), more_label);
+    g_free(more_text);
+  }
+
+  /* Insert badges box into about_content after bio but before metadata */
+  if (self->about_content && GTK_IS_BOX(self->about_content)) {
+    /* Find the bio label and insert after it */
+    GtkWidget *child = gtk_widget_get_first_child(self->about_content);
+    GtkWidget *insert_after = NULL;
+
+    while (child) {
+      if (child == self->lbl_bio) {
+        insert_after = child;
+        break;
+      }
+      child = gtk_widget_get_next_sibling(child);
+    }
+
+    if (insert_after) {
+      /* Insert after bio label */
+      GtkWidget *next = gtk_widget_get_next_sibling(insert_after);
+      if (next) {
+        gtk_box_insert_child_after(GTK_BOX(self->about_content), self->badges_box, insert_after);
+      } else {
+        gtk_box_append(GTK_BOX(self->about_content), self->badges_box);
+      }
+    } else {
+      /* Fallback: append at the end */
+      gtk_box_append(GTK_BOX(self->about_content), self->badges_box);
+    }
+  }
+
+  g_debug("profile_pane: displaying %u badges", count);
+}
+
+/* Callback when badges are fetched */
+static void
+on_badges_fetched(GPtrArray *badges, gpointer user_data)
+{
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+
+  if (!GNOSTR_IS_PROFILE_PANE(self)) {
+    if (badges) g_ptr_array_unref(badges);
+    return;
+  }
+
+  self->badges_loaded = TRUE;
+
+  /* Clear previous badges */
+  g_clear_pointer(&self->profile_badges, g_ptr_array_unref);
+
+  if (!badges || badges->len == 0) {
+    g_debug("profile_pane: no badges found for user");
+    if (badges) g_ptr_array_unref(badges);
+    return;
+  }
+
+  /* Store the badges (transfer ownership) */
+  self->profile_badges = badges;
+
+  g_debug("profile_pane: received %u badges", badges->len);
+
+  /* Build the display */
+  build_badges_display(self);
+}
+
+/* Fetch badges for the current profile */
+static void
+load_badges(GnostrProfilePane *self)
+{
+  if (!self->current_pubkey || strlen(self->current_pubkey) != 64) {
+    g_debug("profile_pane: no valid pubkey for badge fetch");
+    return;
+  }
+
+  if (self->badges_loaded) {
+    g_debug("profile_pane: badges already loaded");
+    return;
+  }
+
+  /* Cancel previous fetch if any */
+  if (self->badges_cancellable) {
+    g_cancellable_cancel(self->badges_cancellable);
+    g_clear_object(&self->badges_cancellable);
+  }
+  self->badges_cancellable = g_cancellable_new();
+
+  g_debug("profile_pane: fetching badges for %.8s", self->current_pubkey);
+
+  gnostr_fetch_profile_badges_async(
+    self->current_pubkey,
+    self->badges_cancellable,
+    on_badges_fetched,
+    self
+  );
 }
