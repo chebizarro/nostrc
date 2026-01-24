@@ -12,6 +12,9 @@
 #include "../util/imeta.h"
 #include "../util/zap.h"
 #include "../util/custom_emoji.h"
+#include "../util/nip32_labels.h"
+#include "../util/nip23.h"
+#include "../util/markdown_pango.h"
 #include "../storage_ndb.h"
 #include <nostr/nip19/nip19.h>
 #ifdef HAVE_SOUP3
@@ -121,6 +124,22 @@ struct _GnostrNoteCardRow {
   GtkWidget *sensitive_warning_box;   /* Box with warning icon/text/button */
   GtkWidget *sensitive_warning_label; /* Label showing "Sensitive Content: reason" */
   GtkWidget *btn_show_sensitive;      /* Button to reveal sensitive content */
+  /* NIP-32 Labels state */
+  GtkWidget *labels_box;              /* FlowBox container for label chips */
+  /* NIP-23 Long-form Content state */
+  gboolean is_article;                /* TRUE if this card displays a kind 30023 article */
+  gchar *article_d_tag;               /* The article's unique "d" tag identifier */
+  gchar *article_title;               /* Article title from "title" tag */
+  gchar *article_image_url;           /* Header image URL from "image" tag */
+  gint64 article_published_at;        /* Publication timestamp from "published_at" tag */
+  GtkWidget *article_title_label;     /* Title label widget (shown in article mode) */
+  GtkWidget *article_image_box;       /* Header image container */
+  GtkWidget *article_image;           /* Header image GtkPicture */
+  GtkWidget *article_hashtags_box;    /* FlowBox for article hashtags */
+  GtkWidget *article_reading_time;    /* Reading time estimate label */
+#ifdef HAVE_SOUP3
+  GCancellable *article_image_cancellable; /* Cancellable for header image fetch */
+#endif
 };
 
 G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
@@ -145,6 +164,8 @@ enum {
   SIGNAL_SEARCH_HASHTAG,
   SIGNAL_NAVIGATE_TO_NOTE,
   SIGNAL_DELETE_NOTE_REQUESTED,
+  SIGNAL_COMMENT_REQUESTED,  /* NIP-22: comment on note */
+  SIGNAL_LABEL_NOTE_REQUESTED,  /* NIP-32: add label to note */
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -209,6 +230,18 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   self->sensitive_warning_box = NULL;
   self->sensitive_warning_label = NULL;
   self->btn_show_sensitive = NULL;
+  /* NIP-23 article widgets */
+  self->article_title_label = NULL;
+  self->article_image_box = NULL;
+  self->article_image = NULL;
+  self->article_hashtags_box = NULL;
+  self->article_reading_time = NULL;
+#ifdef HAVE_SOUP3
+  if (self->article_image_cancellable) {
+    g_cancellable_cancel(self->article_image_cancellable);
+    g_clear_object(&self->article_image_cancellable);
+  }
+#endif
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->dispose(obj);
 }
 
@@ -229,6 +262,10 @@ static void gnostr_note_card_row_finalize(GObject *obj) {
   g_clear_pointer(&self->quoted_event_id, g_free);
   /* NIP-36 sensitive content state cleanup */
   g_clear_pointer(&self->content_warning_reason, g_free);
+  /* NIP-23 article state cleanup */
+  g_clear_pointer(&self->article_d_tag, g_free);
+  g_clear_pointer(&self->article_title, g_free);
+  g_clear_pointer(&self->article_image_url, g_free);
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->finalize(obj);
 }
 
@@ -618,6 +655,196 @@ static void on_delete_note_clicked(GtkButton *btn, gpointer user_data) {
   g_signal_emit(self, signals[SIGNAL_DELETE_NOTE_REQUESTED], 0, self->id_hex, self->pubkey_hex);
 }
 
+/* Forward declaration for label selection callback */
+static void on_label_preset_clicked(GtkButton *btn, gpointer user_data);
+
+/* NIP-32: Show label selection dialog */
+static void on_add_label_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (!self || !self->id_hex) return;
+
+  /* Hide menu popover first */
+  if (self->menu_popover && GTK_IS_POPOVER(self->menu_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
+  }
+
+  /* Get parent window */
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
+
+  /* Create label selection dialog */
+  GtkWidget *dialog = gtk_window_new();
+  gtk_window_set_title(GTK_WINDOW(dialog), "Add Label");
+  gtk_window_set_default_size(GTK_WINDOW(dialog), 350, 400);
+  gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+  if (parent) gtk_window_set_transient_for(GTK_WINDOW(dialog), parent);
+
+  /* Store reference to note card for later use */
+  g_object_set_data(G_OBJECT(dialog), "note-card-row", self);
+
+  /* Main content box */
+  GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+  gtk_widget_set_margin_start(content, 16);
+  gtk_widget_set_margin_end(content, 16);
+  gtk_widget_set_margin_top(content, 16);
+  gtk_widget_set_margin_bottom(content, 16);
+
+  /* Title label */
+  GtkWidget *title = gtk_label_new("Select a label for this note:");
+  gtk_widget_set_halign(title, GTK_ALIGN_START);
+  gtk_box_append(GTK_BOX(content), title);
+
+  /* Preset labels grid */
+  GtkWidget *grid = gtk_flow_box_new();
+  gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(grid), GTK_SELECTION_NONE);
+  gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(grid), FALSE);
+  gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(grid), 8);
+  gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(grid), 8);
+  gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(grid), 4);
+  gtk_widget_add_css_class(grid, "label-dialog-grid");
+
+  /* Add predefined labels */
+  const GnostrPredefinedLabel *presets = gnostr_nip32_get_predefined_labels();
+  for (int i = 0; presets[i].label != NULL; i++) {
+    GtkWidget *preset_btn = gtk_button_new_with_label(presets[i].display_name);
+    gtk_widget_add_css_class(preset_btn, "label-preset-btn");
+
+    /* Store namespace and label in button data */
+    g_object_set_data_full(G_OBJECT(preset_btn), "label-namespace",
+                           g_strdup(presets[i].namespace), g_free);
+    g_object_set_data_full(G_OBJECT(preset_btn), "label-value",
+                           g_strdup(presets[i].label), g_free);
+    g_object_set_data(G_OBJECT(preset_btn), "label-dialog", dialog);
+
+    g_signal_connect(preset_btn, "clicked", G_CALLBACK(on_label_preset_clicked), self);
+    gtk_flow_box_append(GTK_FLOW_BOX(grid), preset_btn);
+  }
+
+  gtk_box_append(GTK_BOX(content), grid);
+
+  /* Separator */
+  GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+  gtk_widget_set_margin_top(sep, 8);
+  gtk_widget_set_margin_bottom(sep, 8);
+  gtk_box_append(GTK_BOX(content), sep);
+
+  /* Custom label section */
+  GtkWidget *custom_label = gtk_label_new("Or add a custom label:");
+  gtk_widget_set_halign(custom_label, GTK_ALIGN_START);
+  gtk_box_append(GTK_BOX(content), custom_label);
+
+  /* Namespace entry */
+  GtkWidget *ns_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  GtkWidget *ns_label = gtk_label_new("Namespace:");
+  GtkWidget *ns_entry = gtk_entry_new();
+  gtk_entry_set_placeholder_text(GTK_ENTRY(ns_entry), "ugc");
+  gtk_widget_set_hexpand(ns_entry, TRUE);
+  gtk_box_append(GTK_BOX(ns_box), ns_label);
+  gtk_box_append(GTK_BOX(ns_box), ns_entry);
+  gtk_box_append(GTK_BOX(content), ns_box);
+
+  /* Label entry */
+  GtkWidget *lbl_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  GtkWidget *lbl_label = gtk_label_new("Label:");
+  GtkWidget *lbl_entry = gtk_entry_new();
+  gtk_entry_set_placeholder_text(GTK_ENTRY(lbl_entry), "interesting");
+  gtk_widget_set_hexpand(lbl_entry, TRUE);
+  gtk_box_append(GTK_BOX(lbl_box), lbl_label);
+  gtk_box_append(GTK_BOX(lbl_box), lbl_entry);
+  gtk_box_append(GTK_BOX(content), lbl_box);
+
+  /* Store entries in dialog for later access */
+  g_object_set_data(G_OBJECT(dialog), "namespace-entry", ns_entry);
+  g_object_set_data(G_OBJECT(dialog), "label-entry", lbl_entry);
+
+  /* Add Custom Label button */
+  GtkWidget *add_btn = gtk_button_new_with_label("Add Custom Label");
+  gtk_widget_add_css_class(add_btn, "suggested-action");
+  gtk_widget_set_margin_top(add_btn, 8);
+
+  /* Connect add button */
+  g_object_set_data(G_OBJECT(add_btn), "label-dialog", dialog);
+  g_signal_connect(add_btn, "clicked", G_CALLBACK(on_label_preset_clicked), self);
+
+  gtk_box_append(GTK_BOX(content), add_btn);
+
+  gtk_window_set_child(GTK_WINDOW(dialog), content);
+  gtk_window_present(GTK_WINDOW(dialog));
+}
+
+/* Callback for preset label button click */
+static void on_label_preset_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  GtkWidget *dialog = GTK_WIDGET(g_object_get_data(G_OBJECT(btn), "label-dialog"));
+  if (!GTK_IS_WINDOW(dialog)) return;
+
+  const char *namespace = NULL;
+  const char *label = NULL;
+
+  /* Check if this is a preset button or the custom add button */
+  const char *preset_ns = g_object_get_data(G_OBJECT(btn), "label-namespace");
+  const char *preset_label = g_object_get_data(G_OBJECT(btn), "label-value");
+
+  if (preset_ns && preset_label) {
+    /* Preset button */
+    namespace = preset_ns;
+    label = preset_label;
+  } else {
+    /* Custom label - get from entries */
+    GtkWidget *ns_entry = g_object_get_data(G_OBJECT(dialog), "namespace-entry");
+    GtkWidget *lbl_entry = g_object_get_data(G_OBJECT(dialog), "label-entry");
+
+    if (!GTK_IS_ENTRY(ns_entry) || !GTK_IS_ENTRY(lbl_entry)) {
+      gtk_window_close(GTK_WINDOW(dialog));
+      return;
+    }
+
+    const char *ns_text = gtk_editable_get_text(GTK_EDITABLE(ns_entry));
+    const char *lbl_text = gtk_editable_get_text(GTK_EDITABLE(lbl_entry));
+
+    if (!lbl_text || !*lbl_text) {
+      /* No label entered, just close */
+      gtk_window_close(GTK_WINDOW(dialog));
+      return;
+    }
+
+    namespace = (ns_text && *ns_text) ? ns_text : NIP32_NS_UGC;
+    label = lbl_text;
+  }
+
+  /* Emit signal to request label creation */
+  if (self->id_hex && self->pubkey_hex && namespace && label) {
+    g_signal_emit(self, signals[SIGNAL_LABEL_NOTE_REQUESTED], 0,
+                  self->id_hex, namespace, label, self->pubkey_hex);
+
+    /* Also add label to display immediately (optimistic update) */
+    gnostr_note_card_row_add_label(self, namespace, label);
+
+    g_signal_emit(self, signals[SIGNAL_SHOW_TOAST], 0, "Label added");
+  }
+
+  gtk_window_close(GTK_WINDOW(dialog));
+}
+
+/* NIP-22 Comment menu item handler */
+static void on_comment_menu_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (!self || !self->id_hex || !self->pubkey_hex) return;
+
+  /* Close menu popover */
+  if (self->menu_popover && GTK_IS_POPOVER(self->menu_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
+  }
+
+  /* Emit comment-requested signal with kind 1 (text note) */
+  g_signal_emit(self, signals[SIGNAL_COMMENT_REQUESTED], 0,
+                self->id_hex, 1, self->pubkey_hex);
+}
+
 static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
   GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
   (void)btn;
@@ -700,6 +927,30 @@ static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
     gtk_button_set_has_frame(GTK_BUTTON(share_btn), FALSE);
     g_signal_connect(share_btn, "clicked", G_CALLBACK(on_share_note_clicked), self);
     gtk_box_append(GTK_BOX(box), share_btn);
+
+    /* NIP-22: Comment button */
+    GtkWidget *comment_btn = gtk_button_new();
+    GtkWidget *comment_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *comment_icon = gtk_image_new_from_icon_name("document-edit-symbolic");
+    GtkWidget *comment_label = gtk_label_new("Comment (NIP-22)");
+    gtk_box_append(GTK_BOX(comment_box), comment_icon);
+    gtk_box_append(GTK_BOX(comment_box), comment_label);
+    gtk_button_set_child(GTK_BUTTON(comment_btn), comment_box);
+    gtk_button_set_has_frame(GTK_BUTTON(comment_btn), FALSE);
+    g_signal_connect(comment_btn, "clicked", G_CALLBACK(on_comment_menu_clicked), self);
+    gtk_box_append(GTK_BOX(box), comment_btn);
+
+    /* NIP-32: Add Label button */
+    GtkWidget *label_btn = gtk_button_new();
+    GtkWidget *label_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *label_icon = gtk_image_new_from_icon_name("tag-symbolic");
+    GtkWidget *label_label_text = gtk_label_new("Add Label");
+    gtk_box_append(GTK_BOX(label_box), label_icon);
+    gtk_box_append(GTK_BOX(label_box), label_label_text);
+    gtk_button_set_child(GTK_BUTTON(label_btn), label_box);
+    gtk_button_set_has_frame(GTK_BUTTON(label_btn), FALSE);
+    g_signal_connect(label_btn, "clicked", G_CALLBACK(on_add_label_clicked), self);
+    gtk_box_append(GTK_BOX(box), label_btn);
 
     /* Separator - Moderation section */
     GtkWidget *sep2 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
@@ -824,6 +1075,17 @@ static void on_reply_clicked(GtkButton *btn, gpointer user_data) {
   if (self && self->id_hex && self->pubkey_hex) {
     g_signal_emit(self, signals[SIGNAL_REPLY_REQUESTED], 0,
                   self->id_hex, self->root_id, self->pubkey_hex);
+  }
+}
+
+/* NIP-22: Comment button handler - emits comment-requested signal */
+static void on_comment_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (self && self->id_hex && self->pubkey_hex) {
+    /* For kind 1 text notes, emit comment signal with kind=1 */
+    g_signal_emit(self, signals[SIGNAL_COMMENT_REQUESTED], 0,
+                  self->id_hex, 1, self->pubkey_hex);
   }
 }
 
@@ -1054,6 +1316,8 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, sensitive_warning_box);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, sensitive_warning_label);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_show_sensitive);
+  /* NIP-32 labels container */
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, labels_box);
 
   signals[SIGNAL_OPEN_NOSTR_TARGET] = g_signal_new("open-nostr-target",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
@@ -1113,6 +1377,14 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   signals[SIGNAL_DELETE_NOTE_REQUESTED] = g_signal_new("delete-note-requested",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
+  /* NIP-22 comment request: id_hex, kind, pubkey_hex */
+  signals[SIGNAL_COMMENT_REQUESTED] = g_signal_new("comment-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 3, G_TYPE_STRING, G_TYPE_INT, G_TYPE_STRING);
+  /* NIP-32 label request: id_hex, namespace, label, pubkey_hex */
+  signals[SIGNAL_LABEL_NOTE_REQUESTED] = g_signal_new("label-note-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
 }
 
 static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
@@ -3331,4 +3603,396 @@ void gnostr_note_card_row_reveal_sensitive_content(GnostrNoteCardRow *self) {
   if (GTK_IS_WIDGET(self->og_preview_container)) {
     gtk_widget_remove_css_class(self->og_preview_container, "content-blurred");
   }
+}
+
+/* ===== NIP-32 Label Functions ===== */
+
+/* Helper: Create a label chip widget */
+static GtkWidget *create_label_chip(const char *namespace, const char *label) {
+  if (!label || !*label) return NULL;
+
+  GtkWidget *chip = gtk_label_new(label);
+  gtk_widget_add_css_class(chip, "note-label-chip");
+
+  /* Add namespace-specific styling */
+  if (namespace) {
+    if (g_str_equal(namespace, NIP32_NS_UGC)) {
+      gtk_widget_add_css_class(chip, "ugc");
+    } else if (g_str_equal(namespace, "topic")) {
+      gtk_widget_add_css_class(chip, "topic");
+    } else if (g_str_equal(namespace, NIP32_NS_QUALITY)) {
+      gtk_widget_add_css_class(chip, "quality");
+    } else if (g_str_equal(namespace, NIP32_NS_REVIEW)) {
+      gtk_widget_add_css_class(chip, "review");
+    }
+  }
+
+  /* Set tooltip with full namespace:label */
+  if (namespace && *namespace) {
+    char *tooltip = g_strdup_printf("%s:%s", namespace, label);
+    gtk_widget_set_tooltip_text(chip, tooltip);
+    g_free(tooltip);
+  }
+
+  return chip;
+}
+
+/* NIP-32: Set labels to display on this note */
+void gnostr_note_card_row_set_labels(GnostrNoteCardRow *self, GPtrArray *labels) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!GTK_IS_FLOW_BOX(self->labels_box)) return;
+
+  /* Clear existing labels */
+  gnostr_note_card_row_clear_labels(self);
+
+  if (!labels || labels->len == 0) {
+    gtk_widget_set_visible(self->labels_box, FALSE);
+    return;
+  }
+
+  /* Add each label as a chip */
+  for (guint i = 0; i < labels->len; i++) {
+    GnostrLabel *l = g_ptr_array_index(labels, i);
+    if (!l || !l->label) continue;
+
+    char *display_label = gnostr_nip32_format_label(l);
+    if (!display_label) continue;
+
+    GtkWidget *chip = create_label_chip(l->namespace, display_label);
+    g_free(display_label);
+
+    if (chip) {
+      gtk_flow_box_append(GTK_FLOW_BOX(self->labels_box), chip);
+    }
+  }
+
+  /* Show the labels container if we have labels */
+  gtk_widget_set_visible(self->labels_box, TRUE);
+}
+
+/* NIP-32: Add a single label to this note's display */
+void gnostr_note_card_row_add_label(GnostrNoteCardRow *self, const char *namespace, const char *label) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!GTK_IS_FLOW_BOX(self->labels_box)) return;
+  if (!label || !*label) return;
+
+  GtkWidget *chip = create_label_chip(namespace, label);
+  if (chip) {
+    gtk_flow_box_append(GTK_FLOW_BOX(self->labels_box), chip);
+    gtk_widget_set_visible(self->labels_box, TRUE);
+  }
+}
+
+/* NIP-32: Clear all displayed labels */
+void gnostr_note_card_row_clear_labels(GnostrNoteCardRow *self) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!GTK_IS_FLOW_BOX(self->labels_box)) return;
+
+  /* Remove all children from the flow box */
+  GtkWidget *child = gtk_widget_get_first_child(self->labels_box);
+  while (child) {
+    GtkWidget *next = gtk_widget_get_next_sibling(child);
+    gtk_flow_box_remove(GTK_FLOW_BOX(self->labels_box), child);
+    child = next;
+  }
+
+  gtk_widget_set_visible(self->labels_box, FALSE);
+}
+
+/* ============================================
+   NIP-23 Long-form Content Implementation
+   ============================================ */
+
+/* Helper: compute reading time from content */
+static gchar *compute_article_reading_time(const char *content) {
+  if (!content || !*content) return NULL;
+
+  int word_count = 0;
+  gboolean in_word = FALSE;
+
+  for (const char *p = content; *p; p++) {
+    if (g_ascii_isspace(*p)) {
+      in_word = FALSE;
+    } else if (!in_word) {
+      in_word = TRUE;
+      word_count++;
+    }
+  }
+
+  int minutes = (word_count + 199) / 200; /* 200 WPM average */
+  if (minutes < 1) minutes = 1;
+
+  return g_strdup_printf(_("%d min read"), minutes);
+}
+
+/* Helper: format publication date for articles */
+static gchar *format_article_date(gint64 timestamp) {
+  if (timestamp <= 0) return g_strdup(_("Unknown date"));
+
+  GDateTime *dt = g_date_time_new_from_unix_local(timestamp);
+  if (!dt) return g_strdup(_("Unknown date"));
+
+  gchar *result = g_date_time_format(dt, "%B %d, %Y");
+  g_date_time_unref(dt);
+  return result;
+}
+
+#ifdef HAVE_SOUP3
+/* Callback for article header image loading */
+static void on_article_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  GError *error = NULL;
+  GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
+
+  if (!bytes || error) {
+    if (error && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_debug("NIP-23: Failed to load article image: %s", error->message);
+    }
+    if (error) g_error_free(error);
+    return;
+  }
+
+  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
+  g_bytes_unref(bytes);
+
+  if (!texture || error) {
+    if (error) {
+      g_debug("NIP-23: Failed to create texture: %s", error->message);
+      g_error_free(error);
+    }
+    return;
+  }
+
+  if (GTK_IS_PICTURE(self->article_image)) {
+    gtk_picture_set_paintable(GTK_PICTURE(self->article_image), GDK_PAINTABLE(texture));
+    gtk_widget_set_visible(self->article_image_box, TRUE);
+  }
+
+  g_object_unref(texture);
+}
+
+/* Load article header image asynchronously */
+static void load_article_header_image(GnostrNoteCardRow *self, const char *url) {
+  if (!url || !*url) return;
+  if (!self->media_session) return;
+
+  /* Cancel any previous image fetch */
+  if (self->article_image_cancellable) {
+    g_cancellable_cancel(self->article_image_cancellable);
+    g_clear_object(&self->article_image_cancellable);
+  }
+
+  self->article_image_cancellable = g_cancellable_new();
+
+  SoupMessage *msg = soup_message_new("GET", url);
+  if (!msg) return;
+
+  soup_session_send_and_read_async(
+    self->media_session,
+    msg,
+    G_PRIORITY_LOW,
+    self->article_image_cancellable,
+    on_article_image_loaded,
+    self
+  );
+
+  g_object_unref(msg);
+}
+#endif
+
+/* Create article hashtag chip widget */
+static GtkWidget *create_article_hashtag_chip(const char *hashtag) {
+  if (!hashtag || !*hashtag) return NULL;
+
+  GtkWidget *btn = gtk_button_new();
+  gtk_button_set_has_frame(GTK_BUTTON(btn), FALSE);
+  gtk_widget_add_css_class(btn, "article-hashtag");
+
+  gchar *label_text = g_strdup_printf("#%s", hashtag);
+  gtk_button_set_label(GTK_BUTTON(btn), label_text);
+  g_free(label_text);
+
+  return btn;
+}
+
+/* NIP-23: Set article mode for this note card */
+void gnostr_note_card_row_set_article_mode(GnostrNoteCardRow *self,
+                                            const char *title,
+                                            const char *summary,
+                                            const char *image_url,
+                                            gint64 published_at,
+                                            const char *d_tag,
+                                            const char * const *hashtags) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  self->is_article = TRUE;
+
+  /* Store article metadata */
+  g_clear_pointer(&self->article_d_tag, g_free);
+  g_clear_pointer(&self->article_title, g_free);
+  g_clear_pointer(&self->article_image_url, g_free);
+
+  self->article_d_tag = g_strdup(d_tag);
+  self->article_title = g_strdup(title);
+  self->article_image_url = g_strdup(image_url);
+  self->article_published_at = published_at;
+
+  /* Add article CSS class to root */
+  if (GTK_IS_WIDGET(self->root)) {
+    gtk_widget_add_css_class(self->root, "article-card");
+  }
+
+  /* Create article title label if not exists */
+  if (!self->article_title_label) {
+    self->article_title_label = gtk_label_new(NULL);
+    gtk_label_set_wrap(GTK_LABEL(self->article_title_label), TRUE);
+    gtk_label_set_wrap_mode(GTK_LABEL(self->article_title_label), PANGO_WRAP_WORD_CHAR);
+    gtk_label_set_xalign(GTK_LABEL(self->article_title_label), 0.0);
+    gtk_label_set_lines(GTK_LABEL(self->article_title_label), 3);
+    gtk_label_set_ellipsize(GTK_LABEL(self->article_title_label), PANGO_ELLIPSIZE_END);
+    gtk_widget_add_css_class(self->article_title_label, "article-title");
+
+    /* Insert title label before content label */
+    if (GTK_IS_WIDGET(self->content_label)) {
+      GtkWidget *parent = gtk_widget_get_parent(self->content_label);
+      if (GTK_IS_BOX(parent)) {
+        /* Insert at position before content label */
+        GtkWidget *sibling = gtk_widget_get_prev_sibling(self->content_label);
+        if (sibling) {
+          gtk_box_insert_child_after(GTK_BOX(parent), self->article_title_label, sibling);
+        } else {
+          gtk_box_prepend(GTK_BOX(parent), self->article_title_label);
+        }
+      }
+    }
+  }
+
+  /* Set title text */
+  if (GTK_IS_LABEL(self->article_title_label)) {
+    gtk_label_set_text(GTK_LABEL(self->article_title_label),
+                       (title && *title) ? title : _("Untitled Article"));
+    gtk_widget_set_visible(self->article_title_label, TRUE);
+  }
+
+  /* Create header image container if not exists */
+  if (!self->article_image_box && image_url && *image_url) {
+    self->article_image_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_add_css_class(self->article_image_box, "article-header-image");
+    gtk_widget_set_visible(self->article_image_box, FALSE);
+
+    self->article_image = gtk_picture_new();
+    gtk_picture_set_content_fit(GTK_PICTURE(self->article_image), GTK_CONTENT_FIT_COVER);
+    gtk_widget_set_size_request(self->article_image, -1, 180);
+    gtk_widget_add_css_class(self->article_image, "article-header-image");
+    gtk_box_append(GTK_BOX(self->article_image_box), self->article_image);
+
+    /* Insert image at the top of the content area */
+    if (GTK_IS_WIDGET(self->content_label)) {
+      GtkWidget *parent = gtk_widget_get_parent(self->content_label);
+      if (GTK_IS_BOX(parent)) {
+        gtk_box_prepend(GTK_BOX(parent), self->article_image_box);
+      }
+    }
+
+#ifdef HAVE_SOUP3
+    load_article_header_image(self, image_url);
+#endif
+  }
+
+  /* Set summary as content (with markdown conversion) */
+  if (GTK_IS_LABEL(self->content_label)) {
+    if (summary && *summary) {
+      gchar *pango_summary = markdown_to_pango_summary(summary, 300);
+      gtk_label_set_markup(GTK_LABEL(self->content_label), pango_summary);
+      g_free(pango_summary);
+    } else {
+      gtk_label_set_text(GTK_LABEL(self->content_label), _("No summary available"));
+    }
+    gtk_widget_add_css_class(self->content_label, "article-summary");
+  }
+
+  /* Update timestamp to show publication date */
+  if (published_at > 0 && GTK_IS_LABEL(self->lbl_timestamp)) {
+    gchar *date_str = format_article_date(published_at);
+    gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), date_str);
+    g_free(date_str);
+  }
+
+  /* Create hashtags box if we have hashtags */
+  if (hashtags && hashtags[0]) {
+    if (!self->article_hashtags_box) {
+      self->article_hashtags_box = gtk_flow_box_new();
+      gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(self->article_hashtags_box),
+                                       GTK_SELECTION_NONE);
+      gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(self->article_hashtags_box), 8);
+      gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(self->article_hashtags_box), 1);
+      gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(self->article_hashtags_box), 4);
+      gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(self->article_hashtags_box), 6);
+      gtk_widget_add_css_class(self->article_hashtags_box, "article-hashtags");
+
+      /* Insert after content label */
+      if (GTK_IS_WIDGET(self->content_label)) {
+        GtkWidget *parent = gtk_widget_get_parent(self->content_label);
+        if (GTK_IS_BOX(parent)) {
+          gtk_box_insert_child_after(GTK_BOX(parent), self->article_hashtags_box,
+                                      self->content_label);
+        }
+      }
+    }
+
+    /* Clear existing hashtags */
+    GtkWidget *child = gtk_widget_get_first_child(self->article_hashtags_box);
+    while (child) {
+      GtkWidget *next = gtk_widget_get_next_sibling(child);
+      gtk_flow_box_remove(GTK_FLOW_BOX(self->article_hashtags_box), child);
+      child = next;
+    }
+
+    /* Add hashtag chips */
+    for (int i = 0; hashtags[i]; i++) {
+      GtkWidget *chip = create_article_hashtag_chip(hashtags[i]);
+      if (chip) {
+        /* Connect click handler to emit search-hashtag signal */
+        g_object_set_data_full(G_OBJECT(chip), "hashtag",
+                               g_strdup(hashtags[i]), g_free);
+        g_signal_connect(chip, "clicked",
+          G_CALLBACK(+[](GtkButton *btn, gpointer user_data) {
+            const char *tag = g_object_get_data(G_OBJECT(btn), "hashtag");
+            if (tag && GNOSTR_IS_NOTE_CARD_ROW(user_data)) {
+              g_signal_emit(user_data, signals[SIGNAL_SEARCH_HASHTAG], 0, tag);
+            }
+          }), self);
+
+        gtk_flow_box_append(GTK_FLOW_BOX(self->article_hashtags_box), chip);
+      }
+    }
+    gtk_widget_set_visible(self->article_hashtags_box, TRUE);
+  }
+
+  /* Hide reply/repost/like buttons for articles - they use different actions */
+  /* Keep zap and bookmark, add share */
+  if (GTK_IS_WIDGET(self->btn_reply)) {
+    gtk_widget_set_visible(self->btn_reply, FALSE);
+  }
+  if (GTK_IS_WIDGET(self->btn_repost)) {
+    gtk_widget_set_visible(self->btn_repost, FALSE);
+  }
+
+  g_debug("NIP-23: Set article mode - title='%s' d_tag='%s'",
+          title ? title : "(null)", d_tag ? d_tag : "(null)");
+}
+
+/* NIP-23: Check if this card is displaying an article */
+gboolean gnostr_note_card_row_is_article(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), FALSE);
+  return self->is_article;
+}
+
+/* NIP-23: Get the article's d-tag identifier */
+const char *gnostr_note_card_row_get_article_d_tag(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+  return self->article_d_tag;
 }

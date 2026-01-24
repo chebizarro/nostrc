@@ -244,6 +244,25 @@
               </object>
             </child>
 
+            <!-- NIP-32 Labels Container (shows labels/tags on notes) -->
+            <child>
+              <object class="GtkFlowBox" id="labels_box">
+                <property name="visible">false</property>
+                <property name="selection-mode">none</property>
+                <property name="homogeneous">false</property>
+                <property name="row-spacing">4</property>
+                <property name="column-spacing">6</property>
+                <property name="max-children-per-line">10</property>
+                <property name="min-children-per-line">1</property>
+                <property name="halign">start</property>
+                <property name="margin-top">6</property>
+                <property name="margin-bottom">2</property>
+                <style>
+                  <class name="note-labels-container"/>
+                </style>
+              </object>
+            </child>
+
             <!-- Thread Root Indicator (shows reply count when this note has replies) -->
             <child>
               <object class="GtkBox" id="reply_count_box">

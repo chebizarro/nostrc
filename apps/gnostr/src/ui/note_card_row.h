@@ -29,6 +29,7 @@ G_DECLARE_FINAL_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GNOSTR, NOTE_CARD_
  * "search-hashtag" (gchar* hashtag, gpointer user_data) - search for hashtag (without # prefix)
  * "navigate-to-note" (gchar* event_id_hex, gpointer user_data) - navigate to specific note (e.g., parent note)
  * "delete-note-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data) - NIP-09 deletion request
+ * "comment-requested" (gchar* id_hex, gint kind, gchar* pubkey_hex, gpointer user_data) - NIP-22 comment request
  */
 
 typedef struct _GnostrNoteCardRow GnostrNoteCardRow;
@@ -118,6 +119,45 @@ gboolean gnostr_note_card_row_is_content_blurred(GnostrNoteCardRow *self);
 
 /* NIP-36: Reveal sensitive content (show hidden content) */
 void gnostr_note_card_row_reveal_sensitive_content(GnostrNoteCardRow *self);
+
+/* NIP-32 Labels: Set labels to display on this note */
+void gnostr_note_card_row_set_labels(GnostrNoteCardRow *self, GPtrArray *labels);
+
+/* NIP-32 Labels: Add a single label to this note's display */
+void gnostr_note_card_row_add_label(GnostrNoteCardRow *self, const char *namespace, const char *label);
+
+/* NIP-32 Labels: Clear all displayed labels */
+void gnostr_note_card_row_clear_labels(GnostrNoteCardRow *self);
+
+/* NIP-23 Long-form Content: Transform this card into article display mode
+ * @self: note card row
+ * @title: Article title from "title" tag
+ * @summary: Article summary from "summary" tag (optional)
+ * @image_url: Header image URL from "image" tag (optional)
+ * @published_at: Publication timestamp from "published_at" tag (0 to use created_at)
+ * @d_tag: The article's unique identifier from "d" tag
+ * @hashtags: Array of hashtags from "t" tags (optional, NULL-terminated)
+ *
+ * When called, switches the card to article display mode:
+ * - Shows title prominently
+ * - Displays summary instead of full content
+ * - Shows header image if available
+ * - Adds "Read more" indication
+ * - Uses publication date instead of created_at
+ */
+void gnostr_note_card_row_set_article_mode(GnostrNoteCardRow *self,
+                                            const char *title,
+                                            const char *summary,
+                                            const char *image_url,
+                                            gint64 published_at,
+                                            const char *d_tag,
+                                            const char * const *hashtags);
+
+/* NIP-23: Check if this card is displaying an article */
+gboolean gnostr_note_card_row_is_article(GnostrNoteCardRow *self);
+
+/* NIP-23: Get the article's d-tag identifier */
+const char *gnostr_note_card_row_get_article_d_tag(GnostrNoteCardRow *self);
 
 G_END_DECLS
 
