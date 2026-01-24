@@ -1126,7 +1126,8 @@ gnostr_page_discover_init(GnostrPageDiscover *self)
     g_signal_connect(self->network_factory, "bind", G_CALLBACK(bind_network_row), self);
     g_signal_connect(self->network_factory, "unbind", G_CALLBACK(unbind_network_row), self);
 
-    /* Start with local model */
+    /* Start with local model - set is_local_mode before connecting signals */
+    self->is_local_mode = TRUE;
     gtk_list_view_set_model(self->results_list, GTK_SELECTION_MODEL(self->local_selection));
     gtk_list_view_set_factory(self->results_list, self->local_factory);
 
@@ -1203,8 +1204,16 @@ gnostr_page_discover_init(GnostrPageDiscover *self)
     }
     switch_to_people_mode(self);
 
-    /* Ensure loading state is shown (switch_to_people_mode calls update_content_state
-     * which may set a different state if model is not loading) */
+    /* Load profiles - must be done explicitly since btn_local may already
+     * be active in the UI template (so toggled signal won't fire) and
+     * switch_to_people_mode doesn't call switch_to_local_model */
+    if (!self->profiles_loaded) {
+        self->profiles_loaded = TRUE;
+        g_debug("discover: loading profiles in init");
+        gn_profile_list_model_load_profiles(self->profile_model);
+    }
+
+    /* Ensure loading state is shown */
     if (gn_profile_list_model_is_loading(self->profile_model)) {
         gtk_stack_set_visible_child_name(self->content_stack, "loading");
     }

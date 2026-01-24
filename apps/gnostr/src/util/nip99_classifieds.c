@@ -385,11 +385,22 @@ gnostr_classified_create_event_json(const GnostrClassified *classified)
 
 /* ============== Async Fetch Context ============== */
 
+/* Static pool for classifieds queries - reused to maintain relay connections */
+static GnostrSimplePool *s_classifieds_pool = NULL;
+
+static GnostrSimplePool *
+get_classifieds_pool(void)
+{
+  if (!s_classifieds_pool) {
+    s_classifieds_pool = gnostr_simple_pool_new();
+  }
+  return s_classifieds_pool;
+}
+
 typedef struct _ClassifiedFetchCtx {
   GnostrClassifiedFetchCallback callback;
   gpointer user_data;
   GCancellable *cancellable;
-  GnostrSimplePool *pool;
   GPtrArray *classifieds;
 } ClassifiedFetchCtx;
 
@@ -398,7 +409,7 @@ classified_fetch_ctx_free(ClassifiedFetchCtx *ctx)
 {
   if (!ctx) return;
   g_clear_object(&ctx->cancellable);
-  g_clear_object(&ctx->pool);
+  /* Note: pool is static/shared, not freed here */
   if (ctx->classifieds) g_ptr_array_unref(ctx->classifieds);
   g_free(ctx);
 }
@@ -474,7 +485,6 @@ gnostr_fetch_classifieds_async(const gchar *filter_category,
   ctx->callback = callback;
   ctx->user_data = user_data;
   ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
-  ctx->pool = gnostr_simple_pool_new();
 
   /* Get relay URLs */
   GPtrArray *relay_urls = gnostr_get_read_relay_urls();
@@ -508,7 +518,9 @@ gnostr_fetch_classifieds_async(const gchar *filter_category,
     urls[i] = g_ptr_array_index(relay_urls, i);
   }
 
-  gnostr_simple_pool_query_single_async(ctx->pool, urls, relay_urls->len,
+  /* Use shared pool for better connection reuse */
+  GnostrSimplePool *pool = get_classifieds_pool();
+  gnostr_simple_pool_query_single_async(pool, urls, relay_urls->len,
                                          filter, ctx->cancellable,
                                          on_classifieds_fetched, ctx);
 
@@ -529,7 +541,6 @@ gnostr_fetch_user_classifieds_async(const gchar *pubkey_hex,
   ctx->callback = callback;
   ctx->user_data = user_data;
   ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
-  ctx->pool = gnostr_simple_pool_new();
 
   /* Get relay URLs */
   GPtrArray *relay_urls = gnostr_get_read_relay_urls();
@@ -555,7 +566,9 @@ gnostr_fetch_user_classifieds_async(const gchar *pubkey_hex,
     urls[i] = g_ptr_array_index(relay_urls, i);
   }
 
-  gnostr_simple_pool_query_single_async(ctx->pool, urls, relay_urls->len,
+  /* Use shared pool for better connection reuse */
+  GnostrSimplePool *pool = get_classifieds_pool();
+  gnostr_simple_pool_query_single_async(pool, urls, relay_urls->len,
                                          filter, ctx->cancellable,
                                          on_classifieds_fetched, ctx);
 
@@ -570,7 +583,6 @@ typedef struct _ClassifiedSingleCtx {
   GnostrClassifiedSingleCallback callback;
   gpointer user_data;
   GCancellable *cancellable;
-  GnostrSimplePool *pool;
   gchar *naddr;
 } ClassifiedSingleCtx;
 
@@ -580,7 +592,7 @@ classified_single_ctx_free(ClassifiedSingleCtx *ctx)
   if (!ctx) return;
   g_free(ctx->naddr);
   g_clear_object(&ctx->cancellable);
-  g_clear_object(&ctx->pool);
+  /* Note: uses shared pool from get_classifieds_pool(), don't free it */
   g_free(ctx);
 }
 
@@ -638,7 +650,6 @@ gnostr_fetch_classified_by_naddr_async(const gchar *naddr,
   ctx->callback = callback;
   ctx->user_data = user_data;
   ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
-  ctx->pool = gnostr_simple_pool_new();
   ctx->naddr = g_strdup(naddr);
 
   /* Get relay URLs */
@@ -666,7 +677,7 @@ gnostr_fetch_classified_by_naddr_async(const gchar *naddr,
     urls[i] = g_ptr_array_index(relay_urls, i);
   }
 
-  gnostr_simple_pool_query_single_async(ctx->pool, urls, relay_urls->len,
+  gnostr_simple_pool_query_single_async(get_classifieds_pool(), urls, relay_urls->len,
                                          filter, ctx->cancellable,
                                          on_single_classified_fetched, ctx);
 
