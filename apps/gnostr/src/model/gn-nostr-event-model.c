@@ -765,7 +765,10 @@ static gboolean remove_note_by_key(GnNostrEventModel *self, uint64_t note_key) {
   return FALSE;
 }
 
-/* Handle NIP-09 deletes (kind 5) by parsing tags and removing referenced notes incrementally. */
+/* Handle NIP-09 deletes (kind 5) by parsing tags and removing referenced notes incrementally.
+ * SECURITY: Per NIP-09, we MUST validate that deletion_event.pubkey === target_event.pubkey
+ * before hiding/deleting any event. This prevents unauthorized deletion of others' events.
+ */
 static void handle_delete_event_json(GnNostrEventModel *self, void *txn, const char *event_json) {
   if (!self || !txn || !event_json) return;
 
@@ -773,6 +776,19 @@ static void handle_delete_event_json(GnNostrEventModel *self, void *txn, const c
   if (!evt) return;
 
   if (nostr_event_deserialize(evt, event_json) != 0 || nostr_event_get_kind(evt) != 5) {
+    nostr_event_free(evt);
+    return;
+  }
+
+  /* Get the deletion event's pubkey for authorization check */
+  const char *deletion_pubkey = nostr_event_get_pubkey(evt);
+  if (!deletion_pubkey || strlen(deletion_pubkey) != 64) {
+    nostr_event_free(evt);
+    return;
+  }
+
+  uint8_t deletion_pk32[32];
+  if (!hex_to_bytes32(deletion_pubkey, deletion_pk32)) {
     nostr_event_free(evt);
     return;
   }
@@ -797,11 +813,24 @@ static void handle_delete_event_json(GnNostrEventModel *self, void *txn, const c
       uint8_t id32[32];
       if (!hex_to_bytes32(id_hex, id32)) continue;
 
-      uint64_t target_key = storage_ndb_get_note_key_by_id(txn, id32, NULL);
-      if (target_key > 0) {
-        (void)remove_note_by_key(self, target_key);
-        pending_remove_note_key(self, target_key);
+      storage_ndb_note *target_note = NULL;
+      uint64_t target_key = storage_ndb_get_note_key_by_id(txn, id32, &target_note);
+      if (target_key == 0 || !target_note) continue;
+
+      /* NIP-09 SECURITY: Verify deletion event pubkey matches target event pubkey.
+       * Only the author of an event can request its deletion. */
+      const unsigned char *target_pk32 = storage_ndb_note_pubkey(target_note);
+      if (!target_pk32) continue;
+
+      if (memcmp(deletion_pk32, target_pk32, 32) != 0) {
+        /* Pubkey mismatch - unauthorized deletion attempt, skip this target */
+        g_debug("[NIP-09] Rejected deletion: pubkey mismatch for event %s", id_hex);
+        continue;
       }
+
+      /* Authorized: pubkeys match, proceed with deletion */
+      (void)remove_note_by_key(self, target_key);
+      pending_remove_note_key(self, target_key);
     }
   }
 

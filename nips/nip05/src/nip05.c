@@ -9,7 +9,8 @@
 #include <ctype.h>
 
 // POSIX ERE: no non-capturing groups; escape literal dots; explicit ranges
-static const char *NIP05_REGEX = "^(([A-Za-z0-9._+-]+)@)?([A-Za-z0-9_-]+([.][A-Za-z0-9_-]+)+)$";
+// NIP-05 spec: local-part allows only a-z0-9-_. (case-insensitive)
+static const char *NIP05_REGEX = "^(([A-Za-z0-9._-]+)@)?([A-Za-z0-9_-]+([.][A-Za-z0-9_-]+)+)$";
 
 typedef struct {
     char *data;
@@ -85,12 +86,11 @@ int nostr_nip05_fetch_json(const char *domain, char **out_json, char **out_error
 
     MemoryStruct chunk = {0};
     curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    // NIP-05 spec: "Fetchers MUST ignore any HTTP redirects"
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "libnostr-nip05/1.0");
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
     long tmo = getenv_ms("NIP05_TIMEOUT_MS", 5000);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, tmo);
     if (!getenv("NIP05_ALLOW_INSECURE")) {
@@ -118,7 +118,8 @@ static int http_get_json(const char *url, char **out_json, char **out_error) {
     if (!curl) { if (out_error) *out_error = strdup("curl init"); return -1; }
     MemoryStruct chunk = {0};
     curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    // NIP-05 spec: "Fetchers MUST ignore any HTTP redirects"
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "libnostr-nip05/1.0");
