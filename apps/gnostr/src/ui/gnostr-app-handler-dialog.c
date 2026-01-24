@@ -154,21 +154,16 @@ gnostr_handler_row_new(GnostrNip89HandlerInfo *handler)
     gtk_widget_set_visible(GTK_WIDGET(row->platforms_label), FALSE);
   }
 
-  /* Load icon asynchronously */
+  /* Load icon - try cache first, then async download */
   if (handler->picture && *handler->picture) {
-    gnostr_avatar_cache_load_async(handler->picture, 48, NULL,
-      (GAsyncReadyCallback)({
-        void inner(GObject *source, GAsyncResult *res, gpointer user_data) {
-          (void)source;
-          GnostrHandlerRow *r = GNOSTR_HANDLER_ROW(user_data);
-          GdkTexture *texture = gnostr_avatar_cache_load_finish(res, NULL);
-          if (texture && GTK_IS_IMAGE(r->icon)) {
-            gtk_image_set_from_paintable(r->icon, GDK_PAINTABLE(texture));
-            g_object_unref(texture);
-          }
-        }
-        inner;
-      }), row);
+    GdkTexture *texture = gnostr_avatar_try_load_cached(handler->picture);
+    if (texture) {
+      gtk_image_set_from_paintable(row->icon, GDK_PAINTABLE(texture));
+      g_object_unref(texture);
+    } else {
+      /* Download async - will update the image widget directly */
+      gnostr_avatar_download_async(handler->picture, GTK_WIDGET(row->icon), NULL);
+    }
   }
 
   return row;
@@ -264,16 +259,12 @@ on_open_clicked(GtkButton *button, GnostrAppHandlerDialog *self)
   }
 
   /* Open URL in default browser/app */
-  GError *error = NULL;
   GtkWidget *toplevel = GTK_WIDGET(gtk_widget_get_root(GTK_WIDGET(self)));
   GtkWindow *window = GTK_IS_WINDOW(toplevel) ? GTK_WINDOW(toplevel) : NULL;
 
-  gtk_show_uri(window, url, GDK_CURRENT_TIME);
-
-  if (error) {
-    g_warning("app-handler: failed to open URL: %s", error->message);
-    g_error_free(error);
-  }
+  GtkUriLauncher *launcher = gtk_uri_launcher_new(url);
+  gtk_uri_launcher_launch(launcher, window, NULL, NULL, NULL);
+  g_object_unref(launcher);
 
   g_free(url);
 
