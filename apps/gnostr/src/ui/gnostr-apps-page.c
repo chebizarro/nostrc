@@ -354,22 +354,16 @@ bind_handler_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer u
     })), self);
   }
 
-  /* Load icon */
+  /* Load icon - try cache first, then async download */
   if (icon && handler->picture && *handler->picture) {
-    gnostr_avatar_cache_load_async(handler->picture, 48, NULL,
-      (GAsyncReadyCallback)({
-        void inner(GObject *source, GAsyncResult *res, gpointer user_data) {
-          (void)source;
-          GtkImage *img = GTK_IMAGE(user_data);
-          if (!GTK_IS_IMAGE(img)) return;
-          GdkTexture *texture = gnostr_avatar_cache_load_finish(res, NULL);
-          if (texture) {
-            gtk_image_set_from_paintable(img, GDK_PAINTABLE(texture));
-            g_object_unref(texture);
-          }
-        }
-        inner;
-      }), icon);
+    GdkTexture *texture = gnostr_avatar_try_load_cached(handler->picture);
+    if (texture) {
+      gtk_image_set_from_paintable(icon, GDK_PAINTABLE(texture));
+      g_object_unref(texture);
+    } else {
+      /* Download async - will update the image widget directly */
+      gnostr_avatar_download_async(handler->picture, GTK_WIDGET(icon), NULL);
+    }
   }
 }
 
