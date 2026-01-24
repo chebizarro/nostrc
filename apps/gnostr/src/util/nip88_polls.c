@@ -361,3 +361,114 @@ void gnostr_nip88_response_free(GnostrNip88Response *response) {
   }
   g_free(response);
 }
+
+/* Voter info for tally tracking */
+typedef struct {
+  GnostrNip88Response *first_response;  /* First (valid) response from voter */
+} VoterInfo;
+
+static void voter_info_free(gpointer p) {
+  VoterInfo *info = (VoterInfo *)p;
+  if (info) {
+    /* Note: we don't own the response, just reference it */
+    g_free(info);
+  }
+}
+
+GnostrNip88VoteTally *gnostr_nip88_tally_votes(GPtrArray *responses,
+                                                 gsize num_options) {
+  if (!responses || num_options == 0) return NULL;
+
+  GnostrNip88VoteTally *tally = g_new0(GnostrNip88VoteTally, 1);
+  tally->num_options = num_options;
+  tally->vote_counts = g_new0(guint, num_options);
+  tally->total_voters = 0;
+  tally->voter_map = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                            g_free, voter_info_free);
+
+  /* Process responses, keeping only first response per voter */
+  for (guint i = 0; i < responses->len; i++) {
+    GnostrNip88Response *resp = g_ptr_array_index(responses, i);
+    if (!resp || !resp->responder_pubkey) continue;
+
+    /* Check if this voter already voted */
+    if (g_hash_table_contains(tally->voter_map, resp->responder_pubkey)) {
+      /* Already voted - keep first vote only (by event creation time) */
+      VoterInfo *existing = g_hash_table_lookup(tally->voter_map, resp->responder_pubkey);
+      if (existing && existing->first_response) {
+        /* If new response is earlier, use it instead */
+        if (resp->created_at < existing->first_response->created_at) {
+          /* Remove old vote counts */
+          for (guint j = 0; j < existing->first_response->selected_indices->len; j++) {
+            int idx = g_array_index(existing->first_response->selected_indices, int, j);
+            if (idx >= 0 && (gsize)idx < num_options && tally->vote_counts[idx] > 0) {
+              tally->vote_counts[idx]--;
+            }
+          }
+          /* Add new vote counts */
+          for (guint j = 0; j < resp->selected_indices->len; j++) {
+            int idx = g_array_index(resp->selected_indices, int, j);
+            if (idx >= 0 && (gsize)idx < num_options) {
+              tally->vote_counts[idx]++;
+            }
+          }
+          existing->first_response = resp;
+        }
+      }
+      continue;
+    }
+
+    /* New voter */
+    VoterInfo *info = g_new0(VoterInfo, 1);
+    info->first_response = resp;
+    g_hash_table_insert(tally->voter_map,
+                        g_strdup(resp->responder_pubkey),
+                        info);
+    tally->total_voters++;
+
+    /* Count votes */
+    for (guint j = 0; j < resp->selected_indices->len; j++) {
+      int idx = g_array_index(resp->selected_indices, int, j);
+      if (idx >= 0 && (gsize)idx < num_options) {
+        tally->vote_counts[idx]++;
+      }
+    }
+  }
+
+  return tally;
+}
+
+void gnostr_nip88_vote_tally_free(GnostrNip88VoteTally *tally) {
+  if (!tally) return;
+  g_free(tally->vote_counts);
+  if (tally->voter_map) {
+    g_hash_table_destroy(tally->voter_map);
+  }
+  g_free(tally);
+}
+
+gboolean gnostr_nip88_has_voted(GnostrNip88VoteTally *tally,
+                                 const char *pubkey_hex) {
+  if (!tally || !tally->voter_map || !pubkey_hex) return FALSE;
+  return g_hash_table_contains(tally->voter_map, pubkey_hex);
+}
+
+GArray *gnostr_nip88_get_voter_choices(GnostrNip88VoteTally *tally,
+                                        const char *pubkey_hex) {
+  if (!tally || !tally->voter_map || !pubkey_hex) return NULL;
+
+  VoterInfo *info = g_hash_table_lookup(tally->voter_map, pubkey_hex);
+  if (!info || !info->first_response || !info->first_response->selected_indices) {
+    return NULL;
+  }
+
+  /* Copy the indices to a new array */
+  GArray *result = g_array_sized_new(FALSE, FALSE, sizeof(int),
+                                      info->first_response->selected_indices->len);
+  for (guint i = 0; i < info->first_response->selected_indices->len; i++) {
+    int idx = g_array_index(info->first_response->selected_indices, int, i);
+    g_array_append_val(result, idx);
+  }
+
+  return result;
+}
