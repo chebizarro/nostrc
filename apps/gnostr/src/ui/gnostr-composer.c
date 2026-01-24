@@ -2,6 +2,8 @@
 #include "gnostr-main-window.h"
 #include "../util/blossom.h"
 #include "../util/blossom_settings.h"
+#include "../util/gnostr-drafts.h"
+#include <time.h>
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-composer.ui"
 
@@ -42,6 +44,13 @@ struct _GnostrComposer {
   char *comment_root_id;              /* root event ID being commented on (hex) */
   int comment_root_kind;              /* kind of the root event */
   char *comment_root_pubkey;          /* pubkey of root event author (hex) */
+  /* NIP-37 Drafts */
+  GtkWidget *btn_drafts;              /* menu button for drafts popover */
+  GtkWidget *drafts_popover;          /* popover with drafts list */
+  GtkWidget *drafts_list;             /* listbox of saved drafts */
+  GtkWidget *drafts_empty_label;      /* "No drafts saved" label */
+  GtkWidget *btn_save_draft;          /* save draft button */
+  char *current_draft_d_tag;          /* d-tag of currently loaded draft (for updates) */
 };
 
 G_DEFINE_TYPE(GnostrComposer, gnostr_composer, GTK_TYPE_WIDGET)
@@ -58,6 +67,9 @@ static void composer_media_free(gpointer p) {
 
 enum {
   SIGNAL_POST_REQUESTED,
+  SIGNAL_DRAFT_SAVED,
+  SIGNAL_DRAFT_LOADED,
+  SIGNAL_DRAFT_DELETED,
   N_SIGNALS
 };
 
@@ -80,6 +92,12 @@ static void gnostr_composer_dispose(GObject *obj) {
   /* NIP-14 subject widgets */
   self->subject_box = NULL;
   self->subject_entry = NULL;
+  /* NIP-37 drafts widgets */
+  self->btn_drafts = NULL;
+  self->drafts_popover = NULL;
+  self->drafts_list = NULL;
+  self->drafts_empty_label = NULL;
+  self->btn_save_draft = NULL;
   G_OBJECT_CLASS(gnostr_composer_parent_class)->dispose(obj);
 }
 
@@ -94,6 +112,8 @@ static void gnostr_composer_finalize(GObject *obj) {
   /* NIP-22 comment context cleanup */
   g_clear_pointer(&self->comment_root_id, g_free);
   g_clear_pointer(&self->comment_root_pubkey, g_free);
+  /* NIP-37 draft context cleanup */
+  g_clear_pointer(&self->current_draft_d_tag, g_free);
   if (self->upload_cancellable) {
     g_cancellable_cancel(self->upload_cancellable);
     g_object_unref(self->upload_cancellable);
@@ -380,6 +400,292 @@ static void on_sensitive_toggled(GnostrComposer *self, GtkToggleButton *button) 
   }
 }
 
+/* ---- NIP-37: Drafts functionality ---- */
+
+/* Forward declarations for draft row click handlers */
+static void on_draft_row_load_clicked(GtkButton *btn, gpointer user_data);
+static void on_draft_row_delete_clicked(GtkButton *btn, gpointer user_data);
+
+/* Create a row widget for a draft in the list */
+static GtkWidget *create_draft_row(GnostrComposer *self, GnostrDraft *draft) {
+  GtkWidget *row = gtk_list_box_row_new();
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+  gtk_widget_set_margin_start(box, 6);
+  gtk_widget_set_margin_end(box, 6);
+  gtk_widget_set_margin_top(box, 6);
+  gtk_widget_set_margin_bottom(box, 6);
+
+  /* Draft preview (truncated content) */
+  GtkWidget *content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+  gtk_widget_set_hexpand(content_box, TRUE);
+
+  /* Content preview */
+  const char *content = draft->content ? draft->content : "";
+  char *preview = g_strndup(content, 50);
+  /* Replace newlines with spaces for preview */
+  for (char *p = preview; *p; p++) {
+    if (*p == '\n' || *p == '\r') *p = ' ';
+  }
+  if (strlen(content) > 50) {
+    char *tmp = g_strdup_printf("%s...", preview);
+    g_free(preview);
+    preview = tmp;
+  }
+
+  GtkWidget *preview_label = gtk_label_new(preview);
+  gtk_label_set_xalign(GTK_LABEL(preview_label), 0);
+  gtk_label_set_ellipsize(GTK_LABEL(preview_label), PANGO_ELLIPSIZE_END);
+  gtk_label_set_max_width_chars(GTK_LABEL(preview_label), 30);
+  gtk_box_append(GTK_BOX(content_box), preview_label);
+  g_free(preview);
+
+  /* Timestamp */
+  GDateTime *dt = g_date_time_new_from_unix_local(draft->updated_at);
+  char *time_str = g_date_time_format(dt, "%b %d, %H:%M");
+  GtkWidget *time_label = gtk_label_new(time_str);
+  gtk_widget_add_css_class(time_label, "dim-label");
+  gtk_widget_add_css_class(time_label, "caption");
+  gtk_label_set_xalign(GTK_LABEL(time_label), 0);
+  gtk_box_append(GTK_BOX(content_box), time_label);
+  g_free(time_str);
+  g_date_time_unref(dt);
+
+  gtk_box_append(GTK_BOX(box), content_box);
+
+  /* Load button */
+  GtkWidget *btn_load = gtk_button_new_from_icon_name("document-open-symbolic");
+  gtk_widget_set_tooltip_text(btn_load, "Load draft");
+  gtk_widget_add_css_class(btn_load, "flat");
+  g_object_set_data_full(G_OBJECT(btn_load), "draft-d-tag", g_strdup(draft->d_tag), g_free);
+  g_object_set_data(G_OBJECT(btn_load), "composer", self);
+  g_signal_connect(btn_load, "clicked", G_CALLBACK(on_draft_row_load_clicked), self);
+  gtk_box_append(GTK_BOX(box), btn_load);
+
+  /* Delete button */
+  GtkWidget *btn_delete = gtk_button_new_from_icon_name("user-trash-symbolic");
+  gtk_widget_set_tooltip_text(btn_delete, "Delete draft");
+  gtk_widget_add_css_class(btn_delete, "flat");
+  gtk_widget_add_css_class(btn_delete, "destructive-action");
+  g_object_set_data_full(G_OBJECT(btn_delete), "draft-d-tag", g_strdup(draft->d_tag), g_free);
+  g_object_set_data(G_OBJECT(btn_delete), "composer", self);
+  g_signal_connect(btn_delete, "clicked", G_CALLBACK(on_draft_row_delete_clicked), self);
+  gtk_box_append(GTK_BOX(box), btn_delete);
+
+  gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
+  return row;
+}
+
+/* Refresh the drafts list in the popover */
+static void refresh_drafts_list(GnostrComposer *self) {
+  if (!GNOSTR_IS_COMPOSER(self)) return;
+  if (!self->drafts_list || !GTK_IS_LIST_BOX(self->drafts_list)) return;
+
+  /* Clear existing rows */
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->drafts_list))) != NULL) {
+    gtk_list_box_remove(GTK_LIST_BOX(self->drafts_list), child);
+  }
+
+  /* Load drafts from local storage */
+  GnostrDrafts *drafts_mgr = gnostr_drafts_get_default();
+  GPtrArray *drafts = gnostr_drafts_load_local(drafts_mgr);
+
+  if (!drafts || drafts->len == 0) {
+    /* Show empty label */
+    if (self->drafts_empty_label && GTK_IS_WIDGET(self->drafts_empty_label)) {
+      gtk_widget_set_visible(self->drafts_empty_label, TRUE);
+    }
+    if (drafts) g_ptr_array_free(drafts, TRUE);
+    return;
+  }
+
+  /* Hide empty label */
+  if (self->drafts_empty_label && GTK_IS_WIDGET(self->drafts_empty_label)) {
+    gtk_widget_set_visible(self->drafts_empty_label, FALSE);
+  }
+
+  /* Add rows for each draft */
+  for (guint i = 0; i < drafts->len; i++) {
+    GnostrDraft *draft = (GnostrDraft *)g_ptr_array_index(drafts, i);
+    GtkWidget *row = create_draft_row(self, draft);
+    gtk_list_box_append(GTK_LIST_BOX(self->drafts_list), row);
+  }
+
+  g_ptr_array_free(drafts, TRUE);
+}
+
+/* Callback when drafts popover is shown */
+static void on_drafts_popover_show(GtkPopover *popover, gpointer user_data) {
+  (void)popover;
+  GnostrComposer *self = GNOSTR_COMPOSER(user_data);
+  refresh_drafts_list(self);
+}
+
+/* Save draft callback */
+static void on_draft_saved(GnostrDrafts *drafts, gboolean success,
+                           const char *error_message, gpointer user_data) {
+  (void)drafts;
+  GnostrComposer *self = GNOSTR_COMPOSER(user_data);
+  if (!GNOSTR_IS_COMPOSER(self)) return;
+
+  if (success) {
+    composer_show_toast(self, "Draft saved");
+    g_signal_emit(self, signals[SIGNAL_DRAFT_SAVED], 0);
+  } else {
+    char *msg = g_strdup_printf("Failed to save draft: %s",
+                                 error_message ? error_message : "unknown error");
+    composer_show_toast(self, msg);
+    g_free(msg);
+  }
+}
+
+/* NIP-37: Save draft button clicked */
+static void on_save_draft_clicked(GnostrComposer *self, GtkButton *button) {
+  (void)button;
+  if (!GNOSTR_IS_COMPOSER(self)) return;
+
+  /* Get current text */
+  if (!self->text_view || !GTK_IS_TEXT_VIEW(self->text_view)) return;
+
+  GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));
+  GtkTextIter start, end;
+  gtk_text_buffer_get_bounds(buf, &start, &end);
+  char *text = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
+
+  /* Don't save empty drafts */
+  if (!text || !*text) {
+    g_free(text);
+    composer_show_toast(self, "Cannot save empty draft");
+    return;
+  }
+
+  /* Create draft */
+  GnostrDraft *draft = gnostr_draft_new();
+  draft->content = text; /* Takes ownership */
+  draft->target_kind = 1; /* Text note */
+
+  /* Preserve d-tag if editing existing draft */
+  if (self->current_draft_d_tag) {
+    draft->d_tag = g_strdup(self->current_draft_d_tag);
+  }
+
+  /* Get subject if present */
+  const char *subject = gnostr_composer_get_subject(self);
+  if (subject) {
+    draft->subject = g_strdup(subject);
+  }
+
+  /* Copy reply context */
+  if (self->reply_to_id) {
+    draft->reply_to_id = g_strdup(self->reply_to_id);
+  }
+  if (self->root_id) {
+    draft->root_id = g_strdup(self->root_id);
+  }
+  if (self->reply_to_pubkey) {
+    draft->reply_to_pubkey = g_strdup(self->reply_to_pubkey);
+  }
+
+  /* Copy quote context */
+  if (self->quote_id) {
+    draft->quote_id = g_strdup(self->quote_id);
+  }
+  if (self->quote_pubkey) {
+    draft->quote_pubkey = g_strdup(self->quote_pubkey);
+  }
+  if (self->quote_nostr_uri) {
+    draft->quote_nostr_uri = g_strdup(self->quote_nostr_uri);
+  }
+
+  /* Copy sensitive flag */
+  draft->is_sensitive = self->is_sensitive;
+
+  /* Save draft */
+  GnostrDrafts *drafts_mgr = gnostr_drafts_get_default();
+  gnostr_drafts_save_async(drafts_mgr, draft, on_draft_saved, self);
+
+  /* Update current draft d-tag for subsequent saves */
+  g_free(self->current_draft_d_tag);
+  self->current_draft_d_tag = g_strdup(draft->d_tag);
+
+  gnostr_draft_free(draft);
+}
+
+/* Load draft into composer */
+static void on_draft_row_load_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrComposer *self = GNOSTR_COMPOSER(user_data);
+  if (!GNOSTR_IS_COMPOSER(self)) return;
+
+  const char *d_tag = g_object_get_data(G_OBJECT(btn), "draft-d-tag");
+  if (!d_tag) return;
+
+  /* Load drafts and find the one with matching d-tag */
+  GnostrDrafts *drafts_mgr = gnostr_drafts_get_default();
+  GPtrArray *drafts = gnostr_drafts_load_local(drafts_mgr);
+  if (!drafts) return;
+
+  GnostrDraft *found = NULL;
+  for (guint i = 0; i < drafts->len; i++) {
+    GnostrDraft *draft = (GnostrDraft *)g_ptr_array_index(drafts, i);
+    if (draft->d_tag && strcmp(draft->d_tag, d_tag) == 0) {
+      found = draft;
+      break;
+    }
+  }
+
+  if (!found) {
+    g_ptr_array_free(drafts, TRUE);
+    composer_show_toast(self, "Draft not found");
+    return;
+  }
+
+  /* Load into composer */
+  gnostr_composer_load_draft(self, found);
+
+  /* Close popover */
+  if (self->drafts_popover && GTK_IS_POPOVER(self->drafts_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->drafts_popover));
+  }
+
+  composer_show_toast(self, "Draft loaded");
+  g_signal_emit(self, signals[SIGNAL_DRAFT_LOADED], 0);
+
+  g_ptr_array_free(drafts, TRUE);
+}
+
+/* Delete draft callback */
+static void on_draft_deleted(GnostrDrafts *drafts, gboolean success,
+                              const char *error_message, gpointer user_data) {
+  (void)drafts;
+  (void)error_message;
+  GnostrComposer *self = GNOSTR_COMPOSER(user_data);
+  if (!GNOSTR_IS_COMPOSER(self)) return;
+
+  if (success) {
+    composer_show_toast(self, "Draft deleted");
+    refresh_drafts_list(self);
+    g_signal_emit(self, signals[SIGNAL_DRAFT_DELETED], 0);
+  }
+}
+
+/* Delete draft from list */
+static void on_draft_row_delete_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrComposer *self = GNOSTR_COMPOSER(user_data);
+  if (!GNOSTR_IS_COMPOSER(self)) return;
+
+  const char *d_tag = g_object_get_data(G_OBJECT(btn), "draft-d-tag");
+  if (!d_tag) return;
+
+  /* Clear current draft if it's the one being deleted */
+  if (self->current_draft_d_tag && strcmp(self->current_draft_d_tag, d_tag) == 0) {
+    g_free(self->current_draft_d_tag);
+    self->current_draft_d_tag = NULL;
+  }
+
+  GnostrDrafts *drafts_mgr = gnostr_drafts_get_default();
+  gnostr_drafts_delete_async(drafts_mgr, d_tag, on_draft_deleted, self);
+}
+
 static void gnostr_composer_class_init(GnostrComposerClass *klass) {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
   GObjectClass *gobj_class = G_OBJECT_CLASS(klass);
@@ -402,10 +708,17 @@ static void gnostr_composer_class_init(GnostrComposerClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrComposer, subject_entry);
   /* NIP-36 Sensitive content toggle */
   gtk_widget_class_bind_template_child(widget_class, GnostrComposer, btn_sensitive);
+  /* NIP-37 Drafts */
+  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, btn_drafts);
+  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, drafts_popover);
+  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, drafts_list);
+  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, drafts_empty_label);
+  gtk_widget_class_bind_template_child(widget_class, GnostrComposer, btn_save_draft);
   gtk_widget_class_bind_template_callback(widget_class, on_post_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_cancel_reply_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_attach_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_sensitive_toggled);
+  gtk_widget_class_bind_template_callback(widget_class, on_save_draft_clicked);
 
   signals[SIGNAL_POST_REQUESTED] =
       g_signal_new("post-requested",
@@ -415,6 +728,31 @@ static void gnostr_composer_class_init(GnostrComposerClass *klass) {
                    NULL, NULL,
                    g_cclosure_marshal_VOID__STRING,
                    G_TYPE_NONE, 1, G_TYPE_STRING);
+
+  /* NIP-37: Draft signals */
+  signals[SIGNAL_DRAFT_SAVED] =
+      g_signal_new("draft-saved",
+                   G_TYPE_FROM_CLASS(klass),
+                   G_SIGNAL_RUN_LAST,
+                   0, NULL, NULL,
+                   g_cclosure_marshal_VOID__VOID,
+                   G_TYPE_NONE, 0);
+
+  signals[SIGNAL_DRAFT_LOADED] =
+      g_signal_new("draft-loaded",
+                   G_TYPE_FROM_CLASS(klass),
+                   G_SIGNAL_RUN_LAST,
+                   0, NULL, NULL,
+                   g_cclosure_marshal_VOID__VOID,
+                   G_TYPE_NONE, 0);
+
+  signals[SIGNAL_DRAFT_DELETED] =
+      g_signal_new("draft-deleted",
+                   G_TYPE_FROM_CLASS(klass),
+                   G_SIGNAL_RUN_LAST,
+                   0, NULL, NULL,
+                   g_cclosure_marshal_VOID__VOID,
+                   G_TYPE_NONE, 0);
 }
 
 static void gnostr_composer_init(GnostrComposer *self) {
@@ -437,6 +775,21 @@ static void gnostr_composer_init(GnostrComposer *self) {
   self->is_sensitive = FALSE;
   self->upload_in_progress = FALSE;
   self->upload_cancellable = NULL;
+  /* NIP-37: Initialize drafts */
+  self->current_draft_d_tag = NULL;
+  if (self->btn_drafts) {
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_drafts),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Drafts", -1);
+  }
+  if (self->btn_save_draft) {
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_save_draft),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Save Draft", -1);
+  }
+  /* Connect popover show signal to refresh drafts list */
+  if (self->drafts_popover && GTK_IS_POPOVER(self->drafts_popover)) {
+    g_signal_connect(self->drafts_popover, "show",
+                     G_CALLBACK(on_drafts_popover_show), self);
+  }
   g_message("composer init: self=%p root=%p text_view=%p btn_post=%p btn_attach=%p",
             (void*)self,
             (void*)self->root,
@@ -834,4 +1187,111 @@ int gnostr_composer_get_comment_root_kind(GnostrComposer *self) {
 const char *gnostr_composer_get_comment_root_pubkey(GnostrComposer *self) {
   g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
   return self->comment_root_pubkey;
+}
+
+/* ---- NIP-37: Draft management public API ---- */
+
+void gnostr_composer_load_draft(GnostrComposer *self, const GnostrDraft *draft) {
+  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+  g_return_if_fail(draft != NULL);
+
+  /* Clear existing state */
+  gnostr_composer_clear(self);
+
+  /* Store d-tag for updates */
+  g_free(self->current_draft_d_tag);
+  self->current_draft_d_tag = g_strdup(draft->d_tag);
+
+  /* Set content */
+  if (draft->content && self->text_view && GTK_IS_TEXT_VIEW(self->text_view)) {
+    GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));
+    gtk_text_buffer_set_text(buf, draft->content, -1);
+  }
+
+  /* Set subject */
+  if (draft->subject && self->subject_entry && GTK_IS_ENTRY(self->subject_entry)) {
+    gtk_editable_set_text(GTK_EDITABLE(self->subject_entry), draft->subject);
+  }
+
+  /* Set reply context */
+  if (draft->reply_to_id) {
+    g_free(self->reply_to_id);
+    self->reply_to_id = g_strdup(draft->reply_to_id);
+  }
+  if (draft->root_id) {
+    g_free(self->root_id);
+    self->root_id = g_strdup(draft->root_id);
+  }
+  if (draft->reply_to_pubkey) {
+    g_free(self->reply_to_pubkey);
+    self->reply_to_pubkey = g_strdup(draft->reply_to_pubkey);
+    /* Show reply indicator */
+    if (self->reply_indicator_box && GTK_IS_WIDGET(self->reply_indicator_box)) {
+      gtk_widget_set_visible(self->reply_indicator_box, TRUE);
+    }
+    if (self->reply_indicator && GTK_IS_LABEL(self->reply_indicator)) {
+      gtk_label_set_text(GTK_LABEL(self->reply_indicator), "Replying to @user (from draft)");
+    }
+    if (self->btn_post && GTK_IS_BUTTON(self->btn_post)) {
+      gtk_button_set_label(GTK_BUTTON(self->btn_post), "Reply");
+    }
+  }
+
+  /* Set quote context */
+  if (draft->quote_id) {
+    g_free(self->quote_id);
+    self->quote_id = g_strdup(draft->quote_id);
+  }
+  if (draft->quote_pubkey) {
+    g_free(self->quote_pubkey);
+    self->quote_pubkey = g_strdup(draft->quote_pubkey);
+  }
+  if (draft->quote_nostr_uri) {
+    g_free(self->quote_nostr_uri);
+    self->quote_nostr_uri = g_strdup(draft->quote_nostr_uri);
+    /* Show quote indicator if no reply context */
+    if (!draft->reply_to_pubkey) {
+      if (self->reply_indicator_box && GTK_IS_WIDGET(self->reply_indicator_box)) {
+        gtk_widget_set_visible(self->reply_indicator_box, TRUE);
+      }
+      if (self->reply_indicator && GTK_IS_LABEL(self->reply_indicator)) {
+        gtk_label_set_text(GTK_LABEL(self->reply_indicator), "Quoting (from draft)");
+      }
+      if (self->btn_post && GTK_IS_BUTTON(self->btn_post)) {
+        gtk_button_set_label(GTK_BUTTON(self->btn_post), "Quote");
+      }
+    }
+  }
+
+  /* Set sensitive flag */
+  gnostr_composer_set_sensitive(self, draft->is_sensitive);
+
+  g_message("composer: loaded draft d_tag=%s kind=%d",
+            draft->d_tag ? draft->d_tag : "(null)",
+            draft->target_kind);
+}
+
+const char *gnostr_composer_get_current_draft_d_tag(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+  return self->current_draft_d_tag;
+}
+
+void gnostr_composer_clear_draft_context(GnostrComposer *self) {
+  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+  g_clear_pointer(&self->current_draft_d_tag, g_free);
+}
+
+gboolean gnostr_composer_has_draft_loaded(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), FALSE);
+  return self->current_draft_d_tag != NULL;
+}
+
+char *gnostr_composer_get_text(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+  if (!self->text_view || !GTK_IS_TEXT_VIEW(self->text_view)) return NULL;
+
+  GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));
+  GtkTextIter start, end;
+  gtk_text_buffer_get_bounds(buf, &start, &end);
+  return gtk_text_buffer_get_text(buf, &start, &end, FALSE);
 }

@@ -150,6 +150,40 @@ int gnostr_composer_get_comment_root_kind(GnostrComposer *self);
  */
 const char *gnostr_composer_get_comment_root_pubkey(GnostrComposer *self);
 
+/* NIP-37: Draft support */
+
+/* Forward declaration for GnostrDraft (defined in gnostr-drafts.h) */
+typedef struct _GnostrDraft GnostrDraft;
+
+/**
+ * Load a draft into the composer.
+ * Clears any existing content and restores the draft state.
+ * @param draft: The draft to load (will be copied, caller retains ownership)
+ */
+void gnostr_composer_load_draft(GnostrComposer *self, const GnostrDraft *draft);
+
+/**
+ * Get the d-tag of the currently loaded draft (for updates).
+ * Returns NULL if no draft is loaded.
+ */
+const char *gnostr_composer_get_current_draft_d_tag(GnostrComposer *self);
+
+/**
+ * Clear the draft context (called after publishing to clean up).
+ */
+void gnostr_composer_clear_draft_context(GnostrComposer *self);
+
+/**
+ * Check if a draft is currently loaded in the composer.
+ */
+gboolean gnostr_composer_has_draft_loaded(GnostrComposer *self);
+
+/**
+ * Get the current text content from the composer.
+ * Returns a newly allocated string that must be freed with g_free().
+ */
+char *gnostr_composer_get_text(GnostrComposer *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_COMPOSER_H */

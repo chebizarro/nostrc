@@ -54,6 +54,8 @@
 #include "../util/nip51_settings.h"
 /* Blossom server settings (kind 10063) */
 #include "../util/blossom_settings.h"
+/* NIP-37 Draft events */
+#include "../util/gnostr-drafts.h"
 #include "gnostr-login.h"
 #include "gnostr-report-dialog.h"
 #ifdef HAVE_SOUP3
@@ -4271,6 +4273,13 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
 
     /* Clear composer text on success */
     if (self->composer && GNOSTR_IS_COMPOSER(self->composer)) {
+      /* NIP-37: Delete draft after successful publish */
+      const char *draft_d_tag = gnostr_composer_get_current_draft_d_tag(GNOSTR_COMPOSER(self->composer));
+      if (draft_d_tag) {
+        GnostrDrafts *drafts_mgr = gnostr_drafts_get_default();
+        gnostr_drafts_delete_async(drafts_mgr, draft_d_tag, NULL, NULL);
+        g_message("[PUBLISH] Deleted draft after successful publish: %s", draft_d_tag);
+      }
       gnostr_composer_clear(GNOSTR_COMPOSER(self->composer));
     }
 
