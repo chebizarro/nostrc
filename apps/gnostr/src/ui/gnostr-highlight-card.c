@@ -502,18 +502,16 @@ void gnostr_highlight_card_set_highlighter(GnostrHighlightCard *self,
   }
 
   /* Load avatar if available */
-#ifdef HAVE_SOUP3
   if (avatar_url && *avatar_url && GTK_IS_IMAGE(self->highlighter_avatar)) {
-    /* Use avatar cache or load directly */
-    GdkPaintable *cached = gnostr_avatar_cache_get(avatar_url);
+    /* Try cache first, then async download */
+    GdkTexture *cached = gnostr_avatar_try_load_cached(avatar_url);
     if (cached) {
-      gtk_image_set_from_paintable(GTK_IMAGE(self->highlighter_avatar), cached);
+      gtk_image_set_from_paintable(GTK_IMAGE(self->highlighter_avatar), GDK_PAINTABLE(cached));
+      g_object_unref(cached);
+    } else {
+      gnostr_avatar_download_async(avatar_url, GTK_WIDGET(self->highlighter_avatar), NULL);
     }
-    /* TODO: Load avatar async if not cached */
   }
-#else
-  (void)avatar_url;
-#endif
 }
 
 void gnostr_highlight_card_set_author(GnostrHighlightCard *self,
