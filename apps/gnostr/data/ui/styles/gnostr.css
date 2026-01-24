@@ -1374,6 +1374,36 @@ profile-row.muted .profile-row-avatar {
   font-family: monospace;
 }
 
+/* ===== NIP-18 Repost Styles ===== */
+
+/* Repost indicator header - "Reposted by X" */
+.repost-indicator {
+  padding: 4px 0;
+  margin-bottom: 4px;
+}
+
+.repost-indicator image {
+  color: alpha(@theme_fg_color, 0.5);
+  min-width: 14px;
+  min-height: 14px;
+}
+
+.repost-indicator label {
+  font-size: 12px;
+  color: alpha(@theme_fg_color, 0.6);
+}
+
+/* Repost note card styling */
+.note-card.repost {
+  /* Subtle visual distinction for reposts */
+  border-left: 3px solid alpha(@accent_bg_color, 0.3);
+}
+
+/* Repost button when active (user has reposted) */
+#btn_repost.reposted image {
+  color: @accent_bg_color;
+}
+
 /* NIP-36: Sensitive content warning styles */
 .sensitive-content {
   /* Add subtle border to indicate sensitive content */
@@ -1419,4 +1449,414 @@ profile-row.muted .profile-row-avatar {
 .warning:checked {
   background: alpha(@warning_color, 0.2);
   color: @warning_color;
+}
+
+/* ============================================
+   NIP-23 Long-form Article Card Styles
+   ============================================ */
+
+/* Main article card container */
+.article-card {
+  border-radius: 16px;
+  padding: 0;
+  background: alpha(@theme_bg_color, 0.7);
+  border: 1px solid alpha(@theme_fg_color, 0.08);
+  overflow: hidden;
+  animation: article-fade-in 600ms ease-out;
+}
+
+@keyframes article-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.article-card:hover {
+  background: alpha(@theme_bg_color, 0.85);
+  border-color: alpha(@theme_fg_color, 0.12);
+  box-shadow: 0 4px 16px alpha(@theme_fg_color, 0.08);
+}
+
+/* Article header image */
+.article-header-image {
+  border-radius: 16px 16px 0 0;
+  min-height: 180px;
+  background: alpha(@theme_bg_color, 0.3);
+}
+
+.article-header-gradient {
+  background: linear-gradient(
+    to top,
+    alpha(black, 0.6) 0%,
+    alpha(black, 0.3) 40%,
+    alpha(black, 0.0) 100%
+  );
+}
+
+/* Article avatar (slightly larger than note avatar) */
+.article-avatar {
+  border-radius: 50%;
+  min-width: 40px;
+  min-height: 40px;
+  background: linear-gradient(
+    135deg,
+    alpha(@accent_bg_color, 0.2) 0%,
+    alpha(@accent_bg_color, 0.35) 100%
+  );
+}
+
+.article-avatar picture {
+  border-radius: 50%;
+  min-width: 40px;
+  min-height: 40px;
+}
+
+.article-avatar-image {
+  border-radius: 50%;
+  min-width: 40px;
+  min-height: 40px;
+}
+
+/* Article author name */
+.article-author {
+  font-weight: 600;
+  font-size: 15px;
+  color: @theme_fg_color;
+}
+
+/* Article meta text (handle, date) */
+.article-meta {
+  font-size: 13px;
+  color: alpha(@theme_fg_color, 0.6);
+}
+
+/* Article title */
+.article-title {
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 1.3;
+  color: @theme_fg_color;
+}
+
+/* Make title button not look like a button */
+.article-card button.flat:focus .article-title,
+.article-card button.flat:hover .article-title {
+  color: @accent_bg_color;
+}
+
+/* Article summary/description */
+.article-summary {
+  font-size: 15px;
+  line-height: 1.5;
+  color: alpha(@theme_fg_color, 0.85);
+}
+
+/* Read more link */
+.article-read-more {
+  font-size: 14px;
+  font-weight: 500;
+  color: @accent_bg_color;
+}
+
+.article-read-more:hover {
+  text-decoration: underline;
+}
+
+/* Hashtag pills */
+.article-hashtags flowboxchild {
+  padding: 0;
+  margin: 0;
+}
+
+.article-hashtag {
+  border-radius: 9999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  background: alpha(@accent_bg_color, 0.12);
+  color: @accent_bg_color;
+  transition: all 150ms ease;
+}
+
+.article-hashtag:hover {
+  background: alpha(@accent_bg_color, 0.2);
+}
+
+/* Reading time estimate */
+.article-reading-time {
+  font-size: 12px;
+  color: alpha(@theme_fg_color, 0.5);
+  font-style: italic;
+}
+
+/* Article card in timeline - compact mode */
+.timeline .article-card {
+  margin-bottom: 8px;
+}
+
+/* Article full view (when opened) */
+.article-full-view {
+  background: @theme_bg_color;
+  padding: 24px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.article-full-view .article-title {
+  font-size: 28px;
+  margin-bottom: 16px;
+}
+
+.article-full-view .article-content {
+  font-size: 17px;
+  line-height: 1.7;
+}
+
+/* Markdown content styles in full article view */
+.article-content tt {
+  font-family: monospace;
+  background: alpha(@theme_fg_color, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.article-content a {
+  color: @accent_bg_color;
+  text-decoration: none;
+}
+
+.article-content a:hover {
+  text-decoration: underline;
+}
+
+/* Article embed preview (when referenced via "a" tag) */
+.article-embed {
+  border-radius: 10px;
+  background: alpha(@theme_bg_color, 0.5);
+  border: 1px solid alpha(@theme_fg_color, 0.1);
+  padding: 12px;
+  margin: 8px 0;
+  transition: all 150ms ease;
+}
+
+.article-embed:hover {
+  background: alpha(@theme_bg_color, 0.7);
+  border-color: alpha(@theme_fg_color, 0.15);
+}
+
+.article-embed-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: @theme_fg_color;
+  margin-bottom: 4px;
+}
+
+.article-embed-summary {
+  font-size: 13px;
+  color: alpha(@theme_fg_color, 0.7);
+  line-height: 1.4;
+}
+
+.article-embed-author {
+  font-size: 12px;
+  color: alpha(@theme_fg_color, 0.5);
+  margin-top: 8px;
+}
+
+/* Article kind badge */
+.article-badge {
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  background: alpha(@accent_bg_color, 0.12);
+  color: @accent_bg_color;
+}
+
+/* ===== NIP-32 Label/Tag Styles ===== */
+
+/* Container for note labels */
+.note-labels-container {
+  margin-top: 4px;
+}
+
+/* Individual label chip/tag */
+.note-label-chip {
+  border-radius: 9999px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  background: alpha(@accent_bg_color, 0.12);
+  color: @accent_bg_color;
+  transition: all 150ms ease;
+}
+
+.note-label-chip:hover {
+  background: alpha(@accent_bg_color, 0.20);
+}
+
+/* Namespace prefix in label */
+.label-namespace {
+  opacity: 0.7;
+  font-weight: 400;
+}
+
+/* Topic labels - slightly different styling */
+.note-label-chip.topic {
+  background: alpha(#6366f1, 0.12);
+  color: #6366f1;
+}
+
+.note-label-chip.topic:hover {
+  background: alpha(#6366f1, 0.20);
+}
+
+/* UGC labels */
+.note-label-chip.ugc {
+  background: alpha(#10b981, 0.12);
+  color: #10b981;
+}
+
+.note-label-chip.ugc:hover {
+  background: alpha(#10b981, 0.20);
+}
+
+/* Quality labels */
+.note-label-chip.quality {
+  background: alpha(#f59e0b, 0.12);
+  color: #f59e0b;
+}
+
+.note-label-chip.quality:hover {
+  background: alpha(#f59e0b, 0.20);
+}
+
+/* Review/moderation labels */
+.note-label-chip.review {
+  background: alpha(#ef4444, 0.12);
+  color: #ef4444;
+}
+
+.note-label-chip.review:hover {
+  background: alpha(#ef4444, 0.20);
+}
+
+/* Add Label Dialog Styles */
+.label-dialog-grid {
+  margin: 12px;
+}
+
+.label-preset-btn {
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  min-width: 80px;
+}
+
+.label-preset-btn:checked {
+  background: alpha(@accent_bg_color, 0.15);
+  color: @accent_bg_color;
+  border-color: alpha(@accent_bg_color, 0.3);
+}
+
+.label-custom-entry {
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-top: 8px;
+}
+
+/* ============================================
+   NIP-58 Badge Styles
+   ============================================ */
+
+/* Badge container in profile pane */
+.profile-badges {
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: alpha(@theme_bg_color, 0.3);
+  border: 1px solid alpha(@theme_fg_color, 0.05);
+}
+
+/* Individual badge icon button */
+.profile-badge-icon {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 2px;
+  border-radius: 6px;
+  transition: all 150ms ease;
+}
+
+.profile-badge-icon:hover {
+  background: alpha(@accent_bg_color, 0.15);
+  transform: scale(1.05);
+}
+
+.profile-badge-icon picture {
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 4px;
+}
+
+/* Badge image styling */
+.profile-badge-icon image {
+  color: @accent_bg_color;
+}
+
+/* Badge popover for details */
+.badge-popover {
+  padding: 12px;
+  min-width: 200px;
+  max-width: 280px;
+}
+
+.badge-popover-image {
+  min-width: 64px;
+  min-height: 64px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.badge-popover-name {
+  font-weight: 600;
+  font-size: 15px;
+  color: @theme_fg_color;
+}
+
+.badge-popover-description {
+  font-size: 13px;
+  line-height: 1.4;
+  color: alpha(@theme_fg_color, 0.8);
+  margin-top: 4px;
+}
+
+.badge-popover-issuer {
+  font-size: 12px;
+  color: alpha(@theme_fg_color, 0.6);
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid alpha(@theme_fg_color, 0.1);
+}
+
+/* Badge in note/embed context */
+.note-badge-icon {
+  min-width: 20px;
+  min-height: 20px;
+  border-radius: 4px;
+}
+
+/* Small badge for compact displays */
+.badge-icon-small {
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.badge-icon-small picture {
+  min-width: 22px;
+  min-height: 22px;
+  border-radius: 3px;
 }

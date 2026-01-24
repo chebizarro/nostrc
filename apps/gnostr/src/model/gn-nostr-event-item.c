@@ -1,6 +1,7 @@
 #include "gn-nostr-event-item.h"
 #include "../storage_ndb.h"
 #include <string.h>
+#include <json-glib/json-glib.h>
 
 struct _GnNostrEventItem {
   GObject parent_instance;
@@ -554,4 +555,54 @@ gboolean gn_nostr_event_item_get_is_expired(GnNostrEventItem *self) {
   if (self->expiration == 0) return FALSE;
   gint64 now = g_get_real_time() / G_USEC_PER_SEC;
   return (self->expiration < now);
+}
+
+/* NIP-18: Extract referenced event ID from kind 6 repost tags.
+ * Parses the cached tags JSON to find the first "e" tag and returns its value.
+ * Returns newly allocated hex string or NULL if not found. */
+char *gn_nostr_event_item_get_reposted_event_id(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
+
+  ensure_note_loaded(self);
+
+  /* Only kind 6 events are reposts */
+  if (self->kind != 6) return NULL;
+
+  /* Need tags_json to parse */
+  if (!self->cached_tags_json || !*self->cached_tags_json) return NULL;
+
+  /* Parse tags JSON array */
+  JsonParser *parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, self->cached_tags_json, -1, NULL)) {
+    g_object_unref(parser);
+    return NULL;
+  }
+
+  JsonNode *root = json_parser_get_root(parser);
+  if (!root || !JSON_NODE_HOLDS_ARRAY(root)) {
+    g_object_unref(parser);
+    return NULL;
+  }
+
+  JsonArray *tags = json_node_get_array(root);
+  guint n_tags = json_array_get_length(tags);
+
+  char *result = NULL;
+
+  /* Find first "e" tag - per NIP-18 this references the reposted event */
+  for (guint i = 0; i < n_tags && !result; i++) {
+    JsonArray *tag = json_array_get_array_element(tags, i);
+    if (!tag || json_array_get_length(tag) < 2) continue;
+
+    const char *tag_type = json_array_get_string_element(tag, 0);
+    if (!tag_type || strcmp(tag_type, "e") != 0) continue;
+
+    const char *event_id = json_array_get_string_element(tag, 1);
+    if (event_id && strlen(event_id) == 64) {
+      result = g_strdup(event_id);
+    }
+  }
+
+  g_object_unref(parser);
+  return result;
 }

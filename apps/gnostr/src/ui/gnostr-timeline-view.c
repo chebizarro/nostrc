@@ -12,6 +12,8 @@
 #include "../util/relays.h"
 #include "../util/utils.h"
 #include "../util/bookmarks.h"
+#include "../util/nip32_labels.h"
+#include "../util/nip23.h"
 #include "nostr-filter.h"
 #include <string.h>
 #include <time.h>
@@ -845,6 +847,22 @@ static void on_note_card_like_requested_relay(GnostrNoteCardRow *row, const char
   (void)user_data;
 }
 
+/* Handler for comment button (NIP-22) - relay to main window */
+static void on_note_card_comment_requested_relay(GnostrNoteCardRow *row, const char *id_hex, int kind, const char *pubkey_hex, gpointer user_data) {
+  /* Relay the signal up to the main window */
+  GtkWidget *widget = GTK_WIDGET(row);
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
+      /* Found the main window - call the comment function */
+      extern void gnostr_main_window_request_comment(GtkWidget *window, const char *id_hex, int kind, const char *pubkey_hex);
+      gnostr_main_window_request_comment(widget, id_hex, kind, pubkey_hex);
+      break;
+    }
+  }
+  (void)user_data;
+}
+
 /* Handler for zap button - show zap dialog */
 static void on_note_card_zap_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, const char *lud16, gpointer user_data) {
   (void)user_data;
@@ -1067,6 +1085,22 @@ static void on_note_card_report_note_requested_relay(GnostrNoteCardRow *row, con
   (void)user_data;
 }
 
+/* NIP-32: Handler for label-note-requested signal - relay to main window */
+static void on_note_card_label_note_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *namespace, const char *label, const char *pubkey_hex, gpointer user_data) {
+  /* Relay the signal up to the main window */
+  GtkWidget *widget = GTK_WIDGET(row);
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
+      /* Found the main window, call method to create label event */
+      extern void gnostr_main_window_request_label_note(GtkWidget *window, const char *id_hex, const char *namespace, const char *label, const char *pubkey_hex);
+      gnostr_main_window_request_label_note(widget, id_hex, namespace, label, pubkey_hex);
+      break;
+    }
+  }
+  (void)user_data;
+}
+
 /* Callback when profile is loaded for an event item - show the row */
 static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
@@ -1127,6 +1161,8 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
   g_signal_connect(row, "quote-requested", G_CALLBACK(on_note_card_quote_requested_relay), NULL);
   /* Connect the like-requested signal */
   g_signal_connect(row, "like-requested", G_CALLBACK(on_note_card_like_requested_relay), NULL);
+  /* Connect the comment-requested signal (NIP-22) */
+  g_signal_connect(row, "comment-requested", G_CALLBACK(on_note_card_comment_requested_relay), NULL);
   /* Connect the zap-requested signal */
   g_signal_connect(row, "zap-requested", G_CALLBACK(on_note_card_zap_requested_relay), NULL);
   /* Connect the view-thread-requested signal */
@@ -1145,6 +1181,8 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
   g_signal_connect(row, "delete-note-requested", G_CALLBACK(on_note_card_delete_note_requested_relay), NULL);
   /* Connect the report-note-requested signal (NIP-56) */
   g_signal_connect(row, "report-note-requested", G_CALLBACK(on_note_card_report_note_requested_relay), NULL);
+  /* Connect the label-note-requested signal (NIP-32) */
+  g_signal_connect(row, "label-note-requested", G_CALLBACK(on_note_card_label_note_requested_relay), NULL);
 
   gtk_list_item_set_child(item, row);
 }
@@ -1448,10 +1486,38 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 
     /* NIP-92: Use imeta-aware setter if this is a GnNostrEventItem */
     const char *tags_json = NULL;
+    gint event_kind = 1;  /* Default to kind 1 text note */
     if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
       tags_json = gn_nostr_event_item_get_tags_json(GN_NOSTR_EVENT_ITEM(obj));
+      g_object_get(obj, "kind", &event_kind, NULL);
     }
-    if (tags_json) {
+
+    /* NIP-23: Handle long-form content (kind 30023) */
+    if (gnostr_article_is_article(event_kind) && tags_json) {
+      GnostrArticleMeta *article_meta = gnostr_article_parse_tags(tags_json);
+      if (article_meta) {
+        /* Use summary if available, otherwise use content excerpt */
+        const char *summary = article_meta->summary;
+        if (!summary && content) {
+          /* Extract first ~300 chars as summary */
+          summary = content;
+        }
+
+        gnostr_note_card_row_set_article_mode(GNOSTR_NOTE_CARD_ROW(row),
+                                               article_meta->title,
+                                               summary,
+                                               article_meta->image,
+                                               article_meta->published_at > 0 ? article_meta->published_at : created_at,
+                                               article_meta->d_tag,
+                                               (const char * const *)article_meta->hashtags);
+
+        gnostr_article_meta_free(article_meta);
+        g_debug("[BIND] NIP-23: Article mode set for event %s", id_hex ? id_hex : "(null)");
+      } else {
+        /* Fallback to regular note display if parsing fails */
+        gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
+      }
+    } else if (tags_json) {
       gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
 
       /* NIP-36: Check for content-warning tag */
@@ -1489,6 +1555,121 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                                              ti->quoted_event_id,
                                              ti->quoted_content,
                                              ti->quoted_author);
+      }
+    }
+    /* NIP-18: Handle GnNostrEventItem kind 6 reposts */
+    else if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
+      gboolean is_repost = gn_nostr_event_item_get_is_repost(GN_NOSTR_EVENT_ITEM(obj));
+      if (is_repost) {
+        /* Get the referenced event ID from the repost's tags */
+        char *reposted_id = gn_nostr_event_item_get_reposted_event_id(GN_NOSTR_EVENT_ITEM(obj));
+        if (reposted_id) {
+          /* Mark this as a repost and set reposter info */
+          gnostr_note_card_row_set_is_repost(GNOSTR_NOTE_CARD_ROW(row), TRUE);
+          gnostr_note_card_row_set_repost_info(GNOSTR_NOTE_CARD_ROW(row),
+                                                pubkey,   /* reposter pubkey */
+                                                display ? display : (handle ? handle : NULL), /* reposter name */
+                                                created_at); /* repost timestamp */
+
+          /* Try to fetch the original note from local storage */
+          char *orig_json = NULL;
+          int orig_len = 0;
+          if (storage_ndb_get_note_by_id_nontxn(reposted_id, &orig_json, &orig_len) == 0 && orig_json) {
+            /* Parse the original event to get author and content */
+            NostrEvent *orig_evt = nostr_event_new();
+            if (orig_evt && nostr_event_deserialize(orig_evt, orig_json) == 0) {
+              const char *orig_content = nostr_event_get_content(orig_evt);
+              const char *orig_pubkey = nostr_event_get_pubkey(orig_evt);
+              gint64 orig_created_at = (gint64)nostr_event_get_created_at(orig_evt);
+
+              /* Update the card with original note's content */
+              if (orig_content) {
+                gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), orig_content);
+              }
+
+              /* Update timestamp to original note's time */
+              if (orig_created_at > 0) {
+                time_t t = (time_t)orig_created_at;
+                struct tm *tm_info = localtime(&t);
+                char orig_ts_buf[64];
+                strftime(orig_ts_buf, sizeof(orig_ts_buf), "%Y-%m-%d %H:%M", tm_info);
+                gnostr_note_card_row_set_timestamp(GNOSTR_NOTE_CARD_ROW(row), orig_created_at, orig_ts_buf);
+              }
+
+              /* Try to get original author's profile */
+              if (orig_pubkey && strlen(orig_pubkey) == 64) {
+                void *txn = NULL;
+                if (storage_ndb_begin_query(&txn) == 0 && txn) {
+                  unsigned char pk_bytes[32];
+                  if (hex32_from_string(orig_pubkey, pk_bytes)) {
+                    char *profile_json = NULL;
+                    int profile_len = 0;
+                    if (storage_ndb_get_profile_by_pubkey(txn, pk_bytes, &profile_json, &profile_len) == 0 && profile_json) {
+                      /* Parse profile JSON to get display name */
+                      JsonParser *parser = json_parser_new();
+                      if (json_parser_load_from_data(parser, profile_json, profile_len, NULL)) {
+                        JsonNode *root = json_parser_get_root(parser);
+                        if (root && JSON_NODE_HOLDS_OBJECT(root)) {
+                          JsonObject *profile_obj = json_node_get_object(root);
+                          /* Profile is stored as event - need to parse content */
+                          const char *profile_content = json_object_get_string_member(profile_obj, "content");
+                          if (profile_content) {
+                            JsonParser *content_parser = json_parser_new();
+                            if (json_parser_load_from_data(content_parser, profile_content, -1, NULL)) {
+                              JsonNode *content_root = json_parser_get_root(content_parser);
+                              if (content_root && JSON_NODE_HOLDS_OBJECT(content_root)) {
+                                JsonObject *meta = json_node_get_object(content_root);
+                                const char *orig_name = NULL;
+                                const char *orig_display = NULL;
+                                const char *orig_avatar = NULL;
+                                const char *orig_nip05_str = NULL;
+
+                                if (json_object_has_member(meta, "display_name"))
+                                  orig_display = json_object_get_string_member(meta, "display_name");
+                                if (json_object_has_member(meta, "name"))
+                                  orig_name = json_object_get_string_member(meta, "name");
+                                if (json_object_has_member(meta, "picture"))
+                                  orig_avatar = json_object_get_string_member(meta, "picture");
+                                if (json_object_has_member(meta, "nip05"))
+                                  orig_nip05_str = json_object_get_string_member(meta, "nip05");
+
+                                /* Update author display with original author */
+                                gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row),
+                                                                 orig_display ? orig_display : orig_name,
+                                                                 orig_name,
+                                                                 orig_avatar);
+
+                                /* Update IDs to use original note's pubkey for actions */
+                                gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row),
+                                                              reposted_id, root_id, (char*)orig_pubkey);
+
+                                /* Update NIP-05 if available */
+                                if (orig_nip05_str && *orig_nip05_str) {
+                                  gnostr_note_card_row_set_nip05(GNOSTR_NOTE_CARD_ROW(row),
+                                                                  orig_nip05_str, orig_pubkey);
+                                }
+                              }
+                            }
+                            g_object_unref(content_parser);
+                          }
+                        }
+                      }
+                      g_object_unref(parser);
+                    }
+                  }
+                  storage_ndb_end_query(txn);
+                }
+              }
+            }
+            if (orig_evt) nostr_event_free(orig_evt);
+          } else {
+            /* Original note not in local storage - request embed fetch */
+            gchar *nostr_uri = g_strdup_printf("nostr:note1%s", reposted_id);
+            g_signal_emit_by_name(row, "request-embed", nostr_uri);
+            g_free(nostr_uri);
+          }
+          g_free(reposted_id);
+        }
       }
     }
 

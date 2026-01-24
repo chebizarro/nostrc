@@ -59,6 +59,11 @@ void gn_nostr_event_item_set_is_liked(GnNostrEventItem *self, gboolean is_liked)
 gint64 gn_nostr_event_item_get_expiration(GnNostrEventItem *self);
 gboolean gn_nostr_event_item_get_is_expired(GnNostrEventItem *self);
 
+/* NIP-18: Repost support - extract referenced event ID from kind 6 repost tags
+ * Returns newly allocated string or NULL if not a repost or no "e" tag found.
+ * Caller must g_free() the result. */
+char *gn_nostr_event_item_get_reposted_event_id(GnNostrEventItem *self);
+
 G_END_DECLS
 
 #endif
