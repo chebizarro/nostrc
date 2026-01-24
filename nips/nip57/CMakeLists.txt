@@ -1,5 +1,8 @@
 project(nip57)
 
+# Vendored nostrdb path (matches libnostr configuration)
+set(LIBNOSTR_NDB_VENDOR_PATH "${CMAKE_SOURCE_DIR}/third_party/nostrdb" CACHE PATH "Path to vendored nostrdb source")
+
 # Core NIP-57 library (Lightning Zaps)
 add_library(nostr_nip57_core OBJECT
     src/nip57.c
@@ -9,6 +12,12 @@ target_include_directories(nostr_nip57_core
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/libnostr/include
+    PRIVATE
+        # BOLT11 parsing requires nostrdb headers
+        "${LIBNOSTR_NDB_VENDOR_PATH}/src"
+        "${LIBNOSTR_NDB_VENDOR_PATH}/src/bolt11"
+        "${LIBNOSTR_NDB_VENDOR_PATH}/ccan"
+        "${LIBNOSTR_NDB_VENDOR_PATH}/ccan/ccan"
 )
 
 target_link_libraries(nostr_nip57_core

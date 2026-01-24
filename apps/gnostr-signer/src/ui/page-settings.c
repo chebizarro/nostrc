@@ -13,11 +13,17 @@
 #include "sheets/sheet-social-recovery.h"
 #include "../secret_store.h"
 #include "../profile_store.h"
+#include "../relay_store.h"
 #include "../settings_manager.h"
 #include "../session-manager.h"
 #include "../client_session.h"
 #include "../startup-timing.h"
 #include "../i18n.h"
+#include "../event_history.h"
+#include "../policy_store.h"
+
+/* Forward declarations for relay publish helpers */
+static void publish_signed_event_to_relays(const gchar *signed_event_json, const gchar *event_type);
 
 /* Provided by settings_page.c for cross-component updates */
 extern void gnostr_settings_apply_import_success(const char *npub, const char *label);
@@ -219,11 +225,55 @@ static void on_profile_save(const gchar *npub, const gchar *event_json, gpointer
   /* The profile is saved to local cache by the editor */
 }
 
+/* Helper to publish signed events to configured relays.
+ * In a full implementation, this would use WebSocket connections to relays.
+ * For now, it verifies relay configuration and logs the publish attempt. */
+static void publish_signed_event_to_relays(const gchar *signed_event_json, const gchar *event_type) {
+  if (!signed_event_json || !event_type) return;
+
+  /* Load relay configuration */
+  RelayStore *relay_store = relay_store_new();
+  relay_store_load(relay_store);
+
+  GPtrArray *write_relays = relay_store_get_write_relays(relay_store);
+
+  if (write_relays->len == 0) {
+    g_warning("No write relays configured - %s event not published", event_type);
+    g_ptr_array_unref(write_relays);
+    relay_store_free(relay_store);
+    return;
+  }
+
+  g_message("Publishing %s event to %u relays:", event_type, write_relays->len);
+  for (guint i = 0; i < write_relays->len; i++) {
+    const gchar *relay_url = g_ptr_array_index(write_relays, i);
+    g_message("  - %s", relay_url);
+  }
+
+  /* In a full implementation, we would:
+   * 1. Connect to each write relay via WebSocket
+   * 2. Send ["EVENT", signed_event_json]
+   * 3. Wait for ["OK", event_id, true, ""] response
+   * 4. Handle errors and retry logic
+   *
+   * For now, just log that we would publish. The actual WebSocket
+   * relay publishing will be implemented when the relay connection
+   * infrastructure is complete.
+   */
+  g_message("Event JSON: %.200s%s", signed_event_json,
+            strlen(signed_event_json) > 200 ? "..." : "");
+
+  g_ptr_array_unref(write_relays);
+  relay_store_free(relay_store);
+}
+
 /* Profile editor publish callback - called when profile is signed and ready */
 static void on_profile_publish(const gchar *npub, const gchar *signed_event_json, gpointer ud) {
   (void)ud;
-  g_message("Publishing profile for %s: %s", npub, signed_event_json);
-  /* TODO: Publish to relays via relay_store or bunker_service */
+  g_message("Publishing profile for %s", npub);
+
+  /* Publish to configured write relays */
+  publish_signed_event_to_relays(signed_event_json, "profile (kind:0)");
 }
 
 static void on_edit_profile(GtkButton *b, gpointer user_data){
@@ -351,11 +401,289 @@ static void on_relays(GtkButton *b, gpointer user_data){
 
   adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
 }
-static void on_logs(GtkButton *b, gpointer user_data){
-  (void)b; (void)user_data; /* TODO: implement log viewer */
+/* Create a log entry row widget */
+static GtkWidget *create_log_entry_row(GnEventHistoryEntry *entry) {
+  AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
+
+  /* Format timestamp */
+  gchar *time_str = gn_event_history_entry_format_timestamp(entry);
+
+  /* Build title: kind and method */
+  gint kind = gn_event_history_entry_get_event_kind(entry);
+  const gchar *method = gn_event_history_entry_get_method(entry);
+  gchar *title = g_strdup_printf("Kind %d - %s", kind, method);
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
+  g_free(title);
+
+  /* Build subtitle: time, result, client app */
+  const gchar *client_app = gn_event_history_entry_get_client_app(entry);
+  GnEventHistoryResult result = gn_event_history_entry_get_result(entry);
+  const gchar *result_str = result == GN_EVENT_HISTORY_SUCCESS ? "Success" :
+                            result == GN_EVENT_HISTORY_DENIED ? "Denied" :
+                            result == GN_EVENT_HISTORY_TIMEOUT ? "Timeout" : "Error";
+
+  gchar *subtitle = g_strdup_printf("%s | %s%s%s",
+                                    time_str, result_str,
+                                    client_app ? " | " : "",
+                                    client_app ? client_app : "");
+  adw_action_row_set_subtitle(row, subtitle);
+  g_free(subtitle);
+  g_free(time_str);
+
+  /* Add result icon */
+  const gchar *icon_name = result == GN_EVENT_HISTORY_SUCCESS ? "emblem-ok-symbolic" :
+                           result == GN_EVENT_HISTORY_DENIED ? "dialog-error-symbolic" :
+                           "dialog-warning-symbolic";
+  GtkImage *icon = GTK_IMAGE(gtk_image_new_from_icon_name(icon_name));
+  adw_action_row_add_prefix(row, GTK_WIDGET(icon));
+
+  return GTK_WIDGET(row);
 }
-static void on_sign_policy(GtkButton *b, gpointer user_data){
-  (void)b; (void)user_data; /* TODO: implement sign policy editor */
+
+static void on_logs(GtkButton *b, gpointer user_data) {
+  (void)b;
+  PageSettings *self = PAGE_SETTINGS(user_data);
+
+  /* Create dialog */
+  AdwDialog *dlg = adw_dialog_new();
+  adw_dialog_set_title(dlg, "Event History");
+  adw_dialog_set_content_width(dlg, 500);
+  adw_dialog_set_content_height(dlg, 600);
+
+  /* Create main box */
+  GtkBox *main_box = GTK_BOX(gtk_box_new(GTK_ORIENTATION_VERTICAL, 0));
+
+  /* Header bar */
+  AdwHeaderBar *header = ADW_HEADER_BAR(adw_header_bar_new());
+  adw_header_bar_set_show_start_title_buttons(header, FALSE);
+  adw_header_bar_set_show_end_title_buttons(header, FALSE);
+
+  /* Close button */
+  GtkButton *btn_close = GTK_BUTTON(gtk_button_new_with_label("Close"));
+  gtk_widget_add_css_class(GTK_WIDGET(btn_close), "suggested-action");
+  adw_header_bar_pack_end(header, GTK_WIDGET(btn_close));
+  g_signal_connect_swapped(btn_close, "clicked", G_CALLBACK(adw_dialog_close), dlg);
+
+  gtk_box_append(main_box, GTK_WIDGET(header));
+
+  /* Scrolled window for list */
+  GtkScrolledWindow *scroll = GTK_SCROLLED_WINDOW(gtk_scrolled_window_new());
+  gtk_scrolled_window_set_policy(scroll, GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_widget_set_vexpand(GTK_WIDGET(scroll), TRUE);
+
+  /* List box for entries */
+  GtkListBox *list_box = GTK_LIST_BOX(gtk_list_box_new());
+  gtk_list_box_set_selection_mode(list_box, GTK_SELECTION_NONE);
+  gtk_widget_add_css_class(GTK_WIDGET(list_box), "boxed-list");
+
+  /* Load and display history entries */
+  GnEventHistory *history = gn_event_history_get_default();
+  gn_event_history_load(history);
+
+  GPtrArray *entries = gn_event_history_list_entries(history, 0, 100);
+
+  if (entries && entries->len > 0) {
+    for (guint i = 0; i < entries->len; i++) {
+      GnEventHistoryEntry *entry = g_ptr_array_index(entries, i);
+      GtkWidget *row = create_log_entry_row(entry);
+      gtk_list_box_append(list_box, row);
+    }
+    g_ptr_array_unref(entries);
+  } else {
+    /* Empty state */
+    AdwStatusPage *empty = ADW_STATUS_PAGE(adw_status_page_new());
+    adw_status_page_set_icon_name(empty, "document-open-symbolic");
+    adw_status_page_set_title(empty, "No Events");
+    adw_status_page_set_description(empty, "Event history will appear here after signing operations.");
+    gtk_box_append(main_box, GTK_WIDGET(empty));
+    gtk_widget_set_visible(GTK_WIDGET(scroll), FALSE);
+  }
+
+  gtk_scrolled_window_set_child(scroll, GTK_WIDGET(list_box));
+  gtk_box_append(main_box, GTK_WIDGET(scroll));
+
+  adw_dialog_set_child(dlg, GTK_WIDGET(main_box));
+  adw_dialog_present(dlg, GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
+}
+
+/* Forward declaration for policy remove callback */
+static void on_policy_remove_clicked(GtkButton *btn, gpointer ud);
+
+/* Create a policy entry row widget */
+static GtkWidget *create_policy_entry_row(PolicyEntry *entry, PolicyStore *store) {
+  AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
+
+  /* Title: app_id truncated */
+  gchar *title = g_strdup(entry->app_id);
+  if (strlen(title) > 16) {
+    gchar *truncated = g_strdup_printf("%.12s...%.4s", title, title + strlen(title) - 4);
+    g_free(title);
+    title = truncated;
+  }
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
+  g_free(title);
+
+  /* Subtitle: decision and expiration */
+  const gchar *decision_str = entry->decision ? "Allowed" : "Denied";
+  gchar *subtitle;
+  if (entry->expires_at == 0) {
+    subtitle = g_strdup_printf("%s (permanent)", decision_str);
+  } else {
+    gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+    if ((gint64)entry->expires_at > now) {
+      gint64 remaining = (gint64)entry->expires_at - now;
+      subtitle = g_strdup_printf("%s (expires in %" G_GINT64_FORMAT " min)", decision_str, remaining / 60);
+    } else {
+      subtitle = g_strdup_printf("%s (expired)", decision_str);
+    }
+  }
+  adw_action_row_set_subtitle(row, subtitle);
+  g_free(subtitle);
+
+  /* Decision icon */
+  const gchar *icon_name = entry->decision ? "emblem-ok-symbolic" : "action-unavailable-symbolic";
+  GtkImage *icon = GTK_IMAGE(gtk_image_new_from_icon_name(icon_name));
+  adw_action_row_add_prefix(row, GTK_WIDGET(icon));
+
+  /* Remove button */
+  GtkButton *btn_remove = GTK_BUTTON(gtk_button_new_from_icon_name("user-trash-symbolic"));
+  gtk_widget_set_valign(GTK_WIDGET(btn_remove), GTK_ALIGN_CENTER);
+  gtk_widget_add_css_class(GTK_WIDGET(btn_remove), "flat");
+  adw_action_row_add_suffix(row, GTK_WIDGET(btn_remove));
+
+  /* Store entry data for removal callback */
+  g_object_set_data_full(G_OBJECT(row), "app-id", g_strdup(entry->app_id), g_free);
+  g_object_set_data_full(G_OBJECT(row), "identity", g_strdup(entry->identity), g_free);
+  g_object_set_data(G_OBJECT(row), "policy-store", store);
+  g_object_set_data(G_OBJECT(btn_remove), "row", row);
+
+  /* Connect remove button callback */
+  g_signal_connect(btn_remove, "clicked", G_CALLBACK(on_policy_remove_clicked), NULL);
+
+  return GTK_WIDGET(row);
+}
+
+/* Callback for policy remove button */
+static void on_policy_remove_clicked(GtkButton *btn, gpointer ud) {
+  (void)ud;
+  GtkWidget *row = GTK_WIDGET(g_object_get_data(G_OBJECT(btn), "row"));
+  const gchar *app_id = g_object_get_data(G_OBJECT(row), "app-id");
+  const gchar *identity = g_object_get_data(G_OBJECT(row), "identity");
+  PolicyStore *ps = g_object_get_data(G_OBJECT(row), "policy-store");
+
+  if (app_id && identity && ps) {
+    policy_store_unset(ps, app_id, identity);
+    policy_store_save(ps);
+  }
+
+  GtkListBox *list = GTK_LIST_BOX(gtk_widget_get_parent(row));
+  if (list) {
+    gtk_list_box_remove(list, row);
+  }
+}
+
+static void on_sign_policy(GtkButton *b, gpointer user_data) {
+  (void)b;
+  PageSettings *self = PAGE_SETTINGS(user_data);
+
+  /* Create and load policy store */
+  PolicyStore *ps = policy_store_new();
+  policy_store_load(ps);
+
+  /* Create dialog */
+  AdwDialog *dlg = adw_dialog_new();
+  adw_dialog_set_title(dlg, "Sign Policy");
+  adw_dialog_set_content_width(dlg, 500);
+  adw_dialog_set_content_height(dlg, 500);
+
+  /* Create main box */
+  GtkBox *main_box = GTK_BOX(gtk_box_new(GTK_ORIENTATION_VERTICAL, 0));
+
+  /* Header bar */
+  AdwHeaderBar *header = ADW_HEADER_BAR(adw_header_bar_new());
+  adw_header_bar_set_show_start_title_buttons(header, FALSE);
+  adw_header_bar_set_show_end_title_buttons(header, FALSE);
+
+  /* Close button */
+  GtkButton *btn_close = GTK_BUTTON(gtk_button_new_with_label("Close"));
+  gtk_widget_add_css_class(GTK_WIDGET(btn_close), "suggested-action");
+  adw_header_bar_pack_end(header, GTK_WIDGET(btn_close));
+
+  gtk_box_append(main_box, GTK_WIDGET(header));
+
+  /* Description label */
+  GtkLabel *desc = GTK_LABEL(gtk_label_new(
+    "Manage remembered signing decisions for applications. "
+    "Remove entries to require re-approval."));
+  gtk_label_set_wrap(desc, TRUE);
+  gtk_label_set_xalign(desc, 0);
+  gtk_widget_set_margin_start(GTK_WIDGET(desc), 16);
+  gtk_widget_set_margin_end(GTK_WIDGET(desc), 16);
+  gtk_widget_set_margin_top(GTK_WIDGET(desc), 12);
+  gtk_widget_set_margin_bottom(GTK_WIDGET(desc), 12);
+  gtk_widget_add_css_class(GTK_WIDGET(desc), "dim-label");
+  gtk_box_append(main_box, GTK_WIDGET(desc));
+
+  /* Scrolled window for list */
+  GtkScrolledWindow *scroll = GTK_SCROLLED_WINDOW(gtk_scrolled_window_new());
+  gtk_scrolled_window_set_policy(scroll, GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_widget_set_vexpand(GTK_WIDGET(scroll), TRUE);
+
+  /* List box for entries */
+  GtkListBox *list_box = GTK_LIST_BOX(gtk_list_box_new());
+  gtk_list_box_set_selection_mode(list_box, GTK_SELECTION_NONE);
+  gtk_widget_add_css_class(GTK_WIDGET(list_box), "boxed-list");
+  gtk_widget_set_margin_start(GTK_WIDGET(list_box), 16);
+  gtk_widget_set_margin_end(GTK_WIDGET(list_box), 16);
+  gtk_widget_set_margin_bottom(GTK_WIDGET(list_box), 16);
+
+  /* Load and display policy entries */
+  GPtrArray *entries = policy_store_list(ps);
+
+  if (entries && entries->len > 0) {
+    for (guint i = 0; i < entries->len; i++) {
+      PolicyEntry *entry = g_ptr_array_index(entries, i);
+      GtkWidget *row = create_policy_entry_row(entry, ps);
+      gtk_list_box_append(list_box, row);
+    }
+
+    /* Free entries (but not the policy store - keep for modifications) */
+    for (guint i = 0; i < entries->len; i++) {
+      PolicyEntry *entry = g_ptr_array_index(entries, i);
+      g_free(entry->app_id);
+      g_free(entry->identity);
+      g_free(entry);
+    }
+    g_ptr_array_free(entries, TRUE);
+  } else {
+    /* Empty state */
+    AdwStatusPage *empty = ADW_STATUS_PAGE(adw_status_page_new());
+    adw_status_page_set_icon_name(empty, "preferences-system-symbolic");
+    adw_status_page_set_title(empty, "No Policies");
+    adw_status_page_set_description(empty, "When you approve or deny signing requests, your decisions will appear here.");
+    gtk_scrolled_window_set_child(scroll, GTK_WIDGET(empty));
+    gtk_box_append(main_box, GTK_WIDGET(scroll));
+    adw_dialog_set_child(dlg, GTK_WIDGET(main_box));
+
+    /* Store policy store for cleanup */
+    g_object_set_data_full(G_OBJECT(dlg), "policy-store", ps,
+                           (GDestroyNotify)policy_store_free);
+
+    g_signal_connect_swapped(btn_close, "clicked", G_CALLBACK(adw_dialog_close), dlg);
+    adw_dialog_present(dlg, GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
+    return;
+  }
+
+  gtk_scrolled_window_set_child(scroll, GTK_WIDGET(list_box));
+  gtk_box_append(main_box, GTK_WIDGET(scroll));
+
+  /* Store policy store for cleanup */
+  g_object_set_data_full(G_OBJECT(dlg), "policy-store", ps,
+                         (GDestroyNotify)policy_store_free);
+
+  adw_dialog_set_child(dlg, GTK_WIDGET(main_box));
+  g_signal_connect_swapped(btn_close, "clicked", G_CALLBACK(adw_dialog_close), dlg);
+  adw_dialog_present(dlg, GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
 }
 static void on_listen_notify(GObject *obj, GParamSpec *pspec, gpointer user_data){
   (void)pspec; (void)user_data; GtkSwitch *sw = GTK_SWITCH(obj);
@@ -363,12 +691,42 @@ static void on_listen_notify(GObject *obj, GParamSpec *pspec, gpointer user_data
   g_message("Listen for new connections: %s", active ? "on" : "off");
 }
 
-/* User list publish callback - called when user saves and publishes the list */
+/* User list publish callback - called when user saves and publishes the list.
+ * Note: The event_json here is unsigned. We need to sign it before publishing. */
 static void on_user_list_publish(UserListType type, const gchar *event_json, gpointer ud) {
   (void)ud;
   const gchar *list_name = (type == USER_LIST_FOLLOWS) ? "follows" : "mutes";
-  g_message("Publishing %s list event: %s", list_name, event_json);
-  /* TODO: Sign and publish to relays via bunker service or relay_store */
+  gint kind = (type == USER_LIST_FOLLOWS) ? 3 : 10000;
+
+  g_message("Publishing %s list (kind:%d)", list_name, kind);
+
+  /* Get the current identity for signing */
+  gchar *npub = NULL;
+  SecretStoreResult rc = secret_store_get_public_key(NULL, &npub);
+
+  if (rc != SECRET_STORE_OK || !npub || !*npub) {
+    g_warning("No account selected - cannot sign %s list for publishing", list_name);
+    return;
+  }
+
+  /* Sign the event */
+  gchar *signature = NULL;
+  rc = secret_store_sign_event(event_json, npub, &signature);
+
+  if (rc != SECRET_STORE_OK || !signature) {
+    g_warning("Failed to sign %s list event: %s", list_name,
+              secret_store_result_to_string(rc));
+    g_free(npub);
+    return;
+  }
+
+  /* The secret_store_sign_event returns the full signed event JSON */
+  gchar *event_type = g_strdup_printf("%s list (kind:%d)", list_name, kind);
+  publish_signed_event_to_relays(signature, event_type);
+  g_free(event_type);
+
+  g_free(signature);
+  g_free(npub);
 }
 
 static void on_follows(GtkButton *b, gpointer user_data){

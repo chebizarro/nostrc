@@ -9,9 +9,25 @@
 #include "gnostr-articles-view.h"
 #include "gnostr-wiki-card.h"
 #include "gnostr-article-card.h"
+#include "../storage_ndb.h"
+#include "../util/nip23.h"
+#include "../util/nip54_wiki.h"
+#include "../util/relays.h"
+#include "nostr-event.h"
+#include "nostr-json.h"
+#include "nostr-filter.h"
+#include "nostr_simple_pool.h"
 #include <glib/gi18n.h>
+#include <json-glib/json-glib.h>
+#include <string.h>
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-articles-view.ui"
+
+/* Maximum number of articles to load initially */
+#define ARTICLES_LOAD_LIMIT 100
+
+/* Maximum number of articles to fetch from relays */
+#define ARTICLES_FETCH_LIMIT 50
 
 /* NIP-23 Long-form content */
 #define KIND_LONG_FORM 30023
@@ -42,6 +58,8 @@ struct _GnostrArticlesView {
 
   /* Model */
   GListStore *articles_model;
+  GtkFilterListModel *filtered_model;
+  GtkCustomFilter *custom_filter;
   GtkSingleSelection *selection;
   GtkListItemFactory *factory;
 
@@ -52,6 +70,11 @@ struct _GnostrArticlesView {
   gboolean articles_loaded;
   gboolean is_logged_in;
   guint search_debounce_id;
+
+  /* Async fetch state */
+  GCancellable *fetch_cancellable;
+  GnostrSimplePool *pool;
+  gboolean fetch_in_progress;
 };
 
 G_DEFINE_TYPE(GnostrArticlesView, gnostr_articles_view, GTK_TYPE_WIDGET)
@@ -135,6 +158,397 @@ static GnostrArticleItem *gnostr_article_item_new(void) {
 static void update_content_state(GnostrArticlesView *self);
 static void update_article_count(GnostrArticlesView *self);
 static void apply_filters(GnostrArticlesView *self);
+static void load_articles_from_nostrdb(GnostrArticlesView *self);
+static void fetch_articles_from_relays(GnostrArticlesView *self);
+static void populate_author_info(GnostrArticleItem *item, void *txn);
+
+/* --- Helper: Convert hex string to 32 bytes --- */
+static gboolean hex_to_bytes_32(const char *hex, unsigned char out[32]) {
+  if (!hex || strlen(hex) != 64) return FALSE;
+  for (int i = 0; i < 32; i++) {
+    unsigned int byte;
+    if (sscanf(hex + i * 2, "%2x", &byte) != 1) return FALSE;
+    out[i] = (unsigned char)byte;
+  }
+  return TRUE;
+}
+
+/* --- Helper: Parse author profile from nostrdb --- */
+static void populate_author_info(GnostrArticleItem *item, void *txn) {
+  if (!item || !item->pubkey_hex || !txn) return;
+
+  unsigned char pubkey_bytes[32];
+  if (!hex_to_bytes_32(item->pubkey_hex, pubkey_bytes)) return;
+
+  char *profile_json = NULL;
+  int profile_len = 0;
+
+  if (storage_ndb_get_profile_by_pubkey(txn, pubkey_bytes, &profile_json, &profile_len) != 0 || !profile_json) {
+    /* No profile found - use short pubkey as fallback */
+    item->author_name = g_strndup(item->pubkey_hex, 8);
+    item->author_handle = g_strdup_printf("@%s...", item->author_name);
+    return;
+  }
+
+  /* Parse the kind-0 event to get profile content */
+  NostrEvent *evt = nostr_event_new();
+  if (!evt || nostr_event_deserialize(evt, profile_json) != 0) {
+    if (evt) nostr_event_free(evt);
+    item->author_name = g_strndup(item->pubkey_hex, 8);
+    item->author_handle = g_strdup_printf("@%s...", item->author_name);
+    return;
+  }
+
+  const char *content = nostr_event_get_content(evt);
+  if (content && *content) {
+    /* Parse profile JSON content */
+    JsonParser *parser = json_parser_new();
+    if (json_parser_load_from_data(parser, content, -1, NULL)) {
+      JsonNode *root = json_parser_get_root(parser);
+      if (JSON_NODE_HOLDS_OBJECT(root)) {
+        JsonObject *obj = json_node_get_object(root);
+
+        if (json_object_has_member(obj, "display_name")) {
+          const char *dn = json_object_get_string_member(obj, "display_name");
+          if (dn && *dn) item->author_name = g_strdup(dn);
+        }
+        if (!item->author_name && json_object_has_member(obj, "name")) {
+          const char *n = json_object_get_string_member(obj, "name");
+          if (n && *n) item->author_name = g_strdup(n);
+        }
+        if (json_object_has_member(obj, "name")) {
+          const char *n = json_object_get_string_member(obj, "name");
+          if (n && *n) item->author_handle = g_strdup_printf("@%s", n);
+        }
+        if (json_object_has_member(obj, "picture")) {
+          const char *pic = json_object_get_string_member(obj, "picture");
+          if (pic && *pic) item->author_avatar = g_strdup(pic);
+        }
+        if (json_object_has_member(obj, "nip05")) {
+          const char *nip05 = json_object_get_string_member(obj, "nip05");
+          if (nip05 && *nip05) item->author_nip05 = g_strdup(nip05);
+        }
+        if (json_object_has_member(obj, "lud16")) {
+          const char *lud16 = json_object_get_string_member(obj, "lud16");
+          if (lud16 && *lud16) item->author_lud16 = g_strdup(lud16);
+        }
+      }
+    }
+    g_object_unref(parser);
+  }
+
+  nostr_event_free(evt);
+
+  /* Fallback if no name found */
+  if (!item->author_name) {
+    item->author_name = g_strndup(item->pubkey_hex, 8);
+  }
+  if (!item->author_handle) {
+    gchar *short_pk = g_strndup(item->pubkey_hex, 8);
+    item->author_handle = g_strdup_printf("@%s...", short_pk);
+    g_free(short_pk);
+  }
+}
+
+/* --- Helper: Create article item from event JSON --- */
+static GnostrArticleItem *create_article_item_from_json(const char *event_json, void *txn) {
+  if (!event_json || !*event_json) return NULL;
+
+  NostrEvent *evt = nostr_event_new();
+  if (!evt || nostr_event_deserialize(evt, event_json) != 0) {
+    if (evt) nostr_event_free(evt);
+    return NULL;
+  }
+
+  int kind = nostr_event_get_kind(evt);
+  if (kind != KIND_LONG_FORM && kind != KIND_WIKI) {
+    nostr_event_free(evt);
+    return NULL;
+  }
+
+  GnostrArticleItem *item = gnostr_article_item_new();
+  item->kind = kind;
+
+  /* Basic event data */
+  char *event_id = nostr_event_get_id(evt);
+  if (event_id) {
+    item->event_id = event_id;  /* Takes ownership */
+  }
+
+  const char *pubkey = nostr_event_get_pubkey(evt);
+  if (pubkey) {
+    item->pubkey_hex = g_strdup(pubkey);
+  }
+
+  item->created_at = (gint64)nostr_event_get_created_at(evt);
+
+  const char *content = nostr_event_get_content(evt);
+  if (content && *content) {
+    item->content = g_strdup(content);
+  }
+
+  /* Parse tags using appropriate NIP utility */
+  if (kind == KIND_WIKI) {
+    GnostrWikiArticle *wiki = gnostr_wiki_article_parse_json(event_json);
+    if (wiki) {
+      item->d_tag = g_strdup(wiki->d_tag);
+      item->title = g_strdup(wiki->title);
+      item->summary = g_strdup(wiki->summary);
+      item->published_at = wiki->published_at > 0 ? wiki->published_at : item->created_at;
+
+      /* Copy topics */
+      if (wiki->topics && wiki->topics_count > 0) {
+        item->topics_count = wiki->topics_count;
+        item->topics = g_new0(gchar*, wiki->topics_count + 1);
+        for (gsize i = 0; i < wiki->topics_count; i++) {
+          item->topics[i] = g_strdup(wiki->topics[i]);
+        }
+      }
+
+      gnostr_wiki_article_free(wiki);
+    }
+  } else {
+    /* KIND_LONG_FORM - parse via NIP-23 */
+    /* We need to extract the tags JSON and parse it */
+    JsonParser *parser = json_parser_new();
+    if (json_parser_load_from_data(parser, event_json, -1, NULL)) {
+      JsonNode *root = json_parser_get_root(parser);
+      if (JSON_NODE_HOLDS_OBJECT(root)) {
+        JsonObject *obj = json_node_get_object(root);
+        if (json_object_has_member(obj, "tags")) {
+          JsonArray *tags_arr = json_object_get_array_member(obj, "tags");
+          JsonGenerator *gen = json_generator_new();
+          JsonNode *tags_node = json_node_new(JSON_NODE_ARRAY);
+          json_node_set_array(tags_node, json_array_ref(tags_arr));
+          json_generator_set_root(gen, tags_node);
+          char *tags_json = json_generator_to_data(gen, NULL);
+          json_node_unref(tags_node);
+          g_object_unref(gen);
+
+          if (tags_json) {
+            GnostrArticleMeta *meta = gnostr_article_parse_tags(tags_json);
+            if (meta) {
+              item->d_tag = g_strdup(meta->d_tag);
+              item->title = g_strdup(meta->title);
+              item->summary = g_strdup(meta->summary);
+              item->image_url = g_strdup(meta->image);
+              item->published_at = meta->published_at > 0 ? meta->published_at : item->created_at;
+
+              /* Copy hashtags as topics */
+              if (meta->hashtags && meta->hashtags_count > 0) {
+                item->topics_count = meta->hashtags_count;
+                item->topics = g_new0(gchar*, meta->hashtags_count + 1);
+                for (gsize i = 0; i < meta->hashtags_count; i++) {
+                  item->topics[i] = g_strdup(meta->hashtags[i]);
+                }
+              }
+
+              gnostr_article_meta_free(meta);
+            }
+            g_free(tags_json);
+          }
+        }
+      }
+    }
+    g_object_unref(parser);
+  }
+
+  /* Fallbacks */
+  if (!item->title || !*item->title) {
+    g_free(item->title);
+    if (item->d_tag && *item->d_tag) {
+      item->title = g_strdup(item->d_tag);
+    } else {
+      item->title = g_strdup("Untitled");
+    }
+  }
+
+  if (item->published_at == 0) {
+    item->published_at = item->created_at;
+  }
+
+  /* Populate author info from profile */
+  if (txn) {
+    populate_author_info(item, txn);
+  }
+
+  nostr_event_free(evt);
+  return item;
+}
+
+/* --- Load articles from local nostrdb --- */
+static void load_articles_from_nostrdb(GnostrArticlesView *self) {
+  g_debug("articles-view: Loading articles from nostrdb");
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+    g_warning("articles-view: Failed to begin nostrdb query");
+    return;
+  }
+
+  /* Build filter JSON for both kinds */
+  char *filter_json = g_strdup_printf(
+    "{\"kinds\":[%d,%d],\"limit\":%d}",
+    KIND_LONG_FORM, KIND_WIKI, ARTICLES_LOAD_LIMIT
+  );
+
+  char **results = NULL;
+  int result_count = 0;
+
+  if (storage_ndb_query(txn, filter_json, &results, &result_count) == 0 && results) {
+    g_debug("articles-view: Found %d articles in nostrdb", result_count);
+
+    /* Use a hash set to deduplicate by event ID */
+    GHashTable *seen_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+    for (int i = 0; i < result_count; i++) {
+      if (!results[i]) continue;
+
+      GnostrArticleItem *item = create_article_item_from_json(results[i], txn);
+      if (item && item->event_id) {
+        /* Check for duplicates */
+        if (!g_hash_table_contains(seen_ids, item->event_id)) {
+          g_hash_table_add(seen_ids, g_strdup(item->event_id));
+          g_list_store_append(self->articles_model, item);
+        }
+        g_object_unref(item);
+      } else if (item) {
+        g_object_unref(item);
+      }
+    }
+
+    g_hash_table_destroy(seen_ids);
+    storage_ndb_free_results(results, result_count);
+  }
+
+  g_free(filter_json);
+  storage_ndb_end_query(txn);
+
+  g_debug("articles-view: Loaded %u articles into model",
+          g_list_model_get_n_items(G_LIST_MODEL(self->articles_model)));
+}
+
+/* --- Async relay fetch callback --- */
+static void on_relay_fetch_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GnostrArticlesView *self = GNOSTR_ARTICLES_VIEW(user_data);
+
+  if (!GNOSTR_IS_ARTICLES_VIEW(self)) return;
+
+  self->fetch_in_progress = FALSE;
+
+  GError *error = NULL;
+  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_warning("articles-view: Relay fetch error: %s", error->message);
+    }
+    g_clear_error(&error);
+    gnostr_articles_view_set_loading(self, FALSE);
+    return;
+  }
+
+  if (results && results->len > 0) {
+    g_debug("articles-view: Fetched %u articles from relays", results->len);
+
+    void *txn = NULL;
+    if (storage_ndb_begin_query(&txn) == 0 && txn) {
+      /* Get existing event IDs to avoid duplicates */
+      GHashTable *existing_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+      guint n_items = g_list_model_get_n_items(G_LIST_MODEL(self->articles_model));
+      for (guint i = 0; i < n_items; i++) {
+        GnostrArticleItem *item = g_list_model_get_item(G_LIST_MODEL(self->articles_model), i);
+        if (item && item->event_id) {
+          g_hash_table_add(existing_ids, g_strdup(item->event_id));
+        }
+        if (item) g_object_unref(item);
+      }
+
+      for (guint i = 0; i < results->len; i++) {
+        const char *event_json = g_ptr_array_index(results, i);
+        if (!event_json) continue;
+
+        /* Ingest into nostrdb */
+        storage_ndb_ingest_event_json(event_json, NULL);
+
+        /* Create item and add to model if not duplicate */
+        GnostrArticleItem *item = create_article_item_from_json(event_json, txn);
+        if (item && item->event_id) {
+          if (!g_hash_table_contains(existing_ids, item->event_id)) {
+            g_hash_table_add(existing_ids, g_strdup(item->event_id));
+            g_list_store_append(self->articles_model, item);
+          }
+          g_object_unref(item);
+        } else if (item) {
+          g_object_unref(item);
+        }
+      }
+
+      g_hash_table_destroy(existing_ids);
+      storage_ndb_end_query(txn);
+    }
+  }
+
+  if (results) g_ptr_array_unref(results);
+
+  gnostr_articles_view_set_loading(self, FALSE);
+}
+
+/* --- Fetch articles from relays --- */
+static void fetch_articles_from_relays(GnostrArticlesView *self) {
+  if (self->fetch_in_progress) return;
+
+  /* Get read relay URLs */
+  GPtrArray *relay_arr = gnostr_get_read_relay_urls();
+  if (!relay_arr || relay_arr->len == 0) {
+    g_debug("articles-view: No relays configured for fetching");
+    if (relay_arr) g_ptr_array_unref(relay_arr);
+    gnostr_articles_view_set_loading(self, FALSE);
+    return;
+  }
+
+  /* Convert to const char** */
+  const char **urls = g_new0(const char*, relay_arr->len);
+  for (guint i = 0; i < relay_arr->len; i++) {
+    urls[i] = g_ptr_array_index(relay_arr, i);
+  }
+
+  /* Create filter for both article kinds */
+  NostrFilter *filter = nostr_filter_new();
+  int kinds[] = { KIND_LONG_FORM, KIND_WIKI };
+  nostr_filter_set_kinds(filter, kinds, 2);
+  nostr_filter_set_limit(filter, ARTICLES_FETCH_LIMIT);
+
+  /* Create pool if needed */
+  if (!self->pool) {
+    self->pool = gnostr_simple_pool_new();
+  }
+
+  /* Create cancellable */
+  if (self->fetch_cancellable) {
+    g_cancellable_cancel(self->fetch_cancellable);
+    g_clear_object(&self->fetch_cancellable);
+  }
+  self->fetch_cancellable = g_cancellable_new();
+
+  self->fetch_in_progress = TRUE;
+
+  g_debug("articles-view: Fetching articles from %u relays", relay_arr->len);
+
+  gnostr_simple_pool_query_single_async(
+    self->pool,
+    urls,
+    relay_arr->len,
+    filter,
+    self->fetch_cancellable,
+    on_relay_fetch_complete,
+    self
+  );
+
+  g_free(urls);
+  g_ptr_array_unref(relay_arr);
+  nostr_filter_free(filter);
+}
 
 /* --- Row signal handlers --- */
 
@@ -411,21 +825,26 @@ static void on_search_changed(GtkSearchEntry *entry, gpointer user_data) {
 
 /* --- Filter application --- */
 
-static gboolean item_matches_filter(GnostrArticleItem *item, GnostrArticlesView *self) {
+static gboolean filter_func(gpointer item, gpointer user_data) {
+  GnostrArticleItem *article = GNOSTR_ARTICLE_ITEM(item);
+  GnostrArticlesView *self = GNOSTR_ARTICLES_VIEW(user_data);
+
+  if (!article) return FALSE;
+
   /* Type filter */
-  if (self->type_filter == GNOSTR_ARTICLES_TYPE_WIKI && item->kind != KIND_WIKI) {
+  if (self->type_filter == GNOSTR_ARTICLES_TYPE_WIKI && article->kind != KIND_WIKI) {
     return FALSE;
   }
-  if (self->type_filter == GNOSTR_ARTICLES_TYPE_BLOG && item->kind != KIND_LONG_FORM) {
+  if (self->type_filter == GNOSTR_ARTICLES_TYPE_BLOG && article->kind != KIND_LONG_FORM) {
     return FALSE;
   }
 
   /* Topic filter */
   if (self->topic_filter && *self->topic_filter) {
     gboolean topic_match = FALSE;
-    if (item->topics) {
-      for (gsize i = 0; i < item->topics_count; i++) {
-        if (g_ascii_strcasecmp(item->topics[i], self->topic_filter) == 0) {
+    if (article->topics) {
+      for (gsize i = 0; i < article->topics_count; i++) {
+        if (g_ascii_strcasecmp(article->topics[i], self->topic_filter) == 0) {
           topic_match = TRUE;
           break;
         }
@@ -439,20 +858,20 @@ static gboolean item_matches_filter(GnostrArticleItem *item, GnostrArticlesView 
     gchar *search_lower = g_utf8_strdown(self->search_text, -1);
     gboolean match = FALSE;
 
-    if (item->title) {
-      gchar *title_lower = g_utf8_strdown(item->title, -1);
+    if (article->title) {
+      gchar *title_lower = g_utf8_strdown(article->title, -1);
       if (strstr(title_lower, search_lower)) match = TRUE;
       g_free(title_lower);
     }
 
-    if (!match && item->summary) {
-      gchar *summary_lower = g_utf8_strdown(item->summary, -1);
+    if (!match && article->summary) {
+      gchar *summary_lower = g_utf8_strdown(article->summary, -1);
       if (strstr(summary_lower, search_lower)) match = TRUE;
       g_free(summary_lower);
     }
 
-    if (!match && item->author_name) {
-      gchar *name_lower = g_utf8_strdown(item->author_name, -1);
+    if (!match && article->author_name) {
+      gchar *name_lower = g_utf8_strdown(article->author_name, -1);
       if (strstr(name_lower, search_lower)) match = TRUE;
       g_free(name_lower);
     }
@@ -465,23 +884,34 @@ static gboolean item_matches_filter(GnostrArticleItem *item, GnostrArticlesView 
 }
 
 static void apply_filters(GnostrArticlesView *self) {
-  /* For now, just update the content state.
-   * Full filtering requires a filtered list model which would be added
-   * when integrating with the actual data source. */
+  /* Notify the filter that it needs to re-evaluate all items */
+  if (self->custom_filter) {
+    gtk_filter_changed(GTK_FILTER(self->custom_filter), GTK_FILTER_CHANGE_DIFFERENT);
+  }
   update_content_state(self);
 }
 
 /* --- State updates --- */
 
 static void update_article_count(GnostrArticlesView *self) {
-  guint count = g_list_model_get_n_items(G_LIST_MODEL(self->articles_model));
-  gchar *text = g_strdup_printf("%u articles", count);
+  guint total = g_list_model_get_n_items(G_LIST_MODEL(self->articles_model));
+  guint filtered = self->filtered_model ?
+    g_list_model_get_n_items(G_LIST_MODEL(self->filtered_model)) : total;
+
+  gchar *text;
+  if (filtered == total) {
+    text = g_strdup_printf("%u articles", total);
+  } else {
+    text = g_strdup_printf("%u of %u articles", filtered, total);
+  }
   gtk_label_set_text(GTK_LABEL(self->lbl_count), text);
   g_free(text);
 }
 
 static void update_content_state(GnostrArticlesView *self) {
-  guint count = g_list_model_get_n_items(G_LIST_MODEL(self->articles_model));
+  guint count = self->filtered_model ?
+    g_list_model_get_n_items(G_LIST_MODEL(self->filtered_model)) :
+    g_list_model_get_n_items(G_LIST_MODEL(self->articles_model));
 
   if (count == 0) {
     gtk_stack_set_visible_child_name(GTK_STACK(self->content_stack), "empty");
@@ -510,6 +940,15 @@ static void gnostr_articles_view_dispose(GObject *object) {
     self->search_debounce_id = 0;
   }
 
+  /* Cancel any pending fetch */
+  if (self->fetch_cancellable) {
+    g_cancellable_cancel(self->fetch_cancellable);
+    g_clear_object(&self->fetch_cancellable);
+  }
+
+  g_clear_object(&self->pool);
+  g_clear_object(&self->custom_filter);
+  g_clear_object(&self->filtered_model);
   g_clear_object(&self->articles_model);
   g_clear_object(&self->selection);
   g_clear_object(&self->factory);
@@ -608,10 +1047,24 @@ static void gnostr_articles_view_init(GnostrArticlesView *self) {
   self->articles_loaded = FALSE;
   self->is_logged_in = FALSE;
   self->search_debounce_id = 0;
+  self->fetch_cancellable = NULL;
+  self->pool = NULL;
+  self->fetch_in_progress = FALSE;
 
-  /* Create model */
+  /* Create model with filter */
   self->articles_model = g_list_store_new(GNOSTR_TYPE_ARTICLE_ITEM);
-  self->selection = gtk_single_selection_new(G_LIST_MODEL(g_object_ref(self->articles_model)));
+
+  /* Create custom filter */
+  self->custom_filter = gtk_custom_filter_new(filter_func, self, NULL);
+
+  /* Create filtered model */
+  self->filtered_model = gtk_filter_list_model_new(
+    G_LIST_MODEL(g_object_ref(self->articles_model)),
+    GTK_FILTER(g_object_ref(self->custom_filter))
+  );
+
+  /* Create selection model on filtered model */
+  self->selection = gtk_single_selection_new(G_LIST_MODEL(g_object_ref(self->filtered_model)));
   gtk_single_selection_set_autoselect(self->selection, FALSE);
   gtk_single_selection_set_can_unselect(self->selection, TRUE);
 
@@ -702,9 +1155,26 @@ void gnostr_articles_view_load_articles(GnostrArticlesView *self) {
 
   self->articles_loaded = TRUE;
 
-  /* TODO: Load articles from nostrdb
-   * For now, just update the content state to show empty or loaded articles */
-  update_content_state(self);
+  /* Show loading state */
+  gnostr_articles_view_set_loading(self, TRUE);
+
+  /* First, load from local nostrdb cache */
+  load_articles_from_nostrdb(self);
+
+  /* If we have some articles, show them immediately while fetching more */
+  guint local_count = g_list_model_get_n_items(G_LIST_MODEL(self->articles_model));
+  if (local_count > 0) {
+    g_debug("articles-view: Showing %u local articles while fetching from relays", local_count);
+    update_content_state(self);
+  }
+
+  /* Fetch from relays to get more/newer articles */
+  fetch_articles_from_relays(self);
+
+  /* If no local articles, keep loading state until relay fetch completes */
+  if (local_count == 0 && !self->fetch_in_progress) {
+    gnostr_articles_view_set_loading(self, FALSE);
+  }
 }
 
 void gnostr_articles_view_refresh(GnostrArticlesView *self) {

@@ -204,10 +204,16 @@ uint64_t nostr_nip57_parse_bolt11_amount(const char *bolt11);
  * @bolt11: BOLT11 invoice string
  * @hash_out: output buffer for 32-byte hash (must be at least 32 bytes)
  *
- * Extracts the description hash from a BOLT11 invoice.
- * Note: This is a simplified parser and may not handle all BOLT11 variants.
+ * Extracts the description hash (the 'h' tagged field) from a BOLT11 invoice.
+ * This is used for NIP-57 zap receipt validation: the SHA-256 hash of the
+ * zap request JSON should match the description hash embedded in the invoice.
  *
- * Returns: 0 on success, negative errno on error
+ * If the invoice has a plain description ('d' field) instead of a description
+ * hash, this function returns -ENOENT. In that case, the caller should compute
+ * SHA-256 of the description themselves and compare.
+ *
+ * Returns: 0 on success, -EINVAL if bolt11 is invalid or NULL, -ENOENT if the
+ *          invoice has a plain description instead of a description hash
  */
 int nostr_nip57_get_bolt11_description_hash(const char *bolt11, uint8_t *hash_out);
 

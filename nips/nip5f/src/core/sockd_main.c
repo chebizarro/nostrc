@@ -45,9 +45,11 @@ int main(int argc, char **argv) {
     fwd_list_keys,
     /*user_data*/ NULL);
 
-  // TODO: implement accept loop; for stub, just sleep until signal
+  // The accept loop runs in a background thread started by nostr_nip5f_server_start().
+  // The main thread just waits for shutdown signals using pause(), which blocks
+  // until a signal is delivered. This is more efficient than busy-waiting with usleep().
   while (!g_stop) {
-    usleep(100000);
+    pause();  // Blocks until SIGINT/SIGTERM handler sets g_stop
   }
 
   nostr_nip5f_server_stop(srv);

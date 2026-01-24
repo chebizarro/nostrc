@@ -12,6 +12,10 @@
 #include "nostr-keys.h"
 #include "nostr-utils.h"
 
+/* BOLT11 parsing from nostrdb */
+#include "bolt11/bolt11.h"
+#include "ccan/tal/tal.h"
+
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -752,14 +756,37 @@ uint64_t nostr_nip57_parse_bolt11_amount(const char *bolt11) {
 }
 
 int nostr_nip57_get_bolt11_description_hash(const char *bolt11, uint8_t *hash_out) {
-    /* Note: Full BOLT11 parsing is complex and requires bech32 decoding
-     * and reading tagged fields. This is a stub that returns an error.
-     * A full implementation would need to decode the invoice and extract
-     * the 'd' (description hash) tagged field.
-     */
-    (void)bolt11;
-    (void)hash_out;
-    return -ENOTSUP;
+    if (!bolt11 || !hash_out) {
+        return -EINVAL;
+    }
+
+    char *fail = NULL;
+    struct bolt11 *b11 = bolt11_decode_minimal(NULL, bolt11, &fail);
+
+    if (!b11) {
+        /* Decoding failed */
+        if (fail) {
+            tal_free(fail);
+        }
+        return -EINVAL;
+    }
+
+    /* Check if the invoice has a description hash (the 'h' field) */
+    if (!b11->description_hash) {
+        /* Invoice has a plain description (the 'd' field) instead of a hash.
+         * For NIP-57 validation, we need the description hash. If the invoice
+         * only has a plain description, the caller should compute SHA-256 of
+         * that description themselves. Return ENOENT to indicate no hash present.
+         */
+        tal_free(b11);
+        return -ENOENT;
+    }
+
+    /* Copy the 32-byte description hash to the output buffer */
+    memcpy(hash_out, b11->description_hash->u.u8, 32);
+
+    tal_free(b11);
+    return 0;
 }
 
 /* ============================================================================

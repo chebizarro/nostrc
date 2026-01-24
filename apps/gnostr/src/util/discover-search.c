@@ -423,6 +423,15 @@ static void on_network_search_done(GObject *source, GAsyncResult *res, gpointer 
     g_debug("search: network returned %u events", events->len);
     for (guint i = 0; i < events->len; i++) {
       const char *json = g_ptr_array_index(events, i);
+
+      /* Save event to nostrdb for local caching (nostrc-yf3v) */
+      if (json && *json) {
+        int ingest_rc = storage_ndb_ingest_event_json(json, NULL);
+        if (ingest_rc != 0) {
+          g_debug("search: failed to ingest profile event to nostrdb (rc=%d)", ingest_rc);
+        }
+      }
+
       GnostrSearchResult *result = parse_profile_event(json, TRUE);
       if (result) {
         search_add_result(ctx, result);

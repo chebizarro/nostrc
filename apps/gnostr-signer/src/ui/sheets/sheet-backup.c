@@ -9,12 +9,14 @@
  * - Verification before importing
  */
 #include "sheet-backup.h"
+#include "sheet-qr-display.h"
 #include "../app-resources.h"
 #include "../../backup-recovery.h"
 #include "../../secret_store.h"
 #include "../../secure-delete.h"
 #include "../../accounts_store.h"
 #include "../../keyboard-nav.h"
+#include "../../qr-code.h"
 
 #include <gtk/gtk.h>
 #include <adwaita.h>
@@ -406,16 +408,20 @@ static void on_show_qr(GtkButton *btn, gpointer user_data) {
   SheetBackup *self = SHEET_BACKUP(user_data);
   if (!self || !self->cached_ncryptsec) return;
 
-  /* QR code generation would require a library like libqrencode.
-   * For now, show a placeholder message.
-   * TODO: Implement actual QR code generation */
+  /* Check if QR generation is available */
+  if (!gn_qr_generation_available()) {
+    show_error(self, "QR Code Unavailable",
+               "QR code display requires the qrencode library.\n\n"
+               "Your encrypted backup string has been copied to clipboard.\n"
+               "You can use an external QR code generator if needed.");
+    copy_to_clipboard(self, self->cached_ncryptsec, TRUE);
+    return;
+  }
 
-  show_error(self, "QR Code",
-             "QR code display requires the qrencode library.\n\n"
-             "Your encrypted backup string has been copied to clipboard.\n"
-             "You can use an external QR code generator if needed.");
-
-  copy_to_clipboard(self, self->cached_ncryptsec, TRUE);
+  /* Create and present the QR display dialog */
+  SheetQrDisplay *qr_dlg = sheet_qr_display_new();
+  sheet_qr_display_set_ncryptsec(qr_dlg, self->cached_ncryptsec);
+  adw_dialog_present(ADW_DIALOG(qr_dlg), GTK_WIDGET(self));
 }
 
 /* Handler: Hide QR button */

@@ -319,3 +319,17 @@ int nostr_nwc_select_encryption(const char **client_supported, size_t client_n,
   if (client_has_04 && wallet_has_04) { *out_enc = NOSTR_NWC_ENC_NIP04; return 0; }
   return -1;
 }
+
+void nostr_nwc_request_body_clear(NostrNwcRequestBody *b) {
+  if (!b) return;
+  if (b->method) { free(b->method); b->method = NULL; }
+  if (b->params_json) { free(b->params_json); b->params_json = NULL; }
+}
+
+void nostr_nwc_response_body_clear(NostrNwcResponseBody *b) {
+  if (!b) return;
+  if (b->result_type) { free(b->result_type); b->result_type = NULL; }
+  if (b->result_json) { free(b->result_json); b->result_json = NULL; }
+  if (b->error_code) { free(b->error_code); b->error_code = NULL; }
+  if (b->error_message) { free(b->error_message); b->error_message = NULL; }
+}
