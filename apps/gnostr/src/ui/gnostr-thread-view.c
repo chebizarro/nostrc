@@ -878,10 +878,11 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
     urls[i] = g_ptr_array_index(relay_arr, i);
   }
 
-  /* Query 1: Fetch all replies (events with #e tag referencing root) */
+  /* Query 1: Fetch all replies and comments (events with #e tag referencing root)
+   * NIP-22: kind 1111 is for comments, which use E tag (uppercase) for root reference */
   NostrFilter *filter_replies = nostr_filter_new();
-  int kinds[1] = { 1 }; /* Text notes */
-  nostr_filter_set_kinds(filter_replies, kinds, 1);
+  int kinds[2] = { 1, 1111 }; /* Text notes and NIP-22 comments */
+  nostr_filter_set_kinds(filter_replies, kinds, 2);
   nostr_filter_tags_append(filter_replies, "e", root, NULL);
   nostr_filter_set_limit(filter_replies, MAX_THREAD_EVENTS);
 
@@ -899,7 +900,7 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
 
   /* Query 2: Fetch root event and focus event by ID (they may not reference themselves) */
   NostrFilter *filter_ids = nostr_filter_new();
-  nostr_filter_set_kinds(filter_ids, kinds, 1);
+  nostr_filter_set_kinds(filter_ids, kinds, 2);  /* Include both kind 1 and 1111 */
 
   /* Add root ID */
   nostr_filter_add_id(filter_ids, root);
@@ -936,6 +937,25 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
   );
 
   nostr_filter_free(filter_ids);
+
+  /* Query 3: NIP-22 comments use uppercase E tag for root event reference */
+  NostrFilter *filter_nip22 = nostr_filter_new();
+  int comment_kind[1] = { 1111 };
+  nostr_filter_set_kinds(filter_nip22, comment_kind, 1);
+  nostr_filter_tags_append(filter_nip22, "E", root, NULL);
+  nostr_filter_set_limit(filter_nip22, MAX_THREAD_EVENTS);
+
+  gnostr_simple_pool_query_single_async(
+    self->simple_pool,
+    urls,
+    relay_arr->len,
+    filter_nip22,
+    self->fetch_cancellable,
+    on_thread_query_done,  /* Reuse same callback */
+    self
+  );
+
+  nostr_filter_free(filter_nip22);
   g_free(urls);
   g_ptr_array_unref(relay_arr);
 }
@@ -1025,10 +1045,10 @@ static void load_thread(GnostrThreadView *self) {
   if (storage_ndb_begin_query(&txn) == 0 && txn) {
     const char *query_root = self->thread_root_id ? self->thread_root_id : focus_id;
 
-    /* Build filter JSON to find all replies to the root */
+    /* Build filter JSON to find all replies to the root (kind 1 and NIP-22 kind 1111) */
     char filter_json[512];
     snprintf(filter_json, sizeof(filter_json),
-             "[{\"kinds\":[1],\"#e\":[\"%s\"],\"limit\":%d}]",
+             "[{\"kinds\":[1,1111],\"#e\":[\"%s\"],\"limit\":%d}]",
              query_root, MAX_THREAD_EVENTS);
 
     char **results = NULL;
@@ -1046,7 +1066,7 @@ static void load_thread(GnostrThreadView *self) {
      * (in case it's a mid-thread note with its own replies) */
     if (focus_id && g_strcmp0(focus_id, query_root) != 0) {
       snprintf(filter_json, sizeof(filter_json),
-               "[{\"kinds\":[1],\"#e\":[\"%s\"],\"limit\":%d}]",
+               "[{\"kinds\":[1,1111],\"#e\":[\"%s\"],\"limit\":%d}]",
                focus_id, MAX_THREAD_EVENTS);
 
       results = NULL;

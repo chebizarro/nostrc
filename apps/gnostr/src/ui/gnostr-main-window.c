@@ -48,6 +48,8 @@
 #include "../util/relay_info.h"
 /* NIP-51 mute list */
 #include "../util/mute_list.h"
+/* NIP-32 labeling */
+#include "../util/nip32_labels.h"
 /* NIP-51 settings sync */
 #include "../util/nip51_settings.h"
 /* Blossom server settings (kind 10063) */
@@ -2926,6 +2928,65 @@ void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, con
   }
 }
 
+/* NIP-22: Public wrapper for requesting a comment (kind 1111) on any event */
+void gnostr_main_window_request_comment(GtkWidget *window, const char *id_hex, int kind, const char *pubkey_hex) {
+  if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  g_debug("[COMMENT] Request comment on id=%s kind=%d pubkey=%.8s...",
+            id_hex ? id_hex : "(null)",
+            kind,
+            pubkey_hex ? pubkey_hex : "(null)");
+
+  if (!id_hex || strlen(id_hex) != 64) {
+    show_toast(self, "Invalid event ID for comment");
+    return;
+  }
+
+  /* Try to look up the author's display name */
+  char *display_name = NULL;
+  if (pubkey_hex && strlen(pubkey_hex) == 64) {
+    void *txn = NULL;
+    if (storage_ndb_begin_query(&txn) == 0 && txn) {
+      uint8_t pk32[32];
+      if (hex_to_bytes32(pubkey_hex, pk32)) {
+        char *meta_json = NULL;
+        int meta_len = 0;
+        if (storage_ndb_get_profile_by_pubkey(txn, pk32, &meta_json, &meta_len) == 0 && meta_json) {
+          json_error_t err;
+          json_t *meta = json_loads(meta_json, 0, &err);
+          if (meta) {
+            json_t *name_obj = json_object_get(meta, "display_name");
+            if (!name_obj || !json_is_string(name_obj)) {
+              name_obj = json_object_get(meta, "name");
+            }
+            if (name_obj && json_is_string(name_obj)) {
+              const char *n = json_string_value(name_obj);
+              if (n && *n) display_name = g_strdup(n);
+            }
+            json_decref(meta);
+          }
+        }
+      }
+      storage_ndb_end_query(txn);
+    }
+  }
+
+  /* Set the comment context on the composer */
+  if (self->composer && GNOSTR_IS_COMPOSER(self->composer)) {
+    gnostr_composer_set_comment_context(GNOSTR_COMPOSER(self->composer),
+                                        id_hex, kind, pubkey_hex,
+                                        display_name ? display_name : "@user");
+  }
+  g_free(display_name);
+
+  /* Switch to timeline tab (composer is shown at bottom of timeline) */
+  if (self->stack && ADW_IS_VIEW_STACK(self->stack)) {
+    adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "timeline");
+  }
+}
+
 /* Signal handler for repost-requested from note card */
 static void on_note_card_repost_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
   (void)row;
@@ -2945,6 +3006,14 @@ static void on_note_card_like_requested(GnostrNoteCardRow *row, const char *id_h
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
   gnostr_main_window_request_like(GTK_WIDGET(self), id_hex, pubkey_hex, row);
+}
+
+/* Signal handler for comment-requested from note card (NIP-22) */
+static void on_note_card_comment_requested(GnostrNoteCardRow *row, const char *id_hex, int kind, const char *pubkey_hex, gpointer user_data) {
+  (void)row;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  gnostr_main_window_request_comment(GTK_WIDGET(self), id_hex, kind, pubkey_hex);
 }
 
 /* Forward declaration for thread view close handler */
@@ -4438,6 +4507,117 @@ void gnostr_main_window_request_report_note(GtkWidget *window, const char *id_he
   gtk_window_present(GTK_WINDOW(dialog));
 }
 
+/* ================= NIP-32 Labeling Implementation ================= */
+
+/* Public wrapper for adding a label to a note (kind 1985) per NIP-32 */
+void gnostr_main_window_request_label_note(GtkWidget *window, const char *id_hex, const char *namespace, const char *label, const char *pubkey_hex) {
+  if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  g_debug("[NIP-32] Request label of id=%s namespace=%s label=%s",
+            id_hex ? id_hex : "(null)",
+            namespace ? namespace : "(null)",
+            label ? label : "(null)");
+
+  /* Verify user is signed in */
+  if (!self->user_pubkey_hex || !*self->user_pubkey_hex) {
+    show_toast(self, "Sign in to add labels");
+    return;
+  }
+
+  /* Validate inputs */
+  if (!id_hex || strlen(id_hex) != 64) {
+    show_toast(self, "Invalid event ID for labeling");
+    return;
+  }
+
+  if (!namespace || !*namespace || !label || !*label) {
+    show_toast(self, "Label and namespace are required");
+    return;
+  }
+
+  /* Check if signer service is available */
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  if (!gnostr_signer_service_is_available(signer)) {
+    show_toast(self, "Signer not available");
+    return;
+  }
+
+  /* Build unsigned kind 1985 label event JSON per NIP-32 */
+  json_t *event_obj = json_object();
+  json_object_set_new(event_obj, "kind", json_integer(1985));  /* NOSTR_KIND_LABEL */
+  json_object_set_new(event_obj, "created_at", json_integer((json_int_t)time(NULL)));
+  json_object_set_new(event_obj, "content", json_string(""));
+
+  /* Build tags array per NIP-32:
+   * - ["L", "<namespace>"]
+   * - ["l", "<label>", "<namespace>"]
+   * - ["e", "<event-id>"]
+   * - ["p", "<event-author-pubkey>"]
+   */
+  json_t *tags = json_array();
+
+  /* L-tag: ["L", "<namespace>"] */
+  json_t *L_tag = json_array();
+  json_array_append_new(L_tag, json_string("L"));
+  json_array_append_new(L_tag, json_string(namespace));
+  json_array_append(tags, L_tag);
+  json_decref(L_tag);
+
+  /* l-tag: ["l", "<label>", "<namespace>"] */
+  json_t *l_tag = json_array();
+  json_array_append_new(l_tag, json_string("l"));
+  json_array_append_new(l_tag, json_string(label));
+  json_array_append_new(l_tag, json_string(namespace));
+  json_array_append(tags, l_tag);
+  json_decref(l_tag);
+
+  /* e-tag: ["e", "<event-id>"] */
+  json_t *e_tag = json_array();
+  json_array_append_new(e_tag, json_string("e"));
+  json_array_append_new(e_tag, json_string(id_hex));
+  json_array_append(tags, e_tag);
+  json_decref(e_tag);
+
+  /* p-tag: ["p", "<event-author-pubkey>"] */
+  if (pubkey_hex && strlen(pubkey_hex) == 64) {
+    json_t *p_tag = json_array();
+    json_array_append_new(p_tag, json_string("p"));
+    json_array_append_new(p_tag, json_string(pubkey_hex));
+    json_array_append(tags, p_tag);
+    json_decref(p_tag);
+  }
+
+  json_object_set_new(event_obj, "tags", tags);
+
+  char *event_json = json_dumps(event_obj, JSON_COMPACT);
+  json_decref(event_obj);
+
+  if (!event_json) {
+    show_toast(self, "Failed to create label event");
+    return;
+  }
+
+  g_debug("[NIP-32] Unsigned label event: %s", event_json);
+
+  /* Create async context */
+  PublishContext *ctx = g_new0(PublishContext, 1);
+  ctx->self = self;
+  ctx->text = g_strdup(""); /* label has no text content */
+
+  /* Call unified signer service */
+  gnostr_sign_event_async(
+    event_json,
+    "",              /* current_user: ignored */
+    "gnostr",        /* app_id: ignored */
+    NULL,            /* cancellable */
+    on_sign_event_complete,
+    ctx
+  );
+  g_free(event_json);
+}
+
 /* ================= NIP-25 Like/Reaction Implementation ================= */
 
 /* Context for async like/reaction operation */
@@ -4698,15 +4878,68 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
 
   /* Build unsigned event JSON */
   json_t *event_obj = json_object();
-  json_object_set_new(event_obj, "kind", json_integer(1));
+  json_t *tags = json_array();
+
+  /* NIP-22: Check if this is a comment (kind 1111) - takes precedence over reply/quote */
+  gboolean is_comment = (composer && GNOSTR_IS_COMPOSER(composer) &&
+                         gnostr_composer_is_comment(GNOSTR_COMPOSER(composer)));
+
+  if (is_comment) {
+    const char *comment_root_id = gnostr_composer_get_comment_root_id(GNOSTR_COMPOSER(composer));
+    int comment_root_kind = gnostr_composer_get_comment_root_kind(GNOSTR_COMPOSER(composer));
+    const char *comment_root_pubkey = gnostr_composer_get_comment_root_pubkey(GNOSTR_COMPOSER(composer));
+
+    g_debug("[PUBLISH] Building NIP-22 comment event: root_id=%s root_kind=%d pubkey=%.8s...",
+            comment_root_id ? comment_root_id : "(null)",
+            comment_root_kind,
+            comment_root_pubkey ? comment_root_pubkey : "(null)");
+
+    /* Set kind 1111 for comment */
+    json_object_set_new(event_obj, "kind", json_integer(1111));
+
+    /* NIP-22 requires these tags:
+     * - ["K", "<root-kind>"] - kind of the root event
+     * - ["E", "<root-id>", "<relay>", "<pubkey>"] - root event reference
+     * - ["P", "<root-pubkey>"] - root event author
+     */
+
+    /* K tag: root event kind */
+    json_t *k_tag = json_array();
+    json_array_append_new(k_tag, json_string("K"));
+    char kind_str[16];
+    g_snprintf(kind_str, sizeof(kind_str), "%d", comment_root_kind);
+    json_array_append_new(k_tag, json_string(kind_str));
+    json_array_append_new(tags, k_tag);
+
+    /* E tag: root event reference */
+    if (comment_root_id && strlen(comment_root_id) == 64) {
+      json_t *e_tag = json_array();
+      json_array_append_new(e_tag, json_string("E"));
+      json_array_append_new(e_tag, json_string(comment_root_id));
+      json_array_append_new(e_tag, json_string("")); /* relay hint */
+      if (comment_root_pubkey && strlen(comment_root_pubkey) == 64) {
+        json_array_append_new(e_tag, json_string(comment_root_pubkey)); /* author hint */
+      }
+      json_array_append_new(tags, e_tag);
+    }
+
+    /* P tag: root event author */
+    if (comment_root_pubkey && strlen(comment_root_pubkey) == 64) {
+      json_t *p_tag = json_array();
+      json_array_append_new(p_tag, json_string("P"));
+      json_array_append_new(p_tag, json_string(comment_root_pubkey));
+      json_array_append_new(tags, p_tag);
+    }
+  } else {
+    /* Regular kind 1 text note */
+    json_object_set_new(event_obj, "kind", json_integer(1));
+  }
+
   json_object_set_new(event_obj, "created_at", json_integer((json_int_t)time(NULL)));
   json_object_set_new(event_obj, "content", json_string(text));
 
-  /* Build tags array */
-  json_t *tags = json_array();
-
-  /* Check if this is a reply - add NIP-10 threading tags */
-  if (composer && GNOSTR_IS_COMPOSER(composer) && gnostr_composer_is_reply(GNOSTR_COMPOSER(composer))) {
+  /* Check if this is a reply - add NIP-10 threading tags (only for kind 1, not comments) */
+  if (!is_comment && composer && GNOSTR_IS_COMPOSER(composer) && gnostr_composer_is_reply(GNOSTR_COMPOSER(composer))) {
     const char *reply_to_id = gnostr_composer_get_reply_to_id(GNOSTR_COMPOSER(composer));
     const char *root_id = gnostr_composer_get_root_id(GNOSTR_COMPOSER(composer));
     const char *reply_to_pubkey = gnostr_composer_get_reply_to_pubkey(GNOSTR_COMPOSER(composer));
@@ -4752,8 +4985,8 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
     }
   }
 
-  /* Check if this is a quote post - add q-tag and p-tag per NIP-18 */
-  if (composer && GNOSTR_IS_COMPOSER(composer) && gnostr_composer_is_quote(GNOSTR_COMPOSER(composer))) {
+  /* Check if this is a quote post - add q-tag and p-tag per NIP-18 (only for kind 1, not comments) */
+  if (!is_comment && composer && GNOSTR_IS_COMPOSER(composer) && gnostr_composer_is_quote(GNOSTR_COMPOSER(composer))) {
     const char *quote_id = gnostr_composer_get_quote_id(GNOSTR_COMPOSER(composer));
     const char *quote_pubkey = gnostr_composer_get_quote_pubkey(GNOSTR_COMPOSER(composer));
 

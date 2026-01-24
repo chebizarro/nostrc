@@ -110,6 +110,46 @@ gboolean gnostr_composer_is_sensitive(GnostrComposer *self);
  */
 void gnostr_composer_set_sensitive(GnostrComposer *self, gboolean sensitive);
 
+/* NIP-22: Comment context for kind 1111 events */
+/**
+ * Set comment context for creating a NIP-22 comment (kind 1111).
+ * Comments can be on any event type, not just kind 1.
+ * @param root_id: The event ID being commented on (hex)
+ * @param root_kind: The kind of the root event (e.g., 1 for text note)
+ * @param root_pubkey: The pubkey of the root event author (hex)
+ * @param display_name: Display name of root event author for UI indicator
+ */
+void gnostr_composer_set_comment_context(GnostrComposer *self,
+                                         const char *root_id,
+                                         int root_kind,
+                                         const char *root_pubkey,
+                                         const char *display_name);
+
+/**
+ * Clear the comment context.
+ */
+void gnostr_composer_clear_comment_context(GnostrComposer *self);
+
+/**
+ * Check if the composer is in comment mode (NIP-22).
+ */
+gboolean gnostr_composer_is_comment(GnostrComposer *self);
+
+/**
+ * Get the comment root event ID.
+ */
+const char *gnostr_composer_get_comment_root_id(GnostrComposer *self);
+
+/**
+ * Get the comment root event kind.
+ */
+int gnostr_composer_get_comment_root_kind(GnostrComposer *self);
+
+/**
+ * Get the comment root event pubkey.
+ */
+const char *gnostr_composer_get_comment_root_pubkey(GnostrComposer *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_COMPOSER_H */

@@ -27,6 +27,9 @@ void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, cons
 /* Public: Request deletion of a note (kind 5) - NIP-09 */
 void gnostr_main_window_request_delete_note(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
 
+/* Public: Request a NIP-22 comment (kind 1111) on an event */
+void gnostr_main_window_request_comment(GtkWidget *window, const char *id_hex, int kind, const char *pubkey_hex);
+
 G_END_DECLS
 
 #endif /* GNOSTR_MAIN_WINDOW_H */

@@ -932,7 +932,8 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
 
     uint32_t kind_u32 = storage_ndb_note_kind(note);
     int kind = (int)kind_u32;
-    if (kind != 1 && kind != 6) { filtered++; continue; }
+    /* Allow kind 1 (text notes), kind 6 (reposts), and kind 1111 (NIP-22 comments) */
+    if (kind != 1 && kind != 6 && kind != 1111) { filtered++; continue; }
 
     /* NIP-40: Filter out expired events */
     if (storage_ndb_note_is_expired(note)) { filtered++; continue; }
@@ -1276,7 +1277,7 @@ void gn_nostr_event_model_refresh(GnNostrEventModel *self) {
 
       if (nostr_event_deserialize(evt, event_json) == 0) {
         int kind = nostr_event_get_kind(evt);
-        if (kind != 1 && kind != 6) {
+        if (kind != 1 && kind != 6 && kind != 1111) {
           nostr_event_free(evt);
           continue;
         }
@@ -1432,7 +1433,7 @@ void gn_nostr_event_model_add_event_json(GnNostrEventModel *self, const char *ev
   }
 
   int kind = nostr_event_get_kind(evt);
-  if (kind != 1 && kind != 6) {
+  if (kind != 1 && kind != 6 && kind != 1111) {
     nostr_event_free(evt);
     return;
   }
@@ -1596,7 +1597,7 @@ guint gn_nostr_event_model_load_older(GnNostrEventModel *self, guint count) {
 
       if (nostr_event_deserialize(evt, event_json) == 0) {
         int kind = nostr_event_get_kind(evt);
-        if (kind != 1 && kind != 6) {
+        if (kind != 1 && kind != 6 && kind != 1111) {
           nostr_event_free(evt);
           continue;
         }
@@ -1787,7 +1788,7 @@ guint gn_nostr_event_model_load_newer(GnNostrEventModel *self, guint count) {
 
       if (nostr_event_deserialize(evt, event_json) == 0) {
         int kind = nostr_event_get_kind(evt);
-        if (kind != 1 && kind != 6) {
+        if (kind != 1 && kind != 6 && kind != 1111) {
           nostr_event_free(evt);
           continue;
         }

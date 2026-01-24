@@ -38,6 +38,10 @@ struct _GnostrComposer {
   /* NIP-36 Content Warning */
   GtkWidget *btn_sensitive;           /* toggle button for sensitive content */
   gboolean is_sensitive;              /* TRUE if note should have content-warning */
+  /* NIP-22 Comment context */
+  char *comment_root_id;              /* root event ID being commented on (hex) */
+  int comment_root_kind;              /* kind of the root event */
+  char *comment_root_pubkey;          /* pubkey of root event author (hex) */
 };
 
 G_DEFINE_TYPE(GnostrComposer, gnostr_composer, GTK_TYPE_WIDGET)
@@ -87,6 +91,9 @@ static void gnostr_composer_finalize(GObject *obj) {
   g_clear_pointer(&self->quote_id, g_free);
   g_clear_pointer(&self->quote_pubkey, g_free);
   g_clear_pointer(&self->quote_nostr_uri, g_free);
+  /* NIP-22 comment context cleanup */
+  g_clear_pointer(&self->comment_root_id, g_free);
+  g_clear_pointer(&self->comment_root_pubkey, g_free);
   if (self->upload_cancellable) {
     g_cancellable_cancel(self->upload_cancellable);
     g_object_unref(self->upload_cancellable);
@@ -451,9 +458,10 @@ void gnostr_composer_clear(GnostrComposer *self) {
   if (self->subject_entry && GTK_IS_ENTRY(self->subject_entry)) {
     gtk_editable_set_text(GTK_EDITABLE(self->subject_entry), "");
   }
-  /* Also clear reply and quote context */
+  /* Also clear reply, quote, and comment context */
   gnostr_composer_clear_reply_context(self);
   gnostr_composer_clear_quote_context(self);
+  gnostr_composer_clear_comment_context(self);
   /* Clear uploaded media metadata */
   gnostr_composer_clear_uploaded_media(self);
   /* NIP-40: Clear expiration */
@@ -744,4 +752,86 @@ void gnostr_composer_set_sensitive(GnostrComposer *self, gboolean sensitive) {
       gtk_widget_remove_css_class(GTK_WIDGET(self->btn_sensitive), "warning");
     }
   }
+}
+
+/* NIP-22: Comment context for kind 1111 events */
+void gnostr_composer_set_comment_context(GnostrComposer *self,
+                                         const char *root_id,
+                                         int root_kind,
+                                         const char *root_pubkey,
+                                         const char *display_name) {
+  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+
+  /* Clear any existing reply/quote context first */
+  gnostr_composer_clear_reply_context(self);
+  gnostr_composer_clear_quote_context(self);
+
+  /* Store comment context */
+  g_free(self->comment_root_id);
+  g_free(self->comment_root_pubkey);
+
+  self->comment_root_id = g_strdup(root_id);
+  self->comment_root_kind = root_kind;
+  self->comment_root_pubkey = g_strdup(root_pubkey);
+
+  /* Update indicator to show we're commenting */
+  if (self->reply_indicator && GTK_IS_LABEL(self->reply_indicator)) {
+    char *label = g_strdup_printf("Commenting on %s",
+                                   display_name ? display_name : "@user");
+    gtk_label_set_text(GTK_LABEL(self->reply_indicator), label);
+    g_free(label);
+  }
+  /* Show the indicator box */
+  if (self->reply_indicator_box && GTK_IS_WIDGET(self->reply_indicator_box)) {
+    gtk_widget_set_visible(self->reply_indicator_box, TRUE);
+  }
+
+  /* Update button label */
+  if (self->btn_post && GTK_IS_BUTTON(self->btn_post)) {
+    gtk_button_set_label(GTK_BUTTON(self->btn_post), "Comment");
+  }
+
+  g_message("composer: set comment context id=%s kind=%d pubkey=%s",
+            root_id ? root_id : "(null)",
+            root_kind,
+            root_pubkey ? root_pubkey : "(null)");
+}
+
+void gnostr_composer_clear_comment_context(GnostrComposer *self) {
+  g_return_if_fail(GNOSTR_IS_COMPOSER(self));
+
+  g_clear_pointer(&self->comment_root_id, g_free);
+  g_clear_pointer(&self->comment_root_pubkey, g_free);
+  self->comment_root_kind = 0;
+
+  /* Hide indicator box if no reply/quote context either */
+  if (!self->reply_to_id && !self->quote_id) {
+    if (self->reply_indicator_box && GTK_IS_WIDGET(self->reply_indicator_box)) {
+      gtk_widget_set_visible(self->reply_indicator_box, FALSE);
+    }
+    /* Reset button label */
+    if (self->btn_post && GTK_IS_BUTTON(self->btn_post)) {
+      gtk_button_set_label(GTK_BUTTON(self->btn_post), "Post");
+    }
+  }
+}
+
+gboolean gnostr_composer_is_comment(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), FALSE);
+  return self->comment_root_id != NULL;
+}
+
+const char *gnostr_composer_get_comment_root_id(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+  return self->comment_root_id;
+}
+
+int gnostr_composer_get_comment_root_kind(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), 0);
+  return self->comment_root_kind;
+}
+
+const char *gnostr_composer_get_comment_root_pubkey(GnostrComposer *self) {
+  g_return_val_if_fail(GNOSTR_IS_COMPOSER(self), NULL);
+  return self->comment_root_pubkey;
 }
