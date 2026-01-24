@@ -421,11 +421,18 @@ update_content_state(GnostrPageDiscover *self)
     const char *search_text = gtk_editable_get_text(GTK_EDITABLE(self->search_entry));
     gboolean has_search = search_text && *search_text;
 
+    g_message("discover: update_content_state - is_local=%d, is_live=%d, is_articles=%d",
+            self->is_local_mode, self->is_live_mode, self->is_articles_mode);
+
     if (self->is_local_mode) {
         /* Local mode */
-        if (gn_profile_list_model_is_loading(self->profile_model)) {
+        gboolean is_loading = gn_profile_list_model_is_loading(self->profile_model);
+        g_message("discover: local mode - is_loading=%d", is_loading);
+
+        if (is_loading) {
             gtk_spinner_start(self->loading_spinner);
             gtk_stack_set_visible_child_name(self->content_stack, "loading");
+            g_message("discover: showing 'loading' state");
             return;
         }
 
@@ -433,20 +440,25 @@ update_content_state(GnostrPageDiscover *self)
 
         guint count = g_list_model_get_n_items(G_LIST_MODEL(self->profile_model));
         guint total = gn_profile_list_model_get_total_count(self->profile_model);
+        g_message("discover: count=%u, total=%u", count, total);
 
         if (total == 0) {
             /* No profiles in database at all */
+            g_message("discover: showing 'empty' state (total=0)");
             gtk_stack_set_visible_child_name(self->content_stack, "empty");
         } else if (count == 0) {
             /* No visible profiles - either filtered by search or all blocked */
             if (has_search) {
+                g_message("discover: showing 'no-results' state");
                 gtk_stack_set_visible_child_name(self->content_stack, "no-results");
             } else {
                 /* All profiles are blocked/filtered, show empty state */
+                g_message("discover: showing 'empty' state (count=0)");
                 gtk_stack_set_visible_child_name(self->content_stack, "empty");
             }
         } else {
             /* Has results - show the results list */
+            g_message("discover: showing 'results' state with %u profiles", count);
             gtk_stack_set_visible_child_name(self->content_stack, "results");
         }
     } else {
@@ -476,7 +488,7 @@ on_network_search_complete(GPtrArray *results, GError *error, gpointer user_data
     gtk_spinner_stop(self->loading_spinner);
 
     if (error && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-        g_debug("discover: search cancelled");
+        g_message("discover: search cancelled");
         return;
     }
 
@@ -492,7 +504,7 @@ on_network_search_complete(GPtrArray *results, GError *error, gpointer user_data
 
     /* Populate results */
     if (results && results->len > 0) {
-        g_debug("discover: got %u network results", results->len);
+        g_message("discover: got %u network results", results->len);
         for (guint i = 0; i < results->len; i++) {
             GnostrSearchResult *result = g_ptr_array_index(results, i);
             GnostrNetworkResultItem *item = gnostr_network_result_item_new_from_search_result(result);
@@ -905,9 +917,7 @@ static void
 on_model_items_changed(GListModel *model, guint position, guint removed, guint added, GnostrPageDiscover *self)
 {
     (void)model;
-    (void)position;
-    (void)removed;
-    (void)added;
+    g_message("discover: on_model_items_changed - pos=%u, removed=%u, added=%u", position, removed, added);
     /* Only update content state if we're in People mode */
     if (!self->is_live_mode && !self->is_articles_mode) {
         update_content_state(self);
@@ -1209,7 +1219,7 @@ gnostr_page_discover_init(GnostrPageDiscover *self)
      * switch_to_people_mode doesn't call switch_to_local_model */
     if (!self->profiles_loaded) {
         self->profiles_loaded = TRUE;
-        g_debug("discover: loading profiles in init");
+        g_message("discover: loading profiles in init");
         gn_profile_list_model_load_profiles(self->profile_model);
     }
 
@@ -1401,7 +1411,7 @@ process_live_activity_event(GnostrPageDiscover *self, storage_ndb_note *note)
     g_free(tags_json);
 
     if (!activity) {
-        g_debug("discover: failed to parse live activity event");
+        g_message("discover: failed to parse live activity event");
         return;
     }
 
@@ -1435,10 +1445,10 @@ process_live_activity_event(GnostrPageDiscover *self, storage_ndb_note *note)
     /* Add to appropriate array based on status */
     if (activity->status == GNOSTR_LIVE_STATUS_LIVE) {
         g_ptr_array_add(self->live_activities, activity);
-        g_debug("discover: added live activity '%s' (live)", activity->title ? activity->title : "(untitled)");
+        g_message("discover: added live activity '%s' (live)", activity->title ? activity->title : "(untitled)");
     } else if (activity->status == GNOSTR_LIVE_STATUS_PLANNED) {
         g_ptr_array_add(self->scheduled_activities, activity);
-        g_debug("discover: added live activity '%s' (planned)", activity->title ? activity->title : "(untitled)");
+        g_message("discover: added live activity '%s' (planned)", activity->title ? activity->title : "(untitled)");
     } else {
         /* Unknown status - treat as planned if it has a future start time */
         if (activity->starts_at > (g_get_real_time() / G_USEC_PER_SEC)) {
@@ -1463,7 +1473,7 @@ on_live_activities_received(uint64_t subid,
     if (!self || n_keys == 0)
         return;
 
-    g_debug("discover: received %u live activity events", n_keys);
+    g_message("discover: received %u live activity events", n_keys);
 
     /* Get transaction to access notes */
     void *txn = NULL;
@@ -1580,7 +1590,7 @@ gnostr_page_discover_load_live_activities(GnostrPageDiscover *self)
         return;
     }
 
-    g_debug("discover: subscribed to live activities (subid=%" G_GUINT64_FORMAT ")",
+    g_message("discover: subscribed to live activities (subid=%" G_GUINT64_FORMAT ")",
             (guint64)self->live_sub_id);
 
     /*
@@ -1597,7 +1607,7 @@ gnostr_page_discover_load_live_activities(GnostrPageDiscover *self)
 
         /* Query for existing live activity events */
         if (storage_ndb_query(txn, filter_json, &results, &count) == 0 && results && count > 0) {
-            g_debug("discover: found %d existing live activity events", count);
+            g_message("discover: found %d existing live activity events", count);
 
             for (int i = 0; i < count; i++) {
                 if (results[i]) {

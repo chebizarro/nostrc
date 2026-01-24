@@ -440,7 +440,9 @@ load_profiles_in_thread(GTask *task, gpointer source_object, gpointer task_data,
     char **results = NULL;
     int result_count = 0;
 
+    g_message("profile-list-model: querying nostrdb with filter: %s", filter_json);
     rc = storage_ndb_query(txn, filter_json, &results, &result_count);
+    g_message("profile-list-model: query returned rc=%d, result_count=%d", rc, result_count);
 
     if (rc == 0 && results && result_count > 0) {
         for (int i = 0; i < result_count; i++) {
@@ -451,8 +453,10 @@ load_profiles_in_thread(GTask *task, gpointer source_object, gpointer task_data,
                 }
             }
         }
-        g_debug("profile-list-model: loaded %u profiles from nostrdb", data->loaded_profiles->len);
+        g_message("profile-list-model: parsed %u profiles from %d results", data->loaded_profiles->len, result_count);
         storage_ndb_free_results(results, result_count);
+    } else {
+        g_warning("profile-list-model: query failed or returned no results (rc=%d, count=%d)", rc, result_count);
     }
 
     storage_ndb_end_query(txn);
@@ -479,6 +483,7 @@ load_profiles_complete(GObject *source, GAsyncResult *result, gpointer user_data
 
     if (data && data->loaded_profiles) {
         guint old_len = self->all_profiles->len;
+        g_message("profile-list-model: load complete - %u profiles loaded", data->loaded_profiles->len);
 
         /* Clear old profiles */
         g_ptr_array_set_size(self->all_profiles, 0);
