@@ -362,11 +362,11 @@ char *gnostr_picture_build_nevent(const GnostrPictureMeta *meta,
                                    const char **relays) {
   if (!meta || !meta->event_id) return NULL;
 
-  NostrNeventConfig cfg = {
-    .event_id = (char *)meta->event_id,
-    .relays = (char **)relays,
+  NostrNEventConfig cfg = {
+    .id = meta->event_id,
+    .relays = (const char *const *)relays,
     .relays_count = 0,
-    .author = (char *)meta->pubkey,
+    .author = meta->pubkey,
     .kind = NOSTR_KIND_PICTURE
   };
 

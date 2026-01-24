@@ -206,6 +206,34 @@ find_child_by_name(GtkWidget *parent, const char *name)
 }
 
 static void
+on_website_btn_clicked(GtkButton *btn, gpointer user_data)
+{
+  GnostrAppsPage *page = GNOSTR_APPS_PAGE(user_data);
+  const char *url = g_object_get_data(G_OBJECT(btn), "website");
+  if (url) {
+    g_signal_emit(page, signals[SIGNAL_OPEN_HANDLER_WEBSITE], 0, url);
+  }
+}
+
+static void
+on_prefer_handler_clicked(GtkButton *btn, gpointer user_data)
+{
+  GnostrAppsPage *page = GNOSTR_APPS_PAGE(user_data);
+  GnostrNip89HandlerInfo *h = g_object_get_data(G_OBJECT(btn), "handler");
+  if (h && h->handled_kinds && h->n_handled_kinds > 0) {
+    /* Set as preferred for first handled kind */
+    guint kind = h->handled_kinds[0];
+    char *a_tag = g_strdup_printf("%d:%s:%s",
+                                   GNOSTR_NIP89_KIND_HANDLER_INFO,
+                                   h->pubkey_hex, h->d_tag);
+    gnostr_nip89_set_preferred_handler(kind, a_tag);
+    g_signal_emit(page, signals[SIGNAL_PREFERENCE_CHANGED], 0, kind, a_tag);
+    g_free(a_tag);
+    gnostr_apps_page_refresh(page);
+  }
+}
+
+static void
 bind_handler_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data)
 {
   (void)factory;
@@ -305,16 +333,7 @@ bind_handler_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer u
     g_object_set_data_full(G_OBJECT(website_btn), "website",
                            g_strdup(handler->website), g_free);
     g_signal_handlers_disconnect_by_data(website_btn, self);
-    g_signal_connect(website_btn, "clicked", G_CALLBACK(({
-      void inner(GtkButton *btn, gpointer user_data) {
-        GnostrAppsPage *page = GNOSTR_APPS_PAGE(user_data);
-        const char *url = g_object_get_data(G_OBJECT(btn), "website");
-        if (url) {
-          g_signal_emit(page, signals[SIGNAL_OPEN_HANDLER_WEBSITE], 0, url);
-        }
-      }
-      inner;
-    })), self);
+    g_signal_connect(website_btn, "clicked", G_CALLBACK(on_website_btn_clicked), self);
   }
 
   /* Set as default button */
@@ -334,24 +353,7 @@ bind_handler_row(GtkListItemFactory *factory, GtkListItem *list_item, gpointer u
     /* Store handler reference for callback */
     g_object_set_data(G_OBJECT(prefer_btn), "handler", handler);
     g_signal_handlers_disconnect_by_data(prefer_btn, self);
-    g_signal_connect(prefer_btn, "clicked", G_CALLBACK(({
-      void inner(GtkButton *btn, gpointer user_data) {
-        GnostrAppsPage *page = GNOSTR_APPS_PAGE(user_data);
-        GnostrNip89HandlerInfo *h = g_object_get_data(G_OBJECT(btn), "handler");
-        if (h && h->handled_kinds && h->n_handled_kinds > 0) {
-          /* Set as preferred for first handled kind */
-          guint kind = h->handled_kinds[0];
-          char *a_tag = g_strdup_printf("%d:%s:%s",
-                                         GNOSTR_NIP89_KIND_HANDLER_INFO,
-                                         h->pubkey_hex, h->d_tag);
-          gnostr_nip89_set_preferred_handler(kind, a_tag);
-          g_signal_emit(page, signals[SIGNAL_PREFERENCE_CHANGED], 0, kind, a_tag);
-          g_free(a_tag);
-          gnostr_apps_page_refresh(page);
-        }
-      }
-      inner;
-    })), self);
+    g_signal_connect(prefer_btn, "clicked", G_CALLBACK(on_prefer_handler_clicked), self);
   }
 
   /* Load icon - try cache first, then async download */

@@ -365,11 +365,11 @@ char *gnostr_wiki_build_naddr(const char *pubkey_hex,
                                const char **relays) {
   if (!pubkey_hex || !d_tag) return NULL;
 
-  NostrEntityPointer cfg = {
+  NostrNAddrConfig cfg = {
     .kind = NOSTR_KIND_WIKI,
-    .public_key = (char *)pubkey_hex,
-    .identifier = (char *)d_tag,
-    .relays = (char **)relays,
+    .public_key = pubkey_hex,
+    .identifier = d_tag,
+    .relays = (const char *const *)relays,
     .relays_count = 0
   };
 

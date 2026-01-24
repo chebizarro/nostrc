@@ -259,7 +259,7 @@ create_filter_bar(GnostrClassifiedsView *self)
   /* Location entry */
   self->location_entry = gtk_entry_new();
   gtk_widget_set_size_request(self->location_entry, 150, -1);
-  gtk_editable_set_placeholder_text(GTK_EDITABLE(self->location_entry),
+  gtk_entry_set_placeholder_text(GTK_ENTRY(self->location_entry),
     _("Location..."));
   g_signal_connect(self->location_entry, "changed",
     G_CALLBACK(on_location_changed), self);
@@ -270,7 +270,7 @@ create_filter_bar(GnostrClassifiedsView *self)
 
   self->price_min_entry = gtk_entry_new();
   gtk_widget_set_size_request(self->price_min_entry, 80, -1);
-  gtk_editable_set_placeholder_text(GTK_EDITABLE(self->price_min_entry), _("Min"));
+  gtk_entry_set_placeholder_text(GTK_ENTRY(self->price_min_entry), _("Min"));
   g_signal_connect(self->price_min_entry, "changed",
     G_CALLBACK(on_price_changed), self);
   gtk_box_append(GTK_BOX(price_box), self->price_min_entry);
@@ -280,7 +280,7 @@ create_filter_bar(GnostrClassifiedsView *self)
 
   self->price_max_entry = gtk_entry_new();
   gtk_widget_set_size_request(self->price_max_entry, 80, -1);
-  gtk_editable_set_placeholder_text(GTK_EDITABLE(self->price_max_entry), _("Max"));
+  gtk_entry_set_placeholder_text(GTK_ENTRY(self->price_max_entry), _("Max"));
   g_signal_connect(self->price_max_entry, "changed",
     G_CALLBACK(on_price_changed), self);
   gtk_box_append(GTK_BOX(price_box), self->price_max_entry);

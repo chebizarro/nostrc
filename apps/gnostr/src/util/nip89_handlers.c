@@ -828,6 +828,23 @@ gboolean gnostr_nip89_is_addressable_kind(guint kind)
 
 /* ============== Async Query (placeholder - uses local cache for now) ============== */
 
+/* Callback data for async query */
+typedef struct {
+  GnostrNip89QueryCallback callback;
+  gpointer user_data;
+  GPtrArray *handlers;
+  GPtrArray *recommendations;
+} Nip89QueryCallbackData;
+
+static gboolean
+on_nip89_query_idle(gpointer data)
+{
+  Nip89QueryCallbackData *cd = data;
+  cd->callback(cd->handlers, cd->recommendations, NULL, cd->user_data);
+  g_free(cd);
+  return G_SOURCE_REMOVE;
+}
+
 void gnostr_nip89_query_handlers_async(guint event_kind,
                                         GnostrNip89QueryCallback callback,
                                         gpointer user_data,
@@ -844,26 +861,11 @@ void gnostr_nip89_query_handlers_async(guint event_kind,
   GPtrArray *recommendations = gnostr_nip89_cache_get_recommendations_for_kind(event_kind, NULL);
 
   /* Schedule callback on main thread */
-  typedef struct {
-    GnostrNip89QueryCallback callback;
-    gpointer user_data;
-    GPtrArray *handlers;
-    GPtrArray *recommendations;
-  } CallbackData;
-
-  CallbackData *data = g_new0(CallbackData, 1);
+  Nip89QueryCallbackData *data = g_new0(Nip89QueryCallbackData, 1);
   data->callback = callback;
   data->user_data = user_data;
   data->handlers = handlers;
   data->recommendations = recommendations;
 
-  g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, (GSourceFunc)({
-    gboolean inner(gpointer d) {
-      CallbackData *cd = d;
-      cd->callback(cd->handlers, cd->recommendations, NULL, cd->user_data);
-      g_free(cd);
-      return G_SOURCE_REMOVE;
-    }
-    inner;
-  }), data, NULL);
+  g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, on_nip89_query_idle, data, NULL);
 }

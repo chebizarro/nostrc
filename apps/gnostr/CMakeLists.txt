@@ -371,6 +371,7 @@ if (BUILD_TESTING)
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_SOURCE_DIR}/libnostr/include
     ${CMAKE_SOURCE_DIR}/nips/nip19/include
+    ${CMAKE_SOURCE_DIR}/nips/nip46/include
     ${CMAKE_SOURCE_DIR}/libgo/include
     ${CMAKE_SOURCE_DIR}/gobject/include)
   target_sources(gnostr-test-blossom PRIVATE
@@ -379,10 +380,14 @@ if (BUILD_TESTING)
     src/util/relays.c
     src/util/relay_info.c
     src/ipc/signer_ipc.c
+    src/ipc/gnostr-signer-service.c
     ${SIGNER_PROXY_C}
     ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c
     ${CMAKE_SOURCE_DIR}/gobject/src/nostr_relay.c)
   target_link_libraries(gnostr-test-blossom PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB PkgConfig::SOUP3 nostr nip19 libgo)
+  if (TARGET nostr_nip46_core)
+    target_link_libraries(gnostr-test-blossom PRIVATE nostr_nip46_core)
+  endif()
   _gnostr_apply_sanitizers(gnostr-test-blossom)
   add_test(NAME gnostr-test-blossom COMMAND gnostr-test-blossom)
   set_tests_properties(gnostr-test-blossom PROPERTIES
@@ -396,6 +401,7 @@ if (BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_SOURCE_DIR}/libnostr/include
+    ${CMAKE_SOURCE_DIR}/nips/nip46/include
     ${CMAKE_SOURCE_DIR}/libgo/include
     ${CMAKE_SOURCE_DIR}/gobject/include)
   target_sources(gnostr-test-blossom-settings PRIVATE
@@ -403,12 +409,16 @@ if (BUILD_TESTING)
     src/util/relays.c
     src/util/relay_info.c
     src/ipc/signer_ipc.c
+    src/ipc/gnostr-signer-service.c
     ${SIGNER_PROXY_C}
     ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c
     ${CMAKE_SOURCE_DIR}/gobject/src/nostr_relay.c)
   target_link_libraries(gnostr-test-blossom-settings PRIVATE
     PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB PkgConfig::SOUP3
     nostr libgo)
+  if (TARGET nostr_nip46_core)
+    target_link_libraries(gnostr-test-blossom-settings PRIVATE nostr_nip46_core)
+  endif()
   _gnostr_apply_sanitizers(gnostr-test-blossom-settings)
   add_test(NAME gnostr-test-blossom-settings COMMAND gnostr-test-blossom-settings)
   set_tests_properties(gnostr-test-blossom-settings PROPERTIES

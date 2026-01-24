@@ -1449,7 +1449,7 @@ gnostr_nip7d_thread_view_load_more_replies(GnostrNip7dThreadView *self,
     nostr_filter_tags_append(filter, "E", self->thread->event_id, NULL);
     nostr_filter_set_limit(filter, limit);
     if (oldest < G_MAXINT64) {
-        nostr_filter_set_until(filter, (uint64_t)(oldest - 1));
+        nostr_filter_set_until_i64(filter, oldest - 1);
     }
 
     gnostr_simple_pool_query_single_async(
