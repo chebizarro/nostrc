@@ -430,12 +430,11 @@ on_classifieds_fetched(GObject *source, GAsyncResult *res, gpointer user_data)
     return;
   }
 
-  /* Parse all events */
+  /* Parse all events - note: query returns JSON strings, not NostrEvent* */
   ctx->classifieds = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_classified_free);
 
   for (guint i = 0; i < events->len; i++) {
-    NostrEvent *event = g_ptr_array_index(events, i);
-    gchar *event_json = nostr_event_serialize_compact(event);
+    const gchar *event_json = g_ptr_array_index(events, i);
     if (event_json) {
       GnostrClassified *classified = gnostr_classified_parse(event_json);
       if (classified) {
@@ -445,7 +444,7 @@ on_classifieds_fetched(GObject *source, GAsyncResult *res, gpointer user_data)
 
         g_ptr_array_add(ctx->classifieds, classified);
       }
-      g_free(event_json);
+      /* Don't free event_json - it's owned by the events array */
     }
   }
 
@@ -601,11 +600,10 @@ on_single_classified_fetched(GObject *source, GAsyncResult *res, gpointer user_d
     }
     g_error_free(error);
   } else if (events && events->len > 0) {
-    NostrEvent *event = g_ptr_array_index(events, 0);
-    gchar *event_json = nostr_event_serialize_compact(event);
+    /* Query returns JSON strings, not NostrEvent* */
+    const gchar *event_json = g_ptr_array_index(events, 0);
     if (event_json) {
       classified = gnostr_classified_parse(event_json);
-      g_free(event_json);
     }
   }
 
