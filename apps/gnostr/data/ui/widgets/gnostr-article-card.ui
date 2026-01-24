@@ -1,0 +1,367 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  gnostr-article-card.ui - NIP-23 Long-form Content Card Widget
+
+  Displays kind 30023 articles with title, summary, header image,
+  author info, and action buttons.
+-->
+<interface>
+  <template class="GnostrArticleCard" parent="GtkWidget">
+    <child>
+      <object class="GtkFrame" id="root">
+        <property name="hexpand">true</property>
+        <property name="vexpand">false</property>
+        <style>
+          <class name="article-card"/>
+        </style>
+        <property name="child">
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="spacing">0</property>
+
+            <!-- Header Image (optional, shown at top) -->
+            <child>
+              <object class="GtkOverlay" id="header_image_overlay">
+                <property name="visible">false</property>
+                <child>
+                  <object class="GtkPicture" id="header_image">
+                    <property name="content-fit">cover</property>
+                    <property name="height-request">180</property>
+                    <style>
+                      <class name="article-header-image"/>
+                    </style>
+                  </object>
+                </child>
+                <!-- Gradient overlay for text readability -->
+                <child type="overlay">
+                  <object class="GtkBox" id="header_gradient">
+                    <property name="vexpand">true</property>
+                    <property name="valign">end</property>
+                    <property name="height-request">60</property>
+                    <style>
+                      <class name="article-header-gradient"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Content area -->
+            <child>
+              <object class="GtkBox" id="content_box">
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <property name="margin-start">16</property>
+                <property name="margin-end">16</property>
+                <property name="margin-top">16</property>
+                <property name="margin-bottom">12</property>
+
+                <!-- Author row -->
+                <child>
+                  <object class="GtkBox" id="author_box">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">10</property>
+
+                    <!-- Avatar (clickable) -->
+                    <child>
+                      <object class="GtkButton" id="btn_avatar">
+                        <property name="has-frame">false</property>
+                        <property name="tooltip-text">View profile</property>
+                        <property name="valign">center</property>
+                        <style>
+                          <class name="flat"/>
+                        </style>
+                        <child>
+                          <object class="GtkOverlay" id="avatar_overlay">
+                            <property name="width-request">40</property>
+                            <property name="height-request">40</property>
+                            <style>
+                              <class name="avatar"/>
+                              <class name="article-avatar"/>
+                            </style>
+                            <child>
+                              <object class="GtkPicture" id="avatar_image">
+                                <property name="visible">false</property>
+                                <property name="content-fit">cover</property>
+                                <property name="width-request">40</property>
+                                <property name="height-request">40</property>
+                                <style>
+                                  <class name="article-avatar-image"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child type="overlay">
+                              <object class="GtkLabel" id="avatar_initials">
+                                <property name="label">AN</property>
+                                <property name="xalign">0.5</property>
+                                <property name="yalign">0.5</property>
+                                <style>
+                                  <class name="avatar-initials"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Author info column -->
+                    <child>
+                      <object class="GtkBox" id="author_info">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">2</property>
+                        <property name="valign">center</property>
+                        <property name="hexpand">true</property>
+
+                        <!-- Author name (clickable) -->
+                        <child>
+                          <object class="GtkBox" id="author_name_row">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">6</property>
+                            <child>
+                              <object class="GtkButton" id="btn_author_name">
+                                <property name="has-frame">false</property>
+                                <property name="tooltip-text">View profile</property>
+                                <style>
+                                  <class name="flat"/>
+                                </style>
+                                <child>
+                                  <object class="GtkLabel" id="lbl_author_name">
+                                    <property name="label">Anonymous</property>
+                                    <property name="xalign">0.0</property>
+                                    <property name="ellipsize">end</property>
+                                    <style>
+                                      <class name="article-author"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <!-- NIP-05 verification badge -->
+                            <child>
+                              <object class="GtkImage" id="nip05_badge">
+                                <property name="visible">false</property>
+                                <property name="icon-name">emblem-ok-symbolic</property>
+                                <property name="icon-size">1</property>
+                                <style>
+                                  <class name="nip05-verified-badge"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                        <!-- Handle and date -->
+                        <child>
+                          <object class="GtkBox" id="meta_row">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">8</property>
+                            <child>
+                              <object class="GtkLabel" id="lbl_author_handle">
+                                <property name="label">@anon</property>
+                                <property name="xalign">0.0</property>
+                                <property name="ellipsize">end</property>
+                                <style>
+                                  <class name="article-meta"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="lbl_separator">
+                                <property name="label">-</property>
+                                <style>
+                                  <class name="article-meta"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="lbl_publish_date">
+                                <property name="label">Just now</property>
+                                <property name="xalign">0.0</property>
+                                <style>
+                                  <class name="article-meta"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Menu button -->
+                    <child>
+                      <object class="GtkButton" id="btn_menu">
+                        <property name="icon-name">open-menu-symbolic</property>
+                        <property name="tooltip-text">More options</property>
+                        <property name="valign">center</property>
+                        <style>
+                          <class name="flat"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Article Title (clickable) -->
+                <child>
+                  <object class="GtkButton" id="btn_title">
+                    <property name="has-frame">false</property>
+                    <style>
+                      <class name="flat"/>
+                    </style>
+                    <child>
+                      <object class="GtkLabel" id="lbl_title">
+                        <property name="label">Untitled Article</property>
+                        <property name="xalign">0.0</property>
+                        <property name="wrap">true</property>
+                        <property name="wrap-mode">word-char</property>
+                        <property name="lines">3</property>
+                        <property name="ellipsize">end</property>
+                        <style>
+                          <class name="article-title"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Summary/Description -->
+                <child>
+                  <object class="GtkLabel" id="lbl_summary">
+                    <property name="visible">false</property>
+                    <property name="label">Article summary...</property>
+                    <property name="xalign">0.0</property>
+                    <property name="wrap">true</property>
+                    <property name="wrap-mode">word-char</property>
+                    <property name="lines">4</property>
+                    <property name="ellipsize">end</property>
+                    <property name="use-markup">true</property>
+                    <style>
+                      <class name="article-summary"/>
+                    </style>
+                  </object>
+                </child>
+
+                <!-- Read More link -->
+                <child>
+                  <object class="GtkButton" id="btn_read_more">
+                    <property name="has-frame">false</property>
+                    <property name="halign">start</property>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">4</property>
+                        <child>
+                          <object class="GtkLabel" id="lbl_read_more">
+                            <property name="label">Read more</property>
+                            <style>
+                              <class name="article-read-more"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">go-next-symbolic</property>
+                            <property name="icon-size">1</property>
+                            <style>
+                              <class name="article-read-more"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+
+                <!-- Hashtags (from t tags) -->
+                <child>
+                  <object class="GtkFlowBox" id="hashtags_box">
+                    <property name="visible">false</property>
+                    <property name="selection-mode">none</property>
+                    <property name="max-children-per-line">8</property>
+                    <property name="min-children-per-line">1</property>
+                    <property name="row-spacing">4</property>
+                    <property name="column-spacing">6</property>
+                    <style>
+                      <class name="article-hashtags"/>
+                    </style>
+                  </object>
+                </child>
+
+                <!-- Action buttons -->
+                <child>
+                  <object class="GtkBox" id="actions_box">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">8</property>
+                    <property name="margin-top">4</property>
+
+                    <!-- Zap button -->
+                    <child>
+                      <object class="GtkButton" id="btn_zap">
+                        <property name="tooltip-text">Zap</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">4</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">camera-flash-symbolic</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="lbl_zap_count">
+                                <property name="label"></property>
+                                <property name="visible">false</property>
+                                <style>
+                                  <class name="zap-count"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Bookmark button -->
+                    <child>
+                      <object class="GtkButton" id="btn_bookmark">
+                        <property name="icon-name">bookmark-new-symbolic</property>
+                        <property name="tooltip-text">Bookmark</property>
+                      </object>
+                    </child>
+
+                    <!-- Share button -->
+                    <child>
+                      <object class="GtkButton" id="btn_share">
+                        <property name="icon-name">emblem-shared-symbolic</property>
+                        <property name="tooltip-text">Share article</property>
+                      </object>
+                    </child>
+
+                    <!-- Spacer -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="hexpand">true</property>
+                      </object>
+                    </child>
+
+                    <!-- Reading time estimate -->
+                    <child>
+                      <object class="GtkLabel" id="lbl_reading_time">
+                        <property name="visible">false</property>
+                        <property name="label">3 min read</property>
+                        <style>
+                          <class name="article-reading-time"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </property>
+      </object>
+    </child>
+  </template>
+</interface>

@@ -16,6 +16,7 @@
     <file>ui/widgets/page-discover.ui</file>
     <file>ui/widgets/gnostr-profile-row.ui</file>
     <file>ui/widgets/gnostr-search-results-view.ui</file>
+    <file>ui/widgets/gnostr-article-card.ui</file>
     <file>ui/dialogs/gnostr-settings-dialog.ui</file>
     <file>ui/dialogs/gnostr-relay-manager.ui</file>
     <file>ui/dialogs/gnostr-profile-edit.ui</file>
