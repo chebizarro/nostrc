@@ -226,6 +226,21 @@ label a:visited {
   background: alpha(@theme_bg_color, 0.5);
 }
 
+/* NIP-24 Bot indicator badge */
+.bot-badge {
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: alpha(@warning_color, 0.2);
+  border: 1px solid alpha(@warning_color, 0.4);
+  font-size: 11px;
+  font-weight: 600;
+  color: @warning_color;
+}
+
+.bot-badge image {
+  color: @warning_color;
+}
+
 /* Open Graph Preview Card Styles */
 .og-preview {
   margin-top: 8px;
@@ -1859,4 +1874,423 @@ profile-row.muted .profile-row-avatar {
   min-width: 22px;
   min-height: 22px;
   border-radius: 3px;
+}
+
+/* ============================================
+   NIP-88 Poll Styles
+   ============================================ */
+
+/* Poll Widget Container */
+.poll-widget {
+  border-radius: 12px;
+  background: alpha(@theme_bg_color, 0.5);
+  border: 1px solid alpha(@accent_bg_color, 0.2);
+  padding: 12px;
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
+
+/* Poll Header */
+.poll-header {
+  margin-bottom: 8px;
+}
+
+.poll-icon {
+  color: @accent_bg_color;
+  min-width: 18px;
+  min-height: 18px;
+}
+
+.poll-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: @accent_bg_color;
+}
+
+.poll-time {
+  font-size: 12px;
+  color: alpha(@theme_fg_color, 0.6);
+  font-style: italic;
+}
+
+.poll-time.poll-closed {
+  color: @error_color;
+  font-weight: 500;
+}
+
+/* Poll Options */
+.poll-options {
+  margin-bottom: 8px;
+}
+
+.poll-option-row {
+  margin-bottom: 4px;
+}
+
+.poll-option-button {
+  font-size: 14px;
+}
+
+.poll-option-button:checked {
+  font-weight: 500;
+}
+
+.poll-option-count {
+  font-size: 12px;
+  font-weight: 500;
+  color: alpha(@theme_fg_color, 0.7);
+  min-width: 60px;
+  text-align: right;
+}
+
+.poll-option-bar {
+  min-height: 6px;
+  border-radius: 3px;
+}
+
+.poll-option-bar trough {
+  background: alpha(@theme_fg_color, 0.1);
+  border-radius: 3px;
+  min-height: 6px;
+}
+
+.poll-option-bar progress {
+  background: @accent_bg_color;
+  border-radius: 3px;
+}
+
+.poll-option-bar.poll-option-voted progress {
+  background: linear-gradient(
+    90deg,
+    @accent_bg_color 0%,
+    shade(@accent_bg_color, 0.8) 100%
+  );
+}
+
+/* Poll Footer */
+.poll-footer {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid alpha(@theme_fg_color, 0.1);
+}
+
+.poll-status {
+  font-size: 13px;
+  color: alpha(@theme_fg_color, 0.7);
+}
+
+.poll-vote-button {
+  padding: 6px 16px;
+  border-radius: 9999px;
+  font-weight: 500;
+}
+
+/* Poll Composer */
+.poll-composer {
+  border-radius: 12px;
+  background: alpha(@theme_bg_color, 0.6);
+  border: 1px solid alpha(@theme_fg_color, 0.1);
+}
+
+.poll-composer-icon {
+  color: @accent_bg_color;
+  min-width: 20px;
+  min-height: 20px;
+}
+
+.poll-composer-title {
+  font-weight: 600;
+  color: @theme_fg_color;
+}
+
+.poll-section-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: alpha(@theme_fg_color, 0.7);
+  margin-bottom: 4px;
+}
+
+.poll-question-entry {
+  font-size: 15px;
+  padding: 10px 12px;
+  border-radius: 8px;
+}
+
+.poll-options-container {
+  margin-top: 4px;
+}
+
+.poll-option-entry-row {
+  margin-bottom: 4px;
+}
+
+.poll-option-number {
+  font-weight: 600;
+  color: alpha(@theme_fg_color, 0.5);
+  min-width: 24px;
+}
+
+.poll-option-entry {
+  padding: 8px 12px;
+  border-radius: 6px;
+}
+
+.poll-option-remove {
+  opacity: 0.6;
+  transition: opacity 150ms ease;
+}
+
+.poll-option-remove:hover {
+  opacity: 1;
+  color: @error_color;
+}
+
+.poll-add-option {
+  color: @accent_bg_color;
+  padding: 6px 12px;
+  margin-top: 4px;
+}
+
+.poll-add-option:hover {
+  background: alpha(@accent_bg_color, 0.1);
+}
+
+.poll-settings {
+  padding: 12px;
+  border-radius: 8px;
+  background: alpha(@theme_bg_color, 0.4);
+}
+
+.poll-create-button {
+  padding: 8px 20px;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+.poll-cancel-button {
+  padding: 8px 16px;
+  border-radius: 8px;
+}
+
+/* ============================================
+   NIP-71 Video Event Card Styles
+   ============================================ */
+
+/* Main video card container */
+.video-card {
+  border-radius: 16px;
+  padding: 0;
+  background: alpha(@theme_bg_color, 0.7);
+  border: 1px solid alpha(@theme_fg_color, 0.08);
+  overflow: hidden;
+  animation: video-fade-in 600ms ease-out;
+}
+
+@keyframes video-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.video-card:hover {
+  background: alpha(@theme_bg_color, 0.85);
+  border-color: alpha(@theme_fg_color, 0.12);
+  box-shadow: 0 4px 16px alpha(@theme_fg_color, 0.08);
+}
+
+/* Vertical video card adjustments */
+.video-card.video-vertical {
+  max-width: 350px;
+}
+
+/* Video title */
+.video-title {
+  font-weight: 700;
+  font-size: 18px;
+  line-height: 1.3;
+  color: @theme_fg_color;
+  padding: 8px 12px 4px 12px;
+}
+
+/* Video summary/description */
+.video-summary {
+  font-size: 14px;
+  line-height: 1.4;
+  color: alpha(@theme_fg_color, 0.75);
+  padding: 0 12px 8px 12px;
+}
+
+/* Thumbnail overlay container */
+.video-thumbnail-overlay {
+  border-radius: 12px;
+  background: #000;
+  margin: 8px;
+  overflow: hidden;
+  transition: all 200ms ease;
+}
+
+.video-thumbnail-overlay:hover {
+  box-shadow: 0 4px 12px alpha(black, 0.3);
+}
+
+/* Thumbnail image */
+.video-thumbnail {
+  background: alpha(@theme_bg_color, 0.3);
+}
+
+/* No thumbnail fallback */
+.video-thumbnail.video-no-thumbnail {
+  background: linear-gradient(
+    135deg,
+    alpha(@theme_bg_color, 0.4) 0%,
+    alpha(@theme_bg_color, 0.2) 100%
+  );
+}
+
+/* Play button overlay */
+.video-play-btn {
+  min-width: 64px;
+  min-height: 64px;
+  background: alpha(black, 0.6);
+  color: white;
+  border: 2px solid alpha(white, 0.3);
+  box-shadow: 0 4px 16px alpha(black, 0.4);
+  transition: all 200ms ease;
+}
+
+.video-play-btn:hover {
+  background: alpha(@accent_bg_color, 0.9);
+  border-color: @accent_bg_color;
+  transform: scale(1.1);
+  box-shadow: 0 6px 20px alpha(@accent_bg_color, 0.4);
+}
+
+.video-play-btn:active {
+  transform: scale(0.95);
+}
+
+.video-play-btn image {
+  min-width: 32px;
+  min-height: 32px;
+}
+
+/* Duration badge */
+.video-duration-badge {
+  background: alpha(black, 0.75);
+  color: white;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Video hashtags */
+.video-hashtags {
+  padding: 4px 12px 8px 12px;
+}
+
+.video-hashtags flowboxchild {
+  padding: 0;
+  margin: 0;
+}
+
+.video-hashtag {
+  border-radius: 9999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  background: alpha(@accent_bg_color, 0.12);
+  color: @accent_bg_color;
+  transition: all 150ms ease;
+}
+
+.video-hashtag:hover {
+  background: alpha(@accent_bg_color, 0.2);
+}
+
+/* Video in timeline - adjust spacing */
+.timeline .video-card {
+  margin-bottom: 8px;
+}
+
+/* Video player when shown */
+.video-card .note-media-video {
+  margin: 8px;
+  border-radius: 12px;
+}
+
+/* Vertical video specific styles */
+.video-vertical .video-thumbnail-overlay {
+  min-height: 350px;
+  max-height: 500px;
+}
+
+.video-vertical .note-media-video {
+  min-height: 350px;
+  max-height: 500px;
+}
+
+.video-vertical .video-play-btn {
+  min-width: 56px;
+  min-height: 56px;
+}
+
+/* Video embed preview (when referenced via "a" tag or nevent) */
+.video-embed {
+  border-radius: 10px;
+  background: alpha(@theme_bg_color, 0.5);
+  border: 1px solid alpha(@theme_fg_color, 0.1);
+  padding: 8px;
+  margin: 8px 0;
+  transition: all 150ms ease;
+}
+
+.video-embed:hover {
+  background: alpha(@theme_bg_color, 0.7);
+  border-color: alpha(@theme_fg_color, 0.15);
+}
+
+.video-embed-thumbnail {
+  border-radius: 8px;
+  min-width: 120px;
+  min-height: 68px;
+  background: #000;
+}
+
+.video-embed-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: @theme_fg_color;
+}
+
+.video-embed-duration {
+  font-size: 12px;
+  color: alpha(@theme_fg_color, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+
+.video-embed-author {
+  font-size: 12px;
+  color: alpha(@theme_fg_color, 0.5);
+}
+
+/* Video kind badge */
+.video-badge {
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  background: alpha(#e91e63, 0.12);
+  color: #e91e63;
+}
+
+.video-badge.vertical {
+  background: alpha(#9c27b0, 0.12);
+  color: #9c27b0;
 }

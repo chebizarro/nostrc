@@ -14,6 +14,7 @@
 #include "../util/bookmarks.h"
 #include "../util/nip32_labels.h"
 #include "../util/nip23.h"
+#include "../util/nip71.h"
 #include "nostr-filter.h"
 #include <string.h>
 #include <time.h>
@@ -1513,6 +1514,27 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 
         gnostr_article_meta_free(article_meta);
         g_debug("[BIND] NIP-23: Article mode set for event %s", id_hex ? id_hex : "(null)");
+      } else {
+        /* Fallback to regular note display if parsing fails */
+        gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
+      }
+    }
+    /* NIP-71: Handle video events (kind 34235/34236) */
+    else if (gnostr_video_is_video(event_kind) && tags_json) {
+      GnostrVideoMeta *video_meta = gnostr_video_parse_tags(tags_json, event_kind);
+      if (video_meta) {
+        gnostr_note_card_row_set_video_mode(GNOSTR_NOTE_CARD_ROW(row),
+                                             video_meta->url,
+                                             video_meta->thumb_url,
+                                             video_meta->title,
+                                             video_meta->summary,
+                                             video_meta->duration,
+                                             video_meta->orientation == GNOSTR_VIDEO_VERTICAL,
+                                             video_meta->d_tag,
+                                             (const char * const *)video_meta->hashtags);
+
+        gnostr_video_meta_free(video_meta);
+        g_debug("[BIND] NIP-71: Video mode set for event %s (kind %d)", id_hex ? id_hex : "(null)", event_kind);
       } else {
         /* Fallback to regular note display if parsing fails */
         gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);

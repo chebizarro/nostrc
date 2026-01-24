@@ -159,6 +159,43 @@ gboolean gnostr_note_card_row_is_article(GnostrNoteCardRow *self);
 /* NIP-23: Get the article's d-tag identifier */
 const char *gnostr_note_card_row_get_article_d_tag(GnostrNoteCardRow *self);
 
+/* NIP-71 Video Events: Transform this card into video display mode
+ * @self: note card row
+ * @video_url: Video URL from "url" tag (required)
+ * @thumb_url: Thumbnail image URL from "thumb" tag (optional)
+ * @title: Video title from "title" tag (optional)
+ * @summary: Video description from "summary" tag (optional)
+ * @duration: Duration in seconds from "duration" tag (0 if unknown)
+ * @is_vertical: TRUE for vertical video (kind 34236), FALSE for horizontal (kind 34235)
+ * @d_tag: The video's unique identifier from "d" tag (optional)
+ * @hashtags: Array of hashtags from "t" tags (optional, NULL-terminated)
+ *
+ * When called, switches the card to video display mode:
+ * - Shows video player with thumbnail overlay
+ * - Displays title and duration badge
+ * - Shows play button overlay
+ * - Supports inline playback and fullscreen
+ * - Adapts layout for vertical videos
+ */
+void gnostr_note_card_row_set_video_mode(GnostrNoteCardRow *self,
+                                          const char *video_url,
+                                          const char *thumb_url,
+                                          const char *title,
+                                          const char *summary,
+                                          gint64 duration,
+                                          gboolean is_vertical,
+                                          const char *d_tag,
+                                          const char * const *hashtags);
+
+/* NIP-71: Check if this card is displaying a video */
+gboolean gnostr_note_card_row_is_video(GnostrNoteCardRow *self);
+
+/* NIP-71: Get the video's d-tag identifier */
+const char *gnostr_note_card_row_get_video_d_tag(GnostrNoteCardRow *self);
+
+/* NIP-71: Get the video URL */
+const char *gnostr_note_card_row_get_video_url(GnostrNoteCardRow *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_NOTE_CARD_ROW_H */
