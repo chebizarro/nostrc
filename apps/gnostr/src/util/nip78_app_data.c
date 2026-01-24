@@ -1,0 +1,840 @@
+/**
+ * NIP-78 App-Specific Data Support Implementation
+ *
+ * Handles parsing, creation, and relay operations for kind 30078 events.
+ */
+
+#include "nip78_app_data.h"
+#include "relays.h"
+#include "../ipc/gnostr-signer-service.h"
+#include <string.h>
+#include <time.h>
+
+#ifndef GNOSTR_NIP78_TEST_ONLY
+#include "nostr_simple_pool.h"
+#include "nostr-filter.h"
+#include "nostr-event.h"
+#include "nostr-relay.h"
+#endif
+
+/* ---- Memory Management ---- */
+
+GnostrAppData *gnostr_app_data_new(void) {
+    GnostrAppData *data = g_new0(GnostrAppData, 1);
+    return data;
+}
+
+void gnostr_app_data_free(GnostrAppData *data) {
+    if (!data) return;
+    g_free(data->app_id);
+    g_free(data->data_key);
+    g_free(data->d_tag);
+    g_free(data->content);
+    if (data->content_json) {
+        json_decref(data->content_json);
+    }
+    g_free(data->event_id);
+    g_free(data->pubkey);
+    g_free(data);
+}
+
+GnostrAppData *gnostr_app_data_copy(const GnostrAppData *data) {
+    if (!data) return NULL;
+
+    GnostrAppData *copy = gnostr_app_data_new();
+    copy->app_id = g_strdup(data->app_id);
+    copy->data_key = g_strdup(data->data_key);
+    copy->d_tag = g_strdup(data->d_tag);
+    copy->content = g_strdup(data->content);
+    if (data->content_json) {
+        copy->content_json = json_deep_copy(data->content_json);
+    }
+    copy->event_id = g_strdup(data->event_id);
+    copy->pubkey = g_strdup(data->pubkey);
+    copy->created_at = data->created_at;
+
+    return copy;
+}
+
+/* ---- Parsing ---- */
+
+gboolean gnostr_app_data_parse_d_tag(const char *d_tag,
+                                      char **out_app_id,
+                                      char **out_data_key) {
+    if (!d_tag || !out_app_id || !out_data_key) return FALSE;
+
+    *out_app_id = NULL;
+    *out_data_key = NULL;
+
+    /* Find the first '/' separator */
+    const char *slash = strchr(d_tag, '/');
+
+    if (slash) {
+        /* Split at the slash */
+        size_t app_id_len = slash - d_tag;
+        *out_app_id = g_strndup(d_tag, app_id_len);
+        *out_data_key = g_strdup(slash + 1);
+    } else {
+        /* No slash - entire tag is app_id, no data_key */
+        *out_app_id = g_strdup(d_tag);
+        *out_data_key = g_strdup("");
+    }
+
+    return TRUE;
+}
+
+char *gnostr_app_data_build_d_tag(const char *app_id, const char *data_key) {
+    if (!app_id || !*app_id) return NULL;
+
+    if (data_key && *data_key) {
+        return g_strdup_printf("%s/%s", app_id, data_key);
+    } else {
+        return g_strdup(app_id);
+    }
+}
+
+GnostrAppData *gnostr_app_data_parse_event(const char *event_json) {
+    if (!event_json) return NULL;
+
+    json_error_t error;
+    json_t *root = json_loads(event_json, 0, &error);
+    if (!root) {
+        g_warning("nip78: failed to parse event JSON: %s", error.text);
+        return NULL;
+    }
+
+    /* Verify kind */
+    json_t *kind_val = json_object_get(root, "kind");
+    if (!kind_val || json_integer_value(kind_val) != GNOSTR_NIP78_KIND_APP_DATA) {
+        g_debug("nip78: not a kind %d event", GNOSTR_NIP78_KIND_APP_DATA);
+        json_decref(root);
+        return NULL;
+    }
+
+    GnostrAppData *data = gnostr_app_data_new();
+
+    /* Extract event metadata */
+    json_t *id_val = json_object_get(root, "id");
+    if (id_val && json_is_string(id_val)) {
+        data->event_id = g_strdup(json_string_value(id_val));
+    }
+
+    json_t *pubkey_val = json_object_get(root, "pubkey");
+    if (pubkey_val && json_is_string(pubkey_val)) {
+        data->pubkey = g_strdup(json_string_value(pubkey_val));
+    }
+
+    json_t *created_at = json_object_get(root, "created_at");
+    if (created_at && json_is_integer(created_at)) {
+        data->created_at = json_integer_value(created_at);
+    }
+
+    /* Extract content */
+    json_t *content_val = json_object_get(root, "content");
+    if (content_val && json_is_string(content_val)) {
+        data->content = g_strdup(json_string_value(content_val));
+
+        /* Try to parse content as JSON */
+        if (data->content && *data->content) {
+            json_error_t content_error;
+            data->content_json = json_loads(data->content, 0, &content_error);
+            /* If parsing fails, content_json remains NULL - that's OK */
+        }
+    }
+
+    /* Find and parse d-tag */
+    json_t *tags = json_object_get(root, "tags");
+    if (json_is_array(tags)) {
+        size_t idx;
+        json_t *tag;
+        json_array_foreach(tags, idx, tag) {
+            if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+
+            const char *tag_name = json_string_value(json_array_get(tag, 0));
+            const char *tag_val = json_string_value(json_array_get(tag, 1));
+
+            if (tag_name && tag_val && strcmp(tag_name, "d") == 0) {
+                data->d_tag = g_strdup(tag_val);
+                gnostr_app_data_parse_d_tag(tag_val, &data->app_id, &data->data_key);
+                break;
+            }
+        }
+    }
+
+    json_decref(root);
+
+    /* Validate we have the minimum required data */
+    if (!data->d_tag) {
+        g_warning("nip78: event missing d-tag");
+        gnostr_app_data_free(data);
+        return NULL;
+    }
+
+    return data;
+}
+
+/* ---- Event Creation ---- */
+
+char *gnostr_app_data_build_event_json(const char *app_id,
+                                        const char *data_key,
+                                        const char *content) {
+    return gnostr_app_data_build_event_json_full(app_id, data_key, content, NULL);
+}
+
+char *gnostr_app_data_build_event_json_full(const char *app_id,
+                                             const char *data_key,
+                                             const char *content,
+                                             json_t *extra_tags) {
+    if (!app_id || !*app_id) return NULL;
+
+    g_autofree char *d_tag = gnostr_app_data_build_d_tag(app_id, data_key);
+    if (!d_tag) return NULL;
+
+    /* Build tags array */
+    json_t *tags = json_array();
+
+    /* Add d-tag */
+    json_t *d_tag_arr = json_array();
+    json_array_append_new(d_tag_arr, json_string("d"));
+    json_array_append_new(d_tag_arr, json_string(d_tag));
+    json_array_append_new(tags, d_tag_arr);
+
+    /* Add extra tags if provided */
+    if (extra_tags && json_is_array(extra_tags)) {
+        size_t idx;
+        json_t *tag;
+        json_array_foreach(extra_tags, idx, tag) {
+            json_array_append(tags, tag);
+        }
+    }
+
+    /* Build event object */
+    json_t *event = json_object();
+    json_object_set_new(event, "kind", json_integer(GNOSTR_NIP78_KIND_APP_DATA));
+    json_object_set_new(event, "created_at", json_integer((json_int_t)time(NULL)));
+    json_object_set_new(event, "content", json_string(content ? content : ""));
+    json_object_set_new(event, "tags", tags);
+
+    char *result = json_dumps(event, JSON_COMPACT);
+    json_decref(event);
+
+    return result;
+}
+
+/* ---- JSON Content Helpers ---- */
+
+const char *gnostr_app_data_get_json_string(const GnostrAppData *data,
+                                             const char *key) {
+    if (!data || !data->content_json || !key) return NULL;
+    if (!json_is_object(data->content_json)) return NULL;
+
+    json_t *val = json_object_get(data->content_json, key);
+    if (!val || !json_is_string(val)) return NULL;
+
+    return json_string_value(val);
+}
+
+gint64 gnostr_app_data_get_json_int(const GnostrAppData *data,
+                                     const char *key,
+                                     gint64 default_val) {
+    if (!data || !data->content_json || !key) return default_val;
+    if (!json_is_object(data->content_json)) return default_val;
+
+    json_t *val = json_object_get(data->content_json, key);
+    if (!val || !json_is_integer(val)) return default_val;
+
+    return json_integer_value(val);
+}
+
+gboolean gnostr_app_data_get_json_bool(const GnostrAppData *data,
+                                        const char *key,
+                                        gboolean default_val) {
+    if (!data || !data->content_json || !key) return default_val;
+    if (!json_is_object(data->content_json)) return default_val;
+
+    json_t *val = json_object_get(data->content_json, key);
+    if (!val) return default_val;
+
+    if (json_is_boolean(val)) {
+        return json_boolean_value(val);
+    } else if (json_is_integer(val)) {
+        return json_integer_value(val) != 0;
+    }
+
+    return default_val;
+}
+
+json_t *gnostr_app_data_get_json_array(const GnostrAppData *data,
+                                        const char *key) {
+    if (!data || !data->content_json || !key) return NULL;
+    if (!json_is_object(data->content_json)) return NULL;
+
+    json_t *val = json_object_get(data->content_json, key);
+    if (!val || !json_is_array(val)) return NULL;
+
+    return val;
+}
+
+json_t *gnostr_app_data_get_json_object(const GnostrAppData *data,
+                                         const char *key) {
+    if (!data || !data->content_json || !key) return NULL;
+    if (!json_is_object(data->content_json)) return NULL;
+
+    json_t *val = json_object_get(data->content_json, key);
+    if (!val || !json_is_object(val)) return NULL;
+
+    return val;
+}
+
+/* ---- Utility ---- */
+
+gboolean gnostr_app_data_is_valid_app_id(const char *app_id) {
+    if (!app_id || !*app_id) return FALSE;
+
+    /* Must not contain '/' */
+    if (strchr(app_id, '/') != NULL) return FALSE;
+
+    /* Allow alphanumeric, hyphens, underscores, dots */
+    for (const char *p = app_id; *p; p++) {
+        if (!g_ascii_isalnum(*p) && *p != '-' && *p != '_' && *p != '.') {
+            return FALSE;
+        }
+    }
+
+    return TRUE;
+}
+
+gboolean gnostr_app_data_is_valid_data_key(const char *data_key) {
+    if (!data_key) return TRUE; /* NULL is valid (no data key) */
+
+    /* Must not contain '/' to avoid nested paths */
+    if (strchr(data_key, '/') != NULL) return FALSE;
+
+    return TRUE;
+}
+
+/* ---- Relay Operations ---- */
+
+#ifndef GNOSTR_NIP78_TEST_ONLY
+
+/* Singleton pool for NIP-78 queries */
+static GnostrSimplePool *s_nip78_pool = NULL;
+
+static GnostrSimplePool *get_nip78_pool(void) {
+    if (!s_nip78_pool) {
+        s_nip78_pool = gnostr_simple_pool_new();
+    }
+    return s_nip78_pool;
+}
+
+/* ---- Fetch Single ---- */
+
+typedef struct {
+    char *pubkey_hex;
+    char *app_id;
+    char *data_key;
+    char *d_tag;
+    GnostrAppDataFetchCallback callback;
+    gpointer user_data;
+} FetchSingleContext;
+
+static void fetch_single_context_free(FetchSingleContext *ctx) {
+    if (!ctx) return;
+    g_free(ctx->pubkey_hex);
+    g_free(ctx->app_id);
+    g_free(ctx->data_key);
+    g_free(ctx->d_tag);
+    g_free(ctx);
+}
+
+static void on_fetch_single_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+    FetchSingleContext *ctx = (FetchSingleContext *)user_data;
+    if (!ctx) return;
+
+    GError *err = NULL;
+    GPtrArray *results = gnostr_simple_pool_query_single_finish(
+        GNOSTR_SIMPLE_POOL(source), res, &err);
+
+    if (err) {
+        if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+            g_warning("nip78: fetch failed: %s", err->message);
+        }
+        if (ctx->callback) {
+            ctx->callback(NULL, FALSE, err->message, ctx->user_data);
+        }
+        g_error_free(err);
+        fetch_single_context_free(ctx);
+        return;
+    }
+
+    GnostrAppData *newest = NULL;
+    gint64 newest_created_at = 0;
+
+    /* Find the newest event matching our d-tag */
+    if (results && results->len > 0) {
+        for (guint i = 0; i < results->len; i++) {
+            const char *json = g_ptr_array_index(results, i);
+            GnostrAppData *data = gnostr_app_data_parse_event(json);
+
+            if (data && g_strcmp0(data->d_tag, ctx->d_tag) == 0) {
+                if (data->created_at > newest_created_at) {
+                    gnostr_app_data_free(newest);
+                    newest = data;
+                    newest_created_at = data->created_at;
+                } else {
+                    gnostr_app_data_free(data);
+                }
+            } else {
+                gnostr_app_data_free(data);
+            }
+        }
+    }
+
+    if (results) g_ptr_array_unref(results);
+
+    if (ctx->callback) {
+        ctx->callback(newest, newest != NULL,
+                     newest ? NULL : "No matching data found",
+                     ctx->user_data);
+    }
+
+    /* Note: caller owns newest, don't free it */
+    fetch_single_context_free(ctx);
+}
+
+void gnostr_app_data_fetch_async(const char *pubkey_hex,
+                                  const char *app_id,
+                                  const char *data_key,
+                                  GnostrAppDataFetchCallback callback,
+                                  gpointer user_data) {
+    if (!pubkey_hex || !app_id) {
+        if (callback) callback(NULL, FALSE, "Missing pubkey or app_id", user_data);
+        return;
+    }
+
+    char *d_tag = gnostr_app_data_build_d_tag(app_id, data_key);
+    if (!d_tag) {
+        if (callback) callback(NULL, FALSE, "Failed to build d-tag", user_data);
+        return;
+    }
+
+    FetchSingleContext *ctx = g_new0(FetchSingleContext, 1);
+    ctx->pubkey_hex = g_strdup(pubkey_hex);
+    ctx->app_id = g_strdup(app_id);
+    ctx->data_key = g_strdup(data_key);
+    ctx->d_tag = d_tag;
+    ctx->callback = callback;
+    ctx->user_data = user_data;
+
+    /* Build filter */
+    NostrFilter *filter = nostr_filter_new();
+    int kinds[1] = { GNOSTR_NIP78_KIND_APP_DATA };
+    nostr_filter_set_kinds(filter, kinds, 1);
+    const char *authors[1] = { pubkey_hex };
+    nostr_filter_set_authors(filter, authors, 1);
+    nostr_filter_set_limit(filter, 10);
+
+    /* Get relay URLs */
+    GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);
+    gnostr_load_relays_into(relay_arr);
+
+    if (relay_arr->len == 0) {
+        if (callback) callback(NULL, FALSE, "No relays configured", user_data);
+        nostr_filter_free(filter);
+        g_ptr_array_unref(relay_arr);
+        fetch_single_context_free(ctx);
+        return;
+    }
+
+    const char **urls = g_new0(const char*, relay_arr->len);
+    for (guint i = 0; i < relay_arr->len; i++) {
+        urls[i] = g_ptr_array_index(relay_arr, i);
+    }
+
+    g_message("nip78: fetching app data %s/%s for %.8s...",
+              app_id, data_key ? data_key : "", pubkey_hex);
+
+    gnostr_simple_pool_query_single_async(
+        get_nip78_pool(),
+        urls,
+        relay_arr->len,
+        filter,
+        NULL,
+        on_fetch_single_done,
+        ctx
+    );
+
+    g_free(urls);
+    g_ptr_array_unref(relay_arr);
+    nostr_filter_free(filter);
+}
+
+/* ---- Fetch All ---- */
+
+typedef struct {
+    char *pubkey_hex;
+    char *app_id;
+    GnostrAppDataListCallback callback;
+    gpointer user_data;
+} FetchAllContext;
+
+static void fetch_all_context_free(FetchAllContext *ctx) {
+    if (!ctx) return;
+    g_free(ctx->pubkey_hex);
+    g_free(ctx->app_id);
+    g_free(ctx);
+}
+
+static void on_fetch_all_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+    FetchAllContext *ctx = (FetchAllContext *)user_data;
+    if (!ctx) return;
+
+    GError *err = NULL;
+    GPtrArray *results = gnostr_simple_pool_query_single_finish(
+        GNOSTR_SIMPLE_POOL(source), res, &err);
+
+    if (err) {
+        if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+            g_warning("nip78: fetch all failed: %s", err->message);
+        }
+        if (ctx->callback) {
+            ctx->callback(NULL, FALSE, err->message, ctx->user_data);
+        }
+        g_error_free(err);
+        fetch_all_context_free(ctx);
+        return;
+    }
+
+    /* Hash table to track newest event per d-tag */
+    GHashTable *by_d_tag = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                                  g_free, (GDestroyNotify)gnostr_app_data_free);
+
+    /* Build prefix for filtering */
+    char *prefix = g_strdup_printf("%s/", ctx->app_id);
+    size_t prefix_len = strlen(prefix);
+
+    if (results && results->len > 0) {
+        for (guint i = 0; i < results->len; i++) {
+            const char *json = g_ptr_array_index(results, i);
+            GnostrAppData *data = gnostr_app_data_parse_event(json);
+
+            if (!data || !data->d_tag) {
+                gnostr_app_data_free(data);
+                continue;
+            }
+
+            /* Check if d-tag matches our app_id */
+            gboolean matches = (g_strcmp0(data->d_tag, ctx->app_id) == 0) ||
+                              (strncmp(data->d_tag, prefix, prefix_len) == 0);
+
+            if (!matches) {
+                gnostr_app_data_free(data);
+                continue;
+            }
+
+            /* Check if newer than existing entry for this d-tag */
+            GnostrAppData *existing = g_hash_table_lookup(by_d_tag, data->d_tag);
+            if (!existing || data->created_at > existing->created_at) {
+                g_hash_table_insert(by_d_tag, g_strdup(data->d_tag), data);
+            } else {
+                gnostr_app_data_free(data);
+            }
+        }
+    }
+
+    g_free(prefix);
+    if (results) g_ptr_array_unref(results);
+
+    /* Convert hash table to array */
+    GPtrArray *data_list = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_app_data_free);
+
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, by_d_tag);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        GnostrAppData *data = (GnostrAppData *)value;
+        g_ptr_array_add(data_list, gnostr_app_data_copy(data));
+    }
+
+    g_hash_table_destroy(by_d_tag);
+
+    g_message("nip78: fetched %u app data entries for %s", data_list->len, ctx->app_id);
+
+    if (ctx->callback) {
+        ctx->callback(data_list, TRUE, NULL, ctx->user_data);
+    }
+
+    /* Note: caller owns data_list */
+    fetch_all_context_free(ctx);
+}
+
+void gnostr_app_data_fetch_all_async(const char *pubkey_hex,
+                                      const char *app_id,
+                                      GnostrAppDataListCallback callback,
+                                      gpointer user_data) {
+    if (!pubkey_hex || !app_id) {
+        if (callback) callback(NULL, FALSE, "Missing pubkey or app_id", user_data);
+        return;
+    }
+
+    FetchAllContext *ctx = g_new0(FetchAllContext, 1);
+    ctx->pubkey_hex = g_strdup(pubkey_hex);
+    ctx->app_id = g_strdup(app_id);
+    ctx->callback = callback;
+    ctx->user_data = user_data;
+
+    /* Build filter for all kind 30078 from this author */
+    NostrFilter *filter = nostr_filter_new();
+    int kinds[1] = { GNOSTR_NIP78_KIND_APP_DATA };
+    nostr_filter_set_kinds(filter, kinds, 1);
+    const char *authors[1] = { pubkey_hex };
+    nostr_filter_set_authors(filter, authors, 1);
+    nostr_filter_set_limit(filter, 100);
+
+    /* Get relay URLs */
+    GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);
+    gnostr_load_relays_into(relay_arr);
+
+    if (relay_arr->len == 0) {
+        if (callback) callback(NULL, FALSE, "No relays configured", user_data);
+        nostr_filter_free(filter);
+        g_ptr_array_unref(relay_arr);
+        fetch_all_context_free(ctx);
+        return;
+    }
+
+    const char **urls = g_new0(const char*, relay_arr->len);
+    for (guint i = 0; i < relay_arr->len; i++) {
+        urls[i] = g_ptr_array_index(relay_arr, i);
+    }
+
+    g_message("nip78: fetching all app data for %s from %.8s...", app_id, pubkey_hex);
+
+    gnostr_simple_pool_query_single_async(
+        get_nip78_pool(),
+        urls,
+        relay_arr->len,
+        filter,
+        NULL,
+        on_fetch_all_done,
+        ctx
+    );
+
+    g_free(urls);
+    g_ptr_array_unref(relay_arr);
+    nostr_filter_free(filter);
+}
+
+/* ---- Publish ---- */
+
+typedef struct {
+    char *app_id;
+    char *data_key;
+    char *content;
+    char *event_json;
+    GnostrAppDataCallback callback;
+    gpointer user_data;
+} PublishContext;
+
+static void publish_context_free(PublishContext *ctx) {
+    if (!ctx) return;
+    g_free(ctx->app_id);
+    g_free(ctx->data_key);
+    g_free(ctx->content);
+    g_free(ctx->event_json);
+    g_free(ctx);
+}
+
+static void on_publish_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
+    PublishContext *ctx = (PublishContext *)user_data;
+    (void)source;
+    if (!ctx) return;
+
+    GError *error = NULL;
+    char *signed_event_json = NULL;
+
+    gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
+
+    if (!ok || !signed_event_json) {
+        g_warning("nip78: signing failed: %s", error ? error->message : "unknown");
+        if (ctx->callback) {
+            ctx->callback(FALSE, error ? error->message : "Signing failed", ctx->user_data);
+        }
+        g_clear_error(&error);
+        publish_context_free(ctx);
+        return;
+    }
+
+    /* Parse signed event */
+    NostrEvent *event = nostr_event_new();
+    int parse_rc = nostr_event_deserialize_compact(event, signed_event_json);
+    if (parse_rc != 1) {
+        g_warning("nip78: failed to parse signed event");
+        if (ctx->callback) {
+            ctx->callback(FALSE, "Failed to parse signed event", ctx->user_data);
+        }
+        nostr_event_free(event);
+        g_free(signed_event_json);
+        publish_context_free(ctx);
+        return;
+    }
+
+    /* Get relay URLs */
+    GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
+    gnostr_get_write_relay_urls_into(relay_urls);
+    if (relay_urls->len == 0) {
+        gnostr_load_relays_into(relay_urls);
+    }
+
+    /* Publish to relays */
+    guint success_count = 0;
+    guint fail_count = 0;
+
+    for (guint i = 0; i < relay_urls->len; i++) {
+        const char *url = g_ptr_array_index(relay_urls, i);
+        GNostrRelay *relay = gnostr_relay_new(url);
+        if (!relay) {
+            fail_count++;
+            continue;
+        }
+
+        GError *conn_err = NULL;
+        if (!gnostr_relay_connect(relay, &conn_err)) {
+            g_debug("nip78: failed to connect to %s: %s",
+                    url, conn_err ? conn_err->message : "unknown");
+            g_clear_error(&conn_err);
+            g_object_unref(relay);
+            fail_count++;
+            continue;
+        }
+
+        GError *pub_err = NULL;
+        if (gnostr_relay_publish(relay, event, &pub_err)) {
+            g_message("nip78: published to %s", url);
+            success_count++;
+        } else {
+            g_debug("nip78: publish failed to %s: %s",
+                    url, pub_err ? pub_err->message : "unknown");
+            g_clear_error(&pub_err);
+            fail_count++;
+        }
+        g_object_unref(relay);
+    }
+
+    nostr_event_free(event);
+    g_free(signed_event_json);
+    g_ptr_array_free(relay_urls, TRUE);
+
+    g_message("nip78: published to %u relays, failed %u", success_count, fail_count);
+
+    if (ctx->callback) {
+        if (success_count > 0) {
+            ctx->callback(TRUE, NULL, ctx->user_data);
+        } else {
+            ctx->callback(FALSE, "Failed to publish to any relay", ctx->user_data);
+        }
+    }
+
+    publish_context_free(ctx);
+}
+
+void gnostr_app_data_publish_async(const char *app_id,
+                                    const char *data_key,
+                                    const char *content,
+                                    GnostrAppDataCallback callback,
+                                    gpointer user_data) {
+    if (!app_id) {
+        if (callback) callback(FALSE, "Missing app_id", user_data);
+        return;
+    }
+
+    /* Check signer availability */
+    GnostrSignerService *signer = gnostr_signer_service_get_default();
+    if (!gnostr_signer_service_is_available(signer)) {
+        if (callback) callback(FALSE, "Signer not available", user_data);
+        return;
+    }
+
+    /* Build unsigned event */
+    char *event_json = gnostr_app_data_build_event_json(app_id, data_key, content);
+    if (!event_json) {
+        if (callback) callback(FALSE, "Failed to build event JSON", user_data);
+        return;
+    }
+
+    PublishContext *ctx = g_new0(PublishContext, 1);
+    ctx->app_id = g_strdup(app_id);
+    ctx->data_key = g_strdup(data_key);
+    ctx->content = g_strdup(content);
+    ctx->event_json = event_json;
+    ctx->callback = callback;
+    ctx->user_data = user_data;
+
+    g_message("nip78: requesting signature for %s/%s", app_id, data_key ? data_key : "");
+
+    gnostr_sign_event_async(
+        event_json,
+        "",
+        "gnostr",
+        NULL,
+        on_publish_sign_complete,
+        ctx
+    );
+}
+
+void gnostr_app_data_delete_async(const char *app_id,
+                                   const char *data_key,
+                                   GnostrAppDataCallback callback,
+                                   gpointer user_data) {
+    /* Delete by publishing empty content */
+    gnostr_app_data_publish_async(app_id, data_key, "", callback, user_data);
+}
+
+#else /* GNOSTR_NIP78_TEST_ONLY */
+
+void gnostr_app_data_fetch_async(const char *pubkey_hex,
+                                  const char *app_id,
+                                  const char *data_key,
+                                  GnostrAppDataFetchCallback callback,
+                                  gpointer user_data) {
+    (void)pubkey_hex;
+    (void)app_id;
+    (void)data_key;
+    g_message("nip78: fetch requested (test stub)");
+    if (callback) callback(NULL, TRUE, NULL, user_data);
+}
+
+void gnostr_app_data_fetch_all_async(const char *pubkey_hex,
+                                      const char *app_id,
+                                      GnostrAppDataListCallback callback,
+                                      gpointer user_data) {
+    (void)pubkey_hex;
+    (void)app_id;
+    g_message("nip78: fetch all requested (test stub)");
+    GPtrArray *empty = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_app_data_free);
+    if (callback) callback(empty, TRUE, NULL, user_data);
+}
+
+void gnostr_app_data_publish_async(const char *app_id,
+                                    const char *data_key,
+                                    const char *content,
+                                    GnostrAppDataCallback callback,
+                                    gpointer user_data) {
+    (void)app_id;
+    (void)data_key;
+    (void)content;
+    g_message("nip78: publish requested (test stub)");
+    if (callback) callback(TRUE, NULL, user_data);
+}
+
+void gnostr_app_data_delete_async(const char *app_id,
+                                   const char *data_key,
+                                   GnostrAppDataCallback callback,
+                                   gpointer user_data) {
+    (void)app_id;
+    (void)data_key;
+    g_message("nip78: delete requested (test stub)");
+    if (callback) callback(TRUE, NULL, user_data);
+}
+
+#endif /* GNOSTR_NIP78_TEST_ONLY */

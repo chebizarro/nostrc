@@ -4,6 +4,9 @@
  * Parsing, building, and formatting for calendar events.
  */
 
+/* Required for strptime on POSIX systems */
+#define _XOPEN_SOURCE 700
+
 #include "nip52_calendar.h"
 #include <json-glib/json-glib.h>
 #include <string.h>
