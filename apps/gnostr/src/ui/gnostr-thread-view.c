@@ -251,6 +251,22 @@ static void on_note_view_thread(GnostrNoteCardRow *row, const char *root_event_i
   gnostr_thread_view_set_thread_root(self, root_event_id);
 }
 
+/* NIP-56: Handler for report-note-requested signal - relay to main window */
+static void on_note_report_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+  (void)user_data;
+  /* Walk up the widget tree to find the main window */
+  GtkWidget *widget = GTK_WIDGET(row);
+  while (widget) {
+    widget = gtk_widget_get_parent(widget);
+    if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
+      /* Found the main window, call method to report note */
+      extern void gnostr_main_window_request_report_note(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
+      gnostr_main_window_request_report_note(widget, id_hex, pubkey_hex);
+      break;
+    }
+  }
+}
+
 /* Class init */
 static void gnostr_thread_view_class_init(GnostrThreadViewClass *klass) {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
@@ -686,6 +702,7 @@ static GtkWidget *create_note_card_for_item(GnostrThreadView *self, ThreadEventI
   /* Connect signals */
   g_signal_connect(row, "open-profile", G_CALLBACK(on_note_open_profile), self);
   g_signal_connect(row, "view-thread-requested", G_CALLBACK(on_note_view_thread), self);
+  g_signal_connect(row, "report-note-requested", G_CALLBACK(on_note_report_requested), self);
 
   /* Highlight focus event */
   if (self->focus_event_id && g_strcmp0(item->id_hex, self->focus_event_id) == 0) {

@@ -24,6 +24,7 @@
     <file>ui/dialogs/gnostr-mute-list.ui</file>
     <file>ui/dialogs/gnostr-login.ui</file>
     <file>ui/dialogs/gnostr-about-dialog.ui</file>
+    <file>ui/dialogs/gnostr-report-dialog.ui</file>
     <file>ui/styles/gnostr.css</file>
   </gresource>
   <gresource prefix="/org/gnostr/assets">

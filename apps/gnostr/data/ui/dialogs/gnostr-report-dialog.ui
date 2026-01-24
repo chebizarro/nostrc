@@ -1,0 +1,393 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnostrReportDialog" parent="GtkWindow">
+    <property name="modal">true</property>
+    <property name="title">Report Content</property>
+    <property name="default-width">400</property>
+    <property name="default-height">450</property>
+    <property name="resizable">false</property>
+    <!-- Header bar as titlebar for proper CSD on GNOME -->
+    <child type="titlebar">
+      <object class="GtkHeaderBar">
+        <property name="show-title-buttons">false</property>
+        <child type="start">
+          <object class="GtkButton" id="btn_cancel">
+            <property name="label">Cancel</property>
+            <property name="tooltip-text">Cancel report</property>
+            <signal name="clicked" handler="on_cancel_clicked"/>
+          </object>
+        </child>
+        <child type="title">
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">8</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">dialog-warning-symbolic</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Report Content</property>
+                <style>
+                  <class name="title"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">0</property>
+
+        <!-- Toast revealer -->
+        <child>
+          <object class="GtkRevealer" id="toast_revealer">
+            <property name="reveal-child">false</property>
+            <property name="transition-type">slide-down</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <property name="margin-top">8</property>
+                <property name="margin-bottom">8</property>
+                <style>
+                  <class name="app-notification"/>
+                </style>
+                <child>
+                  <object class="GtkLabel" id="toast_label">
+                    <property name="label"></property>
+                    <property name="hexpand">true</property>
+                    <property name="xalign">0</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Main content -->
+        <child>
+          <object class="GtkBox" id="content_box">
+            <property name="orientation">vertical</property>
+            <property name="spacing">16</property>
+            <property name="margin-start">24</property>
+            <property name="margin-end">24</property>
+            <property name="margin-top">16</property>
+            <property name="margin-bottom">24</property>
+            <property name="vexpand">true</property>
+
+            <!-- Info text -->
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Report this content for violating community guidelines. Your report will be published to relays.</property>
+                <property name="wrap">true</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+
+            <!-- Report reason selection -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">8</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">Reason for report</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="heading"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkListBox" id="reason_list">
+                    <property name="selection-mode">single</property>
+                    <style>
+                      <class name="boxed-list"/>
+                    </style>
+                    <child>
+                      <object class="GtkListBoxRow" id="row_nudity">
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">12</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">10</property>
+                            <property name="margin-bottom">10</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">emblem-photos-symbolic</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label">Nudity</property>
+                                <property name="hexpand">true</property>
+                                <property name="xalign">0</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkListBoxRow" id="row_malware">
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">12</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">10</property>
+                            <property name="margin-bottom">10</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">security-low-symbolic</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label">Malware</property>
+                                <property name="hexpand">true</property>
+                                <property name="xalign">0</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkListBoxRow" id="row_profanity">
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">12</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">10</property>
+                            <property name="margin-bottom">10</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">dialog-warning-symbolic</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label">Profanity</property>
+                                <property name="hexpand">true</property>
+                                <property name="xalign">0</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkListBoxRow" id="row_illegal">
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">12</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">10</property>
+                            <property name="margin-bottom">10</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">action-unavailable-symbolic</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label">Illegal content</property>
+                                <property name="hexpand">true</property>
+                                <property name="xalign">0</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkListBoxRow" id="row_spam">
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">12</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">10</property>
+                            <property name="margin-bottom">10</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">mail-mark-junk-symbolic</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label">Spam</property>
+                                <property name="hexpand">true</property>
+                                <property name="xalign">0</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkListBoxRow" id="row_impersonation">
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">12</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">10</property>
+                            <property name="margin-bottom">10</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">avatar-default-symbolic</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label">Impersonation</property>
+                                <property name="hexpand">true</property>
+                                <property name="xalign">0</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkListBoxRow" id="row_other">
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">12</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">10</property>
+                            <property name="margin-bottom">10</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">help-about-symbolic</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label">Other</property>
+                                <property name="hexpand">true</property>
+                                <property name="xalign">0</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Optional comment entry -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">8</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">Additional details (optional)</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkEntry" id="entry_comment">
+                    <property name="placeholder-text">Describe the issue...</property>
+                    <property name="max-length">280</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Spacer -->
+            <child>
+              <object class="GtkBox">
+                <property name="vexpand">true</property>
+              </object>
+            </child>
+
+            <!-- Status/error display -->
+            <child>
+              <object class="GtkBox" id="status_box">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <property name="halign">center</property>
+                <property name="visible">false</property>
+                <child>
+                  <object class="GtkSpinner" id="spinner">
+                    <property name="spinning">true</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_status">
+                    <property name="label">Submitting report...</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Submit button -->
+            <child>
+              <object class="GtkButton" id="btn_submit">
+                <property name="halign">center</property>
+                <property name="tooltip-text">Submit report</property>
+                <signal name="clicked" handler="on_submit_clicked"/>
+                <style>
+                  <class name="destructive-action"/>
+                  <class name="pill"/>
+                </style>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">8</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">dialog-warning-symbolic</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="lbl_submit_button">
+                        <property name="label">Submit Report</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+          </object>
+        </child>
+
+      </object>
+    </child>
+  </template>
+</interface>
