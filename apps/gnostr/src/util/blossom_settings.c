@@ -8,7 +8,7 @@
  */
 
 #include "blossom_settings.h"
-#include "../ipc/signer_ipc.h"
+#include "../ipc/gnostr-signer-service.h"
 #include "relays.h"
 #include <string.h>
 #include <time.h>
@@ -342,13 +342,13 @@ static void blossom_publish_ctx_free(BlossomPublishCtx *ctx) {
 
 static void on_blossom_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   BlossomPublishCtx *ctx = (BlossomPublishCtx*)user_data;
+  (void)source;
   if (!ctx) return;
 
-  NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
   GError *error = NULL;
   gchar *signed_event_json = NULL;
 
-  gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(proxy, &signed_event_json, res, &error);
+  gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
 
   if (!ok || !signed_event_json) {
     g_warning("blossom: signing failed: %s", error ? error->message : "unknown error");
@@ -590,19 +590,15 @@ void gnostr_blossom_settings_load_from_relays_async(const char *pubkey_hex,
 
 void gnostr_blossom_settings_publish_async(GnostrBlossomSettingsPublishCallback callback,
                                              gpointer user_data) {
-  /* Get signer proxy */
-  GError *proxy_err = NULL;
-  NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
-  if (!proxy) {
-    gchar *msg = g_strdup_printf("Signer not available: %s",
-                                  proxy_err ? proxy_err->message : "not connected");
+  /* Check if signer service is available */
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  if (!gnostr_signer_service_is_available(signer)) {
     if (callback) {
-      GError *err = g_error_new_literal(g_quark_from_static_string("blossom-settings"), 1, msg);
+      GError *err = g_error_new_literal(g_quark_from_static_string("blossom-settings"), 1,
+                                         "Signer not available");
       callback(FALSE, err, user_data);
       g_error_free(err);
     }
-    g_free(msg);
-    g_clear_error(&proxy_err);
     return;
   }
 
@@ -626,12 +622,11 @@ void gnostr_blossom_settings_publish_async(GnostrBlossomSettingsPublishCallback 
   ctx->user_data = user_data;
   ctx->event_json = event_json;
 
-  /* Call signer asynchronously */
-  nostr_org_nostr_signer_call_sign_event(
-    proxy,
+  /* Call unified signer service (uses NIP-46 or NIP-55L based on login method) */
+  gnostr_sign_event_async(
     event_json,
-    "",        /* current_user: empty = use default */
-    "gnostr",  /* app_id */
+    "",        /* current_user: ignored */
+    "gnostr",  /* app_id: ignored */
     NULL,      /* cancellable */
     on_blossom_sign_complete,
     ctx

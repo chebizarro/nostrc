@@ -53,6 +53,7 @@
 /* Blossom server settings (kind 10063) */
 #include "../util/blossom_settings.h"
 #include "gnostr-login.h"
+#include "gnostr-report-dialog.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -4247,14 +4248,10 @@ void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, co
     return;
   }
 
-  /* Get signer proxy */
-  GError *proxy_err = NULL;
-  NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
-  if (!proxy) {
-    char *msg = g_strdup_printf("Signer not available: %s", proxy_err ? proxy_err->message : "not connected");
-    show_toast(self, msg);
-    g_free(msg);
-    g_clear_error(&proxy_err);
+  /* Check if signer service is available */
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  if (!gnostr_signer_service_is_available(signer)) {
+    show_toast(self, "Signer not available");
     return;
   }
 
@@ -4302,12 +4299,11 @@ void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, co
   ctx->self = self;
   ctx->text = g_strdup(""); /* repost has no text content */
 
-  /* Call signer asynchronously */
-  nostr_org_nostr_signer_call_sign_event(
-    proxy,
+  /* Call unified signer service (uses NIP-46 or NIP-55L based on login method) */
+  gnostr_sign_event_async(
     event_json,
-    "",              /* current_user: empty = use default */
-    "gnostr",        /* app_id */
+    "",              /* current_user: ignored */
+    "gnostr",        /* app_id: ignored */
     NULL,            /* cancellable */
     on_sign_event_complete,
     ctx
@@ -4345,14 +4341,10 @@ void gnostr_main_window_request_delete_note(GtkWidget *window, const char *id_he
     return;
   }
 
-  /* Get signer proxy */
-  GError *proxy_err = NULL;
-  NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
-  if (!proxy) {
-    char *msg = g_strdup_printf("Signer not available: %s", proxy_err ? proxy_err->message : "not connected");
-    show_toast(self, msg);
-    g_free(msg);
-    g_clear_error(&proxy_err);
+  /* Check if signer service is available */
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  if (!gnostr_signer_service_is_available(signer)) {
+    show_toast(self, "Signer not available");
     return;
   }
 
@@ -4400,17 +4392,50 @@ void gnostr_main_window_request_delete_note(GtkWidget *window, const char *id_he
   ctx->self = self;
   ctx->text = g_strdup(""); /* deletion has no text content */
 
-  /* Call signer asynchronously */
-  nostr_org_nostr_signer_call_sign_event(
-    proxy,
+  /* Call unified signer service (uses NIP-46 or NIP-55L based on login method) */
+  gnostr_sign_event_async(
     event_json,
-    "",              /* current_user: empty = use default */
-    "gnostr",        /* app_id */
+    "",              /* current_user: ignored */
+    "gnostr",        /* app_id: ignored */
     NULL,            /* cancellable */
     on_sign_event_complete,
     ctx
   );
   g_free(event_json);
+}
+
+/* ================= NIP-56 Report Implementation ================= */
+
+/* Public wrapper for reporting a note/user (kind 1984) per NIP-56 */
+void gnostr_main_window_request_report_note(GtkWidget *window, const char *id_hex, const char *pubkey_hex) {
+  if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  g_debug("[NIP-56] Request report of id=%s pubkey=%.8s...",
+            id_hex ? id_hex : "(null)",
+            pubkey_hex ? pubkey_hex : "(null)");
+
+  /* Verify user is signed in */
+  if (!self->user_pubkey_hex || !*self->user_pubkey_hex) {
+    show_toast(self, "Sign in to report content");
+    return;
+  }
+
+  /* Validate pubkey */
+  if (!pubkey_hex || strlen(pubkey_hex) != 64) {
+    show_toast(self, "Invalid target for report");
+    return;
+  }
+
+  /* Create and show report dialog */
+  GnostrReportDialog *dialog = gnostr_report_dialog_new(GTK_WINDOW(self));
+  gnostr_report_dialog_set_target(dialog, id_hex, pubkey_hex);
+
+  /* Connect to signals for feedback */
+  g_signal_connect_swapped(dialog, "report-sent", G_CALLBACK(gtk_window_destroy), dialog);
+
+  gtk_window_present(GTK_WINDOW(dialog));
 }
 
 /* ================= NIP-25 Like/Reaction Implementation ================= */
@@ -4428,19 +4453,19 @@ static void like_context_free(LikeContext *ctx) {
   g_free(ctx);
 }
 
-/* Callback when DBus sign_event completes for like/reaction */
+/* Callback when unified signer completes signing for like/reaction */
 static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   LikeContext *ctx = (LikeContext*)user_data;
+  (void)source;
   if (!ctx || !GNOSTR_IS_MAIN_WINDOW(ctx->self)) {
     like_context_free(ctx);
     return;
   }
   GnostrMainWindow *self = ctx->self;
-  NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
 
   GError *error = NULL;
   char *signed_event_json = NULL;
-  gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(proxy, &signed_event_json, res, &error);
+  gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
 
   if (!ok || !signed_event_json) {
     char *msg = g_strdup_printf("Like signing failed: %s", error ? error->message : "unknown error");
@@ -4583,14 +4608,10 @@ void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, cons
     return;
   }
 
-  /* Get signer proxy */
-  GError *proxy_err = NULL;
-  NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
-  if (!proxy) {
-    char *msg = g_strdup_printf("Signer not available: %s", proxy_err ? proxy_err->message : "not connected");
-    show_toast(self, msg);
-    g_free(msg);
-    g_clear_error(&proxy_err);
+  /* Check if signer service is available */
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  if (!gnostr_signer_service_is_available(signer)) {
+    show_toast(self, "Signer not available");
     return;
   }
 
@@ -4644,12 +4665,11 @@ void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, cons
   ctx->event_id_hex = g_strdup(id_hex);
   ctx->row = row; /* weak ref - may be invalid by callback time */
 
-  /* Call signer asynchronously */
-  nostr_org_nostr_signer_call_sign_event(
-    proxy,
+  /* Call unified signer service (uses NIP-46 or NIP-55L based on login method) */
+  gnostr_sign_event_async(
     event_json,
-    "",              /* current_user: empty = use default */
-    "gnostr",        /* app_id */
+    "",              /* current_user: ignored */
+    "gnostr",        /* app_id: ignored */
     NULL,            /* cancellable */
     on_sign_like_event_complete,
     ctx
@@ -4759,6 +4779,18 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
     }
   }
 
+  /* NIP-14: Add subject tag if present */
+  if (composer && GNOSTR_IS_COMPOSER(composer)) {
+    const char *subject = gnostr_composer_get_subject(GNOSTR_COMPOSER(composer));
+    if (subject && *subject) {
+      json_t *subject_tag = json_array();
+      json_array_append_new(subject_tag, json_string("subject"));
+      json_array_append_new(subject_tag, json_string(subject));
+      json_array_append_new(tags, subject_tag);
+      g_debug("[PUBLISH] Added subject tag: %s", subject);
+    }
+  }
+
   /* NIP-92: Add imeta tags for uploaded media */
   if (composer && GNOSTR_IS_COMPOSER(composer)) {
     gsize media_count = gnostr_composer_get_uploaded_media_count(GNOSTR_COMPOSER(composer));
@@ -4803,6 +4835,32 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
                 m->url, m->mime_type ? m->mime_type : "?",
                 m->sha256 ? m->sha256 : "?");
       }
+    }
+  }
+
+  /* NIP-40: Add expiration tag if set */
+  if (composer && GNOSTR_IS_COMPOSER(composer)) {
+    gint64 expiration = gnostr_composer_get_expiration(GNOSTR_COMPOSER(composer));
+    if (expiration > 0) {
+      json_t *expiration_tag = json_array();
+      json_array_append_new(expiration_tag, json_string("expiration"));
+      char expiration_str[32];
+      g_snprintf(expiration_str, sizeof(expiration_str), "%" G_GINT64_FORMAT, expiration);
+      json_array_append_new(expiration_tag, json_string(expiration_str));
+      json_array_append_new(tags, expiration_tag);
+      g_debug("[PUBLISH] Added expiration tag: %s", expiration_str);
+    }
+  }
+
+  /* NIP-36: Add content-warning tag if note is marked as sensitive */
+  if (composer && GNOSTR_IS_COMPOSER(composer)) {
+    if (gnostr_composer_is_sensitive(GNOSTR_COMPOSER(composer))) {
+      json_t *cw_tag = json_array();
+      json_array_append_new(cw_tag, json_string("content-warning"));
+      /* Empty reason - users can customize in future */
+      json_array_append_new(cw_tag, json_string(""));
+      json_array_append_new(tags, cw_tag);
+      g_debug("[PUBLISH] Added content-warning tag (sensitive content)");
     }
   }
 

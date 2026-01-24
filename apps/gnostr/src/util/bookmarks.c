@@ -509,13 +509,13 @@ static void save_context_free(SaveContext *ctx) {
 
 static void on_bookmarks_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
     SaveContext *ctx = (SaveContext *)user_data;
+    (void)source;
     if (!ctx) return;
 
-    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
     GError *error = NULL;
     char *signed_event_json = NULL;
 
-    gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(proxy, &signed_event_json, res, &error);
+    gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
 
     if (!ok || !signed_event_json) {
         g_warning("bookmarks: signing failed: %s", error ? error->message : "unknown error");
@@ -619,13 +619,13 @@ static void on_bookmarks_sign_complete(GObject *source, GAsyncResult *res, gpoin
 
 static void on_bookmarks_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
     SaveContext *ctx = (SaveContext *)user_data;
+    (void)source;
     if (!ctx) return;
 
-    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
     GError *error = NULL;
     char *signed_event_json = NULL;
 
-    gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(proxy, &signed_event_json, res, &error);
+    gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
 
     if (!ok || !signed_event_json) {
         g_warning("bookmarks: signing failed: %s", error ? error->message : "unknown error");
@@ -663,15 +663,10 @@ void gnostr_bookmarks_save_async(GnostrBookmarks *self,
         return;
     }
 
-    /* Get signer proxy */
-    GError *proxy_err = NULL;
-    NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
-    if (!proxy) {
-        char *msg = g_strdup_printf("Signer not available: %s",
-                                     proxy_err ? proxy_err->message : "not connected");
-        if (callback) callback(self, FALSE, msg, user_data);
-        g_free(msg);
-        g_clear_error(&proxy_err);
+    /* Check if signer service is available */
+    GnostrSignerService *signer = gnostr_signer_service_get_default();
+    if (!gnostr_signer_service_is_available(signer)) {
+        if (callback) callback(self, FALSE, "Signer not available", user_data);
         return;
     }
 
@@ -725,12 +720,11 @@ void gnostr_bookmarks_save_async(GnostrBookmarks *self,
     ctx->user_data = user_data;
     ctx->event_json = event_json;
 
-    /* Call signer asynchronously */
-    nostr_org_nostr_signer_call_sign_event(
-        proxy,
+    /* Call unified signer service (uses NIP-46 or NIP-55L based on login method) */
+    gnostr_sign_event_async(
         event_json,
-        "",        /* current_user: empty = use default */
-        "gnostr",  /* app_id */
+        "",        /* current_user: ignored */
+        "gnostr",  /* app_id: ignored */
         NULL,      /* cancellable */
         on_bookmarks_sign_complete,
         ctx

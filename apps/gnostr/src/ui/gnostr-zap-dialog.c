@@ -8,6 +8,7 @@
 #include "../util/zap.h"
 #include "../util/nwc.h"
 #include "../ipc/signer_ipc.h"
+#include "../ipc/gnostr-signer-service.h"
 #include <glib/gi18n.h>
 #include <jansson.h>
 #include <nostr/nip19/nip19.h>
@@ -461,6 +462,7 @@ static void zap_sign_context_free(ZapSignContext *ctx) {
 /* Callback when signer returns signed zap request */
 static void on_zap_request_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   ZapSignContext *ctx = (ZapSignContext *)user_data;
+  (void)source;
   if (!ctx) return;
 
   GnostrZapDialog *self = ctx->dialog;
@@ -469,11 +471,9 @@ static void on_zap_request_sign_complete(GObject *source, GAsyncResult *res, gpo
     return;
   }
 
-  NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
-
   GError *error = NULL;
   gchar *signed_event_json = NULL;
-  gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(proxy, &signed_event_json, res, &error);
+  gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
 
   if (!ok || !signed_event_json) {
     set_processing(self, FALSE, NULL);
@@ -515,16 +515,12 @@ static void initiate_zap_signing(GnostrZapDialog *self, const gchar *sender_pubk
  * Creates an unsigned zap request and sends it to the signer for signing.
  */
 static void initiate_zap_signing(GnostrZapDialog *self, const gchar *sender_pubkey, gint64 amount_msat) {
-  /* Get signer proxy */
-  GError *proxy_err = NULL;
-  NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
-  if (!proxy) {
+  /* Check if signer service is available */
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  if (!gnostr_signer_service_is_available(signer)) {
     set_processing(self, FALSE, NULL);
-    gchar *msg = g_strdup_printf("Signer not available: %s", proxy_err ? proxy_err->message : "not connected");
-    show_toast(self, msg);
-    g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, msg);
-    g_free(msg);
-    g_clear_error(&proxy_err);
+    show_toast(self, "Signer not available");
+    g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, "Signer not available");
     g_object_unref(self);
     return;
   }
@@ -562,12 +558,11 @@ static void initiate_zap_signing(GnostrZapDialog *self, const gchar *sender_pubk
   ctx->dialog = self;
   ctx->amount_msat = amount_msat;
 
-  /* Call signer asynchronously */
-  nostr_org_nostr_signer_call_sign_event(
-    proxy,
+  /* Call unified signer service (uses NIP-46 or NIP-55L based on login method) */
+  gnostr_sign_event_async(
     unsigned_event_json,
-    "",        /* current_user: empty = use default */
-    "gnostr",  /* app_id */
+    "",        /* current_user: ignored */
+    "gnostr",  /* app_id: ignored */
     self->cancellable,
     on_zap_request_sign_complete,
     ctx

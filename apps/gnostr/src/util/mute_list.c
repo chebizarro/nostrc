@@ -9,6 +9,7 @@
 #include "mute_list.h"
 #include "relays.h"
 #include "../ipc/signer_ipc.h"
+#include "../ipc/gnostr-signer-service.h"
 #include <glib.h>
 #include <jansson.h>
 #include <string.h>
@@ -903,13 +904,13 @@ static void publish_to_relays(SaveContext *ctx, const char *signed_event_json) {
 
 static void on_mute_list_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
     SaveContext *ctx = (SaveContext *)user_data;
+    (void)source;
     if (!ctx) return;
 
-    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
     GError *error = NULL;
     char *signed_event_json = NULL;
 
-    gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(proxy, &signed_event_json, res, &error);
+    gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
 
     if (!ok || !signed_event_json) {
         g_warning("mute_list: signing failed: %s", error ? error->message : "unknown error");
@@ -1044,14 +1045,10 @@ static void on_private_tags_encrypted(GObject *source, GAsyncResult *res, gpoint
 
 /* Build and sign the event with given content */
 static void proceed_to_sign(SaveContext *ctx, const char *encrypted_content) {
-    GError *proxy_err = NULL;
-    NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
-    if (!proxy) {
-        char *msg = g_strdup_printf("Signer not available: %s",
-                                     proxy_err ? proxy_err->message : "not connected");
-        if (ctx->callback) ctx->callback(ctx->mute_list, FALSE, msg, ctx->user_data);
-        g_free(msg);
-        g_clear_error(&proxy_err);
+    /* Check if signer service is available */
+    GnostrSignerService *signer = gnostr_signer_service_get_default();
+    if (!gnostr_signer_service_is_available(signer)) {
+        if (ctx->callback) ctx->callback(ctx->mute_list, FALSE, "Signer not available", ctx->user_data);
         save_context_free(ctx);
         return;
     }
@@ -1137,12 +1134,11 @@ static void proceed_to_sign(SaveContext *ctx, const char *encrypted_content) {
     g_free(ctx->event_json);
     ctx->event_json = event_json;
 
-    /* Call signer to sign the event */
-    nostr_org_nostr_signer_call_sign_event(
-        proxy,
+    /* Call unified signer service (uses NIP-46 or NIP-55L based on login method) */
+    gnostr_sign_event_async(
         event_json,
-        "",        /* current_user: empty = use default */
-        "gnostr",  /* app_id */
+        "",        /* current_user: ignored */
+        "gnostr",  /* app_id: ignored */
         NULL,      /* cancellable */
         on_mute_list_sign_complete,
         ctx
@@ -1157,15 +1153,10 @@ void gnostr_mute_list_save_async(GnostrMuteList *self,
         return;
     }
 
-    /* Get signer proxy */
-    GError *proxy_err = NULL;
-    NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
-    if (!proxy) {
-        char *msg = g_strdup_printf("Signer not available: %s",
-                                     proxy_err ? proxy_err->message : "not connected");
-        if (callback) callback(self, FALSE, msg, user_data);
-        g_free(msg);
-        g_clear_error(&proxy_err);
+    /* Check if signer service is available */
+    GnostrSignerService *signer = gnostr_signer_service_get_default();
+    if (!gnostr_signer_service_is_available(signer)) {
+        if (callback) callback(self, FALSE, "Signer not available", user_data);
         return;
     }
 
@@ -1183,8 +1174,14 @@ void gnostr_mute_list_save_async(GnostrMuteList *self,
     ctx->private_tags_json = build_private_tags_json(self);
     g_mutex_unlock(&self->lock);
 
-    /* If there are private entries and we have user pubkey, encrypt them first */
-    if (ctx->private_tags_json && ctx->user_pubkey) {
+    /* Note: Private entry encryption still uses the D-Bus proxy directly
+     * because the unified signer service doesn't yet support NIP-44 encrypt.
+     * This is a separate issue to address in a future task. */
+    GError *proxy_err = NULL;
+    NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
+
+    /* If there are private entries and we have user pubkey and proxy, encrypt them first */
+    if (ctx->private_tags_json && ctx->user_pubkey && proxy) {
         g_message("mute_list: encrypting private entries");
         nostr_org_nostr_signer_call_nip44_encrypt(
             proxy,
@@ -1196,7 +1193,8 @@ void gnostr_mute_list_save_async(GnostrMuteList *self,
             ctx
         );
     } else {
-        /* No private entries or no pubkey - proceed directly to sign */
+        g_clear_error(&proxy_err);
+        /* No private entries or no pubkey/proxy - proceed directly to sign */
         proceed_to_sign(ctx, "");
     }
 }

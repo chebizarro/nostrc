@@ -8,7 +8,7 @@
 #include "nip51_settings.h"
 #include "relays.h"
 #include "blossom_settings.h"
-#include "../ipc/signer_ipc.h"
+#include "../ipc/gnostr-signer-service.h"
 #include <json-glib/json-glib.h>
 #include <time.h>
 
@@ -484,13 +484,13 @@ static void nip51_backup_ctx_free(Nip51BackupCtx *ctx) {
 
 static void on_nip51_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   Nip51BackupCtx *ctx = (Nip51BackupCtx*)user_data;
+  (void)source;
   if (!ctx) return;
 
-  NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
   GError *error = NULL;
   gchar *signed_event_json = NULL;
 
-  gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(proxy, &signed_event_json, res, &error);
+  gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
 
   if (!ok || !signed_event_json) {
     g_warning("nip51_settings: signing failed: %s", error ? error->message : "unknown");
@@ -578,15 +578,10 @@ static void on_nip51_sign_complete(GObject *source, GAsyncResult *res, gpointer 
 
 void gnostr_nip51_settings_backup_async(GnostrNip51SettingsBackupCallback callback,
                                          gpointer user_data) {
-  /* Get signer proxy */
-  GError *proxy_err = NULL;
-  NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
-  if (!proxy) {
-    gchar *msg = g_strdup_printf("Signer not available: %s",
-                                  proxy_err ? proxy_err->message : "not connected");
-    if (callback) callback(FALSE, msg, user_data);
-    g_free(msg);
-    g_clear_error(&proxy_err);
+  /* Check if signer service is available */
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  if (!gnostr_signer_service_is_available(signer)) {
+    if (callback) callback(FALSE, "Signer not available", user_data);
     return;
   }
 
@@ -605,12 +600,11 @@ void gnostr_nip51_settings_backup_async(GnostrNip51SettingsBackupCallback callba
   ctx->user_data = user_data;
   ctx->event_json = event_json;
 
-  /* Call signer asynchronously */
-  nostr_org_nostr_signer_call_sign_event(
-    proxy,
+  /* Call unified signer service (uses NIP-46 or NIP-55L based on login method) */
+  gnostr_sign_event_async(
     event_json,
-    "",        /* current_user: empty = use default */
-    "gnostr",  /* app_id */
+    "",        /* current_user: ignored */
+    "gnostr",  /* app_id: ignored */
     NULL,      /* cancellable */
     on_nip51_sign_complete,
     ctx
