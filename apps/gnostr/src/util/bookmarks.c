@@ -9,6 +9,7 @@
 #include "bookmarks.h"
 #include "relays.h"
 #include "../ipc/signer_ipc.h"
+#include "../ipc/gnostr-signer-service.h"
 #include <glib.h>
 #include <jansson.h>
 #include <string.h>
