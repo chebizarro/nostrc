@@ -14,6 +14,7 @@
 #include "../util/custom_emoji.h"
 #include "../util/nip32_labels.h"
 #include "../util/nip23.h"
+#include "../util/nip71.h"
 #include "../util/markdown_pango.h"
 #include "../storage_ndb.h"
 #include <nostr/nip19/nip19.h>
@@ -139,6 +140,25 @@ struct _GnostrNoteCardRow {
   GtkWidget *article_reading_time;    /* Reading time estimate label */
 #ifdef HAVE_SOUP3
   GCancellable *article_image_cancellable; /* Cancellable for header image fetch */
+#endif
+  /* NIP-71 Video Events state */
+  gboolean is_video;                  /* TRUE if this card displays a video event */
+  gchar *video_d_tag;                 /* The video's unique "d" tag identifier */
+  gchar *video_url;                   /* Video URL from "url" tag */
+  gchar *video_thumb_url;             /* Thumbnail URL from "thumb" tag */
+  gchar *video_title;                 /* Video title from "title" tag */
+  gint64 video_duration;              /* Duration in seconds */
+  gboolean video_is_vertical;         /* TRUE for vertical video (kind 34236) */
+  GtkWidget *video_player;            /* GnostrVideoPlayer widget */
+  GtkWidget *video_overlay;           /* Overlay container for thumbnail + play button */
+  GtkWidget *video_thumb_picture;     /* Thumbnail image */
+  GtkWidget *video_play_overlay_btn;  /* Play button overlay on thumbnail */
+  GtkWidget *video_duration_badge;    /* Duration badge overlay */
+  GtkWidget *video_title_label;       /* Title label widget */
+  GtkWidget *video_hashtags_box;      /* FlowBox for video hashtags */
+  gboolean video_player_shown;        /* TRUE if player is visible (after user clicked play) */
+#ifdef HAVE_SOUP3
+  GCancellable *video_thumb_cancellable; /* Cancellable for thumbnail fetch */
 #endif
 };
 
@@ -3818,6 +3838,14 @@ static GtkWidget *create_article_hashtag_chip(const char *hashtag) {
   return btn;
 }
 
+/* Callback for article hashtag chip clicks */
+static void on_article_hashtag_clicked(GtkButton *btn, gpointer user_data) {
+  const char *tag = g_object_get_data(G_OBJECT(btn), "hashtag");
+  if (tag && GNOSTR_IS_NOTE_CARD_ROW(user_data)) {
+    g_signal_emit(user_data, signals[SIGNAL_SEARCH_HASHTAG], 0, tag);
+  }
+}
+
 /* NIP-23: Set article mode for this note card */
 void gnostr_note_card_row_set_article_mode(GnostrNoteCardRow *self,
                                             const char *title,
@@ -3959,12 +3987,7 @@ void gnostr_note_card_row_set_article_mode(GnostrNoteCardRow *self,
         g_object_set_data_full(G_OBJECT(chip), "hashtag",
                                g_strdup(hashtags[i]), g_free);
         g_signal_connect(chip, "clicked",
-          G_CALLBACK(+[](GtkButton *btn, gpointer user_data) {
-            const char *tag = g_object_get_data(G_OBJECT(btn), "hashtag");
-            if (tag && GNOSTR_IS_NOTE_CARD_ROW(user_data)) {
-              g_signal_emit(user_data, signals[SIGNAL_SEARCH_HASHTAG], 0, tag);
-            }
-          }), self);
+          G_CALLBACK(on_article_hashtag_clicked), self);
 
         gtk_flow_box_append(GTK_FLOW_BOX(self->article_hashtags_box), chip);
       }
@@ -3995,4 +4018,347 @@ gboolean gnostr_note_card_row_is_article(GnostrNoteCardRow *self) {
 const char *gnostr_note_card_row_get_article_d_tag(GnostrNoteCardRow *self) {
   g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
   return self->article_d_tag;
+}
+
+/* NIP-71: Helper to show video player and hide thumbnail overlay */
+static void video_show_player(GnostrNoteCardRow *self) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!self->video_player || !self->video_url) return;
+
+  /* Hide thumbnail overlay */
+  if (GTK_IS_WIDGET(self->video_overlay)) {
+    gtk_widget_set_visible(self->video_overlay, FALSE);
+  }
+
+  /* Show and start the video player */
+  gtk_widget_set_visible(self->video_player, TRUE);
+  gnostr_video_player_set_uri(GNOSTR_VIDEO_PLAYER(self->video_player), self->video_url);
+
+  self->video_player_shown = TRUE;
+  g_debug("NIP-71: Playing video: %s", self->video_url);
+}
+
+/* NIP-71: Play button clicked callback */
+static void on_video_play_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  video_show_player(self);
+}
+
+#ifdef HAVE_SOUP3
+/* NIP-71: Async thumbnail image loader */
+static void on_video_thumb_bytes_ready(GObject *source, GAsyncResult *result, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(g_object_ref(user_data));
+  GError *error = NULL;
+  GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), result, &error);
+
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) {
+    if (bytes) g_bytes_unref(bytes);
+    g_object_unref(self);
+    return;
+  }
+
+  if (error) {
+    g_debug("NIP-71: Thumbnail load error: %s", error->message);
+    g_error_free(error);
+    g_object_unref(self);
+    return;
+  }
+
+  if (!bytes || g_bytes_get_size(bytes) == 0) {
+    if (bytes) g_bytes_unref(bytes);
+    g_object_unref(self);
+    return;
+  }
+
+  /* Load image from bytes */
+  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, NULL);
+  g_bytes_unref(bytes);
+
+  if (texture && GTK_IS_PICTURE(self->video_thumb_picture)) {
+    gtk_picture_set_paintable(GTK_PICTURE(self->video_thumb_picture), GDK_PAINTABLE(texture));
+    gtk_widget_set_visible(self->video_thumb_picture, TRUE);
+    g_object_unref(texture);
+  }
+
+  g_object_unref(self);
+}
+
+static void load_video_thumbnail(GnostrNoteCardRow *self, const char *thumb_url) {
+  if (!self || !thumb_url || !*thumb_url) return;
+
+  /* Cancel any previous fetch */
+  if (self->video_thumb_cancellable) {
+    g_cancellable_cancel(self->video_thumb_cancellable);
+    g_clear_object(&self->video_thumb_cancellable);
+  }
+
+  self->video_thumb_cancellable = g_cancellable_new();
+
+  SoupSession *session = soup_session_new();
+  SoupMessage *msg = soup_message_new("GET", thumb_url);
+  if (!msg) {
+    g_object_unref(session);
+    return;
+  }
+
+  soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT,
+                                    self->video_thumb_cancellable,
+                                    on_video_thumb_bytes_ready, self);
+  g_object_unref(msg);
+  g_object_unref(session);
+}
+#endif
+
+/* NIP-71: Create a hashtag chip button (reuse article pattern) */
+static GtkWidget *create_video_hashtag_chip(const char *hashtag) {
+  if (!hashtag || !*hashtag) return NULL;
+
+  GtkWidget *btn = gtk_button_new();
+  gtk_widget_add_css_class(btn, "pill");
+  gtk_widget_add_css_class(btn, "video-hashtag");
+
+  gchar *label_text = g_strdup_printf("#%s", hashtag);
+  gtk_button_set_label(GTK_BUTTON(btn), label_text);
+  g_free(label_text);
+
+  return btn;
+}
+
+/* NIP-71: Set video mode for this note card */
+void gnostr_note_card_row_set_video_mode(GnostrNoteCardRow *self,
+                                          const char *video_url,
+                                          const char *thumb_url,
+                                          const char *title,
+                                          const char *summary,
+                                          gint64 duration,
+                                          gboolean is_vertical,
+                                          const char *d_tag,
+                                          const char * const *hashtags) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!video_url || !*video_url) return;
+
+  self->is_video = TRUE;
+  self->video_player_shown = FALSE;
+
+  /* Store video metadata */
+  g_clear_pointer(&self->video_d_tag, g_free);
+  g_clear_pointer(&self->video_url, g_free);
+  g_clear_pointer(&self->video_thumb_url, g_free);
+  g_clear_pointer(&self->video_title, g_free);
+
+  self->video_d_tag = g_strdup(d_tag);
+  self->video_url = g_strdup(video_url);
+  self->video_thumb_url = g_strdup(thumb_url);
+  self->video_title = g_strdup(title);
+  self->video_duration = duration;
+  self->video_is_vertical = is_vertical;
+
+  /* Add video CSS class to root */
+  if (GTK_IS_WIDGET(self->root)) {
+    gtk_widget_add_css_class(self->root, "video-card");
+    if (is_vertical) {
+      gtk_widget_add_css_class(self->root, "video-vertical");
+    } else {
+      gtk_widget_add_css_class(self->root, "video-horizontal");
+    }
+  }
+
+  /* Create video title label if title provided */
+  if (title && *title && !self->video_title_label) {
+    self->video_title_label = gtk_label_new(NULL);
+    gtk_label_set_wrap(GTK_LABEL(self->video_title_label), TRUE);
+    gtk_label_set_wrap_mode(GTK_LABEL(self->video_title_label), PANGO_WRAP_WORD_CHAR);
+    gtk_label_set_xalign(GTK_LABEL(self->video_title_label), 0.0);
+    gtk_label_set_lines(GTK_LABEL(self->video_title_label), 2);
+    gtk_label_set_ellipsize(GTK_LABEL(self->video_title_label), PANGO_ELLIPSIZE_END);
+    gtk_widget_add_css_class(self->video_title_label, "video-title");
+
+    /* Insert title label before content label */
+    if (GTK_IS_WIDGET(self->content_label)) {
+      GtkWidget *parent = gtk_widget_get_parent(self->content_label);
+      if (GTK_IS_BOX(parent)) {
+        GtkWidget *sibling = gtk_widget_get_prev_sibling(self->content_label);
+        if (sibling) {
+          gtk_box_insert_child_after(GTK_BOX(parent), self->video_title_label, sibling);
+        } else {
+          gtk_box_prepend(GTK_BOX(parent), self->video_title_label);
+        }
+      }
+    }
+  }
+
+  /* Set title text */
+  if (GTK_IS_LABEL(self->video_title_label)) {
+    gtk_label_set_text(GTK_LABEL(self->video_title_label),
+                       (title && *title) ? title : _("Untitled Video"));
+    gtk_widget_set_visible(self->video_title_label, TRUE);
+  }
+
+  /* Create video overlay (thumbnail + play button) */
+  if (!self->video_overlay) {
+    self->video_overlay = gtk_overlay_new();
+    gtk_widget_add_css_class(self->video_overlay, "video-thumbnail-overlay");
+
+    /* Calculate height based on orientation */
+    int thumb_height = is_vertical ? 400 : 220;
+    gtk_widget_set_size_request(self->video_overlay, -1, thumb_height);
+
+    /* Create thumbnail picture */
+    self->video_thumb_picture = gtk_picture_new();
+    gtk_picture_set_content_fit(GTK_PICTURE(self->video_thumb_picture), GTK_CONTENT_FIT_COVER);
+    gtk_widget_add_css_class(self->video_thumb_picture, "video-thumbnail");
+    gtk_overlay_set_child(GTK_OVERLAY(self->video_overlay), self->video_thumb_picture);
+
+    /* Create play button overlay */
+    self->video_play_overlay_btn = gtk_button_new_from_icon_name("media-playback-start-symbolic");
+    gtk_widget_add_css_class(self->video_play_overlay_btn, "video-play-btn");
+    gtk_widget_add_css_class(self->video_play_overlay_btn, "circular");
+    gtk_widget_add_css_class(self->video_play_overlay_btn, "osd");
+    gtk_widget_set_halign(self->video_play_overlay_btn, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(self->video_play_overlay_btn, GTK_ALIGN_CENTER);
+    gtk_overlay_add_overlay(GTK_OVERLAY(self->video_overlay), self->video_play_overlay_btn);
+
+    g_signal_connect(self->video_play_overlay_btn, "clicked",
+                     G_CALLBACK(on_video_play_clicked), self);
+
+    /* Create duration badge if duration > 0 */
+    if (duration > 0) {
+      gchar *dur_str = gnostr_video_format_duration(duration);
+      self->video_duration_badge = gtk_label_new(dur_str);
+      g_free(dur_str);
+      gtk_widget_add_css_class(self->video_duration_badge, "video-duration-badge");
+      gtk_widget_set_halign(self->video_duration_badge, GTK_ALIGN_END);
+      gtk_widget_set_valign(self->video_duration_badge, GTK_ALIGN_END);
+      gtk_widget_set_margin_end(self->video_duration_badge, 8);
+      gtk_widget_set_margin_bottom(self->video_duration_badge, 8);
+      gtk_overlay_add_overlay(GTK_OVERLAY(self->video_overlay), self->video_duration_badge);
+    }
+
+    /* Insert overlay at the top of content area (or use media_box if available) */
+    if (GTK_IS_WIDGET(self->media_box)) {
+      gtk_box_prepend(GTK_BOX(self->media_box), self->video_overlay);
+      gtk_widget_set_visible(self->media_box, TRUE);
+    } else if (GTK_IS_WIDGET(self->content_label)) {
+      GtkWidget *parent = gtk_widget_get_parent(self->content_label);
+      if (GTK_IS_BOX(parent)) {
+        /* Insert after title if present, else prepend */
+        if (GTK_IS_WIDGET(self->video_title_label)) {
+          gtk_box_insert_child_after(GTK_BOX(parent), self->video_overlay, self->video_title_label);
+        } else {
+          gtk_box_prepend(GTK_BOX(parent), self->video_overlay);
+        }
+      }
+    }
+
+    gtk_widget_set_visible(self->video_overlay, TRUE);
+  }
+
+  /* Create video player (hidden initially) */
+  if (!self->video_player) {
+    self->video_player = GTK_WIDGET(gnostr_video_player_new());
+    int player_height = is_vertical ? 400 : 300;
+    gtk_widget_set_size_request(self->video_player, -1, player_height);
+    gtk_widget_add_css_class(self->video_player, "note-media-video");
+    gtk_widget_set_visible(self->video_player, FALSE);
+
+    /* Insert player after overlay */
+    if (GTK_IS_WIDGET(self->video_overlay)) {
+      GtkWidget *parent = gtk_widget_get_parent(self->video_overlay);
+      if (GTK_IS_BOX(parent)) {
+        gtk_box_insert_child_after(GTK_BOX(parent), self->video_player, self->video_overlay);
+      }
+    }
+  }
+
+  /* Load thumbnail if available */
+  if (thumb_url && *thumb_url) {
+#ifdef HAVE_SOUP3
+    load_video_thumbnail(self, thumb_url);
+#endif
+  } else {
+    /* Use a placeholder or show video icon */
+    gtk_widget_add_css_class(self->video_thumb_picture, "video-no-thumbnail");
+  }
+
+  /* Set summary as content if provided */
+  if (GTK_IS_LABEL(self->content_label)) {
+    if (summary && *summary) {
+      gtk_label_set_text(GTK_LABEL(self->content_label), summary);
+      gtk_widget_add_css_class(self->content_label, "video-summary");
+    } else {
+      /* Hide content label if no summary */
+      gtk_widget_set_visible(self->content_label, FALSE);
+    }
+  }
+
+  /* Create hashtags box if we have hashtags */
+  if (hashtags && hashtags[0]) {
+    if (!self->video_hashtags_box) {
+      self->video_hashtags_box = gtk_flow_box_new();
+      gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(self->video_hashtags_box), GTK_SELECTION_NONE);
+      gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(self->video_hashtags_box), 8);
+      gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(self->video_hashtags_box), 1);
+      gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(self->video_hashtags_box), 4);
+      gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(self->video_hashtags_box), 6);
+      gtk_widget_add_css_class(self->video_hashtags_box, "video-hashtags");
+
+      /* Insert after video player */
+      if (GTK_IS_WIDGET(self->video_player)) {
+        GtkWidget *parent = gtk_widget_get_parent(self->video_player);
+        if (GTK_IS_BOX(parent)) {
+          gtk_box_insert_child_after(GTK_BOX(parent), self->video_hashtags_box, self->video_player);
+        }
+      }
+    }
+
+    /* Clear existing hashtags */
+    GtkWidget *child = gtk_widget_get_first_child(self->video_hashtags_box);
+    while (child) {
+      GtkWidget *next = gtk_widget_get_next_sibling(child);
+      gtk_flow_box_remove(GTK_FLOW_BOX(self->video_hashtags_box), child);
+      child = next;
+    }
+
+    /* Add hashtag chips */
+    for (int i = 0; hashtags[i]; i++) {
+      GtkWidget *chip = create_video_hashtag_chip(hashtags[i]);
+      if (chip) {
+        g_object_set_data_full(G_OBJECT(chip), "hashtag", g_strdup(hashtags[i]), g_free);
+        g_signal_connect(chip, "clicked",
+          G_CALLBACK(on_article_hashtag_clicked), self);
+        gtk_flow_box_append(GTK_FLOW_BOX(self->video_hashtags_box), chip);
+      }
+    }
+    gtk_widget_set_visible(self->video_hashtags_box, TRUE);
+  }
+
+  /* Adjust action buttons for video - hide reply/repost since they're not typical for video events */
+  if (GTK_IS_WIDGET(self->btn_reply)) {
+    gtk_widget_set_visible(self->btn_reply, FALSE);
+  }
+  if (GTK_IS_WIDGET(self->btn_repost)) {
+    gtk_widget_set_visible(self->btn_repost, FALSE);
+  }
+
+  g_debug("NIP-71: Set video mode - url='%s' title='%s' d_tag='%s' vertical=%d",
+          video_url, title ? title : "(null)", d_tag ? d_tag : "(null)", is_vertical);
+}
+
+/* NIP-71: Check if this card is displaying a video */
+gboolean gnostr_note_card_row_is_video(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), FALSE);
+  return self->is_video;
+}
+
+/* NIP-71: Get the video's d-tag identifier */
+const char *gnostr_note_card_row_get_video_d_tag(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+  return self->video_d_tag;
+}
+
+/* NIP-71: Get the video URL */
+const char *gnostr_note_card_row_get_video_url(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+  return self->video_url;
 }
