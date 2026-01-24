@@ -18,6 +18,7 @@
 #include "../util/nip84_highlights.h"
 #include "../util/nip48_proxy.h"
 #include "../util/nip03_opentimestamps.h"
+#include "../util/nip73_external_ids.h"
 #include "../util/markdown_pango.h"
 #include "../storage_ndb.h"
 #include <nostr/nip19/nip19.h>
@@ -179,6 +180,9 @@ struct _GnostrNoteCardRow {
   gint64 ots_verified_timestamp;      /* Bitcoin attestation timestamp */
   guint ots_block_height;             /* Bitcoin block height */
   GtkWidget *ots_badge;               /* OTS verification badge widget */
+  /* NIP-73 External Content IDs state */
+  GtkWidget *external_ids_box;        /* FlowBox container for external ID badges */
+  GPtrArray *external_ids;            /* Array of GnostrExternalContentId* */
 };
 
 G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
@@ -301,6 +305,12 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   self->proxy_indicator_box = NULL;
   /* NIP-03 OTS widget */
   self->ots_badge = NULL;
+  /* NIP-73 external content IDs */
+  self->external_ids_box = NULL;
+  if (self->external_ids) {
+    g_ptr_array_unref(self->external_ids);
+    self->external_ids = NULL;
+  }
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->dispose(obj);
 }
 
@@ -1545,6 +1555,8 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_show_sensitive);
   /* NIP-32 labels container */
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, labels_box);
+  /* NIP-73 external content IDs container */
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, external_ids_box);
 
   signals[SIGNAL_OPEN_NOSTR_TARGET] = g_signal_new("open-nostr-target",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
@@ -4985,4 +4997,73 @@ const char *gnostr_note_card_row_get_proxy_protocol(GnostrNoteCardRow *self) {
 const char *gnostr_note_card_row_get_proxy_id(GnostrNoteCardRow *self) {
   g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
   return self->proxy_id;
+}
+
+/* ============================================
+   NIP-73 External Content IDs Implementation
+   ============================================ */
+
+/* NIP-73: Set external content IDs from event tags */
+void gnostr_note_card_row_set_external_ids(GnostrNoteCardRow *self, const char *tags_json) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!GTK_IS_FLOW_BOX(self->external_ids_box)) return;
+
+  /* Clear existing external IDs */
+  gnostr_note_card_row_clear_external_ids(self);
+
+  if (!tags_json || !*tags_json) {
+    return;
+  }
+
+  /* Parse external content IDs from tags */
+  GPtrArray *content_ids = gnostr_nip73_parse_ids_from_tags_json(tags_json);
+  if (!content_ids || content_ids->len == 0) {
+    if (content_ids) g_ptr_array_unref(content_ids);
+    return;
+  }
+
+  /* Store the content IDs */
+  self->external_ids = content_ids;
+
+  /* Add badges for each content ID */
+  for (guint i = 0; i < content_ids->len; i++) {
+    GnostrExternalContentId *content_id = g_ptr_array_index(content_ids, i);
+    if (!content_id) continue;
+
+    GtkWidget *badge = gnostr_nip73_create_badge(content_id);
+    if (badge) {
+      gtk_flow_box_append(GTK_FLOW_BOX(self->external_ids_box), badge);
+    }
+  }
+
+  /* Show the container if we have badges */
+  gtk_widget_set_visible(self->external_ids_box, TRUE);
+}
+
+/* NIP-73: Check if note has external content IDs */
+gboolean gnostr_note_card_row_has_external_ids(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), FALSE);
+  return self->external_ids != NULL && self->external_ids->len > 0;
+}
+
+/* NIP-73: Clear all external ID badges */
+void gnostr_note_card_row_clear_external_ids(GnostrNoteCardRow *self) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!GTK_IS_FLOW_BOX(self->external_ids_box)) return;
+
+  /* Remove all children from the flow box */
+  GtkWidget *child = gtk_widget_get_first_child(self->external_ids_box);
+  while (child) {
+    GtkWidget *next = gtk_widget_get_next_sibling(child);
+    gtk_flow_box_remove(GTK_FLOW_BOX(self->external_ids_box), child);
+    child = next;
+  }
+
+  /* Clear the stored content IDs */
+  if (self->external_ids) {
+    g_ptr_array_unref(self->external_ids);
+    self->external_ids = NULL;
+  }
+
+  gtk_widget_set_visible(self->external_ids_box, FALSE);
 }

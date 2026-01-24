@@ -54,6 +54,8 @@
 #include "../util/nip51_settings.h"
 /* Blossom server settings (kind 10063) */
 #include "../util/blossom_settings.h"
+/* NIP-66 relay discovery */
+#include "../util/nip66_relay_discovery.h"
 /* NIP-37 Draft events */
 #include "../util/gnostr-drafts.h"
 #include "gnostr-login.h"
@@ -1037,6 +1039,576 @@ static void relay_manager_on_destroy(GtkWidget *widget, gpointer user_data) {
   relay_manager_ctx_free(ctx);
 }
 
+/* ============== NIP-66 Relay Discovery Dialog ============== */
+
+typedef struct {
+  GtkWindow *window;
+  GtkBuilder *builder;
+  GtkListStore *list_store;
+  GtkSingleSelection *selection;
+  GPtrArray *discovered_relays;  /* GnostrNip66RelayMeta* array */
+  GCancellable *cancellable;
+  RelayManagerCtx *relay_manager_ctx;  /* Parent relay manager context */
+  GHashTable *selected_urls;  /* URLs selected for addition */
+} RelayDiscoveryCtx;
+
+static void relay_discovery_ctx_free(RelayDiscoveryCtx *ctx) {
+  if (!ctx) return;
+  if (ctx->cancellable) {
+    g_cancellable_cancel(ctx->cancellable);
+    g_object_unref(ctx->cancellable);
+  }
+  if (ctx->discovered_relays) {
+    g_ptr_array_unref(ctx->discovered_relays);
+  }
+  if (ctx->selected_urls) {
+    g_hash_table_destroy(ctx->selected_urls);
+  }
+  g_free(ctx);
+}
+
+/* Map dropdown selections to filter values */
+static const gchar *s_region_values[] = {
+  NULL,  /* All Regions */
+  "North America",
+  "Europe",
+  "Asia Pacific",
+  "South America",
+  "Middle East",
+  "Africa",
+  "Other"
+};
+
+static const gint s_nip_values[] = {
+  0,   /* Any NIPs */
+  1,   /* NIP-01 */
+  11,  /* NIP-11 */
+  17,  /* NIP-17 */
+  42,  /* NIP-42 */
+  50,  /* NIP-50 */
+  57,  /* NIP-57 */
+  59,  /* NIP-59 */
+  65   /* NIP-65 */
+};
+
+/* Forward declaration */
+static void relay_discovery_apply_filter(RelayDiscoveryCtx *ctx);
+
+static void relay_discovery_update_results_label(RelayDiscoveryCtx *ctx, guint count) {
+  GtkLabel *label = GTK_LABEL(gtk_builder_get_object(ctx->builder, "results_label"));
+  if (label) {
+    gchar *text = g_strdup_printf("<small>Found %u relay%s</small>", count, count == 1 ? "" : "s");
+    gtk_label_set_markup(label, text);
+    g_free(text);
+  }
+}
+
+/* Row widget references for discovery list */
+typedef struct {
+  GtkWidget *check;
+  GtkWidget *name_label;
+  GtkWidget *url_label;
+  GtkWidget *region_label;
+  GtkWidget *status_icon;
+  GtkWidget *nips_label;
+  GtkWidget *uptime_label;
+  GtkWidget *latency_label;
+} DiscoveryRowWidgets;
+
+static void relay_discovery_setup_factory_cb(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+  (void)factory; (void)user_data;
+
+  GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+  gtk_widget_set_margin_top(row, 6);
+  gtk_widget_set_margin_bottom(row, 6);
+  gtk_widget_set_margin_start(row, 8);
+  gtk_widget_set_margin_end(row, 8);
+
+  /* Checkbox for selection */
+  GtkWidget *check = gtk_check_button_new();
+  gtk_box_append(GTK_BOX(row), check);
+
+  /* Status icon */
+  GtkWidget *status_icon = gtk_image_new_from_icon_name("network-transmit-receive-symbolic");
+  gtk_widget_set_size_request(status_icon, 16, 16);
+  gtk_box_append(GTK_BOX(row), status_icon);
+
+  /* Main content */
+  GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+  gtk_widget_set_hexpand(content, TRUE);
+
+  GtkWidget *name_label = gtk_label_new(NULL);
+  gtk_label_set_xalign(GTK_LABEL(name_label), 0.0);
+  gtk_label_set_ellipsize(GTK_LABEL(name_label), PANGO_ELLIPSIZE_END);
+  gtk_widget_add_css_class(name_label, "heading");
+  gtk_box_append(GTK_BOX(content), name_label);
+
+  GtkWidget *url_label = gtk_label_new(NULL);
+  gtk_label_set_xalign(GTK_LABEL(url_label), 0.0);
+  gtk_label_set_ellipsize(GTK_LABEL(url_label), PANGO_ELLIPSIZE_MIDDLE);
+  gtk_widget_add_css_class(url_label, "dim-label");
+  gtk_widget_add_css_class(url_label, "caption");
+  gtk_box_append(GTK_BOX(content), url_label);
+
+  GtkWidget *info_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+  gtk_widget_set_margin_top(info_box, 2);
+
+  GtkWidget *region_label = gtk_label_new(NULL);
+  gtk_widget_add_css_class(region_label, "caption");
+  gtk_widget_add_css_class(region_label, "dim-label");
+  gtk_box_append(GTK_BOX(info_box), region_label);
+
+  GtkWidget *nips_label = gtk_label_new(NULL);
+  gtk_widget_add_css_class(nips_label, "caption");
+  gtk_widget_add_css_class(nips_label, "dim-label");
+  gtk_box_append(GTK_BOX(info_box), nips_label);
+
+  gtk_box_append(GTK_BOX(content), info_box);
+  gtk_box_append(GTK_BOX(row), content);
+
+  /* Stats column */
+  GtkWidget *stats = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+  gtk_widget_set_halign(stats, GTK_ALIGN_END);
+
+  GtkWidget *uptime_label = gtk_label_new(NULL);
+  gtk_widget_add_css_class(uptime_label, "caption");
+  gtk_box_append(GTK_BOX(stats), uptime_label);
+
+  GtkWidget *latency_label = gtk_label_new(NULL);
+  gtk_widget_add_css_class(latency_label, "caption");
+  gtk_widget_add_css_class(latency_label, "dim-label");
+  gtk_box_append(GTK_BOX(stats), latency_label);
+
+  gtk_box_append(GTK_BOX(row), stats);
+
+  /* Store widget references */
+  DiscoveryRowWidgets *widgets = g_new0(DiscoveryRowWidgets, 1);
+  widgets->check = check;
+  widgets->name_label = name_label;
+  widgets->url_label = url_label;
+  widgets->region_label = region_label;
+  widgets->status_icon = status_icon;
+  widgets->nips_label = nips_label;
+  widgets->uptime_label = uptime_label;
+  widgets->latency_label = latency_label;
+  g_object_set_data_full(G_OBJECT(row), "widgets", widgets, g_free);
+
+  gtk_list_item_set_child(list_item, row);
+}
+
+static void on_discovery_check_toggled(GtkCheckButton *check, gpointer user_data);
+
+static void relay_discovery_bind_factory_cb(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+  (void)factory;
+  RelayDiscoveryCtx *ctx = (RelayDiscoveryCtx*)user_data;
+  GtkWidget *row = gtk_list_item_get_child(list_item);
+  GObject *item = gtk_list_item_get_item(list_item);
+
+  if (!row || !item) return;
+
+  DiscoveryRowWidgets *widgets = g_object_get_data(G_OBJECT(row), "widgets");
+  if (!widgets) return;
+
+  /* Get relay index from list position */
+  guint position = gtk_list_item_get_position(list_item);
+  if (position >= ctx->discovered_relays->len) return;
+
+  GnostrNip66RelayMeta *meta = g_ptr_array_index(ctx->discovered_relays, position);
+  if (!meta) return;
+
+  /* Bind data */
+  if (meta->name && *meta->name) {
+    gtk_label_set_text(GTK_LABEL(widgets->name_label), meta->name);
+  } else {
+    /* Use hostname from URL */
+    gchar *hostname = NULL;
+    if (meta->relay_url) {
+      const gchar *start = meta->relay_url;
+      if (g_str_has_prefix(start, "wss://")) start += 6;
+      else if (g_str_has_prefix(start, "ws://")) start += 5;
+      const gchar *end = start;
+      while (*end && *end != '/' && *end != ':') end++;
+      hostname = g_strndup(start, end - start);
+    }
+    gtk_label_set_text(GTK_LABEL(widgets->name_label), hostname ? hostname : "(unknown)");
+    g_free(hostname);
+  }
+
+  gtk_label_set_text(GTK_LABEL(widgets->url_label), meta->relay_url ? meta->relay_url : "");
+
+  /* Region */
+  gchar *region_text = g_strdup_printf("%s%s%s",
+    meta->region ? meta->region : "",
+    (meta->region && meta->country_code) ? " " : "",
+    meta->country_code ? meta->country_code : "");
+  gtk_label_set_text(GTK_LABEL(widgets->region_label), region_text);
+  g_free(region_text);
+
+  /* NIPs summary */
+  if (meta->supported_nips_count > 0) {
+    gchar *nips_text = g_strdup_printf("%zu NIPs", meta->supported_nips_count);
+    gtk_label_set_text(GTK_LABEL(widgets->nips_label), nips_text);
+    g_free(nips_text);
+  } else {
+    gtk_label_set_text(GTK_LABEL(widgets->nips_label), "");
+  }
+
+  /* Status */
+  if (meta->is_online) {
+    gtk_image_set_from_icon_name(GTK_IMAGE(widgets->status_icon), "network-transmit-receive-symbolic");
+    gtk_widget_remove_css_class(widgets->status_icon, "error");
+    gtk_widget_add_css_class(widgets->status_icon, "success");
+    gtk_widget_set_tooltip_text(widgets->status_icon, "Online");
+  } else {
+    gtk_image_set_from_icon_name(GTK_IMAGE(widgets->status_icon), "network-offline-symbolic");
+    gtk_widget_remove_css_class(widgets->status_icon, "success");
+    gtk_widget_add_css_class(widgets->status_icon, "error");
+    gtk_widget_set_tooltip_text(widgets->status_icon, "Offline");
+  }
+
+  /* Uptime */
+  gchar *uptime_str = gnostr_nip66_format_uptime(meta->uptime_percent);
+  gtk_label_set_text(GTK_LABEL(widgets->uptime_label), uptime_str);
+  if (meta->uptime_percent >= 99.0) {
+    gtk_widget_add_css_class(widgets->uptime_label, "success");
+  } else if (meta->uptime_percent >= 90.0) {
+    gtk_widget_remove_css_class(widgets->uptime_label, "success");
+  } else {
+    gtk_widget_add_css_class(widgets->uptime_label, "warning");
+  }
+  g_free(uptime_str);
+
+  /* Latency */
+  gchar *latency_str = gnostr_nip66_format_latency(meta->latency_ms);
+  gtk_label_set_text(GTK_LABEL(widgets->latency_label), latency_str);
+  g_free(latency_str);
+
+  /* Checkbox state */
+  gboolean is_selected = ctx->selected_urls &&
+    g_hash_table_contains(ctx->selected_urls, meta->relay_url);
+  g_signal_handlers_block_by_func(widgets->check, G_CALLBACK(on_discovery_check_toggled), ctx);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(widgets->check), is_selected);
+  g_signal_handlers_unblock_by_func(widgets->check, G_CALLBACK(on_discovery_check_toggled), ctx);
+
+  /* Store URL for checkbox callback */
+  g_object_set_data_full(G_OBJECT(widgets->check), "relay_url",
+    g_strdup(meta->relay_url), g_free);
+
+  /* Connect checkbox signal */
+  g_signal_handlers_disconnect_by_func(widgets->check, G_CALLBACK(on_discovery_check_toggled), ctx);
+  g_signal_connect(widgets->check, "toggled", G_CALLBACK(on_discovery_check_toggled), ctx);
+}
+
+static void on_discovery_check_toggled(GtkCheckButton *check, gpointer user_data) {
+  RelayDiscoveryCtx *ctx = (RelayDiscoveryCtx*)user_data;
+  if (!ctx || !ctx->selected_urls) return;
+
+  const gchar *url = g_object_get_data(G_OBJECT(check), "relay_url");
+  if (!url) return;
+
+  gboolean active = gtk_check_button_get_active(check);
+  if (active) {
+    g_hash_table_add(ctx->selected_urls, g_strdup(url));
+  } else {
+    g_hash_table_remove(ctx->selected_urls, url);
+  }
+
+  /* Update Add Selected button sensitivity */
+  GtkWidget *btn = GTK_WIDGET(gtk_builder_get_object(ctx->builder, "btn_add_selected"));
+  if (btn) {
+    guint count = g_hash_table_size(ctx->selected_urls);
+    gtk_widget_set_sensitive(btn, count > 0);
+    gchar *label = count > 0 ? g_strdup_printf("_Add %u Selected", count) : g_strdup("_Add Selected");
+    gtk_button_set_label(GTK_BUTTON(btn), label);
+    g_free(label);
+  }
+}
+
+static void relay_discovery_on_complete(GPtrArray *relays, GPtrArray *monitors,
+                                         GError *error, gpointer user_data) {
+  RelayDiscoveryCtx *ctx = (RelayDiscoveryCtx*)user_data;
+  if (!ctx || !ctx->builder) return;
+
+  GtkStack *stack = GTK_STACK(gtk_builder_get_object(ctx->builder, "discovery_stack"));
+  if (!stack) return;
+
+  if (error) {
+    GtkLabel *err_label = GTK_LABEL(gtk_builder_get_object(ctx->builder, "error_label"));
+    if (err_label) gtk_label_set_text(err_label, error->message);
+    gtk_stack_set_visible_child_name(stack, "error");
+    g_error_free(error);
+    return;
+  }
+
+  /* Store discovered relays */
+  if (ctx->discovered_relays) {
+    g_ptr_array_unref(ctx->discovered_relays);
+  }
+  ctx->discovered_relays = relays ? g_ptr_array_ref(relays) : g_ptr_array_new();
+
+  /* Apply current filter */
+  relay_discovery_apply_filter(ctx);
+
+  /* Clean up monitors array */
+  if (monitors) g_ptr_array_unref(monitors);
+}
+
+static void relay_discovery_apply_filter(RelayDiscoveryCtx *ctx) {
+  if (!ctx || !ctx->builder) return;
+
+  GtkStack *stack = GTK_STACK(gtk_builder_get_object(ctx->builder, "discovery_stack"));
+  if (!stack) return;
+
+  /* Get filter values */
+  GtkDropDown *region_dd = GTK_DROP_DOWN(gtk_builder_get_object(ctx->builder, "filter_region"));
+  GtkDropDown *nip_dd = GTK_DROP_DOWN(gtk_builder_get_object(ctx->builder, "filter_nip"));
+  GtkCheckButton *online_check = GTK_CHECK_BUTTON(gtk_builder_get_object(ctx->builder, "filter_online"));
+  GtkCheckButton *free_check = GTK_CHECK_BUTTON(gtk_builder_get_object(ctx->builder, "filter_free"));
+
+  guint region_idx = region_dd ? gtk_drop_down_get_selected(region_dd) : 0;
+  guint nip_idx = nip_dd ? gtk_drop_down_get_selected(nip_dd) : 0;
+  gboolean online_only = online_check ? gtk_check_button_get_active(online_check) : TRUE;
+  gboolean free_only = free_check ? gtk_check_button_get_active(free_check) : FALSE;
+
+  const gchar *region_filter = (region_idx < G_N_ELEMENTS(s_region_values)) ?
+    s_region_values[region_idx] : NULL;
+  gint nip_filter = (nip_idx < G_N_ELEMENTS(s_nip_values)) ?
+    s_nip_values[nip_idx] : 0;
+
+  /* Build filtered list model */
+  GtkStringList *filtered_model = gtk_string_list_new(NULL);
+  guint match_count = 0;
+
+  for (guint i = 0; i < ctx->discovered_relays->len; i++) {
+    GnostrNip66RelayMeta *meta = g_ptr_array_index(ctx->discovered_relays, i);
+    if (!meta || !meta->relay_url) continue;
+
+    gboolean matches = TRUE;
+
+    /* Online filter */
+    if (online_only && !meta->is_online) matches = FALSE;
+
+    /* Free filter */
+    if (free_only && meta->payment_required) matches = FALSE;
+
+    /* Region filter */
+    if (region_filter && *region_filter) {
+      if (!meta->region || g_ascii_strcasecmp(meta->region, region_filter) != 0) {
+        matches = FALSE;
+      }
+    }
+
+    /* NIP filter */
+    if (nip_filter > 0) {
+      if (!gnostr_nip66_relay_supports_nip(meta, nip_filter)) {
+        matches = FALSE;
+      }
+    }
+
+    if (matches) {
+      gtk_string_list_append(filtered_model, meta->relay_url);
+      match_count++;
+    }
+  }
+
+  /* Update list view */
+  GtkListView *list_view = GTK_LIST_VIEW(gtk_builder_get_object(ctx->builder, "relay_list"));
+  if (list_view) {
+    GtkSingleSelection *selection = gtk_single_selection_new(G_LIST_MODEL(filtered_model));
+    gtk_single_selection_set_autoselect(selection, FALSE);
+    gtk_single_selection_set_can_unselect(selection, TRUE);
+
+    /* Create factory if needed */
+    if (!gtk_list_view_get_factory(list_view)) {
+      GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
+      g_signal_connect(factory, "setup", G_CALLBACK(relay_discovery_setup_factory_cb), ctx);
+      g_signal_connect(factory, "bind", G_CALLBACK(relay_discovery_bind_factory_cb), ctx);
+      gtk_list_view_set_factory(list_view, factory);
+      g_object_unref(factory);
+    }
+
+    gtk_list_view_set_model(list_view, GTK_SELECTION_MODEL(selection));
+    g_object_unref(selection);
+  }
+
+  /* Update results label and show appropriate page */
+  relay_discovery_update_results_label(ctx, match_count);
+
+  if (match_count > 0) {
+    gtk_stack_set_visible_child_name(stack, "results");
+  } else if (ctx->discovered_relays->len > 0) {
+    /* Have relays but none match filter */
+    gtk_stack_set_visible_child_name(stack, "empty");
+  } else {
+    gtk_stack_set_visible_child_name(stack, "empty");
+  }
+}
+
+static void relay_discovery_start_fetch(RelayDiscoveryCtx *ctx) {
+  if (!ctx || !ctx->builder) return;
+
+  GtkStack *stack = GTK_STACK(gtk_builder_get_object(ctx->builder, "discovery_stack"));
+  if (stack) gtk_stack_set_visible_child_name(stack, "loading");
+
+  /* Cancel any pending operation */
+  if (ctx->cancellable) {
+    g_cancellable_cancel(ctx->cancellable);
+    g_object_unref(ctx->cancellable);
+  }
+  ctx->cancellable = g_cancellable_new();
+
+  /* Start discovery */
+  gnostr_nip66_discover_relays_async(relay_discovery_on_complete, ctx, ctx->cancellable);
+}
+
+static void relay_discovery_on_filter_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+  (void)obj; (void)pspec;
+  relay_discovery_apply_filter((RelayDiscoveryCtx*)user_data);
+}
+
+static void relay_discovery_on_check_toggled(GtkCheckButton *btn, gpointer user_data) {
+  (void)btn;
+  relay_discovery_apply_filter((RelayDiscoveryCtx*)user_data);
+}
+
+static void relay_discovery_on_refresh_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  relay_discovery_start_fetch((RelayDiscoveryCtx*)user_data);
+}
+
+static void relay_discovery_on_close_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  RelayDiscoveryCtx *ctx = (RelayDiscoveryCtx*)user_data;
+  if (ctx && ctx->window) gtk_window_close(ctx->window);
+}
+
+static void relay_discovery_on_add_selected_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  RelayDiscoveryCtx *ctx = (RelayDiscoveryCtx*)user_data;
+  if (!ctx || !ctx->selected_urls || !ctx->relay_manager_ctx) return;
+
+  GHashTableIter iter;
+  gpointer key, value;
+  guint added = 0;
+
+  g_hash_table_iter_init(&iter, ctx->selected_urls);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    const gchar *url = (const gchar*)key;
+    if (!url || !*url) continue;
+
+    /* Check if already in relay manager */
+    gboolean exists = FALSE;
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(ctx->relay_manager_ctx->relay_model));
+    for (guint i = 0; i < n; i++) {
+      GtkStringObject *obj = GTK_STRING_OBJECT(g_list_model_get_item(
+        G_LIST_MODEL(ctx->relay_manager_ctx->relay_model), i));
+      if (obj) {
+        const gchar *existing = gtk_string_object_get_string(obj);
+        if (existing && g_ascii_strcasecmp(existing, url) == 0) {
+          exists = TRUE;
+        }
+        g_object_unref(obj);
+        if (exists) break;
+      }
+    }
+
+    if (!exists) {
+      gtk_string_list_append(ctx->relay_manager_ctx->relay_model, url);
+      g_hash_table_insert(ctx->relay_manager_ctx->relay_types,
+        g_strdup(url), GINT_TO_POINTER(GNOSTR_RELAY_READWRITE));
+      added++;
+    }
+  }
+
+  if (added > 0) {
+    ctx->relay_manager_ctx->modified = TRUE;
+    relay_manager_update_status(ctx->relay_manager_ctx);
+  }
+
+  /* Close discovery dialog */
+  if (ctx->window) gtk_window_close(ctx->window);
+}
+
+static void relay_discovery_on_destroy(GtkWidget *widget, gpointer user_data) {
+  (void)widget;
+  RelayDiscoveryCtx *ctx = (RelayDiscoveryCtx*)user_data;
+  if (ctx && ctx->builder) {
+    g_object_unref(ctx->builder);
+    ctx->builder = NULL;
+  }
+  relay_discovery_ctx_free(ctx);
+}
+
+static void relay_manager_on_discover_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  RelayManagerCtx *manager_ctx = (RelayManagerCtx*)user_data;
+  if (!manager_ctx) return;
+
+  GtkBuilder *builder = gtk_builder_new_from_resource("/org/gnostr/ui/ui/dialogs/gnostr-relay-discovery.ui");
+  if (!builder) {
+    g_warning("Failed to load relay discovery UI");
+    return;
+  }
+
+  GtkWindow *win = GTK_WINDOW(gtk_builder_get_object(builder, "relay_discovery_window"));
+  if (!win) {
+    g_object_unref(builder);
+    return;
+  }
+
+  gtk_window_set_transient_for(win, manager_ctx->window);
+  gtk_window_set_modal(win, TRUE);
+
+  /* Create discovery context */
+  RelayDiscoveryCtx *ctx = g_new0(RelayDiscoveryCtx, 1);
+  ctx->window = win;
+  ctx->builder = builder;
+  ctx->relay_manager_ctx = manager_ctx;
+  ctx->selected_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  ctx->discovered_relays = g_ptr_array_new_with_free_func(
+    (GDestroyNotify)gnostr_nip66_relay_meta_free);
+
+  /* Wire filter controls */
+  GtkDropDown *region_dd = GTK_DROP_DOWN(gtk_builder_get_object(builder, "filter_region"));
+  GtkDropDown *nip_dd = GTK_DROP_DOWN(gtk_builder_get_object(builder, "filter_nip"));
+  GtkCheckButton *online_check = GTK_CHECK_BUTTON(gtk_builder_get_object(builder, "filter_online"));
+  GtkCheckButton *free_check = GTK_CHECK_BUTTON(gtk_builder_get_object(builder, "filter_free"));
+
+  if (region_dd) g_signal_connect(region_dd, "notify::selected",
+    G_CALLBACK(relay_discovery_on_filter_changed), ctx);
+  if (nip_dd) g_signal_connect(nip_dd, "notify::selected",
+    G_CALLBACK(relay_discovery_on_filter_changed), ctx);
+  if (online_check) g_signal_connect(online_check, "toggled",
+    G_CALLBACK(relay_discovery_on_check_toggled), ctx);
+  if (free_check) g_signal_connect(free_check, "toggled",
+    G_CALLBACK(relay_discovery_on_check_toggled), ctx);
+
+  /* Wire buttons */
+  GtkWidget *btn_refresh = GTK_WIDGET(gtk_builder_get_object(builder, "btn_refresh"));
+  GtkWidget *btn_refresh_empty = GTK_WIDGET(gtk_builder_get_object(builder, "btn_refresh_empty"));
+  GtkWidget *btn_retry = GTK_WIDGET(gtk_builder_get_object(builder, "btn_retry"));
+  GtkWidget *btn_close = GTK_WIDGET(gtk_builder_get_object(builder, "btn_close"));
+  GtkWidget *btn_add_selected = GTK_WIDGET(gtk_builder_get_object(builder, "btn_add_selected"));
+
+  if (btn_refresh) g_signal_connect(btn_refresh, "clicked",
+    G_CALLBACK(relay_discovery_on_refresh_clicked), ctx);
+  if (btn_refresh_empty) g_signal_connect(btn_refresh_empty, "clicked",
+    G_CALLBACK(relay_discovery_on_refresh_clicked), ctx);
+  if (btn_retry) g_signal_connect(btn_retry, "clicked",
+    G_CALLBACK(relay_discovery_on_refresh_clicked), ctx);
+  if (btn_close) g_signal_connect(btn_close, "clicked",
+    G_CALLBACK(relay_discovery_on_close_clicked), ctx);
+  if (btn_add_selected) g_signal_connect(btn_add_selected, "clicked",
+    G_CALLBACK(relay_discovery_on_add_selected_clicked), ctx);
+
+  g_signal_connect(win, "destroy", G_CALLBACK(relay_discovery_on_destroy), ctx);
+
+  /* Start initial fetch */
+  relay_discovery_start_fetch(ctx);
+
+  gtk_window_present(win);
+}
+
 /* Structure to hold row widget references */
 typedef struct {
   GtkWidget *name_label;
@@ -1413,6 +1985,7 @@ static void on_relays_clicked(GtkButton *btn, gpointer user_data) {
   GtkWidget *btn_save = GTK_WIDGET(gtk_builder_get_object(builder, "btn_save"));
   GtkWidget *btn_cancel = GTK_WIDGET(gtk_builder_get_object(builder, "btn_cancel"));
   GtkWidget *btn_retry = GTK_WIDGET(gtk_builder_get_object(builder, "btn_retry"));
+  GtkWidget *btn_discover = GTK_WIDGET(gtk_builder_get_object(builder, "btn_discover"));
   GtkWidget *relay_entry = GTK_WIDGET(gtk_builder_get_object(builder, "relay_entry"));
 
   if (btn_add) g_signal_connect(btn_add, "clicked", G_CALLBACK(relay_manager_on_add_clicked), ctx);
@@ -1420,6 +1993,7 @@ static void on_relays_clicked(GtkButton *btn, gpointer user_data) {
   if (btn_save) g_signal_connect(btn_save, "clicked", G_CALLBACK(relay_manager_on_save_clicked), ctx);
   if (btn_cancel) g_signal_connect(btn_cancel, "clicked", G_CALLBACK(relay_manager_on_cancel_clicked), ctx);
   if (btn_retry) g_signal_connect(btn_retry, "clicked", G_CALLBACK(relay_manager_on_retry_clicked), ctx);
+  if (btn_discover) g_signal_connect(btn_discover, "clicked", G_CALLBACK(relay_manager_on_discover_clicked), ctx);
   if (relay_entry) g_signal_connect(relay_entry, "activate", G_CALLBACK(relay_manager_on_entry_activate), ctx);
 
   /* Update status and cleanup on destroy */

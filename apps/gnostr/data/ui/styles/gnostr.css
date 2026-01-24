@@ -2655,3 +2655,95 @@ profile-row.muted .profile-row-avatar {
   font-size: 11px;
   font-weight: 500;
 }
+
+/* ============================================
+   NIP-73 External Content ID Styles
+   ============================================ */
+
+/* Container for external content ID badges */
+.note-external-ids-container {
+  margin-top: 4px;
+  margin-bottom: 2px;
+}
+
+/* Base badge styling */
+.nip73-badge {
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: alpha(@theme_fg_color, 0.08);
+  border: 1px solid alpha(@theme_fg_color, 0.12);
+  transition: all 150ms ease;
+  cursor: pointer;
+}
+
+.nip73-badge:hover {
+  background: alpha(@theme_fg_color, 0.14);
+  border-color: alpha(@theme_fg_color, 0.2);
+  box-shadow: 0 1px 4px alpha(@theme_fg_color, 0.08);
+}
+
+.nip73-badge image {
+  min-width: 12px;
+  min-height: 12px;
+}
+
+/* Reference badges (ISBN, DOI) - academic/book purple */
+.nip73-badge.reference-badge {
+  background: alpha(#7c3aed, 0.12);
+  border-color: alpha(#7c3aed, 0.2);
+  color: #7c3aed;
+}
+
+.nip73-badge.reference-badge:hover {
+  background: alpha(#7c3aed, 0.2);
+  border-color: alpha(#7c3aed, 0.3);
+}
+
+.nip73-badge.reference-badge image {
+  color: #7c3aed;
+}
+
+/* Video badges (IMDB, TMDB, YouTube) - video red/pink */
+.nip73-badge.video-badge {
+  background: alpha(#e91e63, 0.12);
+  border-color: alpha(#e91e63, 0.2);
+  color: #e91e63;
+}
+
+.nip73-badge.video-badge:hover {
+  background: alpha(#e91e63, 0.2);
+  border-color: alpha(#e91e63, 0.3);
+}
+
+.nip73-badge.video-badge image {
+  color: #e91e63;
+}
+
+/* Audio badges (Spotify, Podcast) - audio green */
+.nip73-badge.audio-badge {
+  background: alpha(#1db954, 0.12);
+  border-color: alpha(#1db954, 0.2);
+  color: #1db954;
+}
+
+.nip73-badge.audio-badge:hover {
+  background: alpha(#1db954, 0.2);
+  border-color: alpha(#1db954, 0.3);
+}
+
+.nip73-badge.audio-badge image {
+  color: #1db954;
+}
+
+/* Badge icon (dimmed by default) */
+.nip73-badge .dim-label {
+  opacity: 0.8;
+}
+
+/* Badge caption text */
+.nip73-badge .caption {
+  font-size: 11px;
+  font-weight: 500;
+}

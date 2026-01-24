@@ -156,11 +156,11 @@ char *gnostr_article_build_naddr(int kind, const char *pubkey_hex,
                                   const char *d_tag, const char **relays) {
   if (!pubkey_hex || !d_tag) return NULL;
 
-  NostrEntityPointer cfg = {
+  NostrNAddrConfig cfg = {
+    .identifier = d_tag,
+    .public_key = pubkey_hex,
     .kind = kind,
-    .public_key = (char *)pubkey_hex,
-    .identifier = (char *)d_tag,
-    .relays = (char **)relays,
+    .relays = (const char *const *)relays,
     .relays_count = 0
   };
 

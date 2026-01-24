@@ -263,6 +263,25 @@
               </object>
             </child>
 
+            <!-- NIP-73 External Content IDs Container (shows ISBN, DOI, IMDB, etc. badges) -->
+            <child>
+              <object class="GtkFlowBox" id="external_ids_box">
+                <property name="visible">false</property>
+                <property name="selection-mode">none</property>
+                <property name="homogeneous">false</property>
+                <property name="row-spacing">4</property>
+                <property name="column-spacing">6</property>
+                <property name="max-children-per-line">5</property>
+                <property name="min-children-per-line">1</property>
+                <property name="halign">start</property>
+                <property name="margin-top">4</property>
+                <property name="margin-bottom">2</property>
+                <style>
+                  <class name="note-external-ids-container"/>
+                </style>
+              </object>
+            </child>
+
             <!-- Thread Root Indicator (shows reply count when this note has replies) -->
             <child>
               <object class="GtkBox" id="reply_count_box">

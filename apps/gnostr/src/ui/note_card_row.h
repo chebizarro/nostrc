@@ -281,6 +281,21 @@ gboolean gnostr_note_card_row_has_ots_proof(GnostrNoteCardRow *self);
 /* NIP-03 OpenTimestamps: Get the verification timestamp */
 gint64 gnostr_note_card_row_get_ots_timestamp(GnostrNoteCardRow *self);
 
+/* NIP-73 External Content IDs: Set external references from event tags
+ * @self: note card row
+ * @tags_json: JSON array string of event tags (containing "i" tags for external content)
+ *
+ * Parses the "i" tags (NIP-73) and displays clickable badges for external content
+ * references like ISBN, DOI, IMDB, Spotify, YouTube, etc.
+ */
+void gnostr_note_card_row_set_external_ids(GnostrNoteCardRow *self, const char *tags_json);
+
+/* NIP-73 External Content IDs: Check if note has external references */
+gboolean gnostr_note_card_row_has_external_ids(GnostrNoteCardRow *self);
+
+/* NIP-73 External Content IDs: Clear all external ID badges */
+void gnostr_note_card_row_clear_external_ids(GnostrNoteCardRow *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_NOTE_CARD_ROW_H */

@@ -69,11 +69,40 @@
             </child>
 
             <child>
-              <object class="GtkLabel" id="status_label">
-                <property name="xalign">0.0</property>
-                <property name="use-markup">true</property>
-                <property name="wrap">false</property>
-                <property name="label">&lt;small&gt;0 relays&lt;/small&gt;</property>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="GtkLabel" id="status_label">
+                    <property name="xalign">0.0</property>
+                    <property name="use-markup">true</property>
+                    <property name="wrap">false</property>
+                    <property name="hexpand">true</property>
+                    <property name="label">&lt;small&gt;0 relays&lt;/small&gt;</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_discover">
+                    <property name="tooltip-text">Discover relays via NIP-66 relay monitors</property>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">6</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">system-search-symbolic</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">_Discover</property>
+                            <property name="use-underline">true</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
               </object>
             </child>
 
