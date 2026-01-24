@@ -2,6 +2,7 @@
 #include "gnostr-profile-edit.h"
 #include "gnostr-status-dialog.h"
 #include "note_card_row.h"
+#include "gnostr-highlight-card.h"
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gio/gio.h>
@@ -12,6 +13,7 @@
 #include "../util/nip58_badges.h"
 #include "../util/user_status.h"
 #include "../util/nip39_identity.h"
+#include "../util/nip84_highlights.h"
 #include "../storage_ndb.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
@@ -309,6 +311,17 @@ struct _GnostrProfilePane {
   GCancellable *media_cancellable;
   gboolean media_loaded;
   gint64 media_oldest_timestamp;
+
+  /* NIP-84 Highlights tab widgets */
+  GtkWidget *highlights_container;
+  GtkWidget *highlights_scroll;
+  GtkWidget *highlights_list;
+  GtkWidget *highlights_loading_box;
+  GtkWidget *highlights_spinner;
+  GtkWidget *highlights_empty_box;
+  GtkWidget *highlights_empty_label;
+  GCancellable *highlights_cancellable;
+  gboolean highlights_loaded;
 
   /* State */
   char *current_pubkey;
@@ -723,6 +736,14 @@ static void gnostr_profile_pane_class_init(GnostrProfilePaneClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, media_empty_box);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, media_empty_label);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_media_load_more);
+  /* NIP-84 Highlights tab */
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_container);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_scroll);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_list);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_loading_box);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_spinner);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_empty_box);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, highlights_empty_label);
 
   gtk_widget_class_bind_template_callback(wclass, on_close_clicked);
   gtk_widget_class_bind_template_callback(wclass, on_edit_profile_clicked);
@@ -943,6 +964,29 @@ void gnostr_profile_pane_clear(GnostrProfilePane *self) {
     gtk_widget_set_visible(self->btn_media_load_more, FALSE);
   if (self->media_scroll)
     gtk_widget_set_visible(self->media_scroll, TRUE);
+
+  /* Clear NIP-84 highlights */
+  if (self->highlights_cancellable) {
+    g_cancellable_cancel(self->highlights_cancellable);
+    g_clear_object(&self->highlights_cancellable);
+  }
+  self->highlights_loaded = FALSE;
+  /* Clear highlight widgets from list */
+  if (GTK_IS_BOX(self->highlights_list)) {
+    GtkWidget *child = gtk_widget_get_first_child(self->highlights_list);
+    while (child) {
+      GtkWidget *next = gtk_widget_get_next_sibling(child);
+      gtk_box_remove(GTK_BOX(self->highlights_list), child);
+      child = next;
+    }
+  }
+  /* Reset highlights UI state */
+  if (self->highlights_loading_box)
+    gtk_widget_set_visible(self->highlights_loading_box, FALSE);
+  if (self->highlights_empty_box)
+    gtk_widget_set_visible(self->highlights_empty_box, FALSE);
+  if (self->highlights_scroll)
+    gtk_widget_set_visible(self->highlights_scroll, TRUE);
 
   /* Clear profile data for posts */
   g_clear_pointer(&self->current_display_name, g_free);
@@ -2674,6 +2718,39 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
   fetch_user_status(self);
 }
 
+/* NIP-84: Load highlights for the current user */
+static void load_highlights(GnostrProfilePane *self) {
+  if (!self || !self->current_pubkey || self->highlights_loaded) return;
+
+  self->highlights_loaded = TRUE;
+
+  /* Show loading state */
+  if (GTK_IS_WIDGET(self->highlights_loading_box)) {
+    gtk_widget_set_visible(self->highlights_loading_box, TRUE);
+  }
+  if (GTK_IS_SPINNER(self->highlights_spinner)) {
+    gtk_spinner_start(GTK_SPINNER(self->highlights_spinner));
+  }
+  if (GTK_IS_WIDGET(self->highlights_empty_box)) {
+    gtk_widget_set_visible(self->highlights_empty_box, FALSE);
+  }
+
+  /* For now, show empty state after brief delay - actual fetching would use relay pool */
+  /* TODO: Implement actual NIP-84 highlight fetching via SimplePool */
+  g_message("NIP-84: Highlights tab opened for pubkey %.8s...", self->current_pubkey);
+
+  /* Hide loading, show empty state for now (until relay fetching is implemented) */
+  if (GTK_IS_SPINNER(self->highlights_spinner)) {
+    gtk_spinner_stop(GTK_SPINNER(self->highlights_spinner));
+  }
+  if (GTK_IS_WIDGET(self->highlights_loading_box)) {
+    gtk_widget_set_visible(self->highlights_loading_box, FALSE);
+  }
+  if (GTK_IS_WIDGET(self->highlights_empty_box)) {
+    gtk_widget_set_visible(self->highlights_empty_box, TRUE);
+  }
+}
+
 /* Handle tab switch */
 static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
@@ -2688,6 +2765,9 @@ static void on_stack_visible_child_changed(GtkStack *stack, GParamSpec *pspec, g
   } else if (g_strcmp0(visible, "media") == 0 && !self->media_loaded) {
     /* Lazy load media on first tab switch */
     load_media(self);
+  } else if (g_strcmp0(visible, "highlights") == 0 && !self->highlights_loaded) {
+    /* Lazy load highlights on first tab switch */
+    load_highlights(self);
   }
 }
 

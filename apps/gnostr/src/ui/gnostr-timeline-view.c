@@ -834,14 +834,14 @@ static void on_note_card_quote_requested_relay(GnostrNoteCardRow *row, const cha
 }
 
 /* Handler for like button - relay to main window */
-static void on_note_card_like_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+static void on_note_card_like_requested_relay(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, gpointer user_data) {
   /* Relay the signal up to the main window */
   GtkWidget *widget = GTK_WIDGET(row);
   while (widget) {
     widget = gtk_widget_get_parent(widget);
     if (widget && G_TYPE_CHECK_INSTANCE_TYPE(widget, gtk_application_window_get_type())) {
       /* Found the main window - call the like function */
-      gnostr_main_window_request_like(widget, id_hex, pubkey_hex, row);
+      gnostr_main_window_request_like(widget, id_hex, pubkey_hex, event_kind, reaction_content, row);
       break;
     }
   }
