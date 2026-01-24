@@ -2503,10 +2503,40 @@ static void update_login_ui_state(GnostrMainWindow *self) {
 
   if (self->lbl_profile_name && GTK_IS_LABEL(self->lbl_profile_name)) {
     if (signed_in && npub) {
-      /* Show truncated npub */
-      char *display = g_strdup_printf("%.16s...", npub);
-      gtk_label_set_text(GTK_LABEL(self->lbl_profile_name), display);
-      g_free(display);
+      /* nostrc-loed: Try to show display name from kind-0 profile metadata */
+      char *display_text = NULL;
+
+      /* Decode npub to hex pubkey for profile lookup */
+      if (g_str_has_prefix(npub, "npub1")) {
+        uint8_t pubkey_bytes[32];
+        if (nostr_nip19_decode_npub(npub, pubkey_bytes) == 0) {
+          char pubkey_hex[65];
+          storage_ndb_hex_encode(pubkey_bytes, pubkey_hex);
+
+          /* Fetch profile from provider cache/nostrdb */
+          GnostrProfileMeta *profile = gnostr_profile_provider_get(pubkey_hex);
+          if (profile) {
+            /* Prefer display_name, fall back to name */
+            if (profile->display_name && *profile->display_name) {
+              display_text = g_strdup(profile->display_name);
+            } else if (profile->name && *profile->name) {
+              display_text = g_strdup(profile->name);
+            }
+            gnostr_profile_meta_free(profile);
+          } else {
+            /* Profile not in cache - queue for relay fetch */
+            enqueue_profile_author(self, pubkey_hex);
+          }
+        }
+      }
+
+      /* Fall back to truncated npub if no profile name */
+      if (!display_text) {
+        display_text = g_strdup_printf("%.16s...", npub);
+      }
+
+      gtk_label_set_text(GTK_LABEL(self->lbl_profile_name), display_text);
+      g_free(display_text);
     } else {
       gtk_label_set_text(GTK_LABEL(self->lbl_profile_name), "");
     }
@@ -5561,5 +5591,11 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
         gtk_revealer_get_reveal_child(GTK_REVEALER(self->thread_revealer))) {
       gnostr_thread_view_update_profiles(GNOSTR_THREAD_VIEW(self->thread_view));
     }
+  }
+
+  /* nostrc-loed: Refresh login UI if this is the current user's profile */
+  if (self->user_pubkey_hex && pubkey_hex &&
+      g_ascii_strcasecmp(self->user_pubkey_hex, pubkey_hex) == 0) {
+    update_login_ui_state(self);
   }
 }
