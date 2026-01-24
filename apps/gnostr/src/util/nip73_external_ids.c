@@ -532,12 +532,9 @@ static void on_badge_clicked(GtkGestureClick *gesture G_GNUC_UNUSED,
                              gpointer user_data) {
   const char *url = (const char *)user_data;
   if (url && *url) {
-    GError *error = NULL;
-    gtk_show_uri(NULL, url, GDK_CURRENT_TIME);
-    if (error) {
-      g_warning("nip73: failed to open URL %s: %s", url, error->message);
-      g_error_free(error);
-    }
+    GtkUriLauncher *launcher = gtk_uri_launcher_new(url);
+    gtk_uri_launcher_launch(launcher, NULL, NULL, NULL, NULL);
+    g_object_unref(launcher);
   }
 }
 
