@@ -102,24 +102,27 @@ target_compile_definitions(${APP_CLIENT_BIN} PRIVATE APP_ID="${APP_CLIENT_FLATPA
 target_compile_definitions(${APP_CLIENT_BIN} PRIVATE GNOSTR_ENABLE_REAL_SIMPLEPOOL)
 # Find secp256k1 for key derivation in identity.c
 pkg_check_modules(SECP256K1 QUIET libsecp256k1)
+# Project root for finding shared libraries (works whether built standalone or from top-level)
+get_filename_component(PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+
 # Include GI wrapper and core headers for SimplePool and nostr models
 target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src/util
-  ${CMAKE_SOURCE_DIR}/gobject/include
-  ${CMAKE_SOURCE_DIR}/libnostr/include
-  ${CMAKE_SOURCE_DIR}/libgo/include
-  ${CMAKE_SOURCE_DIR}/nips/nip46/include
-  ${CMAKE_SOURCE_DIR}/nips/nip47/include
-  ${CMAKE_SOURCE_DIR}/nips/nip19/include
-  ${CMAKE_SOURCE_DIR}/nips/nip10/include
-  ${CMAKE_SOURCE_DIR}/nips/nip17/include
-  ${CMAKE_SOURCE_DIR}/nips/nip25/include
+  ${PROJECT_ROOT}/gobject/include
+  ${PROJECT_ROOT}/libnostr/include
+  ${PROJECT_ROOT}/libgo/include
+  ${PROJECT_ROOT}/nips/nip46/include
+  ${PROJECT_ROOT}/nips/nip47/include
+  ${PROJECT_ROOT}/nips/nip19/include
+  ${PROJECT_ROOT}/nips/nip10/include
+  ${PROJECT_ROOT}/nips/nip17/include
+  ${PROJECT_ROOT}/nips/nip25/include
   ${SECP256K1_INCLUDE_DIRS})
 # Compile the GI wrapper implementation into the app (no separate gobject lib target)
 # NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
 target_sources(${APP_CLIENT_BIN} PRIVATE
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_relay.c)
+  ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
+  ${PROJECT_ROOT}/gobject/src/nostr_relay.c)
 # Link JSON shim which (privately) links libnostr; avoid linking libnostr twice to prevent ODR/ASan issues
 if (TARGET nostr_json)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_json)
@@ -235,7 +238,7 @@ elseif (UNIX)
 endif()
 
 # Link nostrdb_storage for local database support
-set(_NDB_VENDOR_DIR ${CMAKE_SOURCE_DIR}/third_party/nostrdb)
+set(_NDB_VENDOR_DIR ${PROJECT_ROOT}/third_party/nostrdb)
 if (TARGET nostrdb_storage)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostrdb_storage)
   # Add nostrdb include paths for direct API access (subscriptions, etc.)
@@ -297,17 +300,17 @@ add_executable(gnostr-live-log src/cli_live_logger.c)
 target_compile_features(gnostr-live-log PRIVATE c_std_11)
 target_compile_definitions(gnostr-live-log PRIVATE GNOSTR_ENABLE_REAL_SIMPLEPOOL)
 target_include_directories(gnostr-live-log PRIVATE
-  ${CMAKE_SOURCE_DIR}/gobject/include
-  ${CMAKE_SOURCE_DIR}/libnostr/include
-  ${CMAKE_SOURCE_DIR}/libgo/include
-  ${CMAKE_SOURCE_DIR}/nips/nip46/include
+  ${PROJECT_ROOT}/gobject/include
+  ${PROJECT_ROOT}/libnostr/include
+  ${PROJECT_ROOT}/libgo/include
+  ${PROJECT_ROOT}/nips/nip46/include
   ${_NDB_VENDOR_DIR}/src
   ${_NDB_VENDOR_DIR}/ccan
   ${_NDB_VENDOR_DIR}/deps/flatcc/include)
 # Compile GI wrapper into the CLI as well
 # NOTE: Goroutine code is now consolidated into nostr_simple_pool.c
 target_sources(gnostr-live-log PRIVATE
-  ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c
+  ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/storage_ndb.c)
 if (TARGET nostr_json)
   target_link_libraries(gnostr-live-log PRIVATE nostr_json)
@@ -357,7 +360,7 @@ if (BUILD_TESTING)
   target_compile_features(gnostr-test-relays PRIVATE c_std_11)
   target_include_directories(gnostr-test-relays PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/libnostr/include)
+    ${PROJECT_ROOT}/libnostr/include)
   target_sources(gnostr-test-relays PRIVATE src/util/relays.c)
   # Disable NIP-65 async functionality for this test (avoids nostr_simple_pool dependency)
   target_compile_definitions(gnostr-test-relays PRIVATE GNOSTR_RELAY_TEST_ONLY=1)
@@ -371,11 +374,11 @@ if (BUILD_TESTING)
   target_include_directories(gnostr-test-blossom PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_BINARY_DIR}
-    ${CMAKE_SOURCE_DIR}/libnostr/include
-    ${CMAKE_SOURCE_DIR}/nips/nip19/include
-    ${CMAKE_SOURCE_DIR}/nips/nip46/include
-    ${CMAKE_SOURCE_DIR}/libgo/include
-    ${CMAKE_SOURCE_DIR}/gobject/include)
+    ${PROJECT_ROOT}/libnostr/include
+    ${PROJECT_ROOT}/nips/nip19/include
+    ${PROJECT_ROOT}/nips/nip46/include
+    ${PROJECT_ROOT}/libgo/include
+    ${PROJECT_ROOT}/gobject/include)
   target_sources(gnostr-test-blossom PRIVATE
     src/util/blossom.c
     src/util/blossom_settings.c
@@ -384,8 +387,8 @@ if (BUILD_TESTING)
     src/ipc/signer_ipc.c
     src/ipc/gnostr-signer-service.c
     ${SIGNER_PROXY_C}
-    ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c
-    ${CMAKE_SOURCE_DIR}/gobject/src/nostr_relay.c)
+    ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
+    ${PROJECT_ROOT}/gobject/src/nostr_relay.c)
   target_link_libraries(gnostr-test-blossom PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB PkgConfig::SOUP3 nostr nip19 libgo)
   if (TARGET nostr_nip46_core)
     target_link_libraries(gnostr-test-blossom PRIVATE nostr_nip46_core)
@@ -402,10 +405,10 @@ if (BUILD_TESTING)
   target_include_directories(gnostr-test-blossom-settings PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_BINARY_DIR}
-    ${CMAKE_SOURCE_DIR}/libnostr/include
-    ${CMAKE_SOURCE_DIR}/nips/nip46/include
-    ${CMAKE_SOURCE_DIR}/libgo/include
-    ${CMAKE_SOURCE_DIR}/gobject/include)
+    ${PROJECT_ROOT}/libnostr/include
+    ${PROJECT_ROOT}/nips/nip46/include
+    ${PROJECT_ROOT}/libgo/include
+    ${PROJECT_ROOT}/gobject/include)
   target_sources(gnostr-test-blossom-settings PRIVATE
     src/util/blossom_settings.c
     src/util/relays.c
@@ -413,8 +416,8 @@ if (BUILD_TESTING)
     src/ipc/signer_ipc.c
     src/ipc/gnostr-signer-service.c
     ${SIGNER_PROXY_C}
-    ${CMAKE_SOURCE_DIR}/gobject/src/nostr_simple_pool.c
-    ${CMAKE_SOURCE_DIR}/gobject/src/nostr_relay.c)
+    ${PROJECT_ROOT}/gobject/src/nostr_simple_pool.c
+    ${PROJECT_ROOT}/gobject/src/nostr_relay.c)
   target_link_libraries(gnostr-test-blossom-settings PRIVATE
     PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB PkgConfig::SOUP3
     nostr libgo)
@@ -459,10 +462,10 @@ if (BUILD_TESTING)
   add_executable(gnostr-test-nip46-e2e tests/test_nip46_e2e.c)
   target_compile_features(gnostr-test-nip46-e2e PRIVATE c_std_11)
   target_include_directories(gnostr-test-nip46-e2e PRIVATE
-    ${CMAKE_SOURCE_DIR}/nips/nip46/include
-    ${CMAKE_SOURCE_DIR}/nips/nip04/include
-    ${CMAKE_SOURCE_DIR}/libnostr/include
-    ${CMAKE_SOURCE_DIR}/libjson/include)
+    ${PROJECT_ROOT}/nips/nip46/include
+    ${PROJECT_ROOT}/nips/nip04/include
+    ${PROJECT_ROOT}/libnostr/include
+    ${PROJECT_ROOT}/libjson/include)
   if (TARGET nostr_nip46_core)
     target_link_libraries(gnostr-test-nip46-e2e PRIVATE nostr_nip46_core)
   endif()
