@@ -221,6 +221,66 @@ const char *gnostr_note_card_row_get_event_id(GnostrNoteCardRow *self);
 /* NIP-84 Highlights: Get the note author's pubkey */
 const char *gnostr_note_card_row_get_pubkey(GnostrNoteCardRow *self);
 
+/* NIP-48 Proxy Tags: Set proxy information for bridged content
+ * @self: note card row
+ * @proxy_id: The original source identifier (URL or ID)
+ * @protocol: The source protocol name (activitypub, atproto, rss, web, etc.)
+ *
+ * When called, displays a "via Protocol" indicator showing that this note
+ * was bridged from another platform. If the proxy_id is a URL, it becomes
+ * a clickable link to the original source.
+ */
+void gnostr_note_card_row_set_proxy_info(GnostrNoteCardRow *self,
+                                          const char *proxy_id,
+                                          const char *protocol);
+
+/* NIP-48 Proxy Tags: Set proxy information from event tags JSON
+ * @self: note card row
+ * @tags_json: JSON array string of event tags
+ *
+ * Parses the "proxy" tag (if present) and displays bridged content attribution.
+ * Equivalent to calling set_proxy_info with extracted values.
+ */
+void gnostr_note_card_row_set_proxy_from_tags(GnostrNoteCardRow *self,
+                                               const char *tags_json);
+
+/* NIP-48: Check if this note is bridged from another protocol */
+gboolean gnostr_note_card_row_is_proxied(GnostrNoteCardRow *self);
+
+/* NIP-48: Get the proxy source protocol (NULL if not proxied) */
+const char *gnostr_note_card_row_get_proxy_protocol(GnostrNoteCardRow *self);
+
+/* NIP-48: Get the proxy source ID/URL (NULL if not proxied) */
+const char *gnostr_note_card_row_get_proxy_id(GnostrNoteCardRow *self);
+
+/* NIP-03 OpenTimestamps: Set OTS proof from event tags
+ * @self: note card row
+ * @tags_json: JSON array string of event tags (containing "ots" tag)
+ *
+ * Parses the "ots" tag (if present) and displays timestamp verification status.
+ * Shows a badge indicating whether the note has a verified Bitcoin timestamp.
+ */
+void gnostr_note_card_row_set_ots_proof(GnostrNoteCardRow *self, const char *tags_json);
+
+/* NIP-03 OpenTimestamps: Set OTS status directly
+ * @self: note card row
+ * @status: verification status (see GnostrOtsStatus enum in nip03_opentimestamps.h)
+ * @verified_timestamp: Unix timestamp of Bitcoin attestation (0 if not verified)
+ * @block_height: Bitcoin block height (0 if not verified)
+ *
+ * Directly sets the OTS display status, useful when proof is already parsed.
+ */
+void gnostr_note_card_row_set_ots_status(GnostrNoteCardRow *self,
+                                          gint status,
+                                          gint64 verified_timestamp,
+                                          guint block_height);
+
+/* NIP-03 OpenTimestamps: Check if note has OTS proof */
+gboolean gnostr_note_card_row_has_ots_proof(GnostrNoteCardRow *self);
+
+/* NIP-03 OpenTimestamps: Get the verification timestamp */
+gint64 gnostr_note_card_row_get_ots_timestamp(GnostrNoteCardRow *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_NOTE_CARD_ROW_H */

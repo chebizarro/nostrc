@@ -2555,3 +2555,103 @@ profile-row.muted .profile-row-avatar {
 .highlight-author-name:hover {
   text-decoration: underline;
 }
+
+/* ============================================
+   NIP-03 OpenTimestamps Badge Styles
+   ============================================ */
+
+/* OTS badge container */
+.ots-badge {
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 500;
+  margin-left: 6px;
+  transition: all 150ms ease;
+}
+
+.ots-badge image {
+  min-width: 12px;
+  min-height: 12px;
+}
+
+/* Verified timestamp - Bitcoin green */
+.ots-badge.ots-verified {
+  background: alpha(#2e7d32, 0.15);
+  color: #2e7d32;
+  border: 1px solid alpha(#2e7d32, 0.25);
+}
+
+.ots-badge.ots-verified image {
+  color: #2e7d32;
+}
+
+.ots-badge.ots-verified:hover {
+  background: alpha(#2e7d32, 0.25);
+}
+
+/* Pending timestamp - orange/amber */
+.ots-badge.ots-pending {
+  background: alpha(#f7931a, 0.12);
+  color: #f7931a;
+  border: 1px solid alpha(#f7931a, 0.2);
+}
+
+.ots-badge.ots-pending image {
+  color: #f7931a;
+}
+
+.ots-badge.ots-pending:hover {
+  background: alpha(#f7931a, 0.2);
+}
+
+/* Invalid timestamp - red/error */
+.ots-badge.ots-invalid {
+  background: alpha(#c62828, 0.12);
+  color: #c62828;
+  border: 1px solid alpha(#c62828, 0.2);
+}
+
+.ots-badge.ots-invalid image {
+  color: #c62828;
+}
+
+.ots-badge.ots-invalid:hover {
+  background: alpha(#c62828, 0.2);
+}
+
+/* Upgraded timestamp - blue */
+.ots-badge.ots-upgraded {
+  background: alpha(#1565c0, 0.12);
+  color: #1565c0;
+  border: 1px solid alpha(#1565c0, 0.2);
+}
+
+.ots-badge.ots-upgraded image {
+  color: #1565c0;
+}
+
+.ots-badge.ots-upgraded:hover {
+  background: alpha(#1565c0, 0.2);
+}
+
+/* Unknown status - dim/neutral */
+.ots-badge.ots-unknown {
+  background: alpha(@theme_fg_color, 0.08);
+  color: alpha(@theme_fg_color, 0.6);
+  border: 1px solid alpha(@theme_fg_color, 0.1);
+}
+
+.ots-badge.ots-unknown image {
+  color: alpha(@theme_fg_color, 0.6);
+}
+
+.ots-badge.ots-unknown:hover {
+  background: alpha(@theme_fg_color, 0.12);
+}
+
+/* OTS status label */
+.ots-status-label {
+  font-size: 11px;
+  font-weight: 500;
+}

@@ -16,6 +16,8 @@
 #include "../util/nip23.h"
 #include "../util/nip71.h"
 #include "../util/nip84_highlights.h"
+#include "../util/nip48_proxy.h"
+#include "../util/nip03_opentimestamps.h"
 #include "../util/markdown_pango.h"
 #include "../storage_ndb.h"
 #include <nostr/nip19/nip19.h>
@@ -167,6 +169,16 @@ struct _GnostrNoteCardRow {
 #ifdef HAVE_SOUP3
   GCancellable *video_thumb_cancellable; /* Cancellable for thumbnail fetch */
 #endif
+  /* NIP-48 Proxy Tags state */
+  GtkWidget *proxy_indicator_box;     /* "via Protocol" indicator widget */
+  gchar *proxy_id;                    /* Original source identifier/URL */
+  gchar *proxy_protocol;              /* Protocol name (activitypub, atproto, etc.) */
+  /* NIP-03 OpenTimestamps state */
+  gboolean has_ots_proof;             /* TRUE if event has "ots" tag */
+  gint ots_status;                    /* GnostrOtsStatus verification status */
+  gint64 ots_verified_timestamp;      /* Bitcoin attestation timestamp */
+  guint ots_block_height;             /* Bitcoin block height */
+  GtkWidget *ots_badge;               /* OTS verification badge widget */
 };
 
 G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
@@ -285,6 +297,10 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
     g_clear_object(&self->article_image_cancellable);
   }
 #endif
+  /* NIP-48 proxy widget */
+  self->proxy_indicator_box = NULL;
+  /* NIP-03 OTS widget */
+  self->ots_badge = NULL;
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->dispose(obj);
 }
 
@@ -309,6 +325,9 @@ static void gnostr_note_card_row_finalize(GObject *obj) {
   g_clear_pointer(&self->article_d_tag, g_free);
   g_clear_pointer(&self->article_title, g_free);
   g_clear_pointer(&self->article_image_url, g_free);
+  /* NIP-48 proxy state cleanup */
+  g_clear_pointer(&self->proxy_id, g_free);
+  g_clear_pointer(&self->proxy_protocol, g_free);
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->finalize(obj);
 }
 
@@ -4675,4 +4694,295 @@ const char *gnostr_note_card_row_get_event_id(GnostrNoteCardRow *self) {
 const char *gnostr_note_card_row_get_pubkey(GnostrNoteCardRow *self) {
   g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
   return self->pubkey_hex;
+}
+
+/* ============================================
+   NIP-03 OpenTimestamps Implementation
+   ============================================ */
+
+/* Helper to create the OTS badge widget */
+static GtkWidget *create_ots_badge(GnostrOtsStatus status, gint64 verified_timestamp, guint block_height) {
+  GtkWidget *badge = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+  gtk_widget_add_css_class(badge, "ots-badge");
+  gtk_widget_add_css_class(badge, gnostr_nip03_status_css_class(status));
+
+  /* Icon */
+  GtkWidget *icon = gtk_image_new_from_icon_name(gnostr_nip03_status_icon(status));
+  gtk_image_set_icon_size(GTK_IMAGE(icon), GTK_ICON_SIZE_NORMAL);
+  gtk_box_append(GTK_BOX(badge), icon);
+
+  /* Label */
+  const char *status_str = gnostr_nip03_status_string(status);
+  GtkWidget *label = gtk_label_new(status_str);
+  gtk_widget_add_css_class(label, "ots-status-label");
+  gtk_box_append(GTK_BOX(badge), label);
+
+  /* Build tooltip with details */
+  GString *tooltip = g_string_new(NULL);
+  g_string_append(tooltip, "OpenTimestamps Proof\n");
+
+  switch (status) {
+    case NIP03_OTS_STATUS_VERIFIED:
+      if (verified_timestamp > 0) {
+        char *ts_str = gnostr_nip03_format_timestamp(verified_timestamp);
+        if (ts_str) {
+          g_string_append_printf(tooltip, "%s\n", ts_str);
+          g_free(ts_str);
+        }
+      }
+      if (block_height > 0) {
+        g_string_append_printf(tooltip, "Bitcoin block: %u", block_height);
+      }
+      break;
+    case NIP03_OTS_STATUS_PENDING:
+      g_string_append(tooltip, "Waiting for Bitcoin confirmation");
+      break;
+    case NIP03_OTS_STATUS_INVALID:
+      g_string_append(tooltip, "Proof verification failed");
+      break;
+    default:
+      g_string_append(tooltip, "Status unknown");
+      break;
+  }
+
+  gtk_widget_set_tooltip_text(badge, tooltip->str);
+  g_string_free(tooltip, TRUE);
+
+  return badge;
+}
+
+/* NIP-03: Set OTS proof from event tags */
+void gnostr_note_card_row_set_ots_proof(GnostrNoteCardRow *self, const char *tags_json) {
+  g_return_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self));
+
+  if (!tags_json || !*tags_json) return;
+
+  /* Parse OTS tag */
+  GnostrOtsProof *proof = gnostr_nip03_parse_ots_tag(tags_json, self->id_hex);
+  if (!proof) {
+    /* No OTS tag in event */
+    self->has_ots_proof = FALSE;
+    if (self->ots_badge) {
+      gtk_widget_set_visible(self->ots_badge, FALSE);
+    }
+    return;
+  }
+
+  /* Store OTS state */
+  self->has_ots_proof = TRUE;
+  self->ots_status = proof->status;
+  self->ots_verified_timestamp = proof->verified_timestamp;
+  self->ots_block_height = proof->block_height;
+
+  /* Create or update badge */
+  GtkWidget *badge = create_ots_badge(proof->status, proof->verified_timestamp, proof->block_height);
+
+  /* Find the header box to insert badge (next to timestamp) */
+  if (GTK_IS_LABEL(self->lbl_timestamp)) {
+    GtkWidget *parent = gtk_widget_get_parent(self->lbl_timestamp);
+    if (GTK_IS_BOX(parent)) {
+      /* Remove old badge if exists */
+      if (self->ots_badge) {
+        gtk_box_remove(GTK_BOX(parent), self->ots_badge);
+      }
+
+      /* Insert badge before timestamp */
+      gtk_box_insert_child_after(GTK_BOX(parent), badge, self->lbl_handle);
+      self->ots_badge = badge;
+      gtk_widget_set_visible(self->ots_badge, TRUE);
+    }
+  }
+
+  /* Cache the result */
+  gnostr_nip03_cache_result(proof);
+  gnostr_ots_proof_free(proof);
+
+  g_debug("[NIP-03] Set OTS proof for event %s - status=%d block=%u",
+          self->id_hex ? self->id_hex : "(null)",
+          self->ots_status, self->ots_block_height);
+}
+
+/* NIP-03: Set OTS status directly */
+void gnostr_note_card_row_set_ots_status(GnostrNoteCardRow *self,
+                                          gint status,
+                                          gint64 verified_timestamp,
+                                          guint block_height) {
+  g_return_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self));
+
+  self->has_ots_proof = TRUE;
+  self->ots_status = status;
+  self->ots_verified_timestamp = verified_timestamp;
+  self->ots_block_height = block_height;
+
+  /* Create or update badge */
+  GtkWidget *badge = create_ots_badge(status, verified_timestamp, block_height);
+
+  /* Find the header box to insert badge */
+  if (GTK_IS_LABEL(self->lbl_timestamp)) {
+    GtkWidget *parent = gtk_widget_get_parent(self->lbl_timestamp);
+    if (GTK_IS_BOX(parent)) {
+      /* Remove old badge if exists */
+      if (self->ots_badge) {
+        gtk_box_remove(GTK_BOX(parent), self->ots_badge);
+      }
+
+      /* Insert badge before timestamp */
+      gtk_box_insert_child_after(GTK_BOX(parent), badge, self->lbl_handle);
+      self->ots_badge = badge;
+      gtk_widget_set_visible(self->ots_badge, TRUE);
+    }
+  }
+}
+
+/* NIP-03: Check if note has OTS proof */
+gboolean gnostr_note_card_row_has_ots_proof(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), FALSE);
+  return self->has_ots_proof;
+}
+
+/* NIP-03: Get the verification timestamp */
+gint64 gnostr_note_card_row_get_ots_timestamp(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), 0);
+  return self->ots_verified_timestamp;
+}
+
+/* ============================================================================
+ * NIP-48 Proxy Tags - Bridged content from external protocols
+ * ============================================================================ */
+
+/* NIP-48: Set proxy information for bridged content */
+void gnostr_note_card_row_set_proxy_info(GnostrNoteCardRow *self,
+                                          const char *proxy_id,
+                                          const char *protocol) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  /* Clear existing proxy state */
+  g_clear_pointer(&self->proxy_id, g_free);
+  g_clear_pointer(&self->proxy_protocol, g_free);
+
+  if (!proxy_id || !*proxy_id || !protocol || !*protocol) {
+    /* Hide proxy indicator if present */
+    if (GTK_IS_WIDGET(self->proxy_indicator_box)) {
+      gtk_widget_set_visible(self->proxy_indicator_box, FALSE);
+    }
+    return;
+  }
+
+  self->proxy_id = g_strdup(proxy_id);
+  self->proxy_protocol = g_strdup(protocol);
+
+  /* Parse the protocol to get display info */
+  GnostrProxyProtocol proto_enum = gnostr_proxy_parse_protocol(protocol);
+  const char *display_name = gnostr_proxy_get_display_name(proto_enum);
+  const char *icon_name = gnostr_proxy_get_icon_name(proto_enum);
+  gboolean is_linkable = gnostr_proxy_is_url(proxy_id);
+
+  /* Create proxy indicator box if it doesn't exist */
+  if (!self->proxy_indicator_box && self->root && GTK_IS_WIDGET(self->root)) {
+    self->proxy_indicator_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_add_css_class(self->proxy_indicator_box, "proxy-indicator");
+    gtk_widget_add_css_class(self->proxy_indicator_box, "dim-label");
+    gtk_widget_set_margin_start(self->proxy_indicator_box, 52);  /* Align with content */
+    gtk_widget_set_margin_bottom(self->proxy_indicator_box, 2);
+    gtk_widget_set_margin_top(self->proxy_indicator_box, 2);
+
+    /* Insert at the top of the card (after repost indicator if present) */
+    if (GTK_IS_BOX(self->root)) {
+      /* Insert after the first child (repost indicator) if it exists,
+         otherwise prepend */
+      GtkWidget *first = gtk_widget_get_first_child(self->root);
+      if (first && self->repost_indicator_box && first == self->repost_indicator_box) {
+        gtk_box_insert_child_after(GTK_BOX(self->root), self->proxy_indicator_box, first);
+      } else {
+        gtk_box_prepend(GTK_BOX(self->root), self->proxy_indicator_box);
+      }
+    }
+  }
+
+  /* Clear existing children */
+  if (GTK_IS_BOX(self->proxy_indicator_box)) {
+    GtkWidget *child;
+    while ((child = gtk_widget_get_first_child(self->proxy_indicator_box)) != NULL) {
+      gtk_box_remove(GTK_BOX(self->proxy_indicator_box), child);
+    }
+  }
+
+  /* Add protocol icon */
+  GtkWidget *icon = gtk_image_new_from_icon_name(icon_name);
+  gtk_image_set_pixel_size(GTK_IMAGE(icon), 12);
+  gtk_widget_add_css_class(icon, "dim-label");
+  gtk_box_append(GTK_BOX(self->proxy_indicator_box), icon);
+
+  /* Add "via Protocol" text */
+  gchar *source_text = g_strdup_printf("via %s", display_name);
+
+  if (is_linkable) {
+    /* Make it a clickable link */
+    GtkWidget *link = gtk_link_button_new_with_label(proxy_id, source_text);
+    gtk_widget_add_css_class(link, "flat");
+    gtk_widget_add_css_class(link, "caption");
+    gtk_widget_add_css_class(link, "proxy-link");
+    gtk_box_append(GTK_BOX(self->proxy_indicator_box), link);
+  } else {
+    GtkWidget *label = gtk_label_new(source_text);
+    gtk_widget_add_css_class(label, "dim-label");
+    gtk_widget_add_css_class(label, "caption");
+    gtk_box_append(GTK_BOX(self->proxy_indicator_box), label);
+  }
+
+  g_free(source_text);
+
+  /* Set tooltip with full source ID */
+  gchar *tooltip = g_strdup_printf("Bridged from: %s", proxy_id);
+  gtk_widget_set_tooltip_text(self->proxy_indicator_box, tooltip);
+  g_free(tooltip);
+
+  /* Show the indicator */
+  gtk_widget_set_visible(self->proxy_indicator_box, TRUE);
+
+  g_debug("NIP-48: Set proxy info - protocol=%s, id=%s", protocol, proxy_id);
+}
+
+/* NIP-48: Set proxy information from event tags JSON */
+void gnostr_note_card_row_set_proxy_from_tags(GnostrNoteCardRow *self,
+                                               const char *tags_json) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  if (!tags_json || !*tags_json) {
+    /* No tags, hide proxy indicator */
+    if (GTK_IS_WIDGET(self->proxy_indicator_box)) {
+      gtk_widget_set_visible(self->proxy_indicator_box, FALSE);
+    }
+    return;
+  }
+
+  /* Parse proxy tag from JSON */
+  GnostrProxyInfo *info = gnostr_proxy_parse_tags_json(tags_json);
+  if (info) {
+    gnostr_note_card_row_set_proxy_info(self, info->id, info->protocol_str);
+    gnostr_proxy_info_free(info);
+  } else {
+    /* No proxy tag found, hide indicator */
+    if (GTK_IS_WIDGET(self->proxy_indicator_box)) {
+      gtk_widget_set_visible(self->proxy_indicator_box, FALSE);
+    }
+  }
+}
+
+/* NIP-48: Check if this note is bridged from another protocol */
+gboolean gnostr_note_card_row_is_proxied(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), FALSE);
+  return self->proxy_protocol != NULL && self->proxy_id != NULL;
+}
+
+/* NIP-48: Get the proxy source protocol */
+const char *gnostr_note_card_row_get_proxy_protocol(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+  return self->proxy_protocol;
+}
+
+/* NIP-48: Get the proxy source ID/URL */
+const char *gnostr_note_card_row_get_proxy_id(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+  return self->proxy_id;
 }
