@@ -22,6 +22,7 @@
 #include "../model/gn-nostr-profile.h"
 #include <gio/gio.h>
 #include <glib.h>
+#include <adwaita.h>
 #include <gtk/gtk.h>
 #include <gdk/gdkkeysyms.h>
 #include <time.h>
@@ -137,7 +138,6 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, 
 /* Forward declaration for close-request handler (nostrc-61s.6: background mode) */
 static gboolean on_window_close_request(GtkWindow *window, gpointer user_data);
 /* Forward declarations for responsive navigation (nostrc-3u7j) */
-static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data);
 static void on_sidebar_toggle_clicked(GtkToggleButton *button, gpointer user_data);
 /* Forward declarations for repost/quote/like signal handlers */
 static void on_note_card_repost_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
@@ -292,10 +292,9 @@ struct _GnostrMainWindow {
   // Template children - responsive layout
   AdwToolbarView *toolbar_view;
   AdwHeaderBar *header_bar;
-  AdwViewSwitcherTitle *switcher_title;
   AdwNavigationSplitView *split_view;
   GtkToggleButton *sidebar_toggle_btn;
-  GtkListBox *sidebar_list;
+  AdwViewSwitcher *sidebar_sidebar;
   AdwViewSwitcherBar *bottom_bar;
   // Template children - content
   GtkWidget *stack;
@@ -1059,10 +1058,10 @@ typedef struct {
   GtkBuilder *builder;
   GtkListStore *list_store;
   GtkSingleSelection *selection;
-  GPtrArray *discovered_relays;  /* GnostrNip66RelayMeta* array */
   GCancellable *cancellable;
-  RelayManagerCtx *relay_manager_ctx;  /* Parent relay manager context */
+  GPtrArray *discovered_relays;  /* GnostrNip66RelayMeta* array */
   GHashTable *selected_urls;  /* URLs selected for addition */
+  RelayManagerCtx *relay_manager_ctx;  /* Parent relay manager context */
 } RelayDiscoveryCtx;
 
 static void relay_discovery_ctx_free(RelayDiscoveryCtx *ctx) {
@@ -2189,7 +2188,7 @@ static void settings_dialog_setup_relay_panel(SettingsDialogCtx *ctx) {
     GtkWidget *row = gtk_list_box_row_new();
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     gtk_widget_set_margin_start(box, 12);
-    gtk_widget_set_margin_end(box, 12);
+    gtk_widget_set_margin_end(box, 8);
     gtk_widget_set_margin_top(box, 8);
     gtk_widget_set_margin_bottom(box, 8);
 
@@ -3444,27 +3443,6 @@ static gboolean on_window_close_request(GtkWindow *window, gpointer user_data) {
   return FALSE;
 }
 
-/* nostrc-3u7j: Responsive navigation - sidebar row activation handler */
-static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
-  (void)box;
-  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!self || !self->stack || !row) return;
-
-  int idx = gtk_list_box_row_get_index(row);
-  const char *names[] = { "timeline", "notifications", "messages", "discover", "search", "marketplace" };
-  if (idx >= 0 && idx < 6) {
-    adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), names[idx]);
-  }
-
-  /* On narrow screens when sidebar is collapsed, selecting a row should close the sidebar */
-  if (self->split_view && adw_navigation_split_view_get_collapsed(self->split_view)) {
-    adw_navigation_split_view_set_show_content(self->split_view, TRUE);
-    if (self->sidebar_toggle_btn) {
-      gtk_toggle_button_set_active(self->sidebar_toggle_btn, FALSE);
-    }
-  }
-}
-
 /* nostrc-3u7j: Responsive navigation - sidebar toggle button handler */
 static void on_sidebar_toggle_clicked(GtkToggleButton *button, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
@@ -4250,13 +4228,6 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
 
   /* nostrc-3u7j: Setup responsive navigation */
-  if (self->sidebar_list) {
-    g_signal_connect(self->sidebar_list, "row-activated",
-                     G_CALLBACK(on_sidebar_row_activated), self);
-    /* Select first row and show default page */
-    GtkListBoxRow *first = gtk_list_box_get_row_at_index(self->sidebar_list, 0);
-    if (first) gtk_list_box_select_row(self->sidebar_list, first);
-  }
   if (self->sidebar_toggle_btn) {
     g_signal_connect(self->sidebar_toggle_btn, "toggled",
                      G_CALLBACK(on_sidebar_toggle_clicked), self);
@@ -4791,10 +4762,9 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   /* Responsive layout components (nostrc-3u7j) */
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toolbar_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, header_bar);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, switcher_title);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, split_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, sidebar_toggle_btn);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, sidebar_list);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, sidebar_sidebar);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, bottom_bar);
   /* Content template children */
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, stack);

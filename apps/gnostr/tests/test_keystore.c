@@ -21,6 +21,10 @@ static void test_keystore_available(void) {
   /* This test may pass or fail depending on platform */
   g_test_message("Keystore available: %s", available ? "yes" : "no");
 #if defined(HAVE_LIBSECRET) || defined(HAVE_MACOS_KEYCHAIN)
+  if (!available) {
+    g_test_skip("Keystore backend compiled in but not available at runtime");
+    return;
+  }
   g_assert_true(available);
 #else
   g_assert_false(available);
