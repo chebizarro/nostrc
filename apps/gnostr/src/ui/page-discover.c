@@ -990,6 +990,9 @@ gnostr_page_discover_class_init(GnostrPageDiscoverClass *klass)
     object_class->dispose = gnostr_page_discover_dispose;
     object_class->finalize = gnostr_page_discover_finalize;
 
+    /* Ensure child widget types are registered before loading template */
+    g_type_ensure(GNOSTR_TYPE_ARTICLES_VIEW);
+
     /* Load template */
     gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
 
