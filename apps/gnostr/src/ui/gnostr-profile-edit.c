@@ -559,6 +559,7 @@ typedef struct {
   GtkWidget *proof_entry;
 } AddIdentityDialog;
 
+G_GNUC_BEGIN_IGNORE_DEPRECATIONS
 static void on_add_identity_response(GtkDialog *dialog, int response, gpointer user_data) {
   AddIdentityDialog *ctx = (AddIdentityDialog *)user_data;
 
@@ -669,6 +670,7 @@ static void on_add_identity_clicked(GtkButton *btn, gpointer user_data) {
 
   gtk_window_present(GTK_WINDOW(dialog));
 }
+G_GNUC_END_IGNORE_DEPRECATIONS
 
 /* Create the identities section UI (called from init) */
 static void create_identities_section(GnostrProfileEdit *self, GtkWidget *parent_box) {

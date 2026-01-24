@@ -8,6 +8,7 @@
 #include "gnostr-avatar-cache.h"
 #include "../util/markdown_pango.h"
 #include "../util/nip05.h"
+#include "../util/nip84_highlights.h"
 #include <glib/gi18n.h>
 #include <json-glib/json-glib.h>
 #include <nostr/nip19/nip19.h>
@@ -81,6 +82,7 @@ enum {
   SIGNAL_ZAP_REQUESTED,
   SIGNAL_BOOKMARK_TOGGLED,
   SIGNAL_SHARE_ARTICLE,
+  SIGNAL_HIGHLIGHT_REQUESTED,  /* NIP-84 highlight request */
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -285,10 +287,10 @@ static void on_share_clicked(GtkButton *btn, gpointer user_data) {
   if (!self->event_id || !self->pubkey_hex || !self->d_tag) return;
 
   /* Build naddr for NIP-33 addressable event */
-  NostrEntityPointer naddr_cfg = {
-    .kind = 30023,
-    .public_key = self->pubkey_hex,
+  NostrNAddrConfig naddr_cfg = {
     .identifier = self->d_tag,
+    .public_key = self->pubkey_hex,
+    .kind = 30023,
     .relays = NULL,
     .relays_count = 0
   };
@@ -414,6 +416,11 @@ static void gnostr_article_card_class_init(GnostrArticleCardClass *klass) {
   signals[SIGNAL_SHARE_ARTICLE] = g_signal_new("share-article",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 1, G_TYPE_STRING);
+
+  /* NIP-84 highlight request: highlighted_text, context, a_tag, pubkey_hex */
+  signals[SIGNAL_HIGHLIGHT_REQUESTED] = g_signal_new("highlight-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
 }
 
 static void gnostr_article_card_init(GnostrArticleCard *self) {
