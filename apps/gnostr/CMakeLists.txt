@@ -43,6 +43,8 @@ add_custom_command(
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notifications-view.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notification-row.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-article-card.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-articles-view.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-live-card.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-zap-goal-widget.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-channel-list-view.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-channel-row.ui

@@ -6,11 +6,16 @@
 #include "nostr/nip44/nip44.h"
 #include "nostr-keys.h"
 #include "nostr-event.h"
+#include "nostr-simple-pool.h"
+#include "nostr-relay.h"
+#include "nostr-filter.h"
+#include "nostr-tag.h"
 #include "secure_buf.h"
 #include "json.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* Forward prototypes for local helpers */
 static int csv_split(const char *csv, char ***out_vec, size_t *out_n);
@@ -19,7 +24,7 @@ static void acl_set_perms(NostrNip46Session *s, const char *client_pk, const cha
 static int acl_has_perm(const NostrNip46Session *s, const char *client_pk, const char *method);
 
 struct NostrNip46Session {
-    /* TODO: wire relay pool, subscriptions, permissions, secrets */
+    /* Session metadata */
     char *note;
     /* parsed URI fields */
     char *remote_pubkey_hex;   /* from bunker:// */
@@ -32,6 +37,13 @@ struct NostrNip46Session {
     NostrNip46BunkerCallbacks cbs;
     /* ACL: per-client allowed methods (simple list) */
     struct PermEntry { char *client_pk; char **methods; size_t n_methods; struct PermEntry *next; } *acl_head;
+
+    /* Transport infrastructure for bunker mode */
+    NostrSimplePool *pool;                /* relay pool for sending/receiving */
+    char *bunker_pubkey_hex;              /* our bunker identity pubkey (x-only hex) */
+    char *bunker_secret_hex;              /* our bunker identity secret key (hex) */
+    int listening;                        /* whether bunker is actively listening */
+    char *current_request_client_pubkey;  /* client pubkey for current request context */
 };
 
 /* Common helpers */
@@ -115,6 +127,14 @@ void nostr_nip46_session_free(NostrNip46Session *s) {
     if (s->last_reply_json) free(s->last_reply_json);
     /* free ACL */
     struct PermEntry *it = s->acl_head; while (it) { struct PermEntry *nx = it->next; if (it->client_pk) free(it->client_pk); if (it->methods){ for(size_t i=0;i<it->n_methods;++i) free(it->methods[i]); free(it->methods);} free(it); it = nx; }
+    /* free transport infrastructure */
+    if (s->pool) {
+        nostr_simple_pool_stop(s->pool);
+        nostr_simple_pool_free(s->pool);
+    }
+    if (s->bunker_pubkey_hex) { free(s->bunker_pubkey_hex); }
+    if (s->bunker_secret_hex) { memset(s->bunker_secret_hex, 0, strlen(s->bunker_secret_hex)); free(s->bunker_secret_hex); }
+    if (s->current_request_client_pubkey) { free(s->current_request_client_pubkey); }
     free(s);
 }
 
@@ -292,8 +312,142 @@ NostrNip46Session *nostr_nip46_bunker_new(const NostrNip46BunkerCallbacks *cbs) 
     return s;
 }
 
+/* Callback for incoming NIP-46 events from the relay pool */
+static void nip46_event_middleware(NostrIncomingEvent *incoming) {
+    /* Note: This callback handles incoming kind 24133 events.
+     * The actual request handling is done via nostr_nip46_bunker_handle_cipher
+     * which is typically called by higher-level code that receives these events.
+     * For now, we log the incoming event for debugging purposes.
+     * Full async processing would require storing a session reference and
+     * integrating with an event loop (GLib, libevent, etc). */
+    if (!incoming || !incoming->event) return;
+
+    NostrEvent *ev = incoming->event;
+    int kind = nostr_event_get_kind(ev);
+
+    if (kind == NOSTR_EVENT_KIND_NIP46 && getenv("NOSTR_DEBUG")) {
+        const char *id = ev->id;
+        const char *pubkey = nostr_event_get_pubkey(ev);
+        fprintf(stderr, "[nip46] received kind %d event id=%s from=%s\n",
+                kind, id ? id : "(null)", pubkey ? pubkey : "(null)");
+    }
+
+    /* Event ownership: the pool will free the event after callback returns */
+}
+
 int nostr_nip46_bunker_listen(NostrNip46Session *s, const char *const *relays, size_t n_relays) {
-    (void)s; (void)relays; (void)n_relays; return -1;
+    if (!s || !relays || n_relays == 0) return -1;
+
+    /* Bunker requires a secret key for decryption and signing */
+    if (!s->secret) {
+        if (getenv("NOSTR_DEBUG")) {
+            fprintf(stderr, "[nip46] bunker_listen: no secret set, cannot listen\n");
+        }
+        return -1;
+    }
+
+    /* Derive bunker public key from secret if not already set */
+    if (!s->bunker_pubkey_hex) {
+        char *pk = nostr_key_get_public(s->secret);
+        if (!pk) {
+            if (getenv("NOSTR_DEBUG")) {
+                fprintf(stderr, "[nip46] bunker_listen: failed to derive pubkey\n");
+            }
+            return -1;
+        }
+        s->bunker_pubkey_hex = pk;
+    }
+
+    /* Store secret hex for transport operations */
+    if (!s->bunker_secret_hex && s->secret) {
+        s->bunker_secret_hex = strdup(s->secret);
+    }
+
+    /* Create relay pool if not already created */
+    if (!s->pool) {
+        s->pool = nostr_simple_pool_new();
+        if (!s->pool) {
+            if (getenv("NOSTR_DEBUG")) {
+                fprintf(stderr, "[nip46] bunker_listen: failed to create pool\n");
+            }
+            return -1;
+        }
+        /* Set event middleware to receive incoming events */
+        nostr_simple_pool_set_event_middleware(s->pool, nip46_event_middleware);
+    }
+
+    /* Store relays in session for later use */
+    if (s->relays) {
+        for (size_t i = 0; i < s->n_relays; ++i) free(s->relays[i]);
+        free(s->relays);
+    }
+    s->relays = (char **)malloc(n_relays * sizeof(char *));
+    if (!s->relays) return -1;
+    s->n_relays = n_relays;
+    for (size_t i = 0; i < n_relays; ++i) {
+        s->relays[i] = strdup(relays[i]);
+        if (!s->relays[i]) {
+            /* Cleanup on failure */
+            for (size_t j = 0; j < i; ++j) free(s->relays[j]);
+            free(s->relays);
+            s->relays = NULL;
+            s->n_relays = 0;
+            return -1;
+        }
+    }
+
+    /* Ensure all relays are connected */
+    for (size_t i = 0; i < n_relays; ++i) {
+        if (relays[i] && *relays[i]) {
+            nostr_simple_pool_ensure_relay(s->pool, relays[i]);
+        }
+    }
+
+    /* Build a filter for kind 24133 events tagged with our pubkey */
+    NostrFilters *filters = nostr_filters_new();
+    if (!filters) return -1;
+
+    NostrFilter *f = nostr_filter_new();
+    if (!f) {
+        nostr_filters_free(filters);
+        return -1;
+    }
+
+    /* Filter for NIP-46 kind */
+    int kinds[] = { NOSTR_EVENT_KIND_NIP46 };
+    nostr_filter_set_kinds(f, kinds, 1);
+
+    /* Filter for events tagged with our pubkey (p-tag) */
+    NostrTags *filter_tags = nostr_tags_new(1, nostr_tag_new("p", s->bunker_pubkey_hex, NULL));
+    if (filter_tags) {
+        nostr_filter_set_tags(f, filter_tags);
+    }
+
+    /* Move filter into filters collection */
+    NostrFilter f_copy = *f;
+    free(f); /* free the shell, contents moved */
+    if (!nostr_filters_add(filters, &f_copy)) {
+        nostr_filters_free(filters);
+        return -1;
+    }
+
+    /* Subscribe to all relays */
+    nostr_simple_pool_subscribe(s->pool, (const char **)relays, n_relays, *filters, true /* dedup */);
+
+    /* Start the pool worker thread */
+    nostr_simple_pool_start(s->pool);
+
+    /* Free the filters wrapper (subscription made a copy) */
+    nostr_filters_free(filters);
+
+    s->listening = 1;
+
+    if (getenv("NOSTR_DEBUG")) {
+        fprintf(stderr, "[nip46] bunker_listen: listening on %zu relay(s) for pubkey %s\n",
+                n_relays, s->bunker_pubkey_hex);
+    }
+
+    return 0;
 }
 static int is_unreserved(int c) {
     return (c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='-'||c=='.'||c=='_'||c=='~'||c==':'||c=='/';
@@ -324,6 +478,104 @@ int nostr_nip46_bunker_issue_bunker_uri(NostrNip46Session *s, const char *remote
     }
     *out_uri = buf; return 0;
 }
+
+/* Helper: publish an encrypted NIP-46 response event to relays.
+ * client_pubkey_hex: the recipient's pubkey (for p-tag and encryption)
+ * plaintext_json: the response JSON to encrypt
+ * Returns 0 on success, -1 on failure
+ */
+static int nip46_publish_response(NostrNip46Session *s, const char *client_pubkey_hex, const char *plaintext_json) {
+    if (!s || !client_pubkey_hex || !plaintext_json) return -1;
+    if (!s->pool || !s->bunker_secret_hex || !s->bunker_pubkey_hex) {
+        if (getenv("NOSTR_DEBUG")) {
+            fprintf(stderr, "[nip46] publish_response: transport not initialized\n");
+        }
+        return -1;
+    }
+
+    /* Encrypt the response JSON using NIP-04 */
+    char *cipher = NULL;
+    char *err = NULL;
+    nostr_secure_buf sb = secure_alloc(32);
+    if (!sb.ptr || parse_sk32(s->bunker_secret_hex, (unsigned char*)sb.ptr) != 0) {
+        if (sb.ptr) secure_free(&sb);
+        return -1;
+    }
+    if (nostr_nip04_encrypt_secure(plaintext_json, client_pubkey_hex, &sb, &cipher, &err) != 0 || !cipher) {
+        secure_free(&sb);
+        if (getenv("NOSTR_DEBUG")) {
+            fprintf(stderr, "[nip46] publish_response: encrypt failed: %s\n", err ? err : "(no error)");
+        }
+        if (err) free(err);
+        return -1;
+    }
+    secure_free(&sb);
+
+    /* Build the NIP-46 response event (kind 24133) */
+    NostrEvent *ev = nostr_event_new();
+    if (!ev) {
+        free(cipher);
+        return -1;
+    }
+
+    nostr_event_set_kind(ev, NOSTR_EVENT_KIND_NIP46);
+    nostr_event_set_pubkey(ev, s->bunker_pubkey_hex);
+    nostr_event_set_content(ev, cipher);
+    nostr_event_set_created_at(ev, (int64_t)time(NULL));
+
+    /* Add p-tag for the client pubkey (recipient) */
+    NostrTags *tags = nostr_tags_new(1, nostr_tag_new("p", client_pubkey_hex, NULL));
+    if (tags) {
+        nostr_event_set_tags(ev, tags);
+    }
+
+    /* Sign the event with our bunker key */
+    nostr_secure_buf sb_sign = secure_alloc(32);
+    if (!sb_sign.ptr || parse_sk32(s->bunker_secret_hex, (unsigned char*)sb_sign.ptr) != 0) {
+        if (sb_sign.ptr) secure_free(&sb_sign);
+        nostr_event_free(ev);
+        free(cipher);
+        return -1;
+    }
+
+    if (nostr_event_sign_secure(ev, &sb_sign) != 0) {
+        secure_free(&sb_sign);
+        nostr_event_free(ev);
+        free(cipher);
+        if (getenv("NOSTR_DEBUG")) {
+            fprintf(stderr, "[nip46] publish_response: signing failed\n");
+        }
+        return -1;
+    }
+    secure_free(&sb_sign);
+
+    /* Publish to all connected relays in the pool */
+    int published = 0;
+    pthread_mutex_t *pool_mutex = &s->pool->pool_mutex;
+    pthread_mutex_lock(pool_mutex);
+    for (size_t i = 0; i < s->pool->relay_count; ++i) {
+        NostrRelay *relay = s->pool->relays[i];
+        if (relay && nostr_relay_is_connected(relay)) {
+            nostr_relay_publish(relay, ev);
+            published++;
+            if (getenv("NOSTR_DEBUG")) {
+                const char *url = nostr_relay_get_url_const(relay);
+                fprintf(stderr, "[nip46] published response to relay: %s\n", url ? url : "(unknown)");
+            }
+        }
+    }
+    pthread_mutex_unlock(pool_mutex);
+
+    free(cipher);
+    nostr_event_free(ev);
+
+    if (getenv("NOSTR_DEBUG")) {
+        fprintf(stderr, "[nip46] publish_response: published to %d relay(s)\n", published);
+    }
+
+    return published > 0 ? 0 : -1;
+}
+
 int nostr_nip46_bunker_reply(NostrNip46Session *s, const NostrNip46Request *req, const char *result_or_json, const char *error_or_null) {
     if (!s || !req || !req->id) return -1;
     char *json = NULL;
@@ -335,9 +587,27 @@ int nostr_nip46_bunker_reply(NostrNip46Session *s, const NostrNip46Request *req,
     }
     if (!json) return -1;
     if (s->last_reply_json) { free(s->last_reply_json); }
-    s->last_reply_json = json; /* transfer ownership to session, retrievable via getter */
-    /* TODO: when transport is wired, emit this JSON over the relay */
-    return 0;
+    s->last_reply_json = strdup(json); /* keep a copy for tests/introspection */
+
+    /* Publish the response over the relay transport if available.
+     * We need the client pubkey to encrypt to. Priority:
+     * 1. current_request_client_pubkey (set during handle_cipher)
+     * 2. client_pubkey_hex (from nostrconnect:// URI)
+     * 3. remote_pubkey_hex (from bunker:// URI) */
+    int rc = 0;
+    const char *recipient = s->current_request_client_pubkey ? s->current_request_client_pubkey :
+                           (s->client_pubkey_hex ? s->client_pubkey_hex : s->remote_pubkey_hex);
+    if (s->pool && s->listening && recipient) {
+        rc = nip46_publish_response(s, recipient, json);
+        if (rc != 0 && getenv("NOSTR_DEBUG")) {
+            fprintf(stderr, "[nip46] bunker_reply: failed to publish response\n");
+        }
+    } else if (getenv("NOSTR_DEBUG")) {
+        fprintf(stderr, "[nip46] bunker_reply: transport not ready, response stored locally only\n");
+    }
+
+    free(json);
+    return rc;
 }
 
 int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
@@ -347,6 +617,12 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
     if (!s || !client_pubkey_hex || !ciphertext || !out_cipher_reply) return -1;
     *out_cipher_reply = NULL;
     if (!s->secret) return -1; /* need our secret to decrypt/encrypt */
+
+    /* Store client pubkey for response routing (used by bunker_reply if transport is active) */
+    if (s->current_request_client_pubkey) {
+        free(s->current_request_client_pubkey);
+    }
+    s->current_request_client_pubkey = strdup(client_pubkey_hex);
 
     /* 1) Decrypt NIP-04 */
     char *plain = NULL; char *err = NULL;

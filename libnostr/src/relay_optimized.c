@@ -223,11 +223,17 @@ static void process_envelope(NostrRelay *r, NostrEnvelope *envelope,
             if (ASYNC_VERIFY && !r->assume_valid) {
                 // Queue for async verification
                 VerifyJob *job = malloc(sizeof(VerifyJob));
+                if (!job) {
+                    g_warning("Failed to allocate VerifyJob for async verification");
+                    nostr_event_free(env->event);
+                    env->event = NULL;
+                    break;
+                }
                 job->event = env->event;
                 job->subscription = subscription;
                 job->relay = r;
                 job->verified = false;
-                
+
                 go_channel_send(channels->verify_queue, job);
                 env->event = NULL; // Ownership transferred
             } else {
@@ -450,7 +456,17 @@ void *optimized_message_loop(void *arg) {
         .eose_count = 0,
         .event_count = 0
     };
-    
+
+    if (!channels.workers) {
+        g_warning("Failed to allocate GoWaitGroup for worker pool");
+        go_channel_free(channels.control_chan);
+        go_channel_free(channels.event_chan);
+        go_channel_free(channels.verify_queue);
+        go_channel_free(channels.verify_results);
+        go_wait_group_done(&r->priv->workers);
+        return NULL;
+    }
+
     go_wait_group_init(channels.workers);
     
     // Start control processor (priority)
@@ -469,6 +485,11 @@ void *optimized_message_loop(void *arg) {
             OptimizedRelayChannels *channels;
             int worker_id;
         } *worker_ctx = malloc(sizeof(*worker_ctx));
+        if (!worker_ctx) {
+            g_warning("Failed to allocate worker context for event worker %d", i);
+            go_wait_group_done(channels.workers);
+            continue;
+        }
         worker_ctx->relay = r;
         worker_ctx->channels = &channels;
         worker_ctx->worker_id = i;
@@ -508,8 +529,17 @@ void *optimized_message_loop(void *arg) {
         // Create message copy
         size_t len = strlen(buf);
         WebSocketMessage *msg = malloc(sizeof(WebSocketMessage));
+        if (!msg) {
+            g_warning("Failed to allocate WebSocketMessage, skipping message");
+            continue;
+        }
         msg->length = len;
         msg->data = malloc(len + 1);
+        if (!msg->data) {
+            g_warning("Failed to allocate message data buffer, skipping message");
+            free(msg);
+            continue;
+        }
         memcpy(msg->data, buf, len + 1);
         
         // Route based on message type

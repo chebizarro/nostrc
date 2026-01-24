@@ -17,6 +17,8 @@
     <file>ui/widgets/gnostr-profile-row.ui</file>
     <file>ui/widgets/gnostr-search-results-view.ui</file>
     <file>ui/widgets/gnostr-article-card.ui</file>
+    <file>ui/widgets/gnostr-articles-view.ui</file>
+    <file>ui/widgets/gnostr-live-card.ui</file>
     <file>ui/widgets/gnostr-zap-goal-widget.ui</file>
     <file>ui/widgets/gnostr-channel-list-view.ui</file>
     <file>ui/widgets/gnostr-channel-row.ui</file>

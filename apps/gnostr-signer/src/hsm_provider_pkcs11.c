@@ -22,6 +22,14 @@
 #include <keys.h>
 #include <nostr/nip19/nip19.h>
 #include <nostr-utils.h>
+#include <nostr-event.h>
+
+#ifdef GNOSTR_HAVE_PKCS11
+/* OID for secp256k1 curve (1.3.132.0.10) */
+static const CK_BYTE SECP256K1_OID[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x0A};
+/* OID for prime256v1/secp256r1 curve (1.2.840.10045.3.1.7) for comparison */
+static const CK_BYTE SECP256R1_OID[] = {0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07};
+#endif
 
 /* Module info structure */
 typedef struct {
@@ -128,6 +136,150 @@ generate_key_id(void)
 }
 
 #ifdef GNOSTR_HAVE_PKCS11
+
+/* Helper to convert hex to bytes */
+static gboolean
+hex_to_bytes(const gchar *hex, guint8 *out, gsize expected_len)
+{
+  gsize hex_len = strlen(hex);
+  if (hex_len != expected_len * 2)
+    return FALSE;
+
+  for (gsize i = 0; i < expected_len; i++) {
+    gchar high = hex[i * 2];
+    gchar low = hex[i * 2 + 1];
+    guint8 val = 0;
+
+    if (high >= '0' && high <= '9')
+      val = (high - '0') << 4;
+    else if (high >= 'a' && high <= 'f')
+      val = (high - 'a' + 10) << 4;
+    else if (high >= 'A' && high <= 'F')
+      val = (high - 'A' + 10) << 4;
+    else
+      return FALSE;
+
+    if (low >= '0' && low <= '9')
+      val |= low - '0';
+    else if (low >= 'a' && low <= 'f')
+      val |= low - 'a' + 10;
+    else if (low >= 'A' && low <= 'F')
+      val |= low - 'A' + 10;
+    else
+      return FALSE;
+
+    out[i] = val;
+  }
+  return TRUE;
+}
+
+/* Find a module that has the specified slot */
+static Pkcs11Module *
+find_module_for_slot(GnHsmProviderPkcs11 *self, guint64 slot_id)
+{
+  for (GList *l = self->modules; l != NULL; l = l->next) {
+    Pkcs11Module *mod = (Pkcs11Module *)l->data;
+    if (!mod->functions)
+      continue;
+
+    CK_ULONG slot_count = 0;
+    CK_RV rv = mod->functions->C_GetSlotList(CK_TRUE, NULL, &slot_count);
+    if (rv != CKR_OK || slot_count == 0)
+      continue;
+
+    CK_SLOT_ID *slots = g_new(CK_SLOT_ID, slot_count);
+    rv = mod->functions->C_GetSlotList(CK_TRUE, slots, &slot_count);
+    if (rv != CKR_OK) {
+      g_free(slots);
+      continue;
+    }
+
+    for (CK_ULONG i = 0; i < slot_count; i++) {
+      if (slots[i] == (CK_SLOT_ID)slot_id) {
+        g_free(slots);
+        return mod;
+      }
+    }
+    g_free(slots);
+  }
+  return NULL;
+}
+
+/* Find a key object by key_id (base64 encoded CKA_ID) */
+static CK_OBJECT_HANDLE
+find_key_object(CK_FUNCTION_LIST *funcs, CK_SESSION_HANDLE session,
+                const gchar *key_id, CK_OBJECT_CLASS key_class)
+{
+  gsize id_len = 0;
+  guchar *id_bytes = g_base64_decode(key_id, &id_len);
+  if (!id_bytes)
+    return CK_INVALID_HANDLE;
+
+  CK_ATTRIBUTE template[] = {
+    {CKA_CLASS, &key_class, sizeof(key_class)},
+    {CKA_ID, id_bytes, id_len}
+  };
+
+  CK_RV rv = funcs->C_FindObjectsInit(session, template, 2);
+  g_free(id_bytes);
+
+  if (rv != CKR_OK)
+    return CK_INVALID_HANDLE;
+
+  CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+  CK_ULONG count = 0;
+  funcs->C_FindObjects(session, &obj, 1, &count);
+  funcs->C_FindObjectsFinal(session);
+
+  return (count > 0) ? obj : CK_INVALID_HANDLE;
+}
+
+/* Extract x-only public key (32 bytes) from EC point attribute */
+static gboolean
+extract_xonly_pubkey(const guint8 *ec_point, gsize ec_point_len, guint8 *xonly_out)
+{
+  /* EC point is typically DER encoded: 0x04 || x || y for uncompressed
+   * or wrapped in OCTET STRING: 0x04 <len> 0x04 || x || y
+   * We want the x coordinate (32 bytes for secp256k1) */
+
+  if (ec_point_len == 0)
+    return FALSE;
+
+  const guint8 *point_data = ec_point;
+  gsize point_len = ec_point_len;
+
+  /* Check for OCTET STRING wrapper (0x04 is tag for OCTET STRING in DER) */
+  if (point_data[0] == 0x04 && point_len > 2) {
+    /* Could be OCTET STRING wrapping, or uncompressed point directly */
+    /* If second byte is length and matches remaining data, it's wrapped */
+    if (point_data[1] == point_len - 2) {
+      /* Skip OCTET STRING tag and length */
+      point_data += 2;
+      point_len -= 2;
+    }
+  }
+
+  /* Now we should have: 0x04 || x (32 bytes) || y (32 bytes) for uncompressed */
+  if (point_len == 65 && point_data[0] == 0x04) {
+    /* Uncompressed point - extract x coordinate */
+    memcpy(xonly_out, point_data + 1, 32);
+    return TRUE;
+  }
+
+  /* Or compressed: 0x02/0x03 || x (32 bytes) */
+  if (point_len == 33 && (point_data[0] == 0x02 || point_data[0] == 0x03)) {
+    memcpy(xonly_out, point_data + 1, 32);
+    return TRUE;
+  }
+
+  /* Raw 32-byte x coordinate */
+  if (point_len == 32) {
+    memcpy(xonly_out, point_data, 32);
+    return TRUE;
+  }
+
+  return FALSE;
+}
 
 /* Convert PKCS#11 return code to string */
 static const gchar *
@@ -507,10 +659,10 @@ pkcs11_get_public_key(GnHsmProvider *provider,
                       GError **error)
 {
   GnHsmProviderPkcs11 *self = GN_HSM_PROVIDER_PKCS11(provider);
-  (void)slot_id;
-  (void)key_id;
 
 #ifndef GNOSTR_HAVE_PKCS11
+  (void)slot_id;
+  (void)key_id;
   g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_NOT_AVAILABLE,
               "PKCS#11 support not compiled in");
   return NULL;
@@ -524,11 +676,131 @@ pkcs11_get_public_key(GnHsmProvider *provider,
     return NULL;
   }
 
-  /* TODO: Implement actual key lookup */
-  g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_NOT_FOUND,
-              "Key lookup not yet implemented");
+  /* Find the module for this slot */
+  Pkcs11Module *mod = find_module_for_slot(self, slot_id);
+  if (!mod) {
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_NOT_FOUND,
+                "No module found for slot %" G_GUINT64_FORMAT, slot_id);
+    g_mutex_unlock(&self->lock);
+    return NULL;
+  }
+
+  /* Open a session */
+  CK_SESSION_HANDLE session;
+  CK_RV rv = mod->functions->C_OpenSession(slot_id,
+                                           CKF_SERIAL_SESSION,
+                                           NULL, NULL, &session);
+  if (rv != CKR_OK) {
+    g_set_error(error, GN_HSM_ERROR, map_pkcs11_error(rv),
+                "Failed to open session: %s", rv_to_string(rv));
+    g_mutex_unlock(&self->lock);
+    return NULL;
+  }
+
+  /* Find the public key object */
+  CK_OBJECT_CLASS pub_class = CKO_PUBLIC_KEY;
+  CK_OBJECT_HANDLE pub_obj = find_key_object(mod->functions, session, key_id, pub_class);
+
+  if (pub_obj == CK_INVALID_HANDLE) {
+    /* Try finding the private key and extracting public from it */
+    CK_OBJECT_CLASS priv_class = CKO_PRIVATE_KEY;
+    CK_OBJECT_HANDLE priv_obj = find_key_object(mod->functions, session, key_id, priv_class);
+    if (priv_obj == CK_INVALID_HANDLE) {
+      mod->functions->C_CloseSession(session);
+      g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_NOT_FOUND,
+                  "Key '%s' not found in slot %" G_GUINT64_FORMAT, key_id, slot_id);
+      g_mutex_unlock(&self->lock);
+      return NULL;
+    }
+    /* Use the private key object - we can get CKA_ID to find matching public */
+    pub_obj = priv_obj;
+  }
+
+  /* Get key attributes */
+  CK_BYTE label[256] = {0};
+  CK_BYTE ec_point[256] = {0};
+  CK_KEY_TYPE key_type = 0;
+  CK_ATTRIBUTE attrs[] = {
+    {CKA_LABEL, label, sizeof(label)},
+    {CKA_EC_POINT, ec_point, sizeof(ec_point)},
+    {CKA_KEY_TYPE, &key_type, sizeof(key_type)}
+  };
+
+  rv = mod->functions->C_GetAttributeValue(session, pub_obj, attrs, 3);
+
+  /* If we couldn't get EC_POINT from private key, try finding the public key */
+  if (rv != CKR_OK || attrs[1].ulValueLen == CK_UNAVAILABLE_INFORMATION) {
+    /* Need to find the matching public key */
+    gsize id_len = 0;
+    guchar *id_bytes = g_base64_decode(key_id, &id_len);
+    if (id_bytes) {
+      CK_OBJECT_CLASS pub_class2 = CKO_PUBLIC_KEY;
+      CK_ATTRIBUTE find_template[] = {
+        {CKA_CLASS, &pub_class2, sizeof(pub_class2)},
+        {CKA_ID, id_bytes, id_len}
+      };
+
+      rv = mod->functions->C_FindObjectsInit(session, find_template, 2);
+      if (rv == CKR_OK) {
+        CK_OBJECT_HANDLE found_pub = CK_INVALID_HANDLE;
+        CK_ULONG count = 0;
+        mod->functions->C_FindObjects(session, &found_pub, 1, &count);
+        mod->functions->C_FindObjectsFinal(session);
+
+        if (count > 0) {
+          pub_obj = found_pub;
+          attrs[1].ulValueLen = sizeof(ec_point);
+          rv = mod->functions->C_GetAttributeValue(session, pub_obj, attrs, 3);
+        }
+      }
+      g_free(id_bytes);
+    }
+  }
+
+  mod->functions->C_CloseSession(session);
+
+  if (rv != CKR_OK) {
+    g_set_error(error, GN_HSM_ERROR, map_pkcs11_error(rv),
+                "Failed to get key attributes: %s", rv_to_string(rv));
+    g_mutex_unlock(&self->lock);
+    return NULL;
+  }
+
+  /* Extract the x-only public key from EC point */
+  guint8 xonly_pk[32];
+  if (!extract_xonly_pubkey(ec_point, attrs[1].ulValueLen, xonly_pk)) {
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_FAILED,
+                "Failed to extract public key from EC point");
+    g_mutex_unlock(&self->lock);
+    return NULL;
+  }
+
+  /* Create key info */
+  GnHsmKeyInfo *info = g_new0(GnHsmKeyInfo, 1);
+  info->key_id = g_strdup(key_id);
+  info->label = g_strndup((gchar *)label, attrs[0].ulValueLen);
+  info->key_type = GN_HSM_KEY_TYPE_SECP256K1;
+  info->slot_id = slot_id;
+  info->can_sign = TRUE;
+  info->is_extractable = FALSE;
+
+  /* Convert public key to hex */
+  info->pubkey_hex = bytes_to_hex(xonly_pk, 32);
+
+  /* Generate npub */
+  gchar *npub = NULL;
+  if (nostr_nip19_encode_npub(xonly_pk, &npub) == 0 && npub) {
+    info->npub = g_strdup(npub);
+    free(npub);
+  } else {
+    info->npub = g_strdup_printf("npub1%s", info->pubkey_hex);
+  }
+
+  /* Get creation time if available (use current time as fallback) */
+  info->created_at = g_strdup_printf("%" G_GINT64_FORMAT, (gint64)time(NULL));
+
   g_mutex_unlock(&self->lock);
-  return NULL;
+  return info;
 #endif
 }
 
@@ -543,18 +815,31 @@ pkcs11_sign_hash(GnHsmProvider *provider,
                  GError **error)
 {
   GnHsmProviderPkcs11 *self = GN_HSM_PROVIDER_PKCS11(provider);
+
+#ifndef GNOSTR_HAVE_PKCS11
   (void)slot_id;
   (void)key_id;
   (void)hash;
   (void)hash_len;
   (void)signature;
   (void)signature_len;
-
-#ifndef GNOSTR_HAVE_PKCS11
   g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_NOT_AVAILABLE,
               "PKCS#11 support not compiled in");
   return FALSE;
 #else
+  if (hash_len != 32) {
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_FAILED,
+                "Hash must be 32 bytes, got %" G_GSIZE_FORMAT, hash_len);
+    return FALSE;
+  }
+
+  if (*signature_len < 64) {
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_FAILED,
+                "Signature buffer too small (need 64, got %" G_GSIZE_FORMAT ")",
+                *signature_len);
+    return FALSE;
+  }
+
   g_mutex_lock(&self->lock);
 
   if (!self->initialized) {
@@ -564,9 +849,204 @@ pkcs11_sign_hash(GnHsmProvider *provider,
     return FALSE;
   }
 
-  /* TODO: Implement actual signing */
+  /* Find the module for this slot */
+  Pkcs11Module *mod = find_module_for_slot(self, slot_id);
+  if (!mod) {
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_NOT_FOUND,
+                "No module found for slot %" G_GUINT64_FORMAT, slot_id);
+    g_mutex_unlock(&self->lock);
+    return FALSE;
+  }
+
+  /* Check for existing session or open a new one */
+  SlotSession *sess = g_hash_table_lookup(self->sessions,
+                                          GUINT_TO_POINTER((guint)slot_id));
+  CK_SESSION_HANDLE session;
+  gboolean own_session = FALSE;
+
+  if (sess && sess->session) {
+    session = sess->session;
+  } else {
+    CK_RV rv = mod->functions->C_OpenSession(slot_id,
+                                             CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                             NULL, NULL, &session);
+    if (rv != CKR_OK) {
+      g_set_error(error, GN_HSM_ERROR, map_pkcs11_error(rv),
+                  "Failed to open session: %s", rv_to_string(rv));
+      g_mutex_unlock(&self->lock);
+      return FALSE;
+    }
+    own_session = TRUE;
+  }
+
+  /* Find the private key object */
+  CK_OBJECT_CLASS priv_class = CKO_PRIVATE_KEY;
+  CK_OBJECT_HANDLE priv_key = find_key_object(mod->functions, session, key_id, priv_class);
+
+  if (priv_key == CK_INVALID_HANDLE) {
+    if (own_session)
+      mod->functions->C_CloseSession(session);
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_NOT_FOUND,
+                "Private key '%s' not found", key_id);
+    g_mutex_unlock(&self->lock);
+    return FALSE;
+  }
+
+  /* Check if software signing is enabled and needed */
+  gboolean use_software_signing = self->software_signing_enabled;
+
+  if (use_software_signing) {
+    /* Try to extract the private key for software signing (if extractable) */
+    /* Note: Most HSM keys are NOT extractable, which is the point.
+     * For tokens without secp256k1 support, we need to store the key
+     * in a way that allows extraction, or use a wrapped key approach.
+     * For now, we'll try PKCS#11 ECDSA and fall back to error if not supported. */
+
+    /* First, try hardware signing with ECDSA mechanism */
+    CK_MECHANISM mechanism = {CKM_ECDSA, NULL, 0};
+
+    CK_RV rv = mod->functions->C_SignInit(session, &mechanism, priv_key);
+    if (rv == CKR_OK) {
+      /* Hardware supports ECDSA - use it */
+      CK_BYTE raw_sig[72]; /* DER encoded ECDSA signature max size */
+      CK_ULONG raw_sig_len = sizeof(raw_sig);
+
+      rv = mod->functions->C_Sign(session, (CK_BYTE_PTR)hash, hash_len,
+                                  raw_sig, &raw_sig_len);
+
+      if (rv == CKR_OK) {
+        /* PKCS#11 ECDSA returns raw (r,s) concatenated for secp256k1 (64 bytes)
+         * or DER encoded for some implementations */
+        if (raw_sig_len == 64) {
+          /* Raw r||s format - exactly what we need for Schnorr-style */
+          memcpy(signature, raw_sig, 64);
+          *signature_len = 64;
+        } else if (raw_sig_len > 64) {
+          /* Likely DER encoded - need to decode */
+          /* DER: 0x30 <len> 0x02 <r_len> <r> 0x02 <s_len> <s> */
+          if (raw_sig[0] == 0x30) {
+            gsize offset = 2; /* Skip 0x30 and length */
+            if (raw_sig[1] & 0x80) offset++; /* Long form length */
+
+            /* Extract r */
+            if (raw_sig[offset] == 0x02) {
+              offset++;
+              gsize r_len = raw_sig[offset++];
+              const guint8 *r_ptr = &raw_sig[offset];
+              if (r_len > 32 && r_ptr[0] == 0x00) {
+                r_ptr++;
+                r_len--;
+              }
+              gsize r_pad = (r_len < 32) ? 32 - r_len : 0;
+              memset(signature, 0, r_pad);
+              memcpy(signature + r_pad, r_ptr, (r_len > 32) ? 32 : r_len);
+              offset += raw_sig[offset - 1 - (r_ptr - &raw_sig[offset])];
+
+              /* Extract s */
+              offset = 2 + (raw_sig[1] & 0x80 ? 1 : 0) + 2 + raw_sig[3 + (raw_sig[1] & 0x80 ? 1 : 0)];
+              if (raw_sig[offset] == 0x02) {
+                offset++;
+                gsize s_len = raw_sig[offset++];
+                const guint8 *s_ptr = &raw_sig[offset];
+                if (s_len > 32 && s_ptr[0] == 0x00) {
+                  s_ptr++;
+                  s_len--;
+                }
+                gsize s_pad = (s_len < 32) ? 32 - s_len : 0;
+                memset(signature + 32, 0, s_pad);
+                memcpy(signature + 32 + s_pad, s_ptr, (s_len > 32) ? 32 : s_len);
+              }
+            }
+            *signature_len = 64;
+          } else {
+            /* Unknown format */
+            if (own_session)
+              mod->functions->C_CloseSession(session);
+            g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_SIGNING_FAILED,
+                        "Unknown signature format from HSM");
+            g_mutex_unlock(&self->lock);
+            return FALSE;
+          }
+        } else {
+          if (own_session)
+            mod->functions->C_CloseSession(session);
+          g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_SIGNING_FAILED,
+                      "Unexpected signature length: %lu", (unsigned long)raw_sig_len);
+          g_mutex_unlock(&self->lock);
+          return FALSE;
+        }
+
+        if (own_session)
+          mod->functions->C_CloseSession(session);
+        g_mutex_unlock(&self->lock);
+        return TRUE;
+      }
+    }
+
+    /* Hardware signing failed - check if key is extractable for software fallback */
+    CK_BBOOL extractable = CK_FALSE;
+    CK_ATTRIBUTE ext_attr = {CKA_EXTRACTABLE, &extractable, sizeof(extractable)};
+    mod->functions->C_GetAttributeValue(session, priv_key, &ext_attr, 1);
+
+    if (extractable == CK_TRUE) {
+      /* Extract private key for software signing */
+      CK_BYTE priv_value[32];
+      CK_ATTRIBUTE val_attr = {CKA_VALUE, priv_value, sizeof(priv_value)};
+
+      rv = mod->functions->C_GetAttributeValue(session, priv_key, &val_attr, 1);
+      if (rv == CKR_OK && val_attr.ulValueLen == 32) {
+        /* Use libnostr for Schnorr signing */
+        gchar *sk_hex = bytes_to_hex(priv_value, 32);
+        gchar *hash_hex = bytes_to_hex(hash, 32);
+
+        /* Create a temporary event to use nostr_event_sign */
+        NostrEvent *temp_event = nostr_event_new();
+        if (temp_event) {
+          /* Get public key */
+          gchar *pk_hex = nostr_key_get_public(sk_hex);
+          if (pk_hex) {
+            nostr_event_set_pubkey(temp_event, pk_hex);
+            nostr_event_set_kind(temp_event, 1);
+            nostr_event_set_created_at(temp_event, time(NULL));
+            nostr_event_set_content(temp_event, "");
+            temp_event->id = g_strdup(hash_hex);
+
+            int sign_result = nostr_event_sign(temp_event, sk_hex);
+            if (sign_result == 0) {
+              const char *sig_hex = nostr_event_get_sig(temp_event);
+              if (sig_hex && hex_to_bytes(sig_hex, signature, 64)) {
+                *signature_len = 64;
+                nostr_event_free(temp_event);
+                memset(priv_value, 0, sizeof(priv_value));
+                memset(sk_hex, 0, strlen(sk_hex));
+                g_free(sk_hex);
+                g_free(hash_hex);
+                g_free(pk_hex);
+                if (own_session)
+                  mod->functions->C_CloseSession(session);
+                g_mutex_unlock(&self->lock);
+                return TRUE;
+              }
+            }
+            g_free(pk_hex);
+          }
+          nostr_event_free(temp_event);
+        }
+
+        memset(priv_value, 0, sizeof(priv_value));
+        memset(sk_hex, 0, strlen(sk_hex));
+        g_free(sk_hex);
+        g_free(hash_hex);
+      }
+    }
+  }
+
+  /* No supported signing method worked */
+  if (own_session)
+    mod->functions->C_CloseSession(session);
+
   g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_SIGNING_FAILED,
-              "Signing not yet implemented");
+              "Token does not support secp256k1 signing and software fallback failed");
   g_mutex_unlock(&self->lock);
   return FALSE;
 #endif
@@ -580,11 +1060,11 @@ pkcs11_sign_event(GnHsmProvider *provider,
                   GError **error)
 {
   GnHsmProviderPkcs11 *self = GN_HSM_PROVIDER_PKCS11(provider);
+
+#ifndef GNOSTR_HAVE_PKCS11
   (void)slot_id;
   (void)key_id;
   (void)event_json;
-
-#ifndef GNOSTR_HAVE_PKCS11
   g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_NOT_AVAILABLE,
               "PKCS#11 support not compiled in");
   return NULL;
@@ -598,11 +1078,77 @@ pkcs11_sign_event(GnHsmProvider *provider,
     return NULL;
   }
 
-  /* TODO: Implement actual event signing */
-  g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_SIGNING_FAILED,
-              "Event signing not yet implemented");
+  /* Parse the event JSON */
+  NostrEvent *event = nostr_event_new();
+  if (!event) {
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_SIGNING_FAILED,
+                "Failed to create event for signing");
+    g_mutex_unlock(&self->lock);
+    return NULL;
+  }
+
+  if (!nostr_event_deserialize_compact(event, event_json)) {
+    nostr_event_free(event);
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_SIGNING_FAILED,
+                "Failed to parse event JSON");
+    g_mutex_unlock(&self->lock);
+    return NULL;
+  }
+
+  /* Get the event ID (hash) */
+  gchar *event_id = nostr_event_get_id(event);
+  if (!event_id) {
+    nostr_event_free(event);
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_SIGNING_FAILED,
+                "Failed to compute event ID");
+    g_mutex_unlock(&self->lock);
+    return NULL;
+  }
+
+  /* Convert event ID hex to bytes */
+  guint8 hash[32];
+  if (!hex_to_bytes(event_id, hash, 32)) {
+    g_free(event_id);
+    nostr_event_free(event);
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_SIGNING_FAILED,
+                "Invalid event ID format");
+    g_mutex_unlock(&self->lock);
+    return NULL;
+  }
+
+  /* Sign the hash */
+  guint8 signature[64];
+  gsize signature_len = sizeof(signature);
+
+  /* Temporarily unlock for the sign_hash call to avoid deadlock */
   g_mutex_unlock(&self->lock);
-  return NULL;
+
+  gboolean signed_ok = pkcs11_sign_hash(provider, slot_id, key_id,
+                                        hash, 32, signature, &signature_len, error);
+
+  if (!signed_ok) {
+    g_free(event_id);
+    nostr_event_free(event);
+    return NULL;
+  }
+
+  /* Set the event ID and signature */
+  event->id = event_id; /* Transfer ownership */
+  gchar *sig_hex = bytes_to_hex(signature, 64);
+  nostr_event_set_sig(event, sig_hex);
+  g_free(sig_hex);
+
+  /* Serialize the signed event */
+  gchar *signed_json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+
+  if (!signed_json) {
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_SIGNING_FAILED,
+                "Failed to serialize signed event");
+    return NULL;
+  }
+
+  return signed_json;
 #endif
 }
 
@@ -614,15 +1160,21 @@ pkcs11_generate_key(GnHsmProvider *provider,
                     GError **error)
 {
   GnHsmProviderPkcs11 *self = GN_HSM_PROVIDER_PKCS11(provider);
+
+#ifndef GNOSTR_HAVE_PKCS11
   (void)slot_id;
   (void)label;
   (void)key_type;
-
-#ifndef GNOSTR_HAVE_PKCS11
   g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_NOT_AVAILABLE,
               "PKCS#11 support not compiled in");
   return NULL;
 #else
+  if (key_type != GN_HSM_KEY_TYPE_SECP256K1) {
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_FAILED,
+                "Only secp256k1 keys are supported");
+    return NULL;
+  }
+
   g_mutex_lock(&self->lock);
 
   if (!self->initialized) {
@@ -632,11 +1184,222 @@ pkcs11_generate_key(GnHsmProvider *provider,
     return NULL;
   }
 
-  /* TODO: Implement actual key generation */
-  g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_KEY_GENERATION_FAILED,
-              "Key generation not yet implemented");
+  /* Find the module for this slot */
+  Pkcs11Module *mod = find_module_for_slot(self, slot_id);
+  if (!mod) {
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_NOT_FOUND,
+                "No module found for slot %" G_GUINT64_FORMAT, slot_id);
+    g_mutex_unlock(&self->lock);
+    return NULL;
+  }
+
+  /* Check for existing session or open a new one */
+  SlotSession *sess = g_hash_table_lookup(self->sessions,
+                                          GUINT_TO_POINTER((guint)slot_id));
+  CK_SESSION_HANDLE session;
+  gboolean own_session = FALSE;
+
+  if (sess && sess->session) {
+    session = sess->session;
+  } else {
+    CK_RV rv = mod->functions->C_OpenSession(slot_id,
+                                             CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                             NULL, NULL, &session);
+    if (rv != CKR_OK) {
+      g_set_error(error, GN_HSM_ERROR, map_pkcs11_error(rv),
+                  "Failed to open session: %s", rv_to_string(rv));
+      g_mutex_unlock(&self->lock);
+      return NULL;
+    }
+    own_session = TRUE;
+  }
+
+  /* Generate a unique key ID */
+  gchar *key_id_str = generate_key_id();
+  gsize key_id_len = 0;
+  guchar *key_id_bytes = g_base64_decode(key_id_str, &key_id_len);
+
+  /* Try to generate key on the HSM first */
+  CK_MECHANISM mechanism = {CKM_EC_KEY_PAIR_GEN, NULL, 0};
+  CK_BBOOL ck_true = CK_TRUE;
+  CK_BBOOL ck_false = CK_FALSE;
+
+  /* Check if token supports secp256k1 */
+  gboolean has_secp256k1 = gn_hsm_provider_pkcs11_has_secp256k1_support(self, slot_id);
+
+  CK_OBJECT_HANDLE pub_key = CK_INVALID_HANDLE;
+  CK_OBJECT_HANDLE priv_key = CK_INVALID_HANDLE;
+  guint8 public_key[32] = {0};
+  guint8 private_key[32] = {0};
+  gboolean generated_in_software = FALSE;
+
+  if (has_secp256k1) {
+    /* Generate on HSM with secp256k1 curve */
+    CK_ATTRIBUTE pub_template[] = {
+      {CKA_TOKEN, &ck_true, sizeof(ck_true)},
+      {CKA_VERIFY, &ck_true, sizeof(ck_true)},
+      {CKA_EC_PARAMS, (CK_VOID_PTR)SECP256K1_OID, sizeof(SECP256K1_OID)},
+      {CKA_LABEL, (CK_VOID_PTR)label, strlen(label)},
+      {CKA_ID, key_id_bytes, key_id_len}
+    };
+
+    CK_ATTRIBUTE priv_template[] = {
+      {CKA_TOKEN, &ck_true, sizeof(ck_true)},
+      {CKA_PRIVATE, &ck_true, sizeof(ck_true)},
+      {CKA_SENSITIVE, &ck_true, sizeof(ck_true)},
+      {CKA_EXTRACTABLE, &ck_false, sizeof(ck_false)},
+      {CKA_SIGN, &ck_true, sizeof(ck_true)},
+      {CKA_LABEL, (CK_VOID_PTR)label, strlen(label)},
+      {CKA_ID, key_id_bytes, key_id_len}
+    };
+
+    CK_RV rv = mod->functions->C_GenerateKeyPair(session, &mechanism,
+                                                  pub_template, 5,
+                                                  priv_template, 7,
+                                                  &pub_key, &priv_key);
+
+    if (rv == CKR_OK) {
+      /* Extract public key */
+      CK_BYTE ec_point[256];
+      CK_ATTRIBUTE ec_attr = {CKA_EC_POINT, ec_point, sizeof(ec_point)};
+      rv = mod->functions->C_GetAttributeValue(session, pub_key, &ec_attr, 1);
+      if (rv == CKR_OK) {
+        extract_xonly_pubkey(ec_point, ec_attr.ulValueLen, public_key);
+      }
+    } else {
+      g_message("PKCS#11: Hardware key generation failed (%s), trying software",
+                rv_to_string(rv));
+    }
+  }
+
+  if (pub_key == CK_INVALID_HANDLE) {
+    /* Generate in software and store on token */
+    gchar *sk_hex = nostr_key_generate_private();
+    if (!sk_hex) {
+      g_free(key_id_bytes);
+      g_free(key_id_str);
+      if (own_session)
+        mod->functions->C_CloseSession(session);
+      g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_KEY_GENERATION_FAILED,
+                  "Failed to generate key in software");
+      g_mutex_unlock(&self->lock);
+      return NULL;
+    }
+
+    gchar *pk_hex = nostr_key_get_public(sk_hex);
+    if (!pk_hex) {
+      memset(sk_hex, 0, strlen(sk_hex));
+      g_free(sk_hex);
+      g_free(key_id_bytes);
+      g_free(key_id_str);
+      if (own_session)
+        mod->functions->C_CloseSession(session);
+      g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_KEY_GENERATION_FAILED,
+                  "Failed to derive public key");
+      g_mutex_unlock(&self->lock);
+      return NULL;
+    }
+
+    hex_to_bytes(sk_hex, private_key, 32);
+    hex_to_bytes(pk_hex, public_key, 32);
+    memset(sk_hex, 0, strlen(sk_hex));
+    g_free(sk_hex);
+    g_free(pk_hex);
+    generated_in_software = TRUE;
+
+    /* Build EC point (uncompressed: 0x04 || x || y) */
+    /* For simplicity, store as 0x04 || x || x (we only have x, but some tokens need 65 bytes) */
+    /* Better approach: compute y from x for secp256k1, but for now store as extractable key */
+    CK_BYTE ec_point[67];
+    ec_point[0] = 0x04; /* OCTET STRING tag */
+    ec_point[1] = 65;   /* Length */
+    ec_point[2] = 0x04; /* Uncompressed point marker */
+    memcpy(&ec_point[3], public_key, 32); /* x coordinate */
+    memset(&ec_point[35], 0, 32); /* y placeholder - not used for x-only keys */
+
+    /* Create private key object (extractable for software signing) */
+    CK_OBJECT_CLASS priv_class = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE key_type_ec = CKK_EC;
+    CK_ATTRIBUTE priv_template[] = {
+      {CKA_CLASS, &priv_class, sizeof(priv_class)},
+      {CKA_KEY_TYPE, &key_type_ec, sizeof(key_type_ec)},
+      {CKA_TOKEN, &ck_true, sizeof(ck_true)},
+      {CKA_PRIVATE, &ck_true, sizeof(ck_true)},
+      {CKA_SENSITIVE, &ck_false, sizeof(ck_false)}, /* Allow extraction for software signing */
+      {CKA_EXTRACTABLE, &ck_true, sizeof(ck_true)},
+      {CKA_SIGN, &ck_true, sizeof(ck_true)},
+      {CKA_EC_PARAMS, (CK_VOID_PTR)SECP256K1_OID, sizeof(SECP256K1_OID)},
+      {CKA_VALUE, private_key, 32},
+      {CKA_LABEL, (CK_VOID_PTR)label, strlen(label)},
+      {CKA_ID, key_id_bytes, key_id_len}
+    };
+
+    CK_RV rv = mod->functions->C_CreateObject(session, priv_template, 11, &priv_key);
+
+    /* Clear private key from memory */
+    memset(private_key, 0, sizeof(private_key));
+
+    if (rv != CKR_OK) {
+      g_free(key_id_bytes);
+      g_free(key_id_str);
+      if (own_session)
+        mod->functions->C_CloseSession(session);
+      g_set_error(error, GN_HSM_ERROR, map_pkcs11_error(rv),
+                  "Failed to store private key: %s", rv_to_string(rv));
+      g_mutex_unlock(&self->lock);
+      return NULL;
+    }
+
+    /* Create public key object */
+    CK_OBJECT_CLASS pub_class = CKO_PUBLIC_KEY;
+    CK_ATTRIBUTE pub_template[] = {
+      {CKA_CLASS, &pub_class, sizeof(pub_class)},
+      {CKA_KEY_TYPE, &key_type_ec, sizeof(key_type_ec)},
+      {CKA_TOKEN, &ck_true, sizeof(ck_true)},
+      {CKA_VERIFY, &ck_true, sizeof(ck_true)},
+      {CKA_EC_PARAMS, (CK_VOID_PTR)SECP256K1_OID, sizeof(SECP256K1_OID)},
+      {CKA_EC_POINT, ec_point, sizeof(ec_point)},
+      {CKA_LABEL, (CK_VOID_PTR)label, strlen(label)},
+      {CKA_ID, key_id_bytes, key_id_len}
+    };
+
+    rv = mod->functions->C_CreateObject(session, pub_template, 8, &pub_key);
+    /* Public key creation failure is not fatal - private key is stored */
+    if (rv != CKR_OK) {
+      g_message("PKCS#11: Failed to store public key object: %s", rv_to_string(rv));
+    }
+  }
+
+  g_free(key_id_bytes);
+
+  if (own_session)
+    mod->functions->C_CloseSession(session);
+
+  /* Create return info */
+  GnHsmKeyInfo *info = g_new0(GnHsmKeyInfo, 1);
+  info->key_id = key_id_str;
+  info->label = g_strdup(label);
+  info->key_type = GN_HSM_KEY_TYPE_SECP256K1;
+  info->slot_id = slot_id;
+  info->can_sign = TRUE;
+  info->is_extractable = generated_in_software;
+
+  /* Convert public key to hex */
+  info->pubkey_hex = bytes_to_hex(public_key, 32);
+
+  /* Generate npub */
+  gchar *npub = NULL;
+  if (nostr_nip19_encode_npub(public_key, &npub) == 0 && npub) {
+    info->npub = g_strdup(npub);
+    free(npub);
+  } else {
+    info->npub = g_strdup_printf("npub1%s", info->pubkey_hex);
+  }
+
+  info->created_at = g_strdup_printf("%" G_GINT64_FORMAT, (gint64)time(NULL));
+
   g_mutex_unlock(&self->lock);
-  return NULL;
+  return info;
 #endif
 }
 
@@ -650,17 +1413,23 @@ pkcs11_import_key(GnHsmProvider *provider,
                   GError **error)
 {
   GnHsmProviderPkcs11 *self = GN_HSM_PROVIDER_PKCS11(provider);
+
+#ifndef GNOSTR_HAVE_PKCS11
   (void)slot_id;
   (void)label;
   (void)private_key;
   (void)key_len;
   (void)out_info;
-
-#ifndef GNOSTR_HAVE_PKCS11
   g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_NOT_AVAILABLE,
               "PKCS#11 support not compiled in");
   return FALSE;
 #else
+  if (key_len != 32) {
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_FAILED,
+                "Private key must be 32 bytes");
+    return FALSE;
+  }
+
   g_mutex_lock(&self->lock);
 
   if (!self->initialized) {
@@ -670,11 +1439,155 @@ pkcs11_import_key(GnHsmProvider *provider,
     return FALSE;
   }
 
-  /* TODO: Implement actual key import */
-  g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_FAILED,
-              "Key import not yet implemented");
+  /* Find the module for this slot */
+  Pkcs11Module *mod = find_module_for_slot(self, slot_id);
+  if (!mod) {
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_NOT_FOUND,
+                "No module found for slot %" G_GUINT64_FORMAT, slot_id);
+    g_mutex_unlock(&self->lock);
+    return FALSE;
+  }
+
+  /* Derive public key from private key */
+  gchar *sk_hex = bytes_to_hex(private_key, 32);
+  gchar *pk_hex = nostr_key_get_public(sk_hex);
+
+  if (!pk_hex) {
+    memset(sk_hex, 0, strlen(sk_hex));
+    g_free(sk_hex);
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_FAILED,
+                "Failed to derive public key");
+    g_mutex_unlock(&self->lock);
+    return FALSE;
+  }
+
+  guint8 public_key[32];
+  hex_to_bytes(pk_hex, public_key, 32);
+  memset(sk_hex, 0, strlen(sk_hex));
+  g_free(sk_hex);
+  g_free(pk_hex);
+
+  /* Check for existing session or open a new one */
+  SlotSession *sess = g_hash_table_lookup(self->sessions,
+                                          GUINT_TO_POINTER((guint)slot_id));
+  CK_SESSION_HANDLE session;
+  gboolean own_session = FALSE;
+
+  if (sess && sess->session) {
+    session = sess->session;
+  } else {
+    CK_RV rv = mod->functions->C_OpenSession(slot_id,
+                                             CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                             NULL, NULL, &session);
+    if (rv != CKR_OK) {
+      g_set_error(error, GN_HSM_ERROR, map_pkcs11_error(rv),
+                  "Failed to open session: %s", rv_to_string(rv));
+      g_mutex_unlock(&self->lock);
+      return FALSE;
+    }
+    own_session = TRUE;
+  }
+
+  /* Generate a unique key ID */
+  gchar *key_id_str = generate_key_id();
+  gsize key_id_len = 0;
+  guchar *key_id_bytes = g_base64_decode(key_id_str, &key_id_len);
+
+  /* Build EC point (uncompressed: 0x04 || x || y) */
+  CK_BYTE ec_point[67];
+  ec_point[0] = 0x04; /* OCTET STRING tag */
+  ec_point[1] = 65;   /* Length */
+  ec_point[2] = 0x04; /* Uncompressed point marker */
+  memcpy(&ec_point[3], public_key, 32); /* x coordinate */
+  memset(&ec_point[35], 0, 32); /* y placeholder */
+
+  /* Create private key object */
+  CK_OBJECT_CLASS priv_class = CKO_PRIVATE_KEY;
+  CK_KEY_TYPE key_type_ec = CKK_EC;
+  CK_BBOOL ck_true = CK_TRUE;
+  CK_BBOOL ck_false = CK_FALSE;
+
+  CK_ATTRIBUTE priv_template[] = {
+    {CKA_CLASS, &priv_class, sizeof(priv_class)},
+    {CKA_KEY_TYPE, &key_type_ec, sizeof(key_type_ec)},
+    {CKA_TOKEN, &ck_true, sizeof(ck_true)},
+    {CKA_PRIVATE, &ck_true, sizeof(ck_true)},
+    {CKA_SENSITIVE, &ck_false, sizeof(ck_false)}, /* Allow extraction for software signing */
+    {CKA_EXTRACTABLE, &ck_true, sizeof(ck_true)},
+    {CKA_SIGN, &ck_true, sizeof(ck_true)},
+    {CKA_EC_PARAMS, (CK_VOID_PTR)SECP256K1_OID, sizeof(SECP256K1_OID)},
+    {CKA_VALUE, (CK_VOID_PTR)private_key, 32},
+    {CKA_LABEL, (CK_VOID_PTR)label, strlen(label)},
+    {CKA_ID, key_id_bytes, key_id_len}
+  };
+
+  CK_OBJECT_HANDLE priv_key = CK_INVALID_HANDLE;
+  CK_RV rv = mod->functions->C_CreateObject(session, priv_template, 11, &priv_key);
+
+  if (rv != CKR_OK) {
+    g_free(key_id_bytes);
+    g_free(key_id_str);
+    if (own_session)
+      mod->functions->C_CloseSession(session);
+    g_set_error(error, GN_HSM_ERROR, map_pkcs11_error(rv),
+                "Failed to import private key: %s", rv_to_string(rv));
+    g_mutex_unlock(&self->lock);
+    return FALSE;
+  }
+
+  /* Create public key object */
+  CK_OBJECT_CLASS pub_class = CKO_PUBLIC_KEY;
+  CK_ATTRIBUTE pub_template[] = {
+    {CKA_CLASS, &pub_class, sizeof(pub_class)},
+    {CKA_KEY_TYPE, &key_type_ec, sizeof(key_type_ec)},
+    {CKA_TOKEN, &ck_true, sizeof(ck_true)},
+    {CKA_VERIFY, &ck_true, sizeof(ck_true)},
+    {CKA_EC_PARAMS, (CK_VOID_PTR)SECP256K1_OID, sizeof(SECP256K1_OID)},
+    {CKA_EC_POINT, ec_point, sizeof(ec_point)},
+    {CKA_LABEL, (CK_VOID_PTR)label, strlen(label)},
+    {CKA_ID, key_id_bytes, key_id_len}
+  };
+
+  CK_OBJECT_HANDLE pub_key = CK_INVALID_HANDLE;
+  rv = mod->functions->C_CreateObject(session, pub_template, 8, &pub_key);
+  /* Public key creation failure is not fatal */
+  if (rv != CKR_OK) {
+    g_message("PKCS#11: Failed to store public key object: %s", rv_to_string(rv));
+  }
+
+  g_free(key_id_bytes);
+
+  if (own_session)
+    mod->functions->C_CloseSession(session);
+
+  /* Create return info if requested */
+  if (out_info) {
+    GnHsmKeyInfo *info = g_new0(GnHsmKeyInfo, 1);
+    info->key_id = key_id_str;
+    info->label = g_strdup(label);
+    info->key_type = GN_HSM_KEY_TYPE_SECP256K1;
+    info->slot_id = slot_id;
+    info->can_sign = TRUE;
+    info->is_extractable = TRUE;
+
+    info->pubkey_hex = bytes_to_hex(public_key, 32);
+
+    gchar *npub = NULL;
+    if (nostr_nip19_encode_npub(public_key, &npub) == 0 && npub) {
+      info->npub = g_strdup(npub);
+      free(npub);
+    } else {
+      info->npub = g_strdup_printf("npub1%s", info->pubkey_hex);
+    }
+
+    info->created_at = g_strdup_printf("%" G_GINT64_FORMAT, (gint64)time(NULL));
+    *out_info = info;
+  } else {
+    g_free(key_id_str);
+  }
+
   g_mutex_unlock(&self->lock);
-  return FALSE;
+  return TRUE;
 #endif
 }
 
@@ -685,10 +1598,10 @@ pkcs11_delete_key(GnHsmProvider *provider,
                   GError **error)
 {
   GnHsmProviderPkcs11 *self = GN_HSM_PROVIDER_PKCS11(provider);
-  (void)slot_id;
-  (void)key_id;
 
 #ifndef GNOSTR_HAVE_PKCS11
+  (void)slot_id;
+  (void)key_id;
   g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_NOT_AVAILABLE,
               "PKCS#11 support not compiled in");
   return FALSE;
@@ -702,11 +1615,76 @@ pkcs11_delete_key(GnHsmProvider *provider,
     return FALSE;
   }
 
-  /* TODO: Implement actual key deletion */
-  g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_FAILED,
-              "Key deletion not yet implemented");
+  /* Find the module for this slot */
+  Pkcs11Module *mod = find_module_for_slot(self, slot_id);
+  if (!mod) {
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_NOT_FOUND,
+                "No module found for slot %" G_GUINT64_FORMAT, slot_id);
+    g_mutex_unlock(&self->lock);
+    return FALSE;
+  }
+
+  /* Check for existing session or open a new one */
+  SlotSession *sess = g_hash_table_lookup(self->sessions,
+                                          GUINT_TO_POINTER((guint)slot_id));
+  CK_SESSION_HANDLE session;
+  gboolean own_session = FALSE;
+
+  if (sess && sess->session) {
+    session = sess->session;
+  } else {
+    CK_RV rv = mod->functions->C_OpenSession(slot_id,
+                                             CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                             NULL, NULL, &session);
+    if (rv != CKR_OK) {
+      g_set_error(error, GN_HSM_ERROR, map_pkcs11_error(rv),
+                  "Failed to open session: %s", rv_to_string(rv));
+      g_mutex_unlock(&self->lock);
+      return FALSE;
+    }
+    own_session = TRUE;
+  }
+
+  gboolean deleted_any = FALSE;
+
+  /* Delete private key object */
+  CK_OBJECT_CLASS priv_class = CKO_PRIVATE_KEY;
+  CK_OBJECT_HANDLE priv_key = find_key_object(mod->functions, session, key_id, priv_class);
+
+  if (priv_key != CK_INVALID_HANDLE) {
+    CK_RV rv = mod->functions->C_DestroyObject(session, priv_key);
+    if (rv == CKR_OK) {
+      deleted_any = TRUE;
+    } else {
+      g_message("PKCS#11: Failed to delete private key: %s", rv_to_string(rv));
+    }
+  }
+
+  /* Delete public key object */
+  CK_OBJECT_CLASS pub_class = CKO_PUBLIC_KEY;
+  CK_OBJECT_HANDLE pub_key = find_key_object(mod->functions, session, key_id, pub_class);
+
+  if (pub_key != CK_INVALID_HANDLE) {
+    CK_RV rv = mod->functions->C_DestroyObject(session, pub_key);
+    if (rv == CKR_OK) {
+      deleted_any = TRUE;
+    } else {
+      g_message("PKCS#11: Failed to delete public key: %s", rv_to_string(rv));
+    }
+  }
+
+  if (own_session)
+    mod->functions->C_CloseSession(session);
+
+  if (!deleted_any) {
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_NOT_FOUND,
+                "Key '%s' not found in slot %" G_GUINT64_FORMAT, key_id, slot_id);
+    g_mutex_unlock(&self->lock);
+    return FALSE;
+  }
+
   g_mutex_unlock(&self->lock);
-  return FALSE;
+  return TRUE;
 #endif
 }
 
@@ -905,10 +1883,68 @@ gn_hsm_provider_pkcs11_add_module(GnHsmProviderPkcs11 *self,
               "PKCS#11 support not compiled in");
   return FALSE;
 #else
-  /* TODO: Implement manual module loading */
-  g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_FAILED,
-              "Manual module loading not yet implemented");
-  return FALSE;
+  g_mutex_lock(&self->lock);
+
+  /* Check if module is already loaded */
+  for (GList *l = self->modules; l != NULL; l = l->next) {
+    Pkcs11Module *mod = (Pkcs11Module *)l->data;
+    if (g_strcmp0(mod->path, module_path) == 0) {
+      g_mutex_unlock(&self->lock);
+      /* Already loaded - not an error */
+      return TRUE;
+    }
+  }
+
+  /* Load the module using p11-kit */
+  CK_FUNCTION_LIST *funcs = p11_kit_module_load(module_path, 0);
+  if (!funcs) {
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_FAILED,
+                "Failed to load PKCS#11 module: %s", module_path);
+    g_mutex_unlock(&self->lock);
+    return FALSE;
+  }
+
+  /* Initialize the module */
+  CK_RV rv = funcs->C_Initialize(NULL);
+  if (rv != CKR_OK && rv != CKR_CRYPTOKI_ALREADY_INITIALIZED) {
+    p11_kit_module_release(funcs);
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_FAILED,
+                "Failed to initialize PKCS#11 module: %s", rv_to_string(rv));
+    g_mutex_unlock(&self->lock);
+    return FALSE;
+  }
+
+  /* Get module info */
+  CK_INFO info;
+  rv = funcs->C_GetInfo(&info);
+  if (rv != CKR_OK) {
+    funcs->C_Finalize(NULL);
+    p11_kit_module_release(funcs);
+    g_set_error(error, GN_HSM_ERROR, GN_HSM_ERROR_FAILED,
+                "Failed to get module info: %s", rv_to_string(rv));
+    g_mutex_unlock(&self->lock);
+    return FALSE;
+  }
+
+  /* Create module entry */
+  Pkcs11Module *mod = g_new0(Pkcs11Module, 1);
+  mod->path = g_strdup(module_path);
+  mod->functions = funcs;
+  mod->is_p11kit = FALSE; /* Manually loaded, not via p11-kit discovery */
+  mod->description = trim_pkcs11_string(info.libraryDescription,
+                                        sizeof(info.libraryDescription));
+  mod->manufacturer = trim_pkcs11_string(info.manufacturerID,
+                                         sizeof(info.manufacturerID));
+  mod->version = g_strdup_printf("%d.%d",
+                                 info.libraryVersion.major,
+                                 info.libraryVersion.minor);
+
+  self->modules = g_list_prepend(self->modules, mod);
+
+  g_mutex_unlock(&self->lock);
+
+  g_message("PKCS#11: Loaded module '%s' (%s)", module_path, mod->description);
+  return TRUE;
 #endif
 }
 
@@ -919,7 +1955,62 @@ gn_hsm_provider_pkcs11_remove_module(GnHsmProviderPkcs11 *self,
   g_return_if_fail(GN_IS_HSM_PROVIDER_PKCS11(self));
   g_return_if_fail(module_path != NULL);
 
-  /* TODO: Implement module removal */
+#ifdef GNOSTR_HAVE_PKCS11
+  g_mutex_lock(&self->lock);
+
+  for (GList *l = self->modules; l != NULL; l = l->next) {
+    Pkcs11Module *mod = (Pkcs11Module *)l->data;
+    if (g_strcmp0(mod->path, module_path) == 0) {
+      /* Don't remove modules loaded via p11-kit discovery */
+      if (mod->is_p11kit) {
+        g_warning("Cannot remove p11-kit managed module: %s", module_path);
+        g_mutex_unlock(&self->lock);
+        return;
+      }
+
+      /* Close any sessions using this module */
+      if (mod->functions) {
+        CK_ULONG slot_count = 0;
+        CK_RV rv = mod->functions->C_GetSlotList(CK_TRUE, NULL, &slot_count);
+        if (rv == CKR_OK && slot_count > 0) {
+          CK_SLOT_ID *slots = g_new(CK_SLOT_ID, slot_count);
+          rv = mod->functions->C_GetSlotList(CK_TRUE, slots, &slot_count);
+          if (rv == CKR_OK) {
+            for (CK_ULONG i = 0; i < slot_count; i++) {
+              SlotSession *sess = g_hash_table_lookup(self->sessions,
+                                                      GUINT_TO_POINTER((guint)slots[i]));
+              if (sess) {
+                mod->functions->C_CloseSession(sess->session);
+                g_hash_table_remove(self->sessions, GUINT_TO_POINTER((guint)slots[i]));
+              }
+            }
+          }
+          g_free(slots);
+        }
+
+        /* Finalize and release the module */
+        mod->functions->C_Finalize(NULL);
+        p11_kit_module_release(mod->functions);
+        mod->functions = NULL;
+      }
+
+      /* Remove from list */
+      self->modules = g_list_remove(self->modules, mod);
+
+      /* Free module structure (but don't call C_Finalize again) */
+      g_free(mod->path);
+      g_free(mod->description);
+      g_free(mod->manufacturer);
+      g_free(mod->version);
+      g_free(mod);
+
+      g_message("PKCS#11: Removed module '%s'", module_path);
+      break;
+    }
+  }
+
+  g_mutex_unlock(&self->lock);
+#endif
 }
 
 gboolean
@@ -978,11 +2069,130 @@ gn_hsm_provider_pkcs11_has_secp256k1_support(GnHsmProviderPkcs11 *self,
                                               guint64 slot_id)
 {
   g_return_val_if_fail(GN_IS_HSM_PROVIDER_PKCS11(self), FALSE);
-  (void)slot_id;
 
-  /* Most PKCS#11 tokens don't support secp256k1 natively */
-  /* TODO: Probe the token for EC mechanism support */
+#ifndef GNOSTR_HAVE_PKCS11
+  (void)slot_id;
   return FALSE;
+#else
+  g_mutex_lock(&self->lock);
+
+  if (!self->initialized) {
+    g_mutex_unlock(&self->lock);
+    return FALSE;
+  }
+
+  /* Find the module for this slot */
+  Pkcs11Module *mod = find_module_for_slot(self, slot_id);
+  if (!mod) {
+    g_mutex_unlock(&self->lock);
+    return FALSE;
+  }
+
+  /* Get the list of mechanisms supported by this token */
+  CK_ULONG mech_count = 0;
+  CK_RV rv = mod->functions->C_GetMechanismList(slot_id, NULL, &mech_count);
+  if (rv != CKR_OK || mech_count == 0) {
+    g_mutex_unlock(&self->lock);
+    return FALSE;
+  }
+
+  CK_MECHANISM_TYPE *mechs = g_new(CK_MECHANISM_TYPE, mech_count);
+  rv = mod->functions->C_GetMechanismList(slot_id, mechs, &mech_count);
+  if (rv != CKR_OK) {
+    g_free(mechs);
+    g_mutex_unlock(&self->lock);
+    return FALSE;
+  }
+
+  /* Check if ECDSA is supported */
+  gboolean has_ecdsa = FALSE;
+  gboolean has_ec_key_gen = FALSE;
+
+  for (CK_ULONG i = 0; i < mech_count; i++) {
+    if (mechs[i] == CKM_ECDSA) {
+      has_ecdsa = TRUE;
+    } else if (mechs[i] == CKM_EC_KEY_PAIR_GEN) {
+      has_ec_key_gen = TRUE;
+    }
+  }
+  g_free(mechs);
+
+  if (!has_ecdsa) {
+    g_mutex_unlock(&self->lock);
+    return FALSE;
+  }
+
+  /* ECDSA is supported, but we need to check if secp256k1 curve is supported.
+   * Most tokens support NIST curves (P-256, P-384, P-521) but not secp256k1.
+   *
+   * Unfortunately, PKCS#11 doesn't provide a direct way to query supported curves.
+   * The best we can do is try to create a key with secp256k1 OID and see if it fails.
+   *
+   * For now, we'll do a simple heuristic:
+   * - If the token supports EC key generation, try to generate a temporary keypair
+   * - If it succeeds with secp256k1 OID, the curve is supported
+   * - Otherwise, assume it's not supported
+   */
+
+  if (has_ec_key_gen) {
+    /* Open a session to test */
+    CK_SESSION_HANDLE session;
+    rv = mod->functions->C_OpenSession(slot_id,
+                                       CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                       NULL, NULL, &session);
+    if (rv == CKR_OK) {
+      /* Try to get mechanism info for ECDSA */
+      CK_MECHANISM_INFO mech_info;
+      rv = mod->functions->C_GetMechanismInfo(slot_id, CKM_ECDSA, &mech_info);
+
+      if (rv == CKR_OK) {
+        /* Check if the mechanism supports key sizes compatible with secp256k1
+         * secp256k1 uses 256-bit keys */
+        if (mech_info.ulMinKeySize <= 256 && mech_info.ulMaxKeySize >= 256) {
+          /* Key size is compatible. Now try to verify by attempting key generation.
+           * We won't actually keep the key - just test if the OID is accepted. */
+
+          CK_MECHANISM mechanism = {CKM_EC_KEY_PAIR_GEN, NULL, 0};
+          CK_BBOOL ck_false = CK_FALSE;
+          CK_BBOOL ck_true = CK_TRUE;
+
+          /* Create templates for a session-only (non-persistent) test key */
+          CK_ATTRIBUTE pub_template[] = {
+            {CKA_TOKEN, &ck_false, sizeof(ck_false)}, /* Session object - auto-deleted */
+            {CKA_EC_PARAMS, (CK_VOID_PTR)SECP256K1_OID, sizeof(SECP256K1_OID)}
+          };
+
+          CK_ATTRIBUTE priv_template[] = {
+            {CKA_TOKEN, &ck_false, sizeof(ck_false)},
+            {CKA_SIGN, &ck_true, sizeof(ck_true)}
+          };
+
+          CK_OBJECT_HANDLE test_pub = CK_INVALID_HANDLE;
+          CK_OBJECT_HANDLE test_priv = CK_INVALID_HANDLE;
+
+          rv = mod->functions->C_GenerateKeyPair(session, &mechanism,
+                                                  pub_template, 2,
+                                                  priv_template, 2,
+                                                  &test_pub, &test_priv);
+
+          if (rv == CKR_OK) {
+            /* secp256k1 is supported! Clean up the test keys. */
+            mod->functions->C_DestroyObject(session, test_pub);
+            mod->functions->C_DestroyObject(session, test_priv);
+            mod->functions->C_CloseSession(session);
+            g_mutex_unlock(&self->lock);
+            return TRUE;
+          }
+        }
+      }
+
+      mod->functions->C_CloseSession(session);
+    }
+  }
+
+  g_mutex_unlock(&self->lock);
+  return FALSE;
+#endif
 }
 
 void

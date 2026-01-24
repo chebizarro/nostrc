@@ -14,6 +14,7 @@
 #include "secure-mem.h"
 #include <nostr/nip19/nip19.h>
 #include <nostr/nip46/nip46_client.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -392,20 +393,67 @@ static void request_remote_signature(MultisigCoordinator *coordinator,
 
   g_free(pk_hex);
 
-  /* TODO: Actually connect via NIP-46 and request signature
-   *
-   * This would involve:
-   * 1. Creating a NIP-46 client session
-   * 2. Connecting to the bunker's relays
-   * 3. Sending a sign_event request
-   * 4. Handling the response via callback
-   *
-   * For now, we mark it as requested. Integration with the nip46
-   * library would happen here in a full implementation.
-   */
-  conn->state = REMOTE_SIGNER_CONNECTING;
-  conn->last_contact = (gint64)time(NULL);
+  /* Create NIP-46 client session and connect to bunker */
+  if (!conn->nip46_session) {
+    conn->nip46_session = nostr_nip46_client_new();
+    if (!conn->nip46_session) {
+      conn->state = REMOTE_SIGNER_ERROR;
+      conn->error_message = g_strdup("Failed to create NIP-46 session");
+      g_warning("multisig_coordinator: failed to create NIP-46 session for %s", conn->npub);
+      return;
+    }
 
+    /* Connect to the bunker - this initiates the NIP-46 handshake */
+    int rc = nostr_nip46_client_connect(conn->nip46_session, bunker_uri, NULL);
+    if (rc != 0) {
+      conn->state = REMOTE_SIGNER_ERROR;
+      conn->error_message = g_strdup("NIP-46 connection failed");
+      g_warning("multisig_coordinator: NIP-46 connect failed for %s (rc=%d)", conn->npub, rc);
+      nostr_nip46_session_free(conn->nip46_session);
+      conn->nip46_session = NULL;
+      return;
+    }
+
+    conn->state = REMOTE_SIGNER_CONNECTED;
+    g_message("multisig_coordinator: connected to remote signer %s via NIP-46", conn->npub);
+  }
+
+  /* Send sign_event request */
+  char *signed_event_json = NULL;
+  int sign_rc = nostr_nip46_client_sign_event(conn->nip46_session,
+                                               session->event_json,
+                                               &signed_event_json);
+
+  if (sign_rc == 0 && signed_event_json) {
+    /* Extract signature from signed event JSON */
+    const gchar *sig_start = strstr(signed_event_json, "\"sig\"");
+    if (sig_start) {
+      sig_start = strchr(sig_start, ':');
+      if (sig_start) {
+        sig_start++;
+        while (*sig_start == ' ' || *sig_start == '"') sig_start++;
+        const gchar *sig_end = strchr(sig_start, '"');
+        if (sig_end && sig_end - sig_start == 128) {
+          gchar *sig = g_strndup(sig_start, 128);
+
+          /* Route signature to the coordinator */
+          multisig_coordinator_receive_remote_signature(coordinator,
+                                                         session->session_id,
+                                                         conn->npub,
+                                                         sig);
+          g_free(sig);
+          g_message("multisig_coordinator: received signature from %s", conn->npub);
+        }
+      }
+    }
+    free(signed_event_json);
+  } else {
+    /* Signing request sent but response pending (async) or failed */
+    conn->state = REMOTE_SIGNER_CONNECTED;
+    g_message("multisig_coordinator: sign_event request sent to %s", conn->npub);
+  }
+
+  conn->last_contact = (gint64)time(NULL);
   g_message("multisig_coordinator: remote signature request sent to %s", conn->npub);
 }
 

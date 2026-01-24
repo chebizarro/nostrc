@@ -21,6 +21,15 @@ G_DECLARE_FINAL_TYPE(GnostrPageDiscover, gnostr_page_discover, GNOSTR, PAGE_DISC
  *   - Emitted when user requests to mute a profile (NIP-51)
  * "copy-npub-requested" (gchar* pubkey_hex, gpointer user_data)
  *   - Emitted when user requests to copy npub to clipboard
+ * "open-communities" (gpointer user_data)
+ *   - Emitted when user clicks the Communities button (NIP-72)
+ * "watch-live" (gchar* event_id_hex, gpointer user_data)
+ *   - Emitted when user clicks Watch Live on a live activity (NIP-53)
+ * "open-article" (gchar* event_id_hex, gint kind, gpointer user_data)
+ *   - Emitted when user clicks to open an article (NIP-23/NIP-54)
+ *   - kind is 30023 for long-form, 30818 for wiki
+ * "zap-article-requested" (gchar* event_id, gchar* pubkey_hex, gchar* lud16, gpointer user_data)
+ *   - Emitted when user requests to zap an article author
  */
 
 /**
@@ -131,6 +140,34 @@ void gnostr_page_discover_set_blocked(GnostrPageDiscover *self, const char **pub
  * Force reload profiles from the database.
  */
 void gnostr_page_discover_refresh(GnostrPageDiscover *self);
+
+/**
+ * gnostr_page_discover_load_live_activities:
+ * @self: the discover page
+ *
+ * Load live activities (NIP-53) from the network.
+ */
+void gnostr_page_discover_load_live_activities(GnostrPageDiscover *self);
+
+/**
+ * gnostr_page_discover_is_live_mode:
+ * @self: the discover page
+ *
+ * Check if the discover page is in live activities mode.
+ *
+ * Returns: TRUE if in live mode, FALSE if in people mode
+ */
+gboolean gnostr_page_discover_is_live_mode(GnostrPageDiscover *self);
+
+/**
+ * gnostr_page_discover_is_articles_mode:
+ * @self: the discover page
+ *
+ * Check if the discover page is in articles mode.
+ *
+ * Returns: TRUE if in articles mode (NIP-23/NIP-54)
+ */
+gboolean gnostr_page_discover_is_articles_mode(GnostrPageDiscover *self);
 
 G_END_DECLS
 

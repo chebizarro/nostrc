@@ -13,6 +13,7 @@
 #include <nostr/nip46/nip46_client.h>
 #include <nostr/nip46/nip46_uri.h>
 #include <nostr/nip19/nip19.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -386,14 +387,105 @@ gboolean multisig_nip46_request_signature(MultisigNip46Client *client,
     return FALSE;
   }
 
-  /* TODO: Process signed_event_json response through callbacks */
+  /* Process signed_event_json response - extract signature and invoke callback */
   if (signed_event_json) {
     g_message("multisig_nip46: got signed event from %s", signer_npub);
+
+    /* Extract the signature from the signed event JSON
+     * Format: {..., "sig": "hexstring", ...} */
+    const gchar *sig_start = strstr(signed_event_json, "\"sig\"");
+    gchar *extracted_sig = NULL;
+
+    if (sig_start) {
+      sig_start = strchr(sig_start, ':');
+      if (sig_start) {
+        sig_start++;
+        /* Skip whitespace and opening quote */
+        while (*sig_start == ' ' || *sig_start == '\t') sig_start++;
+        if (*sig_start == '"') sig_start++;
+
+        /* Find end of signature (closing quote) */
+        const gchar *sig_end = strchr(sig_start, '"');
+        if (sig_end) {
+          gsize sig_len = sig_end - sig_start;
+          /* Schnorr signatures are 64 bytes = 128 hex chars */
+          if (sig_len == 128) {
+            extracted_sig = g_strndup(sig_start, sig_len);
+
+            /* Validate hex characters */
+            gboolean valid = TRUE;
+            for (gsize i = 0; i < 128 && valid; i++) {
+              gchar c = extracted_sig[i];
+              if (!((c >= '0' && c <= '9') ||
+                    (c >= 'a' && c <= 'f') ||
+                    (c >= 'A' && c <= 'F'))) {
+                valid = FALSE;
+              }
+            }
+
+            if (!valid) {
+              g_free(extracted_sig);
+              extracted_sig = NULL;
+              g_warning("multisig_nip46: invalid signature hex from %s", signer_npub);
+            }
+          } else {
+            g_warning("multisig_nip46: unexpected signature length %zu from %s",
+                      sig_len, signer_npub);
+          }
+        }
+      }
+    }
+
+    if (extracted_sig) {
+      /* Update connection state */
+      set_connection_state(client, conn, REMOTE_SIGNER_CONNECTED, NULL);
+      conn->last_contact = (gint64)time(NULL);
+
+      /* Invoke the signature callback to route to coordinator */
+      if (client->signature_cb && conn->pending_session_id) {
+        client->signature_cb(conn->pending_session_id, signer_npub,
+                             extracted_sig, client->user_data);
+        g_message("multisig_nip46: delivered signature from %s to session %s",
+                  signer_npub, conn->pending_session_id);
+      }
+
+      g_free(extracted_sig);
+    } else {
+      /* Failed to extract signature - check if it's an error response */
+      const gchar *error_start = strstr(signed_event_json, "\"error\"");
+      if (error_start) {
+        error_start = strchr(error_start, ':');
+        if (error_start) {
+          error_start++;
+          while (*error_start == ' ' || *error_start == '"') error_start++;
+          const gchar *error_end = strchr(error_start, '"');
+          if (error_end) {
+            gchar *error_msg = g_strndup(error_start, error_end - error_start);
+
+            if (client->reject_cb && conn->pending_session_id) {
+              client->reject_cb(conn->pending_session_id, signer_npub,
+                                error_msg, client->user_data);
+            }
+            g_warning("multisig_nip46: signer %s returned error: %s",
+                      signer_npub, error_msg);
+            g_free(error_msg);
+          }
+        }
+      } else {
+        g_warning("multisig_nip46: could not extract signature from response");
+      }
+    }
+
+    /* Clear pending session after processing */
+    g_clear_pointer(&conn->pending_session_id, g_free);
+
     free(signed_event_json);
+  } else {
+    /* No immediate response - request is pending asynchronously */
+    g_message("multisig_nip46: sign_event request sent to %s for session %s (async)",
+              signer_npub, session_id);
   }
 
-  g_message("multisig_nip46: sent sign_event request to %s for session %s",
-            signer_npub, session_id);
   return TRUE;
 }
 

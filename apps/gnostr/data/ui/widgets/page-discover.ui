@@ -19,14 +19,87 @@
             <property name="margin-top">12</property>
             <property name="margin-bottom">8</property>
 
-            <!-- Title -->
+            <!-- Title row with Communities button -->
             <child>
-              <object class="GtkLabel">
-                <property name="label">Discover</property>
-                <property name="xalign">0.0</property>
-                <style>
-                  <class name="title-2"/>
-                </style>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">Discover</property>
+                    <property name="xalign">0.0</property>
+                    <property name="hexpand">true</property>
+                    <style>
+                      <class name="title-2"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_communities">
+                    <property name="tooltip-text">Browse moderated communities (NIP-72)</property>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">6</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">system-users-symbolic</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">Communities</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <style>
+                      <class name="flat"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Mode toggle: People / Live -->
+            <child>
+              <object class="GtkBox" id="mode_row">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <property name="halign">start</property>
+                <property name="margin-bottom">4</property>
+
+                <child>
+                  <object class="GtkToggleButton" id="btn_mode_people">
+                    <property name="label">People</property>
+                    <property name="active">true</property>
+                    <property name="tooltip-text">Search for profiles</property>
+                    <style>
+                      <class name="pill"/>
+                    </style>
+                  </object>
+                </child>
+
+                <child>
+                  <object class="GtkToggleButton" id="btn_mode_live">
+                    <property name="label">Live</property>
+                    <property name="tooltip-text">Browse live streams (NIP-53)</property>
+                    <style>
+                      <class name="pill"/>
+                    </style>
+                  </object>
+                </child>
+
+                <child>
+                  <object class="GtkToggleButton" id="btn_mode_articles">
+                    <property name="label">Articles</property>
+                    <property name="tooltip-text">Browse Wiki (NIP-54) and Long-form (NIP-23) content</property>
+                    <style>
+                      <class name="pill"/>
+                    </style>
+                  </object>
+                </child>
+
               </object>
             </child>
 
@@ -251,6 +324,226 @@
                         </style>
                       </object>
                     </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Live Activities view -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">live</property>
+                <property name="child">
+                  <object class="GtkScrolledWindow" id="live_scroller">
+                    <property name="hexpand">true</property>
+                    <property name="vexpand">true</property>
+                    <property name="hscrollbar-policy">never</property>
+                    <child>
+                      <object class="GtkBox" id="live_content_box">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">12</property>
+                        <property name="margin-start">12</property>
+                        <property name="margin-end">12</property>
+                        <property name="margin-top">12</property>
+                        <property name="margin-bottom">12</property>
+
+                        <!-- Live now section -->
+                        <child>
+                          <object class="GtkBox" id="live_now_section">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">8</property>
+
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">8</property>
+                                <child>
+                                  <object class="GtkImage">
+                                    <property name="icon-name">media-record-symbolic</property>
+                                    <style>
+                                      <class name="error"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="lbl_live_now">
+                                    <property name="label">Live Now</property>
+                                    <property name="xalign">0.0</property>
+                                    <property name="hexpand">true</property>
+                                    <style>
+                                      <class name="title-3"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkButton" id="btn_refresh_live">
+                                    <property name="icon-name">view-refresh-symbolic</property>
+                                    <property name="tooltip-text">Refresh live activities</property>
+                                    <style>
+                                      <class name="flat"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Live activities flow box -->
+                            <child>
+                              <object class="GtkFlowBox" id="live_flow_box">
+                                <property name="selection-mode">none</property>
+                                <property name="homogeneous">false</property>
+                                <property name="min-children-per-line">1</property>
+                                <property name="max-children-per-line">3</property>
+                                <property name="row-spacing">12</property>
+                                <property name="column-spacing">12</property>
+                              </object>
+                            </child>
+
+                          </object>
+                        </child>
+
+                        <!-- Scheduled section -->
+                        <child>
+                          <object class="GtkBox" id="scheduled_section">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">8</property>
+                            <property name="margin-top">12</property>
+
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">8</property>
+                                <child>
+                                  <object class="GtkImage">
+                                    <property name="icon-name">alarm-symbolic</property>
+                                    <style>
+                                      <class name="dim-label"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="lbl_scheduled">
+                                    <property name="label">Scheduled</property>
+                                    <property name="xalign">0.0</property>
+                                    <property name="hexpand">true</property>
+                                    <style>
+                                      <class name="title-3"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+
+                            <!-- Scheduled activities flow box -->
+                            <child>
+                              <object class="GtkFlowBox" id="scheduled_flow_box">
+                                <property name="selection-mode">none</property>
+                                <property name="homogeneous">false</property>
+                                <property name="min-children-per-line">1</property>
+                                <property name="max-children-per-line">3</property>
+                                <property name="row-spacing">12</property>
+                                <property name="column-spacing">12</property>
+                              </object>
+                            </child>
+
+                          </object>
+                        </child>
+
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Live Activities empty state -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">live-empty</property>
+                <property name="child">
+                  <object class="GtkBox" id="live_empty_state">
+                    <property name="orientation">vertical</property>
+                    <property name="halign">center</property>
+                    <property name="valign">center</property>
+                    <property name="spacing">12</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">video-display-symbolic</property>
+                        <property name="pixel-size">64</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">No Live Activities</property>
+                        <style>
+                          <class name="title-2"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">No one is streaming right now. Check back later!</property>
+                        <property name="wrap">true</property>
+                        <property name="justify">center</property>
+                        <property name="max-width-chars">40</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_refresh_live_empty">
+                        <property name="label">Refresh</property>
+                        <property name="halign">center</property>
+                        <property name="margin-top">8</property>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Live Activities loading state -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">live-loading</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="halign">center</property>
+                    <property name="valign">center</property>
+                    <property name="spacing">12</property>
+                    <child>
+                      <object class="GtkSpinner" id="live_loading_spinner">
+                        <property name="spinning">false</property>
+                        <property name="width-request">32</property>
+                        <property name="height-request">32</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Loading live activities...</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Articles view (NIP-54 Wiki + NIP-23 Long-form) -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">articles</property>
+                <property name="child">
+                  <object class="GnostrArticlesView" id="articles_view">
+                    <property name="hexpand">true</property>
+                    <property name="vexpand">true</property>
                   </object>
                 </property>
               </object>

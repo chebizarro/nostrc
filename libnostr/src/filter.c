@@ -249,7 +249,87 @@ bool nostr_filter_match_ignoring_timestamp(NostrFilter *filter, NostrEvent *even
     }
 
     if (filter->tags && filter->tags->count > 0) {
-        // TODO implement
+        /* Tag filtering: filter->tags contains entries like ["e", "value1"], ["e", "value2"], ["p", "pubkey1"]
+         * This represents filter requirements like {"#e": ["value1", "value2"], "#p": ["pubkey1"]}
+         * For each unique tag key in the filter, the event must have at least one matching tag value.
+         */
+
+        /* First, collect unique tag keys from the filter */
+        size_t filter_tag_count = nostr_tags_size(filter->tags);
+        const char **unique_keys = NULL;
+        size_t unique_key_count = 0;
+
+        for (size_t i = 0; i < filter_tag_count; i++) {
+            NostrTag *ft = nostr_tags_get(filter->tags, i);
+            if (!ft || nostr_tag_size(ft) < 2)
+                continue;
+            const char *key = nostr_tag_get(ft, 0);
+            if (!key)
+                continue;
+
+            /* Check if this key is already in unique_keys */
+            bool found = false;
+            for (size_t j = 0; j < unique_key_count; j++) {
+                if (strcmp(unique_keys[j], key) == 0) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                const char **new_keys = (const char **)realloc(unique_keys, (unique_key_count + 1) * sizeof(char *));
+                if (!new_keys) {
+                    free(unique_keys);
+                    return false;
+                }
+                unique_keys = new_keys;
+                unique_keys[unique_key_count++] = key;
+            }
+        }
+
+        /* For each unique key, collect allowed values and check if event has a matching tag */
+        for (size_t k = 0; k < unique_key_count; k++) {
+            const char *tag_key = unique_keys[k];
+
+            /* Collect all allowed values for this tag key from the filter */
+            char **allowed_values = NULL;
+            size_t allowed_count = 0;
+
+            for (size_t i = 0; i < filter_tag_count; i++) {
+                NostrTag *ft = nostr_tags_get(filter->tags, i);
+                if (!ft || nostr_tag_size(ft) < 2)
+                    continue;
+                const char *key = nostr_tag_get(ft, 0);
+                if (!key || strcmp(key, tag_key) != 0)
+                    continue;
+                const char *val = nostr_tag_get(ft, 1);
+                if (!val)
+                    continue;
+
+                char **new_values = (char **)realloc(allowed_values, (allowed_count + 1) * sizeof(char *));
+                if (!new_values) {
+                    free(allowed_values);
+                    free(unique_keys);
+                    return false;
+                }
+                allowed_values = new_values;
+                allowed_values[allowed_count++] = (char *)val;
+            }
+
+            /* Check if event has a matching tag */
+            bool has_match = false;
+            if (event->tags && allowed_count > 0) {
+                has_match = nostr_tags_contains_any(event->tags, tag_key, allowed_values, allowed_count);
+            }
+
+            free(allowed_values);
+
+            if (!has_match) {
+                free(unique_keys);
+                return false;
+            }
+        }
+
+        free(unique_keys);
     }
 
     return match;

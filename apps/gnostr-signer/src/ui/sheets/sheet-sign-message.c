@@ -6,6 +6,11 @@
 
 #include "sheet-sign-message.h"
 #include "../app-resources.h"
+#include "../../accounts_store.h"
+#include "../../secret_store.h"
+#include "../../key_provider_secp256k1.h"
+#include "../../secure-memory.h"
+#include <nostr/nip19/nip19.h>
 #include <string.h>
 
 struct _SheetSignMessage {
@@ -165,22 +170,91 @@ on_btn_sign_clicked(GtkButton *btn, gpointer user_data)
     return;
   }
 
-  /* TODO: Implement message signing using secret-storage API
-   * 1. Retrieve private key using gn_secret_storage_retrieve_key()
-   * 2. Hash message with SHA256
-   * 3. Sign with secp256k1 Schnorr signature
-   * 4. Display signature in hex format
-   * For now, show placeholder */
-  
+  /* Step 1: Retrieve the secret key (nsec) from secret store */
+  gchar *nsec = NULL;
+  SecretStoreResult rc = secret_store_get_secret(self->account_id, &nsec);
+  if (rc != SECRET_STORE_OK || !nsec) {
+    g_warning("Failed to retrieve secret key: %s", secret_store_result_to_string(rc));
+    g_free(message);
+    return;
+  }
+
+  /* Convert nsec to hex secret key */
+  guint8 sk_bytes[32];
+  gchar *sk_hex = NULL;
+
+  if (g_str_has_prefix(nsec, "nsec1")) {
+    /* Decode nsec1 bech32 format */
+    if (nostr_nip19_decode_nsec(nsec, sk_bytes) != 0) {
+      g_warning("Failed to decode nsec");
+      gn_secure_strfree(nsec);
+      g_free(message);
+      return;
+    }
+    /* Convert binary to hex */
+    sk_hex = (gchar *)gn_secure_alloc(65);
+    if (!sk_hex) {
+      gn_secure_strfree(nsec);
+      g_free(message);
+      return;
+    }
+    for (int i = 0; i < 32; i++) {
+      g_snprintf(sk_hex + i * 2, 3, "%02x", sk_bytes[i]);
+    }
+    gn_secure_clear_buffer(sk_bytes);
+  } else {
+    /* Assume it's already hex */
+    sk_hex = gn_secure_strdup(nsec);
+  }
+  gn_secure_strfree(nsec);
+
+  if (!sk_hex) {
+    g_warning("Failed to prepare secret key");
+    g_free(message);
+    return;
+  }
+
+  /* Step 2: Hash the message with SHA256 */
+  GChecksum *checksum = g_checksum_new(G_CHECKSUM_SHA256);
+  if (!checksum) {
+    gn_secure_strfree(sk_hex);
+    g_free(message);
+    return;
+  }
+
+  g_checksum_update(checksum, (const guchar *)message, strlen(message));
+
+  guint8 hash_bytes[32];
+  gsize hash_len = 32;
+  g_checksum_get_digest(checksum, hash_bytes, &hash_len);
+  g_checksum_free(checksum);
   g_free(message);
-  
-  /* Placeholder signature for demonstration */
-  const char *placeholder_sig = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-  
+
+  /* Convert hash to hex */
+  gchar hash_hex[65];
+  for (gsize i = 0; i < 32; i++) {
+    g_snprintf(hash_hex + i * 2, 3, "%02x", hash_bytes[i]);
+  }
+
+  /* Step 3: Sign the hash with secp256k1 Schnorr signature */
+  gchar *signature = NULL;
+  GError *error = NULL;
+
+  if (!gn_secp256k1_sign_hash_hex(sk_hex, hash_hex, &signature, &error)) {
+    g_warning("Signing failed: %s", error ? error->message : "unknown error");
+    if (error) g_error_free(error);
+    gn_secure_strfree(sk_hex);
+    return;
+  }
+
+  /* Clear the secret key from memory */
+  gn_secure_strfree(sk_hex);
+
+  /* Step 4: Display the real signature in hex format */
   g_free(self->signature_hex);
-  self->signature_hex = g_strdup(placeholder_sig);
-  
-  gtk_label_set_text(self->lbl_signature, placeholder_sig);
+  self->signature_hex = signature;
+
+  gtk_label_set_text(self->lbl_signature, signature);
   gtk_revealer_set_reveal_child(self->revealer_result, TRUE);
   
   /* Change sign button to "Sign Another" */

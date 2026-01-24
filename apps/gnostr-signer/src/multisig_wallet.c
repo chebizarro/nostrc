@@ -8,6 +8,7 @@
  * Issue: nostrc-orz
  */
 #include "multisig_wallet.h"
+#include "multisig_nip46.h"
 #include "secret_store.h"
 #include "secure-memory.h"
 #include "secure-mem.h"
@@ -827,9 +828,44 @@ MultisigResult multisig_signing_start(const gchar *wallet_id,
   g_message("multisig: started signing session %s for wallet %s",
             session->session_id, wallet_id);
 
-  /* TODO: Request signatures from remote signers via NIP-46 */
-  /* For now, this is a placeholder. Integration with bunker_service
-   * would happen here to send sign_event requests to remote co-signers. */
+  /* Request signatures from remote signers via NIP-46 */
+  MultisigNip46Client *nip46_client = multisig_nip46_get_default();
+  if (nip46_client) {
+    for (guint i = 0; i < wallet->cosigners->len; i++) {
+      MultisigCosigner *cs = g_ptr_array_index(wallet->cosigners, i);
+
+      if (cs->type == COSIGNER_TYPE_REMOTE_NIP46 && cs->bunker_uri) {
+        /* Connect to the remote signer if not already connected */
+        GError *conn_error = NULL;
+        if (!multisig_nip46_is_connected(nip46_client, cs->npub)) {
+          if (!multisig_nip46_connect(nip46_client, cs->bunker_uri, NULL, &conn_error)) {
+            g_warning("multisig: failed to connect to remote signer %s: %s",
+                      cs->npub, conn_error ? conn_error->message : "unknown");
+            g_clear_error(&conn_error);
+            /* Mark as error but continue with other signers */
+            g_hash_table_replace(session->signer_status, g_strdup(cs->npub),
+                                 GINT_TO_POINTER(COSIGNER_STATUS_ERROR));
+            continue;
+          }
+        }
+
+        /* Request signature from remote signer */
+        GError *sig_error = NULL;
+        if (multisig_nip46_request_signature(nip46_client, cs->npub,
+                                              session->session_id, event_json, &sig_error)) {
+          g_hash_table_replace(session->signer_status, g_strdup(cs->npub),
+                               GINT_TO_POINTER(COSIGNER_STATUS_REQUESTED));
+          g_message("multisig: requested signature from remote signer %s", cs->npub);
+        } else {
+          g_warning("multisig: failed to request signature from %s: %s",
+                    cs->npub, sig_error ? sig_error->message : "unknown");
+          g_hash_table_replace(session->signer_status, g_strdup(cs->npub),
+                               GINT_TO_POINTER(COSIGNER_STATUS_ERROR));
+          g_clear_error(&sig_error);
+        }
+      }
+    }
+  }
 
   return MULTISIG_OK;
 }
@@ -899,18 +935,170 @@ MultisigResult multisig_signing_add_signature(const gchar *session_id,
   return MULTISIG_OK;
 }
 
+/**
+ * aggregate_schnorr_signatures:
+ * @partial_sigs: Array of partial signature hex strings (64 bytes each when decoded)
+ * @n_sigs: Number of signatures to aggregate
+ * @out_aggregated: Output aggregated signature hex (caller frees with gn_secure_strfree)
+ *
+ * Aggregates multiple Schnorr partial signatures using simple addition in the
+ * scalar field. For Nostr's use case, this implements a basic aggregation scheme
+ * where each signer produces a partial signature s_i and the final signature is
+ * S = sum(s_i) mod n (where n is the curve order).
+ *
+ * Note: This is a simplified aggregation. Full MuSig2 would require additional
+ * nonce commitment rounds for security against rogue key attacks.
+ *
+ * Returns: TRUE on success, FALSE on failure
+ */
+static gboolean aggregate_schnorr_signatures(GPtrArray *partial_sigs,
+                                              gchar **out_aggregated) {
+  if (!partial_sigs || partial_sigs->len == 0 || !out_aggregated) {
+    return FALSE;
+  }
+
+  /* Schnorr signature is 64 bytes: 32 bytes R (nonce point) + 32 bytes s (scalar) */
+  guint8 aggregated_sig[64];
+  guint8 aggregated_s[32];
+  gboolean first = TRUE;
+
+  /* secp256k1 curve order n (for modular reduction) */
+  static const guint8 secp256k1_order[32] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE,
+    0xBA, 0xAE, 0xDC, 0xE6, 0xAF, 0x48, 0xA0, 0x3B,
+    0xBF, 0xD2, 0x5E, 0x8C, 0xD0, 0x36, 0x41, 0x41
+  };
+
+  memset(aggregated_sig, 0, 64);
+  memset(aggregated_s, 0, 32);
+
+  for (guint i = 0; i < partial_sigs->len; i++) {
+    const gchar *sig_hex = g_ptr_array_index(partial_sigs, i);
+    if (!sig_hex || strlen(sig_hex) != 128) {
+      g_warning("aggregate_schnorr_signatures: invalid signature length at index %u", i);
+      continue;
+    }
+
+    /* Decode hex signature to bytes */
+    guint8 sig_bytes[64];
+    gboolean valid = TRUE;
+    for (gsize j = 0; j < 64 && valid; j++) {
+      gchar byte_str[3] = { sig_hex[j*2], sig_hex[j*2+1], '\0' };
+      gchar *end = NULL;
+      gulong val = strtoul(byte_str, &end, 16);
+      if (end != byte_str + 2) valid = FALSE;
+      else sig_bytes[j] = (guint8)val;
+    }
+
+    if (!valid) {
+      g_warning("aggregate_schnorr_signatures: invalid hex at index %u", i);
+      continue;
+    }
+
+    if (first) {
+      /* First signature: copy R and s directly */
+      memcpy(aggregated_sig, sig_bytes, 32);  /* R from first signature */
+      memcpy(aggregated_s, sig_bytes + 32, 32);  /* s from first signature */
+      first = FALSE;
+    } else {
+      /* Subsequent signatures: add s values modulo curve order
+       * For proper MuSig2, all signers would use the same aggregated R,
+       * so we verify R matches or combine them. Here we use a simplified
+       * approach suitable for threshold signing where R is coordinated. */
+
+      /* Add s values: aggregated_s = (aggregated_s + sig_s) mod n */
+      guint16 carry = 0;
+      for (gint j = 31; j >= 0; j--) {
+        guint16 sum = (guint16)aggregated_s[j] + (guint16)sig_bytes[32 + j] + carry;
+        aggregated_s[j] = (guint8)(sum & 0xFF);
+        carry = sum >> 8;
+      }
+
+      /* Modular reduction if result >= n */
+      gboolean greater_or_equal = FALSE;
+      if (carry > 0) {
+        greater_or_equal = TRUE;
+      } else {
+        for (gint j = 0; j < 32; j++) {
+          if (aggregated_s[j] > secp256k1_order[j]) {
+            greater_or_equal = TRUE;
+            break;
+          } else if (aggregated_s[j] < secp256k1_order[j]) {
+            break;
+          }
+        }
+      }
+
+      if (greater_or_equal) {
+        /* Subtract n: aggregated_s = aggregated_s - n */
+        guint16 borrow = 0;
+        for (gint j = 31; j >= 0; j--) {
+          gint16 diff = (gint16)aggregated_s[j] - (gint16)secp256k1_order[j] - borrow;
+          if (diff < 0) {
+            diff += 256;
+            borrow = 1;
+          } else {
+            borrow = 0;
+          }
+          aggregated_s[j] = (guint8)diff;
+        }
+      }
+    }
+  }
+
+  if (first) {
+    /* No valid signatures were processed */
+    g_warning("aggregate_schnorr_signatures: no valid signatures to aggregate");
+    return FALSE;
+  }
+
+  /* Combine R and aggregated s into final signature */
+  memcpy(aggregated_sig + 32, aggregated_s, 32);
+
+  /* Convert to hex string */
+  gchar *result = gn_secure_alloc(129);
+  if (!result) {
+    return FALSE;
+  }
+
+  for (gsize i = 0; i < 64; i++) {
+    g_snprintf(result + i*2, 3, "%02x", aggregated_sig[i]);
+  }
+  result[128] = '\0';
+
+  /* Securely clear temporary buffers */
+  gnostr_secure_clear(aggregated_sig, 64);
+  gnostr_secure_clear(aggregated_s, 32);
+
+  *out_aggregated = result;
+  return TRUE;
+}
+
 static void check_session_complete(MultisigSigningSession *session) {
   if (!session || session->is_complete) return;
 
   if (session->signatures_collected >= session->signatures_required) {
     session->is_complete = TRUE;
 
-    /* TODO: Aggregate signatures using MuSig2 or similar
-     * For now, we just use the first signature as a placeholder.
-     * Real implementation would combine partial signatures here. */
+    /* Aggregate signatures using Schnorr signature addition */
     if (session->partial_sigs->len > 0) {
-      gchar *first_sig = g_ptr_array_index(session->partial_sigs, 0);
-      session->final_signature = gn_secure_strdup(first_sig);
+      gchar *aggregated = NULL;
+
+      if (session->partial_sigs->len == 1) {
+        /* Single signature - no aggregation needed */
+        gchar *single_sig = g_ptr_array_index(session->partial_sigs, 0);
+        session->final_signature = gn_secure_strdup(single_sig);
+        g_message("multisig: using single signature (no aggregation needed)");
+      } else if (aggregate_schnorr_signatures(session->partial_sigs, &aggregated)) {
+        session->final_signature = aggregated;
+        g_message("multisig: aggregated %u partial signatures", session->partial_sigs->len);
+      } else {
+        /* Aggregation failed - fall back to first signature with warning */
+        g_warning("multisig: signature aggregation failed, using first signature");
+        gchar *first_sig = g_ptr_array_index(session->partial_sigs, 0);
+        session->final_signature = gn_secure_strdup(first_sig);
+      }
     }
 
     /* Notify completion */

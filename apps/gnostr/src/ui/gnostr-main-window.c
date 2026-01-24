@@ -13,6 +13,7 @@
 #include "gnostr-notification-row.h"
 #include "page-discover.h"
 #include "gnostr-search-results-view.h"
+#include "gnostr-classifieds-view.h"
 #include "note_card_row.h"
 #include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
@@ -60,6 +61,10 @@
 #include "../util/gnostr-drafts.h"
 #include "gnostr-login.h"
 #include "gnostr-report-dialog.h"
+/* NIP-72 Communities */
+#include "gnostr-community-card.h"
+#include "gnostr-community-view.h"
+#include "../util/nip72_communities.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -119,7 +124,14 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
 static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer user_data);
 /* Forward declarations for discover page signal handlers */
 static void on_discover_open_profile(GnostrPageDiscover *page, const char *pubkey_hex, gpointer user_data);
+static void on_discover_open_communities(GnostrPageDiscover *page, gpointer user_data);
+static void on_discover_open_article(GnostrPageDiscover *page, const char *event_id, gint kind, gpointer user_data);
+static void on_discover_zap_article(GnostrPageDiscover *page, const char *event_id, const char *pubkey_hex, const char *lud16, gpointer user_data);
 static void on_stack_visible_child_changed(GObject *stack, GParamSpec *pspec, gpointer user_data);
+/* Forward declarations for marketplace/classifieds signal handlers */
+static void on_classifieds_open_profile(GnostrClassifiedsView *view, const char *pubkey_hex, gpointer user_data);
+static void on_classifieds_contact_seller(GnostrClassifiedsView *view, const char *pubkey_hex, const char *lud16, gpointer user_data);
+static void on_classifieds_listing_clicked(GnostrClassifiedsView *view, const char *event_id, const char *naddr, gpointer user_data);
 /* Forward declaration for ESC key handler to close profile sidebar */
 static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data);
 /* Forward declaration for close-request handler (nostrc-61s.6: background mode) */
@@ -307,6 +319,7 @@ struct _GnostrMainWindow {
   GtkWidget *dm_inbox;
   GtkWidget *notifications_view;
   GtkWidget *page_discover;
+  GtkWidget *classifieds_view;
   GtkWidget *toast_revealer;
   GtkWidget *toast_label;
   /* nostrc-yi2: Calm timeline - new notes indicator */
@@ -3264,6 +3277,128 @@ static void on_discover_copy_npub(GnostrPageDiscover *page, const char *pubkey_h
   }
 }
 
+/* Marketplace/Classifieds signal handlers (NIP-15/NIP-99) */
+static void on_classifieds_open_profile(GnostrClassifiedsView *view, const char *pubkey_hex, gpointer user_data) {
+  (void)view;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
+  on_note_card_open_profile(NULL, pubkey_hex, self);
+}
+
+static void on_classifieds_contact_seller(GnostrClassifiedsView *view, const char *pubkey_hex,
+                                           const char *lud16, gpointer user_data) {
+  (void)view;
+  (void)lud16;  /* TODO: Could open DM with zap hint in future */
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
+
+  /* Open DM conversation with seller by creating a conversation entry */
+  if (self->dm_inbox && GNOSTR_IS_DM_INBOX_VIEW(self->dm_inbox)) {
+    /* Create a minimal conversation for the seller */
+    GnostrDmConversation conv = {0};
+    conv.peer_pubkey = g_strdup(pubkey_hex);
+    conv.display_name = g_strdup("Seller");
+    conv.last_timestamp = g_get_real_time() / 1000000;
+    gnostr_dm_inbox_view_upsert_conversation(GNOSTR_DM_INBOX_VIEW(self->dm_inbox), &conv);
+    g_free(conv.peer_pubkey);
+    g_free(conv.display_name);
+    /* Switch to messages tab */
+    if (self->stack && ADW_IS_VIEW_STACK(self->stack)) {
+      adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "messages");
+    }
+  }
+}
+
+static void on_classifieds_listing_clicked(GnostrClassifiedsView *view, const char *event_id,
+                                            const char *naddr, gpointer user_data) {
+  (void)view;
+  (void)naddr;  /* TODO: Could use naddr for richer thread context */
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !event_id) return;
+
+  /* Show listing details in thread view */
+  if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
+    gnostr_thread_view_set_focus_event(GNOSTR_THREAD_VIEW(self->thread_view), event_id);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(self->thread_revealer), TRUE);
+  }
+}
+
+/**
+ * on_discover_open_communities - Handle communities button click from Discover page
+ *
+ * This shows a toast message for now. In a full implementation, this would
+ * open a communities list view showing NIP-72 moderated communities.
+ */
+static void on_discover_open_communities(GnostrPageDiscover *page, gpointer user_data) {
+  (void)page;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  /* Show a toast indicating the feature is being accessed */
+  gnostr_main_window_show_toast(GTK_WIDGET(self), "Communities (NIP-72) - Coming soon!");
+
+  /* TODO: Implement full community list view:
+   * 1. Create a GnostrCommunityListView widget
+   * 2. Add it as an overlay like thread_view
+   * 3. Query relays for kind 34550 (community definitions)
+   * 4. Display community cards using GnostrCommunityCard
+   * 5. On card click, show GnostrCommunityView with approved posts
+   */
+  g_debug("[COMMUNITIES] Open communities list requested");
+}
+
+/**
+ * on_discover_open_article - Handle article click from Discover page Articles mode
+ *
+ * Opens an article in a viewer. For now, shows a toast with the kind info.
+ * In a full implementation, this would open an ArticleReader view.
+ *
+ * @param event_id: The event ID of the article
+ * @param kind: The Nostr event kind (30023 for NIP-23 long-form, 30818 for NIP-54 wiki)
+ */
+static void on_discover_open_article(GnostrPageDiscover *page, const char *event_id, gint kind, gpointer user_data) {
+  (void)page;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !event_id) return;
+
+  const char *kind_name = (kind == 30818) ? "Wiki (NIP-54)" : "Long-form (NIP-23)";
+  gchar *msg = g_strdup_printf("Opening %s article...", kind_name);
+  gnostr_main_window_show_toast(GTK_WIDGET(self), msg);
+  g_free(msg);
+
+  /* Show in thread view for now - could have a dedicated ArticleReader in the future */
+  if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
+    gnostr_thread_view_set_focus_event(GNOSTR_THREAD_VIEW(self->thread_view), event_id);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(self->thread_revealer), TRUE);
+  }
+
+  g_debug("[ARTICLES] Open article requested: kind=%d, id=%s", kind, event_id);
+}
+
+/**
+ * on_discover_zap_article - Handle zap request for an article author from Discover page
+ *
+ * Opens the zap dialog for the article author.
+ */
+static void on_discover_zap_article(GnostrPageDiscover *page, const char *event_id,
+                                     const char *pubkey_hex, const char *lud16, gpointer user_data) {
+  (void)page;
+  (void)event_id;  /* Could be used for zap receipts */
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
+
+  if (!lud16 || !*lud16) {
+    gnostr_main_window_show_toast(GTK_WIDGET(self), "Author has no Lightning address set");
+    return;
+  }
+
+  /* TODO: Open zap dialog
+   * gnostr_zap_dialog_show(pubkey_hex, lud16, event_id);
+   */
+  gnostr_main_window_show_toast(GTK_WIDGET(self), "Zap dialog coming soon!");
+  g_debug("[ARTICLES] Zap article author requested: pubkey=%s, lud16=%s", pubkey_hex, lud16);
+}
+
 static void on_stack_visible_child_changed(GObject *stack, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
@@ -3281,6 +3416,13 @@ static void on_stack_visible_child_changed(GObject *stack, GParamSpec *pspec, gp
   if (visible_child == self->page_discover) {
     if (GNOSTR_IS_PAGE_DISCOVER(self->page_discover)) {
       gnostr_page_discover_load_profiles(GNOSTR_PAGE_DISCOVER(self->page_discover));
+    }
+  }
+
+  /* When Marketplace page becomes visible, fetch listings */
+  if (visible_child == self->classifieds_view) {
+    if (GNOSTR_IS_CLASSIFIEDS_VIEW(self->classifieds_view)) {
+      gnostr_classifieds_view_fetch_listings(GNOSTR_CLASSIFIEDS_VIEW(self->classifieds_view));
     }
   }
 }
@@ -3309,8 +3451,8 @@ static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpoint
   if (!self || !self->stack || !row) return;
 
   int idx = gtk_list_box_row_get_index(row);
-  const char *names[] = { "timeline", "notifications", "messages", "discover", "search" };
-  if (idx >= 0 && idx < 5) {
+  const char *names[] = { "timeline", "notifications", "messages", "discover", "search", "marketplace" };
+  if (idx >= 0 && idx < 6) {
     adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), names[idx]);
   }
 
@@ -4254,6 +4396,21 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                      G_CALLBACK(on_discover_open_profile), self);
     g_signal_connect(self->page_discover, "copy-npub-requested",
                      G_CALLBACK(on_discover_copy_npub), self);
+    g_signal_connect(self->page_discover, "open-communities",
+                     G_CALLBACK(on_discover_open_communities), self);
+    g_signal_connect(self->page_discover, "open-article",
+                     G_CALLBACK(on_discover_open_article), self);
+    g_signal_connect(self->page_discover, "zap-article-requested",
+                     G_CALLBACK(on_discover_zap_article), self);
+  }
+  /* Connect marketplace/classifieds view signals (NIP-15/NIP-99) */
+  if (self->classifieds_view && GNOSTR_IS_CLASSIFIEDS_VIEW(self->classifieds_view)) {
+    g_signal_connect(self->classifieds_view, "open-profile",
+                     G_CALLBACK(on_classifieds_open_profile), self);
+    g_signal_connect(self->classifieds_view, "contact-seller",
+                     G_CALLBACK(on_classifieds_contact_seller), self);
+    g_signal_connect(self->classifieds_view, "listing-clicked",
+                     G_CALLBACK(on_classifieds_listing_clicked), self);
   }
   /* Connect stack visible-child-name signal to load discover profiles on demand */
   if (self->stack && ADW_IS_VIEW_STACK(self->stack)) {
@@ -4628,6 +4785,7 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   g_type_ensure(GNOSTR_TYPE_NOTIFICATION_ROW);
   g_type_ensure(GNOSTR_TYPE_PAGE_DISCOVER);
   g_type_ensure(GNOSTR_TYPE_SEARCH_RESULTS_VIEW);
+  g_type_ensure(GNOSTR_TYPE_CLASSIFIEDS_VIEW);
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
   /* Bind expected template children (IDs must match the UI file) */
   /* Responsive layout components (nostrc-3u7j) */
@@ -4659,6 +4817,7 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, dm_inbox);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, notifications_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, page_discover);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, classifieds_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_revealer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_label);
   /* nostrc-yi2: Calm timeline - new notes indicator */

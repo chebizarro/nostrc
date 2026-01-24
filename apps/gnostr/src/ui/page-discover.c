@@ -16,9 +16,12 @@
 
 #include "page-discover.h"
 #include "gnostr-profile-row.h"
+#include "gnostr-live-card.h"
+#include "gnostr-articles-view.h"
 #include "../model/gn-profile-list-model.h"
 #include "../model/gn-nostr-profile.h"
 #include "../util/discover-search.h"
+#include "../util/nip53_live.h"
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/page-discover.ui"
 
@@ -31,7 +34,7 @@
 struct _GnostrPageDiscover {
     GtkWidget parent_instance;
 
-    /* Template widgets */
+    /* Template widgets - Profile search */
     GtkSearchEntry *search_entry;
     GtkToggleButton *btn_local;
     GtkToggleButton *btn_network;
@@ -42,6 +45,25 @@ struct _GnostrPageDiscover {
     GtkBox *empty_state;
     GtkSpinner *loading_spinner;
     GtkScrolledWindow *scroller;
+    GtkButton *btn_communities;
+
+    /* Template widgets - Mode toggle */
+    GtkToggleButton *btn_mode_people;
+    GtkToggleButton *btn_mode_live;
+    GtkToggleButton *btn_mode_articles;
+    GtkBox *filter_row;  /* Profile filter row (Local/Network) */
+
+    /* Template widgets - Articles view (NIP-54 Wiki + NIP-23 Long-form) */
+    GnostrArticlesView *articles_view;
+
+    /* Template widgets - Live Activities */
+    GtkFlowBox *live_flow_box;
+    GtkFlowBox *scheduled_flow_box;
+    GtkBox *live_now_section;
+    GtkBox *scheduled_section;
+    GtkSpinner *live_loading_spinner;
+    GtkButton *btn_refresh_live;
+    GtkButton *btn_refresh_live_empty;
 
     /* Local profile browser (mode: local) */
     GnProfileListModel *profile_model;
@@ -53,10 +75,19 @@ struct _GnostrPageDiscover {
     GtkSingleSelection *network_selection;
     GtkListItemFactory *network_factory;
 
+    /* Live activities data */
+    GPtrArray *live_activities;      /* GnostrLiveActivity* array */
+    GPtrArray *scheduled_activities; /* GnostrLiveActivity* array */
+    GCancellable *live_cancellable;
+    gboolean live_loaded;
+
     /* State */
     guint search_debounce_id;
     gboolean profiles_loaded;
     gboolean is_local_mode;
+    gboolean is_live_mode;     /* TRUE for Live mode, FALSE for People mode */
+    gboolean is_articles_mode; /* TRUE for Articles mode */
+    gboolean articles_loaded;
     GCancellable *search_cancellable;
 };
 
@@ -68,6 +99,10 @@ enum {
     SIGNAL_UNFOLLOW_REQUESTED,
     SIGNAL_MUTE_REQUESTED,
     SIGNAL_COPY_NPUB_REQUESTED,
+    SIGNAL_OPEN_COMMUNITIES,
+    SIGNAL_WATCH_LIVE,
+    SIGNAL_OPEN_ARTICLE,
+    SIGNAL_ZAP_ARTICLE_REQUESTED,
     N_SIGNALS
 };
 
@@ -134,6 +169,11 @@ static void update_content_state(GnostrPageDiscover *self);
 static void update_profile_count(GnostrPageDiscover *self);
 static void switch_to_local_model(GnostrPageDiscover *self);
 static void switch_to_network_model(GnostrPageDiscover *self);
+static void switch_to_people_mode(GnostrPageDiscover *self);
+static void switch_to_live_mode(GnostrPageDiscover *self);
+static void update_live_content_state(GnostrPageDiscover *self);
+static void populate_live_activities(GnostrPageDiscover *self);
+static void clear_live_activities(GnostrPageDiscover *self);
 
 /* --- Local Profile Row Factory --- */
 
@@ -543,6 +583,238 @@ on_search_activate(GtkSearchEntry *entry, GnostrPageDiscover *self)
     }
 }
 
+/* --- Communities Button Handler --- */
+
+static void
+on_communities_clicked(GtkButton *button, GnostrPageDiscover *self)
+{
+    (void)button;
+    g_signal_emit(self, signals[SIGNAL_OPEN_COMMUNITIES], 0);
+}
+
+/* --- Articles View Signal Handlers --- */
+
+static void
+on_articles_open_article(GnostrArticlesView *view, const char *event_id, gint kind, GnostrPageDiscover *self)
+{
+    (void)view;
+    g_signal_emit(self, signals[SIGNAL_OPEN_ARTICLE], 0, event_id, kind);
+}
+
+static void
+on_articles_open_profile(GnostrArticlesView *view, const char *pubkey_hex, GnostrPageDiscover *self)
+{
+    (void)view;
+    g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, pubkey_hex);
+}
+
+static void
+on_articles_zap_requested(GnostrArticlesView *view, const char *event_id,
+                           const char *pubkey_hex, const char *lud16,
+                           GnostrPageDiscover *self)
+{
+    (void)view;
+    g_signal_emit(self, signals[SIGNAL_ZAP_ARTICLE_REQUESTED], 0, event_id, pubkey_hex, lud16);
+}
+
+/* --- Live Activity Handling --- */
+
+static void
+on_live_card_watch_live(GnostrLiveCard *card, GnostrPageDiscover *self)
+{
+    const GnostrLiveActivity *activity = gnostr_live_card_get_activity(card);
+    if (activity && activity->event_id) {
+        g_signal_emit(self, signals[SIGNAL_WATCH_LIVE], 0, activity->event_id);
+    }
+}
+
+static void
+on_live_card_profile_clicked(GnostrLiveCard *card, const char *pubkey_hex, GnostrPageDiscover *self)
+{
+    (void)card;
+    g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, pubkey_hex);
+}
+
+static void
+clear_live_activities(GnostrPageDiscover *self)
+{
+    /* Clear live flow box */
+    if (self->live_flow_box) {
+        GtkWidget *child;
+        while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->live_flow_box))) != NULL) {
+            gtk_flow_box_remove(self->live_flow_box, child);
+        }
+    }
+
+    /* Clear scheduled flow box */
+    if (self->scheduled_flow_box) {
+        GtkWidget *child;
+        while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->scheduled_flow_box))) != NULL) {
+            gtk_flow_box_remove(self->scheduled_flow_box, child);
+        }
+    }
+
+    /* Free activity arrays */
+    if (self->live_activities) {
+        g_ptr_array_unref(self->live_activities);
+        self->live_activities = NULL;
+    }
+    if (self->scheduled_activities) {
+        g_ptr_array_unref(self->scheduled_activities);
+        self->scheduled_activities = NULL;
+    }
+}
+
+static void
+populate_live_activities(GnostrPageDiscover *self)
+{
+    if (!self->live_flow_box || !self->scheduled_flow_box)
+        return;
+
+    /* Clear existing cards */
+    clear_live_activities(self);
+
+    /* Add live activities */
+    if (self->live_activities && self->live_activities->len > 0) {
+        for (guint i = 0; i < self->live_activities->len; i++) {
+            GnostrLiveActivity *activity = g_ptr_array_index(self->live_activities, i);
+            GnostrLiveCard *card = gnostr_live_card_new();
+            gnostr_live_card_set_activity(card, activity);
+            gnostr_live_card_set_compact(card, FALSE);
+
+            g_signal_connect(card, "watch-live", G_CALLBACK(on_live_card_watch_live), self);
+            g_signal_connect(card, "profile-clicked", G_CALLBACK(on_live_card_profile_clicked), self);
+
+            gtk_flow_box_insert(self->live_flow_box, GTK_WIDGET(card), -1);
+        }
+        gtk_widget_set_visible(GTK_WIDGET(self->live_now_section), TRUE);
+    } else {
+        gtk_widget_set_visible(GTK_WIDGET(self->live_now_section), FALSE);
+    }
+
+    /* Add scheduled activities */
+    if (self->scheduled_activities && self->scheduled_activities->len > 0) {
+        for (guint i = 0; i < self->scheduled_activities->len; i++) {
+            GnostrLiveActivity *activity = g_ptr_array_index(self->scheduled_activities, i);
+            GnostrLiveCard *card = gnostr_live_card_new();
+            gnostr_live_card_set_activity(card, activity);
+            gnostr_live_card_set_compact(card, TRUE);
+
+            g_signal_connect(card, "watch-live", G_CALLBACK(on_live_card_watch_live), self);
+            g_signal_connect(card, "profile-clicked", G_CALLBACK(on_live_card_profile_clicked), self);
+
+            gtk_flow_box_insert(self->scheduled_flow_box, GTK_WIDGET(card), -1);
+        }
+        gtk_widget_set_visible(GTK_WIDGET(self->scheduled_section), TRUE);
+    } else {
+        gtk_widget_set_visible(GTK_WIDGET(self->scheduled_section), FALSE);
+    }
+}
+
+static void
+update_live_content_state(GnostrPageDiscover *self)
+{
+    gboolean has_live = self->live_activities && self->live_activities->len > 0;
+    gboolean has_scheduled = self->scheduled_activities && self->scheduled_activities->len > 0;
+
+    if (has_live || has_scheduled) {
+        gtk_stack_set_visible_child_name(self->content_stack, "live");
+    } else {
+        gtk_stack_set_visible_child_name(self->content_stack, "live-empty");
+    }
+}
+
+static void
+switch_to_people_mode(GnostrPageDiscover *self)
+{
+    self->is_live_mode = FALSE;
+    self->is_articles_mode = FALSE;
+
+    /* Show profile search UI */
+    gtk_widget_set_visible(GTK_WIDGET(self->search_entry), TRUE);
+    gtk_widget_set_visible(GTK_WIDGET(self->filter_row), TRUE);
+
+    /* Show the appropriate content */
+    update_content_state(self);
+}
+
+static void
+switch_to_live_mode(GnostrPageDiscover *self)
+{
+    self->is_live_mode = TRUE;
+    self->is_articles_mode = FALSE;
+
+    /* Hide profile search UI */
+    gtk_widget_set_visible(GTK_WIDGET(self->search_entry), FALSE);
+    gtk_widget_set_visible(GTK_WIDGET(self->filter_row), FALSE);
+
+    /* Load live activities if not already loaded */
+    if (!self->live_loaded) {
+        gnostr_page_discover_load_live_activities(self);
+    } else {
+        update_live_content_state(self);
+    }
+}
+
+static void
+switch_to_articles_mode(GnostrPageDiscover *self)
+{
+    self->is_live_mode = FALSE;
+    self->is_articles_mode = TRUE;
+
+    /* Hide profile search UI (articles view has its own) */
+    gtk_widget_set_visible(GTK_WIDGET(self->search_entry), FALSE);
+    gtk_widget_set_visible(GTK_WIDGET(self->filter_row), FALSE);
+
+    /* Show articles view in stack */
+    gtk_stack_set_visible_child_name(self->content_stack, "articles");
+
+    /* Load articles if not already loaded */
+    if (!self->articles_loaded && self->articles_view) {
+        self->articles_loaded = TRUE;
+        gnostr_articles_view_load_articles(self->articles_view);
+    }
+}
+
+static void
+on_mode_toggled(GtkToggleButton *button, GnostrPageDiscover *self)
+{
+    /* Ensure mutual exclusivity */
+    if (gtk_toggle_button_get_active(button)) {
+        if (button == self->btn_mode_people) {
+            gtk_toggle_button_set_active(self->btn_mode_live, FALSE);
+            if (self->btn_mode_articles)
+                gtk_toggle_button_set_active(self->btn_mode_articles, FALSE);
+            switch_to_people_mode(self);
+        } else if (button == self->btn_mode_live) {
+            gtk_toggle_button_set_active(self->btn_mode_people, FALSE);
+            if (self->btn_mode_articles)
+                gtk_toggle_button_set_active(self->btn_mode_articles, FALSE);
+            switch_to_live_mode(self);
+        } else if (button == self->btn_mode_articles) {
+            gtk_toggle_button_set_active(self->btn_mode_people, FALSE);
+            gtk_toggle_button_set_active(self->btn_mode_live, FALSE);
+            switch_to_articles_mode(self);
+        }
+    } else {
+        /* Don't allow all to be inactive */
+        gboolean any_active = gtk_toggle_button_get_active(self->btn_mode_people) ||
+                              gtk_toggle_button_get_active(self->btn_mode_live) ||
+                              (self->btn_mode_articles && gtk_toggle_button_get_active(self->btn_mode_articles));
+        if (!any_active) {
+            gtk_toggle_button_set_active(button, TRUE);
+        }
+    }
+}
+
+static void
+on_refresh_live_clicked(GtkButton *button, GnostrPageDiscover *self)
+{
+    (void)button;
+    self->live_loaded = FALSE;
+    gnostr_page_discover_load_live_activities(self);
+}
+
 /* --- Filter & Sort Handling --- */
 
 static void
@@ -633,6 +905,20 @@ gnostr_page_discover_dispose(GObject *object)
         g_clear_object(&self->search_cancellable);
     }
 
+    if (self->live_cancellable) {
+        g_cancellable_cancel(self->live_cancellable);
+        g_clear_object(&self->live_cancellable);
+    }
+
+    if (self->live_activities) {
+        g_ptr_array_unref(self->live_activities);
+        self->live_activities = NULL;
+    }
+    if (self->scheduled_activities) {
+        g_ptr_array_unref(self->scheduled_activities);
+        self->scheduled_activities = NULL;
+    }
+
     g_clear_object(&self->profile_model);
     g_clear_object(&self->local_selection);
     g_clear_object(&self->local_factory);
@@ -665,7 +951,7 @@ gnostr_page_discover_class_init(GnostrPageDiscoverClass *klass)
     /* Load template */
     gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
 
-    /* Bind template children */
+    /* Bind template children - Profile search */
     gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, search_entry);
     gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, btn_local);
     gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, btn_network);
@@ -676,6 +962,25 @@ gnostr_page_discover_class_init(GnostrPageDiscoverClass *klass)
     gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, empty_state);
     gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, loading_spinner);
     gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, scroller);
+    gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, btn_communities);
+    gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, filter_row);
+
+    /* Bind template children - Mode toggle */
+    gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, btn_mode_people);
+    gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, btn_mode_live);
+    gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, btn_mode_articles);
+
+    /* Bind template children - Articles view */
+    gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, articles_view);
+
+    /* Bind template children - Live Activities */
+    gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, live_flow_box);
+    gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, scheduled_flow_box);
+    gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, live_now_section);
+    gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, scheduled_section);
+    gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, live_loading_spinner);
+    gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, btn_refresh_live);
+    gtk_widget_class_bind_template_child(widget_class, GnostrPageDiscover, btn_refresh_live_empty);
 
     /* Signals */
     signals[SIGNAL_OPEN_PROFILE] = g_signal_new(
@@ -713,6 +1018,34 @@ gnostr_page_discover_class_init(GnostrPageDiscoverClass *klass)
         0, NULL, NULL, NULL,
         G_TYPE_NONE, 1, G_TYPE_STRING);
 
+    signals[SIGNAL_OPEN_COMMUNITIES] = g_signal_new(
+        "open-communities",
+        G_TYPE_FROM_CLASS(klass),
+        G_SIGNAL_RUN_LAST,
+        0, NULL, NULL, NULL,
+        G_TYPE_NONE, 0);
+
+    signals[SIGNAL_WATCH_LIVE] = g_signal_new(
+        "watch-live",
+        G_TYPE_FROM_CLASS(klass),
+        G_SIGNAL_RUN_LAST,
+        0, NULL, NULL, NULL,
+        G_TYPE_NONE, 1, G_TYPE_STRING);
+
+    signals[SIGNAL_OPEN_ARTICLE] = g_signal_new(
+        "open-article",
+        G_TYPE_FROM_CLASS(klass),
+        G_SIGNAL_RUN_LAST,
+        0, NULL, NULL, NULL,
+        G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_INT);
+
+    signals[SIGNAL_ZAP_ARTICLE_REQUESTED] = g_signal_new(
+        "zap-article-requested",
+        G_TYPE_FROM_CLASS(klass),
+        G_SIGNAL_RUN_LAST,
+        0, NULL, NULL, NULL,
+        G_TYPE_NONE, 3, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+
     /* CSS */
     gtk_widget_class_set_css_name(widget_class, "page-discover");
 
@@ -728,6 +1061,13 @@ gnostr_page_discover_init(GnostrPageDiscover *self)
     self->search_debounce_id = 0;
     self->profiles_loaded = FALSE;
     self->is_local_mode = TRUE;
+    self->is_live_mode = FALSE;
+    self->is_articles_mode = FALSE;
+    self->live_loaded = FALSE;
+    self->articles_loaded = FALSE;
+    self->live_activities = NULL;
+    self->scheduled_activities = NULL;
+    self->live_cancellable = NULL;
 
     /* Create local profile browser model */
     self->profile_model = gn_profile_list_model_new();
@@ -781,6 +1121,51 @@ gnostr_page_discover_init(GnostrPageDiscover *self)
 
     /* Default to local filter active */
     gtk_toggle_button_set_active(self->btn_local, TRUE);
+
+    /* Connect communities button */
+    if (self->btn_communities) {
+        g_signal_connect(self->btn_communities, "clicked",
+                         G_CALLBACK(on_communities_clicked), self);
+    }
+
+    /* Connect mode toggle signals */
+    if (self->btn_mode_people) {
+        g_signal_connect(self->btn_mode_people, "toggled",
+                         G_CALLBACK(on_mode_toggled), self);
+    }
+    if (self->btn_mode_live) {
+        g_signal_connect(self->btn_mode_live, "toggled",
+                         G_CALLBACK(on_mode_toggled), self);
+    }
+    if (self->btn_mode_articles) {
+        g_signal_connect(self->btn_mode_articles, "toggled",
+                         G_CALLBACK(on_mode_toggled), self);
+    }
+
+    /* Connect articles view signals */
+    if (self->articles_view) {
+        g_signal_connect(self->articles_view, "open-article",
+                         G_CALLBACK(on_articles_open_article), self);
+        g_signal_connect(self->articles_view, "open-profile",
+                         G_CALLBACK(on_articles_open_profile), self);
+        g_signal_connect(self->articles_view, "zap-requested",
+                         G_CALLBACK(on_articles_zap_requested), self);
+    }
+
+    /* Connect live refresh buttons */
+    if (self->btn_refresh_live) {
+        g_signal_connect(self->btn_refresh_live, "clicked",
+                         G_CALLBACK(on_refresh_live_clicked), self);
+    }
+    if (self->btn_refresh_live_empty) {
+        g_signal_connect(self->btn_refresh_live_empty, "clicked",
+                         G_CALLBACK(on_refresh_live_clicked), self);
+    }
+
+    /* Default to People mode */
+    if (self->btn_mode_people) {
+        gtk_toggle_button_set_active(self->btn_mode_people, TRUE);
+    }
 
     /* Start with loading state */
     gtk_stack_set_visible_child_name(self->content_stack, "loading");
@@ -892,4 +1277,66 @@ gnostr_page_discover_get_result_count(GnostrPageDiscover *self)
     } else {
         return g_list_model_get_n_items(G_LIST_MODEL(self->network_results_model));
     }
+}
+
+void
+gnostr_page_discover_load_live_activities(GnostrPageDiscover *self)
+{
+    g_return_if_fail(GNOSTR_IS_PAGE_DISCOVER(self));
+
+    /* Cancel any pending load */
+    if (self->live_cancellable) {
+        g_cancellable_cancel(self->live_cancellable);
+        g_clear_object(&self->live_cancellable);
+    }
+
+    /* Show loading state */
+    if (self->live_loading_spinner) {
+        gtk_spinner_start(self->live_loading_spinner);
+    }
+    gtk_stack_set_visible_child_name(self->content_stack, "live-loading");
+
+    self->live_cancellable = g_cancellable_new();
+
+    /* Clear existing activities */
+    clear_live_activities(self);
+
+    /* Initialize arrays for activities */
+    self->live_activities = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_live_activity_free);
+    self->scheduled_activities = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_live_activity_free);
+
+    /* TODO: Implement actual NIP-53 subscription to fetch live activities
+     * For now, we just show the empty state after a short delay.
+     * A real implementation would:
+     * 1. Create a filter for kind 30311 events with status=live
+     * 2. Subscribe to configured relays
+     * 3. Parse incoming events with gnostr_live_activity_parse()
+     * 4. Sort by status (live first, then planned by start time)
+     * 5. Call populate_live_activities() to display
+     */
+
+    /* Mark as loaded and show appropriate state */
+    self->live_loaded = TRUE;
+
+    /* Stop loading spinner */
+    if (self->live_loading_spinner) {
+        gtk_spinner_stop(self->live_loading_spinner);
+    }
+
+    /* For now, show empty state since we don't have real data */
+    update_live_content_state(self);
+}
+
+gboolean
+gnostr_page_discover_is_live_mode(GnostrPageDiscover *self)
+{
+    g_return_val_if_fail(GNOSTR_IS_PAGE_DISCOVER(self), FALSE);
+    return self->is_live_mode;
+}
+
+gboolean
+gnostr_page_discover_is_articles_mode(GnostrPageDiscover *self)
+{
+    g_return_val_if_fail(GNOSTR_IS_PAGE_DISCOVER(self), FALSE);
+    return self->is_articles_mode;
 }
