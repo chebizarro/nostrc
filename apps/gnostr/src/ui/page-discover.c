@@ -446,7 +446,7 @@ update_content_state(GnostrPageDiscover *self)
                 gtk_stack_set_visible_child_name(self->content_stack, "empty");
             }
         } else {
-            /* Has results */
+            /* Has results - show the results list */
             gtk_stack_set_visible_child_name(self->content_stack, "results");
         }
     } else {

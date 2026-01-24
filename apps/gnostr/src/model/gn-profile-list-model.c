@@ -428,7 +428,7 @@ load_profiles_in_thread(GTask *task, gpointer source_object, gpointer task_data,
     void *txn = NULL;
     int rc = storage_ndb_begin_query_retry(&txn, 5, 10);
     if (rc != 0 || !txn) {
-        g_warning("Failed to begin nostrdb query for profiles");
+        g_warning("profile-list-model: Failed to begin nostrdb query for profiles");
         g_task_return_pointer(task, data, (GDestroyNotify)load_profiles_data_free);
         return;
     }
@@ -441,6 +441,7 @@ load_profiles_in_thread(GTask *task, gpointer source_object, gpointer task_data,
     int result_count = 0;
 
     rc = storage_ndb_query(txn, filter_json, &results, &result_count);
+
     if (rc == 0 && results && result_count > 0) {
         for (int i = 0; i < result_count; i++) {
             if (results[i]) {
@@ -450,6 +451,7 @@ load_profiles_in_thread(GTask *task, gpointer source_object, gpointer task_data,
                 }
             }
         }
+        g_debug("profile-list-model: loaded %u profiles from nostrdb", data->loaded_profiles->len);
         storage_ndb_free_results(results, result_count);
     }
 
@@ -462,6 +464,7 @@ static void
 load_profiles_complete(GObject *source, GAsyncResult *result, gpointer user_data)
 {
     (void)user_data;
+
     /* Get self from source_object where GTask holds a reference */
     GnProfileListModel *self = GN_PROFILE_LIST_MODEL(source);
     if (!GN_IS_PROFILE_LIST_MODEL(self)) return;
@@ -470,7 +473,7 @@ load_profiles_complete(GObject *source, GAsyncResult *result, gpointer user_data
     LoadProfilesData *data = g_task_propagate_pointer(G_TASK(result), &error);
 
     if (error) {
-        g_warning("Failed to load profiles: %s", error->message);
+        g_warning("profile-list-model: Failed to load profiles: %s", error->message);
         g_error_free(error);
     }
 
