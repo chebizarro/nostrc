@@ -82,3 +82,7 @@ cmake-build-*/
 playwright-report/
 node_modules/
 package-lock.json
+
+# Ignore bd (beads) local cache files
+.beads/beads.db
+.beads/last-touched

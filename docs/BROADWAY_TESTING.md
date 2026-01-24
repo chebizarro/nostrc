@@ -8,16 +8,35 @@ The Broadway backend allows GTK4 applications to run in a web browser. Combined 
 
 ## Quick Start
 
-### 1. Start gnostr with Broadway backend
+### Running gnostr in Broadway
 
 ```bash
+# From project root
 ./tools/run-broadway.sh
+
+# Or with custom port
+BROADWAY_PORT=9090 ./tools/run-broadway.sh
 ```
 
-This will:
-- Start the Broadway daemon on `http://127.0.0.1:8080` (configurable)
-- Launch gnostr with the Broadway backend
-- Clean up on exit
+The script will:
+
+1. Check if Broadway daemon is already running (persistent across runs)
+2. Start Broadway daemon if not running (detached, survives gnostr exit)
+3. Launch gnostr with the Broadway backend
+4. **Broadway daemon persists after gnostr exits** (for rebuild/debug cycles)
+
+**Benefits of Persistent Daemon:**
+
+- ✅ Playwright MCP stays connected across gnostr rebuilds
+- ✅ No need to reconnect browser preview after each rebuild
+- ✅ Faster iteration: rebuild → run → test (no reconnection delay)
+
+**Stopping the Broadway Daemon:**
+
+```bash
+# When done testing, stop the persistent daemon
+./tools/stop-broadway.sh
+```
 
 ### 2. Access the UI
 

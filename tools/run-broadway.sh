@@ -8,6 +8,7 @@ GNOSTR_BIN="${GNOSTR_BIN:-$BUILD_DIR/apps/gnostr/gnostr}"
 
 BROADWAY_PORT="${BROADWAY_PORT:-8080}"
 BROADWAY_DISPLAY="${BROADWAY_DISPLAY:-5}"
+BROADWAY_PIDFILE="/tmp/broadway-${BROADWAY_DISPLAY}.pid"
 
 if [ ! -f "$GNOSTR_BIN" ]; then
     echo "Error: gnostr binary not found at $GNOSTR_BIN"
@@ -21,25 +22,36 @@ if [ -z "$BROADWAYD" ]; then
     exit 1
 fi
 
-echo "Starting Broadway daemon on :$BROADWAY_DISPLAY (port $BROADWAY_PORT)..."
-$BROADWAYD :$BROADWAY_DISPLAY --port $BROADWAY_PORT --address 127.0.0.1 &
-BROADWAYD_PID=$!
+# Check if Broadway daemon is already running
+if [ -f "$BROADWAY_PIDFILE" ]; then
+    EXISTING_PID=$(cat "$BROADWAY_PIDFILE")
+    if kill -0 "$EXISTING_PID" 2>/dev/null; then
+        echo "Broadway daemon already running (PID $EXISTING_PID) at http://127.0.0.1:$BROADWAY_PORT"
+    else
+        echo "Stale PID file found, removing..."
+        rm -f "$BROADWAY_PIDFILE"
+    fi
+fi
 
-cleanup() {
-    echo "Stopping Broadway daemon..."
-    kill $BROADWAYD_PID 2>/dev/null || true
-    wait $BROADWAYD_PID 2>/dev/null || true
-}
-trap cleanup EXIT INT TERM
+# Start Broadway daemon if not running (detached, survives script exit)
+if [ ! -f "$BROADWAY_PIDFILE" ] || ! kill -0 "$(cat "$BROADWAY_PIDFILE")" 2>/dev/null; then
+    echo "Starting persistent Broadway daemon on :$BROADWAY_DISPLAY (port $BROADWAY_PORT)..."
+    nohup $BROADWAYD :$BROADWAY_DISPLAY --port $BROADWAY_PORT --address 127.0.0.1 >/dev/null 2>&1 &
+    BROADWAYD_PID=$!
+    echo $BROADWAYD_PID > "$BROADWAY_PIDFILE"
+    sleep 1
+    echo "Broadway daemon started (PID $BROADWAYD_PID) at http://127.0.0.1:$BROADWAY_PORT"
+    echo "Use tools/stop-broadway.sh to stop the daemon when done."
+fi
 
-sleep 1
-
-echo "Broadway server running at http://127.0.0.1:$BROADWAY_PORT"
-echo "Starting gnostr..."
+echo ""
+echo "Starting gnostr (Broadway at http://127.0.0.1:$BROADWAY_PORT)..."
+echo "Note: Broadway daemon will persist after gnostr exits (for rebuild/debug cycles)"
 echo ""
 
 export GDK_BACKEND=broadway
 export BROADWAY_DISPLAY=:$BROADWAY_DISPLAY
 export GSETTINGS_SCHEMA_DIR="$BUILD_DIR/apps/gnostr"
 
+# Run gnostr (Broadway daemon persists after this exits)
 "$GNOSTR_BIN" "$@"
