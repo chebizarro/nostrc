@@ -11,6 +11,7 @@
 #include "../ipc/signer_ipc.h"
 #include "../util/relays.h"
 #include "nostr_simple_pool.h"
+#include "nostr_relay.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
 #include "nostr-kinds.h"
@@ -894,4 +895,221 @@ gnostr_dm_service_get_recipient_relays_async(const char *recipient_pubkey,
         cancellable,
         on_recipient_dm_relays_done,
         ctx);
+}
+
+/* ============== Send DM using NIP-59 Gift Wrap ============== */
+
+#include "../util/nip59_giftwrap.h"
+
+void gnostr_dm_send_result_free(GnostrDmSendResult *result) {
+    if (!result) return;
+    g_free(result->error_message);
+    g_free(result);
+}
+
+typedef struct {
+    GnostrDmService *service;   /* weak ref */
+    char *recipient_pubkey;
+    char *content;
+    char *gift_wrap_json;       /* Signed gift wrap to publish */
+    GCancellable *cancellable;
+    GnostrDmSendCallback callback;
+    gpointer user_data;
+    guint relays_published;
+    guint relays_failed;
+} DmSendCtx;
+
+static void dm_send_ctx_free(DmSendCtx *ctx) {
+    if (!ctx) return;
+    g_free(ctx->recipient_pubkey);
+    g_free(ctx->content);
+    g_free(ctx->gift_wrap_json);
+    if (ctx->cancellable) g_object_unref(ctx->cancellable);
+    g_free(ctx);
+}
+
+static void finish_dm_send_with_error(DmSendCtx *ctx, const char *msg) {
+    GnostrDmSendResult *result = g_new0(GnostrDmSendResult, 1);
+    result->success = FALSE;
+    result->error_message = g_strdup(msg);
+
+    if (ctx->callback) {
+        ctx->callback(result, ctx->user_data);
+    } else {
+        gnostr_dm_send_result_free(result);
+    }
+
+    dm_send_ctx_free(ctx);
+}
+
+/* Step 3: Publish gift wrap to relays */
+static void
+on_dm_relays_fetched(GPtrArray *relays, gpointer user_data)
+{
+    DmSendCtx *ctx = (DmSendCtx *)user_data;
+
+    if (!relays || relays->len == 0) {
+        g_warning("[DM_SERVICE] No relays available for recipient");
+        finish_dm_send_with_error(ctx, "No relays available for recipient");
+        if (relays) g_ptr_array_unref(relays);
+        return;
+    }
+
+    g_message("[DM_SERVICE] Publishing DM to %u relays", relays->len);
+
+    /* Parse gift wrap event for publishing */
+    NostrEvent *gift_wrap = nostr_event_new();
+    if (!nostr_event_deserialize_compact(gift_wrap, ctx->gift_wrap_json)) {
+        g_warning("[DM_SERVICE] Failed to parse gift wrap for publishing");
+        nostr_event_free(gift_wrap);
+        g_ptr_array_unref(relays);
+        finish_dm_send_with_error(ctx, "Failed to parse gift wrap");
+        return;
+    }
+
+    /* Publish to each relay */
+    ctx->relays_published = 0;
+    ctx->relays_failed = 0;
+
+    for (guint i = 0; i < relays->len; i++) {
+        const char *url = (const char *)g_ptr_array_index(relays, i);
+        GNostrRelay *relay = gnostr_relay_new(url);
+        if (!relay) {
+            ctx->relays_failed++;
+            continue;
+        }
+
+        GError *conn_err = NULL;
+        if (!gnostr_relay_connect(relay, &conn_err)) {
+            g_debug("[DM_SERVICE] Failed to connect to %s: %s",
+                    url, conn_err ? conn_err->message : "unknown");
+            g_clear_error(&conn_err);
+            g_object_unref(relay);
+            ctx->relays_failed++;
+            continue;
+        }
+
+        GError *pub_err = NULL;
+        if (gnostr_relay_publish(relay, gift_wrap, &pub_err)) {
+            g_message("[DM_SERVICE] Published DM to %s", url);
+            ctx->relays_published++;
+        } else {
+            g_debug("[DM_SERVICE] Publish failed to %s: %s",
+                    url, pub_err ? pub_err->message : "unknown");
+            g_clear_error(&pub_err);
+            ctx->relays_failed++;
+        }
+        g_object_unref(relay);
+    }
+
+    nostr_event_free(gift_wrap);
+    g_ptr_array_unref(relays);
+
+    /* Check result */
+    GnostrDmSendResult *result = g_new0(GnostrDmSendResult, 1);
+    if (ctx->relays_published > 0) {
+        result->success = TRUE;
+        result->relays_published = ctx->relays_published;
+        g_message("[DM_SERVICE] DM sent successfully to %u relays (failed: %u)",
+                  ctx->relays_published, ctx->relays_failed);
+    } else {
+        result->success = FALSE;
+        result->error_message = g_strdup("Failed to publish to any relay");
+        g_warning("[DM_SERVICE] DM send failed - no successful publishes");
+    }
+
+    if (ctx->callback) {
+        ctx->callback(result, ctx->user_data);
+    } else {
+        gnostr_dm_send_result_free(result);
+    }
+
+    dm_send_ctx_free(ctx);
+}
+
+/* Step 2: Gift wrap created - fetch recipient relays and publish */
+static void
+on_gift_wrap_created(GnostrGiftWrapResult *wrap_result, gpointer user_data)
+{
+    DmSendCtx *ctx = (DmSendCtx *)user_data;
+
+    if (!wrap_result->success || !wrap_result->gift_wrap_json) {
+        g_warning("[DM_SERVICE] Failed to create gift wrap: %s",
+                  wrap_result->error_message ? wrap_result->error_message : "unknown");
+        finish_dm_send_with_error(ctx, wrap_result->error_message ?
+                                  wrap_result->error_message : "Failed to create gift wrap");
+        gnostr_gift_wrap_result_free(wrap_result);
+        return;
+    }
+
+    ctx->gift_wrap_json = g_strdup(wrap_result->gift_wrap_json);
+    gnostr_gift_wrap_result_free(wrap_result);
+
+    g_message("[DM_SERVICE] Gift wrap created, fetching recipient relays");
+
+    /* Fetch recipient's DM relays */
+    gnostr_dm_service_get_recipient_relays_async(
+        ctx->recipient_pubkey,
+        ctx->cancellable,
+        on_dm_relays_fetched,
+        ctx);
+}
+
+void
+gnostr_dm_service_send_dm_async(GnostrDmService *self,
+                                 const char *recipient_pubkey,
+                                 const char *content,
+                                 GCancellable *cancellable,
+                                 GnostrDmSendCallback callback,
+                                 gpointer user_data)
+{
+    g_return_if_fail(GNOSTR_IS_DM_SERVICE(self));
+    g_return_if_fail(recipient_pubkey != NULL);
+    g_return_if_fail(content != NULL);
+
+    if (!self->user_pubkey) {
+        GnostrDmSendResult *result = g_new0(GnostrDmSendResult, 1);
+        result->success = FALSE;
+        result->error_message = g_strdup("User not logged in");
+        if (callback) callback(result, user_data);
+        else gnostr_dm_send_result_free(result);
+        return;
+    }
+
+    g_message("[DM_SERVICE] Sending DM to %.8s", recipient_pubkey);
+
+    /* Create rumor (unsigned kind 14 event) */
+    NostrEvent *rumor = gnostr_nip59_create_dm_rumor(
+        self->user_pubkey,
+        recipient_pubkey,
+        content);
+
+    if (!rumor) {
+        GnostrDmSendResult *result = g_new0(GnostrDmSendResult, 1);
+        result->success = FALSE;
+        result->error_message = g_strdup("Failed to create DM rumor");
+        if (callback) callback(result, user_data);
+        else gnostr_dm_send_result_free(result);
+        return;
+    }
+
+    /* Create context */
+    DmSendCtx *ctx = g_new0(DmSendCtx, 1);
+    ctx->service = self;
+    ctx->recipient_pubkey = g_strdup(recipient_pubkey);
+    ctx->content = g_strdup(content);
+    ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
+    ctx->callback = callback;
+    ctx->user_data = user_data;
+
+    /* Create gift wrap asynchronously */
+    gnostr_nip59_create_gift_wrap_async(
+        rumor,
+        recipient_pubkey,
+        self->user_pubkey,
+        cancellable,
+        on_gift_wrap_created,
+        ctx);
+
+    nostr_event_free(rumor);
 }

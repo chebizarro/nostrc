@@ -2294,3 +2294,182 @@ profile-row.muted .profile-row-avatar {
   background: alpha(#9c27b0, 0.12);
   color: #9c27b0;
 }
+
+/* ============================================
+   NIP-75 Zap Goal Widget Styles
+   ============================================ */
+
+/* Main zap goal widget container */
+.zap-goal-widget {
+  border-radius: 12px;
+  background: alpha(@theme_bg_color, 0.6);
+  border: 1px solid alpha(#f7931a, 0.25);
+  padding: 12px;
+  margin: 8px 0;
+  transition: all 200ms ease;
+}
+
+.zap-goal-widget:hover {
+  background: alpha(@theme_bg_color, 0.75);
+  border-color: alpha(#f7931a, 0.35);
+  box-shadow: 0 2px 8px alpha(#f7931a, 0.1);
+}
+
+/* Funded/complete state */
+.zap-goal-widget.zap-goal-funded {
+  border-color: alpha(#2e7d32, 0.4);
+  background: alpha(#2e7d32, 0.08);
+}
+
+.zap-goal-widget.zap-goal-funded:hover {
+  background: alpha(#2e7d32, 0.12);
+  border-color: alpha(#2e7d32, 0.5);
+}
+
+/* Lightning bolt icon */
+.zap-goal-icon {
+  color: #f7931a;
+}
+
+/* Goal title */
+.zap-goal-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: @theme_fg_color;
+}
+
+/* Creator link button */
+.zap-goal-creator {
+  padding: 2px 6px;
+  margin: -2px -6px;
+  border-radius: 4px;
+}
+
+.zap-goal-creator:hover {
+  background: alpha(@accent_bg_color, 0.1);
+}
+
+.zap-goal-creator:hover label {
+  color: @accent_bg_color;
+}
+
+/* Description text */
+.zap-goal-description {
+  font-size: 14px;
+  line-height: 1.4;
+  color: alpha(@theme_fg_color, 0.85);
+}
+
+/* Progress bar */
+.zap-goal-bar {
+  min-height: 10px;
+  border-radius: 5px;
+}
+
+.zap-goal-bar trough {
+  background: alpha(@theme_fg_color, 0.12);
+  border-radius: 5px;
+  min-height: 10px;
+}
+
+.zap-goal-bar progress {
+  background: linear-gradient(
+    90deg,
+    #f7931a 0%,
+    #ffc107 100%
+  );
+  border-radius: 5px;
+}
+
+/* Completed progress bar */
+.zap-goal-bar.zap-goal-bar-complete progress {
+  background: linear-gradient(
+    90deg,
+    #2e7d32 0%,
+    #4caf50 100%
+  );
+}
+
+/* Expired progress bar */
+.zap-goal-bar.zap-goal-bar-expired progress {
+  background: alpha(@theme_fg_color, 0.4);
+}
+
+/* Progress label */
+.zap-goal-progress {
+  font-size: 13px;
+  font-weight: 500;
+  color: #f7931a;
+}
+
+/* Status badge (complete/expired) */
+.zap-goal-status-badge {
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.zap-goal-status-badge.zap-goal-complete {
+  background: alpha(#2e7d32, 0.15);
+  color: #2e7d32;
+}
+
+.zap-goal-status-badge.zap-goal-complete image {
+  color: #2e7d32;
+}
+
+.zap-goal-status-badge.zap-goal-expired {
+  background: alpha(@theme_fg_color, 0.12);
+  color: alpha(@theme_fg_color, 0.6);
+}
+
+.zap-goal-status-badge.zap-goal-expired image {
+  color: alpha(@theme_fg_color, 0.6);
+}
+
+/* Zap/Contribute button */
+.zap-goal-zap-btn {
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-weight: 500;
+  background: linear-gradient(
+    135deg,
+    #f7931a 0%,
+    #ffc107 100%
+  );
+  color: white;
+  border: none;
+  transition: all 150ms ease;
+}
+
+.zap-goal-zap-btn:hover {
+  background: linear-gradient(
+    135deg,
+    shade(#f7931a, 0.9) 0%,
+    shade(#ffc107, 0.9) 100%
+  );
+  box-shadow: 0 2px 8px alpha(#f7931a, 0.3);
+}
+
+.zap-goal-zap-btn:disabled {
+  background: alpha(@theme_fg_color, 0.1);
+  color: alpha(@theme_fg_color, 0.4);
+}
+
+.zap-goal-zap-btn image {
+  color: white;
+}
+
+.zap-goal-zap-btn:disabled image {
+  color: alpha(@theme_fg_color, 0.4);
+}
+
+/* Overfunded celebration */
+.zap-goal-widget.zap-goal-funded .zap-goal-progress {
+  color: #2e7d32;
+}
+
+.zap-goal-widget.zap-goal-funded .zap-goal-icon {
+  color: #2e7d32;
+}

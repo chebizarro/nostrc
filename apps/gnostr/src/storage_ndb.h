@@ -122,6 +122,13 @@ guint storage_ndb_count_reactions(const char *event_id_hex);
  * Returns TRUE if the user has reacted, FALSE otherwise. */
 gboolean storage_ndb_user_has_reacted(const char *event_id_hex, const char *user_pubkey_hex);
 
+/* NIP-25: Get reaction breakdown for an event (emoji -> count).
+ * event_id_hex: 64-char hex ID of the event
+ * reactor_pubkeys: (out) (optional): array of reactor pubkeys, caller must free
+ * Returns a GHashTable with emoji strings as keys and count as GUINT_TO_POINTER values.
+ * Caller must free the returned hash table with g_hash_table_unref(). */
+GHashTable *storage_ndb_get_reaction_breakdown(const char *event_id_hex, GPtrArray **reactor_pubkeys);
+
 /* ============== NIP-40 Expiration Timestamp API ============== */
 
 /* Get expiration timestamp from note tags.

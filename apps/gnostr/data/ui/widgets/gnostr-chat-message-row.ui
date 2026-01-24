@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnostrChatMessageRow" parent="GtkWidget">
+    <child>
+      <object class="GtkBox" id="content_box">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">10</property>
+        <property name="margin-start">12</property>
+        <property name="margin-end">12</property>
+        <property name="margin-top">6</property>
+        <property name="margin-bottom">6</property>
+
+        <!-- Author avatar -->
+        <child>
+          <object class="GtkButton" id="btn_avatar">
+            <property name="has-frame">false</property>
+            <property name="valign">start</property>
+            <property name="tooltip-text">View profile</property>
+            <child>
+              <object class="GtkOverlay" id="avatar_box">
+                <property name="width-request">36</property>
+                <property name="height-request">36</property>
+                <child>
+                  <object class="GtkFrame">
+                    <property name="halign">center</property>
+                    <property name="valign">center</property>
+                    <style>
+                      <class name="avatar-frame"/>
+                    </style>
+                    <child>
+                      <object class="GtkLabel" id="avatar_initials">
+                        <property name="label">?</property>
+                        <property name="width-request">36</property>
+                        <property name="height-request">36</property>
+                        <style>
+                          <class name="avatar-initials"/>
+                          <class name="title-4"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child type="overlay">
+                  <object class="GtkPicture" id="avatar_image">
+                    <property name="content-fit">cover</property>
+                    <property name="width-request">36</property>
+                    <property name="height-request">36</property>
+                    <property name="visible">false</property>
+                    <style>
+                      <class name="avatar"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Message content -->
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="spacing">4</property>
+            <property name="hexpand">true</property>
+
+            <!-- Author and timestamp row -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <child>
+                  <object class="GtkLabel" id="lbl_author">
+                    <property name="label">Author</property>
+                    <property name="xalign">0.0</property>
+                    <property name="ellipsize">end</property>
+                    <property name="max-width-chars">20</property>
+                    <style>
+                      <class name="heading"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_timestamp">
+                    <property name="label">12:00 PM</property>
+                    <property name="xalign">0.0</property>
+                    <style>
+                      <class name="dim-label"/>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox">
+                    <property name="hexpand">true</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Message text -->
+            <child>
+              <object class="GtkLabel" id="lbl_content">
+                <property name="label">Message content</property>
+                <property name="xalign">0.0</property>
+                <property name="wrap">true</property>
+                <property name="wrap-mode">word-char</property>
+                <property name="selectable">true</property>
+                <property name="use-markup">false</property>
+              </object>
+            </child>
+
+            <!-- Action buttons (shown on hover) -->
+            <child>
+              <object class="GtkBox" id="action_box">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">4</property>
+                <property name="margin-top">4</property>
+                <style>
+                  <class name="message-actions"/>
+                </style>
+
+                <child>
+                  <object class="GtkButton" id="btn_reply">
+                    <property name="icon-name">mail-reply-sender-symbolic</property>
+                    <property name="has-frame">false</property>
+                    <property name="tooltip-text">Reply</property>
+                    <style>
+                      <class name="flat"/>
+                      <class name="circular"/>
+                    </style>
+                  </object>
+                </child>
+
+                <child>
+                  <object class="GtkButton" id="btn_hide">
+                    <property name="icon-name">view-conceal-symbolic</property>
+                    <property name="has-frame">false</property>
+                    <property name="tooltip-text">Hide message (moderator)</property>
+                    <property name="visible">false</property>
+                    <style>
+                      <class name="flat"/>
+                      <class name="circular"/>
+                    </style>
+                  </object>
+                </child>
+
+                <child>
+                  <object class="GtkButton" id="btn_mute">
+                    <property name="icon-name">action-unavailable-symbolic</property>
+                    <property name="has-frame">false</property>
+                    <property name="tooltip-text">Mute user (moderator)</property>
+                    <property name="visible">false</property>
+                    <style>
+                      <class name="flat"/>
+                      <class name="circular"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

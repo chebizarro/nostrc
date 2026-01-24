@@ -1,0 +1,331 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnostrChatRoomView" parent="GtkWidget">
+    <child>
+      <object class="GtkBox" id="root">
+        <property name="orientation">vertical</property>
+        <property name="hexpand">true</property>
+        <property name="vexpand">true</property>
+
+        <!-- Header bar with channel info -->
+        <child>
+          <object class="GtkBox" id="header_box">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">12</property>
+            <property name="margin-start">8</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">8</property>
+            <property name="margin-bottom">8</property>
+            <style>
+              <class name="chat-header"/>
+            </style>
+
+            <!-- Back button -->
+            <child>
+              <object class="GtkButton" id="btn_back">
+                <property name="icon-name">go-previous-symbolic</property>
+                <property name="tooltip-text">Leave channel</property>
+                <property name="valign">center</property>
+              </object>
+            </child>
+
+            <!-- Channel avatar -->
+            <child>
+              <object class="GtkButton" id="btn_avatar">
+                <property name="has-frame">false</property>
+                <property name="valign">center</property>
+                <property name="tooltip-text">View channel creator</property>
+                <child>
+                  <object class="GtkOverlay">
+                    <property name="width-request">36</property>
+                    <property name="height-request">36</property>
+                    <child>
+                      <object class="GtkFrame">
+                        <property name="halign">center</property>
+                        <property name="valign">center</property>
+                        <style>
+                          <class name="avatar-frame"/>
+                        </style>
+                        <child>
+                          <object class="GtkLabel" id="channel_avatar_initials">
+                            <property name="label">#</property>
+                            <property name="width-request">36</property>
+                            <property name="height-request">36</property>
+                            <style>
+                              <class name="avatar-initials"/>
+                              <class name="title-4"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child type="overlay">
+                      <object class="GtkPicture" id="channel_avatar">
+                        <property name="content-fit">cover</property>
+                        <property name="width-request">36</property>
+                        <property name="height-request">36</property>
+                        <property name="visible">false</property>
+                        <style>
+                          <class name="avatar"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Channel name and about -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">2</property>
+                <property name="hexpand">true</property>
+                <property name="valign">center</property>
+                <child>
+                  <object class="GtkLabel" id="lbl_channel_name">
+                    <property name="label">Channel Name</property>
+                    <property name="xalign">0.0</property>
+                    <property name="ellipsize">end</property>
+                    <style>
+                      <class name="title-4"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_channel_about">
+                    <property name="label">Channel description</property>
+                    <property name="xalign">0.0</property>
+                    <property name="ellipsize">end</property>
+                    <property name="visible">false</property>
+                    <style>
+                      <class name="dim-label"/>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Channel menu -->
+            <child>
+              <object class="GtkMenuButton" id="btn_channel_menu">
+                <property name="icon-name">view-more-symbolic</property>
+                <property name="valign">center</property>
+                <property name="tooltip-text">Channel options</property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">horizontal</property>
+          </object>
+        </child>
+
+        <!-- Content stack: messages / empty / loading -->
+        <child>
+          <object class="GtkStack" id="content_stack">
+            <property name="hexpand">true</property>
+            <property name="vexpand">true</property>
+            <property name="transition-type">crossfade</property>
+
+            <!-- Messages list -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">messages</property>
+                <property name="child">
+                  <object class="GtkScrolledWindow" id="scroller">
+                    <property name="hexpand">true</property>
+                    <property name="vexpand">true</property>
+                    <property name="hscrollbar-policy">never</property>
+                    <child>
+                      <object class="GtkListBox" id="message_list">
+                        <property name="hexpand">true</property>
+                        <property name="vexpand">true</property>
+                        <property name="selection-mode">none</property>
+                        <style>
+                          <class name="chat-messages"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Empty state -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">empty</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="halign">center</property>
+                    <property name="valign">center</property>
+                    <property name="spacing">12</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">chat-symbolic</property>
+                        <property name="pixel-size">64</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">No Messages Yet</property>
+                        <style>
+                          <class name="title-2"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Be the first to send a message!</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Loading state -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">loading</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="halign">center</property>
+                    <property name="valign">center</property>
+                    <property name="spacing">12</property>
+                    <child>
+                      <object class="GtkSpinner" id="loading_spinner">
+                        <property name="spinning">false</property>
+                        <property name="width-request">32</property>
+                        <property name="height-request">32</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Loading messages...</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Reply indicator -->
+        <child>
+          <object class="GtkRevealer" id="reply_revealer">
+            <property name="transition-type">slide-up</property>
+            <property name="reveal-child">false</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <property name="margin-top">6</property>
+                <property name="margin-bottom">6</property>
+                <style>
+                  <class name="reply-indicator"/>
+                </style>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">mail-reply-sender-symbolic</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_reply_to">
+                    <property name="label">Replying to user</property>
+                    <property name="hexpand">true</property>
+                    <property name="xalign">0.0</property>
+                    <property name="ellipsize">end</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_cancel_reply">
+                    <property name="icon-name">window-close-symbolic</property>
+                    <property name="has-frame">false</property>
+                    <property name="tooltip-text">Cancel reply</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Composer box -->
+        <child>
+          <object class="GtkBox" id="composer_box">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">8</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">8</property>
+            <property name="margin-bottom">12</property>
+            <style>
+              <class name="chat-composer"/>
+            </style>
+
+            <!-- Message input -->
+            <child>
+              <object class="GtkScrolledWindow">
+                <property name="hexpand">true</property>
+                <property name="max-content-height">100</property>
+                <property name="propagate-natural-height">true</property>
+                <property name="hscrollbar-policy">never</property>
+                <child>
+                  <object class="GtkTextView" id="message_entry">
+                    <property name="hexpand">true</property>
+                    <property name="wrap-mode">word-char</property>
+                    <property name="accepts-tab">false</property>
+                    <property name="top-margin">8</property>
+                    <property name="bottom-margin">8</property>
+                    <property name="left-margin">12</property>
+                    <property name="right-margin">12</property>
+                    <style>
+                      <class name="chat-entry"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Send button -->
+            <child>
+              <object class="GtkButton" id="btn_send">
+                <property name="icon-name">mail-send-symbolic</property>
+                <property name="valign">end</property>
+                <property name="tooltip-text">Send message</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

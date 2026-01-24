@@ -15,6 +15,7 @@
 #include "../util/nip32_labels.h"
 #include "../util/nip23.h"
 #include "../util/nip71.h"
+#include "../util/nip84_highlights.h"
 #include "../util/markdown_pango.h"
 #include "../storage_ndb.h"
 #include <nostr/nip19/nip19.h>
@@ -92,6 +93,12 @@ struct _GnostrNoteCardRow {
   /* Like state (NIP-25 reactions) */
   gboolean is_liked;
   guint like_count;
+  gint event_kind;  /* Kind of this event (1=text note, etc.) for NIP-25 k-tag */
+  /* NIP-25 reaction breakdown */
+  GHashTable *reaction_breakdown;  /* emoji (string) -> count (guint) */
+  GPtrArray *reactors;  /* Array of reactor pubkeys (for "who reacted" display) */
+  GtkWidget *reactions_popover;  /* Popover showing reaction details */
+  GtkWidget *emoji_picker_popover;  /* Popover for picking custom emoji reaction */
   /* Zap state */
   gint64 zap_total_msat;
   guint zap_count;
@@ -186,6 +193,7 @@ enum {
   SIGNAL_DELETE_NOTE_REQUESTED,
   SIGNAL_COMMENT_REQUESTED,  /* NIP-22: comment on note */
   SIGNAL_LABEL_NOTE_REQUESTED,  /* NIP-32: add label to note */
+  SIGNAL_HIGHLIGHT_REQUESTED,  /* NIP-84: highlight text selection */
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -232,6 +240,21 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   if (self->menu_popover) {
     gtk_widget_unparent(self->menu_popover);
     self->menu_popover = NULL;
+  }
+  /* NIP-25: Clean up reaction popovers */
+  if (self->emoji_picker_popover) {
+    gtk_widget_unparent(self->emoji_picker_popover);
+    self->emoji_picker_popover = NULL;
+  }
+  if (self->reactions_popover) {
+    gtk_widget_unparent(self->reactions_popover);
+    self->reactions_popover = NULL;
+  }
+  /* NIP-25: Clean up reaction breakdown */
+  g_clear_pointer(&self->reaction_breakdown, g_hash_table_unref);
+  if (self->reactors) {
+    g_ptr_array_unref(self->reactors);
+    self->reactors = NULL;
   }
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_CARD_ROW);
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
@@ -865,6 +888,57 @@ static void on_comment_menu_clicked(GtkButton *btn, gpointer user_data) {
                 self->id_hex, 1, self->pubkey_hex);
 }
 
+/* NIP-84: Highlight selected text menu item handler */
+static void on_highlight_text_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)btn;
+  if (!self || !self->id_hex || !self->pubkey_hex || !self->content_text) return;
+
+  /* Close menu popover */
+  if (self->menu_popover && GTK_IS_POPOVER(self->menu_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
+  }
+
+  /* Get selected text from the content label */
+  const char *selected_text = NULL;
+  if (GTK_IS_LABEL(self->content_label)) {
+    /* In GTK4, we need to get selection bounds and extract text */
+    int start, end;
+    if (gtk_label_get_selection_bounds(GTK_LABEL(self->content_label), &start, &end)) {
+      const char *label_text = gtk_label_get_text(GTK_LABEL(self->content_label));
+      if (label_text && start >= 0 && end > start) {
+        gsize len = strlen(label_text);
+        if ((gsize)end <= len) {
+          char *extracted = g_strndup(label_text + start, end - start);
+          if (extracted && *extracted) {
+            /* Extract context around the selection */
+            char *context = gnostr_highlight_extract_context(
+              self->content_text,
+              (gsize)start,
+              (gsize)end,
+              100  /* 100 chars of context */
+            );
+
+            /* Emit highlight signal */
+            g_signal_emit(self, signals[SIGNAL_HIGHLIGHT_REQUESTED], 0,
+                          extracted, context ? context : "",
+                          self->id_hex, self->pubkey_hex);
+
+            g_signal_emit(self, signals[SIGNAL_SHOW_TOAST], 0, "Text highlighted");
+            g_free(context);
+          }
+          g_free(extracted);
+          return;
+        }
+      }
+    }
+  }
+
+  /* No selection - highlight full content with toast message */
+  g_signal_emit(self, signals[SIGNAL_SHOW_TOAST], 0,
+                "Select text to highlight (enable selection in settings)");
+}
+
 static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
   GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
   (void)btn;
@@ -971,6 +1045,18 @@ static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
     gtk_button_set_has_frame(GTK_BUTTON(label_btn), FALSE);
     g_signal_connect(label_btn, "clicked", G_CALLBACK(on_add_label_clicked), self);
     gtk_box_append(GTK_BOX(box), label_btn);
+
+    /* NIP-84: Highlight Text button */
+    GtkWidget *highlight_btn = gtk_button_new();
+    GtkWidget *highlight_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *highlight_icon = gtk_image_new_from_icon_name("format-text-highlight-symbolic");
+    GtkWidget *highlight_label = gtk_label_new("Highlight Selection");
+    gtk_box_append(GTK_BOX(highlight_box), highlight_icon);
+    gtk_box_append(GTK_BOX(highlight_box), highlight_label);
+    gtk_button_set_child(GTK_BUTTON(highlight_btn), highlight_box);
+    gtk_button_set_has_frame(GTK_BUTTON(highlight_btn), FALSE);
+    g_signal_connect(highlight_btn, "clicked", G_CALLBACK(on_highlight_text_clicked), self);
+    gtk_box_append(GTK_BOX(box), highlight_btn);
 
     /* Separator - Moderation section */
     GtkWidget *sep2 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
@@ -1183,13 +1269,115 @@ static void on_repost_clicked(GtkButton *btn, gpointer user_data) {
   gtk_popover_popup(GTK_POPOVER(self->repost_popover));
 }
 
+/* NIP-25: Callback for emoji picker selection */
+static void on_emoji_selected(GtkButton *btn, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  if (!self || !self->id_hex || !self->pubkey_hex) return;
+
+  const char *emoji = g_object_get_data(G_OBJECT(btn), "emoji");
+  if (!emoji) emoji = "+";
+
+  /* Emit reaction-requested signal with emoji content */
+  g_signal_emit(self, signals[SIGNAL_LIKE_REQUESTED], 0,
+                self->id_hex, self->pubkey_hex, self->event_kind, emoji);
+
+  /* Close the popover */
+  if (self->emoji_picker_popover && GTK_IS_POPOVER(self->emoji_picker_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->emoji_picker_popover));
+  }
+}
+
+/* NIP-25: Create emoji picker popover with common reactions */
+static void ensure_emoji_picker_popover(GnostrNoteCardRow *self) {
+  if (self->emoji_picker_popover) return;
+
+  self->emoji_picker_popover = gtk_popover_new();
+  gtk_widget_set_parent(self->emoji_picker_popover, GTK_WIDGET(self->btn_like));
+
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+  gtk_widget_set_margin_start(box, 8);
+  gtk_widget_set_margin_end(box, 8);
+  gtk_widget_set_margin_top(box, 8);
+  gtk_widget_set_margin_bottom(box, 8);
+
+  /* Common reaction emojis */
+  const char *emojis[] = {"+", "\xf0\x9f\x91\x8d", "\xe2\x9d\xa4\xef\xb8\x8f", "\xf0\x9f\x94\xa5",
+                          "\xf0\x9f\x98\x82", "\xf0\x9f\xa4\x94", "\xf0\x9f\x91\x80", "-", NULL};
+  const char *labels[] = {"Like", NULL, NULL, NULL, NULL, NULL, NULL, "Dislike", NULL};
+
+  for (int i = 0; emojis[i] != NULL; i++) {
+    GtkWidget *btn = gtk_button_new_with_label(emojis[i]);
+    gtk_button_set_has_frame(GTK_BUTTON(btn), FALSE);
+    g_object_set_data_full(G_OBJECT(btn), "emoji", g_strdup(emojis[i]), g_free);
+    if (labels[i]) {
+      gtk_widget_set_tooltip_text(btn, labels[i]);
+    }
+    g_signal_connect(btn, "clicked", G_CALLBACK(on_emoji_selected), self);
+    gtk_box_append(GTK_BOX(box), btn);
+  }
+
+  gtk_popover_set_child(GTK_POPOVER(self->emoji_picker_popover), box);
+}
+
 static void on_like_clicked(GtkButton *btn, gpointer user_data) {
   GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
   (void)btn;
   if (self && self->id_hex && self->pubkey_hex) {
+    /* Default like: emit signal with "+" content */
     g_signal_emit(self, signals[SIGNAL_LIKE_REQUESTED], 0,
-                  self->id_hex, self->pubkey_hex);
+                  self->id_hex, self->pubkey_hex, self->event_kind, "+");
   }
+}
+
+/* NIP-25: Long press/right-click to show emoji picker */
+static void on_like_long_press(GtkGestureLongPress *gesture, gdouble x, gdouble y, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)gesture; (void)x; (void)y;
+  if (!self) return;
+
+  ensure_emoji_picker_popover(self);
+  gtk_popover_popup(GTK_POPOVER(self->emoji_picker_popover));
+}
+
+/* NIP-25: Show reaction details popover (who reacted) */
+static void on_like_count_clicked(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  (void)gesture; (void)n_press; (void)x; (void)y;
+  if (!self || !self->reaction_breakdown) return;
+
+  /* Create/update reactions popover */
+  if (!self->reactions_popover) {
+    self->reactions_popover = gtk_popover_new();
+    gtk_widget_set_parent(self->reactions_popover, GTK_WIDGET(self->btn_like));
+  }
+
+  /* Build content showing reaction breakdown */
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+  gtk_widget_set_margin_start(box, 12);
+  gtk_widget_set_margin_end(box, 12);
+  gtk_widget_set_margin_top(box, 8);
+  gtk_widget_set_margin_bottom(box, 8);
+
+  GtkWidget *title = gtk_label_new("Reactions");
+  gtk_widget_add_css_class(title, "heading");
+  gtk_box_append(GTK_BOX(box), title);
+
+  /* Show breakdown by emoji */
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->reaction_breakdown);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    const char *emoji = (const char *)key;
+    guint count = GPOINTER_TO_UINT(value);
+    char *text = g_strdup_printf("%s  %u", emoji, count);
+    GtkWidget *row = gtk_label_new(text);
+    gtk_label_set_xalign(GTK_LABEL(row), 0.0);
+    gtk_box_append(GTK_BOX(box), row);
+    g_free(text);
+  }
+
+  gtk_popover_set_child(GTK_POPOVER(self->reactions_popover), box);
+  gtk_popover_popup(GTK_POPOVER(self->reactions_popover));
 }
 
 static void on_zap_clicked(GtkButton *btn, gpointer user_data) {
@@ -1360,9 +1548,11 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   signals[SIGNAL_QUOTE_REQUESTED] = g_signal_new("quote-requested",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
+  /* NIP-25: like-requested signal now includes kind and reaction content
+   * Parameters: id_hex, pubkey_hex, event_kind, reaction_content */
   signals[SIGNAL_LIKE_REQUESTED] = g_signal_new("like-requested",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
-    G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
+    G_TYPE_NONE, 4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT, G_TYPE_STRING);
   signals[SIGNAL_ZAP_REQUESTED] = g_signal_new("zap-requested",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 3, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
@@ -1405,6 +1595,10 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   signals[SIGNAL_LABEL_NOTE_REQUESTED] = g_signal_new("label-note-requested",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+  /* NIP-84 highlight request: highlighted_text, context, id_hex, pubkey_hex */
+  signals[SIGNAL_HIGHLIGHT_REQUESTED] = g_signal_new("highlight-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
 }
 
 static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
@@ -1445,12 +1639,20 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_repost),
                                    GTK_ACCESSIBLE_PROPERTY_LABEL, "Repost Note", -1);
   }
-  /* Connect like button */
+  /* Connect like button and NIP-25 long-press for emoji picker */
   if (GTK_IS_BUTTON(self->btn_like)) {
     g_signal_connect(self->btn_like, "clicked", G_CALLBACK(on_like_clicked), self);
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_like),
                                    GTK_ACCESSIBLE_PROPERTY_LABEL, "Like Note", -1);
+    /* Long press on like button shows emoji picker */
+    GtkGesture *like_long_press = gtk_gesture_long_press_new();
+    gtk_gesture_long_press_set_delay_factor(GTK_GESTURE_LONG_PRESS(like_long_press), 1.0);
+    g_signal_connect(like_long_press, "pressed", G_CALLBACK(on_like_long_press), self);
+    gtk_widget_add_controller(GTK_WIDGET(self->btn_like), GTK_EVENT_CONTROLLER(like_long_press));
   }
+  /* NIP-25: Initialize reaction breakdown hash table */
+  self->reaction_breakdown = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->event_kind = 1;  /* Default to text note */
   /* Connect zap button */
   if (GTK_IS_BUTTON(self->btn_zap)) {
     g_signal_connect(self->btn_zap, "clicked", G_CALLBACK(on_zap_clicked), self);
@@ -3236,6 +3438,86 @@ void gnostr_note_card_row_set_like_count(GnostrNoteCardRow *self, guint count) {
   }
 }
 
+/* NIP-25: Set event kind for proper reaction k-tag */
+void gnostr_note_card_row_set_event_kind(GnostrNoteCardRow *self, gint kind) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  self->event_kind = kind;
+}
+
+/* NIP-25: Set reaction breakdown with emoji counts for display
+ * @breakdown: GHashTable of emoji (string) -> count (guint via GPOINTER_TO_UINT) */
+void gnostr_note_card_row_set_reaction_breakdown(GnostrNoteCardRow *self, GHashTable *breakdown) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  /* Clear existing breakdown */
+  if (self->reaction_breakdown) {
+    g_hash_table_remove_all(self->reaction_breakdown);
+  } else {
+    self->reaction_breakdown = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  }
+
+  if (!breakdown) return;
+
+  /* Copy breakdown data */
+  GHashTableIter iter;
+  gpointer key, value;
+  guint total = 0;
+  g_hash_table_iter_init(&iter, breakdown);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    const char *emoji = (const char *)key;
+    guint count = GPOINTER_TO_UINT(value);
+    g_hash_table_insert(self->reaction_breakdown, g_strdup(emoji), GUINT_TO_POINTER(count));
+    total += count;
+  }
+
+  /* Update total count display */
+  gnostr_note_card_row_set_like_count(self, total);
+
+  /* Update tooltip with breakdown summary */
+  if (GTK_IS_BUTTON(self->btn_like)) {
+    if (total > 0) {
+      GString *tooltip = g_string_new("Reactions:\n");
+      g_hash_table_iter_init(&iter, self->reaction_breakdown);
+      while (g_hash_table_iter_next(&iter, &key, &value)) {
+        const char *emoji = (const char *)key;
+        guint count = GPOINTER_TO_UINT(value);
+        g_string_append_printf(tooltip, "%s: %u\n", emoji, count);
+      }
+      gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_like), tooltip->str);
+      g_string_free(tooltip, TRUE);
+    } else {
+      gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_like), "Like");
+    }
+  }
+}
+
+/* NIP-25: Add a single reaction to the breakdown */
+void gnostr_note_card_row_add_reaction(GnostrNoteCardRow *self, const char *emoji, const char *reactor_pubkey) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !emoji) return;
+
+  /* Initialize breakdown table if needed */
+  if (!self->reaction_breakdown) {
+    self->reaction_breakdown = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  }
+
+  /* Increment count for this emoji */
+  gpointer existing = g_hash_table_lookup(self->reaction_breakdown, emoji);
+  guint count = existing ? GPOINTER_TO_UINT(existing) + 1 : 1;
+  g_hash_table_insert(self->reaction_breakdown, g_strdup(emoji), GUINT_TO_POINTER(count));
+
+  /* Track reactor pubkey if provided */
+  if (reactor_pubkey) {
+    if (!self->reactors) {
+      self->reactors = g_ptr_array_new_with_free_func(g_free);
+    }
+    g_ptr_array_add(self->reactors, g_strdup(reactor_pubkey));
+  }
+
+  /* Update total count */
+  self->like_count++;
+  gnostr_note_card_row_set_like_count(self, self->like_count);
+}
+
 /* Set author's lightning address for NIP-57 zaps */
 void gnostr_note_card_row_set_author_lud16(GnostrNoteCardRow *self, const char *lud16) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
@@ -4361,4 +4643,36 @@ const char *gnostr_note_card_row_get_video_d_tag(GnostrNoteCardRow *self) {
 const char *gnostr_note_card_row_get_video_url(GnostrNoteCardRow *self) {
   g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
   return self->video_url;
+}
+
+/* NIP-84: Enable text selection mode for highlighting */
+void gnostr_note_card_row_enable_text_selection(GnostrNoteCardRow *self, gboolean enable) {
+  g_return_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self));
+
+  if (GTK_IS_LABEL(self->content_label)) {
+    gtk_label_set_selectable(GTK_LABEL(self->content_label), enable);
+    if (enable) {
+      gtk_widget_set_cursor_from_name(self->content_label, "text");
+    } else {
+      gtk_widget_set_cursor_from_name(self->content_label, "default");
+    }
+  }
+}
+
+/* NIP-84: Get the note's content text (for context extraction) */
+const char *gnostr_note_card_row_get_content_text(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+  return self->content_text;
+}
+
+/* NIP-84: Get the note's event ID */
+const char *gnostr_note_card_row_get_event_id(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+  return self->id_hex;
+}
+
+/* NIP-84: Get the note author's pubkey */
+const char *gnostr_note_card_row_get_pubkey(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+  return self->pubkey_hex;
 }

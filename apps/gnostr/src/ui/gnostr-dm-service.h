@@ -156,6 +156,61 @@ void gnostr_dm_service_get_recipient_relays_async(const char *recipient_pubkey,
                                                    GnostrDmRelaysCallback callback,
                                                    gpointer user_data);
 
+/**
+ * GnostrDmSendResult:
+ *
+ * Result structure from async DM send operations.
+ */
+typedef struct {
+    gboolean success;           /* TRUE if DM was sent successfully */
+    guint relays_published;     /* Number of relays the gift wrap was published to */
+    char *error_message;        /* Error message if failed (caller frees) */
+} GnostrDmSendResult;
+
+/**
+ * GnostrDmSendCallback:
+ * @result: (transfer full): the operation result
+ * @user_data: user data passed to the async function
+ *
+ * Callback for async DM send operations.
+ */
+typedef void (*GnostrDmSendCallback)(GnostrDmSendResult *result,
+                                      gpointer user_data);
+
+/**
+ * gnostr_dm_send_result_free:
+ * @result: result to free
+ *
+ * Frees a DM send result and its contents.
+ */
+void gnostr_dm_send_result_free(GnostrDmSendResult *result);
+
+/**
+ * gnostr_dm_service_send_dm_async:
+ * @self: the DM service
+ * @recipient_pubkey: recipient's public key (hex)
+ * @content: message content (UTF-8)
+ * @cancellable: (nullable): a GCancellable
+ * @callback: callback when complete
+ * @user_data: user data for callback
+ *
+ * Sends a direct message to the recipient using NIP-17/NIP-59 gift wrapping.
+ *
+ * Flow:
+ * 1. Creates kind 14 rumor with message content
+ * 2. Wraps in NIP-59 gift wrap (seal + ephemeral key)
+ * 3. Fetches recipient's DM relays (kind 10050 or fallback)
+ * 4. Publishes gift wrap to recipient's relays
+ *
+ * The message is encrypted using NIP-44 via the D-Bus signer.
+ */
+void gnostr_dm_service_send_dm_async(GnostrDmService *self,
+                                      const char *recipient_pubkey,
+                                      const char *content,
+                                      GCancellable *cancellable,
+                                      GnostrDmSendCallback callback,
+                                      gpointer user_data);
+
 G_END_DECLS
 
 #endif /* GNOSTR_DM_SERVICE_H */

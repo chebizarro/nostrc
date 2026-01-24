@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="adwaita" version="1.5"/>
+  <template class="GnostrChannelCreateDialog" parent="AdwDialog">
+    <property name="title">Create Channel</property>
+    <property name="content-width">400</property>
+    <property name="content-height">-1</property>
+    <child>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <child type="start">
+              <object class="GtkButton" id="btn_cancel">
+                <property name="label">Cancel</property>
+              </object>
+            </child>
+            <property name="title-widget">
+              <object class="GtkLabel" id="lbl_title">
+                <property name="label">Create Channel</property>
+                <style>
+                  <class name="title"/>
+                </style>
+              </object>
+            </property>
+            <child type="end">
+              <object class="GtkButton" id="btn_create">
+                <property name="label">Create</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">never</property>
+            <property name="propagate-natural-height">true</property>
+            <child>
+              <object class="AdwClamp">
+                <property name="maximum-size">500</property>
+                <property name="margin-top">24</property>
+                <property name="margin-bottom">24</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">24</property>
+
+                    <!-- Channel info section -->
+                    <child>
+                      <object class="GtkListBox">
+                        <property name="selection-mode">none</property>
+                        <style>
+                          <class name="boxed-list"/>
+                        </style>
+
+                        <!-- Channel name -->
+                        <child>
+                          <object class="AdwEntryRow" id="entry_name">
+                            <property name="title">Channel Name</property>
+                            <property name="input-purpose">free-form</property>
+                          </object>
+                        </child>
+
+                        <!-- Description -->
+                        <child>
+                          <object class="AdwEntryRow" id="entry_about">
+                            <property name="title">Description</property>
+                            <property name="input-purpose">free-form</property>
+                          </object>
+                        </child>
+
+                        <!-- Picture URL -->
+                        <child>
+                          <object class="AdwEntryRow" id="entry_picture">
+                            <property name="title">Picture URL</property>
+                            <property name="input-purpose">url</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+
+                    <!-- Help text -->
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Public channels are visible to everyone. Messages are not encrypted.</property>
+                        <property name="wrap">true</property>
+                        <property name="justify">center</property>
+                        <property name="xalign">0.5</property>
+                        <style>
+                          <class name="dim-label"/>
+                          <class name="caption"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

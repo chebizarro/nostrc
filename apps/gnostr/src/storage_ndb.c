@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <glib.h>
+#include <jansson.h>
 #include "libnostr_store.h"
 #include "storage_ndb.h"
 
@@ -534,6 +535,72 @@ gboolean storage_ndb_user_has_reacted(const char *event_id_hex, const char *user
   }
 
   return has_reacted;
+}
+
+/* NIP-25: Get reaction breakdown for an event (emoji -> count).
+ * Returns a GHashTable with emoji strings as keys and count as GUINT_TO_POINTER values.
+ * Also populates reactor_pubkeys array if non-NULL.
+ * Caller must free the returned hash table with g_hash_table_unref(). */
+GHashTable *storage_ndb_get_reaction_breakdown(const char *event_id_hex, GPtrArray **reactor_pubkeys)
+{
+  GHashTable *breakdown = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+  if (!event_id_hex || strlen(event_id_hex) != 64) return breakdown;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return breakdown;
+
+  /* Build filter: {"kinds":[7],"#e":["<event_id>"]} */
+  gchar *filter_json = g_strdup_printf("{\"kinds\":[7],\"#e\":[\"%s\"]}", event_id_hex);
+
+  char **results = NULL;
+  int count = 0;
+  int rc = storage_ndb_query(txn, filter_json, &results, &count);
+  g_free(filter_json);
+
+  if (rc != 0 || count == 0) {
+    storage_ndb_end_query(txn);
+    if (results) storage_ndb_free_results(results, count);
+    return breakdown;
+  }
+
+  /* Initialize reactor_pubkeys array if requested */
+  if (reactor_pubkeys) {
+    *reactor_pubkeys = g_ptr_array_new_with_free_func(g_free);
+  }
+
+  /* Parse each reaction event to extract content (emoji) and pubkey */
+  for (int i = 0; i < count; i++) {
+    if (!results[i]) continue;
+
+    /* Parse the JSON to extract content and pubkey */
+    json_error_t err;
+    json_t *event = json_loads(results[i], 0, &err);
+    if (!event) continue;
+
+    const char *content = json_string_value(json_object_get(event, "content"));
+    const char *pubkey = json_string_value(json_object_get(event, "pubkey"));
+
+    /* Default to "+" if content is empty */
+    if (!content || !*content) content = "+";
+
+    /* Increment count for this emoji */
+    gpointer existing = g_hash_table_lookup(breakdown, content);
+    guint emoji_count = existing ? GPOINTER_TO_UINT(existing) + 1 : 1;
+    g_hash_table_insert(breakdown, g_strdup(content), GUINT_TO_POINTER(emoji_count));
+
+    /* Track reactor pubkey if requested */
+    if (reactor_pubkeys && pubkey && strlen(pubkey) == 64) {
+      g_ptr_array_add(*reactor_pubkeys, g_strdup(pubkey));
+    }
+
+    json_decref(event);
+  }
+
+  storage_ndb_end_query(txn);
+  if (results) storage_ndb_free_results(results, count);
+
+  return breakdown;
 }
 
 /* ============== NIP-40 Expiration Timestamp API ============== */

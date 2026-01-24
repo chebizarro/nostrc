@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnostrChannelRow" parent="GtkWidget">
+    <child>
+      <object class="GtkBox" id="root">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">12</property>
+        <property name="margin-end">12</property>
+        <property name="margin-top">10</property>
+        <property name="margin-bottom">10</property>
+
+        <!-- Channel avatar -->
+        <child>
+          <object class="GtkButton" id="btn_avatar">
+            <property name="has-frame">false</property>
+            <property name="valign">start</property>
+            <property name="tooltip-text">View channel creator profile</property>
+            <child>
+              <object class="GtkOverlay" id="avatar_box">
+                <property name="width-request">48</property>
+                <property name="height-request">48</property>
+                <child>
+                  <object class="GtkFrame">
+                    <property name="halign">center</property>
+                    <property name="valign">center</property>
+                    <style>
+                      <class name="avatar-frame"/>
+                    </style>
+                    <child>
+                      <object class="GtkLabel" id="avatar_initials">
+                        <property name="label">#</property>
+                        <property name="width-request">48</property>
+                        <property name="height-request">48</property>
+                        <style>
+                          <class name="avatar-initials"/>
+                          <class name="title-2"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child type="overlay">
+                  <object class="GtkPicture" id="avatar_image">
+                    <property name="content-fit">cover</property>
+                    <property name="width-request">48</property>
+                    <property name="height-request">48</property>
+                    <property name="visible">false</property>
+                    <style>
+                      <class name="avatar"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Channel info -->
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="spacing">4</property>
+            <property name="hexpand">true</property>
+            <property name="valign">center</property>
+
+            <!-- Name -->
+            <child>
+              <object class="GtkLabel" id="lbl_name">
+                <property name="label">Channel Name</property>
+                <property name="xalign">0.0</property>
+                <property name="ellipsize">end</property>
+                <property name="max-width-chars">30</property>
+                <style>
+                  <class name="title-4"/>
+                </style>
+              </object>
+            </child>
+
+            <!-- About/description -->
+            <child>
+              <object class="GtkLabel" id="lbl_about">
+                <property name="label">Channel description</property>
+                <property name="xalign">0.0</property>
+                <property name="ellipsize">end</property>
+                <property name="max-width-chars">50</property>
+                <property name="lines">2</property>
+                <property name="wrap">true</property>
+                <property name="wrap-mode">word-char</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+
+            <!-- Stats row -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="GtkLabel" id="lbl_stats">
+                    <property name="label">0 members, 0 messages</property>
+                    <property name="xalign">0.0</property>
+                    <style>
+                      <class name="dim-label"/>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="lbl_created">
+                    <property name="label">Created 1d ago</property>
+                    <property name="xalign">0.0</property>
+                    <style>
+                      <class name="dim-label"/>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Arrow indicator -->
+        <child>
+          <object class="GtkImage">
+            <property name="icon-name">go-next-symbolic</property>
+            <property name="valign">center</property>
+            <style>
+              <class name="dim-label"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="libadwaita" version="1.0"/>
+  <template class="GnostrAppsPage" parent="GtkWidget">
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">0</property>
+        <child>
+          <!-- Header bar with search and filter -->
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">12</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">12</property>
+            <property name="margin-bottom">12</property>
+            <child>
+              <object class="GtkSearchEntry" id="search_entry">
+                <property name="placeholder-text" translatable="yes">Search apps...</property>
+                <property name="hexpand">true</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkDropDown" id="kind_filter">
+                <property name="model">
+                  <object class="GtkStringList">
+                    <items>
+                      <item translatable="yes">All Events</item>
+                      <item translatable="yes">Notes (kind 1)</item>
+                      <item translatable="yes">Articles (kind 30023)</item>
+                      <item translatable="yes">DMs (kind 4)</item>
+                      <item translatable="yes">Live Events (kind 30311)</item>
+                      <item translatable="yes">Videos (kind 34235)</item>
+                      <item translatable="yes">Zaps (kind 9735)</item>
+                      <item translatable="yes">Products (kind 30018)</item>
+                    </items>
+                  </object>
+                </property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="count_label">
+                <property name="label">0 apps</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">horizontal</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkStack" id="content_stack">
+            <property name="vexpand">true</property>
+            <property name="hexpand">true</property>
+            <property name="transition-type">crossfade</property>
+            <!-- Loading state -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">loading</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="valign">center</property>
+                    <property name="halign">center</property>
+                    <property name="spacing">12</property>
+                    <child>
+                      <object class="GtkSpinner" id="loading_spinner">
+                        <property name="spinning">true</property>
+                        <property name="width-request">48</property>
+                        <property name="height-request">48</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Loading apps...</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+            <!-- Empty state -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">empty</property>
+                <property name="child">
+                  <object class="AdwStatusPage">
+                    <property name="icon-name">application-x-executable-symbolic</property>
+                    <property name="title" translatable="yes">No Apps Found</property>
+                    <property name="description" translatable="yes">No app handlers have been discovered yet. App recommendations from people you follow will appear here as you browse Nostr.</property>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">12</property>
+                        <property name="halign">center</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Apps (NIP-89) are published by developers to advertise their Nostr applications. Users can recommend handlers for specific event types.</property>
+                            <property name="wrap">true</property>
+                            <property name="max-width-chars">50</property>
+                            <property name="justify">center</property>
+                            <style>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+            <!-- No search results state -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">no-results</property>
+                <property name="child">
+                  <object class="AdwStatusPage">
+                    <property name="icon-name">edit-find-symbolic</property>
+                    <property name="title" translatable="yes">No Results</property>
+                    <property name="description" translatable="yes">No apps match your search criteria. Try adjusting your filters.</property>
+                  </object>
+                </property>
+              </object>
+            </child>
+            <!-- Handler list -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">list</property>
+                <property name="child">
+                  <object class="GtkScrolledWindow" id="scroller">
+                    <property name="vexpand">true</property>
+                    <property name="hscrollbar-policy">never</property>
+                    <child>
+                      <object class="GtkListView" id="handler_list">
+                        <property name="single-click-activate">false</property>
+                        <style>
+                          <class name="navigation-sidebar"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

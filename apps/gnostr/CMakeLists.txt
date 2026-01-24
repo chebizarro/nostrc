@@ -43,6 +43,12 @@ add_custom_command(
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notifications-view.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notification-row.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-article-card.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-zap-goal-widget.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-channel-list-view.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-channel-row.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-chat-room-view.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-chat-message-row.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-channel-create-dialog.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-settings-dialog.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-manager.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-profile-edit.ui
@@ -52,6 +58,8 @@ add_custom_command(
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-login.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-about-dialog.ui
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-report-dialog.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-app-handler-dialog.ui
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-apps-page.ui
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
   VERBATIM)
 

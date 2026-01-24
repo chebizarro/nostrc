@@ -1,0 +1,259 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  GnostrZapGoalWidget - NIP-75 Zap Goal Display
+
+  Shows a zap goal with progress bar and funding status.
+  Supports deadline display and complete/expired states.
+-->
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="libadwaita" version="1.0"/>
+  <template class="GnostrZapGoalWidget" parent="GtkWidget">
+    <!-- Main container with zap goal styling -->
+    <child>
+      <object class="GtkBox" id="main_box">
+        <property name="orientation">vertical</property>
+        <property name="spacing">8</property>
+        <property name="margin-start">12</property>
+        <property name="margin-end">12</property>
+        <property name="margin-top">10</property>
+        <property name="margin-bottom">10</property>
+        <style>
+          <class name="zap-goal-widget"/>
+        </style>
+
+        <!-- Header: Icon + Title + Creator -->
+        <child>
+          <object class="GtkBox" id="header_box">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">8</property>
+            <property name="hexpand">true</property>
+
+            <!-- Lightning bolt icon -->
+            <child>
+              <object class="GtkImage" id="icon_image">
+                <property name="icon-name">bolt-symbolic</property>
+                <property name="pixel-size">20</property>
+                <property name="valign">center</property>
+                <style>
+                  <class name="zap-goal-icon"/>
+                </style>
+              </object>
+            </child>
+
+            <!-- Title (Goal: X sats) -->
+            <child>
+              <object class="GtkLabel" id="title_label">
+                <property name="label">Zap Goal</property>
+                <property name="xalign">0</property>
+                <property name="hexpand">true</property>
+                <property name="ellipsize">end</property>
+                <style>
+                  <class name="zap-goal-title"/>
+                </style>
+              </object>
+            </child>
+
+            <!-- Status badge (complete/expired) -->
+            <child>
+              <object class="GtkBox" id="status_badge">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">4</property>
+                <property name="valign">center</property>
+                <property name="visible">false</property>
+                <style>
+                  <class name="zap-goal-status-badge"/>
+                </style>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">emblem-ok-symbolic</property>
+                    <property name="pixel-size">12</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="status_label">
+                    <property name="label">Complete</property>
+                    <style>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Creator button -->
+        <child>
+          <object class="GtkButton" id="creator_button">
+            <property name="halign">start</property>
+            <signal name="clicked" handler="on_creator_clicked"/>
+            <style>
+              <class name="flat"/>
+              <class name="zap-goal-creator"/>
+            </style>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">4</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">by</property>
+                    <property name="opacity">0.6</property>
+                    <style>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="creator_label">
+                    <property name="label">Unknown</property>
+                    <property name="ellipsize">end</property>
+                    <style>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Description -->
+        <child>
+          <object class="GtkLabel" id="description_label">
+            <property name="label"></property>
+            <property name="xalign">0</property>
+            <property name="wrap">true</property>
+            <property name="wrap-mode">word-char</property>
+            <property name="lines">3</property>
+            <property name="ellipsize">end</property>
+            <property name="visible">false</property>
+            <style>
+              <class name="zap-goal-description"/>
+            </style>
+          </object>
+        </child>
+
+        <!-- Progress bar -->
+        <child>
+          <object class="GtkProgressBar" id="progress_bar">
+            <property name="fraction">0</property>
+            <property name="hexpand">true</property>
+            <style>
+              <class name="zap-goal-bar"/>
+            </style>
+          </object>
+        </child>
+
+        <!-- Progress label (X / Y sats) -->
+        <child>
+          <object class="GtkLabel" id="progress_label">
+            <property name="label">0 / 0 sats (0%)</property>
+            <property name="xalign">0</property>
+            <style>
+              <class name="zap-goal-progress"/>
+            </style>
+          </object>
+        </child>
+
+        <!-- Stats row: zap count + deadline + zap button -->
+        <child>
+          <object class="GtkBox" id="stats_box">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">12</property>
+            <property name="hexpand">true</property>
+
+            <!-- Zap count -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">4</property>
+                <property name="valign">center</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">bolt-symbolic</property>
+                    <property name="pixel-size">14</property>
+                    <property name="opacity">0.7</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="zap_count_label">
+                    <property name="label">0 zaps</property>
+                    <property name="opacity">0.7</property>
+                    <style>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Deadline -->
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">4</property>
+                <property name="valign">center</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">alarm-symbolic</property>
+                    <property name="pixel-size">14</property>
+                    <property name="opacity">0.7</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="deadline_label">
+                    <property name="label">No deadline</property>
+                    <property name="visible">false</property>
+                    <property name="opacity">0.7</property>
+                    <style>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+
+            <!-- Spacer -->
+            <child>
+              <object class="GtkBox">
+                <property name="hexpand">true</property>
+              </object>
+            </child>
+
+            <!-- Zap button -->
+            <child>
+              <object class="GtkButton" id="zap_button">
+                <property name="valign">center</property>
+                <property name="sensitive">false</property>
+                <signal name="clicked" handler="on_zap_button_clicked"/>
+                <style>
+                  <class name="suggested-action"/>
+                  <class name="zap-goal-zap-btn"/>
+                </style>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">6</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">bolt-symbolic</property>
+                        <property name="pixel-size">16</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Contribute</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

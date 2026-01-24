@@ -17,7 +17,7 @@ G_DECLARE_FINAL_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GNOSTR, NOTE_CARD_
  * "reply-requested" (gchar* id_hex, gchar* root_id, gchar* pubkey_hex, gpointer user_data)
  * "repost-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data)
  * "quote-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data)
- * "like-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data)
+ * "like-requested" (gchar* id_hex, gchar* pubkey_hex, gint event_kind, gchar* reaction_content, gpointer user_data) - NIP-25 reaction
  * "zap-requested" (gchar* id_hex, gchar* pubkey_hex, gchar* lud16, gpointer user_data)
  * "view-thread-requested" (gchar* root_event_id, gpointer user_data)
  * "mute-user-requested" (gchar* pubkey_hex, gpointer user_data)
@@ -30,6 +30,7 @@ G_DECLARE_FINAL_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GNOSTR, NOTE_CARD_
  * "navigate-to-note" (gchar* event_id_hex, gpointer user_data) - navigate to specific note (e.g., parent note)
  * "delete-note-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data) - NIP-09 deletion request
  * "comment-requested" (gchar* id_hex, gint kind, gchar* pubkey_hex, gpointer user_data) - NIP-22 comment request
+ * "highlight-requested" (gchar* highlighted_text, gchar* context, gchar* id_hex, gchar* pubkey_hex, gpointer user_data) - NIP-84 highlight request
  */
 
 typedef struct _GnostrNoteCardRow GnostrNoteCardRow;
@@ -76,6 +77,18 @@ void gnostr_note_card_row_set_liked(GnostrNoteCardRow *self, gboolean is_liked);
 
 /* NIP-25 Reactions: update the like count display */
 void gnostr_note_card_row_set_like_count(GnostrNoteCardRow *self, guint count);
+
+/* NIP-25 Reactions: set event kind for proper k-tag in reaction events */
+void gnostr_note_card_row_set_event_kind(GnostrNoteCardRow *self, gint kind);
+
+/* NIP-25 Reactions: set reaction breakdown with emoji counts
+ * @breakdown: GHashTable of emoji (string) -> count (guint via GPOINTER_TO_UINT) */
+void gnostr_note_card_row_set_reaction_breakdown(GnostrNoteCardRow *self, GHashTable *breakdown);
+
+/* NIP-25 Reactions: add a single reaction to the breakdown
+ * @emoji: reaction content ("+", "-", or emoji)
+ * @reactor_pubkey: pubkey of the user who reacted (nullable) */
+void gnostr_note_card_row_add_reaction(GnostrNoteCardRow *self, const char *emoji, const char *reactor_pubkey);
 
 /* NIP-57 Zaps: set author's lightning address for zapping */
 void gnostr_note_card_row_set_author_lud16(GnostrNoteCardRow *self, const char *lud16);
@@ -195,6 +208,18 @@ const char *gnostr_note_card_row_get_video_d_tag(GnostrNoteCardRow *self);
 
 /* NIP-71: Get the video URL */
 const char *gnostr_note_card_row_get_video_url(GnostrNoteCardRow *self);
+
+/* NIP-84 Highlights: Enable text selection mode for highlighting */
+void gnostr_note_card_row_enable_text_selection(GnostrNoteCardRow *self, gboolean enable);
+
+/* NIP-84 Highlights: Get the note's content text (for context extraction) */
+const char *gnostr_note_card_row_get_content_text(GnostrNoteCardRow *self);
+
+/* NIP-84 Highlights: Get the note's event ID */
+const char *gnostr_note_card_row_get_event_id(GnostrNoteCardRow *self);
+
+/* NIP-84 Highlights: Get the note author's pubkey */
+const char *gnostr_note_card_row_get_pubkey(GnostrNoteCardRow *self);
 
 G_END_DECLS
 

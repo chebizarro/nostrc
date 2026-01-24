@@ -128,7 +128,7 @@ static void on_sidebar_toggle_clicked(GtkToggleButton *button, gpointer user_dat
 /* Forward declarations for repost/quote/like signal handlers */
 static void on_note_card_repost_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
 static void on_note_card_quote_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
-static void on_note_card_like_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
+static void on_note_card_like_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, gpointer user_data);
 /* Forward declarations for publish context (needed by repost function) */
 typedef struct _PublishContext PublishContext;
 static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer user_data);
@@ -138,7 +138,7 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
 /* Forward declarations for public repost/quote/like functions (defined after PublishContext) */
 void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
 void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
-void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, const char *pubkey_hex, GnostrNoteCardRow *row);
+void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, GnostrNoteCardRow *row);
 static void user_meta_free(gpointer p);
 static void show_toast(GnostrMainWindow *self, const char *msg);
 /* Pre-populate profile from local DB */
@@ -3004,10 +3004,10 @@ static void on_note_card_quote_requested(GnostrNoteCardRow *row, const char *id_
 }
 
 /* Signal handler for like-requested from note card (NIP-25) */
-static void on_note_card_like_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
+static void on_note_card_like_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  gnostr_main_window_request_like(GTK_WIDGET(self), id_hex, pubkey_hex, row);
+  gnostr_main_window_request_like(GTK_WIDGET(self), id_hex, pubkey_hex, event_kind, reaction_content, row);
 }
 
 /* Signal handler for comment-requested from note card (NIP-22) */
@@ -4776,23 +4776,32 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
   like_context_free(ctx);
 }
 
-/* Public function to request a like/reaction (kind 7) - NIP-25 */
-void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, const char *pubkey_hex, GnostrNoteCardRow *row) {
+/* Public function to request a like/reaction (kind 7) - NIP-25
+ * @event_kind: the kind of the event being reacted to (for k-tag)
+ * @reaction_content: the reaction content ("+" for like, "-" for dislike, or emoji) */
+void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, GnostrNoteCardRow *row) {
   if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
-  g_debug("[LIKE] Request like of id=%s pubkey=%.8s...",
+  /* Default reaction content to "+" if not specified */
+  if (!reaction_content || !*reaction_content) {
+    reaction_content = "+";
+  }
+
+  g_debug("[LIKE] Request reaction '%s' on id=%s pubkey=%.8s... kind=%d",
+            reaction_content,
             id_hex ? id_hex : "(null)",
-            pubkey_hex ? pubkey_hex : "(null)");
+            pubkey_hex ? pubkey_hex : "(null)",
+            event_kind);
 
   if (!id_hex || strlen(id_hex) != 64) {
-    show_toast(self, "Invalid event ID for like");
+    show_toast(self, "Invalid event ID for reaction");
     return;
   }
 
-  /* Check if already liked */
-  if (self->liked_events && g_hash_table_contains(self->liked_events, id_hex)) {
+  /* Check if already liked (only for "+" reactions) */
+  if (strcmp(reaction_content, "+") == 0 && self->liked_events && g_hash_table_contains(self->liked_events, id_hex)) {
     show_toast(self, "Already liked!");
     return;
   }
@@ -4804,15 +4813,24 @@ void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, cons
     return;
   }
 
-  show_toast(self, "Liking...");
+  /* Show appropriate toast based on reaction type */
+  if (strcmp(reaction_content, "+") == 0) {
+    show_toast(self, "Liking...");
+  } else if (strcmp(reaction_content, "-") == 0) {
+    show_toast(self, "Reacting...");
+  } else {
+    char *msg = g_strdup_printf("Reacting with %s...", reaction_content);
+    show_toast(self, msg);
+    g_free(msg);
+  }
 
   /* Build unsigned kind 7 reaction event JSON (NIP-25) */
   json_t *event_obj = json_object();
   json_object_set_new(event_obj, "kind", json_integer(NOSTR_KIND_REACTION));
   json_object_set_new(event_obj, "created_at", json_integer((json_int_t)time(NULL)));
-  json_object_set_new(event_obj, "content", json_string("+")); /* "+" = like reaction */
+  json_object_set_new(event_obj, "content", json_string(reaction_content));
 
-  /* Build tags array: e-tag and p-tag per NIP-25 */
+  /* Build tags array: e-tag, p-tag, and k-tag per NIP-25 */
   json_t *tags = json_array();
 
   /* e-tag: ["e", "<event-id-being-reacted-to>"] */
@@ -4830,9 +4848,11 @@ void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, cons
   }
 
   /* k-tag: ["k", "<kind-of-reacted-event>"] per NIP-25 */
+  char kind_str[16];
+  snprintf(kind_str, sizeof(kind_str), "%d", event_kind > 0 ? event_kind : 1);
   json_t *k_tag = json_array();
   json_array_append_new(k_tag, json_string("k"));
-  json_array_append_new(k_tag, json_string("1"));  /* text note - could be enhanced to pass actual kind */
+  json_array_append_new(k_tag, json_string(kind_str));
   json_array_append_new(tags, k_tag);
 
   json_object_set_new(event_obj, "tags", tags);
