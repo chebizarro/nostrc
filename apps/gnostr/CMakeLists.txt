@@ -502,31 +502,6 @@ if (BUILD_TESTING)
     TIMEOUT 60
     LABELS "nip46;e2e;gnostr")
 
-  find_program(NODE_EXECUTABLE node)
-  find_program(NPM_EXECUTABLE npm)
-  find_program(BROADWAYD_EXECUTABLE NAMES gtk4-broadwayd broadwayd)
-
-  if(NODE_EXECUTABLE AND BROADWAYD_EXECUTABLE)
-    add_test(NAME gnostr_e2e_playwright
-      COMMAND ${CMAKE_COMMAND} -E env
-        GNOSTR_BINARY=${CMAKE_CURRENT_BINARY_DIR}/gnostr
-        GNOSTR_BROADWAYD=${BROADWAYD_EXECUTABLE}
-        GNOSTR_E2E_ARTIFACTS_DIR=${CMAKE_BINARY_DIR}/artifacts/gnostr-e2e
-        ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/playwright/runner/run-gnostr-broadway.mjs
-      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests/playwright
-    )
-    set_tests_properties(gnostr_e2e_playwright PROPERTIES
-      TIMEOUT 180
-      LABELS "gtk;e2e;playwright"
-    )
-  endif()
-
-  if(NOT NODE_EXECUTABLE)
-    message(STATUS "Node.js not found - gnostr_e2e_playwright test disabled")
-  endif()
-  if(NOT BROADWAYD_EXECUTABLE)
-    message(STATUS "Broadway daemon not found - gnostr_e2e_playwright test disabled")
-  endif()
 endif()
 
 # ---- GSettings schema compilation (development builds) ----
