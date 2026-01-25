@@ -26,6 +26,11 @@ scrolledwindow > viewport > * {
 	min-width: 0;
 }
 
+/* Clip content that exceeds available width */
+.navigation-split-view > navigation-page:last-child {
+	overflow: hidden;
+}
+
 /* Force content to respect available width */
 .content-pane,
 .timeline-view,
@@ -438,6 +443,11 @@ label a:visited {
 
 .og-preview-image {
 	background: alpha(@theme_bg_color, 0.3);
+	min-width: 0;
+}
+
+.og-preview-image picture {
+	min-width: 0;
 }
 
 .og-preview-title {
@@ -464,6 +474,11 @@ label a:visited {
 	background: alpha(@theme_bg_color, 0.3);
 	margin-top: 8px;
 	margin-bottom: 8px;
+	min-width: 0;
+}
+
+.note-media-image picture {
+	min-width: 0;
 }
 
 .note-media-video {
@@ -471,6 +486,7 @@ label a:visited {
 	background: alpha(@theme_bg_color, 0.3);
 	margin-top: 8px;
 	margin-bottom: 8px;
+	min-width: 0;
 }
 
 /* Image container with loading/error states (nostrc-xdp) */
@@ -480,6 +496,11 @@ label a:visited {
 	margin-top: 8px;
 	margin-bottom: 8px;
 	min-height: 100px;
+	min-width: 0;
+}
+
+.media-image-container picture {
+	min-width: 0;
 }
 
 /* Loading spinner for images */
