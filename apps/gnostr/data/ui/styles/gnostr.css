@@ -3,20 +3,101 @@
 /* ===== Header Bar ===== */
 
 headerbar {
-	padding: 0 6px;
+	padding: 0 8px;
+	background: @headerbar_bg_color;
+	color: @headerbar_fg_color;
+	border-bottom: 1px solid alpha(@theme_fg_color, 0.08);
+	box-shadow: none;
+	min-height: 46px;
 }
+
+/* Ensure window title is visible */
+headerbar windowtitle,
+headerbar .title {
+	opacity: 1;
+}
+
+/* Prevent content from pushing header bar elements off screen */
+.navigation-split-view,
+.toolbar-view {
+	min-width: 0;
+}
+
+/* ===== Content Area Layout Constraints ===== */
+
+/* Content views should fill available space naturally */
 
 headerbar button {
 	border-radius: 6px;
+	padding: 6px;
+	margin: 0 2px;
+	transition: all 150ms ease;
+}
+
+headerbar button.suggested-action {
+	padding: 6px 14px;
+	font-weight: 500;
+	background: @accent_bg_color;
+	color: @accent_fg_color;
+	border: none;
+}
+
+headerbar button.suggested-action:hover {
+	background: shade(@accent_bg_color, 1.1);
+}
+
+headerbar button.flat {
+	background: transparent;
+	border: none;
+}
+
+headerbar button.flat:hover,
+headerbar button.flat:active {
+	background: alpha(@theme_fg_color, 0.1);
 }
 
 headerbar .title {
 	font-weight: 600;
+	font-size: 15px;
 }
 
-/* Relays button styling */
-headerbar button.suggested-action {
-	padding: 4px 12px;
+/* AdwWindowTitle styling */
+headerbar windowtitle {
+	font-weight: 600;
+}
+
+/* Header bar icon buttons */
+headerbar button.image-button {
+	min-width: 32px;
+	min-height: 32px;
+	padding: 4px;
+}
+
+/* Avatar button styling */
+headerbar button.has-frame {
+	border: 1px solid alpha(@theme_fg_color, 0.15);
+	background: alpha(@theme_bg_color, 0.5);
+	padding: 2px 8px;
+}
+
+headerbar button.has-frame:hover {
+	background: alpha(@theme_fg_color, 0.1);
+	border-color: alpha(@theme_fg_color, 0.25);
+}
+
+/* Menu button styling */
+headerbar button.menu {
+	border-radius: 6px;
+}
+
+/* Button icon styling */
+headerbar button image {
+	opacity: 0.8;
+	transition: opacity 150ms ease;
+}
+
+headerbar button:hover image {
+	opacity: 1;
 }
 
 /* ===== Sidebar Navigation ===== */
@@ -127,7 +208,6 @@ headerbar button.suggested-action {
 label a {
 	color: @accent_bg_color;
 	text-decoration: none;
-	word-break: break-all;
 }
 
 .note-content a:hover,
@@ -194,7 +274,6 @@ label a:visited {
 	background: @theme_bg_color;
 	border-left: 1px solid alpha(@theme_fg_color, 0.1);
 	min-width: 450px;
-	max-width: 450px;
 }
 
 /* Profile close button on banner */
@@ -1337,9 +1416,9 @@ button.liked image {
 /* ===== nostrc-92l: Fixed transparency and shadow for floating indicator ===== */
 
 /* "N new notes" floating indicator - toast-style button */
-.new-notes-indicator {
+button.new-notes-indicator {
 	/* Solid background with proper contrast */
-	background-color: @accent_bg_color;
+	background: @accent_bg_color;
 	color: @accent_fg_color;
 	/* Pill shape */
 	border-radius: 999px;
@@ -1349,23 +1428,21 @@ button.liked image {
 	font-size: 14px;
 	/* Subtle shadow for elevation */
 	box-shadow: 0 2px 8px alpha(black, 0.15), 0 4px 16px alpha(black, 0.1);
-	/* Smooth transitions */
-	transition: all 200ms ease;
+	/* Remove default button styling */
+	border: none;
 	/* Ensure it's visible */
 	opacity: 1;
 	min-height: 40px;
 }
 
-.new-notes-indicator:hover {
-	background-color: shade(@accent_bg_color, 1.1);
+button.new-notes-indicator:hover {
+	background: shade(@accent_bg_color, 1.1);
 	box-shadow: 0 3px 12px alpha(black, 0.2), 0 6px 20px alpha(black, 0.15);
-	transform: translateY(-1px);
 }
 
-.new-notes-indicator:active {
-	background-color: shade(@accent_bg_color, 0.95);
+button.new-notes-indicator:active {
+	background: shade(@accent_bg_color, 0.95);
 	box-shadow: 0 1px 4px alpha(black, 0.15);
-	transform: translateY(0);
 }
 
 /* ===== Default Avatar/Banner Fallback Styles (nostrc-uzi) ===== */
@@ -1758,7 +1835,6 @@ profile-row.muted .profile-row-avatar {
 .article-full-view {
 	background: @theme_bg_color;
 	padding: 24px;
-	max-width: 720px;
 	margin: 0 auto;
 }
 
@@ -1966,7 +2042,6 @@ profile-row.muted .profile-row-avatar {
 .badge-popover {
 	padding: 12px;
 	min-width: 200px;
-	max-width: 280px;
 }
 
 .badge-popover-image {
@@ -2245,7 +2320,7 @@ profile-row.muted .profile-row-avatar {
 
 /* Vertical video card adjustments */
 .video-card.video-vertical {
-	max-width: 350px;
+	min-width: 350px;
 }
 
 /* Video title */

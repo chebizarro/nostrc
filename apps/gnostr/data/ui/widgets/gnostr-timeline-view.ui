@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
-  <requires lib="gtk" version="4.0"/>
-  <template class="GnostrTimelineView" parent="GtkWidget">
-    <child>
-      <object class="GtkScrolledWindow" id="root_scroller">
-        <property name="hexpand">true</property>
-        <property name="vexpand">true</property>
+    <requires lib="gtk" version="4.0" />
+    <template class="GnostrTimelineView" parent="GtkWidget">
         <child>
-          <object class="GtkListView" id="list_view">
-            <property name="hexpand">true</property>
-            <property name="vexpand">true</property>
-          </object>
+            <object class="GtkScrolledWindow" id="root_scroller">
+                <property name="hexpand">true</property>
+                <property name="vexpand">true</property>
+                <child>
+                    <object class="GtkListView" id="list_view">
+                        <property name="hexpand">true</property>
+                        <property name="vexpand">true</property>
+                    </object>
+                </child>
+            </object>
         </child>
-      </object>
-    </child>
-  </template>
+    </template>
 </interface>
