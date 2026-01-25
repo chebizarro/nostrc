@@ -1417,32 +1417,14 @@ button.liked image {
 
 /* "N new notes" floating indicator - toast-style button */
 button.new-notes-indicator {
-	/* Solid background with proper contrast */
-	background: @accent_bg_color;
-	color: @accent_fg_color;
 	/* Pill shape */
-	border-radius: 999px;
-	padding: 10px 20px;
+	border-radius: 20px;
+	padding: 8px 16px;
 	/* Typography */
 	font-weight: 600;
-	font-size: 14px;
+	font-size: 13px;
 	/* Subtle shadow for elevation */
-	box-shadow: 0 2px 8px alpha(black, 0.15), 0 4px 16px alpha(black, 0.1);
-	/* Remove default button styling */
-	border: none;
-	/* Ensure it's visible */
-	opacity: 1;
-	min-height: 40px;
-}
-
-button.new-notes-indicator:hover {
-	background: shade(@accent_bg_color, 1.1);
-	box-shadow: 0 3px 12px alpha(black, 0.2), 0 6px 20px alpha(black, 0.15);
-}
-
-button.new-notes-indicator:active {
-	background: shade(@accent_bg_color, 0.95);
-	box-shadow: 0 1px 4px alpha(black, 0.15);
+	box-shadow: 0 2px 8px alpha(black, 0.2);
 }
 
 /* ===== Default Avatar/Banner Fallback Styles (nostrc-uzi) ===== */
