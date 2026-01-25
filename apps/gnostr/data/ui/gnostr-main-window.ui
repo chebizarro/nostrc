@@ -254,9 +254,8 @@
                                                                             </object>
                                                                         </child>
 
-                                                                        <!-- nostrc-yi2: Overlay -
-                                                                        "N new notes" indicator at
-                                                                        top -->
+                                                                        <!-- New notes indicator
+                                                                        overlay -->
                                                                         <child type="overlay">
                                                                             <object
                                                                                 class="GtkRevealer"
@@ -301,10 +300,6 @@
                                                                                         <property
                                                                                             name="vexpand">
                                                                                             false</property>
-                                                                                        <style>
-                                                                                            <class
-                                                                                                name="new-notes-indicator" />
-                                                                                        </style>
                                                                                         <property
                                                                                             name="focusable">
                                                                                             true</property>
@@ -312,6 +307,12 @@
                                                                                             name="tooltip-text">Scroll
                                                                                             to new
                                                                                             notes</property>
+                                                                                        <style>
+                                                                                            <class
+                                                                                                name="pill" />
+                                                                                            <class
+                                                                                                name="suggested-action" />
+                                                                                        </style>
                                                                                         <child>
                                                                                             <object
                                                                                                 class="GtkBox">

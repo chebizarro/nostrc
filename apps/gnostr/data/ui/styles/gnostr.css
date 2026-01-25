@@ -19,7 +19,25 @@ headerbar .title {
 
 /* Prevent content from pushing header bar elements off screen */
 .navigation-split-view,
-.toolbar-view {
+.toolbar-view,
+.navigation-split-view > *,
+overlay,
+scrolledwindow > viewport > * {
+	min-width: 0;
+}
+
+/* Force content to respect available width */
+.content-pane,
+.timeline-view,
+.note-card {
+	min-width: 0;
+}
+
+/* Force the main content area to clip overflow */
+.navigation-split-view > navigation-page > scrolledwindow,
+.navigation-split-view > navigation-page > box,
+viewstack > scrolledwindow,
+viewstack > box {
 	min-width: 0;
 }
 
@@ -1410,21 +1428,6 @@ button.liked image {
 .note-liked #btn_like image {
 	color: #e91e63;
 	opacity: 1;
-}
-
-/* ===== nostrc-yi2: Calm Timeline Styles ===== */
-/* ===== nostrc-92l: Fixed transparency and shadow for floating indicator ===== */
-
-/* "N new notes" floating indicator - toast-style button */
-button.new-notes-indicator {
-	/* Pill shape */
-	border-radius: 20px;
-	padding: 8px 16px;
-	/* Typography */
-	font-weight: 600;
-	font-size: 13px;
-	/* Subtle shadow for elevation */
-	box-shadow: 0 2px 8px alpha(black, 0.2);
 }
 
 /* ===== Default Avatar/Banner Fallback Styles (nostrc-uzi) ===== */
