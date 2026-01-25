@@ -76,8 +76,7 @@
                                             swapped="no" />
                                     </object>
                                 </child>
-                                <property name="title-widget">
-                                    <object class="AdwWindowTitle" id="window_title">
+                                <property name="title-widget"><object class="AdwWindowTitle" id="window_title">
                                         <property name="title">GNostr</property>
                                     </object>
                                 </property>
@@ -127,8 +126,7 @@
                                                                 <property name="wrap-mode">word-char</property>
                                                                 <property name="max-width-chars">28</property>
                                                                 <property name="ellipsize">end</property>
-                                                                <property name="css-classes">
-                                                                    dim-label</property>
+                                                                <property name="css-classes">dim-label</property>
                                                             </object>
                                                         </child>
                                                         <child>
@@ -178,18 +176,32 @@
                                             <property name="description">Navigate between different
                                                 sections of the application</property>
                                         </accessibility>
-                                        <property name="child">
-                                            <object class="AdwViewSwitcher" id="sidebar_sidebar">
-                                                <property name="stack">stack</property>
-                                                <property name="policy">wide</property>
+                                        <property name="child"><object class="GtkScrolledWindow">
                                                 <property name="vexpand">true</property>
                                                 <property name="hexpand">true</property>
-                                                <accessibility>
-                                                    <property name="label">Navigation sidebar</property>
-                                                    <property name="description">Navigate between
-                                                        Timeline, Notifications, Messages, Discover,
-                                                        Search, and Marketplace</property>
-                                                </accessibility>
+                                                <property name="hscrollbar-policy">never</property>
+                                                <child>
+                                                    <object class="GtkListBox" id="sidebar_list">
+                                                        <property name="selection-mode">single</property>
+                                                        <property name="vexpand">true</property>
+                                                        <property name="hexpand">true</property>
+                                                        <signal name="row-activated"
+                                                            handler="on_sidebar_row_activated"
+                                                            swapped="no" />
+                                                        <style>
+                                                            <class name="navigation-sidebar" />
+                                                        </style>
+                                                        <accessibility>
+                                                            <property name="label">Navigation
+                                                                sidebar</property>
+                                                            <property name="description">Navigate
+                                                                between
+                                                                Timeline, Notifications, Messages,
+                                                                Discover,
+                                                                Search, and Marketplace</property>
+                                                        </accessibility>
+                                                    </object>
+                                                </child>
                                             </object>
                                         </property>
                                     </object>
@@ -202,8 +214,7 @@
                                             <property name="description">Main content for the
                                                 selected section</property>
                                         </accessibility>
-                                        <property name="child">
-                                            <object class="GtkBox">
+                                        <property name="child"><object class="GtkBox">
                                                 <property name="orientation">vertical</property>
                                                 <property name="spacing">0</property>
                                                 <child>
@@ -220,17 +231,13 @@
                                                                 <property name="name">timeline</property>
                                                                 <property name="title"
                                                                     translatable="yes">Timeline</property>
-                                                                <property name="icon-name">
-                                                                    view-list-symbolic</property>
-                                                                <property name="child">
-                                                                    <!-- Timeline with overlay
+                                                                <property name="icon-name">view-list-symbolic</property>
+                                                                <property name="child"><!-- Timeline with overlay
                                                                     profile pane -->
                                                                     <object class="GtkOverlay"
                                                                         id="timeline_overlay">
-                                                                        <property name="hexpand">
-                                                                            true</property>
-                                                                        <property name="vexpand">
-                                                                            true</property>
+                                                                        <property name="hexpand">true</property>
+                                                                        <property name="vexpand">true</property>
 
                                                                         <!-- Base: Timeline (full
                                                                         width) -->
@@ -238,12 +245,8 @@
                                                                             <object
                                                                                 class="GnostrTimelineView"
                                                                                 id="timeline">
-                                                                                <property
-                                                                                    name="hexpand">
-                                                                                    true</property>
-                                                                                <property
-                                                                                    name="vexpand">
-                                                                                    true</property>
+                                                                                <property name="hexpand">true</property>
+                                                                                <property name="vexpand">true</property>
                                                                             </object>
                                                                         </child>
 
@@ -254,34 +257,18 @@
                                                                             <object
                                                                                 class="GtkRevealer"
                                                                                 id="new_notes_revealer">
-                                                                                <property
-                                                                                    name="transition-type">
-                                                                                    slide-down</property>
-                                                                                <property
-                                                                                    name="reveal-child">
-                                                                                    false</property>
-                                                                                <property
-                                                                                    name="transition-duration">
-                                                                                    200</property>
-                                                                                <property
-                                                                                    name="halign">
-                                                                                    center</property>
-                                                                                <property
-                                                                                    name="valign">
-                                                                                    start</property>
-                                                                                <property
-                                                                                    name="margin-top">
-                                                                                    8</property>
+                                                                                <property name="transition-type">slide-down</property>
+                                                                                <property name="reveal-child">false</property>
+                                                                                <property name="transition-duration">200</property>
+                                                                                <property name="halign">center</property>
+                                                                                <property name="valign">start</property>
+                                                                                <property name="margin-top">8</property>
                                                                                 <child>
                                                                                     <object
                                                                                         class="GtkButton"
                                                                                         id="btn_new_notes">
-                                                                                        <property
-                                                                                            name="css-classes">
-                                                                                            new-notes-indicator</property>
-                                                                                        <property
-                                                                                            name="focusable">
-                                                                                            true</property>
+                                                                                        <property name="css-classes">new-notes-indicator</property>
+                                                                                        <property name="focusable">true</property>
                                                                                         <property
                                                                                             name="tooltip-text">Scroll
                                                                                             to new
@@ -289,27 +276,19 @@
                                                                                         <child>
                                                                                             <object
                                                                                                 class="GtkBox">
-                                                                                                <property
-                                                                                                    name="orientation">
-                                                                                                    horizontal</property>
-                                                                                                <property
-                                                                                                    name="spacing">
-                                                                                                    6</property>
+                                                                                                <property name="orientation">horizontal</property>
+                                                                                                <property name="spacing">6</property>
                                                                                                 <child>
                                                                                                     <object
                                                                                                         class="GtkImage">
-                                                                                                        <property
-                                                                                                            name="icon-name">
-                                                                                                            go-up-symbolic</property>
+                                                                                                        <property name="icon-name">go-up-symbolic</property>
                                                                                                     </object>
                                                                                                 </child>
                                                                                                 <child>
                                                                                                     <object
                                                                                                         class="GtkLabel"
                                                                                                         id="lbl_new_notes_count">
-                                                                                                        <property
-                                                                                                            name="label">
-                                                                                                            New
+                                                                                                        <property name="label">New
                                                                                                             notes</property>
                                                                                                     </object>
                                                                                                 </child>
@@ -330,16 +309,12 @@
                                                                 <property name="name">notifications</property>
                                                                 <property name="title"
                                                                     translatable="yes">Notifications</property>
-                                                                <property name="icon-name">
-                                                                    notifications-symbolic</property>
-                                                                <property name="child">
-                                                                    <object
+                                                                <property name="icon-name">notifications-symbolic</property>
+                                                                <property name="child"><object
                                                                         class="GnostrNotificationsView"
                                                                         id="notifications_view">
-                                                                        <property name="hexpand">
-                                                                            true</property>
-                                                                        <property name="vexpand">
-                                                                            true</property>
+                                                                        <property name="hexpand">true</property>
+                                                                        <property name="vexpand">true</property>
                                                                     </object>
                                                                 </property>
                                                             </object>
@@ -350,16 +325,12 @@
                                                                 <property name="name">messages</property>
                                                                 <property name="title"
                                                                     translatable="yes">Messages</property>
-                                                                <property name="icon-name">
-                                                                    mail-unread-symbolic</property>
-                                                                <property name="child">
-                                                                    <object
+                                                                <property name="icon-name">mail-unread-symbolic</property>
+                                                                <property name="child"><object
                                                                         class="GnostrDmInboxView"
                                                                         id="dm_inbox">
-                                                                        <property name="hexpand">
-                                                                            true</property>
-                                                                        <property name="vexpand">
-                                                                            true</property>
+                                                                        <property name="hexpand">true</property>
+                                                                        <property name="vexpand">true</property>
                                                                     </object>
                                                                 </property>
                                                             </object>
@@ -370,16 +341,12 @@
                                                                 <property name="name">discover</property>
                                                                 <property name="title"
                                                                     translatable="yes">Discover</property>
-                                                                <property name="icon-name">
-                                                                    find-location-symbolic</property>
-                                                                <property name="child">
-                                                                    <object
+                                                                <property name="icon-name">find-location-symbolic</property>
+                                                                <property name="child"><object
                                                                         class="GnostrPageDiscover"
                                                                         id="page_discover">
-                                                                        <property name="hexpand">
-                                                                            true</property>
-                                                                        <property name="vexpand">
-                                                                            true</property>
+                                                                        <property name="hexpand">true</property>
+                                                                        <property name="vexpand">true</property>
                                                                     </object>
                                                                 </property>
                                                             </object>
@@ -390,16 +357,12 @@
                                                                 <property name="name">search</property>
                                                                 <property name="title"
                                                                     translatable="yes">Search</property>
-                                                                <property name="icon-name">
-                                                                    system-search-symbolic</property>
-                                                                <property name="child">
-                                                                    <object
+                                                                <property name="icon-name">system-search-symbolic</property>
+                                                                <property name="child"><object
                                                                         class="GnostrSearchResultsView"
                                                                         id="search_view">
-                                                                        <property name="hexpand">
-                                                                            true</property>
-                                                                        <property name="vexpand">
-                                                                            true</property>
+                                                                        <property name="hexpand">true</property>
+                                                                        <property name="vexpand">true</property>
                                                                     </object>
                                                                 </property>
                                                             </object>
@@ -410,16 +373,12 @@
                                                                 <property name="name">marketplace</property>
                                                                 <property name="title"
                                                                     translatable="yes">Marketplace</property>
-                                                                <property name="icon-name">
-                                                                    basket-symbolic</property>
-                                                                <property name="child">
-                                                                    <object
+                                                                <property name="icon-name">basket-symbolic</property>
+                                                                <property name="child"><object
                                                                         class="GnostrClassifiedsView"
                                                                         id="classifieds_view">
-                                                                        <property name="hexpand">
-                                                                            true</property>
-                                                                        <property name="vexpand">
-                                                                            true</property>
+                                                                        <property name="hexpand">true</property>
+                                                                        <property name="vexpand">true</property>
                                                                     </object>
                                                                 </property>
                                                             </object>

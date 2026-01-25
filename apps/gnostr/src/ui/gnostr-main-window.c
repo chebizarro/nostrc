@@ -139,6 +139,7 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, 
 static gboolean on_window_close_request(GtkWindow *window, gpointer user_data);
 /* Forward declarations for responsive navigation (nostrc-3u7j) */
 static void on_sidebar_toggle_clicked(GtkToggleButton *button, gpointer user_data);
+static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data);
 /* Forward declarations for repost/quote/like signal handlers */
 static void on_note_card_repost_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
 static void on_note_card_quote_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data);
@@ -294,7 +295,7 @@ struct _GnostrMainWindow {
   AdwHeaderBar *header_bar;
   AdwNavigationSplitView *split_view;
   GtkToggleButton *sidebar_toggle_btn;
-  AdwViewSwitcher *sidebar_sidebar;
+  GtkListBox *sidebar_list;
   AdwViewSwitcherBar *bottom_bar;
   // Template children - content
   GtkWidget *stack;
@@ -3443,6 +3444,27 @@ static gboolean on_window_close_request(GtkWindow *window, gpointer user_data) {
   return FALSE;
 }
 
+/* Sidebar row activation handler - switch between views */
+static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
+  (void)box;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!self || !self->stack || !row) return;
+
+  int idx = gtk_list_box_row_get_index(row);
+  const char *names[] = {"timeline", "notifications", "messages", "discover", "search", "marketplace"};
+  if (idx >= 0 && idx < 6) {
+    adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), names[idx]);
+  }
+
+  /* On narrow screens, hide sidebar after selection */
+  if (self->split_view && adw_navigation_split_view_get_collapsed(self->split_view)) {
+    adw_navigation_split_view_set_show_content(self->split_view, TRUE);
+    if (self->sidebar_toggle_btn) {
+      gtk_toggle_button_set_active(self->sidebar_toggle_btn, FALSE);
+    }
+  }
+}
+
 /* nostrc-3u7j: Responsive navigation - sidebar toggle button handler */
 static void on_sidebar_toggle_clicked(GtkToggleButton *button, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
@@ -4236,6 +4258,42 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "timeline");
   }
 
+  /* Populate sidebar navigation */
+  if (self->sidebar_list) {
+    const char *nav_items[][2] = {
+      {"view-list-symbolic", "Timeline"},
+      {"preferences-system-notifications-symbolic", "Notifications"},
+      {"mail-unread-symbolic", "Messages"},
+      {"starred-symbolic", "Discover"},
+      {"edit-find-symbolic", "Search"},
+      {"folder-publicshare-symbolic", "Marketplace"}
+    };
+    
+    for (int i = 0; i < 6; i++) {
+      GtkWidget *row = gtk_list_box_row_new();
+      GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+      gtk_widget_set_margin_start(box, 12);
+      gtk_widget_set_margin_end(box, 12);
+      gtk_widget_set_margin_top(box, 8);
+      gtk_widget_set_margin_bottom(box, 8);
+      
+      GtkWidget *icon = gtk_image_new_from_icon_name(nav_items[i][0]);
+      gtk_image_set_icon_size(GTK_IMAGE(icon), GTK_ICON_SIZE_NORMAL);
+      
+      GtkWidget *label = gtk_label_new(nav_items[i][1]);
+      gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+      gtk_widget_set_hexpand(label, TRUE);
+      
+      gtk_box_append(GTK_BOX(box), icon);
+      gtk_box_append(GTK_BOX(box), label);
+      gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
+      gtk_list_box_append(self->sidebar_list, row);
+    }
+    
+    gtk_list_box_select_row(self->sidebar_list, 
+                           gtk_list_box_get_row_at_index(self->sidebar_list, 0));
+  }
+
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_relays),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Manage Relays", -1);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_settings),
@@ -4764,7 +4822,7 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, header_bar);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, split_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, sidebar_toggle_btn);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, sidebar_sidebar);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, sidebar_list);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, bottom_bar);
   /* Content template children */
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, stack);
@@ -4795,6 +4853,7 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_new_notes);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, lbl_new_notes_count);
   /* Bind template callbacks referenced by the UI file */
+  gtk_widget_class_bind_template_callback(widget_class, on_sidebar_row_activated);
   gtk_widget_class_bind_template_callback(widget_class, on_relays_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_settings_clicked);
   gtk_widget_class_bind_template_callback(widget_class, on_avatar_login_clicked);

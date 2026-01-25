@@ -1,747 +1,826 @@
 /* GNostr UI stylesheet */
 
+/* ===== Header Bar ===== */
+
+headerbar {
+	padding: 0 6px;
+}
+
+headerbar button {
+	border-radius: 6px;
+}
+
+headerbar .title {
+	font-weight: 600;
+}
+
+/* Relays button styling */
+headerbar button.suggested-action {
+	padding: 4px 12px;
+}
+
+/* ===== Sidebar Navigation ===== */
+
+/* Navigation sidebar container */
+.navigation-sidebar {
+	background: transparent;
+	border-radius: 0;
+}
+
+.navigation-sidebar > row {
+	border-radius: 8px;
+	margin: 2px 8px;
+	padding: 0;
+	transition: all 150ms ease;
+}
+
+.navigation-sidebar > row:hover {
+	background: alpha(@theme_fg_color, 0.06);
+}
+
+.navigation-sidebar > row:selected {
+	background: alpha(@accent_bg_color, 0.15);
+	color: @accent_bg_color;
+}
+
+.navigation-sidebar > row:selected:hover {
+	background: alpha(@accent_bg_color, 0.2);
+}
+
+/* Navigation item styling */
+.navigation-sidebar > row box {
+	min-height: 48px;
+}
+
+.navigation-sidebar > row image {
+	opacity: 0.7;
+	transition: opacity 150ms ease;
+}
+
+.navigation-sidebar > row:selected image {
+	opacity: 1;
+	color: @accent_bg_color;
+}
+
+.navigation-sidebar > row label {
+	font-weight: 500;
+	font-size: 15px;
+}
+
+.navigation-sidebar > row:selected label {
+	font-weight: 600;
+	color: @accent_bg_color;
+}
+
 .note-card {
-  border-radius: 12px;
-  padding: 10px;
-  background: alpha(@theme_bg_color, 0.6);
-  border: 1px solid alpha(@theme_fg_color, 0.08);
-  animation: note-fade-in 600ms ease-out;
+	border-radius: 12px;
+	padding: 16px;
+	margin: 6px 8px;
+	background: alpha(@theme_bg_color, 0.4);
+	border: 1px solid alpha(@theme_fg_color, 0.06);
+	animation: note-fade-in 400ms ease-out;
 }
 
 /* nostrc-7o7: Skip animation for notes added outside visible viewport */
 .note-card.no-animation {
-  animation: none;
+	animation: none;
 }
 
 @keyframes note-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
 }
 
 .note-author {
-  font-weight: 700;
+	font-weight: 700;
+	font-size: 15px;
 }
 
 .note-meta {
-  opacity: 0.7;
+	opacity: 0.7;
+	font-size: 13px;
+	margin-top: 2px;
 }
 
 /* NIP-14: Subject heading styling */
 .note-subject {
-  font-weight: bold;
-  font-size: 1.1em;
-  color: @theme_fg_color;
+	font-weight: bold;
+	font-size: 1.1em;
+	color: @theme_fg_color;
 }
 
 .note-content {
-  line-height: 1.3;
+	line-height: 1.5;
+	font-size: 14px;
+	margin-top: 8px;
+	margin-bottom: 8px;
 }
 
 /* Clickable links in note content */
 .note-content a,
 label a {
-  color: @accent_bg_color;
-  text-decoration: none;
+	color: @accent_bg_color;
+	text-decoration: none;
+	word-break: break-all;
 }
 
 .note-content a:hover,
 label a:hover {
-  text-decoration: underline;
-  color: shade(@accent_bg_color, 0.9);
+	text-decoration: underline;
+	color: shade(@accent_bg_color, 0.9);
 }
 
 .note-content a:visited,
 label a:visited {
-  color: shade(@accent_bg_color, 0.85);
+	color: shade(@accent_bg_color, 0.85);
 }
 
 .note-embed {
-  border-radius: 8px;
-  background: alpha(@theme_bg_color, 0.5);
-  border: 1px solid alpha(@theme_fg_color, 0.06);
+	border-radius: 8px;
+	background: alpha(@theme_bg_color, 0.5);
+	border: 1px solid alpha(@theme_fg_color, 0.06);
 }
 
 /* Circular avatar styles */
 .avatar {
-  border-radius: 9999px;
-  background: alpha(@theme_bg_color, 0.4);
+	border-radius: 9999px;
+	background: alpha(@theme_bg_color, 0.4);
 }
 
 .avatar-circle {
-  border-radius: 50%;
-  min-width: 36px;
-  min-height: 36px;
+	border-radius: 50%;
+	min-width: 36px;
+	min-height: 36px;
 }
 
 .avatar-circle picture,
 .avatar-circle image {
-  border-radius: 50%;
+	border-radius: 50%;
 }
 
 /* Note card avatar specific (36px) */
 .note-avatar {
-  border-radius: 50%;
-  min-width: 36px;
-  min-height: 36px;
-  /* Default fallback gradient for avatars without images */
-  background: linear-gradient(
-    135deg,
-    alpha(@accent_bg_color, 0.2) 0%,
-    alpha(@accent_bg_color, 0.35) 100%
-  );
+	border-radius: 50%;
+	min-width: 36px;
+	min-height: 36px;
+	/* Default fallback gradient for avatars without images */
+	background: linear-gradient(
+		135deg,
+		alpha(@accent_bg_color, 0.2) 0%,
+		alpha(@accent_bg_color, 0.35) 100%
+	);
 }
 
 .note-avatar picture {
-  border-radius: 50%;
-  min-width: 36px;
-  min-height: 36px;
+	border-radius: 50%;
+	min-width: 36px;
+	min-height: 36px;
 }
 
 .note-avatar-image {
-  border-radius: 50%;
-  min-width: 36px;
-  min-height: 36px;
+	border-radius: 50%;
+	min-width: 36px;
+	min-height: 36px;
 }
 
 /* Profile Pane Styles */
 .profile-pane {
-  background: @theme_bg_color;
-  border-left: 1px solid alpha(@theme_fg_color, 0.1);
-  min-width: 450px;
-  max-width: 450px;
+	background: @theme_bg_color;
+	border-left: 1px solid alpha(@theme_fg_color, 0.1);
+	min-width: 450px;
+	max-width: 450px;
 }
 
 /* Profile close button on banner */
 .profile-close-button {
-  background: alpha(black, 0.5);
-  color: white;
-  min-width: 32px;
-  min-height: 32px;
-  padding: 4px;
-  border-radius: 50%;
+	background: alpha(black, 0.5);
+	color: white;
+	min-width: 32px;
+	min-height: 32px;
+	padding: 4px;
+	border-radius: 50%;
 }
 
 .profile-close-button:hover {
-  background: alpha(black, 0.7);
+	background: alpha(black, 0.7);
 }
 
 /* Banner with gradient fallback */
 .profile-banner {
-  background: linear-gradient(
-    135deg,
-    alpha(@accent_bg_color, 0.4) 0%,
-    alpha(@accent_bg_color, 0.6) 50%,
-    alpha(shade(@accent_bg_color, 0.8), 0.5) 100%
-  );
-  min-height: 120px;
+	background: linear-gradient(
+		135deg,
+		alpha(@accent_bg_color, 0.4) 0%,
+		alpha(@accent_bg_color, 0.6) 50%,
+		alpha(shade(@accent_bg_color, 0.8), 0.5) 100%
+	);
+	min-height: 120px;
 }
 
 /* Banner image fixed height with cover fit */
 .profile-banner picture {
-  min-height: 120px;
+	min-height: 120px;
 }
 
 /* Avatar frame with border and shadow */
 .profile-avatar-frame {
-  border-radius: 50%;
-  border: 4px solid @theme_bg_color;
-  box-shadow: 0 2px 8px alpha(black, 0.15),
-              0 4px 16px alpha(black, 0.1);
-  background: @theme_bg_color;
+	border-radius: 50%;
+	border: 4px solid @theme_bg_color;
+	box-shadow: 0 2px 8px alpha(black, 0.15), 0 4px 16px alpha(black, 0.1);
+	background: @theme_bg_color;
 }
 
 /* Profile pane avatar (large, 144px with 132px image) */
 .profile-avatar {
-  border-radius: 50%;
-  background: @theme_bg_color;
+	border-radius: 50%;
+	background: @theme_bg_color;
 }
 
 .profile-avatar picture {
-  border-radius: 50%;
-  min-width: 132px;
-  min-height: 132px;
+	border-radius: 50%;
+	min-width: 132px;
+	min-height: 132px;
 }
 
 /* Avatar image styling */
 .profile-avatar-image {
-  border-radius: 50%;
-  min-width: 132px;
-  min-height: 132px;
+	border-radius: 50%;
+	min-width: 132px;
+	min-height: 132px;
 }
 
 /* Avatar background for initials fallback */
 .profile-avatar-bg {
-  border-radius: 50%;
-  background: linear-gradient(
-    135deg,
-    alpha(@accent_bg_color, 0.2) 0%,
-    alpha(@accent_bg_color, 0.35) 100%
-  );
-  min-width: 132px;
-  min-height: 132px;
+	border-radius: 50%;
+	background: linear-gradient(
+		135deg,
+		alpha(@accent_bg_color, 0.2) 0%,
+		alpha(@accent_bg_color, 0.35) 100%
+	);
+	min-width: 132px;
+	min-height: 132px;
 }
 
 /* Large circular avatar (for profile) */
 .avatar-circle-large {
-  border-radius: 50%;
-  min-width: 80px;
-  min-height: 80px;
+	border-radius: 50%;
+	min-width: 80px;
+	min-height: 80px;
 }
 
 .avatar-circle-large picture,
 .avatar-circle-large image {
-  border-radius: 50%;
+	border-radius: 50%;
 }
 
 /* Avatar initials text */
 .profile-avatar-initials {
-  font-size: 48px;
-  font-weight: 700;
-  color: alpha(@theme_fg_color, 0.65);
+	font-size: 48px;
+	font-weight: 700;
+	color: alpha(@theme_fg_color, 0.65);
 }
 
 .profile-name {
-  font-weight: 700;
-  font-size: 18px;
+	font-weight: 700;
+	font-size: 18px;
 }
 
 .profile-handle {
-  font-size: 14px;
+	font-size: 14px;
 }
 
 .profile-bio {
-  line-height: 1.4;
-  font-size: 14px;
+	line-height: 1.4;
+	font-size: 14px;
 }
 
 .profile-metadata {
-  padding: 8px;
-  border-radius: 8px;
-  background: alpha(@theme_bg_color, 0.5);
+	padding: 8px;
+	border-radius: 8px;
+	background: alpha(@theme_bg_color, 0.5);
 }
 
 /* NIP-24 Bot indicator badge */
 .bot-badge {
-  padding: 2px 8px;
-  border-radius: 12px;
-  background: alpha(@warning_color, 0.2);
-  border: 1px solid alpha(@warning_color, 0.4);
-  font-size: 11px;
-  font-weight: 600;
-  color: @warning_color;
+	padding: 2px 8px;
+	border-radius: 12px;
+	background: alpha(@warning_color, 0.2);
+	border: 1px solid alpha(@warning_color, 0.4);
+	font-size: 11px;
+	font-weight: 600;
+	color: @warning_color;
 }
 
 .bot-badge image {
-  color: @warning_color;
+	color: @warning_color;
 }
 
 /* Open Graph Preview Card Styles */
 .og-preview {
-  margin-top: 8px;
-  margin-bottom: 8px;
+	margin-top: 8px;
+	margin-bottom: 8px;
 }
 
 .og-preview-card {
-  border-radius: 12px;
-  background: alpha(@theme_bg_color, 0.6);
-  border: 1px solid alpha(@theme_fg_color, 0.1);
-  transition: all 200ms ease;
+	border-radius: 12px;
+	background: alpha(@theme_bg_color, 0.6);
+	border: 1px solid alpha(@theme_fg_color, 0.1);
+	transition: all 200ms ease;
 }
 
 .og-preview-card:hover {
-  background: alpha(@theme_bg_color, 0.8);
-  border-color: alpha(@theme_fg_color, 0.15);
-  box-shadow: 0 4px 12px alpha(@theme_fg_color, 0.08);
+	background: alpha(@theme_bg_color, 0.8);
+	border-color: alpha(@theme_fg_color, 0.15);
+	box-shadow: 0 4px 12px alpha(@theme_fg_color, 0.08);
 }
 
 .og-preview-image {
-  background: alpha(@theme_bg_color, 0.3);
+	background: alpha(@theme_bg_color, 0.3);
 }
 
 .og-preview-title {
-  font-weight: 600;
-  font-size: 15px;
-  color: @theme_fg_color;
+	font-weight: 600;
+	font-size: 15px;
+	color: @theme_fg_color;
 }
 
 .og-preview-description {
-  font-size: 13px;
-  color: alpha(@theme_fg_color, 0.7);
-  line-height: 1.4;
+	font-size: 13px;
+	color: alpha(@theme_fg_color, 0.7);
+	line-height: 1.4;
 }
 
 .og-preview-site {
-  font-size: 12px;
-  color: alpha(@theme_fg_color, 0.5);
-  margin-top: 4px;
+	font-size: 12px;
+	color: alpha(@theme_fg_color, 0.5);
+	margin-top: 4px;
 }
 
 /* Media Embed Styles */
 .note-media-image {
-  border-radius: 8px;
-  background: alpha(@theme_bg_color, 0.3);
-  margin-top: 8px;
-  margin-bottom: 8px;
+	border-radius: 8px;
+	background: alpha(@theme_bg_color, 0.3);
+	margin-top: 8px;
+	margin-bottom: 8px;
 }
 
 .note-media-video {
-  border-radius: 8px;
-  background: alpha(@theme_bg_color, 0.3);
-  margin-top: 8px;
-  margin-bottom: 8px;
+	border-radius: 8px;
+	background: alpha(@theme_bg_color, 0.3);
+	margin-top: 8px;
+	margin-bottom: 8px;
 }
 
 /* Image container with loading/error states (nostrc-xdp) */
 .media-image-container {
-  border-radius: 8px;
-  background: alpha(@theme_bg_color, 0.3);
-  margin-top: 8px;
-  margin-bottom: 8px;
-  min-height: 100px;
+	border-radius: 8px;
+	background: alpha(@theme_bg_color, 0.3);
+	margin-top: 8px;
+	margin-bottom: 8px;
+	min-height: 100px;
 }
 
 /* Loading spinner for images */
 .media-loading-spinner {
-  opacity: 0.7;
-  color: @theme_fg_color;
+	opacity: 0.7;
+	color: @theme_fg_color;
 }
 
 /* Broken image fallback */
 .media-error-image {
-  opacity: 0.5;
-  color: alpha(@theme_fg_color, 0.6);
+	opacity: 0.5;
+	color: alpha(@theme_fg_color, 0.6);
 }
 
 /* Enhanced Video Player Styles */
 gnostr-video-player {
-  border-radius: 8px;
-  background: #000;
+	border-radius: 8px;
+	background: #000;
 }
 
 /* Video content uses GtkPicture with GtkMediaFile (no native controls).
  * This eliminates duplicate controls entirely (nostrc-xc8). */
 .video-content {
-  background: #000;
+	background: #000;
 }
 
 .video-content-fullscreen {
-  background: #000;
+	background: #000;
 }
 
 /* Video Controls Overlay */
 .video-controls {
-  background: linear-gradient(
-    to top,
-    alpha(black, 0.8) 0%,
-    alpha(black, 0.6) 50%,
-    alpha(black, 0.0) 100%
-  );
-  padding: 12px 16px;
-  border-radius: 0 0 8px 8px;
-  opacity: 1;
-  transition: opacity 300ms ease;
+	background: linear-gradient(
+		to top,
+		alpha(black, 0.8) 0%,
+		alpha(black, 0.6) 50%,
+		alpha(black, 0) 100%
+	);
+	padding: 12px 16px;
+	border-radius: 0 0 8px 8px;
+	opacity: 1;
+	transition: opacity 300ms ease;
 }
 
 /* Controls visibility states */
 .video-controls:not(.controls-visible) {
-  opacity: 0;
+	opacity: 0;
 }
 
 .video-controls.controls-visible {
-  opacity: 1;
+	opacity: 1;
 }
 
 /* Seek bar row */
 .video-seek-row {
-  margin-bottom: 8px;
+	margin-bottom: 8px;
 }
 
 /* Time labels */
 .video-time {
-  font-size: 12px;
-  color: white;
-  min-width: 45px;
+	font-size: 12px;
+	color: white;
+	min-width: 45px;
 }
 
 /* Seek slider */
 .video-seek {
-  min-height: 6px;
+	min-height: 6px;
 }
 
 .video-seek trough {
-  background: alpha(white, 0.3);
-  border-radius: 3px;
-  min-height: 6px;
+	background: alpha(white, 0.3);
+	border-radius: 3px;
+	min-height: 6px;
 }
 
 .video-seek highlight {
-  background: @accent_bg_color;
-  border-radius: 3px;
+	background: @accent_bg_color;
+	border-radius: 3px;
 }
 
 .video-seek slider {
-  background: white;
-  border-radius: 50%;
-  min-width: 14px;
-  min-height: 14px;
-  margin: -4px;
-  border: none;
-  box-shadow: 0 1px 3px alpha(black, 0.3);
+	background: white;
+	border-radius: 50%;
+	min-width: 14px;
+	min-height: 14px;
+	margin: -4px;
+	border: none;
+	box-shadow: 0 1px 3px alpha(black, 0.3);
 }
 
 /* Button row */
 .video-button-row {
-  margin-top: 4px;
+	margin-top: 4px;
 }
 
 /* Control buttons */
 .video-control-btn {
-  color: white;
-  min-width: 36px;
-  min-height: 36px;
-  padding: 8px;
-  border-radius: 50%;
-  transition: background 150ms ease;
+	color: white;
+	min-width: 36px;
+	min-height: 36px;
+	padding: 8px;
+	border-radius: 50%;
+	transition: background 150ms ease;
 }
 
 .video-control-btn:hover {
-  background: alpha(white, 0.15);
+	background: alpha(white, 0.15);
 }
 
 .video-control-btn:active {
-  background: alpha(white, 0.25);
+	background: alpha(white, 0.25);
 }
 
 /* Volume slider */
 .video-volume {
-  min-height: 4px;
+	min-height: 4px;
 }
 
 .video-volume trough {
-  background: alpha(white, 0.3);
-  border-radius: 2px;
-  min-height: 4px;
+	background: alpha(white, 0.3);
+	border-radius: 2px;
+	min-height: 4px;
 }
 
 .video-volume highlight {
-  background: white;
-  border-radius: 2px;
+	background: white;
+	border-radius: 2px;
 }
 
 .video-volume slider {
-  background: white;
-  border-radius: 50%;
-  min-width: 12px;
-  min-height: 12px;
-  margin: -4px;
-  border: none;
+	background: white;
+	border-radius: 50%;
+	min-width: 12px;
+	min-height: 12px;
+	margin: -4px;
+	border: none;
 }
 
 /* Fullscreen specific styles */
 .video-content-fullscreen + .video-controls {
-  border-radius: 0;
-  padding: 16px 24px;
+	border-radius: 0;
+	padding: 16px 24px;
 }
 
 /* DM Inbox Styles */
 .dm-list {
-  background: transparent;
+	background: transparent;
 }
 
 .dm-row {
-  padding: 8px 12px;
-  border-radius: 8px;
-  transition: background 150ms ease;
+	padding: 8px 12px;
+	border-radius: 8px;
+	transition: background 150ms ease;
 }
 
 .dm-row:hover {
-  background: alpha(@theme_fg_color, 0.05);
+	background: alpha(@theme_fg_color, 0.05);
 }
 
 .dm-row.unread {
-  background: alpha(@accent_bg_color, 0.08);
+	background: alpha(@accent_bg_color, 0.08);
 }
 
 .dm-row.unread:hover {
-  background: alpha(@accent_bg_color, 0.12);
+	background: alpha(@accent_bg_color, 0.12);
 }
 
 .dm-avatar {
-  border-radius: 9999px;
-  /* Default fallback gradient for DM avatars without images */
-  background: linear-gradient(
-    135deg,
-    alpha(@accent_bg_color, 0.2) 0%,
-    alpha(@accent_bg_color, 0.35) 100%
-  );
+	border-radius: 9999px;
+	/* Default fallback gradient for DM avatars without images */
+	background: linear-gradient(
+		135deg,
+		alpha(@accent_bg_color, 0.2) 0%,
+		alpha(@accent_bg_color, 0.35) 100%
+	);
 }
 
 .dm-avatar picture {
-  border-radius: 50%;
+	border-radius: 50%;
 }
 
 .dm-avatar-image {
-  border-radius: 50%;
+	border-radius: 50%;
 }
 
 .dm-name {
-  font-weight: 600;
-  font-size: 15px;
+	font-weight: 600;
+	font-size: 15px;
 }
 
 .dm-handle {
-  font-size: 13px;
-  opacity: 0.6;
+	font-size: 13px;
+	opacity: 0.6;
 }
 
 .dm-timestamp {
-  font-size: 12px;
-  opacity: 0.5;
+	font-size: 12px;
+	opacity: 0.5;
 }
 
 .dm-preview {
-  font-size: 14px;
-  opacity: 0.7;
+	font-size: 14px;
+	opacity: 0.7;
 }
 
 .unread-badge {
-  background: @accent_bg_color;
-  border-radius: 9999px;
-  padding: 2px 8px;
-  min-width: 18px;
+	background: @accent_bg_color;
+	border-radius: 9999px;
+	padding: 2px 8px;
+	min-width: 18px;
 }
 
 .unread-count {
-  font-size: 11px;
-  font-weight: 600;
-  color: @accent_fg_color;
+	font-size: 11px;
+	font-weight: 600;
+	color: @accent_fg_color;
 }
 
 .avatar-initials {
-  font-size: 16px;
-  font-weight: 600;
-  color: alpha(@theme_fg_color, 0.6);
+	font-size: 16px;
+	font-weight: 600;
+	color: alpha(@theme_fg_color, 0.6);
 }
 
 /* Relay Manager Styles */
 .relay-row {
-  padding: 6px 8px;
-  border-radius: 6px;
-  transition: background 150ms ease;
+	padding: 6px 8px;
+	border-radius: 6px;
+	transition: background 150ms ease;
 }
 
 .relay-row:hover {
-  background: alpha(@theme_fg_color, 0.05);
+	background: alpha(@theme_fg_color, 0.05);
 }
 
 /* NIP badge pills */
 .pill {
-  border-radius: 9999px;
-  padding: 2px 8px;
-  font-size: 11px;
-  font-weight: 500;
+	border-radius: 9999px;
+	padding: 2px 8px;
+	font-size: 11px;
+	font-weight: 500;
 }
 
 .pill.accent {
-  background: alpha(@accent_bg_color, 0.15);
-  color: @accent_bg_color;
+	background: alpha(@accent_bg_color, 0.15);
+	color: @accent_bg_color;
 }
 
 /* Status indicators */
 .success {
-  color: #2e7d32;
+	color: #2e7d32;
 }
 
 .error {
-  color: #c62828;
+	color: #c62828;
 }
 
 .warning {
-  color: #ed6c02;
+	color: #ed6c02;
 }
 
 /* Warning badge in relay info */
 .relay-warning-badge {
-  background: alpha(#ed6c02, 0.12);
-  border-radius: 6px;
-  padding: 6px 10px;
+	background: alpha(#ed6c02, 0.12);
+	border-radius: 6px;
+	padding: 6px 10px;
 }
 
 .relay-warning-badge image {
-  color: #ed6c02;
+	color: #ed6c02;
 }
 
 .relay-warning-badge label {
-  color: #ed6c02;
-  font-size: 12px;
-  font-weight: 500;
+	color: #ed6c02;
+	font-size: 12px;
+	font-weight: 500;
 }
 
 /* Caption text style */
 .caption {
-  font-size: 11px;
+	font-size: 11px;
 }
 
 /* Heading style for relay names */
 .heading {
-  font-weight: 600;
-  font-size: 14px;
+	font-weight: 600;
+	font-size: 14px;
 }
 
 /* Monospace for pubkeys */
 .monospace {
-  font-family: monospace;
-  font-size: 12px;
+	font-family: monospace;
+	font-size: 12px;
 }
 
 /* Relay permission type indicators (NIP-65) */
 .relay-type-icon {
-  min-width: 16px;
-  min-height: 16px;
+	min-width: 16px;
+	min-height: 16px;
 }
 
 .relay-type-readwrite {
-  color: @accent_bg_color;
+	color: @accent_bg_color;
 }
 
 .relay-type-read {
-  color: #2e7d32;  /* Green for read/subscribe */
+	color: #2e7d32; /* Green for read/subscribe */
 }
 
 .relay-type-write {
-  color: #1565c0;  /* Blue for write/publish */
+	color: #1565c0; /* Blue for write/publish */
 }
 
 /* Relay type dropdown in relay manager */
 .relay-row dropdown {
-  min-width: 70px;
+	min-width: 70px;
 }
 
 /* NIP-10 Reply Indicator Styles */
 .reply-indicator {
-  padding: 4px 0;
+	padding: 4px 0;
 }
 
 .reply-to-text {
-  font-size: 12px;
-  font-style: italic;
+	font-size: 12px;
+	font-style: italic;
 }
 
 /* Clickable reply indicator - navigates to parent note on click */
 .reply-indicator-clickable {
-  border-radius: 4px;
-  padding: 2px 6px;
-  margin-left: -6px;
-  transition: all 150ms ease;
+	border-radius: 4px;
+	padding: 2px 6px;
+	margin-left: -6px;
+	transition: all 150ms ease;
 }
 
 .reply-indicator-clickable:hover {
-  background: alpha(@accent_bg_color, 0.1);
+	background: alpha(@accent_bg_color, 0.1);
 }
 
 .reply-indicator-clickable:hover label,
 .reply-indicator-clickable:hover image {
-  color: @accent_bg_color;
+	color: @accent_bg_color;
 }
 
 /* Thread root indicator - shows reply count */
 .thread-root-badge {
-  border-radius: 4px;
-  padding: 2px 8px;
-  background: alpha(@accent_bg_color, 0.08);
-  transition: all 150ms ease;
+	border-radius: 4px;
+	padding: 2px 8px;
+	background: alpha(@accent_bg_color, 0.08);
+	transition: all 150ms ease;
 }
 
 .thread-root-badge:hover {
-  background: alpha(@accent_bg_color, 0.15);
+	background: alpha(@accent_bg_color, 0.15);
 }
 
 .thread-root-badge label {
-  font-size: 11px;
-  font-weight: 500;
-  color: @accent_bg_color;
+	font-size: 11px;
+	font-weight: 500;
+	color: @accent_bg_color;
 }
 
 .thread-root-badge image {
-  color: @accent_bg_color;
+	color: @accent_bg_color;
 }
 
 /* Thread button styling */
 .btn-thread {
-  opacity: 0.7;
-  transition: opacity 150ms ease;
+	opacity: 0.7;
+	transition: opacity 150ms ease;
 }
 
 .btn-thread:hover {
-  opacity: 1.0;
+	opacity: 1;
 }
 
 /* Profile Tabs Styles */
 .profile-tabs {
-  margin: 0 16px;
+	margin: 0 16px;
 }
 
 .profile-tabs > button {
-  border-radius: 8px;
-  padding: 8px 16px;
-  margin: 0 4px;
-  font-weight: 500;
-  transition: all 150ms ease;
+	border-radius: 8px;
+	padding: 8px 16px;
+	margin: 0 4px;
+	font-weight: 500;
+	transition: all 150ms ease;
 }
 
 .profile-tabs > button:not(:checked) {
-  background: transparent;
-  color: alpha(@theme_fg_color, 0.7);
+	background: transparent;
+	color: alpha(@theme_fg_color, 0.7);
 }
 
 .profile-tabs > button:checked {
-  background: alpha(@accent_bg_color, 0.12);
-  color: @accent_bg_color;
+	background: alpha(@accent_bg_color, 0.12);
+	color: @accent_bg_color;
 }
 
 .profile-tabs > button:hover:not(:checked) {
-  background: alpha(@theme_fg_color, 0.06);
+	background: alpha(@theme_fg_color, 0.06);
 }
 
 /* Profile Posts List */
 .profile-posts-list {
-  background: transparent;
+	background: transparent;
 }
 
 .profile-posts-list > row {
-  padding: 4px 8px;
-  margin: 4px 0;
+	padding: 4px 8px;
+	margin: 4px 0;
 }
 
 .profile-posts-list > row:hover {
-  background: alpha(@theme_fg_color, 0.03);
+	background: alpha(@theme_fg_color, 0.03);
 }
 
 /* Compact note cards for profile posts */
 .profile-posts-list .note-card {
-  padding: 8px;
-  margin: 2px 0;
+	padding: 8px;
+	margin: 2px 0;
 }
 
 /* Load more button */
 .profile-posts-list + button.pill,
 button.pill {
-  border-radius: 9999px;
-  padding: 8px 24px;
-  font-weight: 500;
-  background: alpha(@accent_bg_color, 0.12);
-  color: @accent_bg_color;
-  transition: all 150ms ease;
+	border-radius: 9999px;
+	padding: 8px 24px;
+	font-weight: 500;
+	background: alpha(@accent_bg_color, 0.12);
+	color: @accent_bg_color;
+	transition: all 150ms ease;
 }
 
 button.pill:hover {
-  background: alpha(@accent_bg_color, 0.18);
+	background: alpha(@accent_bg_color, 0.18);
 }
 
 /* ============================================
@@ -750,107 +829,107 @@ button.pill:hover {
 
 /* Main image viewer window */
 .image-viewer {
-  background: alpha(black, 0.92);
+	background: alpha(black, 0.92);
 }
 
 /* Overlay container with dark background */
 .image-viewer-overlay {
-  background: transparent;
+	background: transparent;
 }
 
 /* Scrolled window for pan support */
 .image-viewer scrolledwindow {
-  background: transparent;
+	background: transparent;
 }
 
 /* The image itself */
 .image-viewer picture {
-  background: transparent;
+	background: transparent;
 }
 
 /* Close button styling (top-right corner) */
 .image-viewer-close {
-  background: alpha(black, 0.5);
-  color: white;
-  min-width: 36px;
-  min-height: 36px;
-  padding: 8px;
-  border: none;
-  border-radius: 50%;
-  transition: all 150ms ease;
+	background: alpha(black, 0.5);
+	color: white;
+	min-width: 36px;
+	min-height: 36px;
+	padding: 8px;
+	border: none;
+	border-radius: 50%;
+	transition: all 150ms ease;
 }
 
 .image-viewer-close:hover {
-  background: alpha(black, 0.7);
+	background: alpha(black, 0.7);
 }
 
 /* Zoom indicator (bottom-right corner) */
 .image-viewer-zoom {
-  background: alpha(black, 0.5);
-  color: white;
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
+	background: alpha(black, 0.5);
+	color: white;
+	padding: 6px 12px;
+	border-radius: 6px;
+	font-size: 13px;
+	font-weight: 500;
 }
 
 /* Toolbar button styling (save, etc.) */
 .image-viewer-button {
-  background: alpha(black, 0.5);
-  color: white;
-  min-width: 36px;
-  min-height: 36px;
-  padding: 8px;
-  border: none;
-  transition: all 150ms ease;
+	background: alpha(black, 0.5);
+	color: white;
+	min-width: 36px;
+	min-height: 36px;
+	padding: 8px;
+	border: none;
+	transition: all 150ms ease;
 }
 
 .image-viewer-button:hover {
-  background: alpha(black, 0.7);
+	background: alpha(black, 0.7);
 }
 
 /* Gallery navigation container (bottom center) */
 .image-viewer-nav {
-  background: alpha(black, 0.5);
-  padding: 8px 16px;
-  border-radius: 24px;
+	background: alpha(black, 0.5);
+	padding: 8px 16px;
+	border-radius: 24px;
 }
 
 /* Navigation buttons (prev/next) */
 .image-viewer-nav-button {
-  background: transparent;
-  color: white;
-  min-width: 32px;
-  min-height: 32px;
-  padding: 6px;
-  border: none;
-  transition: all 150ms ease;
+	background: transparent;
+	color: white;
+	min-width: 32px;
+	min-height: 32px;
+	padding: 6px;
+	border: none;
+	transition: all 150ms ease;
 }
 
 .image-viewer-nav-button:hover {
-  background: alpha(white, 0.15);
+	background: alpha(white, 0.15);
 }
 
 .image-viewer-nav-button:disabled {
-  opacity: 0.3;
+	opacity: 0.3;
 }
 
 /* Navigation label (e.g., "1 / 5") */
 .image-viewer-nav-label {
-  color: white;
-  font-size: 14px;
-  font-weight: 500;
-  min-width: 60px;
+	color: white;
+	font-size: 14px;
+	font-weight: 500;
+	min-width: 60px;
 }
 
 /* Clickable image in note cards */
 .clickable-image {
-  transition: all 150ms ease;
+	transition: all 150ms ease;
 }
 
 .clickable-image:hover {
-  opacity: 0.9;
-  box-shadow: 0 2px 8px alpha(black, 0.15);
+	opacity: 0.9;
+	box-shadow: 0 2px 8px alpha(black, 0.15);
 }
 
 /* ============================================
@@ -859,164 +938,164 @@ button.pill:hover {
 
 /* Main thread view container */
 .thread-view {
-  background: @theme_bg_color;
-  border-left: 1px solid alpha(@theme_fg_color, 0.1);
+	background: @theme_bg_color;
+	border-left: 1px solid alpha(@theme_fg_color, 0.1);
 }
 
 /* Thread header bar */
 .thread-header {
-  background: alpha(@theme_bg_color, 0.95);
-  border-bottom: 1px solid alpha(@theme_fg_color, 0.08);
-  padding: 8px 12px;
+	background: alpha(@theme_bg_color, 0.95);
+	border-bottom: 1px solid alpha(@theme_fg_color, 0.08);
+	padding: 8px 12px;
 }
 
 /* Thread title */
 .thread-title {
-  font-weight: 600;
-  font-size: 16px;
+	font-weight: 600;
+	font-size: 16px;
 }
 
 /* Thread list container */
 .thread-list {
-  background: transparent;
-  padding: 4px 8px;
+	background: transparent;
+	padding: 4px 8px;
 }
 
 /* Thread depth indentation (via note card classes) */
 .thread-depth-0 {
-  margin-left: 0;
+	margin-left: 0;
 }
 
 .thread-depth-1 {
-  margin-left: 24px;
-  border-left: 2px solid alpha(@accent_bg_color, 0.3);
-  padding-left: 12px;
+	margin-left: 24px;
+	border-left: 2px solid alpha(@accent_bg_color, 0.3);
+	padding-left: 12px;
 }
 
 .thread-depth-2 {
-  margin-left: 48px;
-  border-left: 2px solid alpha(@accent_bg_color, 0.25);
-  padding-left: 12px;
+	margin-left: 48px;
+	border-left: 2px solid alpha(@accent_bg_color, 0.25);
+	padding-left: 12px;
 }
 
 .thread-depth-3 {
-  margin-left: 72px;
-  border-left: 2px solid alpha(@accent_bg_color, 0.2);
-  padding-left: 12px;
+	margin-left: 72px;
+	border-left: 2px solid alpha(@accent_bg_color, 0.2);
+	padding-left: 12px;
 }
 
 .thread-depth-4 {
-  margin-left: 96px;
-  border-left: 2px solid alpha(@accent_bg_color, 0.15);
-  padding-left: 12px;
+	margin-left: 96px;
+	border-left: 2px solid alpha(@accent_bg_color, 0.15);
+	padding-left: 12px;
 }
 
 /* Note cards in thread - connecting lines */
 .thread-list .note-card {
-  margin-bottom: 4px;
+	margin-bottom: 4px;
 }
 
 /* Focus note highlight - the note that was clicked */
 .thread-focus-note {
-  border: 2px solid @accent_bg_color;
-  background: alpha(@accent_bg_color, 0.08);
-  box-shadow: 0 2px 8px alpha(@accent_bg_color, 0.15);
+	border: 2px solid @accent_bg_color;
+	background: alpha(@accent_bg_color, 0.08);
+	box-shadow: 0 2px 8px alpha(@accent_bg_color, 0.15);
 }
 
 .thread-focus-note .note-card {
-  background: alpha(@accent_bg_color, 0.06);
+	background: alpha(@accent_bg_color, 0.06);
 }
 
 /* Root note style - slightly emphasized */
 .thread-root-note {
-  margin-bottom: 8px;
+	margin-bottom: 8px;
 }
 
 .thread-root-note .note-card {
-  border-left: 3px solid @accent_bg_color;
+	border-left: 3px solid @accent_bg_color;
 }
 
 /* Reply note style - slightly dimmed */
 .thread-reply-note {
-  opacity: 0.95;
+	opacity: 0.95;
 }
 
 /* Thread connector lines (vertical) */
 .thread-connector {
-  min-width: 2px;
-  background: alpha(@theme_fg_color, 0.15);
-  margin-left: 18px; /* Align with avatar center */
+	min-width: 2px;
+	background: alpha(@theme_fg_color, 0.15);
+	margin-left: 18px; /* Align with avatar center */
 }
 
 /* Thread connector branch point (horizontal) */
 .thread-branch {
-  min-height: 2px;
-  min-width: 16px;
-  background: alpha(@theme_fg_color, 0.15);
-  margin-top: 18px; /* Align with avatar center */
+	min-height: 2px;
+	min-width: 16px;
+	background: alpha(@theme_fg_color, 0.15);
+	margin-top: 18px; /* Align with avatar center */
 }
 
 /* Thread continuation indicator */
 .thread-continuation {
-  font-size: 12px;
-  color: alpha(@theme_fg_color, 0.5);
-  padding: 8px 16px;
+	font-size: 12px;
+	color: alpha(@theme_fg_color, 0.5);
+	padding: 8px 16px;
 }
 
 /* Loading state */
 .thread-view .loading-box {
-  padding: 32px;
+	padding: 32px;
 }
 
 /* Empty state */
 .thread-view .empty-box {
-  padding: 48px;
+	padding: 48px;
 }
 
 /* Smooth reveal animation */
 .thread-view-entering {
-  animation: thread-slide-in 250ms ease-out;
+	animation: thread-slide-in 250ms ease-out;
 }
 
 @keyframes thread-slide-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
 }
 
 /* Parent chain (notes above focus) styling */
 .thread-ancestor {
-  opacity: 0.85;
+	opacity: 0.85;
 }
 
 .thread-ancestor .note-card {
-  border-left: 3px solid alpha(@theme_fg_color, 0.2);
+	border-left: 3px solid alpha(@theme_fg_color, 0.2);
 }
 
 /* Descendant chain (replies below focus) styling */
 .thread-descendant {
-  /* Slightly smaller for visual hierarchy */
+	/* Slightly smaller for visual hierarchy */
 }
 
 .thread-descendant .note-card {
-  padding: 8px;
+	padding: 8px;
 }
 
 /* More replies collapsed indicator */
 .thread-more-replies {
-  padding: 12px 16px;
-  margin-left: 24px;
-  color: @accent_bg_color;
-  font-weight: 500;
-  border-radius: 8px;
-  transition: background 150ms ease;
+	padding: 12px 16px;
+	margin-left: 24px;
+	color: @accent_bg_color;
+	font-weight: 500;
+	border-radius: 8px;
+	transition: background 150ms ease;
 }
 
 .thread-more-replies:hover {
-  background: alpha(@accent_bg_color, 0.1);
+	background: alpha(@accent_bg_color, 0.1);
 }
 
 /* ============================================
@@ -1025,153 +1104,213 @@ button.pill:hover {
 
 /* Embed frame container */
 .note-embed-frame {
-  border-radius: 10px;
-  background: alpha(@theme_bg_color, 0.5);
-  border: 1px solid alpha(@theme_fg_color, 0.1);
-  margin-top: 8px;
-  margin-bottom: 4px;
-  transition: all 150ms ease;
+	border-radius: 10px;
+	background: alpha(@theme_bg_color, 0.5);
+	border: 1px solid alpha(@theme_fg_color, 0.1);
+	margin-top: 8px;
+	margin-bottom: 4px;
+	transition: all 150ms ease;
 }
 
 .note-embed-frame:hover {
-  background: alpha(@theme_bg_color, 0.7);
-  border-color: alpha(@theme_fg_color, 0.15);
-  box-shadow: 0 2px 8px alpha(@theme_fg_color, 0.08);
+	background: alpha(@theme_bg_color, 0.7);
+	border-color: alpha(@theme_fg_color, 0.15);
+	box-shadow: 0 2px 8px alpha(@theme_fg_color, 0.08);
 }
 
 /* Embed avatar (smaller than main note avatar) */
 .embed-avatar {
-  border-radius: 50%;
-  min-width: 24px;
-  min-height: 24px;
-  /* Default fallback gradient for embed avatars without images */
-  background: linear-gradient(
-    135deg,
-    alpha(@accent_bg_color, 0.2) 0%,
-    alpha(@accent_bg_color, 0.35) 100%
-  );
+	border-radius: 50%;
+	min-width: 24px;
+	min-height: 24px;
+	/* Default fallback gradient for embed avatars without images */
+	background: linear-gradient(
+		135deg,
+		alpha(@accent_bg_color, 0.2) 0%,
+		alpha(@accent_bg_color, 0.35) 100%
+	);
 }
 
 .embed-avatar picture {
-  border-radius: 50%;
-  min-width: 24px;
-  min-height: 24px;
+	border-radius: 50%;
+	min-width: 24px;
+	min-height: 24px;
 }
 
 .embed-avatar-image {
-  border-radius: 50%;
-  min-width: 24px;
-  min-height: 24px;
+	border-radius: 50%;
+	min-width: 24px;
+	min-height: 24px;
 }
 
 .embed-avatar-initials {
-  font-size: 11px;
-  font-weight: 600;
-  color: alpha(@theme_fg_color, 0.55);
+	font-size: 11px;
+	font-weight: 600;
+	color: alpha(@theme_fg_color, 0.55);
 }
 
 /* Embed author name */
 .embed-author {
-  font-weight: 600;
-  font-size: 13px;
-  color: @theme_fg_color;
+	font-weight: 600;
+	font-size: 13px;
+	color: @theme_fg_color;
 }
 
 /* Embed handle */
 .embed-handle {
-  font-size: 12px;
-  opacity: 0.6;
+	font-size: 12px;
+	opacity: 0.6;
 }
 
 /* Embed timestamp */
 .embed-timestamp {
-  font-size: 12px;
-  opacity: 0.5;
+	font-size: 12px;
+	opacity: 0.5;
 }
 
 /* Embed content preview */
 .embed-content {
-  font-size: 13px;
-  line-height: 1.35;
-  color: alpha(@theme_fg_color, 0.85);
+	font-size: 13px;
+	line-height: 1.35;
+	color: alpha(@theme_fg_color, 0.85);
 }
 
 /* Embed profile about (for profile embeds) */
 .embed-about {
-  font-size: 13px;
-  line-height: 1.35;
-  font-style: italic;
+	font-size: 13px;
+	line-height: 1.35;
+	font-style: italic;
 }
 
 /* Embed loading spinner */
 .note-embed spinner {
-  min-width: 20px;
-  min-height: 20px;
+	min-width: 20px;
+	min-height: 20px;
 }
 
 /* Embed error state */
 .note-embed .error {
-  font-size: 12px;
-  opacity: 0.7;
+	font-size: 12px;
+	opacity: 0.7;
 }
 
 /* ===== NIP-57 Zap Styles ===== */
 
 /* Zap count label next to button */
 .zap-count {
-  font-size: 12px;
-  font-weight: 500;
-  color: #f7931a;
-  opacity: 0.9;
+	font-size: 12px;
+	font-weight: 500;
+	color: #f7931a;
+	opacity: 0.9;
 }
 
 /* Zap amount selection buttons */
 .zap-amount {
-  min-width: 60px;
-  padding: 8px 16px;
-  border-radius: 8px;
-  font-weight: 500;
+	min-width: 60px;
+	padding: 8px 16px;
+	border-radius: 8px;
+	font-weight: 500;
 }
 
 .zap-amount:checked {
-  background: alpha(#f7931a, 0.15);
-  color: #f7931a;
-  border-color: alpha(#f7931a, 0.3);
+	background: alpha(#f7931a, 0.15);
+	color: #f7931a;
+	border-color: alpha(#f7931a, 0.3);
 }
 
 /* Custom amount entry in zap dialog */
 .zap-custom-entry {
-  font-size: 18px;
-  font-weight: 600;
-  padding: 12px 16px;
+	font-size: 18px;
+	font-weight: 600;
+	padding: 12px 16px;
 }
 
 /* Zap button highlight color (lightning orange) */
 #btn_zap:hover image,
 .zap-button:hover image {
-  color: #f7931a;
+	color: #f7931a;
 }
 
 /* Zapped state indicator */
 .note-zapped #btn_zap image {
-  color: #f7931a;
+	color: #f7931a;
 }
 
 /* Zap receipt badge */
 .zap-receipt-badge {
-  background: alpha(#f7931a, 0.12);
-  border-radius: 6px;
-  padding: 4px 8px;
+	background: alpha(#f7931a, 0.12);
+	border-radius: 6px;
+	padding: 4px 8px;
 }
 
 .zap-receipt-badge image {
-  color: #f7931a;
+	color: #f7931a;
 }
 
 .zap-receipt-badge label {
-  font-size: 11px;
-  font-weight: 500;
-  color: #f7931a;
+	font-size: 11px;
+	font-weight: 500;
+	color: #f7931a;
+}
+
+/* ===== Note Card Action Buttons ===== */
+
+/* Action button container - better spacing and alignment */
+.note-actions {
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: none;
+}
+
+/* Individual action buttons - consistent sizing and spacing */
+.note-actions button {
+	min-width: 36px;
+	min-height: 36px;
+	padding: 6px;
+	border-radius: 999px;
+	margin: 0 2px;
+	background: transparent;
+	border: none;
+	transition: all 150ms ease;
+}
+
+.note-actions button:first-child {
+	margin-left: 0;
+}
+
+.note-actions button:hover {
+	background: alpha(@theme_fg_color, 0.1);
+}
+
+.note-actions button:active {
+	background: alpha(@theme_fg_color, 0.15);
+}
+
+.note-actions button image {
+	opacity: 0.55;
+	transition: opacity 150ms ease;
+}
+
+.note-actions button:hover image {
+	opacity: 0.85;
+}
+
+/* Reply button accent on hover */
+.note-actions button.reply:hover {
+	background: alpha(@blue_3, 0.15);
+}
+.note-actions button.reply:hover image {
+	color: @blue_3;
+	opacity: 1;
+}
+
+/* Repost button accent on hover */
+.note-actions button.repost:hover {
+	background: alpha(@green_4, 0.15);
+}
+.note-actions button.repost:hover image {
+	color: @green_4;
+	opacity: 1;
 }
 
 /* ===== NIP-25 Like/Reaction Styles ===== */
@@ -1179,17 +1318,19 @@ button.pill:hover {
 /* Like button in liked state */
 #btn_like.liked image,
 button.liked image {
-  color: #e91e63;  /* Pink/red heart color */
+	color: #e91e63; /* Pink/red heart color */
+	opacity: 1;
 }
 
 /* Hover effect on like button */
 #btn_like:hover image {
-  color: alpha(#e91e63, 0.8);
+	color: alpha(#e91e63, 0.8);
 }
 
 /* Liked state styling */
 .note-liked #btn_like image {
-  color: #e91e63;
+	color: #e91e63;
+	opacity: 1;
 }
 
 /* ===== nostrc-yi2: Calm Timeline Styles ===== */
@@ -1197,273 +1338,272 @@ button.liked image {
 
 /* "N new notes" floating indicator - toast-style button */
 .new-notes-indicator {
-  /* Semi-transparent background matching system toasts */
-  background-color: alpha(@window_bg_color, 0.9);
-  color: @window_fg_color;
-  /* Pill shape */
-  border-radius: 999px;
-  padding: 8px 16px;
-  /* Typography */
-  font-weight: 600;
-  font-size: 13px;
-  /* No shadow - prevents cropping artifacts */
-  box-shadow: none;
-  /* Match toast opacity */
-  opacity: 0.95;
-  /* Smooth transitions */
-  transition: all 200ms ease;
-  /* Subtle border for definition */
-  border: 1px solid alpha(@borders, 0.3);
+	/* Solid background with proper contrast */
+	background-color: @accent_bg_color;
+	color: @accent_fg_color;
+	/* Pill shape */
+	border-radius: 999px;
+	padding: 10px 20px;
+	/* Typography */
+	font-weight: 600;
+	font-size: 14px;
+	/* Subtle shadow for elevation */
+	box-shadow: 0 2px 8px alpha(black, 0.15), 0 4px 16px alpha(black, 0.1);
+	/* Smooth transitions */
+	transition: all 200ms ease;
+	/* Ensure it's visible */
+	opacity: 1;
+	min-height: 40px;
 }
 
 .new-notes-indicator:hover {
-  background-color: alpha(@window_bg_color, 0.95);
-  box-shadow: none;
-  opacity: 1;
+	background-color: shade(@accent_bg_color, 1.1);
+	box-shadow: 0 3px 12px alpha(black, 0.2), 0 6px 20px alpha(black, 0.15);
+	transform: translateY(-1px);
 }
 
 .new-notes-indicator:active {
-  background-color: alpha(@window_bg_color, 0.85);
-  box-shadow: none;
-  opacity: 0.9;
+	background-color: shade(@accent_bg_color, 0.95);
+	box-shadow: 0 1px 4px alpha(black, 0.15);
+	transform: translateY(0);
 }
 
 /* ===== Default Avatar/Banner Fallback Styles (nostrc-uzi) ===== */
 
 /* Default avatar icon (person silhouette) - alternative to initials */
 .avatar-default-icon {
-  color: alpha(@theme_fg_color, 0.5);
+	color: alpha(@theme_fg_color, 0.5);
 }
 
 /* Note card avatar with icon fallback */
 .note-avatar .avatar-default-icon {
-  min-width: 20px;
-  min-height: 20px;
+	min-width: 20px;
+	min-height: 20px;
 }
 
 /* Profile avatar with icon fallback */
 .profile-avatar .avatar-default-icon {
-  min-width: 48px;
-  min-height: 48px;
+	min-width: 48px;
+	min-height: 48px;
 }
 
 /* Embed avatar with icon fallback */
 .embed-avatar .avatar-default-icon {
-  min-width: 14px;
-  min-height: 14px;
+	min-width: 14px;
+	min-height: 14px;
 }
 
 /* DM avatar with icon fallback */
 .dm-avatar .avatar-default-icon {
-  min-width: 20px;
-  min-height: 20px;
+	min-width: 20px;
+	min-height: 20px;
 }
 
 /* ===== Profile Row Styles (nostrc-dr3: Discover) ===== */
 
 /* Profile row container */
 .profile-row {
-  transition: opacity 200ms ease;
+	transition: opacity 200ms ease;
 }
 
 /* Profile row name */
 .profile-row-name {
-  font-weight: 600;
-  font-size: 15px;
+	font-weight: 600;
+	font-size: 15px;
 }
 
 /* Profile row NIP-05 identifier */
 .profile-row-nip05 {
-  font-size: 13px;
-  color: alpha(@theme_fg_color, 0.6);
+	font-size: 13px;
+	color: alpha(@theme_fg_color, 0.6);
 }
 
 /* Profile row bio preview */
 .profile-row-bio {
-  font-size: 13px;
-  line-height: 1.3;
+	font-size: 13px;
+	line-height: 1.3;
 }
 
 /* Profile row avatar */
 .profile-row-avatar {
-  border-radius: 50%;
-  background: linear-gradient(
-    135deg,
-    alpha(@accent_bg_color, 0.2) 0%,
-    alpha(@accent_bg_color, 0.35) 100%
-  );
+	border-radius: 50%;
+	background: linear-gradient(
+		135deg,
+		alpha(@accent_bg_color, 0.2) 0%,
+		alpha(@accent_bg_color, 0.35) 100%
+	);
 }
 
 .profile-row-avatar picture {
-  border-radius: 50%;
+	border-radius: 50%;
 }
 
 .profile-row-avatar-image {
-  border-radius: 50%;
+	border-radius: 50%;
 }
 
 /* NIP-05 verification badge */
 .nip05-badge {
-  color: #2e7d32;
-  min-width: 16px;
-  min-height: 16px;
+	color: #2e7d32;
+	min-width: 16px;
+	min-height: 16px;
 }
 
 /* NIP-05 verification badge (note card) */
 .nip05-verified-badge {
-  color: #2e7d32;
-  min-width: 14px;
-  min-height: 14px;
-  margin-left: 4px;
+	color: #2e7d32;
+	min-width: 14px;
+	min-height: 14px;
+	margin-left: 4px;
 }
 
 /* Follow indicator */
 .follow-indicator {
-  color: @accent_bg_color;
-  min-width: 20px;
-  min-height: 20px;
+	color: @accent_bg_color;
+	min-width: 20px;
+	min-height: 20px;
 }
 
 /* Muted indicator (NIP-51) */
 .muted-indicator {
-  color: alpha(@theme_fg_color, 0.5);
-  min-width: 20px;
-  min-height: 20px;
+	color: alpha(@theme_fg_color, 0.5);
+	min-width: 20px;
+	min-height: 20px;
 }
 
 /* Muted profile row - grayed out appearance */
 profile-row.muted {
-  opacity: 0.5;
+	opacity: 0.5;
 }
 
 profile-row.muted .profile-row-name,
 profile-row.muted .profile-row-nip05,
 profile-row.muted .profile-row-bio {
-  color: alpha(@theme_fg_color, 0.5);
+	color: alpha(@theme_fg_color, 0.5);
 }
 
 profile-row.muted .profile-row-avatar {
-  filter: grayscale(50%);
+	filter: grayscale(50%);
 }
 
 /* Actions button */
 .profile-row-actions {
-  min-width: 32px;
-  min-height: 32px;
+	min-width: 32px;
+	min-height: 32px;
 }
 
 /* ===== NIP-30 Custom Emoji Styles ===== */
 
 /* Container for custom emoji display */
 .custom-emoji-box {
-  margin-top: 6px;
-  margin-bottom: 4px;
-  padding: 4px 0;
+	margin-top: 6px;
+	margin-bottom: 4px;
+	padding: 4px 0;
 }
 
 /* Individual emoji item (image + shortcode label) */
 .custom-emoji-item {
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: alpha(@theme_bg_color, 0.4);
-  border: 1px solid alpha(@theme_fg_color, 0.08);
-  transition: all 150ms ease;
+	padding: 4px 8px;
+	border-radius: 6px;
+	background: alpha(@theme_bg_color, 0.4);
+	border: 1px solid alpha(@theme_fg_color, 0.08);
+	transition: all 150ms ease;
 }
 
 .custom-emoji-item:hover {
-  background: alpha(@theme_bg_color, 0.6);
-  border-color: alpha(@theme_fg_color, 0.12);
+	background: alpha(@theme_bg_color, 0.6);
+	border-color: alpha(@theme_fg_color, 0.12);
 }
 
 /* Custom emoji image */
 .custom-emoji {
-  min-width: 24px;
-  min-height: 24px;
-  border-radius: 4px;
+	min-width: 24px;
+	min-height: 24px;
+	border-radius: 4px;
 }
 
 /* Custom emoji shortcode label */
 .custom-emoji-label {
-  font-size: 11px;
-  color: alpha(@theme_fg_color, 0.7);
-  font-family: monospace;
+	font-size: 11px;
+	color: alpha(@theme_fg_color, 0.7);
+	font-family: monospace;
 }
 
 /* ===== NIP-18 Repost Styles ===== */
 
 /* Repost indicator header - "Reposted by X" */
 .repost-indicator {
-  padding: 4px 0;
-  margin-bottom: 4px;
+	padding: 4px 0;
+	margin-bottom: 4px;
 }
 
 .repost-indicator image {
-  color: alpha(@theme_fg_color, 0.5);
-  min-width: 14px;
-  min-height: 14px;
+	color: alpha(@theme_fg_color, 0.5);
+	min-width: 14px;
+	min-height: 14px;
 }
 
 .repost-indicator label {
-  font-size: 12px;
-  color: alpha(@theme_fg_color, 0.6);
+	font-size: 12px;
+	color: alpha(@theme_fg_color, 0.6);
 }
 
 /* Repost note card styling */
 .note-card.repost {
-  /* Subtle visual distinction for reposts */
-  border-left: 3px solid alpha(@accent_bg_color, 0.3);
+	/* Subtle visual distinction for reposts */
+	border-left: 3px solid alpha(@accent_bg_color, 0.3);
 }
 
 /* Repost button when active (user has reposted) */
 #btn_repost.reposted image {
-  color: @accent_bg_color;
+	color: @accent_bg_color;
 }
 
 /* NIP-36: Sensitive content warning styles */
 .sensitive-content {
-  /* Add subtle border to indicate sensitive content */
-  border-color: alpha(@warning_color, 0.5);
+	/* Add subtle border to indicate sensitive content */
+	border-color: alpha(@warning_color, 0.5);
 }
 
 .sensitive-warning-box {
-  padding: 24px;
-  background: alpha(@theme_bg_color, 0.95);
-  border-radius: 8px;
-  border: 1px solid alpha(@warning_color, 0.3);
+	padding: 24px;
+	background: alpha(@theme_bg_color, 0.95);
+	border-radius: 8px;
+	border: 1px solid alpha(@warning_color, 0.3);
 }
 
 .sensitive-warning-icon {
-  color: @warning_color;
-  opacity: 0.9;
+	color: @warning_color;
+	opacity: 0.9;
 }
 
 .sensitive-warning-label {
-  font-size: 14px;
-  font-weight: 500;
-  color: alpha(@theme_fg_color, 0.9);
+	font-size: 14px;
+	font-weight: 500;
+	color: alpha(@theme_fg_color, 0.9);
 }
 
 .sensitive-show-button {
-  margin-top: 8px;
-  padding: 8px 16px;
+	margin-top: 8px;
+	padding: 8px 16px;
 }
 
 /* Blur effect for content under the overlay */
 .content-blurred {
-  filter: blur(8px);
-  opacity: 0.6;
-  user-select: none;
-  pointer-events: none;
+	filter: blur(8px);
+	opacity: 0.6;
+	user-select: none;
+	pointer-events: none;
 }
 
 /* Warning style for composer sensitive toggle when active */
 .warning {
-  color: @warning_color;
+	color: @warning_color;
 }
 
 .warning:checked {
-  background: alpha(@warning_color, 0.2);
-  color: @warning_color;
+	background: alpha(@warning_color, 0.2);
+	color: @warning_color;
 }
 
 /* ============================================
@@ -1472,317 +1612,317 @@ profile-row.muted .profile-row-avatar {
 
 /* Main article card container */
 .article-card {
-  border-radius: 16px;
-  padding: 0;
-  background: alpha(@theme_bg_color, 0.7);
-  border: 1px solid alpha(@theme_fg_color, 0.08);
-  overflow: hidden;
-  animation: article-fade-in 600ms ease-out;
+	border-radius: 16px;
+	padding: 0;
+	background: alpha(@theme_bg_color, 0.7);
+	border: 1px solid alpha(@theme_fg_color, 0.08);
+	overflow: hidden;
+	animation: article-fade-in 600ms ease-out;
 }
 
 @keyframes article-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+	from {
+		opacity: 0;
+		transform: translateY(12px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
 }
 
 .article-card:hover {
-  background: alpha(@theme_bg_color, 0.85);
-  border-color: alpha(@theme_fg_color, 0.12);
-  box-shadow: 0 4px 16px alpha(@theme_fg_color, 0.08);
+	background: alpha(@theme_bg_color, 0.85);
+	border-color: alpha(@theme_fg_color, 0.12);
+	box-shadow: 0 4px 16px alpha(@theme_fg_color, 0.08);
 }
 
 /* Article header image */
 .article-header-image {
-  border-radius: 16px 16px 0 0;
-  min-height: 180px;
-  background: alpha(@theme_bg_color, 0.3);
+	border-radius: 16px 16px 0 0;
+	min-height: 180px;
+	background: alpha(@theme_bg_color, 0.3);
 }
 
 .article-header-gradient {
-  background: linear-gradient(
-    to top,
-    alpha(black, 0.6) 0%,
-    alpha(black, 0.3) 40%,
-    alpha(black, 0.0) 100%
-  );
+	background: linear-gradient(
+		to top,
+		alpha(black, 0.6) 0%,
+		alpha(black, 0.3) 40%,
+		alpha(black, 0) 100%
+	);
 }
 
 /* Article avatar (slightly larger than note avatar) */
 .article-avatar {
-  border-radius: 50%;
-  min-width: 40px;
-  min-height: 40px;
-  background: linear-gradient(
-    135deg,
-    alpha(@accent_bg_color, 0.2) 0%,
-    alpha(@accent_bg_color, 0.35) 100%
-  );
+	border-radius: 50%;
+	min-width: 40px;
+	min-height: 40px;
+	background: linear-gradient(
+		135deg,
+		alpha(@accent_bg_color, 0.2) 0%,
+		alpha(@accent_bg_color, 0.35) 100%
+	);
 }
 
 .article-avatar picture {
-  border-radius: 50%;
-  min-width: 40px;
-  min-height: 40px;
+	border-radius: 50%;
+	min-width: 40px;
+	min-height: 40px;
 }
 
 .article-avatar-image {
-  border-radius: 50%;
-  min-width: 40px;
-  min-height: 40px;
+	border-radius: 50%;
+	min-width: 40px;
+	min-height: 40px;
 }
 
 /* Article author name */
 .article-author {
-  font-weight: 600;
-  font-size: 15px;
-  color: @theme_fg_color;
+	font-weight: 600;
+	font-size: 15px;
+	color: @theme_fg_color;
 }
 
 /* Article meta text (handle, date) */
 .article-meta {
-  font-size: 13px;
-  color: alpha(@theme_fg_color, 0.6);
+	font-size: 13px;
+	color: alpha(@theme_fg_color, 0.6);
 }
 
 /* Article title */
 .article-title {
-  font-weight: 700;
-  font-size: 20px;
-  line-height: 1.3;
-  color: @theme_fg_color;
+	font-weight: 700;
+	font-size: 20px;
+	line-height: 1.3;
+	color: @theme_fg_color;
 }
 
 /* Make title button not look like a button */
 .article-card button.flat:focus .article-title,
 .article-card button.flat:hover .article-title {
-  color: @accent_bg_color;
+	color: @accent_bg_color;
 }
 
 /* Article summary/description */
 .article-summary {
-  font-size: 15px;
-  line-height: 1.5;
-  color: alpha(@theme_fg_color, 0.85);
+	font-size: 15px;
+	line-height: 1.5;
+	color: alpha(@theme_fg_color, 0.85);
 }
 
 /* Read more link */
 .article-read-more {
-  font-size: 14px;
-  font-weight: 500;
-  color: @accent_bg_color;
+	font-size: 14px;
+	font-weight: 500;
+	color: @accent_bg_color;
 }
 
 .article-read-more:hover {
-  text-decoration: underline;
+	text-decoration: underline;
 }
 
 /* Hashtag pills */
 .article-hashtags flowboxchild {
-  padding: 0;
-  margin: 0;
+	padding: 0;
+	margin: 0;
 }
 
 .article-hashtag {
-  border-radius: 9999px;
-  padding: 4px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  background: alpha(@accent_bg_color, 0.12);
-  color: @accent_bg_color;
-  transition: all 150ms ease;
+	border-radius: 9999px;
+	padding: 4px 12px;
+	font-size: 12px;
+	font-weight: 500;
+	background: alpha(@accent_bg_color, 0.12);
+	color: @accent_bg_color;
+	transition: all 150ms ease;
 }
 
 .article-hashtag:hover {
-  background: alpha(@accent_bg_color, 0.2);
+	background: alpha(@accent_bg_color, 0.2);
 }
 
 /* Reading time estimate */
 .article-reading-time {
-  font-size: 12px;
-  color: alpha(@theme_fg_color, 0.5);
-  font-style: italic;
+	font-size: 12px;
+	color: alpha(@theme_fg_color, 0.5);
+	font-style: italic;
 }
 
 /* Article card in timeline - compact mode */
 .timeline .article-card {
-  margin-bottom: 8px;
+	margin-bottom: 8px;
 }
 
 /* Article full view (when opened) */
 .article-full-view {
-  background: @theme_bg_color;
-  padding: 24px;
-  max-width: 720px;
-  margin: 0 auto;
+	background: @theme_bg_color;
+	padding: 24px;
+	max-width: 720px;
+	margin: 0 auto;
 }
 
 .article-full-view .article-title {
-  font-size: 28px;
-  margin-bottom: 16px;
+	font-size: 28px;
+	margin-bottom: 16px;
 }
 
 .article-full-view .article-content {
-  font-size: 17px;
-  line-height: 1.7;
+	font-size: 17px;
+	line-height: 1.7;
 }
 
 /* Markdown content styles in full article view */
 .article-content tt {
-  font-family: monospace;
-  background: alpha(@theme_fg_color, 0.08);
-  padding: 2px 6px;
-  border-radius: 4px;
+	font-family: monospace;
+	background: alpha(@theme_fg_color, 0.08);
+	padding: 2px 6px;
+	border-radius: 4px;
 }
 
 .article-content a {
-  color: @accent_bg_color;
-  text-decoration: none;
+	color: @accent_bg_color;
+	text-decoration: none;
 }
 
 .article-content a:hover {
-  text-decoration: underline;
+	text-decoration: underline;
 }
 
 /* Article embed preview (when referenced via "a" tag) */
 .article-embed {
-  border-radius: 10px;
-  background: alpha(@theme_bg_color, 0.5);
-  border: 1px solid alpha(@theme_fg_color, 0.1);
-  padding: 12px;
-  margin: 8px 0;
-  transition: all 150ms ease;
+	border-radius: 10px;
+	background: alpha(@theme_bg_color, 0.5);
+	border: 1px solid alpha(@theme_fg_color, 0.1);
+	padding: 12px;
+	margin: 8px 0;
+	transition: all 150ms ease;
 }
 
 .article-embed:hover {
-  background: alpha(@theme_bg_color, 0.7);
-  border-color: alpha(@theme_fg_color, 0.15);
+	background: alpha(@theme_bg_color, 0.7);
+	border-color: alpha(@theme_fg_color, 0.15);
 }
 
 .article-embed-title {
-  font-weight: 600;
-  font-size: 14px;
-  color: @theme_fg_color;
-  margin-bottom: 4px;
+	font-weight: 600;
+	font-size: 14px;
+	color: @theme_fg_color;
+	margin-bottom: 4px;
 }
 
 .article-embed-summary {
-  font-size: 13px;
-  color: alpha(@theme_fg_color, 0.7);
-  line-height: 1.4;
+	font-size: 13px;
+	color: alpha(@theme_fg_color, 0.7);
+	line-height: 1.4;
 }
 
 .article-embed-author {
-  font-size: 12px;
-  color: alpha(@theme_fg_color, 0.5);
-  margin-top: 8px;
+	font-size: 12px;
+	color: alpha(@theme_fg_color, 0.5);
+	margin-top: 8px;
 }
 
 /* Article kind badge */
 .article-badge {
-  border-radius: 6px;
-  padding: 2px 8px;
-  font-size: 11px;
-  font-weight: 500;
-  background: alpha(@accent_bg_color, 0.12);
-  color: @accent_bg_color;
+	border-radius: 6px;
+	padding: 2px 8px;
+	font-size: 11px;
+	font-weight: 500;
+	background: alpha(@accent_bg_color, 0.12);
+	color: @accent_bg_color;
 }
 
 /* ===== NIP-32 Label/Tag Styles ===== */
 
 /* Container for note labels */
 .note-labels-container {
-  margin-top: 4px;
+	margin-top: 4px;
 }
 
 /* Individual label chip/tag */
 .note-label-chip {
-  border-radius: 9999px;
-  padding: 2px 10px;
-  font-size: 11px;
-  font-weight: 500;
-  background: alpha(@accent_bg_color, 0.12);
-  color: @accent_bg_color;
-  transition: all 150ms ease;
+	border-radius: 9999px;
+	padding: 2px 10px;
+	font-size: 11px;
+	font-weight: 500;
+	background: alpha(@accent_bg_color, 0.12);
+	color: @accent_bg_color;
+	transition: all 150ms ease;
 }
 
 .note-label-chip:hover {
-  background: alpha(@accent_bg_color, 0.20);
+	background: alpha(@accent_bg_color, 0.2);
 }
 
 /* Namespace prefix in label */
 .label-namespace {
-  opacity: 0.7;
-  font-weight: 400;
+	opacity: 0.7;
+	font-weight: 400;
 }
 
 /* Topic labels - slightly different styling */
 .note-label-chip.topic {
-  background: alpha(#6366f1, 0.12);
-  color: #6366f1;
+	background: alpha(#6366f1, 0.12);
+	color: #6366f1;
 }
 
 .note-label-chip.topic:hover {
-  background: alpha(#6366f1, 0.20);
+	background: alpha(#6366f1, 0.2);
 }
 
 /* UGC labels */
 .note-label-chip.ugc {
-  background: alpha(#10b981, 0.12);
-  color: #10b981;
+	background: alpha(#10b981, 0.12);
+	color: #10b981;
 }
 
 .note-label-chip.ugc:hover {
-  background: alpha(#10b981, 0.20);
+	background: alpha(#10b981, 0.2);
 }
 
 /* Quality labels */
 .note-label-chip.quality {
-  background: alpha(#f59e0b, 0.12);
-  color: #f59e0b;
+	background: alpha(#f59e0b, 0.12);
+	color: #f59e0b;
 }
 
 .note-label-chip.quality:hover {
-  background: alpha(#f59e0b, 0.20);
+	background: alpha(#f59e0b, 0.2);
 }
 
 /* Review/moderation labels */
 .note-label-chip.review {
-  background: alpha(#ef4444, 0.12);
-  color: #ef4444;
+	background: alpha(#ef4444, 0.12);
+	color: #ef4444;
 }
 
 .note-label-chip.review:hover {
-  background: alpha(#ef4444, 0.20);
+	background: alpha(#ef4444, 0.2);
 }
 
 /* Add Label Dialog Styles */
 .label-dialog-grid {
-  margin: 12px;
+	margin: 12px;
 }
 
 .label-preset-btn {
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 12px;
-  min-width: 80px;
+	border-radius: 8px;
+	padding: 8px 12px;
+	font-size: 12px;
+	min-width: 80px;
 }
 
 .label-preset-btn:checked {
-  background: alpha(@accent_bg_color, 0.15);
-  color: @accent_bg_color;
-  border-color: alpha(@accent_bg_color, 0.3);
+	background: alpha(@accent_bg_color, 0.15);
+	color: @accent_bg_color;
+	border-color: alpha(@accent_bg_color, 0.3);
 }
 
 .label-custom-entry {
-  border-radius: 6px;
-  padding: 8px 12px;
-  margin-top: 8px;
+	border-radius: 6px;
+	padding: 8px 12px;
+	margin-top: 8px;
 }
 
 /* ============================================
@@ -1791,89 +1931,89 @@ profile-row.muted .profile-row-avatar {
 
 /* Badge container in profile pane */
 .profile-badges {
-  padding: 4px 8px;
-  border-radius: 8px;
-  background: alpha(@theme_bg_color, 0.3);
-  border: 1px solid alpha(@theme_fg_color, 0.05);
+	padding: 4px 8px;
+	border-radius: 8px;
+	background: alpha(@theme_bg_color, 0.3);
+	border: 1px solid alpha(@theme_fg_color, 0.05);
 }
 
 /* Individual badge icon button */
 .profile-badge-icon {
-  min-width: 32px;
-  min-height: 32px;
-  padding: 2px;
-  border-radius: 6px;
-  transition: all 150ms ease;
+	min-width: 32px;
+	min-height: 32px;
+	padding: 2px;
+	border-radius: 6px;
+	transition: all 150ms ease;
 }
 
 .profile-badge-icon:hover {
-  background: alpha(@accent_bg_color, 0.15);
-  transform: scale(1.05);
+	background: alpha(@accent_bg_color, 0.15);
+	transform: scale(1.05);
 }
 
 .profile-badge-icon picture {
-  min-width: 28px;
-  min-height: 28px;
-  border-radius: 4px;
+	min-width: 28px;
+	min-height: 28px;
+	border-radius: 4px;
 }
 
 /* Badge image styling */
 .profile-badge-icon image {
-  color: @accent_bg_color;
+	color: @accent_bg_color;
 }
 
 /* Badge popover for details */
 .badge-popover {
-  padding: 12px;
-  min-width: 200px;
-  max-width: 280px;
+	padding: 12px;
+	min-width: 200px;
+	max-width: 280px;
 }
 
 .badge-popover-image {
-  min-width: 64px;
-  min-height: 64px;
-  border-radius: 8px;
-  margin-bottom: 8px;
+	min-width: 64px;
+	min-height: 64px;
+	border-radius: 8px;
+	margin-bottom: 8px;
 }
 
 .badge-popover-name {
-  font-weight: 600;
-  font-size: 15px;
-  color: @theme_fg_color;
+	font-weight: 600;
+	font-size: 15px;
+	color: @theme_fg_color;
 }
 
 .badge-popover-description {
-  font-size: 13px;
-  line-height: 1.4;
-  color: alpha(@theme_fg_color, 0.8);
-  margin-top: 4px;
+	font-size: 13px;
+	line-height: 1.4;
+	color: alpha(@theme_fg_color, 0.8);
+	margin-top: 4px;
 }
 
 .badge-popover-issuer {
-  font-size: 12px;
-  color: alpha(@theme_fg_color, 0.6);
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid alpha(@theme_fg_color, 0.1);
+	font-size: 12px;
+	color: alpha(@theme_fg_color, 0.6);
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px solid alpha(@theme_fg_color, 0.1);
 }
 
 /* Badge in note/embed context */
 .note-badge-icon {
-  min-width: 20px;
-  min-height: 20px;
-  border-radius: 4px;
+	min-width: 20px;
+	min-height: 20px;
+	border-radius: 4px;
 }
 
 /* Small badge for compact displays */
 .badge-icon-small {
-  min-width: 24px;
-  min-height: 24px;
+	min-width: 24px;
+	min-height: 24px;
 }
 
 .badge-icon-small picture {
-  min-width: 22px;
-  min-height: 22px;
-  border-radius: 3px;
+	min-width: 22px;
+	min-height: 22px;
+	border-radius: 3px;
 }
 
 /* ============================================
@@ -1882,194 +2022,194 @@ profile-row.muted .profile-row-avatar {
 
 /* Poll Widget Container */
 .poll-widget {
-  border-radius: 12px;
-  background: alpha(@theme_bg_color, 0.5);
-  border: 1px solid alpha(@accent_bg_color, 0.2);
-  padding: 12px;
-  margin-top: 8px;
-  margin-bottom: 8px;
+	border-radius: 12px;
+	background: alpha(@theme_bg_color, 0.5);
+	border: 1px solid alpha(@accent_bg_color, 0.2);
+	padding: 12px;
+	margin-top: 8px;
+	margin-bottom: 8px;
 }
 
 /* Poll Header */
 .poll-header {
-  margin-bottom: 8px;
+	margin-bottom: 8px;
 }
 
 .poll-icon {
-  color: @accent_bg_color;
-  min-width: 18px;
-  min-height: 18px;
+	color: @accent_bg_color;
+	min-width: 18px;
+	min-height: 18px;
 }
 
 .poll-title {
-  font-weight: 600;
-  font-size: 14px;
-  color: @accent_bg_color;
+	font-weight: 600;
+	font-size: 14px;
+	color: @accent_bg_color;
 }
 
 .poll-time {
-  font-size: 12px;
-  color: alpha(@theme_fg_color, 0.6);
-  font-style: italic;
+	font-size: 12px;
+	color: alpha(@theme_fg_color, 0.6);
+	font-style: italic;
 }
 
 .poll-time.poll-closed {
-  color: @error_color;
-  font-weight: 500;
+	color: @error_color;
+	font-weight: 500;
 }
 
 /* Poll Options */
 .poll-options {
-  margin-bottom: 8px;
+	margin-bottom: 8px;
 }
 
 .poll-option-row {
-  margin-bottom: 4px;
+	margin-bottom: 4px;
 }
 
 .poll-option-button {
-  font-size: 14px;
+	font-size: 14px;
 }
 
 .poll-option-button:checked {
-  font-weight: 500;
+	font-weight: 500;
 }
 
 .poll-option-count {
-  font-size: 12px;
-  font-weight: 500;
-  color: alpha(@theme_fg_color, 0.7);
-  min-width: 60px;
-  text-align: right;
+	font-size: 12px;
+	font-weight: 500;
+	color: alpha(@theme_fg_color, 0.7);
+	min-width: 60px;
+	text-align: right;
 }
 
 .poll-option-bar {
-  min-height: 6px;
-  border-radius: 3px;
+	min-height: 6px;
+	border-radius: 3px;
 }
 
 .poll-option-bar trough {
-  background: alpha(@theme_fg_color, 0.1);
-  border-radius: 3px;
-  min-height: 6px;
+	background: alpha(@theme_fg_color, 0.1);
+	border-radius: 3px;
+	min-height: 6px;
 }
 
 .poll-option-bar progress {
-  background: @accent_bg_color;
-  border-radius: 3px;
+	background: @accent_bg_color;
+	border-radius: 3px;
 }
 
 .poll-option-bar.poll-option-voted progress {
-  background: linear-gradient(
-    90deg,
-    @accent_bg_color 0%,
-    shade(@accent_bg_color, 0.8) 100%
-  );
+	background: linear-gradient(
+		90deg,
+		@accent_bg_color 0%,
+		shade(@accent_bg_color, 0.8) 100%
+	);
 }
 
 /* Poll Footer */
 .poll-footer {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid alpha(@theme_fg_color, 0.1);
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px solid alpha(@theme_fg_color, 0.1);
 }
 
 .poll-status {
-  font-size: 13px;
-  color: alpha(@theme_fg_color, 0.7);
+	font-size: 13px;
+	color: alpha(@theme_fg_color, 0.7);
 }
 
 .poll-vote-button {
-  padding: 6px 16px;
-  border-radius: 9999px;
-  font-weight: 500;
+	padding: 6px 16px;
+	border-radius: 9999px;
+	font-weight: 500;
 }
 
 /* Poll Composer */
 .poll-composer {
-  border-radius: 12px;
-  background: alpha(@theme_bg_color, 0.6);
-  border: 1px solid alpha(@theme_fg_color, 0.1);
+	border-radius: 12px;
+	background: alpha(@theme_bg_color, 0.6);
+	border: 1px solid alpha(@theme_fg_color, 0.1);
 }
 
 .poll-composer-icon {
-  color: @accent_bg_color;
-  min-width: 20px;
-  min-height: 20px;
+	color: @accent_bg_color;
+	min-width: 20px;
+	min-height: 20px;
 }
 
 .poll-composer-title {
-  font-weight: 600;
-  color: @theme_fg_color;
+	font-weight: 600;
+	color: @theme_fg_color;
 }
 
 .poll-section-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: alpha(@theme_fg_color, 0.7);
-  margin-bottom: 4px;
+	font-size: 13px;
+	font-weight: 500;
+	color: alpha(@theme_fg_color, 0.7);
+	margin-bottom: 4px;
 }
 
 .poll-question-entry {
-  font-size: 15px;
-  padding: 10px 12px;
-  border-radius: 8px;
+	font-size: 15px;
+	padding: 10px 12px;
+	border-radius: 8px;
 }
 
 .poll-options-container {
-  margin-top: 4px;
+	margin-top: 4px;
 }
 
 .poll-option-entry-row {
-  margin-bottom: 4px;
+	margin-bottom: 4px;
 }
 
 .poll-option-number {
-  font-weight: 600;
-  color: alpha(@theme_fg_color, 0.5);
-  min-width: 24px;
+	font-weight: 600;
+	color: alpha(@theme_fg_color, 0.5);
+	min-width: 24px;
 }
 
 .poll-option-entry {
-  padding: 8px 12px;
-  border-radius: 6px;
+	padding: 8px 12px;
+	border-radius: 6px;
 }
 
 .poll-option-remove {
-  opacity: 0.6;
-  transition: opacity 150ms ease;
+	opacity: 0.6;
+	transition: opacity 150ms ease;
 }
 
 .poll-option-remove:hover {
-  opacity: 1;
-  color: @error_color;
+	opacity: 1;
+	color: @error_color;
 }
 
 .poll-add-option {
-  color: @accent_bg_color;
-  padding: 6px 12px;
-  margin-top: 4px;
+	color: @accent_bg_color;
+	padding: 6px 12px;
+	margin-top: 4px;
 }
 
 .poll-add-option:hover {
-  background: alpha(@accent_bg_color, 0.1);
+	background: alpha(@accent_bg_color, 0.1);
 }
 
 .poll-settings {
-  padding: 12px;
-  border-radius: 8px;
-  background: alpha(@theme_bg_color, 0.4);
+	padding: 12px;
+	border-radius: 8px;
+	background: alpha(@theme_bg_color, 0.4);
 }
 
 .poll-create-button {
-  padding: 8px 20px;
-  border-radius: 8px;
-  font-weight: 500;
+	padding: 8px 20px;
+	border-radius: 8px;
+	font-weight: 500;
 }
 
 .poll-cancel-button {
-  padding: 8px 16px;
-  border-radius: 8px;
+	padding: 8px 16px;
+	border-radius: 8px;
 }
 
 /* ============================================
@@ -2078,221 +2218,221 @@ profile-row.muted .profile-row-avatar {
 
 /* Main video card container */
 .video-card {
-  border-radius: 16px;
-  padding: 0;
-  background: alpha(@theme_bg_color, 0.7);
-  border: 1px solid alpha(@theme_fg_color, 0.08);
-  overflow: hidden;
-  animation: video-fade-in 600ms ease-out;
+	border-radius: 16px;
+	padding: 0;
+	background: alpha(@theme_bg_color, 0.7);
+	border: 1px solid alpha(@theme_fg_color, 0.08);
+	overflow: hidden;
+	animation: video-fade-in 600ms ease-out;
 }
 
 @keyframes video-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+	from {
+		opacity: 0;
+		transform: translateY(12px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
 }
 
 .video-card:hover {
-  background: alpha(@theme_bg_color, 0.85);
-  border-color: alpha(@theme_fg_color, 0.12);
-  box-shadow: 0 4px 16px alpha(@theme_fg_color, 0.08);
+	background: alpha(@theme_bg_color, 0.85);
+	border-color: alpha(@theme_fg_color, 0.12);
+	box-shadow: 0 4px 16px alpha(@theme_fg_color, 0.08);
 }
 
 /* Vertical video card adjustments */
 .video-card.video-vertical {
-  max-width: 350px;
+	max-width: 350px;
 }
 
 /* Video title */
 .video-title {
-  font-weight: 700;
-  font-size: 18px;
-  line-height: 1.3;
-  color: @theme_fg_color;
-  padding: 8px 12px 4px 12px;
+	font-weight: 700;
+	font-size: 18px;
+	line-height: 1.3;
+	color: @theme_fg_color;
+	padding: 8px 12px 4px 12px;
 }
 
 /* Video summary/description */
 .video-summary {
-  font-size: 14px;
-  line-height: 1.4;
-  color: alpha(@theme_fg_color, 0.75);
-  padding: 0 12px 8px 12px;
+	font-size: 14px;
+	line-height: 1.4;
+	color: alpha(@theme_fg_color, 0.75);
+	padding: 0 12px 8px 12px;
 }
 
 /* Thumbnail overlay container */
 .video-thumbnail-overlay {
-  border-radius: 12px;
-  background: #000;
-  margin: 8px;
-  overflow: hidden;
-  transition: all 200ms ease;
+	border-radius: 12px;
+	background: #000;
+	margin: 8px;
+	overflow: hidden;
+	transition: all 200ms ease;
 }
 
 .video-thumbnail-overlay:hover {
-  box-shadow: 0 4px 12px alpha(black, 0.3);
+	box-shadow: 0 4px 12px alpha(black, 0.3);
 }
 
 /* Thumbnail image */
 .video-thumbnail {
-  background: alpha(@theme_bg_color, 0.3);
+	background: alpha(@theme_bg_color, 0.3);
 }
 
 /* No thumbnail fallback */
 .video-thumbnail.video-no-thumbnail {
-  background: linear-gradient(
-    135deg,
-    alpha(@theme_bg_color, 0.4) 0%,
-    alpha(@theme_bg_color, 0.2) 100%
-  );
+	background: linear-gradient(
+		135deg,
+		alpha(@theme_bg_color, 0.4) 0%,
+		alpha(@theme_bg_color, 0.2) 100%
+	);
 }
 
 /* Play button overlay */
 .video-play-btn {
-  min-width: 64px;
-  min-height: 64px;
-  background: alpha(black, 0.6);
-  color: white;
-  border: 2px solid alpha(white, 0.3);
-  box-shadow: 0 4px 16px alpha(black, 0.4);
-  transition: all 200ms ease;
+	min-width: 64px;
+	min-height: 64px;
+	background: alpha(black, 0.6);
+	color: white;
+	border: 2px solid alpha(white, 0.3);
+	box-shadow: 0 4px 16px alpha(black, 0.4);
+	transition: all 200ms ease;
 }
 
 .video-play-btn:hover {
-  background: alpha(@accent_bg_color, 0.9);
-  border-color: @accent_bg_color;
-  transform: scale(1.1);
-  box-shadow: 0 6px 20px alpha(@accent_bg_color, 0.4);
+	background: alpha(@accent_bg_color, 0.9);
+	border-color: @accent_bg_color;
+	transform: scale(1.1);
+	box-shadow: 0 6px 20px alpha(@accent_bg_color, 0.4);
 }
 
 .video-play-btn:active {
-  transform: scale(0.95);
+	transform: scale(0.95);
 }
 
 .video-play-btn image {
-  min-width: 32px;
-  min-height: 32px;
+	min-width: 32px;
+	min-height: 32px;
 }
 
 /* Duration badge */
 .video-duration-badge {
-  background: alpha(black, 0.75);
-  color: white;
-  font-size: 12px;
-  font-weight: 500;
-  padding: 4px 8px;
-  border-radius: 6px;
-  font-variant-numeric: tabular-nums;
+	background: alpha(black, 0.75);
+	color: white;
+	font-size: 12px;
+	font-weight: 500;
+	padding: 4px 8px;
+	border-radius: 6px;
+	font-variant-numeric: tabular-nums;
 }
 
 /* Video hashtags */
 .video-hashtags {
-  padding: 4px 12px 8px 12px;
+	padding: 4px 12px 8px 12px;
 }
 
 .video-hashtags flowboxchild {
-  padding: 0;
-  margin: 0;
+	padding: 0;
+	margin: 0;
 }
 
 .video-hashtag {
-  border-radius: 9999px;
-  padding: 4px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  background: alpha(@accent_bg_color, 0.12);
-  color: @accent_bg_color;
-  transition: all 150ms ease;
+	border-radius: 9999px;
+	padding: 4px 12px;
+	font-size: 12px;
+	font-weight: 500;
+	background: alpha(@accent_bg_color, 0.12);
+	color: @accent_bg_color;
+	transition: all 150ms ease;
 }
 
 .video-hashtag:hover {
-  background: alpha(@accent_bg_color, 0.2);
+	background: alpha(@accent_bg_color, 0.2);
 }
 
 /* Video in timeline - adjust spacing */
 .timeline .video-card {
-  margin-bottom: 8px;
+	margin-bottom: 8px;
 }
 
 /* Video player when shown */
 .video-card .note-media-video {
-  margin: 8px;
-  border-radius: 12px;
+	margin: 8px;
+	border-radius: 12px;
 }
 
 /* Vertical video specific styles */
 .video-vertical .video-thumbnail-overlay {
-  min-height: 350px;
-  max-height: 500px;
+	min-height: 350px;
+	max-height: 500px;
 }
 
 .video-vertical .note-media-video {
-  min-height: 350px;
-  max-height: 500px;
+	min-height: 350px;
+	max-height: 500px;
 }
 
 .video-vertical .video-play-btn {
-  min-width: 56px;
-  min-height: 56px;
+	min-width: 56px;
+	min-height: 56px;
 }
 
 /* Video embed preview (when referenced via "a" tag or nevent) */
 .video-embed {
-  border-radius: 10px;
-  background: alpha(@theme_bg_color, 0.5);
-  border: 1px solid alpha(@theme_fg_color, 0.1);
-  padding: 8px;
-  margin: 8px 0;
-  transition: all 150ms ease;
+	border-radius: 10px;
+	background: alpha(@theme_bg_color, 0.5);
+	border: 1px solid alpha(@theme_fg_color, 0.1);
+	padding: 8px;
+	margin: 8px 0;
+	transition: all 150ms ease;
 }
 
 .video-embed:hover {
-  background: alpha(@theme_bg_color, 0.7);
-  border-color: alpha(@theme_fg_color, 0.15);
+	background: alpha(@theme_bg_color, 0.7);
+	border-color: alpha(@theme_fg_color, 0.15);
 }
 
 .video-embed-thumbnail {
-  border-radius: 8px;
-  min-width: 120px;
-  min-height: 68px;
-  background: #000;
+	border-radius: 8px;
+	min-width: 120px;
+	min-height: 68px;
+	background: #000;
 }
 
 .video-embed-title {
-  font-weight: 600;
-  font-size: 14px;
-  color: @theme_fg_color;
+	font-weight: 600;
+	font-size: 14px;
+	color: @theme_fg_color;
 }
 
 .video-embed-duration {
-  font-size: 12px;
-  color: alpha(@theme_fg_color, 0.6);
-  font-variant-numeric: tabular-nums;
+	font-size: 12px;
+	color: alpha(@theme_fg_color, 0.6);
+	font-variant-numeric: tabular-nums;
 }
 
 .video-embed-author {
-  font-size: 12px;
-  color: alpha(@theme_fg_color, 0.5);
+	font-size: 12px;
+	color: alpha(@theme_fg_color, 0.5);
 }
 
 /* Video kind badge */
 .video-badge {
-  border-radius: 6px;
-  padding: 2px 8px;
-  font-size: 11px;
-  font-weight: 500;
-  background: alpha(#e91e63, 0.12);
-  color: #e91e63;
+	border-radius: 6px;
+	padding: 2px 8px;
+	font-size: 11px;
+	font-weight: 500;
+	background: alpha(#e91e63, 0.12);
+	color: #e91e63;
 }
 
 .video-badge.vertical {
-  background: alpha(#9c27b0, 0.12);
-  color: #9c27b0;
+	background: alpha(#9c27b0, 0.12);
+	color: #9c27b0;
 }
 
 /* ============================================
@@ -2301,177 +2441,165 @@ profile-row.muted .profile-row-avatar {
 
 /* Main zap goal widget container */
 .zap-goal-widget {
-  border-radius: 12px;
-  background: alpha(@theme_bg_color, 0.6);
-  border: 1px solid alpha(#f7931a, 0.25);
-  padding: 12px;
-  margin: 8px 0;
-  transition: all 200ms ease;
+	border-radius: 12px;
+	background: alpha(@theme_bg_color, 0.6);
+	border: 1px solid alpha(#f7931a, 0.25);
+	padding: 12px;
+	margin: 8px 0;
+	transition: all 200ms ease;
 }
 
 .zap-goal-widget:hover {
-  background: alpha(@theme_bg_color, 0.75);
-  border-color: alpha(#f7931a, 0.35);
-  box-shadow: 0 2px 8px alpha(#f7931a, 0.1);
+	background: alpha(@theme_bg_color, 0.75);
+	border-color: alpha(#f7931a, 0.35);
+	box-shadow: 0 2px 8px alpha(#f7931a, 0.1);
 }
 
 /* Funded/complete state */
 .zap-goal-widget.zap-goal-funded {
-  border-color: alpha(#2e7d32, 0.4);
-  background: alpha(#2e7d32, 0.08);
+	border-color: alpha(#2e7d32, 0.4);
+	background: alpha(#2e7d32, 0.08);
 }
 
 .zap-goal-widget.zap-goal-funded:hover {
-  background: alpha(#2e7d32, 0.12);
-  border-color: alpha(#2e7d32, 0.5);
+	background: alpha(#2e7d32, 0.12);
+	border-color: alpha(#2e7d32, 0.5);
 }
 
 /* Lightning bolt icon */
 .zap-goal-icon {
-  color: #f7931a;
+	color: #f7931a;
 }
 
 /* Goal title */
 .zap-goal-title {
-  font-weight: 600;
-  font-size: 15px;
-  color: @theme_fg_color;
+	font-weight: 600;
+	font-size: 15px;
+	color: @theme_fg_color;
 }
 
 /* Creator link button */
 .zap-goal-creator {
-  padding: 2px 6px;
-  margin: -2px -6px;
-  border-radius: 4px;
+	padding: 2px 6px;
+	margin: -2px -6px;
+	border-radius: 4px;
 }
 
 .zap-goal-creator:hover {
-  background: alpha(@accent_bg_color, 0.1);
+	background: alpha(@accent_bg_color, 0.1);
 }
 
 .zap-goal-creator:hover label {
-  color: @accent_bg_color;
+	color: @accent_bg_color;
 }
 
 /* Description text */
 .zap-goal-description {
-  font-size: 14px;
-  line-height: 1.4;
-  color: alpha(@theme_fg_color, 0.85);
+	font-size: 14px;
+	line-height: 1.4;
+	color: alpha(@theme_fg_color, 0.85);
 }
 
 /* Progress bar */
 .zap-goal-bar {
-  min-height: 10px;
-  border-radius: 5px;
+	min-height: 10px;
+	border-radius: 5px;
 }
 
 .zap-goal-bar trough {
-  background: alpha(@theme_fg_color, 0.12);
-  border-radius: 5px;
-  min-height: 10px;
+	background: alpha(@theme_fg_color, 0.12);
+	border-radius: 5px;
+	min-height: 10px;
 }
 
 .zap-goal-bar progress {
-  background: linear-gradient(
-    90deg,
-    #f7931a 0%,
-    #ffc107 100%
-  );
-  border-radius: 5px;
+	background: linear-gradient(90deg, #f7931a 0%, #ffc107 100%);
+	border-radius: 5px;
 }
 
 /* Completed progress bar */
 .zap-goal-bar.zap-goal-bar-complete progress {
-  background: linear-gradient(
-    90deg,
-    #2e7d32 0%,
-    #4caf50 100%
-  );
+	background: linear-gradient(90deg, #2e7d32 0%, #4caf50 100%);
 }
 
 /* Expired progress bar */
 .zap-goal-bar.zap-goal-bar-expired progress {
-  background: alpha(@theme_fg_color, 0.4);
+	background: alpha(@theme_fg_color, 0.4);
 }
 
 /* Progress label */
 .zap-goal-progress {
-  font-size: 13px;
-  font-weight: 500;
-  color: #f7931a;
+	font-size: 13px;
+	font-weight: 500;
+	color: #f7931a;
 }
 
 /* Status badge (complete/expired) */
 .zap-goal-status-badge {
-  padding: 2px 8px;
-  border-radius: 9999px;
-  font-size: 11px;
-  font-weight: 500;
+	padding: 2px 8px;
+	border-radius: 9999px;
+	font-size: 11px;
+	font-weight: 500;
 }
 
 .zap-goal-status-badge.zap-goal-complete {
-  background: alpha(#2e7d32, 0.15);
-  color: #2e7d32;
+	background: alpha(#2e7d32, 0.15);
+	color: #2e7d32;
 }
 
 .zap-goal-status-badge.zap-goal-complete image {
-  color: #2e7d32;
+	color: #2e7d32;
 }
 
 .zap-goal-status-badge.zap-goal-expired {
-  background: alpha(@theme_fg_color, 0.12);
-  color: alpha(@theme_fg_color, 0.6);
+	background: alpha(@theme_fg_color, 0.12);
+	color: alpha(@theme_fg_color, 0.6);
 }
 
 .zap-goal-status-badge.zap-goal-expired image {
-  color: alpha(@theme_fg_color, 0.6);
+	color: alpha(@theme_fg_color, 0.6);
 }
 
 /* Zap/Contribute button */
 .zap-goal-zap-btn {
-  padding: 6px 14px;
-  border-radius: 8px;
-  font-weight: 500;
-  background: linear-gradient(
-    135deg,
-    #f7931a 0%,
-    #ffc107 100%
-  );
-  color: white;
-  border: none;
-  transition: all 150ms ease;
+	padding: 6px 14px;
+	border-radius: 8px;
+	font-weight: 500;
+	background: linear-gradient(135deg, #f7931a 0%, #ffc107 100%);
+	color: white;
+	border: none;
+	transition: all 150ms ease;
 }
 
 .zap-goal-zap-btn:hover {
-  background: linear-gradient(
-    135deg,
-    shade(#f7931a, 0.9) 0%,
-    shade(#ffc107, 0.9) 100%
-  );
-  box-shadow: 0 2px 8px alpha(#f7931a, 0.3);
+	background: linear-gradient(
+		135deg,
+		shade(#f7931a, 0.9) 0%,
+		shade(#ffc107, 0.9) 100%
+	);
+	box-shadow: 0 2px 8px alpha(#f7931a, 0.3);
 }
 
 .zap-goal-zap-btn:disabled {
-  background: alpha(@theme_fg_color, 0.1);
-  color: alpha(@theme_fg_color, 0.4);
+	background: alpha(@theme_fg_color, 0.1);
+	color: alpha(@theme_fg_color, 0.4);
 }
 
 .zap-goal-zap-btn image {
-  color: white;
+	color: white;
 }
 
 .zap-goal-zap-btn:disabled image {
-  color: alpha(@theme_fg_color, 0.4);
+	color: alpha(@theme_fg_color, 0.4);
 }
 
 /* Overfunded celebration */
 .zap-goal-widget.zap-goal-funded .zap-goal-progress {
-  color: #2e7d32;
+	color: #2e7d32;
 }
 
 .zap-goal-widget.zap-goal-funded .zap-goal-icon {
-  color: #2e7d32;
+	color: #2e7d32;
 }
 
 /* ============================================
@@ -2479,81 +2607,81 @@ profile-row.muted .profile-row-avatar {
  * ============================================ */
 
 .highlight-card {
-  border-radius: 8px;
-  padding: 8px;
-  background: alpha(@theme_bg_color, 0.6);
-  border: 1px solid alpha(@theme_fg_color, 0.08);
-  margin-bottom: 8px;
+	border-radius: 8px;
+	padding: 8px;
+	background: alpha(@theme_bg_color, 0.6);
+	border: 1px solid alpha(@theme_fg_color, 0.08);
+	margin-bottom: 8px;
 }
 
 .highlight-card:hover {
-  background: alpha(@theme_bg_color, 0.8);
+	background: alpha(@theme_bg_color, 0.8);
 }
 
 /* Left border indicator (quote-style) */
 .highlight-quote-border {
-  background: @accent_bg_color;
-  border-radius: 2px;
-  min-width: 4px;
+	background: @accent_bg_color;
+	border-radius: 2px;
+	min-width: 4px;
 }
 
 /* Highlighted text (main content) */
 .highlight-text {
-  font-size: 1.05em;
-  line-height: 1.4;
-  color: @theme_fg_color;
+	font-size: 1.05em;
+	line-height: 1.4;
+	color: @theme_fg_color;
 }
 
 /* Context text (collapsed/dimmed) */
 .highlight-context {
-  font-size: 0.9em;
-  line-height: 1.3;
-  opacity: 0.6;
-  margin-top: 4px;
+	font-size: 0.9em;
+	line-height: 1.3;
+	opacity: 0.6;
+	margin-top: 4px;
 }
 
 /* User comment/annotation */
 .highlight-comment {
-  font-size: 0.95em;
-  line-height: 1.3;
-  color: @accent_fg_color;
-  background: alpha(@accent_bg_color, 0.1);
-  padding: 6px 10px;
-  border-radius: 6px;
-  margin-top: 6px;
+	font-size: 0.95em;
+	line-height: 1.3;
+	color: @accent_fg_color;
+	background: alpha(@accent_bg_color, 0.1);
+	padding: 6px 10px;
+	border-radius: 6px;
+	margin-top: 6px;
 }
 
 /* Source link row */
 .highlight-source-row {
-  margin-top: 6px;
+	margin-top: 6px;
 }
 
 .highlight-source-link {
-  font-size: 0.85em;
-  color: @accent_bg_color;
+	font-size: 0.85em;
+	color: @accent_bg_color;
 }
 
 .highlight-source-link:hover {
-  text-decoration: underline;
+	text-decoration: underline;
 }
 
 /* Highlighter metadata row */
 .highlight-meta-row {
-  padding-top: 6px;
-  border-top: 1px solid alpha(@theme_fg_color, 0.06);
+	padding-top: 6px;
+	border-top: 1px solid alpha(@theme_fg_color, 0.06);
 }
 
 .highlight-avatar {
-  border-radius: 50%;
+	border-radius: 50%;
 }
 
 .highlight-author-name {
-  font-weight: 600;
-  font-size: 0.9em;
+	font-weight: 600;
+	font-size: 0.9em;
 }
 
 .highlight-author-name:hover {
-  text-decoration: underline;
+	text-decoration: underline;
 }
 
 /* ============================================
@@ -2562,98 +2690,98 @@ profile-row.muted .profile-row-avatar {
 
 /* OTS badge container */
 .ots-badge {
-  padding: 2px 8px;
-  border-radius: 9999px;
-  font-size: 11px;
-  font-weight: 500;
-  margin-left: 6px;
-  transition: all 150ms ease;
+	padding: 2px 8px;
+	border-radius: 9999px;
+	font-size: 11px;
+	font-weight: 500;
+	margin-left: 6px;
+	transition: all 150ms ease;
 }
 
 .ots-badge image {
-  min-width: 12px;
-  min-height: 12px;
+	min-width: 12px;
+	min-height: 12px;
 }
 
 /* Verified timestamp - Bitcoin green */
 .ots-badge.ots-verified {
-  background: alpha(#2e7d32, 0.15);
-  color: #2e7d32;
-  border: 1px solid alpha(#2e7d32, 0.25);
+	background: alpha(#2e7d32, 0.15);
+	color: #2e7d32;
+	border: 1px solid alpha(#2e7d32, 0.25);
 }
 
 .ots-badge.ots-verified image {
-  color: #2e7d32;
+	color: #2e7d32;
 }
 
 .ots-badge.ots-verified:hover {
-  background: alpha(#2e7d32, 0.25);
+	background: alpha(#2e7d32, 0.25);
 }
 
 /* Pending timestamp - orange/amber */
 .ots-badge.ots-pending {
-  background: alpha(#f7931a, 0.12);
-  color: #f7931a;
-  border: 1px solid alpha(#f7931a, 0.2);
+	background: alpha(#f7931a, 0.12);
+	color: #f7931a;
+	border: 1px solid alpha(#f7931a, 0.2);
 }
 
 .ots-badge.ots-pending image {
-  color: #f7931a;
+	color: #f7931a;
 }
 
 .ots-badge.ots-pending:hover {
-  background: alpha(#f7931a, 0.2);
+	background: alpha(#f7931a, 0.2);
 }
 
 /* Invalid timestamp - red/error */
 .ots-badge.ots-invalid {
-  background: alpha(#c62828, 0.12);
-  color: #c62828;
-  border: 1px solid alpha(#c62828, 0.2);
+	background: alpha(#c62828, 0.12);
+	color: #c62828;
+	border: 1px solid alpha(#c62828, 0.2);
 }
 
 .ots-badge.ots-invalid image {
-  color: #c62828;
+	color: #c62828;
 }
 
 .ots-badge.ots-invalid:hover {
-  background: alpha(#c62828, 0.2);
+	background: alpha(#c62828, 0.2);
 }
 
 /* Upgraded timestamp - blue */
 .ots-badge.ots-upgraded {
-  background: alpha(#1565c0, 0.12);
-  color: #1565c0;
-  border: 1px solid alpha(#1565c0, 0.2);
+	background: alpha(#1565c0, 0.12);
+	color: #1565c0;
+	border: 1px solid alpha(#1565c0, 0.2);
 }
 
 .ots-badge.ots-upgraded image {
-  color: #1565c0;
+	color: #1565c0;
 }
 
 .ots-badge.ots-upgraded:hover {
-  background: alpha(#1565c0, 0.2);
+	background: alpha(#1565c0, 0.2);
 }
 
 /* Unknown status - dim/neutral */
 .ots-badge.ots-unknown {
-  background: alpha(@theme_fg_color, 0.08);
-  color: alpha(@theme_fg_color, 0.6);
-  border: 1px solid alpha(@theme_fg_color, 0.1);
+	background: alpha(@theme_fg_color, 0.08);
+	color: alpha(@theme_fg_color, 0.6);
+	border: 1px solid alpha(@theme_fg_color, 0.1);
 }
 
 .ots-badge.ots-unknown image {
-  color: alpha(@theme_fg_color, 0.6);
+	color: alpha(@theme_fg_color, 0.6);
 }
 
 .ots-badge.ots-unknown:hover {
-  background: alpha(@theme_fg_color, 0.12);
+	background: alpha(@theme_fg_color, 0.12);
 }
 
 /* OTS status label */
 .ots-status-label {
-  font-size: 11px;
-  font-weight: 500;
+	font-size: 11px;
+	font-weight: 500;
 }
 
 /* ============================================
@@ -2662,88 +2790,88 @@ profile-row.muted .profile-row-avatar {
 
 /* Container for external content ID badges */
 .note-external-ids-container {
-  margin-top: 4px;
-  margin-bottom: 2px;
+	margin-top: 4px;
+	margin-bottom: 2px;
 }
 
 /* Base badge styling */
 .nip73-badge {
-  padding: 3px 10px;
-  border-radius: 9999px;
-  font-size: 11px;
-  font-weight: 500;
-  background: alpha(@theme_fg_color, 0.08);
-  border: 1px solid alpha(@theme_fg_color, 0.12);
-  transition: all 150ms ease;
-  cursor: pointer;
+	padding: 3px 10px;
+	border-radius: 9999px;
+	font-size: 11px;
+	font-weight: 500;
+	background: alpha(@theme_fg_color, 0.08);
+	border: 1px solid alpha(@theme_fg_color, 0.12);
+	transition: all 150ms ease;
+	cursor: pointer;
 }
 
 .nip73-badge:hover {
-  background: alpha(@theme_fg_color, 0.14);
-  border-color: alpha(@theme_fg_color, 0.2);
-  box-shadow: 0 1px 4px alpha(@theme_fg_color, 0.08);
+	background: alpha(@theme_fg_color, 0.14);
+	border-color: alpha(@theme_fg_color, 0.2);
+	box-shadow: 0 1px 4px alpha(@theme_fg_color, 0.08);
 }
 
 .nip73-badge image {
-  min-width: 12px;
-  min-height: 12px;
+	min-width: 12px;
+	min-height: 12px;
 }
 
 /* Reference badges (ISBN, DOI) - academic/book purple */
 .nip73-badge.reference-badge {
-  background: alpha(#7c3aed, 0.12);
-  border-color: alpha(#7c3aed, 0.2);
-  color: #7c3aed;
+	background: alpha(#7c3aed, 0.12);
+	border-color: alpha(#7c3aed, 0.2);
+	color: #7c3aed;
 }
 
 .nip73-badge.reference-badge:hover {
-  background: alpha(#7c3aed, 0.2);
-  border-color: alpha(#7c3aed, 0.3);
+	background: alpha(#7c3aed, 0.2);
+	border-color: alpha(#7c3aed, 0.3);
 }
 
 .nip73-badge.reference-badge image {
-  color: #7c3aed;
+	color: #7c3aed;
 }
 
 /* Video badges (IMDB, TMDB, YouTube) - video red/pink */
 .nip73-badge.video-badge {
-  background: alpha(#e91e63, 0.12);
-  border-color: alpha(#e91e63, 0.2);
-  color: #e91e63;
+	background: alpha(#e91e63, 0.12);
+	border-color: alpha(#e91e63, 0.2);
+	color: #e91e63;
 }
 
 .nip73-badge.video-badge:hover {
-  background: alpha(#e91e63, 0.2);
-  border-color: alpha(#e91e63, 0.3);
+	background: alpha(#e91e63, 0.2);
+	border-color: alpha(#e91e63, 0.3);
 }
 
 .nip73-badge.video-badge image {
-  color: #e91e63;
+	color: #e91e63;
 }
 
 /* Audio badges (Spotify, Podcast) - audio green */
 .nip73-badge.audio-badge {
-  background: alpha(#1db954, 0.12);
-  border-color: alpha(#1db954, 0.2);
-  color: #1db954;
+	background: alpha(#1db954, 0.12);
+	border-color: alpha(#1db954, 0.2);
+	color: #1db954;
 }
 
 .nip73-badge.audio-badge:hover {
-  background: alpha(#1db954, 0.2);
-  border-color: alpha(#1db954, 0.3);
+	background: alpha(#1db954, 0.2);
+	border-color: alpha(#1db954, 0.3);
 }
 
 .nip73-badge.audio-badge image {
-  color: #1db954;
+	color: #1db954;
 }
 
 /* Badge icon (dimmed by default) */
 .nip73-badge .dim-label {
-  opacity: 0.8;
+	opacity: 0.8;
 }
 
 /* Badge caption text */
 .nip73-badge .caption {
-  font-size: 11px;
-  font-weight: 500;
+	font-size: 11px;
+	font-weight: 500;
 }
