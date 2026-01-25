@@ -596,11 +596,8 @@
                                                                                         class="GtkButton"
                                                                                         id="btn_new_notes">
                                                                                         <property
-                                                                                            name="halign">
-                                                                                            center</property>
-                                                                                        <property
-                                                                                            name="hexpand">
-                                                                                            false</property>
+                                                                                            name="css-classes">
+                                                                                            new-notes-indicator</property>
                                                                                         <property
                                                                                             name="focusable">
                                                                                             true</property>
@@ -608,12 +605,6 @@
                                                                                             name="tooltip-text">Scroll
                                                                                             to new
                                                                                             notes</property>
-                                                                                        <style>
-                                                                                            <class
-                                                                                                name="pill" />
-                                                                                            <class
-                                                                                                name="suggested-action" />
-                                                                                        </style>
                                                                                         <child>
                                                                                             <object
                                                                                                 class="GtkBox">
@@ -724,26 +715,6 @@
                                                                     <object
                                                                         class="GnostrSearchResultsView"
                                                                         id="search_view">
-                                                                        <property name="hexpand">
-                                                                            true</property>
-                                                                        <property name="vexpand">
-                                                                            true</property>
-                                                                    </object>
-                                                                </property>
-                                                            </object>
-                                                        </child>
-
-                                                        <child>
-                                                            <object class="AdwViewStackPage">
-                                                                <property name="name">marketplace</property>
-                                                                <property name="title"
-                                                                    translatable="yes">Marketplace</property>
-                                                                <property name="icon-name">
-                                                                    basket-symbolic</property>
-                                                                <property name="child">
-                                                                    <object
-                                                                        class="GnostrClassifiedsView"
-                                                                        id="classifieds_view">
                                                                         <property name="hexpand">
                                                                             true</property>
                                                                         <property name="vexpand">
