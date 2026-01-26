@@ -411,8 +411,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
 
                                         Button btn_new_notes {
                                             css-classes: [
-                                                "",
-                                                "                                                                                            new-notes-indicator",
+                                                "new-notes-indicator",
                                             ];
 
                                             focusable: false;
@@ -427,7 +426,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                                 }
 
                                                 Label lbl_new_notes_count {
-                                                    label: " New notes";
+                                                    label: "New notes";
                                                 }
                                             }
                                         }
@@ -520,7 +519,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
             valign: fill;
 
             $GnostrProfilePane profile_pane {
-                vexpand: "true";
+                vexpand: true;
             }
         }
 
@@ -533,8 +532,8 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
             valign: fill;
 
             $GnostrThreadView thread_view {
-                vexpand: "true";
-                width-request: "450";
+                vexpand: true;
+                width-request: 450;
             }
         }
 
