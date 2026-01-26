@@ -1,120 +1,204 @@
 using Gtk 4.0;
+using Adw 1;
 
-ShortcutsWindow shortcuts_window {
-  modal: true;
+Adw.Dialog shortcuts_window {
+    title: _("Keyboard Shortcuts");
+    content-width: 400;
+    content-height: 500;
 
-  ShortcutsSection {
-    section-name: "shortcuts";
-    max-height: 12;
+    child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
 
-    ShortcutsGroup {
-      title: _("General");
+        ScrolledWindow {
+            hscrollbar-policy: never;
 
-      ShortcutsShortcut {
-        title: _("Show Keyboard Shortcuts");
-        accelerator: "<Primary>question";
-      }
+            Adw.Clamp {
+                maximum-size: 400;
+                margin-start: 12;
+                margin-end: 12;
+                margin-top: 12;
+                margin-bottom: 12;
 
-      ShortcutsShortcut {
-        title: _("Preferences");
-        accelerator: "<Primary>comma";
-      }
+                Box {
+                    orientation: vertical;
+                    spacing: 24;
+                    // General
+                    Box {
+                        orientation: vertical;
+                        spacing: 6;
 
-      ShortcutsShortcut {
-        title: _("Help / About");
-        accelerator: "F1";
-      }
+                        Label {
+                            label: _("General");
+                            xalign: 0;
 
-      ShortcutsShortcut {
-        title: _("Quit Application");
-        accelerator: "<Primary>q";
-      }
-    }
+                            styles [
+                                "heading",
+                            ]
+                        }
 
-    ShortcutsGroup {
-      title: _("Profile Management");
+                        Adw.ActionRow {
+                            title: _("Show Keyboard Shortcuts");
+                            subtitle: "Ctrl+?";
+                        }
 
-      ShortcutsShortcut {
-        title: _("New Identity");
-        accelerator: "<Primary>n";
-      }
+                        Adw.ActionRow {
+                            title: _("Preferences");
+                            subtitle: "Ctrl+,";
+                        }
 
-      ShortcutsShortcut {
-        title: _("Import Profile");
-        accelerator: "<Primary>i";
-      }
+                        Adw.ActionRow {
+                            title: _("Help / About");
+                            subtitle: "F1";
+                        }
 
-      ShortcutsShortcut {
-        title: _("Export / Backup");
-        accelerator: "<Primary>e";
-      }
-    }
+                        Adw.ActionRow {
+                            title: _("Quit Application");
+                            subtitle: "Ctrl+Q";
+                        }
+                    }
 
-    ShortcutsGroup {
-      title: _("Security");
+                    // Profile Management
+                    Box {
+                        orientation: vertical;
+                        spacing: 6;
 
-      ShortcutsShortcut {
-        title: _("Lock Session");
-        accelerator: "<Primary>l";
-      }
-    }
+                        Label {
+                            label: _("Profile Management");
+                            xalign: 0;
 
-    ShortcutsGroup {
-      title: _("Dialogs");
+                            styles [
+                                "heading",
+                            ]
+                        }
 
-      ShortcutsShortcut {
-        title: _("Close Dialog");
-        accelerator: "Escape";
-      }
+                        Adw.ActionRow {
+                            title: _("New Identity");
+                            subtitle: "Ctrl+N";
+                        }
 
-      ShortcutsShortcut {
-        title: _("Submit Form / Activate Default");
-        accelerator: "Return";
-      }
-    }
+                        Adw.ActionRow {
+                            title: _("Import Profile");
+                            subtitle: "Ctrl+I";
+                        }
 
-    ShortcutsGroup {
-      title: _("Navigation");
+                        Adw.ActionRow {
+                            title: _("Export / Backup");
+                            subtitle: "Ctrl+E";
+                        }
+                    }
 
-      ShortcutsShortcut {
-        title: _("Move to Next Element");
-        accelerator: "Tab";
-      }
+                    // Security
+                    Box {
+                        orientation: vertical;
+                        spacing: 6;
 
-      ShortcutsShortcut {
-        title: _("Move to Previous Element");
-        accelerator: "<Shift>Tab";
-      }
+                        Label {
+                            label: _("Security");
+                            xalign: 0;
 
-      ShortcutsShortcut {
-        title: _("Navigate Lists");
-        accelerator: "Up Down";
-      }
+                            styles [
+                                "heading",
+                            ]
+                        }
 
-      ShortcutsShortcut {
-        title: _("Next / Previous Page");
-        accelerator: "<Primary>Page_Down <Primary>Page_Up";
-      }
+                        Adw.ActionRow {
+                            title: _("Lock Session");
+                            subtitle: "Ctrl+L";
+                        }
+                    }
 
-      ShortcutsShortcut {
-        title: _("Activate Focused Button");
-        accelerator: "Return space";
-      }
-    }
+                    // Dialogs
+                    Box {
+                        orientation: vertical;
+                        spacing: 6;
 
-    ShortcutsGroup {
-      title: _("Approval Dialog");
+                        Label {
+                            label: _("Dialogs");
+                            xalign: 0;
 
-      ShortcutsShortcut {
-        title: _("Approve Request");
-        accelerator: "<Primary>a";
-      }
+                            styles [
+                                "heading",
+                            ]
+                        }
 
-      ShortcutsShortcut {
-        title: _("Deny Request");
-        accelerator: "<Primary>d";
-      }
-    }
-  }
+                        Adw.ActionRow {
+                            title: _("Close Dialog");
+                            subtitle: "Escape";
+                        }
+
+                        Adw.ActionRow {
+                            title: _("Submit Form / Activate Default");
+                            subtitle: "Return";
+                        }
+                    }
+
+                    // Navigation
+                    Box {
+                        orientation: vertical;
+                        spacing: 6;
+
+                        Label {
+                            label: _("Navigation");
+                            xalign: 0;
+
+                            styles [
+                                "heading",
+                            ]
+                        }
+
+                        Adw.ActionRow {
+                            title: _("Move to Next Element");
+                            subtitle: "Tab";
+                        }
+
+                        Adw.ActionRow {
+                            title: _("Move to Previous Element");
+                            subtitle: "Shift+Tab";
+                        }
+
+                        Adw.ActionRow {
+                            title: _("Navigate Lists");
+                            subtitle: "↑ / ↓";
+                        }
+
+                        Adw.ActionRow {
+                            title: _("Next / Previous Page");
+                            subtitle: "Ctrl+Page Down / Ctrl+Page Up";
+                        }
+
+                        Adw.ActionRow {
+                            title: _("Activate Focused Button");
+                            subtitle: "Return / Space";
+                        }
+                    }
+
+                    // Approval Dialog
+                    Box {
+                        orientation: vertical;
+                        spacing: 6;
+
+                        Label {
+                            label: _("Approval Dialog");
+                            xalign: 0;
+
+                            styles [
+                                "heading",
+                            ]
+                        }
+
+                        Adw.ActionRow {
+                            title: _("Approve Request");
+                            subtitle: "Ctrl+A";
+                        }
+
+                        Adw.ActionRow {
+                            title: _("Deny Request");
+                            subtitle: "Ctrl+D";
+                        }
+                    }
+                }
+            }
+        }
+    };
 }
-

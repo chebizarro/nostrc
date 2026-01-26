@@ -21,7 +21,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <condition>max-width: 500px</condition>
         <setter object="split_view" property="collapsed">true</setter>
         <setter object="bottom_bar" property="reveal">true</setter>
-        <setter object="switcher_title" property="title-visible">true</setter>
         <setter object="sidebar_toggle_btn" property="visible">true</setter>
       </object>
     </child>
@@ -71,13 +70,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       </object>
                     </child>
                     <property name="title-widget">
-                      <object class="AdwViewSwitcherTitle" id="switcher_title">
-                        <property name="stack">stack</property>
+                      <object class="AdwWindowTitle" id="switcher_title">
                         <property name="title">GNostr Signer</property>
-                        <accessibility>
-                          <property name="label">Page switcher</property>
-                          <property name="description">Switch between Permissions, Applications, and Settings pages</property>
-                        </accessibility>
                       </object>
                     </property>
                     <child type="end">

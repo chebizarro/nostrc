@@ -22,7 +22,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <condition>max-width: 500px</condition>
         <setter object="split_view" property="collapsed">true</setter>
         <setter object="bottom_bar" property="reveal">true</setter>
-        <setter object="switcher_title" property="title-visible">true</setter>
         <setter object="sidebar_toggle_btn" property="visible">true</setter>
         <setter object="btn_relays" property="visible">false</setter>
       </object>
@@ -47,13 +46,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <child type="start">
                   <object class="GtkToggleButton" id="sidebar_toggle_btn">
                     <property name="icon-name">sidebar-show-symbolic</property>
-                    <property name="tooltip-text" translatable="yes">Toggle
-                                            sidebar</property>
+                    <property name="tooltip-text" translatable="yes">Toggle sidebar</property>
                     <property name="visible">false</property>
                     <accessibility>
                       <property name="label">Toggle sidebar</property>
-                      <property name="description">Show or hide the navigation
-                                                sidebar</property>
+                      <property name="description">Show or hide the navigation sidebar</property>
                     </accessibility>
                   </object>
                 </child>
@@ -61,25 +58,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="GtkButton" id="btn_relays">
                     <property name="label">Relays</property>
                     <property name="tooltip-text">Manage relay connections</property>
-                    <signal name="clicked" handler="on_relays_clicked" swapped="False"/>
+                    <signal name="clicked" handler="on_relays_clicked"/>
                   </object>
                 </child>
                 <child type="start">
                   <object class="GtkButton" id="btn_settings">
                     <property name="icon-name">emblem-system-symbolic</property>
                     <property name="tooltip-text">Open settings</property>
-                    <signal name="clicked" handler="on_settings_clicked" swapped="False"/>
+                    <signal name="clicked" handler="on_settings_clicked"/>
                   </object>
                 </child>
                 <property name="title-widget">
-                  <object class="AdwViewSwitcherTitle" id="switcher_title">
-                    <property name="stack">stack</property>
+                  <object class="AdwWindowTitle" id="switcher_title">
                     <property name="title">GNostr</property>
-                    <accessibility>
-                      <property name="label">Page switcher</property>
-                      <property name="description">Switch between Timeline,
-                                                Notifications, Messages, Discover, and Search pages</property>
-                    </accessibility>
                   </object>
                 </property>
                 <child type="end">
@@ -88,8 +79,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="tooltip-text">Main menu</property>
                     <accessibility>
                       <property name="label">Application menu</property>
-                      <property name="description">Open the application menu
-                                                with additional options</property>
+                      <property name="description">Open the application menu with additional options</property>
                     </accessibility>
                   </object>
                 </child>
@@ -133,17 +123,15 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <child>
                               <object class="GtkButton" id="btn_login">
                                 <property name="label">Log In</property>
-                                <property name="tooltip-text">Sign
-                                                                    in to your account</property>
-                                <signal name="clicked" handler="on_avatar_login_clicked" swapped="False"/>
+                                <property name="tooltip-text">Sign in to your account</property>
+                                <signal name="clicked" handler="on_avatar_login_clicked"/>
                               </object>
                             </child>
                             <child>
                               <object class="GtkButton" id="btn_logout">
                                 <property name="label">Log Out</property>
-                                <property name="tooltip-text">Sign
-                                                                    out of your account</property>
-                                <signal name="clicked" handler="on_avatar_logout_clicked" swapped="False"/>
+                                <property name="tooltip-text">Sign out of your account</property>
+                                <signal name="clicked" handler="on_avatar_logout_clicked"/>
                               </object>
                             </child>
                           </object>
@@ -161,16 +149,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="sidebar-width-fraction">0.28</property>
                 <accessibility>
                   <property name="label">Navigation split view</property>
-                  <property name="description">Main content area with sidebar
-                                        navigation</property>
+                  <property name="description">Main content area with sidebar navigation</property>
                 </accessibility>
                 <child type="sidebar">
                   <object class="AdwNavigationPage" id="sidebar_page">
                     <property name="title" translatable="yes">Navigation</property>
                     <accessibility>
                       <property name="label">Section navigation sidebar</property>
-                      <property name="description">Navigate between different
-                                                sections of the application</property>
+                      <property name="description">Navigate between different sections of the application</property>
                     </accessibility>
                     <property name="child">
                       <object class="GtkScrolledWindow">
@@ -186,19 +172,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               <class name="navigation-sidebar"/>
                             </style>
                             <accessibility>
-                              <property name="label">Navigation
-                                                                sections list</property>
-                              <property name="description">List of
-                                                                navigation sections. Use arrow keys
-                                                                to navigate and Enter to select.</property>
+                              <property name="label">Navigation sections list</property>
+                              <property name="description">List of navigation sections. Use arrow keys to navigate and Enter to select.</property>
                             </accessibility>
                             <child>
                               <object class="GtkListBoxRow" id="row_timeline">
                                 <accessibility>
-                                  <property name="label">Timeline
-                                                                        section</property>
-                                  <property name="description">Navigate
-                                                                        to the main timeline</property>
+                                  <property name="label">Timeline section</property>
+                                  <property name="description">Navigate to the main timeline</property>
                                 </accessibility>
                                 <child>
                                   <object class="GtkBox">
@@ -210,8 +191,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="margin-bottom">10</property>
                                     <child>
                                       <object class="GtkImage">
-                                        <property name="icon-name">
-                                                                                    view-list-symbolic</property>
+                                        <property name="icon-name"> view-list-symbolic</property>
                                         <style>
                                           <class name="dim-label"/>
                                         </style>
@@ -219,8 +199,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     </child>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label" translatable="yes">
-                                                                                    Timeline</property>
+                                        <property name="label" translatable="yes"> Timeline</property>
                                         <property name="xalign">0</property>
                                         <property name="hexpand">false</property>
                                       </object>
@@ -232,10 +211,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <child>
                               <object class="GtkListBoxRow" id="row_notifications">
                                 <accessibility>
-                                  <property name="label">Notifications
-                                                                        section</property>
-                                  <property name="description">Navigate
-                                                                        to notifications</property>
+                                  <property name="label">Notifications section</property>
+                                  <property name="description">Navigate to notifications</property>
                                 </accessibility>
                                 <child>
                                   <object class="GtkBox">
@@ -247,8 +224,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="margin-bottom">10</property>
                                     <child>
                                       <object class="GtkImage">
-                                        <property name="icon-name">
-                                                                                    notifications-symbolic</property>
+                                        <property name="icon-name"> notifications-symbolic</property>
                                         <style>
                                           <class name="dim-label"/>
                                         </style>
@@ -256,8 +232,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     </child>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label" translatable="yes">
-                                                                                    Notifications</property>
+                                        <property name="label" translatable="yes"> Notifications</property>
                                         <property name="xalign">0</property>
                                         <property name="hexpand">false</property>
                                       </object>
@@ -269,10 +244,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <child>
                               <object class="GtkListBoxRow" id="row_messages">
                                 <accessibility>
-                                  <property name="label">Messages
-                                                                        section</property>
-                                  <property name="description">Navigate
-                                                                        to direct messages</property>
+                                  <property name="label">Messages section</property>
+                                  <property name="description">Navigate to direct messages</property>
                                 </accessibility>
                                 <child>
                                   <object class="GtkBox">
@@ -284,8 +257,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="margin-bottom">10</property>
                                     <child>
                                       <object class="GtkImage">
-                                        <property name="icon-name">
-                                                                                    mail-unread-symbolic</property>
+                                        <property name="icon-name"> mail-unread-symbolic</property>
                                         <style>
                                           <class name="dim-label"/>
                                         </style>
@@ -293,8 +265,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     </child>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label" translatable="yes">
-                                                                                    Messages</property>
+                                        <property name="label" translatable="yes"> Messages</property>
                                         <property name="xalign">0</property>
                                         <property name="hexpand">false</property>
                                       </object>
@@ -306,10 +277,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <child>
                               <object class="GtkListBoxRow" id="row_discover">
                                 <accessibility>
-                                  <property name="label">Discover
-                                                                        section</property>
-                                  <property name="description">Navigate
-                                                                        to discover page</property>
+                                  <property name="label">Discover section</property>
+                                  <property name="description">Navigate to discover page</property>
                                 </accessibility>
                                 <child>
                                   <object class="GtkBox">
@@ -321,8 +290,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="margin-bottom">10</property>
                                     <child>
                                       <object class="GtkImage">
-                                        <property name="icon-name">
-                                                                                    find-location-symbolic</property>
+                                        <property name="icon-name"> find-location-symbolic</property>
                                         <style>
                                           <class name="dim-label"/>
                                         </style>
@@ -330,8 +298,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     </child>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label" translatable="yes">
-                                                                                    Discover</property>
+                                        <property name="label" translatable="yes"> Discover</property>
                                         <property name="xalign">0</property>
                                         <property name="hexpand">false</property>
                                       </object>
@@ -343,10 +310,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <child>
                               <object class="GtkListBoxRow" id="row_search">
                                 <accessibility>
-                                  <property name="label">Search
-                                                                        section</property>
-                                  <property name="description">Navigate
-                                                                        to search</property>
+                                  <property name="label">Search section</property>
+                                  <property name="description">Navigate to search</property>
                                 </accessibility>
                                 <child>
                                   <object class="GtkBox">
@@ -358,8 +323,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="margin-bottom">10</property>
                                     <child>
                                       <object class="GtkImage">
-                                        <property name="icon-name">
-                                                                                    system-search-symbolic</property>
+                                        <property name="icon-name"> system-search-symbolic</property>
                                         <style>
                                           <class name="dim-label"/>
                                         </style>
@@ -367,8 +331,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     </child>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label" translatable="yes">
-                                                                                    Search</property>
+                                        <property name="label" translatable="yes"> Search</property>
                                         <property name="xalign">0</property>
                                         <property name="hexpand">false</property>
                                       </object>
@@ -380,11 +343,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <child>
                               <object class="GtkListBoxRow" id="row_marketplace">
                                 <accessibility>
-                                  <property name="label">Marketplace
-                                                                        section</property>
-                                  <property name="description">Navigate
-                                                                        to classified listings
-                                                                        marketplace</property>
+                                  <property name="label">Marketplace section</property>
+                                  <property name="description">Navigate to classified listings marketplace</property>
                                 </accessibility>
                                 <child>
                                   <object class="GtkBox">
@@ -396,8 +356,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="margin-bottom">10</property>
                                     <child>
                                       <object class="GtkImage">
-                                        <property name="icon-name">
-                                                                                    basket-symbolic</property>
+                                        <property name="icon-name"> basket-symbolic</property>
                                         <style>
                                           <class name="dim-label"/>
                                         </style>
@@ -405,8 +364,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     </child>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label" translatable="yes">
-                                                                                    Marketplace</property>
+                                        <property name="label" translatable="yes"> Marketplace</property>
                                         <property name="xalign">0</property>
                                         <property name="hexpand">false</property>
                                       </object>
@@ -426,8 +384,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="title" translatable="yes">GNostr</property>
                     <accessibility>
                       <property name="label">Main content area</property>
-                      <property name="description">Main content for the
-                                                selected section</property>
+                      <property name="description">Main content for the selected section</property>
                     </accessibility>
                     <property name="child">
                       <object class="GtkBox">
@@ -438,25 +395,21 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="vexpand">true</property>
                             <accessibility>
                               <property name="label">Content stack</property>
-                              <property name="description">Container
-                                                                for different page views</property>
+                              <property name="description">Container for different page views</property>
                             </accessibility>
                             <child>
                               <object class="AdwViewStackPage">
                                 <property name="name">timeline</property>
                                 <property name="title" translatable="yes">Timeline</property>
-                                <property name="icon-name">
-                                                                    view-list-symbolic</property>
+                                <property name="icon-name"> view-list-symbolic</property>
                                 <property name="child">
                                   <object class="GtkOverlay" id="timeline_overlay">
                                     <property name="hexpand">false</property>
                                     <property name="vexpand">false</property>
                                     <child>
                                       <object class="GnostrTimelineView" id="timeline">
-                                        <property name="hexpand">
-                                                                                    true</property>
-                                        <property name="vexpand">
-                                                                                    true</property>
+                                        <property name="hexpand"> true</property>
+                                        <property name="vexpand"> true</property>
                                       </object>
                                     </child>
                                     <child type="overlay">
@@ -472,24 +425,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                             <property name="css-classes">
                                                                                             new-notes-indicator</property>
                                             <property name="focusable">false</property>
-                                            <property name="tooltip-text">Scroll
-                                                                                            to new
-                                                                                            notes</property>
+                                            <property name="tooltip-text">Scroll to new notes</property>
                                             <child>
                                               <object class="GtkBox">
                                                 <property name="orientation">0</property>
                                                 <property name="spacing">6</property>
                                                 <child>
                                                   <object class="GtkImage">
-                                                    <property name="icon-name">
-                                                                                                            go-up-symbolic</property>
+                                                    <property name="icon-name"> go-up-symbolic</property>
                                                   </object>
                                                 </child>
                                                 <child>
                                                   <object class="GtkLabel" id="lbl_new_notes_count">
-                                                    <property name="label">
-                                                                                                            New
-                                                                                                            notes</property>
+                                                    <property name="label"> New notes</property>
                                                   </object>
                                                 </child>
                                               </object>
@@ -506,14 +454,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               <object class="AdwViewStackPage">
                                 <property name="name">notifications</property>
                                 <property name="title" translatable="yes">Notifications</property>
-                                <property name="icon-name">
-                                                                    notifications-symbolic</property>
+                                <property name="icon-name"> notifications-symbolic</property>
                                 <property name="child">
                                   <object class="GnostrNotificationsView" id="notifications_view">
-                                    <property name="hexpand">
-                                                                            true</property>
-                                    <property name="vexpand">
-                                                                            true</property>
+                                    <property name="hexpand"> true</property>
+                                    <property name="vexpand"> true</property>
                                   </object>
                                 </property>
                               </object>
@@ -522,14 +467,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               <object class="AdwViewStackPage">
                                 <property name="name">messages</property>
                                 <property name="title" translatable="yes">Messages</property>
-                                <property name="icon-name">
-                                                                    mail-unread-symbolic</property>
+                                <property name="icon-name"> mail-unread-symbolic</property>
                                 <property name="child">
                                   <object class="GnostrDmInboxView" id="dm_inbox">
-                                    <property name="hexpand">
-                                                                            true</property>
-                                    <property name="vexpand">
-                                                                            true</property>
+                                    <property name="hexpand"> true</property>
+                                    <property name="vexpand"> true</property>
                                   </object>
                                 </property>
                               </object>
@@ -538,14 +480,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               <object class="AdwViewStackPage">
                                 <property name="name">discover</property>
                                 <property name="title" translatable="yes">Discover</property>
-                                <property name="icon-name">
-                                                                    find-location-symbolic</property>
+                                <property name="icon-name"> find-location-symbolic</property>
                                 <property name="child">
                                   <object class="GnostrPageDiscover" id="page_discover">
-                                    <property name="hexpand">
-                                                                            true</property>
-                                    <property name="vexpand">
-                                                                            true</property>
+                                    <property name="hexpand"> true</property>
+                                    <property name="vexpand"> true</property>
                                   </object>
                                 </property>
                               </object>
@@ -554,14 +493,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               <object class="AdwViewStackPage">
                                 <property name="name">search</property>
                                 <property name="title" translatable="yes">Search</property>
-                                <property name="icon-name">
-                                                                    system-search-symbolic</property>
+                                <property name="icon-name"> system-search-symbolic</property>
                                 <property name="child">
                                   <object class="GnostrSearchResultsView" id="search_view">
-                                    <property name="hexpand">
-                                                                            true</property>
-                                    <property name="vexpand">
-                                                                            true</property>
+                                    <property name="hexpand"> true</property>
+                                    <property name="vexpand"> true</property>
                                   </object>
                                 </property>
                               </object>

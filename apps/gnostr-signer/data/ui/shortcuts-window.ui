@@ -6,145 +6,228 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 -->
 <interface>
   <requires lib="gtk" version="4.0"/>
-  <object class="GtkShortcutsWindow" id="shortcuts_window">
-    <property name="modal">true</property>
-    <child>
-      <object class="GtkShortcutsSection">
-        <property name="section-name">shortcuts</property>
-        <property name="max-height">12</property>
-        <child>
-          <object class="GtkShortcutsGroup">
-            <property name="title" translatable="yes">General</property>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Show Keyboard Shortcuts</property>
-                <property name="accelerator">&lt;Primary&gt;question</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Preferences</property>
-                <property name="accelerator">&lt;Primary&gt;comma</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Help / About</property>
-                <property name="accelerator">F1</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Quit Application</property>
-                <property name="accelerator">&lt;Primary&gt;q</property>
-              </object>
-            </child>
-          </object>
+  <object class="AdwDialog" id="shortcuts_window">
+    <property name="title" translatable="yes">Keyboard Shortcuts</property>
+    <property name="content-width">400</property>
+    <property name="content-height">500</property>
+    <property name="child">
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar"></object>
         </child>
         <child>
-          <object class="GtkShortcutsGroup">
-            <property name="title" translatable="yes">Profile Management</property>
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">2</property>
             <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">New Identity</property>
-                <property name="accelerator">&lt;Primary&gt;n</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Import Profile</property>
-                <property name="accelerator">&lt;Primary&gt;i</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Export / Backup</property>
-                <property name="accelerator">&lt;Primary&gt;e</property>
-              </object>
-            </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkShortcutsGroup">
-            <property name="title" translatable="yes">Security</property>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Lock Session</property>
-                <property name="accelerator">&lt;Primary&gt;l</property>
-              </object>
-            </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkShortcutsGroup">
-            <property name="title" translatable="yes">Dialogs</property>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Close Dialog</property>
-                <property name="accelerator">Escape</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Submit Form / Activate Default</property>
-                <property name="accelerator">Return</property>
-              </object>
-            </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkShortcutsGroup">
-            <property name="title" translatable="yes">Navigation</property>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Move to Next Element</property>
-                <property name="accelerator">Tab</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Move to Previous Element</property>
-                <property name="accelerator">&lt;Shift&gt;Tab</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Navigate Lists</property>
-                <property name="accelerator">Up Down</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Next / Previous Page</property>
-                <property name="accelerator">&lt;Primary&gt;Page_Down &lt;Primary&gt;Page_Up</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Activate Focused Button</property>
-                <property name="accelerator">Return space</property>
-              </object>
-            </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkShortcutsGroup">
-            <property name="title" translatable="yes">Approval Dialog</property>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Approve Request</property>
-                <property name="accelerator">&lt;Primary&gt;a</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Deny Request</property>
-                <property name="accelerator">&lt;Primary&gt;d</property>
+              <object class="AdwClamp">
+                <property name="maximum-size">400</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <property name="margin-top">12</property>
+                <property name="margin-bottom">12</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">1</property>
+                    <property name="spacing">24</property>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">1</property>
+                        <property name="spacing">6</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">General</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="heading"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Show Keyboard Shortcuts</property>
+                            <property name="subtitle">Ctrl+?</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Preferences</property>
+                            <property name="subtitle">Ctrl+,</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Help / About</property>
+                            <property name="subtitle">F1</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Quit Application</property>
+                            <property name="subtitle">Ctrl+Q</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">1</property>
+                        <property name="spacing">6</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Profile Management</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="heading"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">New Identity</property>
+                            <property name="subtitle">Ctrl+N</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Import Profile</property>
+                            <property name="subtitle">Ctrl+I</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Export / Backup</property>
+                            <property name="subtitle">Ctrl+E</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">1</property>
+                        <property name="spacing">6</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Security</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="heading"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Lock Session</property>
+                            <property name="subtitle">Ctrl+L</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">1</property>
+                        <property name="spacing">6</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Dialogs</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="heading"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Close Dialog</property>
+                            <property name="subtitle">Escape</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Submit Form / Activate Default</property>
+                            <property name="subtitle">Return</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">1</property>
+                        <property name="spacing">6</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Navigation</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="heading"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Move to Next Element</property>
+                            <property name="subtitle">Tab</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Move to Previous Element</property>
+                            <property name="subtitle">Shift+Tab</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Navigate Lists</property>
+                            <property name="subtitle">↑ / ↓</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Next / Previous Page</property>
+                            <property name="subtitle">Ctrl+Page Down / Ctrl+Page Up</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Activate Focused Button</property>
+                            <property name="subtitle">Return / Space</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">1</property>
+                        <property name="spacing">6</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Approval Dialog</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="heading"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Approve Request</property>
+                            <property name="subtitle">Ctrl+A</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Deny Request</property>
+                            <property name="subtitle">Ctrl+D</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
               </object>
             </child>
           </object>
         </child>
       </object>
-    </child>
+    </property>
   </object>
 </interface>

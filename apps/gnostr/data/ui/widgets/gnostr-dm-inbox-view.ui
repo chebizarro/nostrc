@@ -97,8 +97,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkLabel">
-                        <property name="label">Start a conversation by
-                                                    clicking the compose button above.</property>
+                        <property name="label">Start a conversation by clicking the compose button above.</property>
                         <property name="wrap">true</property>
                         <property name="justify">2</property>
                         <property name="max-width-chars">40</property>

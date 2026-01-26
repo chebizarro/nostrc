@@ -157,8 +157,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </style>
                     <child>
                       <object class="GtkImage">
-                        <property name="icon-name">
-                                                    application-x-executable-symbolic</property>
+                        <property name="icon-name"> application-x-executable-symbolic</property>
                         <property name="pixel-size">14</property>
                       </object>
                     </child>
@@ -371,8 +370,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 </child>
                                 <child>
                                   <object class="GtkLabel">
-                                    <property name="label">
-                                                                            Followers</property>
+                                    <property name="label"> Followers</property>
                                     <style>
                                       <class name="dim-label"/>
                                     </style>
@@ -394,8 +392,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 </child>
                                 <child>
                                   <object class="GtkLabel">
-                                    <property name="label">
-                                                                            Following</property>
+                                    <property name="label"> Following</property>
                                     <style>
                                       <class name="dim-label"/>
                                     </style>
@@ -469,8 +466,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="visible">false</property>
                         <child>
                           <object class="GtkImage">
-                            <property name="icon-name">
-                                                            text-x-generic-symbolic</property>
+                            <property name="icon-name"> text-x-generic-symbolic</property>
                             <property name="pixel-size">48</property>
                             <style>
                               <class name="dim-label"/>
@@ -564,8 +560,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="visible">false</property>
                         <child>
                           <object class="GtkImage">
-                            <property name="icon-name">
-                                                            image-x-generic-symbolic</property>
+                            <property name="icon-name"> image-x-generic-symbolic</property>
                             <property name="pixel-size">48</property>
                             <style>
                               <class name="dim-label"/>
@@ -658,8 +653,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="visible">false</property>
                         <child>
                           <object class="GtkImage">
-                            <property name="icon-name">
-                                                            format-text-highlight-symbolic</property>
+                            <property name="icon-name"> format-text-highlight-symbolic</property>
                             <property name="pixel-size">48</property>
                             <style>
                               <class name="dim-label"/>

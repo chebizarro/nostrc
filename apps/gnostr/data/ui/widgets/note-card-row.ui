@@ -312,8 +312,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="spacing">4</property>
                         <child>
                           <object class="GtkImage" id="like_icon">
-                            <property name="icon-name">
-                                                            emblem-favorite-symbolic</property>
+                            <property name="icon-name"> emblem-favorite-symbolic</property>
                           </object>
                         </child>
                         <child>
@@ -338,8 +337,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="spacing">4</property>
                         <child>
                           <object class="GtkImage" id="zap_icon">
-                            <property name="icon-name">
-                                                            camera-flash-symbolic</property>
+                            <property name="icon-name"> camera-flash-symbolic</property>
                           </object>
                         </child>
                         <child>

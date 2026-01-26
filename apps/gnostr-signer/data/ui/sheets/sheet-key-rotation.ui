@@ -157,11 +157,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="margin-end">12</property>
                                     <property name="margin-top">6</property>
                                     <property name="margin-bottom">6</property>
-                                    <property name="label" translatable="yes">1. A new keypair will be generated
-2. A migration event (kind 1776) will be created
-3. The migration event will be signed with your old key
-4. The new key will be stored in secure storage
-5. The migration event can be published to announce the change</property>
+                                    <property name="label" translatable="yes">1. A new keypair will be generated 2. A migration event (kind 1776) will be created 3. The migration event will be signed with your old key 4. The new key will be stored in secure storage 5. The migration event can be published to announce the change</property>
                                     <style>
                                       <class name="dim-label"/>
                                     </style>
@@ -230,8 +226,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkLabel">
-                        <property name="label" translatable="yes">Please wait while your key is being rotated.
-Do not close this dialog.</property>
+                        <property name="label" translatable="yes">Please wait while your key is being rotated. Do not close this dialog.</property>
                         <property name="wrap">true</property>
                         <property name="justify">2</property>
                         <style>
