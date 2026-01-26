@@ -1,535 +1,253 @@
 using Gtk 4.0;
 using Adw 1;
 
+menu primary_menu {
+    section {
+        item {
+            label: _("_Preferences");
+            action: "app.preferences";
+        }
+
+        item {
+            label: _("_Keyboard Shortcuts");
+            action: "win.show-help-overlay";
+        }
+
+        item {
+            label: _("_About GNostr");
+            action: "app.about";
+        }
+    }
+}
+
 template $GnostrMainWindow: Adw.ApplicationWindow {
     title: "GNostr";
     default-width: 900;
     default-height: 640;
-    width-request: 320;
+    width-request: 360;
     height-request: 480;
-    focus-visible: true;
 
-    accessibility {
-        label: "GNostr main window";
-        description: "Main application window for the GNostr Nostr client";
+    Adw.ToastOverlay toast_overlay {
+        Adw.NavigationSplitView split_view {
+            sidebar-width-fraction: 0.28;
+            min-sidebar-width: 220;
+            max-sidebar-width: 280;
+
+            sidebar: Adw.NavigationPage sidebar_page {
+                title: _("GNostr");
+
+                child: Adw.ToolbarView {
+                    [top]
+                    Adw.HeaderBar {
+                        [start]
+                        Button btn_settings {
+                            icon-name: "emblem-system-symbolic";
+                            tooltip-text: _("Settings");
+                        }
+
+                        [end]
+                        MenuButton btn_menu {
+                            icon-name: "open-menu-symbolic";
+                            menu-model: primary_menu;
+                            tooltip-text: _("Main Menu");
+                            primary: true;
+                        }
+                    }
+
+                    content: ScrolledWindow {
+                        hscrollbar-policy: never;
+                        vexpand: true;
+
+                        ListBox sidebar_list {
+                            selection-mode: browse;
+                            activate-on-single-click: true;
+
+                            styles [
+                                "navigation-sidebar",
+                            ]
+
+                            ListBoxRow row_timeline {
+                                Box {
+                                    orientation: horizontal;
+                                    spacing: 12;
+                                    margin-start: 12;
+                                    margin-end: 12;
+                                    margin-top: 10;
+                                    margin-bottom: 10;
+
+                                    Image {
+                                        icon-name: "view-list-symbolic";
+
+                                        styles [
+                                            "dim-label",
+                                        ]
+                                    }
+
+                                    Label {
+                                        label: _("Timeline");
+                                        xalign: 0;
+                                    }
+                                }
+                            }
+
+                            ListBoxRow row_notifications {
+                                Box {
+                                    orientation: horizontal;
+                                    spacing: 12;
+                                    margin-start: 12;
+                                    margin-end: 12;
+                                    margin-top: 10;
+                                    margin-bottom: 10;
+
+                                    Image {
+                                        icon-name: "preferences-system-notifications-symbolic";
+
+                                        styles [
+                                            "dim-label",
+                                        ]
+                                    }
+
+                                    Label {
+                                        label: _("Notifications");
+                                        xalign: 0;
+                                    }
+                                }
+                            }
+
+                            ListBoxRow row_messages {
+                                Box {
+                                    orientation: horizontal;
+                                    spacing: 12;
+                                    margin-start: 12;
+                                    margin-end: 12;
+                                    margin-top: 10;
+                                    margin-bottom: 10;
+
+                                    Image {
+                                        icon-name: "mail-unread-symbolic";
+
+                                        styles [
+                                            "dim-label",
+                                        ]
+                                    }
+
+                                    Label {
+                                        label: _("Messages");
+                                        xalign: 0;
+                                    }
+                                }
+                            }
+
+                            ListBoxRow row_discover {
+                                Box {
+                                    orientation: horizontal;
+                                    spacing: 12;
+                                    margin-start: 12;
+                                    margin-end: 12;
+                                    margin-top: 10;
+                                    margin-bottom: 10;
+
+                                    Image {
+                                        icon-name: "system-search-symbolic";
+
+                                        styles [
+                                            "dim-label",
+                                        ]
+                                    }
+
+                                    Label {
+                                        label: _("Discover");
+                                        xalign: 0;
+                                    }
+                                }
+                            }
+                        }
+                    };
+                };
+            };
+
+            content: Adw.NavigationPage content_page {
+                title: _("Timeline");
+
+                child: Adw.ToolbarView toolbar_view {
+                    [top]
+                    Adw.HeaderBar header_bar {
+                        [end]
+                        MenuButton btn_avatar {
+                            icon-name: "avatar-default-symbolic";
+                            tooltip-text: _("Account");
+                        }
+                    }
+
+                    content: Adw.ViewStack stack {
+                        vexpand: true;
+
+                        Adw.ViewStackPage {
+                            name: "timeline";
+                            title: _("Timeline");
+                            icon-name: "view-list-symbolic";
+
+                            child: ScrolledWindow {
+                                hscrollbar-policy: never;
+                                vexpand: true;
+
+                                $GnostrTimelineView timeline {
+                                    hexpand: true;
+                                    vexpand: true;
+                                }
+                            };
+                        }
+
+                        Adw.ViewStackPage {
+                            name: "notifications";
+                            title: _("Notifications");
+                            icon-name: "preferences-system-notifications-symbolic";
+
+                            child: $GnostrNotificationsView notifications_view {
+                                hexpand: true;
+                                vexpand: true;
+                            };
+                        }
+
+                        Adw.ViewStackPage {
+                            name: "messages";
+                            title: _("Messages");
+                            icon-name: "mail-unread-symbolic";
+
+                            child: $GnostrDmInboxView dm_inbox {
+                                hexpand: true;
+                                vexpand: true;
+                            };
+                        }
+
+                        Adw.ViewStackPage {
+                            name: "discover";
+                            title: _("Discover");
+                            icon-name: "system-search-symbolic";
+
+                            child: $GnostrPageDiscover discover_page {
+                                hexpand: true;
+                                vexpand: true;
+                            };
+                        }
+                    };
+
+                    [bottom]
+                    Adw.ViewSwitcherBar bottom_bar {
+                        stack: stack;
+                        reveal: false;
+                    }
+                };
+            };
+        }
     }
 
-    Adw.Breakpoint breakpoint_mobile {
-        condition ("max-width: 500px")
+    Adw.Breakpoint {
+        condition ("max-width: 600sp")
 
         setters {
             split_view.collapsed: true;
             bottom_bar.reveal: true;
-            sidebar_toggle_btn.visible: true;
-            btn_relays.visible: false;
         }
     }
-
-    Adw.Breakpoint breakpoint_tablet {
-        condition ("max-width: 800px")
-
-        setters {
-            split_view.collapsed: true;
-            bottom_bar.reveal: false;
-            sidebar_toggle_btn.visible: true;
-        }
-    }
-
-    content: Adw.ToastOverlay toast_overlay {
-        Adw.OverlaySplitView panel_split {
-            show-sidebar: false;
-            sidebar-position: end;
-            max-sidebar-width: 450;
-            min-sidebar-width: 350;
-
-            [sidebar]
-            Box panel_container {
-                orientation: vertical;
-
-                $GnostrProfilePane profile_pane {
-                    vexpand: true;
-                    visible: false;
-                }
-
-                $GnostrThreadView thread_view {
-                    vexpand: true;
-                    visible: false;
-                }
-            }
-
-            content: Adw.ToolbarView toolbar_view {
-                [top]
-                Adw.HeaderBar header_bar {
-                    accessibility {
-                        label: "Main header bar";
-                    }
-
-                    [start]
-                    ToggleButton sidebar_toggle_btn {
-                        icon-name: "sidebar-show-symbolic";
-                        tooltip-text: _("Toggle sidebar");
-                        visible: false;
-
-                        accessibility {
-                            label: "Toggle sidebar";
-                            description: "Show or hide the navigation sidebar";
-                        }
-                    }
-
-                    [start]
-                    Button btn_relays {
-                        label: "Relays";
-                        tooltip-text: "Manage relay connections";
-                        clicked => $on_relays_clicked();
-                    }
-
-                    [start]
-                    Button btn_settings {
-                        icon-name: "emblem-system-symbolic";
-                        tooltip-text: "Open settings";
-                        clicked => $on_settings_clicked();
-                    }
-
-                    title-widget: Adw.WindowTitle switcher_title {
-                        title: "GNostr";
-                    };
-
-                    [end]
-                    MenuButton btn_menu {
-                        icon-name: "open-menu-symbolic";
-                        tooltip-text: "Main menu";
-
-                        accessibility {
-                            label: "Application menu";
-                            description: "Open the application menu with additional options";
-                        }
-                    }
-
-                    [end]
-                    MenuButton btn_avatar {
-                        icon-name: "avatar-default-symbolic";
-                        has-frame: true;
-                        sensitive: true;
-                        focusable: true;
-                        can-target: true;
-                        always-show-arrow: true;
-                        tooltip-text: "Login / Account";
-
-                        [popover]
-                        Popover avatar_popover {
-                            has-arrow: true;
-
-                            Box {
-                                orientation: vertical;
-                                margin-start: 12;
-                                margin-end: 12;
-                                margin-top: 8;
-                                margin-bottom: 8;
-                                spacing: 8;
-
-                                Label lbl_signin_status {
-                                    label: "Not signed in";
-
-                                    css-classes: [
-                                        "title-4",
-                                    ];
-                                }
-
-                                Label lbl_profile_name {
-                                    label: "";
-                                    wrap: true;
-                                    wrap-mode: word_char;
-                                    max-width-chars: 28;
-                                    ellipsize: end;
-
-                                    css-classes: [
-                                        "dim-label",
-                                    ];
-                                }
-
-                                Button btn_login {
-                                    label: "Log In";
-                                    tooltip-text: "Sign in to your account";
-                                    clicked => $on_avatar_login_clicked();
-                                }
-
-                                Button btn_logout {
-                                    label: "Log Out";
-                                    tooltip-text: "Sign out of your account";
-                                    clicked => $on_avatar_logout_clicked();
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Adw.NavigationSplitView split_view {
-                    collapsed: true;
-                    min-sidebar-width: 220;
-                    max-sidebar-width: 280;
-                    sidebar-width-fraction: 0.28;
-
-                    accessibility {
-                        label: "Navigation split view";
-                        description: "Main content area with sidebar navigation";
-                    }
-
-                    [sidebar]
-                    Adw.NavigationPage sidebar_page {
-                        title: _("Navigation");
-
-                        accessibility {
-                            label: "Section navigation sidebar";
-                            description: "Navigate between different sections of the application";
-                        }
-
-                        child: ScrolledWindow {
-                            hscrollbar-policy: never;
-                            vexpand: true;
-
-                            ListBox sidebar_list {
-                                selection-mode: browse;
-                                activate-on-single-click: true;
-                                focusable: true;
-                                focus-on-click: true;
-                                row-activated => $on_sidebar_row_activated();
-
-                                styles [
-                                    "navigation-sidebar",
-                                ]
-
-                                accessibility {
-                                    label: "Navigation sections list";
-                                    description: "List of navigation sections. Use arrow keys to navigate and Enter to select.";
-                                }
-
-                                ListBoxRow row_timeline {
-                                    accessibility {
-                                        label: "Timeline section";
-                                        description: "Navigate to the main timeline";
-                                    }
-
-                                    Box {
-                                        orientation: horizontal;
-                                        spacing: 12;
-                                        margin-start: 12;
-                                        margin-end: 12;
-                                        margin-top: 10;
-                                        margin-bottom: 10;
-
-                                        Image {
-                                            icon-name: "view-list-symbolic";
-
-                                            styles [
-                                                "dim-label",
-                                            ]
-                                        }
-
-                                        Label {
-                                            label: _("Timeline");
-                                            xalign: 0;
-                                            hexpand: false;
-                                        }
-                                    }
-                                }
-
-                                ListBoxRow row_notifications {
-                                    accessibility {
-                                        label: "Notifications section";
-                                        description: "Navigate to notifications";
-                                    }
-
-                                    Box {
-                                        orientation: horizontal;
-                                        spacing: 12;
-                                        margin-start: 12;
-                                        margin-end: 12;
-                                        margin-top: 10;
-                                        margin-bottom: 10;
-
-                                        Image {
-                                            icon-name: "preferences-system-notifications-symbolic";
-
-                                            styles [
-                                                "dim-label",
-                                            ]
-                                        }
-
-                                        Label {
-                                            label: _("Notifications");
-                                            xalign: 0;
-                                            hexpand: false;
-                                        }
-                                    }
-                                }
-
-                                ListBoxRow row_messages {
-                                    accessibility {
-                                        label: "Messages section";
-                                        description: "Navigate to direct messages";
-                                    }
-
-                                    Box {
-                                        orientation: horizontal;
-                                        spacing: 12;
-                                        margin-start: 12;
-                                        margin-end: 12;
-                                        margin-top: 10;
-                                        margin-bottom: 10;
-
-                                        Image {
-                                            icon-name: "mail-unread-symbolic";
-
-                                            styles [
-                                                "dim-label",
-                                            ]
-                                        }
-
-                                        Label {
-                                            label: _("Messages");
-                                            xalign: 0;
-                                            hexpand: false;
-                                        }
-                                    }
-                                }
-
-                                ListBoxRow row_discover {
-                                    accessibility {
-                                        label: "Discover section";
-                                        description: "Navigate to discover page";
-                                    }
-
-                                    Box {
-                                        orientation: horizontal;
-                                        spacing: 12;
-                                        margin-start: 12;
-                                        margin-end: 12;
-                                        margin-top: 10;
-                                        margin-bottom: 10;
-
-                                        Image {
-                                            icon-name: "find-location-symbolic";
-
-                                            styles [
-                                                "dim-label",
-                                            ]
-                                        }
-
-                                        Label {
-                                            label: _("Discover");
-                                            xalign: 0;
-                                            hexpand: false;
-                                        }
-                                    }
-                                }
-
-                                ListBoxRow row_search {
-                                    accessibility {
-                                        label: "Search section";
-                                        description: "Navigate to search";
-                                    }
-
-                                    Box {
-                                        orientation: horizontal;
-                                        spacing: 12;
-                                        margin-start: 12;
-                                        margin-end: 12;
-                                        margin-top: 10;
-                                        margin-bottom: 10;
-
-                                        Image {
-                                            icon-name: "system-search-symbolic";
-
-                                            styles [
-                                                "dim-label",
-                                            ]
-                                        }
-
-                                        Label {
-                                            label: _("Search");
-                                            xalign: 0;
-                                            hexpand: false;
-                                        }
-                                    }
-                                }
-
-                                ListBoxRow row_marketplace {
-                                    accessibility {
-                                        label: "Marketplace section";
-                                        description: "Navigate to classified listings marketplace";
-                                    }
-
-                                    Box {
-                                        orientation: horizontal;
-                                        spacing: 12;
-                                        margin-start: 12;
-                                        margin-end: 12;
-                                        margin-top: 10;
-                                        margin-bottom: 10;
-
-                                        Image {
-                                            icon-name: "view-grid-symbolic";
-
-                                            styles [
-                                                "dim-label",
-                                            ]
-                                        }
-
-                                        Label {
-                                            label: _("Marketplace");
-                                            xalign: 0;
-                                            hexpand: false;
-                                        }
-                                    }
-                                }
-                            }
-                        };
-                    }
-
-                    [content]
-                    Adw.NavigationPage content_page {
-                        title: _("GNostr");
-
-                        accessibility {
-                            label: "Main content area";
-                            description: "Main content for the selected section";
-                        }
-
-                        child: Box {
-                            orientation: vertical;
-                            spacing: 0;
-
-                            Adw.ViewStack stack {
-                                vexpand: true;
-
-                                accessibility {
-                                    label: "Content stack";
-                                    description: "Container for different page views";
-                                }
-
-                                Adw.ViewStackPage {
-                                    name: "timeline";
-                                    title: _("Timeline");
-                                    icon-name: "view-list-symbolic";
-
-                                    child: Overlay timeline_overlay {
-                                        hexpand: true;
-                                        vexpand: true;
-
-                                        $GnostrTimelineView timeline {
-                                            hexpand: true;
-                                            vexpand: true;
-                                        }
-
-                                        [overlay]
-                                        Revealer new_notes_revealer {
-                                            transition-type: slide_down;
-                                            reveal-child: false;
-                                            transition-duration: 200;
-                                            halign: center;
-                                            valign: start;
-                                            margin-top: 8;
-
-                                            Button btn_new_notes {
-                                                css-classes: [
-                                                    "new-notes-indicator",
-                                                ];
-
-                                                focusable: false;
-                                                tooltip-text: "Scroll to new notes";
-
-                                                Box {
-                                                    orientation: horizontal;
-                                                    spacing: 6;
-
-                                                    Image {
-                                                        icon-name: "go-up-symbolic";
-                                                    }
-
-                                                    Label lbl_new_notes_count {
-                                                        label: "New notes";
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    };
-                                }
-
-                                Adw.ViewStackPage {
-                                    name: "notifications";
-                                    title: _("Notifications");
-                                    icon-name: "preferences-system-notifications-symbolic";
-
-                                    child: $GnostrNotificationsView notifications_view {
-                                        hexpand: true;
-                                        vexpand: true;
-                                    };
-                                }
-
-                                Adw.ViewStackPage {
-                                    name: "messages";
-                                    title: _("Messages");
-                                    icon-name: "mail-unread-symbolic";
-
-                                    child: $GnostrDmInboxView dm_inbox {
-                                        hexpand: true;
-                                        vexpand: true;
-                                    };
-                                }
-
-                                Adw.ViewStackPage {
-                                    name: "discover";
-                                    title: _("Discover");
-                                    icon-name: "find-location-symbolic";
-
-                                    child: $GnostrPageDiscover page_discover {
-                                        hexpand: true;
-                                        vexpand: true;
-                                    };
-                                }
-
-                                Adw.ViewStackPage {
-                                    name: "search";
-                                    title: _("Search");
-                                    icon-name: "system-search-symbolic";
-
-                                    child: $GnostrSearchResultsView search_view {
-                                        hexpand: true;
-                                        vexpand: true;
-                                    };
-                                }
-
-                                Adw.ViewStackPage {
-                                    name: "marketplace";
-                                    title: _("Marketplace");
-                                    icon-name: "view-grid-symbolic";
-
-                                    child: $GnostrClassifiedsView classifieds_view {
-                                        hexpand: true;
-                                        vexpand: true;
-                                    };
-                                }
-                            }
-
-                            $GnostrComposer composer {
-                                hexpand: true;
-                                visible: false;
-                            }
-                        };
-                    }
-                }
-
-                [bottom]
-                Adw.ViewSwitcherBar bottom_bar {
-                    stack: stack;
-                    reveal: false;
-
-                    accessibility {
-                        label: "Bottom navigation bar";
-                        description: "Navigation bar for narrow screens";
-                    }
-                }
-            };
-        }
-    };
 }
