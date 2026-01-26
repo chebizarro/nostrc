@@ -405,8 +405,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 <property name="icon-name">view-list-symbolic</property>
                                 <property name="child">
                                   <object class="GtkOverlay" id="timeline_overlay">
-                                    <property name="hexpand">false</property>
-                                    <property name="vexpand">false</property>
+                                    <property name="hexpand">true</property>
+                                    <property name="vexpand">true</property>
                                     <child>
                                       <object class="GnostrTimelineView" id="timeline">
                                         <property name="hexpand">true</property>
@@ -423,8 +423,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                         <property name="margin-top">8</property>
                                         <child>
                                           <object class="GtkButton" id="btn_new_notes">
-                                            <property name="css-classes">
-                                                                                            new-notes-indicator</property>
+                                            <property name="css-classes">new-notes-indicator</property>
                                             <property name="focusable">false</property>
                                             <property name="tooltip-text">Scroll to new notes</property>
                                             <child>
@@ -438,7 +437,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                                 </child>
                                                 <child>
                                                   <object class="GtkLabel" id="lbl_new_notes_count">
-                                                    <property name="label"> New notes</property>
+                                                    <property name="label">New notes</property>
                                                   </object>
                                                 </child>
                                               </object>
