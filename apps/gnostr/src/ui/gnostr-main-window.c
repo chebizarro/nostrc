@@ -4395,20 +4395,20 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   if (self->btn_new_notes) {
     g_signal_connect(self->btn_new_notes, "clicked", G_CALLBACK(on_new_notes_clicked), self);
   }
-  /* Re-added: profile pane signals */
-  if (self->profile_pane && GNOSTR_IS_PROFILE_PANE(self->profile_pane)) {
+  /* REMOVED: profile pane signals - caused width overflow */
+  /* if (self->profile_pane && GNOSTR_IS_PROFILE_PANE(self->profile_pane)) {
     g_signal_connect(self->profile_pane, "close-requested",
                      G_CALLBACK(on_profile_pane_close_requested), self);
-  }
-  /* Re-added: thread view signals */
-  if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
+  } */
+  /* REMOVED: thread view signals - caused width overflow */
+  /* if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
     g_signal_connect(self->thread_view, "close-requested",
                      G_CALLBACK(on_thread_view_close_requested), self);
     g_signal_connect(self->thread_view, "open-profile",
                      G_CALLBACK(on_thread_view_open_profile), self);
     g_signal_connect(self->thread_view, "need-profile",
                      G_CALLBACK(on_thread_view_need_profile), self);
-  }
+  } */
   /* Connect discover page signals (nostrc-dr3) */
   if (self->discover_page && GNOSTR_IS_PAGE_DISCOVER(self->discover_page)) {
     g_signal_connect(self->discover_page, "open-profile",
@@ -4820,11 +4820,11 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, timeline);
   /* REMOVED: timeline_overlay not in new simplified UI */
   /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, timeline_overlay); */
-  /* Re-added: panel_split, panel_container, profile_pane, thread_view */
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, panel_split);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, panel_container);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, profile_pane);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, thread_view);
+  /* REMOVED: panel_split, panel_container, profile_pane, thread_view - caused width overflow */
+  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, panel_split); */
+  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, panel_container); */
+  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, profile_pane); */
+  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, thread_view); */
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_settings);
   /* Re-added: btn_relays */
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_relays);
