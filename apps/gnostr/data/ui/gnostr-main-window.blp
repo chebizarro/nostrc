@@ -196,7 +196,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                     margin-bottom: 10;
 
                                     Image {
-                                        icon-name: " view-list-symbolic";
+                                        icon-name: "view-list-symbolic";
 
                                         styles [
                                             "dim-label",
@@ -204,7 +204,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                     }
 
                                     Label {
-                                        label: _(" Timeline");
+                                        label: _("Timeline");
                                         xalign: 0;
                                         hexpand: false;
                                     }
@@ -226,7 +226,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                     margin-bottom: 10;
 
                                     Image {
-                                        icon-name: " notifications-symbolic";
+                                        icon-name: "preferences-system-notifications-symbolic";
 
                                         styles [
                                             "dim-label",
@@ -234,7 +234,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                     }
 
                                     Label {
-                                        label: _(" Notifications");
+                                        label: _("Notifications");
                                         xalign: 0;
                                         hexpand: false;
                                     }
@@ -256,7 +256,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                     margin-bottom: 10;
 
                                     Image {
-                                        icon-name: " mail-unread-symbolic";
+                                        icon-name: "mail-unread-symbolic";
 
                                         styles [
                                             "dim-label",
@@ -264,7 +264,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                     }
 
                                     Label {
-                                        label: _(" Messages");
+                                        label: _("Messages");
                                         xalign: 0;
                                         hexpand: false;
                                     }
@@ -286,7 +286,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                     margin-bottom: 10;
 
                                     Image {
-                                        icon-name: " find-location-symbolic";
+                                        icon-name: "find-location-symbolic";
 
                                         styles [
                                             "dim-label",
@@ -294,7 +294,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                     }
 
                                     Label {
-                                        label: _(" Discover");
+                                        label: _("Discover");
                                         xalign: 0;
                                         hexpand: false;
                                     }
@@ -316,7 +316,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                     margin-bottom: 10;
 
                                     Image {
-                                        icon-name: " system-search-symbolic";
+                                        icon-name: "system-search-symbolic";
 
                                         styles [
                                             "dim-label",
@@ -324,7 +324,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                     }
 
                                     Label {
-                                        label: _(" Search");
+                                        label: _("Search");
                                         xalign: 0;
                                         hexpand: false;
                                     }
@@ -346,7 +346,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                     margin-bottom: 10;
 
                                     Image {
-                                        icon-name: " basket-symbolic";
+                                        icon-name: "view-grid-symbolic";
 
                                         styles [
                                             "dim-label",
@@ -354,7 +354,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                     }
 
                                     Label {
-                                        label: _(" Marketplace");
+                                        label: _("Marketplace");
                                         xalign: 0;
                                         hexpand: false;
                                     }
@@ -387,7 +387,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                             Adw.ViewStackPage {
                                 name: "timeline";
                                 title: _("Timeline");
-                                icon-name: " view-list-symbolic";
+                                icon-name: "view-list-symbolic";
 
                                 child: Overlay timeline_overlay {
                                     hexpand: false;
@@ -421,7 +421,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                                 spacing: 6;
 
                                                 Image {
-                                                    icon-name: " go-up-symbolic";
+                                                    icon-name: "go-up-symbolic";
                                                 }
 
                                                 Label lbl_new_notes_count {
@@ -436,51 +436,51 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                             Adw.ViewStackPage {
                                 name: "notifications";
                                 title: _("Notifications");
-                                icon-name: " notifications-symbolic";
+                                icon-name: "preferences-system-notifications-symbolic";
 
                                 child: $GnostrNotificationsView notifications_view {
-                                    hexpand: " true";
-                                    vexpand: " true";
+                                    hexpand: true;
+                                    vexpand: true;
                                 };
                             }
 
                             Adw.ViewStackPage {
                                 name: "messages";
                                 title: _("Messages");
-                                icon-name: " mail-unread-symbolic";
+                                icon-name: "mail-unread-symbolic";
 
                                 child: $GnostrDmInboxView dm_inbox {
-                                    hexpand: " true";
-                                    vexpand: " true";
+                                    hexpand: true;
+                                    vexpand: true;
                                 };
                             }
 
                             Adw.ViewStackPage {
                                 name: "discover";
                                 title: _("Discover");
-                                icon-name: " find-location-symbolic";
+                                icon-name: "find-location-symbolic";
 
                                 child: $GnostrPageDiscover page_discover {
-                                    hexpand: " true";
-                                    vexpand: " true";
+                                    hexpand: true;
+                                    vexpand: true;
                                 };
                             }
 
                             Adw.ViewStackPage {
                                 name: "search";
                                 title: _("Search");
-                                icon-name: " system-search-symbolic";
+                                icon-name: "system-search-symbolic";
 
                                 child: $GnostrSearchResultsView search_view {
-                                    hexpand: " true";
-                                    vexpand: " true";
+                                    hexpand: true;
+                                    vexpand: true;
                                 };
                             }
                         }
 
                         $GnostrComposer composer {
-                            hexpand: "true";
-                            visible: "false";
+                            hexpand: true;
+                            visible: false;
                         }
                     };
                 }
