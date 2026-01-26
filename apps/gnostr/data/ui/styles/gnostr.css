@@ -22,8 +22,21 @@ headerbar .title {
 .toolbar-view,
 .navigation-split-view > *,
 overlay,
-scrolledwindow > viewport > * {
+scrolledwindow > viewport > *,
+listview,
+listview > row,
+listview > row > * {
 	min-width: 0;
+}
+
+/* Constrain note card content to prevent width overflow */
+.note-card,
+.note-card > *,
+.note-content,
+.note-media-image,
+.media-image-container {
+	min-width: 0;
+	max-width: 100%;
 }
 
 /* Clip content that exceeds available width */
