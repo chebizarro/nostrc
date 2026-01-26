@@ -11,6 +11,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <object class="GtkScrolledWindow" id="root_scroller">
         <property name="hexpand">true</property>
         <property name="vexpand">true</property>
+        <property name="hscrollbar-policy">2</property>
         <child>
           <object class="GtkListView" id="list_view">
             <property name="hexpand">true</property>

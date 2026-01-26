@@ -35,7 +35,7 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
         }
     }
 
-    Adw.ToastOverlay toast_overlay {
+    content: Adw.ToastOverlay toast_overlay {
         Adw.OverlaySplitView panel_split {
             show-sidebar: false;
             sidebar-position: end;
@@ -530,5 +530,5 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                 }
             };
         }
-    }
+    };
 }

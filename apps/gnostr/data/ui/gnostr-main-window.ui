@@ -34,7 +34,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <setter object="sidebar_toggle_btn" property="visible">true</setter>
       </object>
     </child>
-    <child>
+    <property name="content">
       <object class="AdwToastOverlay" id="toast_overlay">
         <child>
           <object class="AdwOverlaySplitView" id="panel_split">
@@ -566,6 +566,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
       </object>
-    </child>
+    </property>
   </template>
 </interface>
