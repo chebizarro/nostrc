@@ -302,10 +302,11 @@ struct _GnostrMainWindow {
   GtkWidget *timeline;
   GWeakRef timeline_ref; /* weak ref to avoid UAF in async */
   GtkWidget *timeline_overlay;
-  GtkWidget *profile_revealer;
+  GtkWidget *panel_split;      /* Adw.OverlaySplitView for side panels */
+  GtkWidget *panel_container;  /* Box containing profile_pane and thread_view */
   GtkWidget *profile_pane;
-  GtkWidget *thread_revealer;
   GtkWidget *thread_view;
+  gboolean showing_profile;    /* TRUE if profile pane is active, FALSE if thread view */
   GtkWidget *btn_settings;
   GtkWidget *btn_relays;
   GtkWidget *btn_menu;
@@ -320,8 +321,7 @@ struct _GnostrMainWindow {
   GtkWidget *notifications_view;
   GtkWidget *page_discover;
   GtkWidget *classifieds_view;
-  GtkWidget *toast_revealer;
-  GtkWidget *toast_label;
+  GtkWidget *toast_overlay;
   /* nostrc-yi2: Calm timeline - new notes indicator */
   GtkWidget *new_notes_revealer;
   GtkWidget *btn_new_notes;
@@ -504,23 +504,51 @@ schedule_only:
 }
 
 /* ---- Toast helpers and UI signal handlers ---- */
-static gboolean hide_toast_cb(gpointer data) {
-  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
-  if (!GNOSTR_IS_MAIN_WINDOW(self)) return G_SOURCE_REMOVE;
-  if (self->toast_revealer && GTK_IS_REVEALER(self->toast_revealer))
-    gtk_revealer_set_reveal_child(GTK_REVEALER(self->toast_revealer), FALSE);
-  g_object_unref(self);
-  return G_SOURCE_REMOVE;
+static void show_toast(GnostrMainWindow *self, const char *msg) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !msg) return;
+  if (self->toast_overlay && ADW_IS_TOAST_OVERLAY(self->toast_overlay)) {
+    AdwToast *toast = adw_toast_new(msg);
+    adw_toast_set_timeout(toast, 2);
+    adw_toast_overlay_add_toast(ADW_TOAST_OVERLAY(self->toast_overlay), toast);
+  }
 }
 
-static void show_toast(GnostrMainWindow *self, const char *msg) {
+/* ---- Panel management helpers for OverlaySplitView ---- */
+static void show_profile_panel(GnostrMainWindow *self) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  if (self->toast_label && GTK_IS_LABEL(self->toast_label))
-    gtk_label_set_text(GTK_LABEL(self->toast_label), msg ? msg : "");
-  if (self->toast_revealer && GTK_IS_REVEALER(self->toast_revealer))
-    gtk_revealer_set_reveal_child(GTK_REVEALER(self->toast_revealer), TRUE);
-  /* auto-hide after 2s */
-  g_timeout_add_once(2000, (GSourceOnceFunc)hide_toast_cb, g_object_ref(self));
+  /* Hide thread view, show profile pane */
+  if (self->thread_view) gtk_widget_set_visible(self->thread_view, FALSE);
+  if (self->profile_pane) gtk_widget_set_visible(self->profile_pane, TRUE);
+  self->showing_profile = TRUE;
+  if (self->panel_split && ADW_IS_OVERLAY_SPLIT_VIEW(self->panel_split)) {
+    adw_overlay_split_view_set_show_sidebar(ADW_OVERLAY_SPLIT_VIEW(self->panel_split), TRUE);
+  }
+}
+
+static void show_thread_panel(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  /* Hide profile pane, show thread view */
+  if (self->profile_pane) gtk_widget_set_visible(self->profile_pane, FALSE);
+  if (self->thread_view) gtk_widget_set_visible(self->thread_view, TRUE);
+  self->showing_profile = FALSE;
+  if (self->panel_split && ADW_IS_OVERLAY_SPLIT_VIEW(self->panel_split)) {
+    adw_overlay_split_view_set_show_sidebar(ADW_OVERLAY_SPLIT_VIEW(self->panel_split), TRUE);
+  }
+}
+
+static void hide_panel(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  if (self->panel_split && ADW_IS_OVERLAY_SPLIT_VIEW(self->panel_split)) {
+    adw_overlay_split_view_set_show_sidebar(ADW_OVERLAY_SPLIT_VIEW(self->panel_split), FALSE);
+  }
+}
+
+static gboolean is_panel_visible(GnostrMainWindow *self) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return FALSE;
+  if (self->panel_split && ADW_IS_OVERLAY_SPLIT_VIEW(self->panel_split)) {
+    return adw_overlay_split_view_get_show_sidebar(ADW_OVERLAY_SPLIT_VIEW(self->panel_split));
+  }
+  return FALSE;
 }
 
 static void settings_on_close_clicked(GtkButton *btn, gpointer user_data) {
@@ -3180,13 +3208,8 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
 
-  /* Close thread pane if open - panels are mutually exclusive */
-  if (self->thread_revealer && GTK_IS_REVEALER(self->thread_revealer)) {
-    gtk_revealer_set_reveal_child(GTK_REVEALER(self->thread_revealer), FALSE);
-  }
-
   /* Check if profile pane is currently visible */
-  gboolean sidebar_visible = gtk_revealer_get_reveal_child(GTK_REVEALER(self->profile_revealer));
+  gboolean sidebar_visible = is_panel_visible(self) && self->showing_profile;
 
   /* Check if profile pane is already showing this profile */
   extern const char* gnostr_profile_pane_get_current_pubkey(GnostrProfilePane *pane);
@@ -3194,13 +3217,13 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
     const char *current = gnostr_profile_pane_get_current_pubkey(GNOSTR_PROFILE_PANE(self->profile_pane));
     if (sidebar_visible && current && strcmp(current, pubkey_hex) == 0) {
       /* Same profile clicked while sidebar is visible - toggle OFF */
-      gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), FALSE);
+      hide_panel(self);
       return;
     }
   }
 
   /* Different profile or sidebar was closed - show the profile pane */
-  gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), TRUE);
+  show_profile_panel(self);
   
   /* Set the pubkey on the profile pane */
   if (GNOSTR_IS_PROFILE_PANE(self->profile_pane)) {
@@ -3244,7 +3267,7 @@ static void on_profile_pane_close_requested(GnostrProfilePane *pane, gpointer us
   (void)pane;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), FALSE);
+  hide_panel(self);
 }
 
 /* Discover page signal handlers (nostrc-dr3) */
@@ -3319,7 +3342,7 @@ static void on_classifieds_listing_clicked(GnostrClassifiedsView *view, const ch
   /* Show listing details in thread view */
   if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
     gnostr_thread_view_set_focus_event(GNOSTR_THREAD_VIEW(self->thread_view), event_id);
-    gtk_revealer_set_reveal_child(GTK_REVEALER(self->thread_revealer), TRUE);
+    show_thread_panel(self);
   }
 }
 
@@ -3369,7 +3392,7 @@ static void on_discover_open_article(GnostrPageDiscover *page, const char *event
   /* Show in thread view for now - could have a dedicated ArticleReader in the future */
   if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
     gnostr_thread_view_set_focus_event(GNOSTR_THREAD_VIEW(self->thread_view), event_id);
-    gtk_revealer_set_reveal_child(GTK_REVEALER(self->thread_revealer), TRUE);
+    show_thread_panel(self);
   }
 
   g_debug("[ARTICLES] Open article requested: kind=%d, id=%s", kind, event_id);
@@ -3484,21 +3507,17 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, 
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return GDK_EVENT_PROPAGATE;
 
   if (keyval == GDK_KEY_Escape) {
-    /* Close thread view if it's open (takes priority) */
-    if (self->thread_revealer && GTK_IS_REVEALER(self->thread_revealer) &&
-        gtk_revealer_get_reveal_child(GTK_REVEALER(self->thread_revealer))) {
-      g_debug("[UI] ESC pressed: closing thread view");
-      gtk_revealer_set_reveal_child(GTK_REVEALER(self->thread_revealer), FALSE);
-      if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
-        gnostr_thread_view_clear(GNOSTR_THREAD_VIEW(self->thread_view));
+    /* Close panel if it's open */
+    if (is_panel_visible(self)) {
+      if (!self->showing_profile) {
+        g_debug("[UI] ESC pressed: closing thread view");
+        if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
+          gnostr_thread_view_clear(GNOSTR_THREAD_VIEW(self->thread_view));
+        }
+      } else {
+        g_debug("[UI] ESC pressed: closing profile sidebar");
       }
-      return GDK_EVENT_STOP;
-    }
-    /* Close profile sidebar if it's open */
-    if (self->profile_revealer && GTK_IS_REVEALER(self->profile_revealer) &&
-        gtk_revealer_get_reveal_child(GTK_REVEALER(self->profile_revealer))) {
-      g_debug("[UI] ESC pressed: closing profile sidebar");
-      gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), FALSE);
+      hide_panel(self);
       return GDK_EVENT_STOP;
     }
   }
@@ -3758,18 +3777,11 @@ void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id
     return;
   }
 
-  /* Close profile pane first if open - panels are mutually exclusive */
-  if (self->profile_revealer && GTK_IS_REVEALER(self->profile_revealer)) {
-    gtk_revealer_set_reveal_child(GTK_REVEALER(self->profile_revealer), FALSE);
-  }
-
   /* Set the thread root and load the thread */
   gnostr_thread_view_set_thread_root(GNOSTR_THREAD_VIEW(self->thread_view), root_event_id);
 
-  /* Reveal the thread panel */
-  if (self->thread_revealer && GTK_IS_REVEALER(self->thread_revealer)) {
-    gtk_revealer_set_reveal_child(GTK_REVEALER(self->thread_revealer), TRUE);
-  }
+  /* Show the thread panel */
+  show_thread_panel(self);
 }
 
 /* Handler for thread view close button */
@@ -3780,9 +3792,7 @@ static void on_thread_view_close_requested(GnostrThreadView *view, gpointer user
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
   /* Hide thread panel */
-  if (self->thread_revealer && GTK_IS_REVEALER(self->thread_revealer)) {
-    gtk_revealer_set_reveal_child(GTK_REVEALER(self->thread_revealer), FALSE);
-  }
+  hide_panel(self);
 
   /* Clear thread view to free resources */
   if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
@@ -4799,9 +4809,9 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, stack);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, timeline);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, timeline_overlay);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, profile_revealer);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, panel_split);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, panel_container);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, profile_pane);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, thread_revealer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, thread_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_settings);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_relays);
@@ -4817,8 +4827,7 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, notifications_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, page_discover);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, classifieds_view);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_revealer);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_label);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_overlay);
   /* nostrc-yi2: Calm timeline - new notes indicator */
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, new_notes_revealer);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_new_notes);
@@ -6640,8 +6649,7 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
 
   /* Update thread view if visible */
   if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
-    if (self->thread_revealer && GTK_IS_REVEALER(self->thread_revealer) &&
-        gtk_revealer_get_reveal_child(GTK_REVEALER(self->thread_revealer))) {
+    if (is_panel_visible(self) && !self->showing_profile) {
       gnostr_thread_view_update_profiles(GNOSTR_THREAD_VIEW(self->thread_view));
     }
   }
