@@ -1,122 +1,122 @@
 using Gtk 4.0;
 
 template $GnostrThreadView: Widget {
-  Box root_box {
-    orientation: vertical;
-    hexpand: true;
-    vexpand: true;
-
-    styles [
-      "thread-view",
-    ]
-
-    Box header_box {
-      orientation: horizontal;
-      spacing: 12;
-      margin-start: 12;
-      margin-end: 12;
-      margin-top: 8;
-      margin-bottom: 8;
-
-      styles [
-        "thread-header",
-      ]
-
-      Button btn_close {
-        icon-name: "go-previous-symbolic";
-        tooltip-text: "Close thread";
-        valign: center;
-
-        styles [
-          "flat",
-        ]
-      }
-
-      Label title_label {
-        label: "Thread";
-        hexpand: true;
-        xalign: 0;
-
-        styles [
-          "title-3",
-          "thread-title",
-        ]
-      }
-    }
-
-    Separator {
-      orientation: horizontal;
-    }
-
-    Box loading_box {
-      orientation: vertical;
-      halign: center;
-      valign: center;
-      vexpand: true;
-      spacing: 12;
-      visible: false;
-
-      Spinner loading_spinner {
-        width-request: 32;
-        height-request: 32;
-      }
-
-      Label {
-        label: "Loading thread...";
-
-        styles [
-          "dim-label",
-        ]
-      }
-    }
-
-    Box empty_box {
-      orientation: vertical;
-      halign: center;
-      valign: center;
-      vexpand: true;
-      spacing: 12;
-      visible: false;
-
-      Image {
-        icon-name: "dialog-information-symbolic";
-        pixel-size: 48;
-
-        styles [
-          "dim-label",
-        ]
-      }
-
-      Label empty_label {
-        label: "No thread found";
-
-        styles [
-          "dim-label",
-          "title-4",
-        ]
-      }
-    }
-
-    ScrolledWindow scroll_window {
-      hscrollbar-policy: never;
-      vscrollbar-policy: automatic;
-      hexpand: true;
-      vexpand: true;
-      visible: true;
-
-      Box thread_list_box {
+    Box root_box {
         orientation: vertical;
-        spacing: 0;
-        margin-start: 0;
-        margin-end: 0;
-        margin-top: 4;
-        margin-bottom: 4;
+        hexpand: false;
+        vexpand: true;
+        width-request: 450;
 
         styles [
-          "thread-list",
+            "thread-view",
         ]
-      }
-    }
-  }
-}
 
+        Box header_box {
+            orientation: horizontal;
+            spacing: 12;
+            margin-start: 12;
+            margin-end: 12;
+            margin-top: 8;
+            margin-bottom: 8;
+
+            styles [
+                "thread-header",
+            ]
+
+            Button btn_close {
+                icon-name: "go-previous-symbolic";
+                tooltip-text: "Close thread";
+                valign: center;
+
+                styles [
+                    "flat",
+                ]
+            }
+
+            Label title_label {
+                label: "Thread";
+                hexpand: true;
+                xalign: 0;
+
+                styles [
+                    "title-3",
+                    "thread-title",
+                ]
+            }
+        }
+
+        Separator {
+            orientation: horizontal;
+        }
+
+        Box loading_box {
+            orientation: vertical;
+            halign: center;
+            valign: center;
+            vexpand: true;
+            spacing: 12;
+            visible: false;
+
+            Spinner loading_spinner {
+                width-request: 32;
+                height-request: 32;
+            }
+
+            Label {
+                label: "Loading thread...";
+
+                styles [
+                    "dim-label",
+                ]
+            }
+        }
+
+        Box empty_box {
+            orientation: vertical;
+            halign: center;
+            valign: center;
+            vexpand: true;
+            spacing: 12;
+            visible: false;
+
+            Image {
+                icon-name: "dialog-information-symbolic";
+                pixel-size: 48;
+
+                styles [
+                    "dim-label",
+                ]
+            }
+
+            Label empty_label {
+                label: "No thread found";
+
+                styles [
+                    "dim-label",
+                    "title-4",
+                ]
+            }
+        }
+
+        ScrolledWindow scroll_window {
+            hscrollbar-policy: never;
+            vscrollbar-policy: automatic;
+            hexpand: true;
+            vexpand: true;
+            visible: true;
+
+            Box thread_list_box {
+                orientation: vertical;
+                spacing: 0;
+                margin-start: 0;
+                margin-end: 0;
+                margin-top: 4;
+                margin-bottom: 4;
+
+                styles [
+                    "thread-list",
+                ]
+            }
+        }
+    }
+}

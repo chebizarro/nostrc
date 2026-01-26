@@ -10,8 +10,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <child>
       <object class="GtkBox" id="root_box">
         <property name="orientation">1</property>
-        <property name="hexpand">true</property>
+        <property name="hexpand">false</property>
         <property name="vexpand">true</property>
+        <property name="width-request">450</property>
         <style>
           <class name="thread-view"/>
         </style>
