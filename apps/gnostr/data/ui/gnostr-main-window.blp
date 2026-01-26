@@ -516,11 +516,13 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
             transition-type: slide_left;
             reveal-child: false;
             transition-duration: 250;
-            halign: end;
+            halign: fill;
             valign: fill;
 
             $GnostrProfilePane profile_pane {
                 vexpand: true;
+                hexpand: true;
+                halign: fill;
             }
         }
 
@@ -529,12 +531,13 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
             transition-type: slide_left;
             reveal-child: false;
             transition-duration: 250;
-            halign: end;
+            halign: fill;
             valign: fill;
 
             $GnostrThreadView thread_view {
                 vexpand: true;
-                width-request: 450;
+                hexpand: true;
+                halign: fill;
             }
         }
 
