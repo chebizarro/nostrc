@@ -546,13 +546,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="transition-type">3</property>
             <property name="reveal-child">false</property>
             <property name="transition-duration">250</property>
-            <property name="halign">0</property>
+            <property name="halign">2</property>
             <property name="valign">0</property>
             <child>
               <object class="GnostrProfilePane" id="profile_pane">
                 <property name="vexpand">true</property>
-                <property name="hexpand">true</property>
-                <property name="halign">fill</property>
               </object>
             </child>
           </object>
@@ -562,13 +560,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="transition-type">3</property>
             <property name="reveal-child">false</property>
             <property name="transition-duration">250</property>
-            <property name="halign">0</property>
+            <property name="halign">2</property>
             <property name="valign">0</property>
             <child>
               <object class="GnostrThreadView" id="thread_view">
                 <property name="vexpand">true</property>
-                <property name="hexpand">true</property>
-                <property name="halign">fill</property>
+                <property name="width-request">450</property>
               </object>
             </child>
           </object>
