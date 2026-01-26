@@ -1,0 +1,278 @@
+using Gtk 4.0;
+
+Window relay_discovery_window {
+    title: "Discover Relays (NIP-66)";
+    default-width: 700;
+    default-height: 550;
+
+    Box {
+        orientation: vertical;
+        spacing: 12;
+        margin-start: 16;
+        margin-end: 16;
+        margin-top: 16;
+        margin-bottom: 16;
+
+        /* Header with description */
+        Box {
+            orientation: vertical;
+            spacing: 4;
+
+            Label {
+                xalign: 0.0;
+                use-markup: true;
+                label: "<b>Relay Discovery</b>";
+            }
+
+            Label {
+                xalign: 0.0;
+                wrap: true;
+                use-markup: true;
+                label: "<small>Browse relays discovered via NIP-66 relay monitors. Filter by region, supported NIPs, and status to find relays that match your needs.</small>";
+
+                styles [
+                    "dim-label",
+                ]
+            }
+        }
+
+        /* Filter controls */
+        Box {
+            orientation: horizontal;
+            spacing: 12;
+
+            Box {
+                orientation: horizontal;
+                spacing: 6;
+
+                Label {
+                    label: "Region:";
+                }
+
+                DropDown filter_region {
+                    tooltip-text: "Filter by geographic region";
+
+                    model: StringList {
+                        strings [
+                            "All Regions",
+                            "North America",
+                            "Europe",
+                            "Asia Pacific",
+                            "South America",
+                            "Middle East",
+                            "Africa",
+                            "Other",
+                        ]
+                    };
+                }
+            }
+
+            Box {
+                orientation: horizontal;
+                spacing: 6;
+
+                Label {
+                    label: "NIP:";
+                }
+
+                DropDown filter_nip {
+                    tooltip-text: "Filter by required NIP support";
+
+                    model: StringList {
+                        strings [
+                            "Any NIPs",
+                            "NIP-01 (Basic)",
+                            "NIP-11 (Relay Info)",
+                            "NIP-17 (Private DMs)",
+                            "NIP-42 (Auth)",
+                            "NIP-50 (Search)",
+                            "NIP-57 (Zaps)",
+                            "NIP-59 (Gift Wrap)",
+                            "NIP-65 (Relay List)",
+                        ]
+                    };
+                }
+            }
+
+            CheckButton filter_online {
+                label: "Online only";
+                tooltip-text: "Show only currently online relays";
+                active: true;
+            }
+
+            CheckButton filter_free {
+                label: "Free only";
+                tooltip-text: "Show only relays that don't require payment";
+                active: false;
+            }
+
+            Button btn_refresh {
+                icon-name: "view-refresh-symbolic";
+                tooltip-text: "Refresh relay list from monitors";
+                hexpand: true;
+                halign: end;
+            }
+        }
+
+        /* Main content stack */
+        Stack discovery_stack {
+            vexpand: true;
+            hexpand: true;
+            transition-type: crossfade;
+
+            /* Loading state */
+            StackPage {
+                name: "loading";
+
+                child: Box {
+                    orientation: vertical;
+                    valign: center;
+                    halign: center;
+                    spacing: 16;
+
+                    Spinner discovery_spinner {
+                        spinning: true;
+                        width-request: 48;
+                        height-request: 48;
+                    }
+
+                    Label loading_label {
+                        label: "Discovering relays from NIP-66 monitors...";
+
+                        styles [
+                            "dim-label",
+                        ]
+                    }
+                };
+            }
+
+            /* Empty state */
+            StackPage {
+                name: "empty";
+
+                child: Box {
+                    orientation: vertical;
+                    valign: center;
+                    halign: center;
+                    spacing: 12;
+
+                    Image {
+                        icon-name: "network-offline-symbolic";
+                        pixel-size: 64;
+
+                        styles [
+                            "dim-label",
+                        ]
+                    }
+
+                    Label {
+                        label: "No relays found";
+
+                        styles [
+                            "title-3",
+                        ]
+                    }
+
+                    Label {
+                        label: "Try adjusting your filters or refresh the list.";
+
+                        styles [
+                            "dim-label",
+                        ]
+                    }
+
+                    Button btn_refresh_empty {
+                        label: "Refresh";
+                        halign: center;
+                    }
+                };
+            }
+
+            /* Error state */
+            StackPage {
+                name: "error";
+
+                child: Box {
+                    orientation: vertical;
+                    valign: center;
+                    halign: center;
+                    spacing: 12;
+
+                    Image {
+                        icon-name: "dialog-error-symbolic";
+                        pixel-size: 64;
+
+                        styles [
+                            "error",
+                        ]
+                    }
+
+                    Label error_label {
+                        label: "Failed to discover relays";
+                        wrap: true;
+
+                        styles [
+                            "error",
+                        ]
+                    }
+
+                    Button btn_retry {
+                        label: "Try Again";
+                        halign: center;
+                    }
+                };
+            }
+
+            /* Results list */
+            StackPage {
+                name: "results";
+
+                child: Box {
+                    orientation: vertical;
+                    spacing: 8;
+
+                    Label results_label {
+                        xalign: 0.0;
+                        use-markup: true;
+                        label: "<small>Found 0 relays</small>";
+
+                        styles [
+                            "dim-label",
+                        ]
+                    }
+
+                    ScrolledWindow {
+                        vexpand: true;
+                        hexpand: true;
+
+                        ListView relay_list {
+                            show-separators: true;
+                        }
+                    }
+                };
+            }
+        }
+
+        /* Action buttons */
+        Box {
+            halign: end;
+            spacing: 8;
+
+            Button btn_close {
+                label: "_Close";
+                use-underline: true;
+            }
+
+            Button btn_add_selected {
+                label: "_Add Selected";
+                use-underline: true;
+                sensitive: false;
+                tooltip-text: "Add selected relays to your relay list";
+
+                styles [
+                    "suggested-action",
+                ]
+            }
+        }
+    }
+}

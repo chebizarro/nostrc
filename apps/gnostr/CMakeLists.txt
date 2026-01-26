@@ -62,6 +62,7 @@ set(BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-about-dialog.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-report-dialog.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-app-handler-dialog.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-discovery.blp
 )
 
 # Compile Blueprint files to UI files if blueprint-compiler is available
@@ -88,7 +89,6 @@ if(BLUEPRINT_COMPILER)
 endif()
 
 # UI files that are compiled from Blueprint sources
-# Note: gnostr-relay-discovery.ui is kept as XML (blueprint-compiler doesn't support its constructs)
 set(UI_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-main-window.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.ui
