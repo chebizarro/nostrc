@@ -329,12 +329,22 @@ label a:visited {
 	border-radius: 50%;
 	min-width: 24px;
 	min-height: 24px;
+	/* Force the overlay to maintain size even without image */
+	-gtk-icon-size: 24px;
 	/* Default fallback gradient for avatars without images */
 	background: linear-gradient(
 		135deg,
 		alpha(@accent_bg_color, 0.2) 0%,
 		alpha(@accent_bg_color, 0.35) 100%
 	);
+}
+
+/* Avatar initials label - sized to fill the avatar circle */
+.avatar-initials {
+	min-width: 24px;
+	min-height: 24px;
+	font-size: 10px;
+	font-weight: 600;
 }
 
 .note-avatar picture {
