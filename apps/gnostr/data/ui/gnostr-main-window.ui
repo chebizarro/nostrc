@@ -36,6 +36,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     </child>
     <child>
       <object class="GtkOverlay" id="root_overlay">
+        <property name="overflow">1</property>
         <child>
           <object class="AdwToolbarView" id="toolbar_view">
             <child type="top">
