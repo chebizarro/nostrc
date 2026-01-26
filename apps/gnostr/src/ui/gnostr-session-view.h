@@ -42,6 +42,9 @@ GtkWidget *gnostr_session_view_get_classifieds_view(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_profile_pane(GnostrSessionView *self);
 GtkWidget *gnostr_session_view_get_thread_view(GnostrSessionView *self);
 
+/* Panel state queries */
+gboolean gnostr_session_view_is_showing_profile(GnostrSessionView *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_SESSION_VIEW_H */

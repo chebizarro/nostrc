@@ -630,3 +630,8 @@ GtkWidget *gnostr_session_view_get_thread_view(GnostrSessionView *self) {
   g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), NULL);
   return self->thread_view;
 }
+
+gboolean gnostr_session_view_is_showing_profile(GnostrSessionView *self) {
+  g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), FALSE);
+  return self->showing_profile;
+}

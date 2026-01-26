@@ -3019,10 +3019,7 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
     gnostr_nip51_settings_auto_sync_on_login(self->user_pubkey_hex);
   }
 
-  /* Close the avatar popover */
-  if (self->avatar_popover && GTK_IS_POPOVER(self->avatar_popover)) {
-    gtk_popover_popdown(GTK_POPOVER(self->avatar_popover));
-  }
+  /* TODO: Close avatar popover - now in session view */
 
   show_toast(self, "Signed in successfully");
 }
@@ -3039,10 +3036,7 @@ static void on_avatar_login_clicked(GtkButton *btn, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
-  /* Close popover and open login dialog */
-  if (self->avatar_popover && GTK_IS_POPOVER(self->avatar_popover)) {
-    gtk_popover_popdown(GTK_POPOVER(self->avatar_popover));
-  }
+  /* Open login dialog */
   open_login_dialog(self);
 }
 
@@ -3082,11 +3076,6 @@ static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data) {
     g_ptr_array_set_size(self->gift_wrap_queue, 0);
   }
 
-  /* Close popover */
-  if (self->avatar_popover && GTK_IS_POPOVER(self->avatar_popover)) {
-    gtk_popover_popdown(GTK_POPOVER(self->avatar_popover));
-  }
-
   show_toast(self, "Signed out");
 }
 
@@ -3121,7 +3110,7 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
   GtkWidget *profile_pane = self->session_view ? gnostr_session_view_get_profile_pane(self->session_view) : NULL;
 
   /* Check if profile pane is currently visible */
-  gboolean sidebar_visible = is_panel_visible(self) && self->showing_profile;
+  gboolean sidebar_visible = is_panel_visible(self) && gnostr_session_view_is_showing_profile(self->session_view);
 
   /* Check if profile pane is already showing this profile */
   extern const char* gnostr_profile_pane_get_current_pubkey(GnostrProfilePane *pane);
@@ -3355,16 +3344,18 @@ static void on_stack_visible_child_changed(GObject *stack, GParamSpec *pspec, gp
   }
 
   /* When Discover page becomes visible, load profiles */
-  if (visible_child == self->discover_page) {
-    if (GNOSTR_IS_PAGE_DISCOVER(self->discover_page)) {
-      gnostr_page_discover_load_profiles(GNOSTR_PAGE_DISCOVER(self->discover_page));
+  GtkWidget *discover_page = self->session_view ? gnostr_session_view_get_discover_page(self->session_view) : NULL;
+  if (visible_child == discover_page) {
+    if (discover_page && GNOSTR_IS_PAGE_DISCOVER(discover_page)) {
+      gnostr_page_discover_load_profiles(GNOSTR_PAGE_DISCOVER(discover_page));
     }
   }
 
   /* When Marketplace page becomes visible, fetch listings */
-  if (visible_child == self->classifieds_view) {
-    if (GNOSTR_IS_CLASSIFIEDS_VIEW(self->classifieds_view)) {
-      gnostr_classifieds_view_fetch_listings(GNOSTR_CLASSIFIEDS_VIEW(self->classifieds_view));
+  GtkWidget *classifieds_view = self->session_view ? gnostr_session_view_get_classifieds_view(self->session_view) : NULL;
+  if (visible_child == classifieds_view) {
+    if (classifieds_view && GNOSTR_IS_CLASSIFIEDS_VIEW(classifieds_view)) {
+      gnostr_classifieds_view_fetch_listings(GNOSTR_CLASSIFIEDS_VIEW(classifieds_view));
     }
   }
 }
@@ -3401,7 +3392,7 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, 
   if (keyval == GDK_KEY_Escape) {
     /* Close panel if it's open */
     if (is_panel_visible(self)) {
-      if (!self->showing_profile) {
+      if (!gnostr_session_view_is_showing_profile(self->session_view)) {
         g_debug("[UI] ESC pressed: closing thread view");
         GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
         if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
@@ -4515,10 +4506,7 @@ static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
    * We ref the window to ensure it stays valid until the timeout fires. */
   g_timeout_add(50, scroll_to_top_idle, g_object_ref(self));
 
-  /* Hide indicator */
-  if (self->new_notes_revealer && GTK_IS_REVEALER(self->new_notes_revealer)) {
-    gtk_revealer_set_reveal_child(GTK_REVEALER(self->new_notes_revealer), FALSE);
-  }
+  /* TODO: Hide new notes indicator - now in session view */
 }
 
 gboolean gnostr_main_window_get_compact(GnostrMainWindow *self) {
@@ -6488,7 +6476,7 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
   /* Update thread view if visible */
   GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
   if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
-    if (is_panel_visible(self) && !self->showing_profile) {
+    if (is_panel_visible(self) && !gnostr_session_view_is_showing_profile(self->session_view)) {
       gnostr_thread_view_update_profiles(GNOSTR_THREAD_VIEW(thread_view));
     }
   }
