@@ -380,7 +380,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </property>
                   </object>
                 </child>
-                <child>
+                <child type="content">
                   <object class="AdwNavigationPage" id="content_page">
                     <property name="title" translatable="yes">GNostr</property>
                     <accessibility>
