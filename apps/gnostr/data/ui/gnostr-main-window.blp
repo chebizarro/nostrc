@@ -1,0 +1,558 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GnostrMainWindow: Adw.ApplicationWindow {
+  title: "GNostr";
+  default-width: 900;
+  default-height: 640;
+  width-request: 320;
+  height-request: 480;
+  focus-visible: true;
+
+  accessibility {
+    label: "GNostr main window";
+    description: "Main application window for the GNostr Nostr client";
+  }
+
+  Adw.Breakpoint breakpoint_mobile {
+    condition ("max-width: 500px")
+
+    setters {
+      split_view.collapsed: true;
+      bottom_bar.reveal: true;
+      switcher_title.title-visible: true;
+      sidebar_toggle_btn.visible: true;
+      btn_relays.visible: false;
+    }
+  }
+
+  Adw.Breakpoint breakpoint_tablet {
+    condition ("max-width: 800px")
+
+    setters {
+      split_view.collapsed: true;
+      bottom_bar.reveal: false;
+      sidebar_toggle_btn.visible: true;
+    }
+  }
+
+  Overlay root_overlay {
+    Adw.ToolbarView toolbar_view {
+      [top]
+      Adw.HeaderBar header_bar {
+        accessibility {
+          label: "Main header bar";
+        }
+
+        [start]
+        ToggleButton sidebar_toggle_btn {
+          icon-name: "sidebar-show-symbolic";
+          tooltip-text: _("Toggle sidebar");
+          visible: false;
+
+          accessibility {
+            label: "Toggle sidebar";
+            description: "Show or hide the navigation sidebar";
+          }
+        }
+
+        [start]
+        Button btn_relays {
+          label: "Relays";
+          tooltip-text: "Manage relay connections";
+          clicked => $on_relays_clicked() not-swapped;
+        }
+
+        [start]
+        Button btn_settings {
+          icon-name: "emblem-system-symbolic";
+          tooltip-text: "Open settings";
+          clicked => $on_settings_clicked() not-swapped;
+        }
+
+        title-widget: Adw.ViewSwitcherTitle switcher_title {
+          stack: stack;
+          title: "GNostr";
+
+          accessibility {
+            label: "Page switcher";
+            description: "Switch between Timeline, Notifications, Messages, Discover, and Search pages";
+          }
+        };
+
+        [end]
+        MenuButton btn_menu {
+          icon-name: "open-menu-symbolic";
+          tooltip-text: "Main menu";
+
+          accessibility {
+            label: "Application menu";
+            description: "Open the application menu with additional options";
+          }
+        }
+
+        [end]
+        MenuButton btn_avatar {
+          icon-name: "avatar-default-symbolic";
+          has-frame: true;
+          sensitive: true;
+          focusable: true;
+          can-target: true;
+          always-show-arrow: true;
+          tooltip-text: "Login / Account";
+
+          [popover]
+          Popover avatar_popover {
+            has-arrow: true;
+
+            Box {
+              orientation: vertical;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 8;
+              margin-bottom: 8;
+              spacing: 8;
+
+              Label lbl_signin_status {
+                label: "Not signed in";
+
+                css-classes: [
+                  "title-4",
+                ];
+              }
+
+              Label lbl_profile_name {
+                label: "";
+                wrap: true;
+                wrap-mode: word_char;
+                max-width-chars: 28;
+                ellipsize: end;
+
+                css-classes: [
+                  "",
+                  "                                                                    dim-label",
+                ];
+              }
+
+              Button btn_login {
+                label: "Log In";
+                tooltip-text: "Sign in to your account";
+                clicked => $on_avatar_login_clicked() not-swapped;
+              }
+
+              Button btn_logout {
+                label: "Log Out";
+                tooltip-text: "Sign out of your account";
+                clicked => $on_avatar_logout_clicked() not-swapped;
+              }
+            }
+          }
+        }
+      }
+
+      Adw.NavigationSplitView split_view {
+        min-sidebar-width: 220;
+        max-sidebar-width: 280;
+        sidebar-width-fraction: 0.28;
+
+        accessibility {
+          label: "Navigation split view";
+          description: "Main content area with sidebar navigation";
+        }
+
+        [sidebar]
+        Adw.NavigationPage sidebar_page {
+          title: _("Navigation");
+
+          accessibility {
+            label: "Section navigation sidebar";
+            description: "Navigate between different sections of the application";
+          }
+
+          child: ScrolledWindow {
+            hscrollbar-policy: never;
+            vexpand: true;
+
+            ListBox sidebar_list {
+              selection-mode: browse;
+              activate-on-single-click: false;
+              focusable: true;
+              focus-on-click: true;
+
+              styles [
+                "navigation-sidebar",
+              ]
+
+              accessibility {
+                label: "Navigation sections list";
+                description: "List of navigation sections. Use arrow keys to navigate and Enter to select.";
+              }
+
+              ListBoxRow row_timeline {
+                accessibility {
+                  label: "Timeline section";
+                  description: "Navigate to the main timeline";
+                }
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 12;
+                  margin-start: 12;
+                  margin-end: 12;
+                  margin-top: 10;
+                  margin-bottom: 10;
+
+                  Image {
+                    icon-name: " view-list-symbolic";
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+
+                  Label {
+                    label: _(" Timeline");
+                    xalign: 0;
+                    hexpand: false;
+                  }
+                }
+              }
+
+              ListBoxRow row_notifications {
+                accessibility {
+                  label: "Notifications section";
+                  description: "Navigate to notifications";
+                }
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 12;
+                  margin-start: 12;
+                  margin-end: 12;
+                  margin-top: 10;
+                  margin-bottom: 10;
+
+                  Image {
+                    icon-name: " notifications-symbolic";
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+
+                  Label {
+                    label: _(" Notifications");
+                    xalign: 0;
+                    hexpand: false;
+                  }
+                }
+              }
+
+              ListBoxRow row_messages {
+                accessibility {
+                  label: "Messages section";
+                  description: "Navigate to direct messages";
+                }
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 12;
+                  margin-start: 12;
+                  margin-end: 12;
+                  margin-top: 10;
+                  margin-bottom: 10;
+
+                  Image {
+                    icon-name: " mail-unread-symbolic";
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+
+                  Label {
+                    label: _(" Messages");
+                    xalign: 0;
+                    hexpand: false;
+                  }
+                }
+              }
+
+              ListBoxRow row_discover {
+                accessibility {
+                  label: "Discover section";
+                  description: "Navigate to discover page";
+                }
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 12;
+                  margin-start: 12;
+                  margin-end: 12;
+                  margin-top: 10;
+                  margin-bottom: 10;
+
+                  Image {
+                    icon-name: " find-location-symbolic";
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+
+                  Label {
+                    label: _(" Discover");
+                    xalign: 0;
+                    hexpand: false;
+                  }
+                }
+              }
+
+              ListBoxRow row_search {
+                accessibility {
+                  label: "Search section";
+                  description: "Navigate to search";
+                }
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 12;
+                  margin-start: 12;
+                  margin-end: 12;
+                  margin-top: 10;
+                  margin-bottom: 10;
+
+                  Image {
+                    icon-name: " system-search-symbolic";
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+
+                  Label {
+                    label: _(" Search");
+                    xalign: 0;
+                    hexpand: false;
+                  }
+                }
+              }
+
+              ListBoxRow row_marketplace {
+                accessibility {
+                  label: "Marketplace section";
+                  description: "Navigate to classified listings marketplace";
+                }
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 12;
+                  margin-start: 12;
+                  margin-end: 12;
+                  margin-top: 10;
+                  margin-bottom: 10;
+
+                  Image {
+                    icon-name: " basket-symbolic";
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+
+                  Label {
+                    label: _(" Marketplace");
+                    xalign: 0;
+                    hexpand: false;
+                  }
+                }
+              }
+            }
+          };
+        }
+
+        Adw.NavigationPage content_page {
+          title: _("GNostr");
+
+          accessibility {
+            label: "Main content area";
+            description: "Main content for the selected section";
+          }
+
+          child: Box {
+            orientation: vertical;
+            spacing: 0;
+
+            Adw.ViewStack stack {
+              vexpand: true;
+
+              accessibility {
+                label: "Content stack";
+                description: "Container for different page views";
+              }
+
+              Adw.ViewStackPage {
+                name: "timeline";
+                title: _("Timeline");
+                icon-name: " view-list-symbolic";
+
+                child: Overlay timeline_overlay {
+                  hexpand: false;
+                  vexpand: false;
+
+                  $GnostrTimelineView timeline {
+                    hexpand: " true";
+                    vexpand: " true";
+                  }
+
+                  [overlay]
+                  Revealer new_notes_revealer {
+                    transition-type: slide_down;
+                    reveal-child: false;
+                    transition-duration: 200;
+                    halign: center;
+                    valign: start;
+                    margin-top: 8;
+
+                    Button btn_new_notes {
+                      css-classes: [
+                        "",
+                        "                                                                                            new-notes-indicator",
+                      ];
+
+                      focusable: false;
+                      tooltip-text: "Scroll to new notes";
+
+                      Box {
+                        orientation: horizontal;
+                        spacing: 6;
+
+                        Image {
+                          icon-name: " go-up-symbolic";
+                        }
+
+                        Label lbl_new_notes_count {
+                          label: " New notes";
+                        }
+                      }
+                    }
+                  }
+                };
+              }
+
+              Adw.ViewStackPage {
+                name: "notifications";
+                title: _("Notifications");
+                icon-name: " notifications-symbolic";
+
+                child: $GnostrNotificationsView notifications_view {
+                  hexpand: " true";
+                  vexpand: " true";
+                };
+              }
+
+              Adw.ViewStackPage {
+                name: "messages";
+                title: _("Messages");
+                icon-name: " mail-unread-symbolic";
+
+                child: $GnostrDmInboxView dm_inbox {
+                  hexpand: " true";
+                  vexpand: " true";
+                };
+              }
+
+              Adw.ViewStackPage {
+                name: "discover";
+                title: _("Discover");
+                icon-name: " find-location-symbolic";
+
+                child: $GnostrPageDiscover page_discover {
+                  hexpand: " true";
+                  vexpand: " true";
+                };
+              }
+
+              Adw.ViewStackPage {
+                name: "search";
+                title: _("Search");
+                icon-name: " system-search-symbolic";
+
+                child: $GnostrSearchResultsView search_view {
+                  hexpand: " true";
+                  vexpand: " true";
+                };
+              }
+            }
+
+            $GnostrComposer composer {
+              hexpand: "true";
+              visible: "false";
+            }
+          };
+        }
+      }
+
+      [bottom]
+      Adw.ViewSwitcherBar bottom_bar {
+        stack: stack;
+        reveal: false;
+
+        accessibility {
+          label: "Bottom navigation bar";
+          description: "Navigation bar for narrow screens";
+        }
+      }
+    }
+
+    [overlay]
+    Revealer profile_revealer {
+      transition-type: slide_left;
+      reveal-child: false;
+      transition-duration: 250;
+      halign: end;
+      valign: fill;
+
+      $GnostrProfilePane profile_pane {
+        vexpand: "true";
+      }
+    }
+
+    [overlay]
+    Revealer thread_revealer {
+      transition-type: slide_left;
+      reveal-child: false;
+      transition-duration: 250;
+      halign: end;
+      valign: fill;
+
+      $GnostrThreadView thread_view {
+        vexpand: "true";
+        width-request: "450";
+      }
+    }
+
+    [overlay]
+    Revealer toast_revealer {
+      transition-type: crossfade;
+      halign: center;
+      valign: end;
+      margin-bottom: 24;
+
+      Frame {
+        css-classes: [
+          "card",
+        ];
+
+        Label toast_label {
+          label: "Toast";
+          margin-start: 12;
+          margin-end: 12;
+          margin-top: 8;
+          margin-bottom: 8;
+        }
+      }
+    }
+  }
+}
+

@@ -1,0 +1,2178 @@
+using Gtk 4.0;
+
+Window settings_window {
+  modal: true;
+  title: "Settings";
+  default-width: 700;
+  default-height: 500;
+  resizable: true;
+
+  [titlebar]
+  HeaderBar {
+    show-title-buttons: true;
+
+    [title]
+    Label {
+      label: "Settings";
+
+      styles [
+        "title",
+      ]
+    }
+  }
+
+  Box {
+    orientation: vertical;
+    spacing: 0;
+
+    Box {
+      orientation: horizontal;
+      vexpand: true;
+
+      StackSidebar sidebar {
+        stack: settings_stack;
+        width-request: 180;
+
+        styles [
+          "background",
+        ]
+      }
+
+      Separator {
+        orientation: vertical;
+      }
+
+      Stack settings_stack {
+        hexpand: true;
+        vexpand: true;
+        transition-type: crossfade;
+        transition-duration: 200;
+
+        StackPage {
+          name: "general";
+          title: "General";
+          icon-name: "preferences-system-symbolic";
+
+          child: ScrolledWindow {
+            hscrollbar-policy: never;
+
+            Box {
+              orientation: vertical;
+              spacing: 16;
+              margin-start: 24;
+              margin-end: 24;
+              margin-top: 24;
+              margin-bottom: 24;
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+
+                Label {
+                  label: "System";
+                  xalign: 0;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                ListBox {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Run in Background";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Keep app running when window is closed";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Switch w_background_mode {
+                        valign: center;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          };
+        }
+
+        StackPage {
+          name: "advanced";
+          title: "Advanced";
+          icon-name: "applications-engineering-symbolic";
+
+          child: ScrolledWindow {
+            hscrollbar-policy: never;
+
+            Box {
+              orientation: vertical;
+              spacing: 16;
+              margin-start: 24;
+              margin-end: 24;
+              margin-top: 24;
+              margin-bottom: 24;
+
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+
+                styles [
+                  "warning",
+                  "frame",
+                ]
+
+                Image {
+                  icon-name: "dialog-warning-symbolic";
+                  margin-start: 12;
+                  margin-top: 8;
+                  margin-bottom: 8;
+                }
+
+                Label {
+                  label: "These settings are for advanced users. Changing them may affect app performance.";
+                  wrap: true;
+                  xalign: 0;
+                  margin-start: 4;
+                  margin-end: 12;
+                  margin-top: 8;
+                  margin-bottom: 8;
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+
+                Label {
+                  label: "Timeline";
+                  xalign: 0;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                ListBox {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Default Limit";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Maximum events to request per query";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      SpinButton w_limit {
+                        adjustment: Adjustment {
+                          lower: 1;
+                          upper: 200;
+                          step-increment: 1;
+                        };
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Batch Max";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Events to process per batch";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      SpinButton w_batch {
+                        adjustment: Adjustment {
+                          lower: 1;
+                          upper: 100;
+                          step-increment: 1;
+                        };
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Post Interval (ms)";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Delay between processing batches";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      SpinButton w_interval {
+                        adjustment: Adjustment {
+                          lower: 10;
+                          upper: 5000;
+                          step-increment: 10;
+                        };
+                      }
+                    }
+                  }
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+
+                Label {
+                  label: "Network";
+                  xalign: 0;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                ListBox {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "EOSE Quiet (ms)";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Wait time after End-Of-Stored-Events";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      SpinButton w_quiet {
+                        adjustment: Adjustment {
+                          lower: 50;
+                          upper: 5000;
+                          step-increment: 50;
+                        };
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Hard Timeout (ms)";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Maximum wait time for relay responses";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      SpinButton w_hard {
+                        adjustment: Adjustment {
+                          lower: 100;
+                          upper: 60000;
+                          step-increment: 50;
+                        };
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Use Since Window";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Filter events by time window";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Switch w_use_since {
+                        valign: center;
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Since Seconds";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Time window size for event filtering";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      SpinButton w_since {
+                        adjustment: Adjustment {
+                          lower: 60;
+                          upper: 604800;
+                          step-increment: 60;
+                        };
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Backfill Interval (sec)";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Auto-fetch older events interval (0=off)";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      SpinButton w_backfill {
+                        adjustment: Adjustment {
+                          lower: 0;
+                          upper: 3600;
+                          step-increment: 1;
+                        };
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          };
+        }
+
+        StackPage {
+          name: "media";
+          title: "Media";
+          icon-name: "folder-pictures-symbolic";
+
+          child: ScrolledWindow {
+            hscrollbar-policy: never;
+
+            Box {
+              orientation: vertical;
+              spacing: 16;
+              margin-start: 24;
+              margin-end: 24;
+              margin-top: 24;
+              margin-bottom: 24;
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 8;
+
+                  Label {
+                    label: "Media Servers (Blossom)";
+                    xalign: 0;
+                    hexpand: true;
+
+                    styles [
+                      "heading",
+                    ]
+                  }
+
+                  Button btn_blossom_publish {
+                    icon-name: "send-to-symbolic";
+                    tooltip-text: "Publish server list to relays (kind 10063)";
+
+                    styles [
+                      "flat",
+                    ]
+                  }
+                }
+
+                Label {
+                  label: "Servers are tried in order during upload. Drag to reorder.";
+                  xalign: 0;
+
+                  styles [
+                    "dim-label",
+                    "caption",
+                  ]
+                }
+
+                Frame {
+                  margin-top: 4;
+
+                  ScrolledWindow {
+                    min-content-height: 120;
+                    max-content-height: 200;
+                    hscrollbar-policy: never;
+
+                    ListBox blossom_server_list {
+                      selection-mode: none;
+
+                      styles [
+                        "boxed-list",
+                      ]
+                    }
+                  }
+                }
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 8;
+                  margin-top: 4;
+
+                  Entry w_blossom_server {
+                    placeholder-text: "https://blossom.example.com";
+                    hexpand: true;
+                  }
+
+                  Button btn_blossom_add {
+                    icon-name: "list-add-symbolic";
+                    tooltip-text: "Add server";
+
+                    styles [
+                      "suggested-action",
+                    ]
+                  }
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+
+                Label {
+                  label: "Video Playback";
+                  xalign: 0;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                ListBox {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Autoplay Videos";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Automatically start playing videos";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Switch w_video_autoplay {
+                        valign: center;
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Loop Videos";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Repeat videos after they finish";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Switch w_video_loop {
+                        valign: center;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          };
+        }
+
+        StackPage {
+          name: "messages";
+          title: "Messages";
+          icon-name: "mail-unread-symbolic";
+
+          child: ScrolledWindow {
+            hscrollbar-policy: never;
+
+            Box {
+              orientation: vertical;
+              spacing: 16;
+              margin-start: 24;
+              margin-end: 24;
+              margin-top: 24;
+              margin-bottom: 24;
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+
+                Label {
+                  label: "DM Relays (NIP-17)";
+                  xalign: 0;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                Label {
+                  label: "These relays are used specifically for receiving and sending direct messages. If empty, general relays are used.";
+                  xalign: 0;
+                  wrap: true;
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 8;
+                  margin-top: 8;
+
+                  Box {
+                    orientation: horizontal;
+                    spacing: 8;
+
+                    Entry entry_dm_relay {
+                      hexpand: true;
+                      placeholder-text: "wss://relay.example.com";
+                    }
+
+                    Button btn_add_dm_relay {
+                      icon-name: "list-add-symbolic";
+                      tooltip-text: "Add DM relay";
+                    }
+                  }
+
+                  ScrolledWindow {
+                    vexpand: true;
+                    min-content-height: 150;
+                    hscrollbar-policy: never;
+
+                    ListBox list_dm_relays {
+                      selection-mode: none;
+                      show-separators: true;
+
+                      styles [
+                        "boxed-list",
+                      ]
+                    }
+                  }
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+                halign: end;
+
+                Button btn_publish_dm_relays {
+                  label: "Publish DM Relay List";
+                  tooltip-text: "Publish your DM relays as kind 10050 event";
+
+                  styles [
+                    "suggested-action",
+                  ]
+                }
+              }
+            }
+          };
+        }
+
+        StackPage {
+          name: "relays";
+          title: "Relays";
+          icon-name: "network-server-symbolic";
+
+          child: Box {
+            orientation: vertical;
+            spacing: 0;
+
+            Box {
+              orientation: vertical;
+              spacing: 16;
+              margin-start: 24;
+              margin-end: 24;
+              margin-top: 24;
+              margin-bottom: 24;
+              vexpand: true;
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+
+                Label {
+                  label: "Relay List (NIP-65)";
+                  xalign: 0;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                Label {
+                  label: "Configure relays for reading and publishing events. Each relay can be set for read, write, or both.";
+                  xalign: 0;
+                  wrap: true;
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 8;
+                  margin-top: 8;
+
+                  Entry entry_relay {
+                    hexpand: true;
+                    placeholder-text: "wss://relay.example.com";
+                  }
+
+                  Button btn_add_relay {
+                    icon-name: "list-add-symbolic";
+                    tooltip-text: "Add relay";
+                  }
+                }
+
+                ScrolledWindow {
+                  vexpand: true;
+                  min-content-height: 200;
+                  hscrollbar-policy: never;
+
+                  ListBox list_relays {
+                    selection-mode: single;
+                    show-separators: true;
+
+                    styles [
+                      "boxed-list",
+                    ]
+                  }
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+                halign: end;
+
+                Button btn_remove_relay {
+                  label: "Remove Selected";
+                  tooltip-text: "Remove the selected relay";
+                }
+
+                Button btn_publish_relays {
+                  label: "Publish Relay List";
+                  tooltip-text: "Publish your relay configuration (NIP-65)";
+
+                  styles [
+                    "suggested-action",
+                  ]
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+                margin-top: 16;
+
+                Label {
+                  label: "Index Relays (NIP-50 Search)";
+                  xalign: 0;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                Label {
+                  label: "Relays that support NIP-50 search queries. Used for the Discover tab to search profiles by name, npub, or keywords.";
+                  xalign: 0;
+                  wrap: true;
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 8;
+                  margin-top: 8;
+
+                  Entry entry_index_relay {
+                    hexpand: true;
+                    placeholder-text: "wss://relay.nostr.band";
+                  }
+
+                  Button btn_add_index_relay {
+                    icon-name: "list-add-symbolic";
+                    tooltip-text: "Add index relay";
+                  }
+                }
+
+                ScrolledWindow {
+                  min-content-height: 100;
+                  max-content-height: 150;
+                  hscrollbar-policy: never;
+
+                  ListBox list_index_relays {
+                    selection-mode: none;
+                    show-separators: true;
+
+                    styles [
+                      "boxed-list",
+                    ]
+                  }
+                }
+              }
+            }
+          };
+        }
+
+        StackPage {
+          name: "display";
+          title: "Display";
+          icon-name: "preferences-desktop-display-symbolic";
+
+          child: ScrolledWindow {
+            hscrollbar-policy: never;
+
+            Box {
+              orientation: vertical;
+              spacing: 16;
+              margin-start: 24;
+              margin-end: 24;
+              margin-top: 24;
+              margin-bottom: 24;
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+
+                Label {
+                  label: "Appearance";
+                  xalign: 0;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                ListBox {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Color Scheme";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Follow system, or use light/dark mode";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      DropDown w_color_scheme {
+                        valign: center;
+
+                        model: StringList {
+                          strings [
+                            "System",
+                            "Light",
+                            "Dark",
+                          ]
+                        };
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Font Size";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Adjust text size throughout the app";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Scale w_font_scale {
+                        valign: center;
+                        width-request: 150;
+
+                        adjustment: Adjustment {
+                          lower: 0.8;
+                          upper: 1.5;
+                          step-increment: 0.1;
+                        };
+
+                        draw-value: true;
+                        digits: 1;
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Timeline Density";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Space between notes in timeline";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      DropDown w_timeline_density {
+                        valign: center;
+
+                        model: StringList {
+                          strings [
+                            "Compact",
+                            "Normal",
+                            "Comfortable",
+                          ]
+                        };
+                      }
+                    }
+                  }
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+
+                Label {
+                  label: "Content";
+                  xalign: 0;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                ListBox {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Show Avatars";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Display profile pictures";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Switch w_show_avatars {
+                        valign: center;
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Show Media Previews";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Display inline images and video thumbnails";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Switch w_show_media_previews {
+                        valign: center;
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Enable Animations";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Smooth transitions and effects";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Switch w_enable_animations {
+                        valign: center;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          };
+        }
+
+        StackPage {
+          name: "notifications";
+          title: "Notifications";
+          icon-name: "preferences-system-notifications-symbolic";
+
+          child: ScrolledWindow {
+            hscrollbar-policy: never;
+
+            Box {
+              orientation: vertical;
+              spacing: 16;
+              margin-start: 24;
+              margin-end: 24;
+              margin-top: 24;
+              margin-bottom: 24;
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+
+                Label {
+                  label: "Notifications";
+                  xalign: 0;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                ListBox {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Enable Notifications";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Master switch for all notifications";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Switch w_notif_enabled {
+                        valign: center;
+                      }
+                    }
+                  }
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+
+                Label {
+                  label: "Notify For";
+                  xalign: 0;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                Label {
+                  label: "Choose which events trigger notifications";
+                  xalign: 0;
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+
+                ListBox {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Label {
+                        label: "Mentions";
+                        hexpand: true;
+                        xalign: 0;
+                      }
+
+                      Switch w_notif_mention {
+                        valign: center;
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Label {
+                        label: "Direct Messages";
+                        hexpand: true;
+                        xalign: 0;
+                      }
+
+                      Switch w_notif_dm {
+                        valign: center;
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Label {
+                        label: "Zaps";
+                        hexpand: true;
+                        xalign: 0;
+                      }
+
+                      Switch w_notif_zap {
+                        valign: center;
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Label {
+                        label: "Replies";
+                        hexpand: true;
+                        xalign: 0;
+                      }
+
+                      Switch w_notif_reply {
+                        valign: center;
+                      }
+                    }
+                  }
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+
+                Label {
+                  label: "Presentation";
+                  xalign: 0;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                Label {
+                  label: "How notifications are shown to you";
+                  xalign: 0;
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+
+                ListBox {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Sound";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Play a sound when notifications arrive";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Switch w_notif_sound {
+                        valign: center;
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Tray Badge";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Show unread count on the system tray icon";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Switch w_notif_tray_badge {
+                        valign: center;
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Desktop Popup";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Show desktop notification popups";
+                          xalign: 0;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Switch w_notif_desktop_popup {
+                        valign: center;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          };
+        }
+
+        StackPage {
+          name: "account";
+          title: "Account";
+          icon-name: "avatar-default-symbolic";
+
+          child: Box account_page {
+            orientation: vertical;
+            spacing: 0;
+
+            Box account_login_required {
+              orientation: vertical;
+              spacing: 12;
+              valign: center;
+              halign: center;
+              vexpand: true;
+              visible: true;
+
+              Image {
+                icon-name: "system-lock-screen-symbolic";
+                pixel-size: 64;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Label {
+                label: "Sign in Required";
+
+                styles [
+                  "title-2",
+                ]
+              }
+
+              Label {
+                label: "Sign in to sync settings and manage your account";
+
+                styles [
+                  "dim-label",
+                ]
+              }
+            }
+
+            ScrolledWindow account_content {
+              hscrollbar-policy: never;
+              visible: false;
+              vexpand: true;
+
+              Box {
+                orientation: vertical;
+                spacing: 16;
+                margin-start: 24;
+                margin-end: 24;
+                margin-top: 24;
+                margin-bottom: 24;
+
+                Box {
+                  orientation: vertical;
+                  spacing: 8;
+
+                  Label {
+                    label: "Settings Sync (NIP-51)";
+                    xalign: 0;
+
+                    styles [
+                      "heading",
+                    ]
+                  }
+
+                  Label {
+                    label: "Backup and sync your app settings to Nostr relays using kind 30078 events.";
+                    xalign: 0;
+                    wrap: true;
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+
+                  ListBox {
+                    selection-mode: none;
+
+                    styles [
+                      "boxed-list",
+                    ]
+
+                    ListBoxRow {
+                      activatable: false;
+
+                      Box {
+                        orientation: horizontal;
+                        spacing: 12;
+                        margin-start: 12;
+                        margin-end: 12;
+                        margin-top: 8;
+                        margin-bottom: 8;
+
+                        Box {
+                          orientation: vertical;
+                          hexpand: true;
+
+                          Label {
+                            label: "Enable Settings Sync";
+                            xalign: 0;
+                          }
+
+                          Label {
+                            label: "Sync settings across devices via relays";
+                            xalign: 0;
+
+                            styles [
+                              "dim-label",
+                              "caption",
+                            ]
+                          }
+                        }
+
+                        Switch w_nip51_sync_enabled {
+                          valign: center;
+                        }
+                      }
+                    }
+
+                    ListBoxRow {
+                      activatable: false;
+
+                      Box {
+                        orientation: horizontal;
+                        spacing: 12;
+                        margin-start: 12;
+                        margin-end: 12;
+                        margin-top: 8;
+                        margin-bottom: 8;
+
+                        Label {
+                          label: "Last synced";
+                          hexpand: true;
+                          xalign: 0;
+                        }
+
+                        Label lbl_nip51_last_sync {
+                          label: "Never";
+
+                          styles [
+                            "dim-label",
+                          ]
+                        }
+                      }
+                    }
+                  }
+
+                  Box {
+                    orientation: horizontal;
+                    spacing: 8;
+                    halign: end;
+                    margin-top: 8;
+
+                    Button btn_nip51_restore {
+                      label: "Restore from Relays";
+                      tooltip-text: "Download and restore settings from relays";
+                    }
+
+                    Button btn_nip51_backup {
+                      label: "Backup to Relays";
+                      tooltip-text: "Upload current settings to relays";
+
+                      styles [
+                        "suggested-action",
+                      ]
+                    }
+                  }
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 8;
+
+                  Label {
+                    label: "Synced Data";
+                    xalign: 0;
+
+                    styles [
+                      "heading",
+                    ]
+                  }
+
+                  Label {
+                    label: "The following data is backed up when sync is enabled:";
+                    xalign: 0;
+                    wrap: true;
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+
+                  ListBox {
+                    selection-mode: none;
+
+                    styles [
+                      "boxed-list",
+                    ]
+
+                    ListBoxRow {
+                      activatable: false;
+
+                      Box {
+                        orientation: horizontal;
+                        spacing: 12;
+                        margin-start: 12;
+                        margin-end: 12;
+                        margin-top: 8;
+                        margin-bottom: 8;
+
+                        Image {
+                          icon-name: "network-server-symbolic";
+
+                          styles [
+                            "dim-label",
+                          ]
+                        }
+
+                        Label {
+                          label: "Relay List (NIP-65 kind 10002)";
+                          hexpand: true;
+                          xalign: 0;
+                        }
+                      }
+                    }
+
+                    ListBoxRow {
+                      activatable: false;
+
+                      Box {
+                        orientation: horizontal;
+                        spacing: 12;
+                        margin-start: 12;
+                        margin-end: 12;
+                        margin-top: 8;
+                        margin-bottom: 8;
+
+                        Image {
+                          icon-name: "folder-pictures-symbolic";
+
+                          styles [
+                            "dim-label",
+                          ]
+                        }
+
+                        Label {
+                          label: "Blossom Servers (kind 10063)";
+                          hexpand: true;
+                          xalign: 0;
+                        }
+                      }
+                    }
+
+                    ListBoxRow {
+                      activatable: false;
+
+                      Box {
+                        orientation: horizontal;
+                        spacing: 12;
+                        margin-start: 12;
+                        margin-end: 12;
+                        margin-top: 8;
+                        margin-bottom: 8;
+
+                        Image {
+                          icon-name: "action-unavailable-symbolic";
+
+                          styles [
+                            "dim-label",
+                          ]
+                        }
+
+                        Label {
+                          label: "Mute List (NIP-51 kind 10000)";
+                          hexpand: true;
+                          xalign: 0;
+                        }
+                      }
+                    }
+
+                    ListBoxRow {
+                      activatable: false;
+
+                      Box {
+                        orientation: horizontal;
+                        spacing: 12;
+                        margin-start: 12;
+                        margin-end: 12;
+                        margin-top: 8;
+                        margin-bottom: 8;
+
+                        Image {
+                          icon-name: "emblem-system-symbolic";
+
+                          styles [
+                            "dim-label",
+                          ]
+                        }
+
+                        Label {
+                          label: "App Preferences (kind 30078)";
+                          hexpand: true;
+                          xalign: 0;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          };
+        }
+
+        StackPage {
+          name: "mute";
+          title: "Mute List";
+          icon-name: "action-unavailable-symbolic";
+
+          child: Box mute_page {
+            orientation: vertical;
+            spacing: 0;
+
+            Box mute_login_required {
+              orientation: vertical;
+              spacing: 12;
+              valign: center;
+              halign: center;
+              vexpand: true;
+              visible: true;
+
+              Image {
+                icon-name: "system-lock-screen-symbolic";
+                pixel-size: 64;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Label {
+                label: "Sign in Required";
+
+                styles [
+                  "title-2",
+                ]
+              }
+
+              Label {
+                label: "You need to sign in to manage your mute list";
+
+                styles [
+                  "dim-label",
+                ]
+              }
+            }
+
+            Box mute_content {
+              orientation: vertical;
+              spacing: 0;
+              vexpand: true;
+              visible: false;
+
+              Box mute_status_bar {
+                orientation: horizontal;
+                spacing: 8;
+                margin-start: 12;
+                margin-end: 12;
+                margin-top: 8;
+                margin-bottom: 8;
+                visible: false;
+
+                styles [
+                  "app-notification",
+                ]
+
+                Label mute_status_label {
+                  label: "";
+                  hexpand: true;
+                  xalign: 0;
+                }
+
+                Button btn_mute_save {
+                  label: "Save";
+                  tooltip-text: "Save mute list changes";
+
+                  styles [
+                    "suggested-action",
+                  ]
+                }
+              }
+
+              Notebook mute_notebook {
+                vexpand: true;
+
+                NotebookPage {
+                  tab-expand: true;
+
+                  child: Box {
+                    orientation: vertical;
+                    spacing: 8;
+                    margin-start: 12;
+                    margin-end: 12;
+                    margin-top: 12;
+                    margin-bottom: 12;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 8;
+
+                      Entry entry_mute_user {
+                        hexpand: true;
+                        placeholder-text: "npub or hex pubkey";
+                      }
+
+                      Button btn_mute_add_user {
+                        icon-name: "list-add-symbolic";
+                        tooltip-text: "Add user to mute list";
+                      }
+                    }
+
+                    ScrolledWindow {
+                      vexpand: true;
+                      hscrollbar-policy: never;
+
+                      ListBox list_mute_users {
+                        selection-mode: none;
+                        show-separators: true;
+
+                        styles [
+                          "boxed-list",
+                        ]
+                      }
+                    }
+                  };
+
+                  tab: Label {
+                    label: "Users";
+                  };
+                }
+
+                NotebookPage {
+                  tab-expand: true;
+
+                  child: Box {
+                    orientation: vertical;
+                    spacing: 8;
+                    margin-start: 12;
+                    margin-end: 12;
+                    margin-top: 12;
+                    margin-bottom: 12;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 8;
+
+                      Entry entry_mute_word {
+                        hexpand: true;
+                        placeholder-text: "Word or phrase to mute";
+                      }
+
+                      Button btn_mute_add_word {
+                        icon-name: "list-add-symbolic";
+                        tooltip-text: "Add word to mute list";
+                      }
+                    }
+
+                    ScrolledWindow {
+                      vexpand: true;
+                      hscrollbar-policy: never;
+
+                      ListBox list_mute_words {
+                        selection-mode: none;
+                        show-separators: true;
+
+                        styles [
+                          "boxed-list",
+                        ]
+                      }
+                    }
+                  };
+
+                  tab: Label {
+                    label: "Words";
+                  };
+                }
+
+                NotebookPage {
+                  tab-expand: true;
+
+                  child: Box {
+                    orientation: vertical;
+                    spacing: 8;
+                    margin-start: 12;
+                    margin-end: 12;
+                    margin-top: 12;
+                    margin-bottom: 12;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 8;
+
+                      Entry entry_mute_hashtag {
+                        hexpand: true;
+                        placeholder-text: "Hashtag (without #)";
+                      }
+
+                      Button btn_mute_add_hashtag {
+                        icon-name: "list-add-symbolic";
+                        tooltip-text: "Add hashtag to mute list";
+                      }
+                    }
+
+                    ScrolledWindow {
+                      vexpand: true;
+                      hscrollbar-policy: never;
+
+                      ListBox list_mute_hashtags {
+                        selection-mode: none;
+                        show-separators: true;
+
+                        styles [
+                          "boxed-list",
+                        ]
+                      }
+                    }
+                  };
+
+                  tab: Label {
+                    label: "Hashtags";
+                  };
+                }
+              }
+            }
+          };
+        }
+      }
+    }
+  }
+}
+

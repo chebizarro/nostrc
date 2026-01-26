@@ -1,0 +1,104 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $PagePermissions: Adw.PreferencesPage {
+  accessibility {
+    label: "Permissions and connection page";
+    description: "Configure approval policies and network connectivity options";
+  }
+
+  Adw.PreferencesGroup group_policy {
+    title: _("Approval policy");
+
+    accessibility {
+      label: "Approval policy settings";
+      description: "Choose how signature requests are approved";
+    }
+
+    Adw.ActionRow row_basic {
+      title: _("Approve basic actions");
+      subtitle: _("Recommended for most people. This will minimize interruptions.");
+
+      accessibility {
+        description: "Select this option to automatically approve basic signing actions with minimal interruptions";
+      }
+
+      [suffix]
+      CheckButton radio_basic {
+        group: radio_manual;
+        active: true;
+
+        accessibility {
+          label: "Approve basic actions automatically";
+          description: "When selected, basic signing requests are approved automatically";
+        }
+      }
+    }
+
+    Adw.ActionRow row_manual {
+      title: _("Manually approve each app");
+      subtitle: _("Recommended if you want control over each app.");
+
+      accessibility {
+        description: "Select this option to manually approve each signing request for maximum control";
+      }
+
+      [suffix]
+      CheckButton radio_manual {
+        active: false;
+
+        accessibility {
+          label: "Manually approve each application";
+          description: "When selected, you must manually approve each signing request";
+        }
+      }
+    }
+  }
+
+  Adw.PreferencesGroup group_conn {
+    title: _("Connectivity");
+
+    accessibility {
+      label: "Network connectivity settings";
+      description: "Configure network and privacy options";
+    }
+
+    Adw.ActionRow row_orbot {
+      title: _("Connect through your Orbot setup");
+
+      accessibility {
+        description: "Enable to route connections through the Tor network for enhanced privacy";
+      }
+
+      [suffix]
+      Switch switch_orbot {
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Enable Orbot connection";
+          description: "Toggle to enable or disable routing through Orbot Tor proxy";
+        }
+      }
+
+      Adw.Clamp {
+        Box {
+          orientation: horizontal;
+          spacing: 6;
+
+          LinkButton btn_configure_orbot {
+            label: _("Configure Orbot");
+            uri: "about:blank";
+            visible: false;
+
+            accessibility {
+              label: "Configure Orbot settings";
+              description: "Open Orbot configuration dialog to set up proxy settings";
+            }
+          }
+        }
+      }
+    }
+  }
+}
+

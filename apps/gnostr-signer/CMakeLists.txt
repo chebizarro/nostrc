@@ -99,6 +99,41 @@ else()
   message(STATUS "GStreamer not found - Camera QR scanning disabled (clipboard/file scanning still available)")
 endif()
 
+# Find blueprint-compiler for compiling .blp files to .ui files
+find_program(BLUEPRINT_COMPILER blueprint-compiler)
+if(BLUEPRINT_COMPILER)
+  message(STATUS "Found blueprint-compiler: ${BLUEPRINT_COMPILER}")
+else()
+  message(WARNING "blueprint-compiler not found - using pre-compiled .ui files")
+endif()
+
+# Blueprint source files (.blp) - these are the source of truth for UI definitions
+# Note: Some files that failed decompilation are kept as .ui only
+file(GLOB_RECURSE BLUEPRINT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/*.blp)
+
+# Compile Blueprint files to UI files if blueprint-compiler is available
+set(SIGNER_COMPILED_UI_FILES)
+if(BLUEPRINT_COMPILER AND BLUEPRINT_SOURCES)
+  foreach(BLP_FILE ${BLUEPRINT_SOURCES})
+    # Get relative path and convert .blp to .ui
+    file(RELATIVE_PATH BLP_REL ${CMAKE_CURRENT_SOURCE_DIR}/data ${BLP_FILE})
+    string(REGEX REPLACE "\\.blp$" ".ui" UI_REL ${BLP_REL})
+    set(UI_FILE ${CMAKE_CURRENT_SOURCE_DIR}/data/${UI_REL})
+    
+    add_custom_command(
+      OUTPUT ${UI_FILE}
+      COMMAND ${BLUEPRINT_COMPILER} compile --output ${UI_FILE} ${BLP_FILE}
+      DEPENDS ${BLP_FILE}
+      COMMENT "Compiling Blueprint: ${BLP_REL}"
+      VERBATIM
+    )
+    list(APPEND SIGNER_COMPILED_UI_FILES ${UI_FILE})
+  endforeach()
+  
+  # Create a target for all Blueprint compilations
+  add_custom_target(gnostr_signer_blueprints ALL DEPENDS ${SIGNER_COMPILED_UI_FILES})
+endif()
+
 # Main GTK4 application (UI shell)
 file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/ui/sheets/*.c src/ui/widgets/*.c)
 if (NOT APP_SRC)
@@ -107,8 +142,7 @@ endif()
 set(APP_GRESOURCE_XML ${CMAKE_CURRENT_SOURCE_DIR}/data/resources.gresource.xml)
 set(APP_GRESOURCE_C ${CMAKE_CURRENT_BINARY_DIR}/resources.c)
 # Rebuild resources.c whenever any referenced UI changes
-file(GLOB_RECURSE APP_UI_FILES
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/*.ui)
+file(GLOB_RECURSE APP_UI_FILES ${CMAKE_CURRENT_SOURCE_DIR}/data/*.ui)
 add_custom_command(
   OUTPUT ${APP_GRESOURCE_C}
   COMMAND glib-compile-resources --target=${APP_GRESOURCE_C} --generate-source --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/data ${APP_GRESOURCE_XML}

@@ -1,0 +1,188 @@
+using Gtk 4.0;
+
+template $GnostrLiveCard: Widget {
+  Box root_box {
+    orientation: vertical;
+    hexpand: true;
+
+    Frame card_frame {
+      hexpand: true;
+
+      styles [
+        "live-card-frame",
+      ]
+
+      child: Box {
+        orientation: vertical;
+        spacing: 0;
+
+        Overlay image_overlay {
+          hexpand: true;
+
+          styles [
+            "live-cover-overlay",
+          ]
+
+          Picture cover_image {
+            content-fit: cover;
+            height-request: 180;
+            hexpand: true;
+
+            styles [
+              "live-cover-image",
+            ]
+          }
+
+          [overlay]
+          Box status_badge {
+            orientation: horizontal;
+            spacing: 4;
+            halign: start;
+            valign: start;
+            margin-start: 8;
+            margin-top: 8;
+
+            styles [
+              "live-status-badge",
+            ]
+
+            Image status_icon {
+              icon-name: "media-record-symbolic";
+              pixel-size: 12;
+            }
+
+            Label status_label {
+              label: "LIVE";
+
+              styles [
+                "live-status-text",
+              ]
+            }
+          }
+        }
+
+        Spinner loading_spinner {
+          visible: false;
+          halign: center;
+          valign: center;
+          margin-top: 24;
+          margin-bottom: 24;
+        }
+
+        Label error_label {
+          visible: false;
+          label: "Failed to load";
+          wrap: true;
+          margin-start: 12;
+          margin-end: 12;
+          margin-top: 16;
+          margin-bottom: 16;
+
+          styles [
+            "dim-label",
+            "error",
+          ]
+        }
+
+        Box content_box {
+          orientation: vertical;
+          spacing: 8;
+          margin-start: 12;
+          margin-end: 12;
+          margin-top: 12;
+          margin-bottom: 12;
+
+          Label title_label {
+            label: "Live Activity Title";
+            xalign: 0.0;
+            wrap: true;
+            wrap-mode: word_char;
+            lines: 2;
+            ellipsize: end;
+            max-width-chars: 50;
+
+            styles [
+              "live-title",
+            ]
+          }
+
+          Label summary_label {
+            label: "Event description goes here...";
+            xalign: 0.0;
+            wrap: true;
+            wrap-mode: word_char;
+            lines: 2;
+            ellipsize: end;
+            max-width-chars: 60;
+
+            styles [
+              "live-summary",
+              "dim-label",
+            ]
+          }
+
+          Box hashtags_box {
+            orientation: horizontal;
+            spacing: 6;
+            visible: false;
+
+            styles [
+              "live-hashtags",
+            ]
+          }
+
+          Box meta_box {
+            orientation: horizontal;
+            spacing: 12;
+            margin-top: 4;
+
+            Box speakers_box {
+              orientation: horizontal;
+              spacing: -8;
+
+              styles [
+                "live-speakers",
+              ]
+            }
+
+            Label viewers_label {
+              visible: false;
+              xalign: 0.0;
+
+              styles [
+                "live-viewers",
+                "dim-label",
+              ]
+            }
+
+            Box {
+              hexpand: true;
+            }
+
+            Label time_label {
+              visible: false;
+              xalign: 1.0;
+              halign: end;
+
+              styles [
+                "live-time",
+                "dim-label",
+              ]
+            }
+          }
+
+          Button action_button {
+            label: "Watch Live";
+            halign: fill;
+            margin-top: 8;
+
+            styles [
+              "live-action-button",
+            ]
+          }
+        }
+      };
+    }
+  }
+}
+

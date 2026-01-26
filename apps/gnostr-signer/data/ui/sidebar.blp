@@ -1,0 +1,59 @@
+using Gtk 4.0;
+
+ListBox sidebar_list {
+  selection-mode: browse;
+
+  accessibility {
+    label: "Navigation sidebar";
+    description: "List of navigation sections. Use arrow keys to navigate and Enter to select.";
+  }
+
+  ListBoxRow {
+    accessibility {
+      label: "Permissions and Connection";
+      description: "Navigate to permissions and connection settings";
+    }
+
+    Label {
+      label: _("Permissions & Connection");
+      xalign: 0;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 8;
+      margin-bottom: 8;
+    }
+  }
+
+  ListBoxRow {
+    accessibility {
+      label: "Applications";
+      description: "Navigate to manage connected applications";
+    }
+
+    Label {
+      label: _("Applications");
+      xalign: 0;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 8;
+      margin-bottom: 8;
+    }
+  }
+
+  ListBoxRow {
+    accessibility {
+      label: "Settings";
+      description: "Navigate to application settings";
+    }
+
+    Label {
+      label: _("Settings");
+      xalign: 0;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 8;
+      margin-bottom: 8;
+    }
+  }
+}
+

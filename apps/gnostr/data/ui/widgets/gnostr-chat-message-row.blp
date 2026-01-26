@@ -1,0 +1,146 @@
+using Gtk 4.0;
+
+template $GnostrChatMessageRow: Widget {
+  Box content_box {
+    orientation: horizontal;
+    spacing: 10;
+    margin-start: 12;
+    margin-end: 12;
+    margin-top: 6;
+    margin-bottom: 6;
+
+    Button btn_avatar {
+      has-frame: false;
+      valign: start;
+      tooltip-text: "View profile";
+
+      Overlay avatar_box {
+        width-request: 36;
+        height-request: 36;
+
+        Frame {
+          halign: center;
+          valign: center;
+
+          styles [
+            "avatar-frame",
+          ]
+
+          Label avatar_initials {
+            label: "?";
+            width-request: 36;
+            height-request: 36;
+
+            styles [
+              "avatar-initials",
+              "title-4",
+            ]
+          }
+        }
+
+        [overlay]
+        Picture avatar_image {
+          content-fit: cover;
+          width-request: 36;
+          height-request: 36;
+          visible: false;
+
+          styles [
+            "avatar",
+          ]
+        }
+      }
+    }
+
+    Box {
+      orientation: vertical;
+      spacing: 4;
+      hexpand: true;
+
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+
+        Label lbl_author {
+          label: "Author";
+          xalign: 0.0;
+          ellipsize: end;
+          max-width-chars: 20;
+
+          styles [
+            "heading",
+          ]
+        }
+
+        Label lbl_timestamp {
+          label: "12:00 PM";
+          xalign: 0.0;
+
+          styles [
+            "dim-label",
+            "caption",
+          ]
+        }
+
+        Box {
+          hexpand: true;
+        }
+      }
+
+      Label lbl_content {
+        label: "Message content";
+        xalign: 0.0;
+        wrap: true;
+        wrap-mode: word_char;
+        selectable: true;
+        use-markup: false;
+      }
+
+      Box action_box {
+        orientation: horizontal;
+        spacing: 4;
+        margin-top: 4;
+
+        styles [
+          "message-actions",
+        ]
+
+        Button btn_reply {
+          icon-name: "mail-reply-sender-symbolic";
+          has-frame: false;
+          tooltip-text: "Reply";
+
+          styles [
+            "flat",
+            "circular",
+          ]
+        }
+
+        Button btn_hide {
+          icon-name: "view-conceal-symbolic";
+          has-frame: false;
+          tooltip-text: "Hide message (moderator)";
+          visible: false;
+
+          styles [
+            "flat",
+            "circular",
+          ]
+        }
+
+        Button btn_mute {
+          icon-name: "action-unavailable-symbolic";
+          has-frame: false;
+          tooltip-text: "Mute user (moderator)";
+          visible: false;
+
+          styles [
+            "flat",
+            "circular",
+          ]
+        }
+      }
+    }
+  }
+}
+

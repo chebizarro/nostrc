@@ -1,0 +1,463 @@
+using Gtk 4.0;
+
+template $GnostrLogin: Window {
+  modal: true;
+  title: "Sign In";
+  default-width: 440;
+  default-height: 520;
+  resizable: true;
+
+  [titlebar]
+  HeaderBar {
+    show-title-buttons: false;
+
+    [start]
+    Button btn_close {
+      label: "Close";
+      tooltip-text: "Close dialog";
+      clicked => $on_close_clicked();
+    }
+
+    [title]
+    Box {
+      orientation: horizontal;
+      spacing: 8;
+
+      Image {
+        icon-name: "dialog-password-symbolic";
+      }
+
+      Label {
+        label: "Sign In";
+
+        styles [
+          "title",
+        ]
+      }
+    }
+  }
+
+  Box {
+    orientation: vertical;
+    spacing: 0;
+
+    Revealer toast_revealer {
+      reveal-child: false;
+      transition-type: slide_down;
+
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+        margin-start: 12;
+        margin-end: 12;
+        margin-top: 8;
+        margin-bottom: 8;
+
+        styles [
+          "app-notification",
+        ]
+
+        Label toast_label {
+          label: "";
+          hexpand: true;
+          xalign: 0;
+        }
+      }
+    }
+
+    Stack stack {
+      vexpand: true;
+      transition-type: crossfade;
+
+      StackPage {
+        name: "choose";
+
+        child: Box page_choose {
+          orientation: vertical;
+          spacing: 16;
+          margin-start: 24;
+          margin-end: 24;
+          margin-top: 24;
+          margin-bottom: 24;
+          valign: center;
+
+          Box {
+            orientation: vertical;
+            spacing: 12;
+            halign: center;
+
+            Image {
+              icon-name: "system-users-symbolic";
+              pixel-size: 64;
+
+              styles [
+                "dim-label",
+              ]
+            }
+
+            Label {
+              label: "Choose Sign-In Method";
+
+              styles [
+                "title-2",
+              ]
+            }
+
+            Label {
+              label: "Sign in using a local signer app (NIP-55L) or pair with a remote signer (NIP-46) for secure key management.";
+              wrap: true;
+              max-width-chars: 45;
+              justify: center;
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+
+          Frame {
+            styles [
+              "view",
+            ]
+
+            Box {
+              orientation: vertical;
+              spacing: 8;
+              margin-start: 16;
+              margin-end: 16;
+              margin-top: 12;
+              margin-bottom: 12;
+
+              Box {
+                orientation: horizontal;
+                spacing: 12;
+
+                Image {
+                  icon-name: "computer-symbolic";
+                  pixel-size: 32;
+
+                  styles [
+                    "accent",
+                  ]
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 2;
+                  hexpand: true;
+                  valign: center;
+
+                  Label {
+                    label: "Local Signer (NIP-55L)";
+                    xalign: 0;
+
+                    styles [
+                      "heading",
+                    ]
+                  }
+
+                  Label lbl_local_status {
+                    label: "Checking availability...";
+                    xalign: 0;
+
+                    styles [
+                      "dim-label",
+                      "caption",
+                    ]
+                  }
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+                halign: end;
+
+                Spinner spinner_local {
+                  visible: false;
+                  spinning: true;
+                }
+
+                Button btn_local_signer {
+                  label: "Sign with Local Signer";
+                  sensitive: false;
+                  tooltip-text: "Sign in using local signer (NIP-55L)";
+                  clicked => $on_local_signer_clicked();
+
+                  styles [
+                    "suggested-action",
+                  ]
+                }
+              }
+            }
+          }
+
+          Frame {
+            styles [
+              "view",
+            ]
+
+            Box {
+              orientation: vertical;
+              spacing: 8;
+              margin-start: 16;
+              margin-end: 16;
+              margin-top: 12;
+              margin-bottom: 12;
+
+              Box {
+                orientation: horizontal;
+                spacing: 12;
+
+                Image {
+                  icon-name: "phone-symbolic";
+                  pixel-size: 32;
+
+                  styles [
+                    "accent",
+                  ]
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 2;
+                  hexpand: true;
+                  valign: center;
+
+                  Label {
+                    label: "Remote Signer (NIP-46)";
+                    xalign: 0;
+
+                    styles [
+                      "heading",
+                    ]
+                  }
+
+                  Label {
+                    label: "Connect using bunker:// URI or QR code";
+                    xalign: 0;
+
+                    styles [
+                      "dim-label",
+                      "caption",
+                    ]
+                  }
+                }
+              }
+
+              Button btn_remote_signer {
+                label: "Connect Remote Signer";
+                halign: end;
+                tooltip-text: "Connect to remote signer (NIP-46)";
+                clicked => $on_remote_signer_clicked();
+              }
+            }
+          }
+        };
+      }
+
+      StackPage {
+        name: "bunker";
+
+        child: Box page_bunker {
+          orientation: vertical;
+          spacing: 16;
+          margin-start: 24;
+          margin-end: 24;
+          margin-top: 24;
+          margin-bottom: 24;
+
+          Button btn_back_bunker {
+            halign: start;
+            tooltip-text: "Go back to sign-in options";
+            clicked => $on_back_clicked();
+
+            Box {
+              orientation: horizontal;
+              spacing: 4;
+
+              Image {
+                icon-name: "go-previous-symbolic";
+              }
+
+              Label {
+                label: "Back";
+              }
+            }
+          }
+
+          Box {
+            orientation: vertical;
+            spacing: 12;
+            halign: center;
+
+            Label {
+              label: "Scan with Mobile Signer";
+
+              styles [
+                "title-3",
+              ]
+            }
+
+            Frame qr_frame {
+              styles [
+                "view",
+              ]
+
+              Box {
+                margin-start: 8;
+                margin-end: 8;
+                margin-top: 8;
+                margin-bottom: 8;
+
+                Picture qr_picture {
+                  content-fit: contain;
+                  width-request: 200;
+                  height-request: 200;
+                }
+              }
+            }
+
+            Label {
+              label: "or enter bunker:// URI manually";
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+
+          Box {
+            orientation: vertical;
+            spacing: 8;
+
+            Label {
+              label: "Bunker URI";
+              xalign: 0;
+
+              styles [
+                "dim-label",
+              ]
+            }
+
+            Box {
+              orientation: horizontal;
+              spacing: 8;
+
+              Entry entry_bunker_uri {
+                placeholder-text: "bunker://...";
+                hexpand: true;
+                input-purpose: url;
+              }
+
+              Button btn_paste_bunker {
+                icon-name: "edit-paste-symbolic";
+                tooltip-text: "Paste from clipboard";
+                clicked => $on_paste_bunker_clicked();
+              }
+            }
+
+            Label {
+              label: "Get this URI from your signer app (e.g., Amber, nsec.app)";
+              xalign: 0;
+              wrap: true;
+
+              styles [
+                "caption",
+                "dim-label",
+              ]
+            }
+          }
+
+          Box {
+            orientation: horizontal;
+            spacing: 8;
+            halign: center;
+
+            Button btn_connect_bunker {
+              label: "Connect";
+              tooltip-text: "Connect to remote signer";
+              clicked => $on_connect_bunker_clicked();
+
+              styles [
+                "suggested-action",
+                "pill",
+              ]
+            }
+
+            Spinner spinner_bunker {
+              visible: false;
+              spinning: true;
+            }
+          }
+
+          Label lbl_bunker_status {
+            label: "";
+            wrap: true;
+            halign: center;
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "success";
+
+        child: Box page_success {
+          orientation: vertical;
+          spacing: 16;
+          margin-start: 24;
+          margin-end: 24;
+          margin-top: 24;
+          margin-bottom: 24;
+          valign: center;
+          halign: center;
+
+          Image {
+            icon-name: "emblem-ok-symbolic";
+            pixel-size: 64;
+
+            styles [
+              "success",
+            ]
+          }
+
+          Label {
+            label: "Signed In";
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Label lbl_success_npub {
+            label: "npub...";
+            selectable: true;
+            wrap: true;
+            max-width-chars: 40;
+
+            styles [
+              "monospace",
+              "dim-label",
+            ]
+          }
+
+          Button btn_done {
+            label: "Done";
+            tooltip-text: "Close and continue";
+            clicked => $on_done_clicked();
+
+            styles [
+              "suggested-action",
+              "pill",
+            ]
+          }
+        };
+      }
+    }
+  }
+}
+

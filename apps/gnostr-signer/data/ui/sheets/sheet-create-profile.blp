@@ -1,0 +1,277 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetCreateProfile: Adw.Dialog {
+  title: _("Create Profile");
+  content-width: 480;
+  content-height: -1;
+  follows-content-size: true;
+  can-close: true;
+
+  accessibility {
+    label: "Create profile dialog";
+    description: "Create a new Nostr profile with a display name and secure passphrase";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      accessibility {
+        label: "Create profile header";
+      }
+
+      title-widget: Label {
+        label: _("Create Profile");
+      };
+
+      [start]
+      Button btn_cancel {
+        label: _("_Cancel");
+        use-underline: true;
+        focusable: true;
+
+        accessibility {
+          label: "Cancel";
+          description: "Close without creating a profile. Keyboard shortcut: Alt+C or Escape.";
+        }
+      }
+
+      [end]
+      Button btn_create {
+        label: _("C_reate");
+        use-underline: true;
+        tooltip-text: _("Create a new profile with this passphrase (Alt+R)");
+        focusable: true;
+
+        accessibility {
+          label: "Create profile";
+          description: "Create a new profile with the entered information. Keyboard shortcut: Alt+R.";
+        }
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    ScrolledWindow {
+      hscrollbar-policy: never;
+      vexpand: true;
+
+      accessibility {
+        label: "Profile form container";
+      }
+
+      Adw.Clamp {
+        maximum-size: 500;
+        tightening-threshold: 400;
+        margin-top: 16;
+        margin-bottom: 16;
+        margin-start: 12;
+        margin-end: 12;
+
+        Box {
+          orientation: vertical;
+          spacing: 16;
+
+          Label {
+            wrap: true;
+            xalign: 0;
+            label: _("Create a new Nostr profile. Your private key will be encrypted with your passphrase and stored securely.");
+
+            accessibility {
+              label: "Instructions";
+              description: "Your private key will be encrypted and stored securely using your passphrase.";
+            }
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Adw.PreferencesGroup {
+            title: _("Identity");
+
+            accessibility {
+              label: "Identity settings";
+              description: "Set your display name";
+            }
+
+            Adw.EntryRow entry_display_name {
+              title: _("Display Name");
+              input-hints: spellcheck;
+
+              accessibility {
+                description: "Your public display name that others will see";
+              }
+            }
+          }
+
+          Adw.PreferencesGroup {
+            title: _("Security");
+            description: _("Your passphrase protects your private key. Choose a strong passphrase that you can remember.");
+
+            accessibility {
+              label: "Security settings";
+              description: "Set a strong passphrase to encrypt your private key";
+            }
+
+            Label {
+              label: _("Passphrase");
+              xalign: 0;
+              margin-start: 4;
+              margin-top: 8;
+
+              styles [
+                "caption",
+                "dim-label",
+              ]
+            }
+
+            Box box_passphrase_container {
+              orientation: vertical;
+              margin-start: 4;
+              margin-end: 4;
+              margin-bottom: 8;
+
+              accessibility {
+                label: "Passphrase input container";
+                description: "Secure entry for your encryption passphrase";
+              }
+            }
+
+            Label {
+              label: _("Confirm Passphrase");
+              xalign: 0;
+              margin-start: 4;
+              margin-top: 8;
+
+              styles [
+                "caption",
+                "dim-label",
+              ]
+            }
+
+            Box box_confirm_container {
+              orientation: vertical;
+              margin-start: 4;
+              margin-end: 4;
+              margin-bottom: 4;
+
+              accessibility {
+                label: "Confirm passphrase input container";
+                description: "Re-enter your passphrase to confirm";
+              }
+            }
+
+            Box {
+              orientation: horizontal;
+              spacing: 8;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 4;
+              margin-bottom: 8;
+              halign: end;
+
+              Label lbl_passphrase_match {
+                label: _("Passphrases match");
+
+                accessibility {
+                  label: "Passphrase match status";
+                  description: "Indicates whether both passphrases match";
+                }
+
+                styles [
+                  "caption",
+                ]
+              }
+            }
+          }
+
+          Adw.PreferencesGroup {
+            title: _("Recovery");
+            description: _("A hint to help you remember your passphrase. This is stored unencrypted.");
+
+            accessibility {
+              label: "Recovery settings";
+              description: "Optional hint to help remember your passphrase";
+            }
+
+            Adw.EntryRow entry_recovery_hint {
+              title: _("Recovery Hint (Optional)");
+              input-hints: spellcheck;
+
+              accessibility {
+                description: "An optional hint to help you remember your passphrase. This is not encrypted.";
+              }
+            }
+          }
+
+          Adw.PreferencesGroup {
+            title: _("Advanced Options");
+
+            accessibility {
+              label: "Advanced options";
+              description: "Additional security options";
+            }
+
+            Adw.ActionRow {
+              title: _("Use Hardware Key");
+              subtitle: _("Store private key on a hardware security device (e.g., YubiKey)");
+
+              accessibility {
+                description: "Enable to store your private key on a hardware security device instead of in software";
+              }
+
+              [suffix]
+              CheckButton chk_hardware_key {
+                valign: center;
+
+                accessibility {
+                  label: "Use hardware key";
+                  description: "When checked, your private key will be stored on a hardware security device";
+                }
+              }
+
+              activatable-widget: chk_hardware_key;
+            }
+          }
+
+          Box box_status {
+            visible: false;
+            orientation: horizontal;
+            spacing: 8;
+            halign: center;
+            margin-top: 8;
+
+            accessibility {
+              label: "Creation status";
+              description: "Status indicator for profile creation";
+            }
+
+            Spinner spinner_status {
+              spinning: false;
+
+              accessibility {
+                label: "Loading indicator";
+              }
+            }
+
+            Label lbl_status {
+              label: _("Creating profile...");
+
+              accessibility {
+                label: "Status message";
+              }
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+

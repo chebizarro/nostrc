@@ -1,0 +1,113 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GnostrAppHandlerDialog: Adw.Dialog {
+  title: _("Open with...");
+  content-width: 450;
+  content-height: 500;
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-end-title-buttons: false;
+      show-start-title-buttons: false;
+
+      [start]
+      Button cancel_button {
+        label: _("Cancel");
+      }
+
+      [end]
+      Button open_button {
+        label: _("Open");
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    content: Box {
+      orientation: vertical;
+      spacing: 12;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 12;
+      margin-bottom: 12;
+
+      Label kind_label {
+        label: _("Select an app to open this event:");
+        xalign: 0;
+        wrap: true;
+
+        styles [
+          "title-4",
+        ]
+      }
+
+      Stack content_stack {
+        vexpand: true;
+        transition-type: crossfade;
+
+        StackPage {
+          name: "loading";
+
+          child: Box {
+            orientation: vertical;
+            valign: center;
+            halign: center;
+            spacing: 12;
+
+            Spinner loading_spinner {
+              spinning: true;
+              width-request: 32;
+              height-request: 32;
+            }
+
+            Label {
+              label: _("Loading handlers...");
+
+              styles [
+                "dim-label",
+              ]
+            }
+          };
+        }
+
+        StackPage {
+          name: "empty";
+
+          child: Adw.StatusPage {
+            icon-name: "application-x-executable-symbolic";
+            title: _("No Handlers Found");
+            description: _("No applications are available to handle this event type. Try browsing the Apps page to discover handlers.");
+          };
+        }
+
+        StackPage {
+          name: "list";
+
+          child: ScrolledWindow {
+            vexpand: true;
+            hscrollbar-policy: never;
+
+            ListBox handler_list {
+              selection-mode: single;
+              activate-on-single-click: false;
+
+              styles [
+                "boxed-list",
+              ]
+            }
+          };
+        }
+      }
+
+      CheckButton remember_check {
+        label: _("Remember my choice for this event type");
+        margin-top: 6;
+      }
+    };
+  }
+}
+

@@ -1,0 +1,211 @@
+using Gtk 4.0;
+
+template $GnostrZapGoalWidget: Widget {
+  Box main_box {
+    orientation: vertical;
+    spacing: 8;
+    margin-start: 12;
+    margin-end: 12;
+    margin-top: 10;
+    margin-bottom: 10;
+
+    styles [
+      "zap-goal-widget",
+    ]
+
+    Box header_box {
+      orientation: horizontal;
+      spacing: 8;
+      hexpand: true;
+
+      Image icon_image {
+        icon-name: "bolt-symbolic";
+        pixel-size: 20;
+        valign: center;
+
+        styles [
+          "zap-goal-icon",
+        ]
+      }
+
+      Label title_label {
+        label: "Zap Goal";
+        xalign: 0;
+        hexpand: true;
+        ellipsize: end;
+
+        styles [
+          "zap-goal-title",
+        ]
+      }
+
+      Box status_badge {
+        orientation: horizontal;
+        spacing: 4;
+        valign: center;
+        visible: false;
+
+        styles [
+          "zap-goal-status-badge",
+        ]
+
+        Image {
+          icon-name: "emblem-ok-symbolic";
+          pixel-size: 12;
+        }
+
+        Label status_label {
+          label: "Complete";
+
+          styles [
+            "caption",
+          ]
+        }
+      }
+    }
+
+    Button creator_button {
+      halign: start;
+      clicked => $on_creator_clicked();
+
+      styles [
+        "flat",
+        "zap-goal-creator",
+      ]
+
+      Box {
+        orientation: horizontal;
+        spacing: 4;
+
+        Label {
+          label: "by";
+          opacity: 0.6;
+
+          styles [
+            "caption",
+          ]
+        }
+
+        Label creator_label {
+          label: "Unknown";
+          ellipsize: end;
+
+          styles [
+            "caption",
+          ]
+        }
+      }
+    }
+
+    Label description_label {
+      label: "";
+      xalign: 0;
+      wrap: true;
+      wrap-mode: word_char;
+      lines: 3;
+      ellipsize: end;
+      visible: false;
+
+      styles [
+        "zap-goal-description",
+      ]
+    }
+
+    ProgressBar progress_bar {
+      fraction: 0;
+      hexpand: true;
+
+      styles [
+        "zap-goal-bar",
+      ]
+    }
+
+    Label progress_label {
+      label: "0 / 0 sats (0%)";
+      xalign: 0;
+
+      styles [
+        "zap-goal-progress",
+      ]
+    }
+
+    Box stats_box {
+      orientation: horizontal;
+      spacing: 12;
+      hexpand: true;
+
+      Box {
+        orientation: horizontal;
+        spacing: 4;
+        valign: center;
+
+        Image {
+          icon-name: "bolt-symbolic";
+          pixel-size: 14;
+          opacity: 0.7;
+        }
+
+        Label zap_count_label {
+          label: "0 zaps";
+          opacity: 0.7;
+
+          styles [
+            "caption",
+          ]
+        }
+      }
+
+      Box {
+        orientation: horizontal;
+        spacing: 4;
+        valign: center;
+
+        Image {
+          icon-name: "alarm-symbolic";
+          pixel-size: 14;
+          opacity: 0.7;
+        }
+
+        Label deadline_label {
+          label: "No deadline";
+          visible: false;
+          opacity: 0.7;
+
+          styles [
+            "caption",
+          ]
+        }
+      }
+
+      Box {
+        hexpand: true;
+      }
+
+      Button zap_button {
+        valign: center;
+        sensitive: false;
+        clicked => $on_zap_button_clicked();
+
+        styles [
+          "suggested-action",
+          "zap-goal-zap-btn",
+        ]
+
+        Box {
+          orientation: horizontal;
+          spacing: 6;
+
+          Image {
+            icon-name: "bolt-symbolic";
+            pixel-size: 16;
+          }
+
+          Label {
+            label: "Contribute";
+          }
+        }
+      }
+    }
+  }
+}
+

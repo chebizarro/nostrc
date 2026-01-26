@@ -1,0 +1,28 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $AppRow: Adw.ActionRow {
+  title: _("Application");
+  subtitle: _("App details");
+
+  accessibility {
+    label: "Connected application";
+    description: "A connected application that can request signatures. Activate to view details or use the Remove button to disconnect.";
+  }
+
+  [suffix]
+  Button btn_remove {
+    label: _("Remove");
+    valign: center;
+
+    accessibility {
+      label: "Remove application";
+      description: "Remove this application and revoke its signing permissions";
+    }
+
+    styles [
+      "destructive-action",
+    ]
+  }
+}
+

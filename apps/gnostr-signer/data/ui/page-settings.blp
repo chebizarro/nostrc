@@ -1,0 +1,545 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $PageSettings: Adw.PreferencesPage {
+  accessibility {
+    label: "Settings page";
+    description: "Configure application appearance, security, network, and social settings";
+  }
+
+  Adw.PreferencesGroup group_appearance {
+    title: _("Appearance");
+
+    accessibility {
+      label: "Appearance settings";
+      description: "Configure visual appearance options";
+    }
+
+    Adw.ComboRow combo_theme {
+      title: _("Theme");
+      subtitle: _("Choose the app color scheme");
+
+      accessibility {
+        description: "Select the application color theme from System, Light, Dark, or High Contrast modes";
+      }
+
+      model: StringList theme_model {
+        strings [
+          _("System"),
+          _("Light"),
+          _("Dark"),
+          _("High Contrast"),
+        ]
+      };
+    }
+
+    Adw.ComboRow combo_language {
+      title: _("Language");
+      subtitle: _("Choose the app display language");
+
+      accessibility {
+        description: "Select the application display language. Changes take effect on next restart.";
+      }
+
+      model: StringList language_model {
+        strings [
+          _("System Default"),
+          "English",
+          "日本語",
+          "Español",
+          "Português (Brasil)",
+          "Bahasa Indonesia",
+          "فارسی",
+        ]
+      };
+    }
+
+    Adw.SwitchRow switch_force_high_contrast {
+      title: _("Force High Contrast");
+      subtitle: _("Use high contrast regardless of system settings");
+
+      accessibility {
+        label: "Force high contrast mode";
+        description: "Enable to always use high contrast styling, even when the system is not in high contrast mode";
+      }
+    }
+
+    Adw.ComboRow combo_high_contrast_variant {
+      title: _("High Contrast Style");
+      subtitle: _("Color scheme for high contrast mode");
+
+      accessibility {
+        description: "Select the color scheme variant for high contrast mode: Black on White, White on Black, or Yellow on Black";
+      }
+
+      model: StringList high_contrast_variant_model {
+        strings [
+          _("Black on White"),
+          _("White on Black"),
+          _("Yellow on Black"),
+        ]
+      };
+    }
+  }
+
+  Adw.PreferencesGroup group_session {
+    title: _("Session");
+    description: _("Auto-lock and app session settings");
+
+    accessibility {
+      label: "Session settings";
+      description: "Configure auto-lock timeout and client session behavior";
+    }
+
+    Adw.ComboRow combo_lock_timeout {
+      title: _("Auto-lock timeout");
+      subtitle: _("Lock session after inactivity");
+
+      accessibility {
+        description: "Select how long to wait before automatically locking the session";
+      }
+
+      model: StringList lock_timeout_model {
+        strings [
+          _("Never"),
+          _("1 minute"),
+          _("5 minutes"),
+          _("15 minutes"),
+          _("30 minutes"),
+          _("1 hour"),
+        ]
+      };
+    }
+
+    Adw.SwitchRow switch_lock_on_idle {
+      title: _("Lock on system idle");
+      subtitle: _("Also lock when the screen locks");
+
+      accessibility {
+        description: "Enable to automatically lock when the system goes idle or screen locks";
+      }
+    }
+
+    Adw.ComboRow combo_client_session_timeout {
+      title: _("App session timeout");
+      subtitle: _("How long remembered apps stay approved");
+
+      accessibility {
+        description: "Select how long client application approvals remain valid";
+      }
+
+      model: StringList client_session_timeout_model {
+        strings [
+          _("10 minutes"),
+          _("15 minutes"),
+          _("30 minutes"),
+          _("1 hour"),
+          _("4 hours"),
+          _("24 hours"),
+          _("Forever"),
+        ]
+      };
+    }
+
+    Adw.ActionRow {
+      title: _("Manage active sessions");
+      subtitle: _("View and revoke app approvals");
+
+      accessibility {
+        description: "Open the sessions page to view and manage active application sessions";
+      }
+
+      [suffix]
+      Button btn_manage_sessions {
+        label: _("View");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "View active sessions";
+          description: "Click to view and manage active app sessions";
+        }
+
+        styles [
+          "suffix-action",
+        ]
+      }
+    }
+  }
+
+  Adw.PreferencesGroup group_security {
+    title: _("Security");
+
+    accessibility {
+      label: "Security settings";
+      description: "Manage accounts, keys, and profile settings";
+    }
+
+    Adw.ActionRow {
+      title: _("Add Account");
+
+      accessibility {
+        description: "Add a new signing account or import an existing key";
+      }
+
+      [suffix]
+      Button btn_add_account {
+        label: _("Open");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Open add account dialog";
+          description: "Click to open the add account dialog";
+        }
+
+        styles [
+          "suffix-action",
+        ]
+      }
+    }
+
+    Adw.ActionRow {
+      title: _("Select Account");
+
+      accessibility {
+        description: "Switch between available signing accounts";
+      }
+
+      [suffix]
+      Button btn_select_account {
+        label: _("Open");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Open account selector";
+          description: "Click to open the account selection dialog";
+        }
+
+        styles [
+          "suffix-action",
+        ]
+      }
+    }
+
+    Adw.ActionRow {
+      title: _("Backup Keys");
+
+      accessibility {
+        description: "Export and backup your private keys securely";
+      }
+
+      [suffix]
+      Button btn_backup_keys {
+        label: _("Open");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Open key backup dialog";
+          description: "Click to open the key backup and export dialog";
+        }
+
+        styles [
+          "suffix-action",
+        ]
+      }
+    }
+
+    Adw.ActionRow {
+      title: _("Social Recovery");
+      subtitle: _("Set up guardians for key recovery");
+
+      accessibility {
+        description: "Configure trusted contacts who can help recover your key using Shamir secret sharing";
+      }
+
+      [suffix]
+      Button btn_social_recovery {
+        label: _("Open");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Open social recovery dialog";
+          description: "Click to set up or manage social recovery with guardians";
+        }
+
+        styles [
+          "suffix-action",
+        ]
+      }
+    }
+
+    Adw.ActionRow {
+      title: _("Edit Profile");
+      subtitle: _("Name, bio, avatar, NIP-05, lightning address");
+
+      accessibility {
+        description: "Edit your Nostr profile metadata including display name, bio, and identifiers";
+      }
+
+      [suffix]
+      Button btn_edit_profile {
+        label: _("Open");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Open profile editor";
+          description: "Click to open the profile editing dialog";
+        }
+
+        styles [
+          "suffix-action",
+        ]
+      }
+    }
+
+    Adw.ActionRow {
+      title: _("Key Rotation");
+      subtitle: _("Migrate to a new keypair (kind 1776)");
+
+      accessibility {
+        description: "Rotate your identity to a new keypair while announcing the migration";
+      }
+
+      [suffix]
+      Button btn_key_rotation {
+        label: _("Rotate");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Open key rotation dialog";
+          description: "Click to rotate your key to a new keypair";
+        }
+
+        styles [
+          "suffix-action",
+        ]
+      }
+    }
+  }
+
+  Adw.PreferencesGroup group_network {
+    title: _("Network");
+
+    accessibility {
+      label: "Network settings";
+      description: "Configure network connections and relay settings";
+    }
+
+    Adw.ActionRow {
+      title: _("Tor/Orbot setup");
+
+      accessibility {
+        description: "Configure Tor proxy settings for enhanced privacy";
+      }
+
+      [suffix]
+      Button btn_orbot_setup {
+        label: _("Open");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Open Orbot setup";
+          description: "Click to configure Tor and Orbot proxy settings";
+        }
+
+        styles [
+          "suffix-action",
+        ]
+      }
+    }
+
+    Adw.ActionRow {
+      title: _("Relays");
+
+      accessibility {
+        description: "Manage Nostr relay connections for reading and writing events";
+      }
+
+      [suffix]
+      Button btn_relays {
+        label: _("Open");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Open relay configuration";
+          description: "Click to manage relay connections";
+        }
+
+        styles [
+          "suffix-action",
+        ]
+      }
+    }
+
+    Adw.ActionRow {
+      title: _("Listen for new connections");
+
+      accessibility {
+        description: "Enable or disable listening for incoming connection requests from applications";
+      }
+
+      [suffix]
+      Switch switch_listen {
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Listen for connections toggle";
+          description: "Toggle to enable or disable listening for new application connections";
+        }
+      }
+    }
+  }
+
+  Adw.PreferencesGroup group_social {
+    title: _("Social");
+    description: _("Manage your follow and mute lists");
+
+    accessibility {
+      label: "Social settings";
+      description: "Manage your social connections including follows and mutes";
+    }
+
+    Adw.ActionRow {
+      title: _("Following");
+      subtitle: _("Manage accounts you follow (kind:3)");
+
+      accessibility {
+        description: "View and edit your list of followed accounts published as kind 3 events";
+      }
+
+      [suffix]
+      Button btn_follows {
+        label: _("Manage");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Manage following list";
+          description: "Click to manage your list of followed accounts";
+        }
+
+        styles [
+          "suffix-action",
+        ]
+      }
+    }
+
+    Adw.ActionRow {
+      title: _("Muted");
+      subtitle: _("Manage muted accounts (kind:10000)");
+
+      accessibility {
+        description: "View and edit your list of muted accounts published as kind 10000 events";
+      }
+
+      [suffix]
+      Button btn_mutes {
+        label: _("Manage");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Manage mute list";
+          description: "Click to manage your list of muted accounts";
+        }
+
+        styles [
+          "suffix-action",
+        ]
+      }
+    }
+  }
+
+  Adw.PreferencesGroup group_misc {
+    title: _("Other");
+
+    accessibility {
+      label: "Other settings";
+      description: "Additional configuration options";
+    }
+
+    Adw.ActionRow {
+      title: _("Logs");
+
+      accessibility {
+        description: "View application logs for debugging and troubleshooting";
+      }
+
+      [suffix]
+      Button btn_logs {
+        label: _("Open");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Open application logs";
+          description: "Click to view application logs";
+        }
+
+        styles [
+          "suffix-action",
+        ]
+      }
+    }
+
+    Adw.ActionRow {
+      title: _("Sign policy");
+
+      accessibility {
+        description: "Configure signing policies and approval rules";
+      }
+
+      [suffix]
+      Button btn_sign_policy {
+        label: _("Open");
+        valign: center;
+        vexpand: false;
+
+        accessibility {
+          label: "Open sign policy settings";
+          description: "Click to configure signing policies";
+        }
+
+        styles [
+          "suffix-action",
+        ]
+      }
+    }
+
+    Adw.ActionRow {
+      title: _("Setup Assistant");
+      subtitle: _("Re-run the introductory setup wizard");
+
+      accessibility {
+        description: "Launch the setup assistant to learn about GNostr Signer and configure your account";
+      }
+
+      [suffix]
+      Button btn_setup_assistant {
+        label: _("Run");
+        valign: center;
+        vexpand: false;
+        action-name: "app.show-onboarding";
+
+        accessibility {
+          label: "Run setup assistant";
+          description: "Click to launch the setup wizard";
+        }
+
+        styles [
+          "suffix-action",
+        ]
+      }
+    }
+  }
+}
+

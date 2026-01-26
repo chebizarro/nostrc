@@ -1,0 +1,351 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GnPageHistory: Adw.PreferencesPage {
+  title: _("Event History");
+  icon-name: "document-open-recent-symbolic";
+
+  accessibility {
+    label: "Event history page";
+    description: "View history of signing operations and event transactions";
+  }
+
+  Adw.PreferencesGroup {
+    title: _("Filters");
+    description: _("Filter history by event kind, client, or date");
+
+    accessibility {
+      label: "History filters group";
+    }
+
+    Adw.ComboRow combo_kind_filter {
+      title: _("Event Kind");
+      subtitle: _("Filter by Nostr event type");
+
+      accessibility {
+        label: "Event kind filter";
+        description: "Select an event kind to filter the history";
+      }
+    }
+
+    Adw.ComboRow combo_client_filter {
+      title: _("Client Application");
+      subtitle: _("Filter by requesting application");
+
+      accessibility {
+        label: "Client filter";
+        description: "Select a client to filter the history";
+      }
+    }
+
+    Box {
+      orientation: horizontal;
+      spacing: 12;
+      margin-top: 6;
+      margin-bottom: 6;
+      halign: end;
+
+      Button btn_clear_filters {
+        label: _("Clear Filters");
+        tooltip-text: _("Remove all active filters");
+
+        accessibility {
+          label: "Clear all filters";
+        }
+      }
+    }
+  }
+
+  Adw.PreferencesGroup {
+    title: _("History Management");
+
+    accessibility {
+      label: "History management group";
+    }
+
+    Box {
+      orientation: horizontal;
+      spacing: 12;
+      margin-top: 6;
+      margin-bottom: 6;
+
+      Label lbl_entry_count {
+        label: _("0 entries");
+        hexpand: true;
+        xalign: 0;
+
+        styles [
+          "dim-label",
+        ]
+
+        accessibility {
+          label: "Entry count";
+          description: "Number of history entries";
+        }
+      }
+
+      Button btn_refresh {
+        icon-name: "view-refresh-symbolic";
+        tooltip-text: _("Refresh history");
+
+        styles [
+          "flat",
+        ]
+
+        accessibility {
+          label: "Refresh history";
+        }
+      }
+
+      Button btn_export {
+        label: _("Export");
+        tooltip-text: _("Export history to JSON or CSV file");
+
+        accessibility {
+          label: "Export history";
+          description: "Save history to a file in JSON or CSV format";
+        }
+      }
+
+      Button btn_clear_history {
+        label: _("Clear All");
+        sensitive: false;
+        tooltip-text: _("Delete all history entries");
+
+        styles [
+          "destructive-action",
+        ]
+
+        accessibility {
+          label: "Clear all history";
+          description: "Permanently delete all history entries";
+        }
+      }
+    }
+  }
+
+  Adw.PreferencesGroup {
+    title: _("Recent Events");
+    description: _("Signing operations performed by connected applications");
+
+    accessibility {
+      label: "Recent events list";
+      description: "List of recent signing operations";
+    }
+
+    Stack empty_stack {
+      transition-type: crossfade;
+
+      StackPage {
+        name: "empty";
+
+        child: Adw.StatusPage {
+          icon-name: "document-open-recent-symbolic";
+          title: _("No History");
+          description: _("Signing operations will appear here once applications start making requests");
+
+          accessibility {
+            label: "No history entries";
+          }
+        };
+      }
+
+      StackPage {
+        name: "list";
+
+        child: ScrolledWindow {
+          hexpand: true;
+          vexpand: true;
+          min-content-height: 200;
+          max-content-height: 500;
+
+          accessibility {
+            label: "History list container";
+          }
+
+          ListBox history_list {
+            selection-mode: none;
+
+            styles [
+              "boxed-list",
+            ]
+
+            accessibility {
+              label: "Event history list";
+              description: "List of signing operations. Use arrow keys to navigate.";
+            }
+          }
+        };
+      }
+    }
+  }
+
+  Adw.PreferencesGroup {
+    accessibility {
+      label: "Pagination controls";
+    }
+
+    Box {
+      orientation: horizontal;
+      spacing: 12;
+      margin-top: 6;
+      margin-bottom: 6;
+      halign: center;
+
+      Button btn_prev_page {
+        icon-name: "go-previous-symbolic";
+        tooltip-text: _("Previous page");
+        sensitive: false;
+
+        styles [
+          "flat",
+        ]
+
+        accessibility {
+          label: "Previous page";
+        }
+      }
+
+      Label lbl_page_info {
+        label: _("Page 1 of 1");
+        width-chars: 15;
+        xalign: 0.5;
+
+        accessibility {
+          label: "Current page indicator";
+        }
+      }
+
+      Button btn_next_page {
+        icon-name: "go-next-symbolic";
+        tooltip-text: _("Next page");
+        sensitive: false;
+
+        styles [
+          "flat",
+        ]
+
+        accessibility {
+          label: "Next page";
+        }
+      }
+    }
+  }
+
+  Adw.PreferencesGroup {
+    title: _("Status Legend");
+
+    accessibility {
+      label: "Result status legend";
+    }
+
+    FlowBox {
+      selection-mode: none;
+      homogeneous: false;
+      row-spacing: 8;
+      column-spacing: 24;
+      margin-top: 6;
+      margin-bottom: 6;
+      halign: center;
+      max-children-per-line: 4;
+      min-children-per-line: 2;
+
+      FlowBoxChild {
+        focusable: false;
+
+        Box {
+          spacing: 6;
+
+          Image {
+            icon-name: "emblem-ok-symbolic";
+
+            styles [
+              "success",
+            ]
+          }
+
+          Label {
+            label: _("Success");
+
+            styles [
+              "dim-label",
+            ]
+          }
+        }
+      }
+
+      FlowBoxChild {
+        focusable: false;
+
+        Box {
+          spacing: 6;
+
+          Image {
+            icon-name: "action-unavailable-symbolic";
+
+            styles [
+              "warning",
+            ]
+          }
+
+          Label {
+            label: _("Denied");
+
+            styles [
+              "dim-label",
+            ]
+          }
+        }
+      }
+
+      FlowBoxChild {
+        focusable: false;
+
+        Box {
+          spacing: 6;
+
+          Image {
+            icon-name: "dialog-error-symbolic";
+
+            styles [
+              "error",
+            ]
+          }
+
+          Label {
+            label: _("Error");
+
+            styles [
+              "dim-label",
+            ]
+          }
+        }
+      }
+
+      FlowBoxChild {
+        focusable: false;
+
+        Box {
+          spacing: 6;
+
+          Image {
+            icon-name: "appointment-soon-symbolic";
+
+            styles [
+              "warning",
+            ]
+          }
+
+          Label {
+            label: _("Timeout");
+
+            styles [
+              "dim-label",
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+

@@ -1,0 +1,89 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GnostrChannelCreateDialog: Adw.Dialog {
+  title: "Create Channel";
+  content-width: 400;
+  content-height: -1;
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      [start]
+      Button btn_cancel {
+        label: "Cancel";
+      }
+
+      title-widget: Label lbl_title {
+        label: "Create Channel";
+
+        styles [
+          "title",
+        ]
+      };
+
+      [end]
+      Button btn_create {
+        label: "Create";
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    ScrolledWindow {
+      hscrollbar-policy: never;
+      propagate-natural-height: true;
+
+      Adw.Clamp {
+        maximum-size: 500;
+        margin-top: 24;
+        margin-bottom: 24;
+        margin-start: 12;
+        margin-end: 12;
+
+        Box {
+          orientation: vertical;
+          spacing: 24;
+
+          ListBox {
+            selection-mode: none;
+
+            styles [
+              "boxed-list",
+            ]
+
+            Adw.EntryRow entry_name {
+              title: "Channel Name";
+              input-purpose: free_form;
+            }
+
+            Adw.EntryRow entry_about {
+              title: "Description";
+              input-purpose: free_form;
+            }
+
+            Adw.EntryRow entry_picture {
+              title: "Picture URL";
+              input-purpose: url;
+            }
+          }
+
+          Label {
+            label: "Public channels are visible to everyone. Messages are not encrypted.";
+            wrap: true;
+            justify: center;
+            xalign: 0.5;
+
+            styles [
+              "dim-label",
+              "caption",
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+

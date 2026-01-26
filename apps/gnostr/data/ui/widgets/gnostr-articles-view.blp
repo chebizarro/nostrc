@@ -1,0 +1,204 @@
+using Gtk 4.0;
+
+template $GnostrArticlesView: Widget {
+  Box root {
+    orientation: vertical;
+    hexpand: true;
+    vexpand: true;
+    spacing: 0;
+
+    Box header_box {
+      orientation: vertical;
+      spacing: 8;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 12;
+      margin-bottom: 8;
+
+      Label title_label {
+        label: "Articles";
+        xalign: 0.0;
+
+        styles [
+          "title-2",
+        ]
+      }
+
+      SearchEntry search_entry {
+        placeholder-text: "Search articles...";
+        hexpand: true;
+      }
+
+      Box filter_row {
+        orientation: horizontal;
+        spacing: 8;
+        hexpand: true;
+
+        ToggleButton btn_all {
+          label: "All";
+          active: true;
+
+          styles [
+            "pill",
+          ]
+        }
+
+        ToggleButton btn_wiki {
+          label: "Wiki";
+          tooltip-text: "NIP-54 Wiki Articles";
+
+          styles [
+            "pill",
+          ]
+        }
+
+        ToggleButton btn_blog {
+          label: "Blog";
+          tooltip-text: "NIP-23 Long-form Content";
+
+          styles [
+            "pill",
+          ]
+        }
+
+        Box {
+          hexpand: true;
+        }
+
+        Label lbl_count {
+          label: "0 articles";
+
+          styles [
+            "dim-label",
+          ]
+        }
+      }
+
+      Box topic_filter_box {
+        orientation: horizontal;
+        spacing: 8;
+        visible: false;
+
+        Label {
+          label: "Filtered by topic:";
+
+          styles [
+            "dim-label",
+          ]
+        }
+
+        Label topic_filter_label {
+          label: "";
+
+          styles [
+            "accent",
+          ]
+        }
+
+        Button btn_clear_topic {
+          icon-name: "window-close-symbolic";
+          tooltip-text: "Clear topic filter";
+          has-frame: false;
+
+          styles [
+            "circular",
+          ]
+        }
+      }
+    }
+
+    Separator {
+      orientation: horizontal;
+    }
+
+    Stack content_stack {
+      hexpand: true;
+      vexpand: true;
+      transition-type: crossfade;
+
+      StackPage {
+        name: "results";
+
+        child: ScrolledWindow articles_scroll {
+          hexpand: true;
+          vexpand: true;
+          hscrollbar-policy: never;
+
+          ListView articles_list {
+            hexpand: true;
+            vexpand: true;
+
+            styles [
+              "navigation-sidebar",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "empty";
+
+        child: Box empty_state {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Image {
+            icon-name: "document-open-symbolic";
+            pixel-size: 64;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Label {
+            label: "No Articles Found";
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Label {
+            label: "Wiki and long-form articles will appear here as you browse the network.";
+            wrap: true;
+            justify: center;
+            max-width-chars: 40;
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "loading";
+
+        child: Box {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Spinner loading_spinner {
+            spinning: false;
+            width-request: 32;
+            height-request: 32;
+          }
+
+          Label {
+            label: "Loading articles...";
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+    }
+  }
+}
+

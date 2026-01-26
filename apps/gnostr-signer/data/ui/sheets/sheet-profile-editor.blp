@@ -1,0 +1,370 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetProfileEditor: Adw.Dialog {
+  title: _("Edit Profile");
+  content-width: 520;
+  content-height: -1;
+  follows-content-size: true;
+
+  accessibility {
+    label: "Profile editor dialog";
+    description: "Edit your Nostr profile metadata including display name, bio, images, and identifiers";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      accessibility {
+        label: "Profile editor header";
+      }
+
+      title-widget: Label {
+        label: _("Edit Profile");
+      };
+
+      [start]
+      Button btn_cancel {
+        label: _("Cancel");
+
+        accessibility {
+          label: "Cancel";
+          description: "Close without saving changes";
+        }
+      }
+
+      [end]
+      Button btn_preview {
+        label: _("Preview");
+        tooltip-text: _("Preview changes before publishing");
+
+        accessibility {
+          label: "Preview changes";
+          description: "Preview how your profile will appear before publishing";
+        }
+      }
+
+      [end]
+      Button btn_save {
+        label: _("Sign & Publish");
+        tooltip-text: _("Sign with your key and publish as kind:0 event");
+
+        accessibility {
+          label: "Sign and publish profile";
+          description: "Sign your profile with your private key and publish it to relays";
+        }
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    ScrolledWindow {
+      hscrollbar-policy: never;
+      vexpand: true;
+
+      accessibility {
+        label: "Profile form container";
+      }
+
+      Adw.Clamp {
+        maximum-size: 600;
+        tightening-threshold: 400;
+        margin-top: 16;
+        margin-bottom: 16;
+        margin-start: 12;
+        margin-end: 12;
+
+        Box {
+          orientation: vertical;
+          spacing: 16;
+
+          Box {
+            orientation: horizontal;
+            spacing: 8;
+
+            Label {
+              label: _("Public Key:");
+
+              styles [
+                "dim-label",
+              ]
+            }
+
+            Label lbl_npub {
+              selectable: true;
+              ellipsize: middle;
+              hexpand: true;
+              xalign: 0;
+
+              accessibility {
+                label: "Public key";
+                description: "Your Nostr public key. Select to copy.";
+              }
+
+              styles [
+                "monospace",
+              ]
+            }
+          }
+
+          Adw.PreferencesGroup {
+            title: _("Basic Information");
+
+            accessibility {
+              label: "Basic information";
+              description: "Your display name, bio, and website";
+            }
+
+            Adw.EntryRow entry_name {
+              title: _("Display Name");
+
+              accessibility {
+                description: "Your public display name shown on your profile";
+              }
+            }
+
+            Adw.EntryRow entry_about {
+              title: _("About / Bio");
+
+              accessibility {
+                description: "A short biography or description about yourself";
+              }
+            }
+
+            Adw.EntryRow entry_website {
+              title: _("Website");
+              input-hints: no_spellcheck;
+
+              accessibility {
+                description: "Your personal or professional website URL";
+              }
+            }
+          }
+
+          Adw.PreferencesGroup {
+            title: _("Images");
+            description: _("URLs to your profile images");
+
+            accessibility {
+              label: "Profile images";
+              description: "URLs for your avatar and banner images";
+            }
+
+            Adw.EntryRow entry_picture {
+              title: _("Avatar URL");
+              input-hints: no_spellcheck;
+
+              accessibility {
+                description: "URL to your profile picture or avatar image";
+              }
+            }
+
+            Adw.EntryRow entry_banner {
+              title: _("Banner URL");
+              input-hints: no_spellcheck;
+
+              accessibility {
+                description: "URL to your profile banner image";
+              }
+            }
+          }
+
+          Adw.PreferencesGroup {
+            title: _("Verification & Payments");
+
+            accessibility {
+              label: "Verification and payments";
+              description: "NIP-05 verification and Lightning payment address";
+            }
+
+            Adw.EntryRow entry_nip05 {
+              title: _("NIP-05 Identifier");
+              input-hints: no_spellcheck;
+
+              accessibility {
+                description: "Your NIP-05 verification identifier, like name@domain.com";
+              }
+            }
+
+            Adw.EntryRow entry_lud16 {
+              title: _("Lightning Address");
+              input-hints: no_spellcheck;
+
+              accessibility {
+                description: "Your Lightning address for receiving payments, like name@wallet.com";
+              }
+            }
+          }
+
+          Adw.PreferencesGroup group_preview {
+            visible: false;
+            title: _("Preview");
+            description: _("This is how your profile will appear");
+
+            accessibility {
+              label: "Profile preview";
+              description: "Preview of how your profile will appear to others";
+            }
+
+            Box {
+              orientation: vertical;
+              spacing: 12;
+              margin-top: 12;
+              margin-bottom: 12;
+              margin-start: 12;
+              margin-end: 12;
+
+              Box {
+                orientation: horizontal;
+                spacing: 16;
+
+                Adw.Avatar preview_avatar {
+                  size: 64;
+                  show-initials: true;
+
+                  accessibility {
+                    label: "Preview avatar";
+                    description: "Preview of your profile picture";
+                  }
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 4;
+                  valign: center;
+                  hexpand: true;
+
+                  Label preview_name {
+                    xalign: 0;
+                    ellipsize: end;
+
+                    accessibility {
+                      label: "Preview display name";
+                    }
+
+                    styles [
+                      "title-2",
+                    ]
+                  }
+
+                  Label preview_nip05 {
+                    xalign: 0;
+                    ellipsize: end;
+
+                    accessibility {
+                      label: "Preview NIP-05 identifier";
+                    }
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+                }
+              }
+
+              Label preview_about {
+                xalign: 0;
+                wrap: true;
+                wrap-mode: word_char;
+                max-width-chars: 60;
+
+                accessibility {
+                  label: "Preview bio";
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+
+                Image {
+                  icon-name: "web-browser-symbolic";
+
+                  accessibility {
+                    label: "Website icon";
+                    description: "Decorative website icon";
+                  }
+                }
+
+                Label preview_website {
+                  xalign: 0;
+                  ellipsize: end;
+
+                  accessibility {
+                    label: "Preview website";
+                  }
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+
+                Image {
+                  icon-name: "lightning-bolt-symbolic";
+
+                  accessibility {
+                    label: "Lightning icon";
+                    description: "Decorative Lightning payment icon";
+                  }
+                }
+
+                Label preview_lud16 {
+                  xalign: 0;
+                  ellipsize: end;
+
+                  accessibility {
+                    label: "Preview Lightning address";
+                  }
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+              }
+            }
+          }
+
+          Box box_status {
+            visible: false;
+            orientation: horizontal;
+            spacing: 8;
+            halign: center;
+
+            accessibility {
+              label: "Publishing status";
+              description: "Status indicator for profile publishing";
+            }
+
+            Spinner spinner_status {
+              spinning: false;
+
+              accessibility {
+                label: "Loading indicator";
+              }
+            }
+
+            Label lbl_status {
+              label: _("Signing and publishing...");
+
+              accessibility {
+                label: "Status message";
+              }
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+

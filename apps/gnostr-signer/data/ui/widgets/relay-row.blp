@@ -1,0 +1,24 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $RelayRow: Adw.ActionRow {
+  title: _("Relay URL");
+  subtitle: _("Status");
+
+  accessibility {
+    label: "Relay connection";
+    description: "A configured Nostr relay. Use the toggle to enable or disable this relay connection.";
+  }
+
+  [suffix]
+  Switch switch_enabled {
+    valign: center;
+    vexpand: false;
+
+    accessibility {
+      label: "Enable relay";
+      description: "Toggle to enable or disable this relay connection";
+    }
+  }
+}
+

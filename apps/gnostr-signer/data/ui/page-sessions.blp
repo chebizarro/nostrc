@@ -1,0 +1,257 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GnPageSessions: Adw.PreferencesPage {
+  title: _("Active Sessions");
+  icon-name: "network-server-symbolic";
+
+  accessibility {
+    label: "Active sessions page";
+    description: "Manage active NIP-46 client sessions for remote signing applications";
+  }
+
+  Adw.PreferencesGroup {
+    title: _("Session Settings");
+    description: _("Configure how long client sessions remain active");
+
+    accessibility {
+      label: "Session settings group";
+    }
+
+    Adw.SpinRow spin_timeout {
+      title: _("Session Timeout");
+      subtitle: _("Minutes of inactivity before session expires (0 = no timeout)");
+
+      adjustment: Adjustment {
+        lower: 0;
+        upper: 1440;
+        step-increment: 5;
+        page-increment: 15;
+        value: 15;
+      };
+
+      accessibility {
+        label: "Session timeout in minutes";
+        description: "Set the number of minutes before inactive sessions expire";
+      }
+    }
+  }
+
+  Adw.PreferencesGroup {
+    title: _("Session Management");
+
+    accessibility {
+      label: "Session management group";
+    }
+
+    Box {
+      orientation: horizontal;
+      spacing: 12;
+      margin-top: 6;
+      margin-bottom: 6;
+
+      Label lbl_active_count {
+        label: _("0 active / 0 total");
+        hexpand: true;
+        xalign: 0;
+
+        styles [
+          "dim-label",
+        ]
+
+        accessibility {
+          label: "Session count";
+          description: "Number of active and total sessions";
+        }
+      }
+
+      Button btn_revoke_all {
+        label: _("Revoke All");
+        sensitive: false;
+        tooltip-text: _("Revoke all active sessions");
+
+        styles [
+          "destructive-action",
+        ]
+
+        accessibility {
+          label: "Revoke all sessions";
+          description: "Terminate all active client sessions immediately";
+        }
+      }
+    }
+  }
+
+  Adw.PreferencesGroup {
+    title: _("Connected Applications");
+    description: _("Applications currently authorized to request signatures");
+
+    accessibility {
+      label: "Connected applications list";
+      description: "List of applications with active signing sessions";
+    }
+
+    Stack empty_stack {
+      transition-type: crossfade;
+
+      StackPage {
+        name: "empty";
+
+        child: Adw.StatusPage {
+          icon-name: "network-offline-symbolic";
+          title: _("No Active Sessions");
+          description: _("Applications will appear here when they connect and are authorized to sign events");
+
+          accessibility {
+            label: "No active sessions";
+          }
+        };
+      }
+
+      StackPage {
+        name: "list";
+
+        child: ScrolledWindow {
+          hexpand: true;
+          vexpand: true;
+          min-content-height: 200;
+          max-content-height: 400;
+
+          accessibility {
+            label: "Session list container";
+          }
+
+          ListBox session_list {
+            selection-mode: none;
+
+            styles [
+              "boxed-list",
+            ]
+
+            accessibility {
+              label: "Active sessions list";
+              description: "List of connected applications. Use arrow keys to navigate.";
+            }
+          }
+        };
+      }
+    }
+  }
+
+  Adw.PreferencesGroup {
+    title: _("Status Legend");
+
+    accessibility {
+      label: "Session status legend";
+    }
+
+    FlowBox {
+      selection-mode: none;
+      homogeneous: false;
+      row-spacing: 8;
+      column-spacing: 24;
+      margin-top: 6;
+      margin-bottom: 6;
+      halign: center;
+      max-children-per-line: 4;
+      min-children-per-line: 2;
+
+      FlowBoxChild {
+        focusable: false;
+
+        Box {
+          spacing: 6;
+
+          Image {
+            icon-name: "media-playback-start-symbolic";
+
+            styles [
+              "success",
+            ]
+          }
+
+          Label {
+            label: _("Active");
+
+            styles [
+              "dim-label",
+            ]
+          }
+        }
+      }
+
+      FlowBoxChild {
+        focusable: false;
+
+        Box {
+          spacing: 6;
+
+          Image {
+            icon-name: "starred-symbolic";
+
+            styles [
+              "success",
+            ]
+          }
+
+          Label {
+            label: _("Remembered");
+
+            styles [
+              "dim-label",
+            ]
+          }
+        }
+      }
+
+      FlowBoxChild {
+        focusable: false;
+
+        Box {
+          spacing: 6;
+
+          Image {
+            icon-name: "appointment-soon-symbolic";
+
+            styles [
+              "warning",
+            ]
+          }
+
+          Label {
+            label: _("Expired");
+
+            styles [
+              "dim-label",
+            ]
+          }
+        }
+      }
+
+      FlowBoxChild {
+        focusable: false;
+
+        Box {
+          spacing: 6;
+
+          Image {
+            icon-name: "action-unavailable-symbolic";
+
+            styles [
+              "error",
+            ]
+          }
+
+          Label {
+            label: _("Revoked");
+
+            styles [
+              "dim-label",
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+

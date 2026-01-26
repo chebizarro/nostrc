@@ -1,0 +1,201 @@
+using Gtk 4.0;
+
+template $GnostrSearchResultsView: Widget {
+  Box root {
+    orientation: vertical;
+    hexpand: true;
+    vexpand: true;
+    spacing: 0;
+
+    Box header {
+      orientation: vertical;
+      spacing: 8;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 12;
+      margin-bottom: 8;
+
+      Label {
+        label: "Search Notes";
+        xalign: 0.0;
+
+        styles [
+          "title-2",
+        ]
+      }
+
+      SearchEntry search_entry {
+        placeholder-text: "Search by content, #hashtag, or @mention...";
+        hexpand: true;
+      }
+
+      Box filter_row {
+        orientation: horizontal;
+        spacing: 8;
+        halign: start;
+
+        ToggleButton btn_local {
+          label: "Local Cache";
+          active: true;
+          tooltip-text: "Search notes stored in local database. Fast and works offline.";
+
+          styles [
+            "pill",
+          ]
+        }
+
+        ToggleButton btn_relay {
+          label: "Search Relays";
+          tooltip-text: "Search notes on remote relays (NIP-50). Results are fetched from relays and saved locally.";
+
+          styles [
+            "pill",
+          ]
+        }
+      }
+
+      Label results_count_label {
+        label: "";
+        xalign: 0.0;
+        visible: false;
+
+        styles [
+          "dim-label",
+        ]
+      }
+    }
+
+    Separator {
+      orientation: horizontal;
+    }
+
+    Stack content_stack {
+      hexpand: true;
+      vexpand: true;
+      transition-type: crossfade;
+
+      StackPage {
+        name: "results";
+
+        child: ScrolledWindow scroller {
+          hexpand: true;
+          vexpand: true;
+          hscrollbar-policy: never;
+
+          ListView results_list {
+            hexpand: true;
+            vexpand: true;
+
+            styles [
+              "navigation-sidebar",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "empty";
+
+        child: Box empty_state {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Image {
+            icon-name: "system-search-symbolic";
+            pixel-size: 64;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Label {
+            label: "Search Notes";
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Label {
+            label: "Search for notes by text content, #hashtags, or @mentions.";
+            wrap: true;
+            justify: center;
+            max-width-chars: 40;
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "loading";
+
+        child: Box {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Spinner loading_spinner {
+            spinning: false;
+            width-request: 32;
+            height-request: 32;
+          }
+
+          Label {
+            label: "Searching...";
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "no-results";
+
+        child: Box no_results_state {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Image {
+            icon-name: "face-uncertain-symbolic";
+            pixel-size: 64;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Label {
+            label: "No Results";
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Label no_results_hint {
+            label: "Try a different search term or switch to relay search.";
+            wrap: true;
+            justify: center;
+            max-width-chars: 40;
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+    }
+  }
+}
+

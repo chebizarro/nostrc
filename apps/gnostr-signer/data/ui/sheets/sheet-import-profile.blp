@@ -1,0 +1,508 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetImportProfile: Adw.Dialog {
+  title: _("Import Profile");
+  content-width: 520;
+  content-height: 680;
+  can-close: true;
+
+  accessibility {
+    label: "Import profile dialog";
+    description: "Import an existing Nostr profile using encrypted backup, seed phrase, or hardware device";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      accessibility {
+        label: "Import profile header";
+      }
+
+      title-widget: Label {
+        label: _("Import Profile");
+      };
+
+      [start]
+      Button btn_cancel {
+        label: _("_Cancel");
+        use-underline: true;
+        focusable: true;
+
+        accessibility {
+          label: "Cancel";
+          description: "Close without importing. Keyboard shortcut: Alt+C or Escape.";
+        }
+      }
+
+      [end]
+      Button btn_import {
+        label: _("_Import");
+        use-underline: true;
+        tooltip-text: _("Import the profile using the selected method (Alt+I)");
+        focusable: true;
+
+        accessibility {
+          label: "Import profile";
+          description: "Import the profile using the selected method. Keyboard shortcut: Alt+I.";
+        }
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    ScrolledWindow {
+      hscrollbar-policy: never;
+      vexpand: true;
+
+      accessibility {
+        label: "Import form container";
+      }
+
+      Adw.Clamp {
+        maximum-size: 500;
+        margin-top: 16;
+        margin-bottom: 16;
+        margin-start: 16;
+        margin-end: 16;
+
+        Box {
+          orientation: vertical;
+          spacing: 16;
+
+          Label {
+            wrap: true;
+            xalign: 0;
+            label: _("Import an existing Nostr profile using one of the methods below. Your private key will be stored securely.");
+
+            accessibility {
+              label: "Instructions";
+              description: "Choose an import method. Your key will be securely stored.";
+            }
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Adw.PreferencesGroup {
+            title: _("Import Method");
+
+            accessibility {
+              label: "Import method selection";
+              description: "Choose how to import your profile";
+            }
+
+            Adw.ActionRow {
+              title: _("NIP-49 Encrypted Backup");
+              subtitle: _("Import from an ncryptsec backup string");
+
+              accessibility {
+                description: "Select to import using an encrypted ncryptsec backup";
+              }
+
+              [prefix]
+              CheckButton radio_nip49 {
+                valign: center;
+                active: true;
+
+                accessibility {
+                  label: "NIP-49 encrypted backup";
+                  description: "Import from an encrypted backup string";
+                }
+              }
+
+              activatable-widget: radio_nip49;
+            }
+
+            Adw.ActionRow {
+              title: _("Mnemonic Seed Phrase");
+              subtitle: _("Import from a 12 or 24 word recovery phrase");
+
+              accessibility {
+                description: "Select to import using a recovery seed phrase";
+              }
+
+              [prefix]
+              CheckButton radio_mnemonic {
+                valign: center;
+                group: radio_nip49;
+
+                accessibility {
+                  label: "Mnemonic seed phrase";
+                  description: "Import from a 12 or 24 word recovery phrase";
+                }
+              }
+
+              activatable-widget: radio_mnemonic;
+            }
+
+            Adw.ActionRow {
+              title: _("External Hardware Device");
+              subtitle: _("Import from a hardware security key (coming soon)");
+
+              accessibility {
+                description: "Select to import from a hardware security device. This feature is coming soon.";
+              }
+
+              [prefix]
+              CheckButton radio_hardware {
+                valign: center;
+                group: radio_nip49;
+
+                accessibility {
+                  label: "Hardware device";
+                  description: "Import from a hardware security key";
+                }
+              }
+
+              activatable-widget: radio_hardware;
+            }
+          }
+
+          Box box_nip49 {
+            orientation: vertical;
+            spacing: 12;
+
+            Adw.PreferencesGroup {
+              title: _("Encrypted Backup");
+              description: _("Paste your ncryptsec1... backup string below");
+
+              accessibility {
+                label: "Encrypted backup input";
+                description: "Enter your ncryptsec encrypted backup string";
+              }
+
+              Frame {
+                margin-top: 8;
+
+                ScrolledWindow {
+                  min-content-height: 100;
+                  max-content-height: 150;
+
+                  TextView text_ncryptsec {
+                    wrap-mode: word_char;
+                    accepts-tab: false;
+                    top-margin: 8;
+                    bottom-margin: 8;
+                    left-margin: 8;
+                    right-margin: 8;
+                    monospace: true;
+
+                    accessibility {
+                      label: "Encrypted backup text";
+                      description: "Paste your ncryptsec1 encrypted backup string here";
+                    }
+
+                    styles [
+                      "view",
+                    ]
+                  }
+                }
+              }
+            }
+          }
+
+          Box box_mnemonic {
+            visible: false;
+            orientation: vertical;
+            spacing: 12;
+
+            Adw.PreferencesGroup {
+              title: _("Seed Phrase");
+              description: _("Enter your recovery words separated by spaces");
+
+              accessibility {
+                label: "Seed phrase input";
+                description: "Enter your recovery mnemonic words";
+              }
+
+              Adw.ComboRow {
+                title: _("Word Count");
+
+                accessibility {
+                  description: "Select whether your seed phrase has 12 or 24 words";
+                }
+
+                model: StringList {
+                  strings [
+                    _("12 words"),
+                    _("24 words"),
+                  ]
+                };
+
+                DropDown dropdown_word_count {
+                  visible: false;
+                }
+              }
+
+              Frame {
+                margin-top: 8;
+
+                ScrolledWindow {
+                  min-content-height: 100;
+                  max-content-height: 150;
+
+                  TextView text_mnemonic {
+                    wrap-mode: word;
+                    accepts-tab: false;
+                    top-margin: 8;
+                    bottom-margin: 8;
+                    left-margin: 8;
+                    right-margin: 8;
+
+                    accessibility {
+                      label: "Seed phrase words";
+                      description: "Enter your recovery words separated by spaces";
+                    }
+
+                    styles [
+                      "view",
+                    ]
+                  }
+                }
+              }
+            }
+          }
+
+          Box box_hardware {
+            visible: false;
+            orientation: vertical;
+            spacing: 12;
+
+            Adw.Banner banner_hsm_status {
+              title: _("Scanning for hardware devices...");
+              revealed: true;
+
+              accessibility {
+                label: "HSM status banner";
+                description: "Shows the status of hardware device detection";
+              }
+            }
+
+            Adw.PreferencesGroup group_hsm_devices {
+              title: _("Available Devices");
+              description: _("Select a hardware security module to use");
+
+              accessibility {
+                label: "Hardware device selection";
+                description: "List of detected hardware security devices";
+              }
+
+              ListBox listbox_hsm_devices {
+                selection-mode: single;
+                activate-on-single-click: true;
+
+                accessibility {
+                  label: "Device list";
+                  description: "Select a hardware security device from this list";
+                }
+
+                styles [
+                  "boxed-list",
+                ]
+              }
+
+              Button btn_hsm_refresh {
+                halign: end;
+                margin-top: 8;
+
+                Box {
+                  spacing: 6;
+
+                  Image {
+                    icon-name: "view-refresh-symbolic";
+                  }
+
+                  Label {
+                    label: _("Refresh Devices");
+                  }
+                }
+
+                accessibility {
+                  label: "Refresh device list";
+                  description: "Scan for hardware security devices again";
+                }
+              }
+            }
+
+            Adw.PreferencesGroup group_hsm_keys {
+              title: _("Keys on Device");
+              description: _("Select an existing key or generate a new one");
+              visible: false;
+
+              accessibility {
+                label: "Key selection";
+                description: "Choose a key from the selected device";
+              }
+
+              ListBox listbox_hsm_keys {
+                selection-mode: single;
+                activate-on-single-click: true;
+
+                accessibility {
+                  label: "Key list";
+                  description: "Select a key from the hardware device";
+                }
+
+                styles [
+                  "boxed-list",
+                ]
+              }
+
+              Button btn_hsm_generate_key {
+                halign: center;
+                margin-top: 12;
+
+                Box {
+                  spacing: 6;
+
+                  Image {
+                    icon-name: "list-add-symbolic";
+                  }
+
+                  Label {
+                    label: _("Generate New Key on Device");
+                  }
+                }
+
+                accessibility {
+                  label: "Generate new key";
+                  description: "Create a new Nostr key pair on the hardware device";
+                }
+
+                styles [
+                  "suggested-action",
+                ]
+              }
+            }
+
+            Adw.PreferencesGroup group_hsm_pin {
+              title: _("Device PIN");
+              description: _("Enter your device PIN to access keys");
+              visible: false;
+
+              accessibility {
+                label: "PIN entry";
+                description: "Enter the PIN for your hardware security device";
+              }
+
+              Box box_hsm_pin_container {
+                orientation: vertical;
+                margin-start: 4;
+                margin-end: 4;
+                margin-bottom: 8;
+
+                accessibility {
+                  label: "PIN input container";
+                }
+              }
+
+              Button btn_hsm_unlock {
+                label: _("Unlock Device");
+                halign: end;
+                margin-top: 8;
+
+                accessibility {
+                  label: "Unlock device";
+                  description: "Authenticate with the hardware device using your PIN";
+                }
+
+                styles [
+                  "suggested-action",
+                ]
+              }
+            }
+
+            Adw.StatusPage status_no_hsm {
+              visible: false;
+              icon-name: "dialog-warning-symbolic";
+              title: _("No Devices Found");
+              description: _("No hardware security devices were detected. Make sure your device is connected and try refreshing.");
+
+              accessibility {
+                label: "No devices found";
+                description: "No hardware security devices are connected";
+              }
+            }
+          }
+
+          Box box_passphrase {
+            orientation: vertical;
+            spacing: 12;
+
+            Adw.PreferencesGroup {
+              title: _("Decryption");
+              description: _("Enter the passphrase used to protect your backup");
+
+              accessibility {
+                label: "Decryption settings";
+                description: "Enter your passphrase to decrypt the backup";
+              }
+
+              Label {
+                label: _("Passphrase");
+                xalign: 0;
+                margin-start: 4;
+                margin-top: 8;
+
+                styles [
+                  "caption",
+                  "dim-label",
+                ]
+              }
+
+              Box box_passphrase_container {
+                orientation: vertical;
+                margin-start: 4;
+                margin-end: 4;
+                margin-bottom: 8;
+
+                accessibility {
+                  label: "Passphrase input container";
+                  description: "Secure entry for your decryption passphrase";
+                }
+              }
+            }
+          }
+
+          Box box_status {
+            visible: false;
+            orientation: horizontal;
+            spacing: 8;
+            halign: center;
+            margin-top: 8;
+
+            accessibility {
+              label: "Import status";
+              description: "Status indicator for profile import";
+            }
+
+            Spinner spinner_status {
+              spinning: false;
+
+              accessibility {
+                label: "Loading indicator";
+              }
+            }
+
+            Label lbl_status {
+              label: _("Importing profile...");
+
+              accessibility {
+                label: "Status message";
+              }
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+

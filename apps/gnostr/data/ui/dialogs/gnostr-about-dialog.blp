@@ -1,0 +1,172 @@
+using Gtk 4.0;
+
+Window about_window {
+  modal: true;
+  title: "About GNostr";
+  default-width: 400;
+  default-height: 450;
+  resizable: false;
+
+  [titlebar]
+  HeaderBar {
+    show-title-buttons: true;
+
+    [title]
+    Label {
+      label: "About";
+
+      styles [
+        "title",
+      ]
+    }
+  }
+
+  Box {
+    orientation: vertical;
+    spacing: 0;
+
+    Box {
+      orientation: vertical;
+      spacing: 24;
+      margin-start: 32;
+      margin-end: 32;
+      margin-top: 32;
+      margin-bottom: 32;
+      vexpand: true;
+      valign: center;
+
+      Image {
+        icon-name: "applications-internet-symbolic";
+        pixel-size: 96;
+        halign: center;
+      }
+
+      Label {
+        label: "GNostr";
+        halign: center;
+
+        styles [
+          "title-1",
+        ]
+      }
+
+      Label {
+        label: "Version 0.1.0";
+        halign: center;
+
+        styles [
+          "dim-label",
+        ]
+      }
+
+      Label {
+        label: "A Nostr client for GNOME";
+        halign: center;
+        wrap: true;
+        justify: center;
+      }
+
+      Box {
+        orientation: vertical;
+        spacing: 12;
+        margin-top: 16;
+
+        Label {
+          label: "Credits";
+          halign: center;
+
+          styles [
+            "title-4",
+          ]
+        }
+
+        Box {
+          orientation: vertical;
+          spacing: 2;
+          halign: center;
+
+          Label {
+            label: "Biz";
+            halign: center;
+
+            styles [
+              "heading",
+            ]
+          }
+
+          Label {
+            label: "Creator & Lead Developer";
+            halign: center;
+
+            styles [
+              "dim-label",
+              "caption",
+            ]
+          }
+        }
+
+        Box {
+          orientation: vertical;
+          spacing: 2;
+          halign: center;
+
+          Label {
+            label: "Claude (Anthropic)";
+            halign: center;
+
+            styles [
+              "heading",
+            ]
+          }
+
+          Label {
+            label: "AI Pair Programmer";
+            halign: center;
+
+            styles [
+              "dim-label",
+              "caption",
+            ]
+          }
+        }
+
+        Box {
+          orientation: vertical;
+          spacing: 2;
+          halign: center;
+
+          Label {
+            label: "Chatty-G (OpenAI)";
+            halign: center;
+
+            styles [
+              "heading",
+            ]
+          }
+
+          Label {
+            label: "AI Contributor";
+            halign: center;
+
+            styles [
+              "dim-label",
+              "caption",
+            ]
+          }
+        }
+      }
+
+      Label {
+        label: "Licensed under the MIT License";
+        halign: center;
+        margin-top: 16;
+
+        styles [
+          "dim-label",
+          "caption",
+        ]
+      }
+    }
+  }
+}
+

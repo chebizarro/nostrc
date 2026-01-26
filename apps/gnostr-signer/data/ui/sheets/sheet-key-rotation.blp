@@ -1,0 +1,337 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetKeyRotation: Adw.Dialog {
+  title: _("Key Rotation");
+  can-close: true;
+  content-width: 480;
+  content-height: -1;
+  follows-content-size: true;
+
+  accessibility {
+    label: "Key rotation dialog";
+    description: "Rotate your Nostr identity to a new keypair while maintaining continuity";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      [start]
+      Button btn_cancel {
+        label: _("Cancel");
+
+        accessibility {
+          label: "Cancel key rotation";
+        }
+      }
+    }
+
+    content: Stack stack_main {
+      transition-type: slide_left_right;
+
+      StackPage {
+        name: "info";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+          vscrollbar-policy: automatic;
+
+          Adw.Clamp {
+            maximum-size: 420;
+            tightening-threshold: 360;
+
+            Box {
+              orientation: vertical;
+              spacing: 18;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 18;
+              margin-bottom: 18;
+
+              Adw.Banner banner_warning {
+                title: _("Key rotation creates a new identity. Make sure you understand the implications.");
+                revealed: true;
+
+                styles [
+                  "warning",
+                ]
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Current Identity");
+                description: _("The key that will be rotated to a new keypair.");
+
+                Adw.ActionRow {
+                  title: _("Public Key");
+
+                  [suffix]
+                  Label lbl_current_npub {
+                    label: "npub1...";
+                    selectable: true;
+
+                    styles [
+                      "dim-label",
+                      "monospace",
+                    ]
+                  }
+                }
+
+                Adw.ActionRow {
+                  title: _("Label");
+
+                  [suffix]
+                  Label lbl_current_label {
+                    label: "(no label)";
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("New Identity");
+                description: _("Configure the new keypair that will replace your current one.");
+
+                Adw.EntryRow entry_new_label {
+                  title: _("Label for New Key");
+
+                  accessibility {
+                    description: "Optional label for the new identity";
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Migration Options");
+
+                Adw.ActionRow {
+                  title: _("Publish Migration Event");
+                  subtitle: _("Announce the key change to your relays (kind 1776)");
+
+                  [suffix]
+                  CheckButton chk_publish {
+                    valign: center;
+                    active: true;
+
+                    accessibility {
+                      label: "Publish migration event";
+                    }
+                  }
+
+                  activatable-widget: chk_publish;
+                }
+
+                Adw.ActionRow {
+                  title: _("Keep Old Key");
+                  subtitle: _("Retain access to old key for recovery (recommended)");
+
+                  [suffix]
+                  CheckButton chk_keep_old {
+                    valign: center;
+                    active: true;
+
+                    accessibility {
+                      label: "Keep old key accessible";
+                    }
+                  }
+
+                  activatable-widget: chk_keep_old;
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("What Happens");
+
+                Label {
+                  wrap: true;
+                  xalign: 0;
+                  margin-start: 12;
+                  margin-end: 12;
+                  margin-top: 6;
+                  margin-bottom: 6;
+                  label: _("1. A new keypair will be generated 2. A migration event (kind 1776) will be created 3. The migration event will be signed with your old key 4. The new key will be stored in secure storage 5. The migration event can be published to announce the change");
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                halign: center;
+                margin-top: 12;
+
+                Button btn_start_rotation {
+                  label: _("Start Key Rotation");
+                  sensitive: false;
+
+                  styles [
+                    "suggested-action",
+                    "pill",
+                  ]
+
+                  accessibility {
+                    label: "Start the key rotation process";
+                  }
+                }
+              }
+            }
+          }
+        };
+      }
+
+      StackPage {
+        name: "progress";
+
+        child: Box {
+          orientation: vertical;
+          valign: center;
+          halign: center;
+          spacing: 24;
+          margin-start: 24;
+          margin-end: 24;
+
+          Spinner spinner_progress {
+            width-request: 48;
+            height-request: 48;
+          }
+
+          Label lbl_progress_status {
+            label: _("Rotating key...");
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          ProgressBar progress_bar {
+            width-request: 300;
+            show-text: false;
+          }
+
+          Label {
+            label: _("Please wait while your key is being rotated. Do not close this dialog.");
+            wrap: true;
+            justify: center;
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "result";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+          vscrollbar-policy: automatic;
+
+          Adw.Clamp {
+            maximum-size: 420;
+            tightening-threshold: 360;
+
+            Box {
+              orientation: vertical;
+              spacing: 18;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 18;
+              margin-bottom: 18;
+
+              Adw.StatusPage status_result {
+                icon-name: "emblem-ok-symbolic";
+                title: _("Key Rotation Complete");
+                description: _("Your identity has been migrated to a new key.");
+              }
+
+              Adw.PreferencesGroup {
+                title: _("New Identity");
+
+                Adw.ActionRow {
+                  title: _("New Public Key");
+
+                  [suffix]
+                  Label lbl_new_npub {
+                    label: "npub1...";
+                    selectable: true;
+
+                    styles [
+                      "dim-label",
+                      "monospace",
+                    ]
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Migration Event");
+                description: _("Publish this event to announce your key migration to followers.");
+
+                Box {
+                  orientation: vertical;
+                  spacing: 12;
+                  margin-start: 12;
+                  margin-end: 12;
+                  margin-top: 6;
+                  margin-bottom: 6;
+
+                  ScrolledWindow {
+                    height-request: 120;
+                    hscrollbar-policy: automatic;
+                    vscrollbar-policy: automatic;
+
+                    Label lbl_migration_event {
+                      wrap: true;
+                      wrap-mode: word_char;
+                      selectable: true;
+                      xalign: 0;
+                      yalign: 0;
+
+                      styles [
+                        "monospace",
+                      ]
+                    }
+                  }
+
+                  Button btn_copy_event {
+                    label: _("Copy Migration Event");
+                    halign: center;
+
+                    accessibility {
+                      label: "Copy migration event to clipboard";
+                    }
+                  }
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                halign: center;
+                margin-top: 12;
+
+                Button btn_close {
+                  label: _("Done");
+
+                  styles [
+                    "suggested-action",
+                    "pill",
+                  ]
+
+                  accessibility {
+                    label: "Close the dialog";
+                  }
+                }
+              }
+            }
+          }
+        };
+      }
+    };
+  }
+}
+

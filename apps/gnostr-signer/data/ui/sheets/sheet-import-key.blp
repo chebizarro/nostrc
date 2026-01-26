@@ -1,0 +1,153 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetImportKey: Adw.Dialog {
+  content-width: 400;
+  content-height: -1;
+  follows-content-size: true;
+  can-close: true;
+
+  accessibility {
+    label: "Add new account dialog";
+    description: "Import an existing Nostr private key to add a new signing account";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      accessibility {
+        label: "Add account header";
+      }
+
+      title-widget: Label {
+        label: _("Add New Account");
+      };
+
+      [start]
+      Button btn_cancel {
+        label: _("_Cancel");
+        use-underline: true;
+        focusable: true;
+
+        accessibility {
+          label: "Cancel";
+          description: "Close this dialog without adding an account. Press Escape or Alt+C.";
+        }
+      }
+
+      [end]
+      Button btn_ok {
+        label: _("_Add");
+        use-underline: true;
+        focusable: true;
+
+        accessibility {
+          label: "Add account";
+          description: "Import the key and add this account. Press Alt+A or Enter when form is valid.";
+        }
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    ScrolledWindow {
+      hscrollbar-policy: never;
+      vexpand: true;
+      propagate-natural-height: true;
+
+      Adw.Clamp {
+        maximum-size: 500;
+        tightening-threshold: 400;
+        margin-top: 16;
+        margin-bottom: 16;
+        margin-start: 16;
+        margin-end: 16;
+
+        Box {
+          orientation: vertical;
+          spacing: 16;
+
+          Label {
+            wrap: true;
+            wrap-mode: word_char;
+            xalign: 0;
+            label: _("Paste your private key (hex, nsec, or ncrypt). It will be stored securely via libsecret. The public key will be saved in settings.");
+
+            accessibility {
+              label: "Import instructions";
+              description: "Your private key will be stored securely. Supported formats include hex, nsec, and ncrypt.";
+            }
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Box {
+            orientation: horizontal;
+            halign: center;
+            margin-bottom: 8;
+
+            Button btn_scan_qr {
+              label: _("Scan _QR Code");
+              use-underline: true;
+              focusable: true;
+
+              accessibility {
+                label: "Scan QR code";
+                description: "Import a key by scanning a QR code from camera or image";
+              }
+
+              styles [
+                "pill",
+              ]
+            }
+          }
+
+          Adw.PreferencesGroup {
+            Adw.EntryRow entry_secret {
+              title: _("Private Key");
+              input-hints: no_spellcheck | private;
+
+              accessibility {
+                label: "Private key";
+                description: "Enter your Nostr private key in nsec, hex, or ncrypt format";
+              }
+            }
+
+            Adw.EntryRow entry_label {
+              title: _("Label (optional)");
+
+              accessibility {
+                label: "Account label";
+                description: "Optional friendly name for this account";
+              }
+            }
+          }
+
+          Adw.PreferencesGroup {
+            Adw.ActionRow {
+              title: _("Link to current user");
+              subtitle: _("Associate this account with your system user");
+
+              [prefix]
+              CheckButton chk_link_user {
+                valign: center;
+
+                accessibility {
+                  label: "Link to user";
+                  description: "When checked, this account will be associated with your current system user";
+                }
+              }
+
+              activatable-widget: chk_link_user;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+

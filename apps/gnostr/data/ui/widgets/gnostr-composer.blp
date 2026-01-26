@@ -1,0 +1,195 @@
+using Gtk 4.0;
+
+template $GnostrComposer: Widget {
+  Box root {
+    orientation: vertical;
+    spacing: 6;
+    margin-top: 6;
+    margin-bottom: 6;
+    margin-start: 6;
+    margin-end: 6;
+
+    Box reply_indicator_box {
+      orientation: horizontal;
+      spacing: 6;
+      visible: false;
+
+      styles [
+        "composer-reply-indicator",
+      ]
+
+      Image {
+        icon-name: "mail-reply-sender-symbolic";
+      }
+
+      Label reply_indicator {
+        label: "Replying to @user";
+        xalign: 0;
+        hexpand: true;
+
+        styles [
+          "dim-label",
+        ]
+      }
+
+      Button btn_cancel_reply {
+        icon-name: "window-close-symbolic";
+        tooltip-text: "Cancel reply";
+        has-frame: false;
+        clicked => $on_cancel_reply_clicked() swapped;
+
+        styles [
+          "flat",
+        ]
+      }
+    }
+
+    Box subject_box {
+      orientation: horizontal;
+      spacing: 6;
+
+      Label {
+        label: "Subject:";
+
+        styles [
+          "dim-label",
+        ]
+      }
+
+      Entry subject_entry {
+        hexpand: true;
+        placeholder-text: "Optional subject line (NIP-14)";
+        max-length: 80;
+      }
+    }
+
+    TextView text_view {}
+
+    Box upload_progress_box {
+      orientation: horizontal;
+      spacing: 6;
+      visible: false;
+
+      styles [
+        "composer-upload-progress",
+      ]
+
+      Spinner upload_spinner {
+        spinning: false;
+      }
+
+      Label upload_status_label {
+        label: "Uploading...";
+        xalign: 0;
+        hexpand: true;
+
+        styles [
+          "dim-label",
+        ]
+      }
+    }
+
+    Box {
+      orientation: horizontal;
+      spacing: 6;
+
+      Button btn_attach {
+        icon-name: "mail-attachment-symbolic";
+        tooltip-text: "Attach image or file";
+        has-frame: false;
+        clicked => $on_attach_clicked() swapped;
+
+        styles [
+          "flat",
+        ]
+      }
+
+      ToggleButton btn_sensitive {
+        icon-name: "dialog-warning-symbolic";
+        tooltip-text: "Mark as sensitive content (NIP-36)";
+        has-frame: false;
+        toggled => $on_sensitive_toggled() swapped;
+
+        styles [
+          "flat",
+        ]
+      }
+
+      MenuButton btn_drafts {
+        icon-name: "document-open-recent-symbolic";
+        tooltip-text: "Drafts (NIP-37)";
+        has-frame: false;
+
+        popover: Popover drafts_popover {
+          Box {
+            orientation: vertical;
+            spacing: 6;
+            margin-top: 6;
+            margin-bottom: 6;
+            margin-start: 6;
+            margin-end: 6;
+
+            Label {
+              label: "Saved Drafts";
+
+              styles [
+                "title-4",
+              ]
+            }
+
+            ScrolledWindow {
+              min-content-height: 100;
+              max-content-height: 300;
+              min-content-width: 250;
+              hscrollbar-policy: never;
+
+              ListBox drafts_list {
+                selection-mode: none;
+                show-separators: true;
+
+                styles [
+                  "boxed-list",
+                ]
+              }
+            }
+
+            Label drafts_empty_label {
+              label: "No drafts saved";
+              visible: true;
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+        };
+
+        styles [
+          "flat",
+        ]
+      }
+
+      Box {
+        hexpand: true;
+      }
+
+      Button btn_save_draft {
+        icon-name: "document-save-symbolic";
+        tooltip-text: "Save as draft (NIP-37)";
+        has-frame: false;
+        clicked => $on_save_draft_clicked() swapped;
+
+        styles [
+          "flat",
+        ]
+      }
+
+      Button btn_post {
+        label: "Post";
+        tooltip-text: "Publish note";
+        clicked => $on_post_clicked() swapped;
+      }
+    }
+  }
+}
+

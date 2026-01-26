@@ -1,0 +1,122 @@
+using Gtk 4.0;
+
+template $GnostrChannelRow: Widget {
+  Box root {
+    orientation: horizontal;
+    spacing: 12;
+    margin-start: 12;
+    margin-end: 12;
+    margin-top: 10;
+    margin-bottom: 10;
+
+    Button btn_avatar {
+      has-frame: false;
+      valign: start;
+      tooltip-text: "View channel creator profile";
+
+      Overlay avatar_box {
+        width-request: 48;
+        height-request: 48;
+
+        Frame {
+          halign: center;
+          valign: center;
+
+          styles [
+            "avatar-frame",
+          ]
+
+          Label avatar_initials {
+            label: "#";
+            width-request: 48;
+            height-request: 48;
+
+            styles [
+              "avatar-initials",
+              "title-2",
+            ]
+          }
+        }
+
+        [overlay]
+        Picture avatar_image {
+          content-fit: cover;
+          width-request: 48;
+          height-request: 48;
+          visible: false;
+
+          styles [
+            "avatar",
+          ]
+        }
+      }
+    }
+
+    Box {
+      orientation: vertical;
+      spacing: 4;
+      hexpand: true;
+      valign: center;
+
+      Label lbl_name {
+        label: "Channel Name";
+        xalign: 0.0;
+        ellipsize: end;
+        max-width-chars: 30;
+
+        styles [
+          "title-4",
+        ]
+      }
+
+      Label lbl_about {
+        label: "Channel description";
+        xalign: 0.0;
+        ellipsize: end;
+        max-width-chars: 50;
+        lines: 2;
+        wrap: true;
+        wrap-mode: word_char;
+
+        styles [
+          "dim-label",
+        ]
+      }
+
+      Box {
+        orientation: horizontal;
+        spacing: 12;
+
+        Label lbl_stats {
+          label: "0 members, 0 messages";
+          xalign: 0.0;
+
+          styles [
+            "dim-label",
+            "caption",
+          ]
+        }
+
+        Label lbl_created {
+          label: "Created 1d ago";
+          xalign: 0.0;
+
+          styles [
+            "dim-label",
+            "caption",
+          ]
+        }
+      }
+    }
+
+    Image {
+      icon-name: "go-next-symbolic";
+      valign: center;
+
+      styles [
+        "dim-label",
+      ]
+    }
+  }
+}
+

@@ -1,0 +1,360 @@
+using Gtk 4.0;
+
+template $GnostrNwcConnect: Window {
+  modal: true;
+  title: "Wallet Connect";
+  default-width: 420;
+  default-height: 400;
+  resizable: true;
+
+  [titlebar]
+  HeaderBar {
+    show-title-buttons: false;
+
+    [start]
+    Button btn_close {
+      label: "Close";
+      tooltip-text: "Close dialog";
+      clicked => $on_close_clicked();
+    }
+
+    [title]
+    Box {
+      orientation: horizontal;
+      spacing: 8;
+
+      Image {
+        icon-name: "wallet-symbolic";
+      }
+
+      Label {
+        label: "Wallet Connect";
+
+        styles [
+          "title",
+        ]
+      }
+    }
+  }
+
+  Box {
+    orientation: vertical;
+    spacing: 0;
+
+    Revealer toast_revealer {
+      reveal-child: false;
+      transition-type: slide_down;
+
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+        margin-start: 12;
+        margin-end: 12;
+        margin-top: 8;
+        margin-bottom: 8;
+
+        styles [
+          "app-notification",
+        ]
+
+        Label toast_label {
+          label: "";
+          hexpand: true;
+          xalign: 0;
+        }
+      }
+    }
+
+    Stack stack {
+      vexpand: true;
+      transition-type: crossfade;
+
+      StackPage {
+        name: "disconnected";
+
+        child: Box page_disconnected {
+          orientation: vertical;
+          spacing: 16;
+          margin-start: 24;
+          margin-end: 24;
+          margin-top: 24;
+          margin-bottom: 24;
+          valign: center;
+
+          Box {
+            orientation: vertical;
+            spacing: 12;
+            halign: center;
+
+            Image {
+              icon-name: "lightning-symbolic";
+              pixel-size: 64;
+
+              styles [
+                "dim-label",
+              ]
+            }
+
+            Label {
+              label: "Connect Lightning Wallet";
+
+              styles [
+                "title-2",
+              ]
+            }
+
+            Label {
+              label: "Paste your NWC connection string to connect your wallet. Get one from your wallet app (e.g., Alby, Zeus, Mutiny).";
+              wrap: true;
+              max-width-chars: 40;
+              justify: center;
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+
+          Box {
+            orientation: vertical;
+            spacing: 8;
+
+            Label {
+              label: "Connection String";
+              xalign: 0;
+
+              styles [
+                "dim-label",
+              ]
+            }
+
+            Box {
+              orientation: horizontal;
+              spacing: 8;
+
+              Entry entry_connection_uri {
+                placeholder-text: "nostr+walletconnect://...";
+                hexpand: true;
+                input-purpose: url;
+              }
+
+              Button btn_paste {
+                icon-name: "edit-paste-symbolic";
+                tooltip-text: "Paste from clipboard";
+                clicked => $on_paste_clicked();
+              }
+            }
+
+            Label {
+              label: "Starts with nostr+walletconnect://";
+              xalign: 0;
+
+              styles [
+                "caption",
+                "dim-label",
+              ]
+            }
+          }
+
+          Box {
+            orientation: horizontal;
+            spacing: 8;
+            halign: center;
+
+            Button btn_connect {
+              label: "Connect Wallet";
+              tooltip-text: "Connect to wallet using NWC";
+              clicked => $on_connect_clicked();
+
+              styles [
+                "suggested-action",
+                "pill",
+              ]
+            }
+
+            Spinner spinner_connect {
+              visible: false;
+              spinning: true;
+            }
+          }
+        };
+      }
+
+      StackPage {
+        name: "connected";
+
+        child: Box page_connected {
+          orientation: vertical;
+          spacing: 16;
+          margin-start: 24;
+          margin-end: 24;
+          margin-top: 24;
+          margin-bottom: 24;
+
+          Box {
+            orientation: horizontal;
+            spacing: 12;
+            halign: center;
+
+            Image {
+              icon-name: "emblem-ok-symbolic";
+              pixel-size: 24;
+
+              styles [
+                "success",
+              ]
+            }
+
+            Label {
+              label: "Wallet Connected";
+
+              styles [
+                "title-2",
+              ]
+            }
+          }
+
+          Frame {
+            styles [
+              "view",
+            ]
+
+            Box {
+              orientation: vertical;
+              spacing: 12;
+              margin-start: 16;
+              margin-end: 16;
+              margin-top: 16;
+              margin-bottom: 16;
+
+              Box {
+                orientation: vertical;
+                spacing: 4;
+
+                Label {
+                  label: "Wallet";
+                  xalign: 0;
+
+                  styles [
+                    "dim-label",
+                    "caption",
+                  ]
+                }
+
+                Label lbl_wallet_pubkey {
+                  label: "-";
+                  xalign: 0;
+                  selectable: true;
+
+                  styles [
+                    "monospace",
+                  ]
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 4;
+
+                Label {
+                  label: "Relay";
+                  xalign: 0;
+
+                  styles [
+                    "dim-label",
+                    "caption",
+                  ]
+                }
+
+                Label lbl_relay {
+                  label: "-";
+                  xalign: 0;
+                  selectable: true;
+                  ellipsize: end;
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 4;
+
+                Label {
+                  label: "Lightning Address";
+                  xalign: 0;
+
+                  styles [
+                    "dim-label",
+                    "caption",
+                  ]
+                }
+
+                Label lbl_lud16 {
+                  label: "-";
+                  xalign: 0;
+                  selectable: true;
+                }
+              }
+            }
+          }
+
+          Box {
+            orientation: vertical;
+            spacing: 8;
+
+            Box {
+              orientation: horizontal;
+              spacing: 8;
+
+              Label {
+                label: "Balance";
+                xalign: 0;
+                hexpand: true;
+
+                styles [
+                  "heading",
+                ]
+              }
+
+              Button btn_refresh_balance {
+                icon-name: "view-refresh-symbolic";
+                tooltip-text: "Refresh balance";
+                clicked => $on_refresh_balance_clicked();
+              }
+
+              Spinner spinner_balance {
+                visible: false;
+                spinning: true;
+              }
+            }
+
+            Label lbl_balance {
+              label: "Click refresh to fetch";
+              xalign: 0;
+
+              styles [
+                "title-1",
+              ]
+            }
+          }
+
+          Box {
+            vexpand: true;
+          }
+
+          Button btn_disconnect {
+            label: "Disconnect Wallet";
+            halign: center;
+            tooltip-text: "Disconnect from wallet";
+            clicked => $on_disconnect_clicked();
+
+            styles [
+              "destructive-action",
+              "pill",
+            ]
+          }
+        };
+      }
+    }
+  }
+}
+

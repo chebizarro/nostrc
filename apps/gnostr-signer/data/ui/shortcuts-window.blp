@@ -1,0 +1,120 @@
+using Gtk 4.0;
+
+ShortcutsWindow shortcuts_window {
+  modal: true;
+
+  ShortcutsSection {
+    section-name: "shortcuts";
+    max-height: 12;
+
+    ShortcutsGroup {
+      title: _("General");
+
+      ShortcutsShortcut {
+        title: _("Show Keyboard Shortcuts");
+        accelerator: "<Primary>question";
+      }
+
+      ShortcutsShortcut {
+        title: _("Preferences");
+        accelerator: "<Primary>comma";
+      }
+
+      ShortcutsShortcut {
+        title: _("Help / About");
+        accelerator: "F1";
+      }
+
+      ShortcutsShortcut {
+        title: _("Quit Application");
+        accelerator: "<Primary>q";
+      }
+    }
+
+    ShortcutsGroup {
+      title: _("Profile Management");
+
+      ShortcutsShortcut {
+        title: _("New Identity");
+        accelerator: "<Primary>n";
+      }
+
+      ShortcutsShortcut {
+        title: _("Import Profile");
+        accelerator: "<Primary>i";
+      }
+
+      ShortcutsShortcut {
+        title: _("Export / Backup");
+        accelerator: "<Primary>e";
+      }
+    }
+
+    ShortcutsGroup {
+      title: _("Security");
+
+      ShortcutsShortcut {
+        title: _("Lock Session");
+        accelerator: "<Primary>l";
+      }
+    }
+
+    ShortcutsGroup {
+      title: _("Dialogs");
+
+      ShortcutsShortcut {
+        title: _("Close Dialog");
+        accelerator: "Escape";
+      }
+
+      ShortcutsShortcut {
+        title: _("Submit Form / Activate Default");
+        accelerator: "Return";
+      }
+    }
+
+    ShortcutsGroup {
+      title: _("Navigation");
+
+      ShortcutsShortcut {
+        title: _("Move to Next Element");
+        accelerator: "Tab";
+      }
+
+      ShortcutsShortcut {
+        title: _("Move to Previous Element");
+        accelerator: "<Shift>Tab";
+      }
+
+      ShortcutsShortcut {
+        title: _("Navigate Lists");
+        accelerator: "Up Down";
+      }
+
+      ShortcutsShortcut {
+        title: _("Next / Previous Page");
+        accelerator: "<Primary>Page_Down <Primary>Page_Up";
+      }
+
+      ShortcutsShortcut {
+        title: _("Activate Focused Button");
+        accelerator: "Return space";
+      }
+    }
+
+    ShortcutsGroup {
+      title: _("Approval Dialog");
+
+      ShortcutsShortcut {
+        title: _("Approve Request");
+        accelerator: "<Primary>a";
+      }
+
+      ShortcutsShortcut {
+        title: _("Deny Request");
+        accelerator: "<Primary>d";
+      }
+    }
+  }
+}
+

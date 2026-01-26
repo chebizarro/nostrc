@@ -1,0 +1,231 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetQrScanner: Adw.Dialog {
+  title: _("Scan QR Code");
+  can-close: true;
+  content-width: 400;
+  content-height: 480;
+
+  accessibility {
+    label: "QR code scanner dialog";
+    description: "Scan a QR code to import a key";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-end-title-buttons: false;
+      show-start-title-buttons: false;
+
+      [start]
+      Button btn_cancel {
+        label: _("Cancel");
+
+        accessibility {
+          label: "Cancel";
+          description: "Close without importing";
+        }
+      }
+    }
+
+    Stack stack {
+      transition-type: slide_left_right;
+
+      StackPage {
+        name: "scanner";
+
+        child: Box scanner_page {
+          orientation: vertical;
+          spacing: 16;
+          margin-start: 24;
+          margin-end: 24;
+          margin-top: 16;
+          margin-bottom: 24;
+
+          Label status_label {
+            label: _("Ready to scan");
+            halign: center;
+
+            accessibility {
+              label: "Scanner status";
+            }
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Box {
+            orientation: vertical;
+            spacing: 8;
+            halign: center;
+
+            Button btn_camera {
+              label: _("Start Camera");
+              halign: center;
+
+              accessibility {
+                label: "Start camera";
+                description: "Use camera to scan QR code";
+              }
+
+              styles [
+                "suggested-action",
+              ]
+            }
+
+            Box {
+              orientation: horizontal;
+              spacing: 8;
+              halign: center;
+
+              Button btn_paste {
+                label: _("Paste from Clipboard");
+
+                accessibility {
+                  label: "Paste image";
+                  description: "Scan QR code from clipboard image";
+                }
+              }
+
+              Button btn_file {
+                label: _("Open File");
+
+                accessibility {
+                  label: "Open file";
+                  description: "Scan QR code from image file";
+                }
+              }
+            }
+          }
+
+          Label hint_label {
+            label: _("Scan an nsec, ncryptsec, or hex key QR code");
+            halign: center;
+            wrap: true;
+            margin-top: 8;
+
+            accessibility {
+              label: "Scanning hint";
+            }
+
+            styles [
+              "dim-label",
+              "caption",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "result";
+
+        child: Box result_page {
+          orientation: vertical;
+          spacing: 16;
+          margin-start: 24;
+          margin-end: 24;
+          margin-top: 24;
+          margin-bottom: 24;
+          valign: center;
+
+          Image result_icon {
+            icon-name: "emblem-ok-symbolic";
+            pixel-size: 64;
+            halign: center;
+
+            accessibility {
+              label: "Success icon";
+            }
+
+            styles [
+              "success",
+            ]
+          }
+
+          Label {
+            label: _("QR Code Scanned");
+            halign: center;
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Label result_type_label {
+            label: _("Type");
+            halign: center;
+
+            accessibility {
+              label: "Detected content type";
+            }
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Frame {
+            halign: center;
+
+            styles [
+              "view",
+            ]
+
+            Label result_data_label {
+              label: _("Data");
+              wrap: true;
+              wrap-mode: char;
+              selectable: true;
+              max-width-chars: 35;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 8;
+              margin-bottom: 8;
+
+              accessibility {
+                label: "Scanned data";
+              }
+
+              styles [
+                "monospace",
+                "caption",
+              ]
+            }
+          }
+
+          Box {
+            orientation: horizontal;
+            spacing: 12;
+            halign: center;
+            margin-top: 16;
+
+            Button {
+              label: _("Back");
+
+              accessibility {
+                label: "Go back";
+                description: "Return to scanner";
+              }
+            }
+
+            Button btn_import {
+              label: _("Import Key");
+
+              accessibility {
+                label: "Import key";
+                description: "Import this key to your account";
+              }
+
+              styles [
+                "suggested-action",
+              ]
+            }
+          }
+        };
+      }
+    }
+  }
+}
+

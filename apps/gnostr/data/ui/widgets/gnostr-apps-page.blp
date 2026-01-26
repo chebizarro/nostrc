@@ -1,0 +1,136 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GnostrAppsPage: Widget {
+  Box {
+    orientation: vertical;
+    spacing: 0;
+
+    Box {
+      orientation: horizontal;
+      spacing: 12;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 12;
+      margin-bottom: 12;
+
+      SearchEntry search_entry {
+        placeholder-text: _("Search apps...");
+        hexpand: true;
+      }
+
+      DropDown kind_filter {
+        model: StringList {
+          strings [
+            _("All Events"),
+            _("Notes (kind 1)"),
+            _("Articles (kind 30023)"),
+            _("DMs (kind 4)"),
+            _("Live Events (kind 30311)"),
+            _("Videos (kind 34235)"),
+            _("Zaps (kind 9735)"),
+            _("Products (kind 30018)"),
+          ]
+        };
+      }
+
+      Label count_label {
+        label: "0 apps";
+
+        styles [
+          "dim-label",
+        ]
+      }
+    }
+
+    Separator {
+      orientation: horizontal;
+    }
+
+    Stack content_stack {
+      vexpand: true;
+      hexpand: true;
+      transition-type: crossfade;
+
+      StackPage {
+        name: "loading";
+
+        child: Box {
+          orientation: vertical;
+          valign: center;
+          halign: center;
+          spacing: 12;
+
+          Spinner loading_spinner {
+            spinning: true;
+            width-request: 48;
+            height-request: 48;
+          }
+
+          Label {
+            label: _("Loading apps...");
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "empty";
+
+        child: Adw.StatusPage {
+          icon-name: "application-x-executable-symbolic";
+          title: _("No Apps Found");
+          description: _("No app handlers have been discovered yet. App recommendations from people you follow will appear here as you browse Nostr.");
+
+          Box {
+            orientation: vertical;
+            spacing: 12;
+            halign: center;
+
+            Label {
+              label: _("Apps (NIP-89) are published by developers to advertise their Nostr applications. Users can recommend handlers for specific event types.");
+              wrap: true;
+              max-width-chars: 50;
+              justify: center;
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+        };
+      }
+
+      StackPage {
+        name: "no-results";
+
+        child: Adw.StatusPage {
+          icon-name: "edit-find-symbolic";
+          title: _("No Results");
+          description: _("No apps match your search criteria. Try adjusting your filters.");
+        };
+      }
+
+      StackPage {
+        name: "list";
+
+        child: ScrolledWindow scroller {
+          vexpand: true;
+          hscrollbar-policy: never;
+
+          ListView handler_list {
+            single-click-activate: false;
+
+            styles [
+              "navigation-sidebar",
+            ]
+          }
+        };
+      }
+    }
+  }
+}
+

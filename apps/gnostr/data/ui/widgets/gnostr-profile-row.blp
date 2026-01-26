@@ -1,0 +1,146 @@
+using Gtk 4.0;
+
+template $GnostrProfileRow: Widget {
+  Box root {
+    orientation: horizontal;
+    spacing: 12;
+    margin-start: 12;
+    margin-end: 12;
+    margin-top: 8;
+    margin-bottom: 8;
+
+    styles [
+      "profile-row",
+    ]
+
+    Overlay avatar_box {
+      width-request: 48;
+      height-request: 48;
+
+      styles [
+        "avatar",
+        "profile-row-avatar",
+      ]
+
+      Picture avatar_image {
+        visible: false;
+        content-fit: cover;
+        width-request: 48;
+        height-request: 48;
+
+        styles [
+          "profile-row-avatar-image",
+        ]
+      }
+
+      [overlay]
+      Label avatar_initials {
+        label: "?";
+        xalign: 0.5;
+        yalign: 0.5;
+
+        styles [
+          "avatar-initials",
+        ]
+      }
+    }
+
+    Box content_box {
+      orientation: vertical;
+      hexpand: true;
+      spacing: 2;
+      valign: center;
+
+      Box top_row {
+        orientation: horizontal;
+        spacing: 6;
+
+        Label lbl_display {
+          label: "Display Name";
+          xalign: 0.0;
+          ellipsize: end;
+          max-width-chars: 24;
+
+          styles [
+            "profile-row-name",
+          ]
+        }
+
+        Image nip05_badge {
+          icon-name: "emblem-ok-symbolic";
+          visible: false;
+          tooltip-text: "Verified NIP-05";
+
+          styles [
+            "nip05-badge",
+          ]
+        }
+
+        Label lbl_nip05 {
+          label: "@nip05";
+          xalign: 0.0;
+          ellipsize: end;
+          hexpand: true;
+          visible: false;
+
+          styles [
+            "profile-row-nip05",
+          ]
+        }
+      }
+
+      Label lbl_bio {
+        label: "Bio preview...";
+        xalign: 0.0;
+        hexpand: true;
+        ellipsize: end;
+        max-width-chars: 50;
+        single-line-mode: true;
+
+        styles [
+          "profile-row-bio",
+          "dim-label",
+        ]
+      }
+    }
+
+    Box status_box {
+      orientation: horizontal;
+      spacing: 4;
+      valign: center;
+
+      Image follow_indicator {
+        icon-name: "emblem-favorite-symbolic";
+        visible: false;
+        tooltip-text: "Following";
+
+        styles [
+          "follow-indicator",
+        ]
+      }
+
+      Image muted_indicator {
+        icon-name: "audio-volume-muted-symbolic";
+        visible: false;
+        tooltip-text: "Muted";
+
+        styles [
+          "muted-indicator",
+        ]
+      }
+    }
+
+    MenuButton btn_actions {
+      icon-name: "view-more-symbolic";
+      valign: center;
+      tooltip-text: "Actions";
+      has-frame: false;
+
+      styles [
+        "flat",
+        "profile-row-actions",
+      ]
+    }
+  }
+}
+

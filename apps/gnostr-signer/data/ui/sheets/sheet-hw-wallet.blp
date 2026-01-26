@@ -1,0 +1,274 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetHwWallet: Adw.Dialog {
+  title: _("Hardware Wallet");
+  content-width: 400;
+  content-height: 500;
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-end-title-buttons: false;
+      show-start-title-buttons: false;
+
+      [start]
+      Button {
+        icon-name: "window-close-symbolic";
+        action-name: "window.close";
+      }
+    }
+
+    content: Adw.NavigationView nav_view {
+      Adw.NavigationPage page_devices {
+        title: _("Select Device");
+        tag: "devices";
+
+        child: Box {
+          orientation: vertical;
+          spacing: 0;
+
+          Adw.Banner banner_instructions {
+            title: _("Connect your hardware wallet and unlock it");
+            revealed: true;
+          }
+
+          Stack stack_devices {
+            vexpand: true;
+
+            StackPage {
+              name: "empty";
+
+              child: Adw.StatusPage status_no_devices {
+                icon-name: "drive-removable-media-symbolic";
+                title: _("No Devices Found");
+                description: _("Connect a Ledger or Trezor device and unlock it");
+
+                Box {
+                  orientation: vertical;
+                  spacing: 12;
+                  halign: center;
+
+                  Spinner spinner_scanning {
+                    spinning: false;
+                    width-request: 32;
+                    height-request: 32;
+                  }
+
+                  Button btn_refresh {
+                    label: _("Scan for Devices");
+                    halign: center;
+
+                    styles [
+                      "suggested-action",
+                      "pill",
+                    ]
+                  }
+                }
+              };
+            }
+
+            StackPage {
+              name: "devices";
+
+              child: ScrolledWindow {
+                hscrollbar-policy: never;
+                vexpand: true;
+
+                Adw.Clamp {
+                  maximum-size: 600;
+                  margin-start: 12;
+                  margin-end: 12;
+                  margin-top: 12;
+                  margin-bottom: 12;
+
+                  Box {
+                    orientation: vertical;
+                    spacing: 12;
+
+                    Adw.PreferencesGroup {
+                      title: _("Account Label");
+                      description: _("Optional name for this account");
+
+                      Adw.EntryRow entry_label {
+                        title: _("Label");
+                      }
+                    }
+
+                    Adw.PreferencesGroup {
+                      title: _("Connected Devices");
+
+                      ListBox listbox_devices {
+                        selection-mode: none;
+
+                        styles [
+                          "boxed-list",
+                        ]
+                      }
+                    }
+
+                    Box {
+                      halign: center;
+                      spacing: 12;
+
+                      Button {
+                        label: _("Refresh");
+                        action-name: "hw.refresh";
+
+                        styles [
+                          "flat",
+                        ]
+                      }
+                    }
+                  }
+                }
+              };
+            }
+          }
+        };
+      }
+
+      Adw.NavigationPage page_confirm {
+        title: _("Confirm on Device");
+        tag: "confirm";
+
+        child: Adw.StatusPage status_confirm {
+          icon-name: "dialog-password-symbolic";
+          title: _("Confirm on Device");
+
+          Box {
+            orientation: vertical;
+            spacing: 24;
+            halign: center;
+            margin-top: 12;
+            margin-bottom: 12;
+
+            Box {
+              orientation: vertical;
+              spacing: 6;
+              halign: center;
+
+              Label lbl_confirm_device {
+                label: "Hardware Wallet";
+
+                styles [
+                  "title-2",
+                ]
+              }
+
+              Label lbl_confirm_action {
+                label: _("Please confirm on your device");
+
+                styles [
+                  "dim-label",
+                ]
+              }
+            }
+
+            Spinner spinner_confirm {
+              spinning: true;
+              width-request: 48;
+              height-request: 48;
+            }
+
+            Button btn_confirm_cancel {
+              label: _("Cancel");
+              halign: center;
+
+              styles [
+                "pill",
+              ]
+            }
+          }
+        };
+      }
+
+      Adw.NavigationPage page_success {
+        title: _("Success");
+        tag: "success";
+
+        child: Adw.StatusPage status_success {
+          icon-name: "emblem-ok-symbolic";
+          title: _("Account Added");
+          description: _("Your hardware wallet identity has been imported");
+
+          Box {
+            orientation: vertical;
+            spacing: 18;
+            halign: center;
+
+            Box {
+              orientation: vertical;
+              spacing: 6;
+
+              Label {
+                label: _("Public Key");
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Box {
+                spacing: 6;
+
+                Label lbl_npub_result {
+                  label: "npub1...";
+                  selectable: true;
+                  ellipsize: middle;
+                  max-width-chars: 40;
+
+                  styles [
+                    "monospace",
+                  ]
+                }
+
+                Button btn_copy_npub {
+                  icon-name: "edit-copy-symbolic";
+                  tooltip-text: _("Copy to Clipboard");
+
+                  styles [
+                    "flat",
+                  ]
+                }
+              }
+            }
+
+            Box {
+              orientation: horizontal;
+              spacing: 6;
+              halign: center;
+
+              Image {
+                icon-name: "security-high-symbolic";
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Label {
+                label: _("Signing requires your hardware wallet");
+
+                styles [
+                  "dim-label",
+                ]
+              }
+            }
+
+            Button btn_finish {
+              label: _("Done");
+              halign: center;
+
+              styles [
+                "suggested-action",
+                "pill",
+              ]
+            }
+          }
+        };
+      }
+    };
+  }
+}
+

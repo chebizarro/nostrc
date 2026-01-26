@@ -1,0 +1,285 @@
+using Gtk 4.0;
+
+template $GnostrChatRoomView: Widget {
+  Box root {
+    orientation: vertical;
+    hexpand: true;
+    vexpand: true;
+
+    Box header_box {
+      orientation: horizontal;
+      spacing: 12;
+      margin-start: 8;
+      margin-end: 12;
+      margin-top: 8;
+      margin-bottom: 8;
+
+      styles [
+        "chat-header",
+      ]
+
+      Button btn_back {
+        icon-name: "go-previous-symbolic";
+        tooltip-text: "Leave channel";
+        valign: center;
+      }
+
+      Button btn_avatar {
+        has-frame: false;
+        valign: center;
+        tooltip-text: "View channel creator";
+
+        Overlay {
+          width-request: 36;
+          height-request: 36;
+
+          Frame {
+            halign: center;
+            valign: center;
+
+            styles [
+              "avatar-frame",
+            ]
+
+            Label channel_avatar_initials {
+              label: "#";
+              width-request: 36;
+              height-request: 36;
+
+              styles [
+                "avatar-initials",
+                "title-4",
+              ]
+            }
+          }
+
+          [overlay]
+          Picture channel_avatar {
+            content-fit: cover;
+            width-request: 36;
+            height-request: 36;
+            visible: false;
+
+            styles [
+              "avatar",
+            ]
+          }
+        }
+      }
+
+      Box {
+        orientation: vertical;
+        spacing: 2;
+        hexpand: true;
+        valign: center;
+
+        Label lbl_channel_name {
+          label: "Channel Name";
+          xalign: 0.0;
+          ellipsize: end;
+
+          styles [
+            "title-4",
+          ]
+        }
+
+        Label lbl_channel_about {
+          label: "Channel description";
+          xalign: 0.0;
+          ellipsize: end;
+          visible: false;
+
+          styles [
+            "dim-label",
+            "caption",
+          ]
+        }
+      }
+
+      MenuButton btn_channel_menu {
+        icon-name: "view-more-symbolic";
+        valign: center;
+        tooltip-text: "Channel options";
+      }
+    }
+
+    Separator {
+      orientation: horizontal;
+    }
+
+    Stack content_stack {
+      hexpand: true;
+      vexpand: true;
+      transition-type: crossfade;
+
+      StackPage {
+        name: "messages";
+
+        child: ScrolledWindow scroller {
+          hexpand: true;
+          vexpand: true;
+          hscrollbar-policy: never;
+
+          ListBox message_list {
+            hexpand: true;
+            vexpand: true;
+            selection-mode: none;
+
+            styles [
+              "chat-messages",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "empty";
+
+        child: Box {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Image {
+            icon-name: "chat-symbolic";
+            pixel-size: 64;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Label {
+            label: "No Messages Yet";
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Label {
+            label: "Be the first to send a message!";
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "loading";
+
+        child: Box {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Spinner loading_spinner {
+            spinning: false;
+            width-request: 32;
+            height-request: 32;
+          }
+
+          Label {
+            label: "Loading messages...";
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+    }
+
+    Revealer reply_revealer {
+      transition-type: slide_up;
+      reveal-child: false;
+
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+        margin-start: 12;
+        margin-end: 12;
+        margin-top: 6;
+        margin-bottom: 6;
+
+        styles [
+          "reply-indicator",
+        ]
+
+        Image {
+          icon-name: "mail-reply-sender-symbolic";
+
+          styles [
+            "dim-label",
+          ]
+        }
+
+        Label lbl_reply_to {
+          label: "Replying to user";
+          hexpand: true;
+          xalign: 0.0;
+          ellipsize: end;
+
+          styles [
+            "dim-label",
+          ]
+        }
+
+        Button btn_cancel_reply {
+          icon-name: "window-close-symbolic";
+          has-frame: false;
+          tooltip-text: "Cancel reply";
+        }
+      }
+    }
+
+    Box composer_box {
+      orientation: horizontal;
+      spacing: 8;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 8;
+      margin-bottom: 12;
+
+      styles [
+        "chat-composer",
+      ]
+
+      ScrolledWindow {
+        hexpand: true;
+        max-content-height: 100;
+        propagate-natural-height: true;
+        hscrollbar-policy: never;
+
+        TextView message_entry {
+          hexpand: true;
+          wrap-mode: word_char;
+          accepts-tab: false;
+          top-margin: 8;
+          bottom-margin: 8;
+          left-margin: 12;
+          right-margin: 12;
+
+          styles [
+            "chat-entry",
+          ]
+        }
+      }
+
+      Button btn_send {
+        icon-name: "mail-send-symbolic";
+        valign: end;
+        tooltip-text: "Send message";
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+  }
+}
+

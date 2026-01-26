@@ -1,0 +1,392 @@
+using Gtk 4.0;
+
+template $GnostrProfileEdit: Window {
+  modal: true;
+  title: "Edit Profile";
+  default-width: 480;
+  default-height: 600;
+  resizable: true;
+
+  [titlebar]
+  HeaderBar {
+    show-title-buttons: false;
+
+    [start]
+    Button btn_cancel {
+      label: "Cancel";
+      tooltip-text: "Cancel changes";
+      clicked => $on_cancel_clicked();
+    }
+
+    [title]
+    Label {
+      label: "Edit Profile";
+
+      styles [
+        "title",
+      ]
+    }
+
+    [end]
+    Button btn_save {
+      label: "Save";
+      tooltip-text: "Save profile changes";
+      clicked => $on_save_clicked();
+
+      styles [
+        "suggested-action",
+      ]
+    }
+
+    [end]
+    Spinner spinner {
+      visible: false;
+    }
+  }
+
+  Box {
+    orientation: vertical;
+    spacing: 0;
+
+    Revealer toast_revealer {
+      reveal-child: false;
+      transition-type: slide_down;
+
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+        margin-start: 12;
+        margin-end: 12;
+        margin-top: 8;
+        margin-bottom: 8;
+
+        styles [
+          "app-notification",
+        ]
+
+        Label toast_label {
+          label: "";
+          hexpand: true;
+          xalign: 0;
+        }
+      }
+    }
+
+    ScrolledWindow {
+      vexpand: true;
+      hscrollbar-policy: never;
+
+      Box {
+        orientation: vertical;
+        spacing: 16;
+        margin-start: 16;
+        margin-end: 16;
+        margin-top: 16;
+        margin-bottom: 16;
+
+        Box {
+          orientation: vertical;
+          spacing: 4;
+
+          Label {
+            label: "Display Name";
+            xalign: 0;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Entry entry_display_name {
+            placeholder-text: "Your display name";
+            hexpand: true;
+          }
+        }
+
+        Box {
+          orientation: vertical;
+          spacing: 4;
+
+          Label {
+            label: "Username";
+            xalign: 0;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Entry entry_name {
+            placeholder-text: "username (without @)";
+            hexpand: true;
+          }
+        }
+
+        Box {
+          orientation: vertical;
+          spacing: 4;
+
+          Label {
+            label: "Bio";
+            xalign: 0;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Frame {
+            styles [
+              "view",
+            ]
+
+            TextView text_about {
+              wrap-mode: word_char;
+              accepts-tab: false;
+              height-request: 100;
+              top-margin: 8;
+              bottom-margin: 8;
+              left-margin: 8;
+              right-margin: 8;
+            }
+          }
+        }
+
+        Box {
+          orientation: vertical;
+          spacing: 4;
+
+          Label {
+            label: "Avatar URL";
+            xalign: 0;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Entry entry_picture {
+            placeholder-text: "https://example.com/avatar.jpg";
+            hexpand: true;
+            input-purpose: url;
+          }
+        }
+
+        Box {
+          orientation: vertical;
+          spacing: 4;
+
+          Label {
+            label: "Banner URL";
+            xalign: 0;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Entry entry_banner {
+            placeholder-text: "https://example.com/banner.jpg";
+            hexpand: true;
+            input-purpose: url;
+          }
+        }
+
+        Box {
+          orientation: vertical;
+          spacing: 4;
+
+          Label {
+            label: "NIP-05 Identifier";
+            xalign: 0;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Entry entry_nip05 {
+            placeholder-text: "user@domain.com";
+            hexpand: true;
+            input-purpose: email;
+          }
+
+          Label {
+            label: "Your verifiable nostr address";
+            xalign: 0;
+            wrap: true;
+
+            styles [
+              "caption",
+              "dim-label",
+            ]
+          }
+        }
+
+        Box {
+          orientation: vertical;
+          spacing: 4;
+
+          Label {
+            label: "Website";
+            xalign: 0;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Entry entry_website {
+            placeholder-text: "https://yourwebsite.com";
+            hexpand: true;
+            input-purpose: url;
+          }
+        }
+
+        Box {
+          orientation: vertical;
+          spacing: 4;
+
+          Label {
+            label: "Lightning Address";
+            xalign: 0;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Entry entry_lud16 {
+            placeholder-text: "user@wallet.com";
+            hexpand: true;
+            input-purpose: email;
+          }
+
+          Label {
+            label: "For receiving lightning tips (email-like format)";
+            xalign: 0;
+            wrap: true;
+
+            styles [
+              "caption",
+              "dim-label",
+            ]
+          }
+        }
+
+        Box {
+          orientation: vertical;
+          spacing: 4;
+
+          Label {
+            label: "LNURL Pay (Advanced)";
+            xalign: 0;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Entry entry_lud06 {
+            placeholder-text: "lnurl1...";
+            hexpand: true;
+          }
+
+          Label {
+            label: "Bech32-encoded LNURL pay address (optional)";
+            xalign: 0;
+            wrap: true;
+
+            styles [
+              "caption",
+              "dim-label",
+            ]
+          }
+        }
+
+        Box {
+          orientation: horizontal;
+          spacing: 12;
+          margin-top: 8;
+
+          Switch switch_bot {
+            valign: center;
+          }
+
+          Box {
+            orientation: vertical;
+            spacing: 2;
+            hexpand: true;
+
+            Label {
+              label: "Bot Account";
+              xalign: 0;
+            }
+
+            Label {
+              label: "Enable if this account is automated";
+              xalign: 0;
+              wrap: true;
+
+              styles [
+                "caption",
+                "dim-label",
+              ]
+            }
+          }
+        }
+
+        Box identities_section {
+          orientation: vertical;
+          spacing: 8;
+          margin-top: 16;
+
+          Box {
+            orientation: horizontal;
+            spacing: 8;
+
+            Label {
+              label: "External Identities (NIP-39)";
+              xalign: 0;
+              hexpand: true;
+
+              styles [
+                "heading",
+              ]
+            }
+
+            Button btn_add_identity {
+              icon-name: "list-add-symbolic";
+              tooltip-text: "Add external identity";
+
+              styles [
+                "flat",
+              ]
+            }
+          }
+
+          Label {
+            label: "Link your accounts from other platforms to prove ownership.";
+            xalign: 0;
+            wrap: true;
+
+            styles [
+              "dim-label",
+              "caption",
+            ]
+          }
+
+          Box identities_list {
+            orientation: vertical;
+            spacing: 4;
+
+            styles [
+              "card",
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+

@@ -1,0 +1,71 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $PageApplications: Adw.PreferencesPage {
+  accessibility {
+    label: "Applications page";
+    description: "Manage connected applications that can request signatures";
+  }
+
+  Adw.PreferencesGroup {
+    accessibility {
+      label: "Application actions";
+      description: "Add new applications or bunkers";
+    }
+
+    Box {
+      orientation: horizontal;
+      spacing: 6;
+
+      Button btn_add_app {
+        label: _("_Add a new application");
+        use-underline: true;
+        focusable: true;
+        tooltip-text: _("Add a new application connection (Alt+A)");
+
+        accessibility {
+          label: "Add a new application";
+          description: "Open dialog to connect a new application for signing requests";
+        }
+      }
+
+      Button btn_add_bunker {
+        label: _("Add a nsec_bunker");
+        use-underline: true;
+        focusable: true;
+        tooltip-text: _("Add a nsecbunker connection (Alt+B)");
+
+        accessibility {
+          label: "Add a nsecbunker";
+          description: "Open dialog to add a new remote signer bunker connection";
+        }
+      }
+    }
+  }
+
+  Adw.PreferencesGroup {
+    title: _("Approved applications");
+
+    accessibility {
+      label: "Approved applications list";
+      description: "List of applications that have been approved to request signatures";
+    }
+
+    ScrolledWindow {
+      hexpand: true;
+      vexpand: true;
+
+      accessibility {
+        label: "Applications list container";
+      }
+
+      ListView list_apps {
+        accessibility {
+          label: "Connected applications";
+          description: "List of applications approved for signing. Use arrow keys to navigate.";
+        }
+      }
+    }
+  }
+}
+

@@ -1,0 +1,406 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetBackup: Adw.Dialog {
+  title: _("Backup & Recovery");
+  can-close: true;
+  content-width: 500;
+  content-height: -1;
+  width-request: 300;
+  follows-content-size: true;
+
+  accessibility {
+    label: "Backup and recovery dialog";
+    description: "Backup your private key or recover from backup using NIP-49 encrypted format or BIP-39 mnemonic";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      [start]
+      Button btn_close {
+        icon-name: "window-close-symbolic";
+        tooltip-text: _("Close dialog");
+
+        accessibility {
+          label: "Close";
+        }
+      }
+    }
+
+    content: Adw.ViewStack view_stack {
+      Adw.ViewStackPage {
+        name: "backup";
+        title: _("Backup");
+        icon-name: "document-save-symbolic";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+          vscrollbar-policy: automatic;
+
+          Adw.Clamp {
+            maximum-size: 450;
+            tightening-threshold: 360;
+
+            Box {
+              orientation: vertical;
+              spacing: 18;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 18;
+              margin-bottom: 18;
+
+              Adw.Banner banner_warning {
+                title: _("Never share your secret key. Developers will never ask for it.");
+                revealed: true;
+
+                styles [
+                  "warning",
+                ]
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Account");
+
+                Adw.ActionRow row_account {
+                  title: _("npub1...");
+                  subtitle: _("Selected identity");
+                  activatable: false;
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("NIP-49 Encrypted Backup");
+                description: _("Create a password-protected backup string that can be imported into any NIP-49 compatible wallet.");
+
+                Adw.PasswordEntryRow entry_backup_password {
+                  title: _("Encryption Password");
+
+                  accessibility {
+                    description: "Enter a strong password to encrypt your backup";
+                  }
+                }
+
+                Adw.PasswordEntryRow entry_backup_password_confirm {
+                  title: _("Confirm Password");
+
+                  accessibility {
+                    description: "Re-enter the password to confirm";
+                  }
+                }
+
+                Adw.ComboRow combo_security {
+                  title: _("Security Level");
+                  subtitle: _("Higher security takes longer to encrypt/decrypt");
+
+                  model: StringList {
+                    strings [
+                      _("Normal (~1s)"),
+                      _("High (~4s)"),
+                      _("Maximum (~8s)"),
+                    ]
+                  };
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                spacing: 12;
+                halign: center;
+
+                Button btn_create_backup {
+                  label: _("Create Backup");
+                  tooltip-text: _("Generate encrypted backup string");
+
+                  styles [
+                    "suggested-action",
+                  ]
+
+                  accessibility {
+                    label: "Create encrypted backup";
+                  }
+                }
+
+                Button btn_save_to_file {
+                  label: _("Save to File...");
+                  tooltip-text: _("Save encrypted backup to a file");
+
+                  accessibility {
+                    label: "Save backup to file";
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup group_backup_result {
+                visible: false;
+                title: _("Encrypted Backup");
+
+                Box {
+                  orientation: vertical;
+                  spacing: 12;
+                  margin-top: 12;
+                  margin-bottom: 12;
+                  margin-start: 12;
+                  margin-end: 12;
+
+                  Label lbl_backup_result {
+                    wrap: true;
+                    wrap-mode: word_char;
+                    selectable: true;
+                    xalign: 0;
+
+                    styles [
+                      "monospace",
+                    ]
+
+                    accessibility {
+                      label: "Backup result";
+                      description: "Your encrypted backup string. Copy this and store it safely.";
+                    }
+                  }
+
+                  Box {
+                    orientation: horizontal;
+                    spacing: 12;
+                    halign: center;
+
+                    Button btn_copy_backup {
+                      label: _("Copy");
+                      icon-name: "edit-copy-symbolic";
+
+                      accessibility {
+                        label: "Copy backup to clipboard";
+                      }
+                    }
+
+                    Button btn_show_qr {
+                      label: _("Show QR");
+                      icon-name: "qr-code-symbolic";
+                      tooltip-text: _("Display QR code for scanning");
+
+                      accessibility {
+                        label: "Show QR code";
+                      }
+                    }
+                  }
+                }
+              }
+
+              Box box_qr_display {
+                visible: false;
+                orientation: vertical;
+                spacing: 12;
+                halign: center;
+
+                Picture picture_qr {
+                  width-request: 256;
+                  height-request: 256;
+                  content-fit: contain;
+
+                  accessibility {
+                    label: "QR code image";
+                    description: "QR code containing your encrypted backup. Scan with a compatible wallet.";
+                  }
+                }
+
+                Button btn_hide_qr {
+                  label: _("Hide QR Code");
+
+                  accessibility {
+                    label: "Hide QR code";
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Advanced");
+
+                Adw.ActionRow row_copy_nsec {
+                  title: _("Copy Raw Secret Key");
+                  subtitle: _("Not recommended. Use encrypted backup instead.");
+                  activatable: true;
+
+                  [suffix]
+                  Image {
+                    icon-name: "dialog-warning-symbolic";
+
+                    styles [
+                      "warning",
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        };
+      }
+
+      Adw.ViewStackPage {
+        name: "recovery";
+        title: _("Recovery");
+        icon-name: "view-refresh-symbolic";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+          vscrollbar-policy: automatic;
+
+          Adw.Clamp {
+            maximum-size: 450;
+            tightening-threshold: 360;
+
+            Box {
+              orientation: vertical;
+              spacing: 18;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 18;
+              margin-bottom: 18;
+
+              Adw.PreferencesGroup {
+                title: _("Recovery Method");
+
+                Adw.ComboRow combo_recovery_method {
+                  title: _("Import From");
+
+                  model: StringList {
+                    strings [
+                      _("NIP-49 Encrypted Backup (ncryptsec)"),
+                      _("BIP-39 Mnemonic Phrase"),
+                    ]
+                  };
+                }
+              }
+
+              Adw.PreferencesGroup group_ncryptsec_recovery {
+                title: _("Import Encrypted Backup");
+                description: _("Enter your ncryptsec1... string and the password used to encrypt it.");
+
+                Adw.EntryRow entry_ncryptsec {
+                  title: _("Encrypted Backup String");
+
+                  accessibility {
+                    description: "Paste your ncryptsec1... backup string here";
+                  }
+                }
+
+                Adw.PasswordEntryRow entry_decrypt_password {
+                  title: _("Decryption Password");
+
+                  accessibility {
+                    description: "Enter the password used when creating the backup";
+                  }
+                }
+
+                Adw.ActionRow {
+                  activatable: false;
+
+                  [suffix]
+                  Button btn_load_from_file {
+                    label: _("Load from File...");
+                    valign: center;
+
+                    accessibility {
+                      label: "Load backup from file";
+                    }
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup group_mnemonic_recovery {
+                visible: false;
+                title: _("Import from Mnemonic");
+                description: _("Enter your 12, 15, 18, 21, or 24 word recovery phrase.");
+
+                Adw.EntryRow entry_mnemonic {
+                  title: _("Recovery Phrase");
+
+                  accessibility {
+                    description: "Enter your BIP-39 mnemonic words separated by spaces";
+                  }
+                }
+
+                Adw.PasswordEntryRow entry_mnemonic_passphrase {
+                  title: _("Optional Passphrase");
+                  show-apply-button: false;
+
+                  accessibility {
+                    description: "Enter optional BIP-39 passphrase if one was used";
+                  }
+                }
+
+                Adw.SpinRow spin_account_index {
+                  title: _("Account Index");
+                  subtitle: _("Usually 0 for the first account");
+
+                  adjustment: Adjustment {
+                    lower: 0;
+                    upper: 999;
+                    value: 0;
+                    step-increment: 1;
+                    page-increment: 10;
+                  };
+                }
+              }
+
+              Adw.PreferencesGroup group_preview {
+                visible: false;
+                title: _("Preview");
+                description: _("Verify this is the correct identity before importing.");
+
+                Adw.ActionRow row_preview_npub {
+                  title: _("Public Key");
+                  subtitle: "npub1...";
+                  subtitle-selectable: true;
+                }
+              }
+
+              Adw.StatusPage status_verification {
+                visible: false;
+                icon-name: "emblem-ok-symbolic";
+                title: _("Key Verified");
+                description: _("The backup was successfully decrypted.");
+              }
+
+              Box {
+                orientation: horizontal;
+                spacing: 12;
+                halign: center;
+                margin-top: 12;
+
+                Button btn_verify {
+                  label: _("Verify");
+                  tooltip-text: _("Decrypt and preview without importing");
+
+                  accessibility {
+                    label: "Verify backup";
+                  }
+                }
+
+                Button btn_import {
+                  label: _("Import Key");
+                  sensitive: false;
+                  tooltip-text: _("Add this key to your wallet");
+
+                  styles [
+                    "suggested-action",
+                  ]
+
+                  accessibility {
+                    label: "Import recovered key";
+                  }
+                }
+              }
+            }
+          }
+        };
+      }
+    };
+
+    [bottom]
+    Adw.ViewSwitcherBar view_switcher {
+      stack: view_stack;
+      reveal: true;
+    }
+  }
+}
+

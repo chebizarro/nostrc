@@ -1,0 +1,150 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetSelectAccount: Adw.Dialog {
+  title: _("Select Account");
+  content-width: 400;
+  content-height: 480;
+
+  accessibility {
+    label: "Select account dialog";
+    description: "Choose an account to switch to or add a new account";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      accessibility {
+        label: "Account selection header";
+      }
+
+      title-widget: Label {
+        label: _("Accounts");
+      };
+
+      [start]
+      Button btn_cancel {
+        label: _("Close");
+
+        accessibility {
+          label: "Close";
+          description: "Close this dialog";
+        }
+      }
+    }
+
+    Box {
+      orientation: vertical;
+      spacing: 12;
+      margin-top: 16;
+      margin-bottom: 16;
+      margin-start: 16;
+      margin-end: 16;
+
+      Label {
+        label: _("Select an account to switch to, or add a new one.");
+        wrap: true;
+        xalign: 0;
+
+        accessibility {
+          label: "Instructions";
+          description: "Select an existing account or create a new one";
+        }
+
+        styles [
+          "dim-label",
+        ]
+      }
+
+      ScrolledWindow {
+        vexpand: true;
+        hscrollbar-policy: never;
+
+        accessibility {
+          label: "Accounts list container";
+        }
+
+        Box {
+          orientation: vertical;
+          spacing: 8;
+
+          ListBox list_accounts {
+            selection-mode: none;
+
+            accessibility {
+              label: "Available accounts";
+              description: "List of your Nostr accounts. Click to select and switch.";
+            }
+
+            styles [
+              "boxed-list",
+            ]
+          }
+
+          Label lbl_empty {
+            label: _("No accounts yet. Create or import one to get started.");
+            wrap: true;
+            visible: false;
+            margin-top: 24;
+            margin-bottom: 24;
+
+            accessibility {
+              label: "No accounts message";
+              description: "You have no accounts yet. Use the buttons below to create or import one.";
+            }
+
+            styles [
+              "dim-label",
+            ]
+          }
+        }
+      }
+
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+        halign: center;
+
+        accessibility {
+          label: "Account actions";
+          description: "Create a new account or import an existing key";
+        }
+
+        Button btn_add_new {
+          label: _("Generate New");
+          tooltip-text: _("Generate a new keypair");
+
+          accessibility {
+            label: "Generate new account";
+            description: "Create a new Nostr keypair and account";
+          }
+
+          styles [
+            "suggested-action",
+          ]
+        }
+
+        Button btn_import {
+          label: _("Import Key");
+          tooltip-text: _("Import an existing nsec key");
+
+          accessibility {
+            label: "Import existing key";
+            description: "Import an existing Nostr private key";
+          }
+        }
+
+        Button btn_import_pubkey {
+          label: _("Watch Only");
+          tooltip-text: _("Import a public key for watch-only access");
+
+          accessibility {
+            label: "Import public key (watch-only)";
+            description: "Import a Nostr public key to monitor activity without signing capability";
+          }
+        }
+      }
+    }
+  }
+}
+

@@ -1,0 +1,308 @@
+using Gtk 4.0;
+
+template $GnostrArticleCard: Widget {
+  Frame root {
+    hexpand: true;
+    vexpand: false;
+
+    styles [
+      "article-card",
+    ]
+
+    child: Box {
+      orientation: vertical;
+      spacing: 0;
+
+      Overlay header_image_overlay {
+        visible: false;
+
+        Picture header_image {
+          content-fit: cover;
+          height-request: 180;
+
+          styles [
+            "article-header-image",
+          ]
+        }
+
+        [overlay]
+        Box header_gradient {
+          vexpand: true;
+          valign: end;
+          height-request: 60;
+
+          styles [
+            "article-header-gradient",
+          ]
+        }
+      }
+
+      Box content_box {
+        orientation: vertical;
+        spacing: 12;
+        margin-start: 16;
+        margin-end: 16;
+        margin-top: 16;
+        margin-bottom: 12;
+
+        Box author_box {
+          orientation: horizontal;
+          spacing: 10;
+
+          Button btn_avatar {
+            has-frame: false;
+            tooltip-text: "View profile";
+            valign: center;
+
+            styles [
+              "flat",
+            ]
+
+            Overlay avatar_overlay {
+              width-request: 40;
+              height-request: 40;
+
+              styles [
+                "avatar",
+                "article-avatar",
+              ]
+
+              Picture avatar_image {
+                visible: false;
+                content-fit: cover;
+                width-request: 40;
+                height-request: 40;
+
+                styles [
+                  "article-avatar-image",
+                ]
+              }
+
+              [overlay]
+              Label avatar_initials {
+                label: "AN";
+                xalign: 0.5;
+                yalign: 0.5;
+
+                styles [
+                  "avatar-initials",
+                ]
+              }
+            }
+          }
+
+          Box author_info {
+            orientation: vertical;
+            spacing: 2;
+            valign: center;
+            hexpand: true;
+
+            Box author_name_row {
+              orientation: horizontal;
+              spacing: 6;
+
+              Button btn_author_name {
+                has-frame: false;
+                tooltip-text: "View profile";
+
+                styles [
+                  "flat",
+                ]
+
+                Label lbl_author_name {
+                  label: "Anonymous";
+                  xalign: 0.0;
+                  ellipsize: end;
+
+                  styles [
+                    "article-author",
+                  ]
+                }
+              }
+
+              Image nip05_badge {
+                visible: false;
+                icon-name: "emblem-ok-symbolic";
+                icon-size: normal;
+
+                styles [
+                  "nip05-verified-badge",
+                ]
+              }
+            }
+
+            Box meta_row {
+              orientation: horizontal;
+              spacing: 8;
+
+              Label lbl_author_handle {
+                label: "@anon";
+                xalign: 0.0;
+                ellipsize: end;
+
+                styles [
+                  "article-meta",
+                ]
+              }
+
+              Label lbl_separator {
+                label: "-";
+
+                styles [
+                  "article-meta",
+                ]
+              }
+
+              Label lbl_publish_date {
+                label: "Just now";
+                xalign: 0.0;
+
+                styles [
+                  "article-meta",
+                ]
+              }
+            }
+          }
+
+          Button btn_menu {
+            icon-name: "open-menu-symbolic";
+            tooltip-text: "More options";
+            valign: center;
+
+            styles [
+              "flat",
+            ]
+          }
+        }
+
+        Button btn_title {
+          has-frame: false;
+
+          styles [
+            "flat",
+          ]
+
+          Label lbl_title {
+            label: "Untitled Article";
+            xalign: 0.0;
+            wrap: true;
+            wrap-mode: word_char;
+            lines: 3;
+            ellipsize: end;
+
+            styles [
+              "article-title",
+            ]
+          }
+        }
+
+        Label lbl_summary {
+          visible: false;
+          label: "Article summary...";
+          xalign: 0.0;
+          wrap: true;
+          wrap-mode: word_char;
+          lines: 4;
+          ellipsize: end;
+          use-markup: true;
+
+          styles [
+            "article-summary",
+          ]
+        }
+
+        Button btn_read_more {
+          has-frame: false;
+          halign: start;
+
+          Box {
+            orientation: horizontal;
+            spacing: 4;
+
+            Label lbl_read_more {
+              label: "Read more";
+
+              styles [
+                "article-read-more",
+              ]
+            }
+
+            Image {
+              icon-name: "go-next-symbolic";
+              icon-size: normal;
+
+              styles [
+                "article-read-more",
+              ]
+            }
+          }
+        }
+
+        FlowBox hashtags_box {
+          visible: false;
+          selection-mode: none;
+          max-children-per-line: 8;
+          min-children-per-line: 1;
+          row-spacing: 4;
+          column-spacing: 6;
+
+          styles [
+            "article-hashtags",
+          ]
+        }
+
+        Box actions_box {
+          orientation: horizontal;
+          spacing: 8;
+          margin-top: 4;
+
+          Button btn_zap {
+            tooltip-text: "Zap";
+
+            Box {
+              orientation: horizontal;
+              spacing: 4;
+
+              Image {
+                icon-name: "camera-flash-symbolic";
+              }
+
+              Label lbl_zap_count {
+                label: "";
+                visible: false;
+
+                styles [
+                  "zap-count",
+                ]
+              }
+            }
+          }
+
+          Button btn_bookmark {
+            icon-name: "bookmark-new-symbolic";
+            tooltip-text: "Bookmark";
+          }
+
+          Button btn_share {
+            icon-name: "emblem-shared-symbolic";
+            tooltip-text: "Share article";
+          }
+
+          Box {
+            hexpand: true;
+          }
+
+          Label lbl_reading_time {
+            visible: false;
+            label: "3 min read";
+
+            styles [
+              "article-reading-time",
+            ]
+          }
+        }
+      }
+    };
+  }
+}
+

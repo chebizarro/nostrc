@@ -1,0 +1,138 @@
+using Gtk 4.0;
+
+template $GnostrDmRow: Widget {
+  Box root {
+    orientation: horizontal;
+    spacing: 12;
+    margin-start: 12;
+    margin-end: 12;
+    margin-top: 8;
+    margin-bottom: 8;
+
+    styles [
+      "dm-row",
+    ]
+
+    Button btn_avatar {
+      has-frame: false;
+      tooltip-text: "View profile";
+
+      styles [
+        "flat",
+      ]
+
+      Overlay avatar_box {
+        width-request: 48;
+        height-request: 48;
+
+        styles [
+          "avatar",
+          "dm-avatar",
+        ]
+
+        Picture avatar_image {
+          visible: false;
+          content-fit: cover;
+          width-request: 48;
+          height-request: 48;
+
+          styles [
+            "dm-avatar-image",
+          ]
+        }
+
+        [overlay]
+        Label avatar_initials {
+          label: "?";
+          xalign: 0.5;
+          yalign: 0.5;
+
+          styles [
+            "avatar-initials",
+          ]
+        }
+      }
+    }
+
+    Box content_box {
+      orientation: vertical;
+      hexpand: true;
+      spacing: 2;
+      valign: center;
+
+      Box top_row {
+        orientation: horizontal;
+        spacing: 6;
+
+        Label lbl_display {
+          label: "Display Name";
+          xalign: 0.0;
+          ellipsize: end;
+          max-width-chars: 24;
+
+          styles [
+            "dm-name",
+          ]
+        }
+
+        Label lbl_handle {
+          label: "@handle";
+          xalign: 0.0;
+          ellipsize: end;
+          visible: false;
+
+          styles [
+            "dm-handle",
+          ]
+        }
+
+        Label lbl_timestamp {
+          label: "2h";
+          hexpand: true;
+          halign: end;
+
+          styles [
+            "dm-timestamp",
+          ]
+        }
+      }
+
+      Box bottom_row {
+        orientation: horizontal;
+        spacing: 8;
+
+        Label lbl_preview {
+          label: "Last message preview...";
+          xalign: 0.0;
+          hexpand: true;
+          ellipsize: end;
+          max-width-chars: 40;
+          single-line-mode: true;
+
+          styles [
+            "dm-preview",
+          ]
+        }
+
+        Box unread_badge {
+          visible: false;
+          halign: end;
+          valign: center;
+
+          styles [
+            "unread-badge",
+          ]
+
+          Label lbl_unread {
+            label: "1";
+
+            styles [
+              "unread-count",
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+

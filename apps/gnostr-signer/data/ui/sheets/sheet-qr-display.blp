@@ -1,0 +1,168 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetQrDisplay: Adw.Dialog {
+  title: _("QR Code");
+  can-close: true;
+  content-width: 400;
+  content-height: 520;
+
+  accessibility {
+    label: "QR code display dialog";
+    description: "Shows a QR code for sharing or backup";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-end-title-buttons: false;
+      show-start-title-buttons: false;
+
+      [end]
+      Button btn_close {
+        label: _("Done");
+
+        accessibility {
+          label: "Close dialog";
+        }
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    ScrolledWindow {
+      hscrollbar-policy: never;
+      vscrollbar-policy: automatic;
+
+      Box content_box {
+        orientation: vertical;
+        spacing: 16;
+        margin-start: 24;
+        margin-end: 24;
+        margin-top: 16;
+        margin-bottom: 24;
+        halign: center;
+
+        Label title_label {
+          label: _("QR Code");
+          halign: center;
+
+          accessibility {
+            label: "QR code title";
+          }
+
+          styles [
+            "title-2",
+          ]
+        }
+
+        Frame {
+          halign: center;
+
+          styles [
+            "view",
+          ]
+
+          Picture qr_picture {
+            content-fit: contain;
+            width-request: 280;
+            height-request: 280;
+            margin-start: 8;
+            margin-end: 8;
+            margin-top: 8;
+            margin-bottom: 8;
+
+            accessibility {
+              label: "QR code image";
+              description: "Scan this QR code with a compatible app";
+            }
+          }
+        }
+
+        Label type_label {
+          label: _("Type");
+          halign: center;
+
+          accessibility {
+            label: "Content type";
+          }
+
+          styles [
+            "dim-label",
+            "caption",
+          ]
+        }
+
+        Label data_label {
+          label: _("Data");
+          halign: center;
+          wrap: true;
+          wrap-mode: char;
+          selectable: true;
+          max-width-chars: 40;
+
+          accessibility {
+            label: "QR code data";
+            description: "The data encoded in the QR code";
+          }
+
+          styles [
+            "monospace",
+            "caption",
+          ]
+        }
+
+        Box warning_box {
+          visible: false;
+          orientation: horizontal;
+          spacing: 8;
+          halign: center;
+          margin-top: 8;
+
+          accessibility {
+            label: "Security warning";
+          }
+
+          styles [
+            "warning",
+            "card",
+          ]
+
+          Image {
+            icon-name: "dialog-warning-symbolic";
+            margin-start: 12;
+            margin-top: 8;
+            margin-bottom: 8;
+          }
+
+          Label warning_label {
+            label: _("Warning message");
+            wrap: true;
+            max-width-chars: 35;
+            margin-end: 12;
+            margin-top: 8;
+            margin-bottom: 8;
+
+            accessibility {
+              label: "Warning text";
+            }
+          }
+        }
+
+        Button btn_copy {
+          label: _("Copy to Clipboard");
+          halign: center;
+          margin-top: 8;
+
+          accessibility {
+            label: "Copy data to clipboard";
+            description: "Copy the QR code data to your clipboard";
+          }
+        }
+      }
+    }
+  }
+}
+

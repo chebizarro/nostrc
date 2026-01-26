@@ -17,6 +17,117 @@ pkg_check_modules(SQLITE3 QUIET IMPORTED_TARGET sqlite3)
 pkg_check_modules(SOUP3 QUIET IMPORTED_TARGET libsoup-3.0)
 pkg_check_modules(QRENCODE QUIET IMPORTED_TARGET libqrencode)
 
+# Find blueprint-compiler for compiling .blp files to .ui files
+find_program(BLUEPRINT_COMPILER blueprint-compiler)
+if(BLUEPRINT_COMPILER)
+  message(STATUS "Found blueprint-compiler: ${BLUEPRINT_COMPILER}")
+else()
+  message(WARNING "blueprint-compiler not found - using pre-compiled .ui files")
+endif()
+
+# Blueprint source files (.blp) - these are the source of truth for UI definitions
+set(BLUEPRINT_SOURCES
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-main-window.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-composer.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/note-card-row.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-thread-view.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-note-embed.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/page-discover.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-row.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-search-results-view.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-inbox-view.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-row.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notifications-view.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notification-row.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-article-card.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-articles-view.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-live-card.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-zap-goal-widget.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-channel-list-view.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-channel-row.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-chat-room-view.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-chat-message-row.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-apps-page.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-channel-create-dialog.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-settings-dialog.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-manager.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-profile-edit.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-nwc-connect.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-zap-dialog.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-mute-list.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-login.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-about-dialog.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-report-dialog.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-app-handler-dialog.blp
+)
+
+# Compile Blueprint files to UI files if blueprint-compiler is available
+set(COMPILED_UI_FILES)
+if(BLUEPRINT_COMPILER)
+  foreach(BLP_FILE ${BLUEPRINT_SOURCES})
+    # Get relative path and convert .blp to .ui
+    file(RELATIVE_PATH BLP_REL ${CMAKE_CURRENT_SOURCE_DIR}/data ${BLP_FILE})
+    string(REGEX REPLACE "\\.blp$" ".ui" UI_REL ${BLP_REL})
+    set(UI_FILE ${CMAKE_CURRENT_SOURCE_DIR}/data/${UI_REL})
+    
+    add_custom_command(
+      OUTPUT ${UI_FILE}
+      COMMAND ${BLUEPRINT_COMPILER} compile --output ${UI_FILE} ${BLP_FILE}
+      DEPENDS ${BLP_FILE}
+      COMMENT "Compiling Blueprint: ${BLP_REL}"
+      VERBATIM
+    )
+    list(APPEND COMPILED_UI_FILES ${UI_FILE})
+  endforeach()
+  
+  # Create a target for all Blueprint compilations
+  add_custom_target(gnostr_blueprints ALL DEPENDS ${COMPILED_UI_FILES})
+endif()
+
+# UI files that are compiled from Blueprint sources
+# Note: gnostr-relay-discovery.ui is kept as XML (blueprint-compiler doesn't support its constructs)
+set(UI_FILES
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-main-window.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-composer.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/note-card-row.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-thread-view.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-note-embed.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/page-discover.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-row.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-search-results-view.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-inbox-view.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-row.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notifications-view.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notification-row.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-article-card.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-articles-view.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-live-card.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-zap-goal-widget.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-channel-list-view.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-channel-row.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-chat-room-view.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-chat-message-row.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-apps-page.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-channel-create-dialog.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-settings-dialog.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-manager.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-profile-edit.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-nwc-connect.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-zap-dialog.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-mute-list.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-login.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-about-dialog.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-report-dialog.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-app-handler-dialog.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-discovery.ui
+)
+
 # Compile Gtk resources
 set(GRESOURCE_XML ${CMAKE_CURRENT_SOURCE_DIR}/data/resources.gresource.xml)
 set(GRESOURCE_C ${CMAKE_CURRENT_BINARY_DIR}/resources.c)
@@ -26,43 +137,8 @@ add_custom_command(
           --target=${GRESOURCE_C}
           --generate-source
           ${GRESOURCE_XML}
-  DEPENDS ${GRESOURCE_XML}
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-main-window.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-composer.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/note-card-row.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-pane.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-thread-view.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-note-embed.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/page-discover.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-row.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-search-results-view.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-inbox-view.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-row.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notifications-view.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notification-row.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-article-card.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-articles-view.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-live-card.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-zap-goal-widget.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-channel-list-view.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-channel-row.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-chat-room-view.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-chat-message-row.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-channel-create-dialog.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-settings-dialog.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-manager.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-profile-edit.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-nwc-connect.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-zap-dialog.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-mute-list.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-login.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-about-dialog.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-report-dialog.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-app-handler-dialog.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-discovery.ui
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-apps-page.ui
+  DEPENDS ${GRESOURCE_XML} ${UI_FILES}
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/styles/gnostr.css
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
   VERBATIM)
 

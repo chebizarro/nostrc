@@ -1,0 +1,324 @@
+using Gtk 4.0;
+
+template $GnostrReportDialog: Window {
+  modal: true;
+  title: "Report Content";
+  default-width: 400;
+  default-height: 450;
+  resizable: false;
+
+  [titlebar]
+  HeaderBar {
+    show-title-buttons: false;
+
+    [start]
+    Button btn_cancel {
+      label: "Cancel";
+      tooltip-text: "Cancel report";
+      clicked => $on_cancel_clicked();
+    }
+
+    [title]
+    Box {
+      orientation: horizontal;
+      spacing: 8;
+
+      Image {
+        icon-name: "dialog-warning-symbolic";
+      }
+
+      Label {
+        label: "Report Content";
+
+        styles [
+          "title",
+        ]
+      }
+    }
+  }
+
+  Box {
+    orientation: vertical;
+    spacing: 0;
+
+    Revealer toast_revealer {
+      reveal-child: false;
+      transition-type: slide_down;
+
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+        margin-start: 12;
+        margin-end: 12;
+        margin-top: 8;
+        margin-bottom: 8;
+
+        styles [
+          "app-notification",
+        ]
+
+        Label toast_label {
+          label: "";
+          hexpand: true;
+          xalign: 0;
+        }
+      }
+    }
+
+    Box content_box {
+      orientation: vertical;
+      spacing: 16;
+      margin-start: 24;
+      margin-end: 24;
+      margin-top: 16;
+      margin-bottom: 24;
+      vexpand: true;
+
+      Label {
+        label: "Report this content for violating community guidelines. Your report will be published to relays.";
+        wrap: true;
+        xalign: 0;
+
+        styles [
+          "dim-label",
+        ]
+      }
+
+      Box {
+        orientation: vertical;
+        spacing: 8;
+
+        Label {
+          label: "Reason for report";
+          xalign: 0;
+
+          styles [
+            "heading",
+          ]
+        }
+
+        ListBox reason_list {
+          selection-mode: single;
+
+          styles [
+            "boxed-list",
+          ]
+
+          ListBoxRow row_nudity {
+            Box {
+              orientation: horizontal;
+              spacing: 12;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 10;
+              margin-bottom: 10;
+
+              Image {
+                icon-name: "emblem-photos-symbolic";
+              }
+
+              Label {
+                label: "Nudity";
+                hexpand: true;
+                xalign: 0;
+              }
+            }
+          }
+
+          ListBoxRow row_malware {
+            Box {
+              orientation: horizontal;
+              spacing: 12;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 10;
+              margin-bottom: 10;
+
+              Image {
+                icon-name: "security-low-symbolic";
+              }
+
+              Label {
+                label: "Malware";
+                hexpand: true;
+                xalign: 0;
+              }
+            }
+          }
+
+          ListBoxRow row_profanity {
+            Box {
+              orientation: horizontal;
+              spacing: 12;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 10;
+              margin-bottom: 10;
+
+              Image {
+                icon-name: "dialog-warning-symbolic";
+              }
+
+              Label {
+                label: "Profanity";
+                hexpand: true;
+                xalign: 0;
+              }
+            }
+          }
+
+          ListBoxRow row_illegal {
+            Box {
+              orientation: horizontal;
+              spacing: 12;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 10;
+              margin-bottom: 10;
+
+              Image {
+                icon-name: "action-unavailable-symbolic";
+              }
+
+              Label {
+                label: "Illegal content";
+                hexpand: true;
+                xalign: 0;
+              }
+            }
+          }
+
+          ListBoxRow row_spam {
+            Box {
+              orientation: horizontal;
+              spacing: 12;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 10;
+              margin-bottom: 10;
+
+              Image {
+                icon-name: "mail-mark-junk-symbolic";
+              }
+
+              Label {
+                label: "Spam";
+                hexpand: true;
+                xalign: 0;
+              }
+            }
+          }
+
+          ListBoxRow row_impersonation {
+            Box {
+              orientation: horizontal;
+              spacing: 12;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 10;
+              margin-bottom: 10;
+
+              Image {
+                icon-name: "avatar-default-symbolic";
+              }
+
+              Label {
+                label: "Impersonation";
+                hexpand: true;
+                xalign: 0;
+              }
+            }
+          }
+
+          ListBoxRow row_other {
+            Box {
+              orientation: horizontal;
+              spacing: 12;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 10;
+              margin-bottom: 10;
+
+              Image {
+                icon-name: "help-about-symbolic";
+              }
+
+              Label {
+                label: "Other";
+                hexpand: true;
+                xalign: 0;
+              }
+            }
+          }
+        }
+      }
+
+      Box {
+        orientation: vertical;
+        spacing: 8;
+
+        Label {
+          label: "Additional details (optional)";
+          xalign: 0;
+
+          styles [
+            "dim-label",
+          ]
+        }
+
+        Entry entry_comment {
+          placeholder-text: "Describe the issue...";
+          max-length: 280;
+        }
+      }
+
+      Box {
+        vexpand: true;
+      }
+
+      Box status_box {
+        orientation: horizontal;
+        spacing: 8;
+        halign: center;
+        visible: false;
+
+        Spinner spinner {
+          spinning: true;
+        }
+
+        Label lbl_status {
+          label: "Submitting report...";
+
+          styles [
+            "dim-label",
+          ]
+        }
+      }
+
+      Button btn_submit {
+        halign: center;
+        tooltip-text: "Submit report";
+        clicked => $on_submit_clicked();
+
+        styles [
+          "destructive-action",
+          "pill",
+        ]
+
+        Box {
+          orientation: horizontal;
+          spacing: 8;
+
+          Image {
+            icon-name: "dialog-warning-symbolic";
+          }
+
+          Label lbl_submit_button {
+            label: "Submit Report";
+          }
+        }
+      }
+    }
+  }
+}
+

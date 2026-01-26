@@ -1,0 +1,1029 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $OnboardingAssistant: Adw.Window {
+  title: _("Welcome to GNostr Signer");
+  default-width: 600;
+  default-height: 500;
+  width-request: 320;
+  height-request: 400;
+  modal: true;
+  resizable: true;
+
+  accessibility {
+    label: "Setup assistant window";
+    description: "Step-by-step wizard to set up your Nostr identity with GNostr Signer";
+  }
+
+  Box {
+    orientation: vertical;
+
+    Adw.HeaderBar {
+      show-start-title-buttons: false;
+      show-end-title-buttons: false;
+
+      accessibility {
+        label: "Setup assistant header";
+      }
+
+      title-widget: Adw.WindowTitle {
+        title: _("Setup Assistant");
+      };
+
+      [end]
+      Button btn_skip {
+        label: _("Skip");
+        valign: center;
+
+        accessibility {
+          label: "Skip setup";
+          description: "Skip the setup wizard and configure later";
+        }
+      }
+    }
+
+    Box {
+      orientation: vertical;
+      vexpand: true;
+      spacing: 12;
+      margin-start: 24;
+      margin-end: 24;
+      margin-top: 12;
+      margin-bottom: 12;
+
+      Adw.Carousel carousel {
+        vexpand: true;
+        hexpand: true;
+        interactive: false;
+        allow-scroll-wheel: false;
+        allow-long-swipes: false;
+
+        accessibility {
+          label: "Setup wizard pages";
+          description: "Navigate through setup steps using the Back and Next buttons";
+        }
+
+        Box page_welcome {
+          orientation: vertical;
+          spacing: 16;
+          valign: center;
+          halign: center;
+          margin-start: 24;
+          margin-end: 24;
+
+          accessibility {
+            label: "Welcome page - Step 1";
+            description: "Introduction to GNostr Signer and what it does";
+          }
+
+          Image {
+            icon-name: "org.gnostr.Signer";
+            pixel-size: 96;
+            margin-bottom: 12;
+
+            accessibility {
+              label: "GNostr Signer application icon";
+            }
+          }
+
+          Label {
+            label: _("Welcome to GNostr Signer");
+
+            styles [
+              "title-1",
+            ]
+          }
+
+          Label {
+            label: _("Your secure key manager for the Nostr network");
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Label {
+            wrap: true;
+            wrap-mode: word_char;
+            max-width-chars: 50;
+            justify: center;
+            margin-top: 24;
+            label: _("GNostr Signer securely manages your Nostr identity keys, allowing applications to sign events on your behalf without ever exposing your private keys. This setup assistant will guide you through: - Understanding how your keys are protected - Creating or importing your Nostr identity - Setting up secure backup options");
+          }
+        }
+
+        Box page_security {
+          orientation: vertical;
+          spacing: 16;
+          valign: center;
+          halign: center;
+          margin-start: 24;
+          margin-end: 24;
+
+          accessibility {
+            label: "Security overview page - Step 2";
+            description: "Learn how your keys are protected with encrypted storage, session protection, and permission control";
+          }
+
+          Image {
+            icon-name: "security-high-symbolic";
+            pixel-size: 64;
+            margin-bottom: 12;
+
+            accessibility {
+              label: "Security shield icon";
+            }
+
+            styles [
+              "accent",
+            ]
+          }
+
+          Label {
+            label: _("How Your Keys Are Protected");
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Box {
+            orientation: vertical;
+            spacing: 12;
+            margin-top: 16;
+
+            Box {
+              orientation: horizontal;
+              spacing: 12;
+
+              Image {
+                icon-name: "dialog-password-symbolic";
+                pixel-size: 24;
+              }
+
+              Label {
+                wrap: true;
+                xalign: 0;
+                max-width-chars: 45;
+                label: _("<b>Encrypted Storage</b> - Your private key is encrypted using your system's secure keyring (GNOME Keyring, KDE Wallet, or similar).");
+                use-markup: true;
+              }
+            }
+
+            Box {
+              orientation: horizontal;
+              spacing: 12;
+
+              Image {
+                icon-name: "system-lock-screen-symbolic";
+                pixel-size: 24;
+              }
+
+              Label {
+                wrap: true;
+                xalign: 0;
+                max-width-chars: 45;
+                label: _("<b>Session Protection</b> - Keys are only decrypted in memory when needed and can be locked when you step away.");
+                use-markup: true;
+              }
+            }
+
+            Box {
+              orientation: horizontal;
+              spacing: 12;
+
+              Image {
+                icon-name: "emblem-ok-symbolic";
+                pixel-size: 24;
+              }
+
+              Label {
+                wrap: true;
+                xalign: 0;
+                max-width-chars: 45;
+                label: _("<b>Permission Control</b> - You decide which applications can request signatures and can revoke access at any time.");
+                use-markup: true;
+              }
+            }
+
+            Box {
+              orientation: horizontal;
+              spacing: 12;
+
+              Image {
+                icon-name: "network-server-symbolic";
+                pixel-size: 24;
+              }
+
+              Label {
+                wrap: true;
+                xalign: 0;
+                max-width-chars: 45;
+                label: _("<b>NIP-46 Remote Signing</b> - Use your keys across devices without ever sharing them directly.");
+                use-markup: true;
+              }
+            }
+          }
+        }
+
+        Box page_choose_path {
+          orientation: vertical;
+          spacing: 16;
+          valign: center;
+          halign: center;
+          margin-start: 24;
+          margin-end: 24;
+
+          accessibility {
+            label: "Get started page - Step 3";
+            description: "Choose whether to create a new Nostr identity or import an existing one";
+          }
+
+          Label {
+            label: _("Get Started");
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Label {
+            label: _("Choose how you'd like to set up your Nostr identity");
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Box {
+            orientation: vertical;
+            spacing: 16;
+            margin-top: 24;
+            halign: center;
+
+            Box {
+              orientation: horizontal;
+              spacing: 16;
+
+              styles [
+                "card",
+              ]
+
+              margin-start: 8;
+              margin-end: 8;
+              margin-top: 8;
+              margin-bottom: 8;
+
+              CheckButton radio_create {
+                valign: center;
+
+                accessibility {
+                  label: "Create new identity";
+                  description: "Generate a new Nostr keypair for a fresh identity";
+                }
+              }
+
+              Image {
+                icon-name: "list-add-symbolic";
+                pixel-size: 32;
+                valign: center;
+
+                accessibility {
+                  label: "Add new identity icon";
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 4;
+                hexpand: true;
+
+                Label {
+                  label: _("Create New Identity");
+                  xalign: 0;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                Label {
+                  label: _("Generate a new Nostr keypair. Perfect if you're new to Nostr or want a fresh identity.");
+                  xalign: 0;
+                  wrap: true;
+                  max-width-chars: 40;
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+              }
+            }
+
+            Box {
+              orientation: horizontal;
+              spacing: 16;
+
+              styles [
+                "card",
+              ]
+
+              margin-start: 8;
+              margin-end: 8;
+              margin-top: 8;
+              margin-bottom: 8;
+
+              CheckButton radio_import {
+                valign: center;
+                group: radio_create;
+
+                accessibility {
+                  label: "Import existing identity";
+                  description: "Use an existing nsec key, seed phrase, or backup file from another app";
+                }
+              }
+
+              Image {
+                icon-name: "document-open-symbolic";
+                pixel-size: 32;
+                valign: center;
+
+                accessibility {
+                  label: "Import identity icon";
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 4;
+                hexpand: true;
+
+                Label {
+                  label: _("Import Existing Identity");
+                  xalign: 0;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                Label {
+                  label: _("Use an existing nsec key, seed phrase, or backup file from another app.");
+                  xalign: 0;
+                  wrap: true;
+                  max-width-chars: 40;
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+              }
+            }
+          }
+        }
+
+        Box page_create_passphrase {
+          orientation: vertical;
+          spacing: 16;
+          valign: center;
+          halign: center;
+          margin-start: 24;
+          margin-end: 24;
+
+          accessibility {
+            label: "Create profile page";
+            description: "Set up your new Nostr identity with a name and passphrase";
+          }
+
+          Image {
+            icon-name: "avatar-default-symbolic";
+            pixel-size: 48;
+            margin-bottom: 8;
+
+            accessibility {
+              label: "Profile avatar icon";
+            }
+          }
+
+          Label {
+            label: _("Create Your Profile");
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Label {
+            label: _("Set up your new Nostr identity with a name and passphrase");
+            wrap: true;
+            max-width-chars: 45;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Box {
+            orientation: vertical;
+            spacing: 12;
+            margin-top: 16;
+            halign: center;
+            width-request: 320;
+
+            Adw.EntryRow entry_profile_name {
+              title: _("Display Name");
+
+              accessibility {
+                label: "Display name";
+                description: "Enter a display name for your Nostr profile. This is optional and can be changed later.";
+              }
+
+              styles [
+                "card",
+              ]
+            }
+
+            Box box_passphrase_container {
+              orientation: vertical;
+              spacing: 4;
+
+              accessibility {
+                label: "Passphrase entry container";
+                description: "Enter a secure passphrase to protect your private key";
+              }
+            }
+
+            LevelBar passphrase_strength {
+              min-value: 0;
+              max-value: 1;
+              value: 0;
+
+              accessibility {
+                label: "Passphrase strength meter";
+                description: "Indicates the strength of your passphrase from weak to strong";
+              }
+            }
+
+            Label passphrase_hint {
+              label: _("Enter a strong passphrase");
+              xalign: 0;
+
+              styles [
+                "dim-label",
+                "caption",
+              ]
+            }
+
+            Box box_confirm_container {
+              orientation: vertical;
+              spacing: 4;
+              margin-top: 8;
+
+              accessibility {
+                label: "Confirm passphrase container";
+                description: "Re-enter your passphrase to confirm";
+              }
+            }
+
+            Label passphrase_match_label {
+              xalign: 0;
+
+              styles [
+                "caption",
+              ]
+            }
+
+            PasswordEntry entry_passphrase {
+              visible: false;
+            }
+
+            PasswordEntry entry_passphrase_confirm {
+              visible: false;
+            }
+
+            Label {
+              label: _("Use a unique passphrase you don't use elsewhere. This protects your private key locally.");
+              wrap: true;
+              max-width-chars: 40;
+              margin-top: 12;
+
+              styles [
+                "dim-label",
+                "caption",
+              ]
+            }
+
+            Box box_status {
+              orientation: horizontal;
+              spacing: 8;
+              halign: center;
+              margin-top: 12;
+
+              accessibility {
+                label: "Status indicator";
+              }
+
+              Spinner spinner_status {
+                spinning: false;
+
+                accessibility {
+                  label: "Loading indicator";
+                }
+              }
+
+              Label lbl_status {
+                label: "";
+
+                accessibility {
+                  label: "Status message";
+                }
+              }
+            }
+          }
+        }
+
+        Box page_import_method {
+          orientation: vertical;
+          spacing: 12;
+          valign: center;
+          halign: center;
+          margin-start: 24;
+          margin-end: 24;
+
+          accessibility {
+            label: "Import key page";
+            description: "Import your existing Nostr key using nsec, NIP-49 encrypted backup, or mnemonic phrase";
+          }
+
+          Image {
+            icon-name: "document-open-symbolic";
+            pixel-size: 48;
+            margin-bottom: 4;
+
+            accessibility {
+              label: "Import key icon";
+            }
+          }
+
+          Label {
+            label: _("Import Your Key");
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Box {
+            orientation: vertical;
+            spacing: 12;
+            margin-top: 8;
+            halign: center;
+            width-request: 360;
+
+            Box {
+              orientation: horizontal;
+              spacing: 16;
+              halign: center;
+
+              CheckButton radio_import_nsec {
+                active: true;
+                label: _("nsec / NIP-49");
+
+                accessibility {
+                  label: "Import nsec or NIP-49 encrypted backup";
+                  description: "Import using an nsec1 private key or ncryptsec1 encrypted backup";
+                }
+              }
+
+              CheckButton radio_import_seed {
+                group: radio_import_nsec;
+                label: _("Mnemonic");
+
+                accessibility {
+                  label: "Import mnemonic seed phrase";
+                  description: "Import using a 12 or 24 word BIP-39 recovery phrase";
+                }
+              }
+
+              CheckButton radio_import_file {
+                group: radio_import_nsec;
+                label: _("File");
+                sensitive: false;
+
+                accessibility {
+                  label: "Import from file";
+                  description: "Import from a backup file. This feature is coming soon.";
+                }
+              }
+            }
+
+            Frame {
+              margin-top: 8;
+
+              ScrolledWindow {
+                height-request: 100;
+                hscrollbar-policy: never;
+
+                TextView text_import_data {
+                  wrap-mode: word_char;
+                  left-margin: 8;
+                  right-margin: 8;
+                  top-margin: 8;
+                  bottom-margin: 8;
+                  monospace: true;
+
+                  accessibility {
+                    label: "Key data input";
+                    description: "Enter your nsec1, ncryptsec1 encrypted backup, or mnemonic phrase here";
+                  }
+
+                  styles [
+                    "view",
+                  ]
+                }
+              }
+            }
+
+            Label {
+              label: _("Enter your nsec1..., ncryptsec1..., or mnemonic phrase");
+              xalign: 0;
+
+              styles [
+                "dim-label",
+                "caption",
+              ]
+            }
+
+            Box {
+              orientation: horizontal;
+              spacing: 8;
+              halign: start;
+
+              Label {
+                label: _("Word count:");
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              DropDown dropdown_word_count {
+                model: StringList {
+                  strings [
+                    "12 words",
+                    "24 words",
+                  ]
+                };
+
+                accessibility {
+                  label: "Word count selector";
+                  description: "Select whether your seed phrase has 12 or 24 words";
+                }
+              }
+            }
+
+            Box box_import_passphrase_container {
+              orientation: vertical;
+              spacing: 4;
+              margin-top: 8;
+
+              accessibility {
+                label: "Decryption passphrase container";
+                description: "Enter the passphrase used to decrypt your NIP-49 encrypted backup";
+              }
+            }
+
+            Label {
+              label: _("For NIP-49 (ncryptsec) encrypted backups, enter the decryption passphrase above.");
+              wrap: true;
+              max-width-chars: 45;
+              xalign: 0;
+
+              styles [
+                "dim-label",
+                "caption",
+              ]
+            }
+          }
+        }
+
+        Box page_seed_phrase {
+          orientation: vertical;
+          spacing: 16;
+          valign: center;
+          halign: center;
+          margin-start: 24;
+          margin-end: 24;
+
+          accessibility {
+            label: "Recovery phrase page";
+            description: "Your secret recovery phrase. Write down these words in order and keep them safe. This is the only way to recover your key.";
+          }
+
+          Image {
+            icon-name: "dialog-warning-symbolic";
+            pixel-size: 48;
+            margin-bottom: 8;
+
+            accessibility {
+              label: "Warning icon";
+            }
+
+            styles [
+              "warning",
+            ]
+          }
+
+          Label {
+            label: _("Your Recovery Phrase");
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Label {
+            label: _("Write down these words in order and keep them safe. This is the ONLY way to recover your key.");
+            wrap: true;
+            max-width-chars: 50;
+            justify: center;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Box {
+            orientation: vertical;
+            spacing: 12;
+            margin-top: 16;
+            halign: center;
+            width-request: 400;
+
+            Frame {
+              styles [
+                "card",
+              ]
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+                margin-start: 16;
+                margin-end: 16;
+                margin-top: 16;
+                margin-bottom: 16;
+
+                FlowBox seed_phrase_grid {
+                  homogeneous: true;
+                  selection-mode: none;
+                  max-children-per-line: 4;
+                  min-children-per-line: 3;
+                  row-spacing: 8;
+                  column-spacing: 12;
+
+                  accessibility {
+                    label: "Recovery phrase words";
+                    description: "Your 12 or 24 word recovery phrase. Write these down in order.";
+                  }
+                }
+              }
+            }
+
+            Button btn_copy_seed {
+              halign: center;
+
+              accessibility {
+                label: "Copy recovery phrase to clipboard";
+                description: "Copy the recovery phrase to your clipboard. Be careful when pasting as it contains sensitive information.";
+              }
+
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+
+                Image {
+                  icon-name: "edit-copy-symbolic";
+                }
+
+                Label {
+                  label: _("Copy to Clipboard");
+                }
+              }
+            }
+
+            Adw.Banner seed_warning_banner {
+              title: _("Never share your recovery phrase with anyone. Anyone with these words can access your identity.");
+              revealed: true;
+
+              accessibility {
+                label: "Security warning";
+              }
+
+              styles [
+                "error",
+              ]
+            }
+
+            CheckButton seed_written_down {
+              label: _("I have written down my recovery phrase and stored it safely");
+              halign: center;
+              margin-top: 8;
+
+              accessibility {
+                label: "Confirm recovery phrase saved";
+                description: "Check this box to confirm you have written down your recovery phrase and stored it in a safe place";
+              }
+            }
+          }
+        }
+
+        Box page_backup_reminder {
+          orientation: vertical;
+          spacing: 16;
+          valign: center;
+          halign: center;
+          margin-start: 24;
+          margin-end: 24;
+
+          accessibility {
+            label: "Backup reminder page";
+            description: "Important reminder to back up your private key. Your key is the only way to access your Nostr identity.";
+          }
+
+          Image {
+            icon-name: "document-save-symbolic";
+            pixel-size: 64;
+            margin-bottom: 8;
+
+            accessibility {
+              label: "Backup icon";
+            }
+
+            styles [
+              "warning",
+            ]
+          }
+
+          Label {
+            label: _("Back Up Your Key");
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Box {
+            orientation: vertical;
+            spacing: 12;
+            margin-top: 16;
+
+            Adw.Banner {
+              title: _("Your private key is the ONLY way to access your Nostr identity. If you lose it, there is no recovery option.");
+              revealed: true;
+
+              styles [
+                "warning",
+              ]
+            }
+
+            Label {
+              wrap: true;
+              max-width-chars: 50;
+              margin-top: 8;
+              label: _("We strongly recommend creating a backup immediately after setup: - Use the Export feature to save an encrypted backup - Store your backup in multiple secure locations - Never share your private key with anyone - Consider using a hardware security key for additional protection");
+            }
+
+            Box {
+              orientation: horizontal;
+              spacing: 8;
+              margin-top: 16;
+              halign: center;
+
+              CheckButton backup_understood {
+                label: _("I understand and will back up my key");
+
+                accessibility {
+                  label: "Confirm backup understanding";
+                  description: "Check this box to confirm you understand the importance of backing up your key";
+                }
+              }
+            }
+          }
+        }
+
+        Box page_ready {
+          orientation: vertical;
+          spacing: 16;
+          valign: center;
+          halign: center;
+          margin-start: 24;
+          margin-end: 24;
+
+          accessibility {
+            label: "Setup complete page";
+            description: "Congratulations! Your Nostr identity is set up and ready to use.";
+          }
+
+          Image {
+            icon-name: "emblem-ok-symbolic";
+            pixel-size: 72;
+            margin-bottom: 12;
+
+            accessibility {
+              label: "Success checkmark icon";
+            }
+
+            styles [
+              "success",
+            ]
+          }
+
+          Label {
+            label: _("You're All Set!");
+
+            styles [
+              "title-1",
+            ]
+          }
+
+          Label {
+            wrap: true;
+            max-width-chars: 45;
+            justify: center;
+            margin-top: 12;
+            label: _("GNostr Signer is ready to protect your Nostr identity. Here's what you can do next:");
+          }
+
+          Box {
+            orientation: vertical;
+            spacing: 8;
+            margin-top: 16;
+            halign: center;
+
+            Label {
+              xalign: 0;
+              label: _("- Complete your key setup in the main window - Connect Nostr applications via NIP-46 - Configure permission policies for apps - Export a backup of your key");
+            }
+          }
+
+          Label {
+            wrap: true;
+            max-width-chars: 45;
+            justify: center;
+            margin-top: 24;
+            label: _("You can always re-run this setup assistant from the Settings page.");
+
+            styles [
+              "dim-label",
+              "caption",
+            ]
+          }
+        }
+      }
+
+      Adw.CarouselIndicatorDots carousel_dots {
+        carousel: carousel;
+        halign: center;
+        margin-top: 8;
+
+        accessibility {
+          label: "Page indicator";
+          description: "Shows which step you are on in the setup wizard";
+        }
+      }
+
+      Box {
+        orientation: horizontal;
+        spacing: 12;
+        halign: center;
+        margin-top: 16;
+        margin-bottom: 8;
+
+        Button btn_back {
+          label: _("Back");
+          width-request: 100;
+
+          accessibility {
+            label: "Go back";
+            description: "Return to the previous step in the setup wizard";
+          }
+        }
+
+        Button btn_next {
+          label: _("Next");
+          width-request: 100;
+
+          accessibility {
+            label: "Continue";
+            description: "Continue to the next step in the setup wizard";
+          }
+
+          styles [
+            "suggested-action",
+          ]
+        }
+      }
+    }
+  }
+}
+

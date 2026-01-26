@@ -1,0 +1,284 @@
+using Gtk 4.0;
+
+template $GnostrZapDialog: Window {
+  modal: true;
+  title: "Send Zap";
+  default-width: 380;
+  default-height: 500;
+  resizable: false;
+
+  [titlebar]
+  HeaderBar {
+    show-title-buttons: false;
+
+    [start]
+    Button btn_cancel {
+      label: "Cancel";
+      tooltip-text: "Cancel zap";
+      clicked => $on_cancel_clicked();
+    }
+
+    [title]
+    Box {
+      orientation: horizontal;
+      spacing: 8;
+
+      Image {
+        icon-name: "weather-storm-symbolic";
+      }
+
+      Label {
+        label: "Send Zap";
+
+        styles [
+          "title",
+        ]
+      }
+    }
+  }
+
+  Box {
+    orientation: vertical;
+    spacing: 0;
+
+    Revealer toast_revealer {
+      reveal-child: false;
+      transition-type: slide_down;
+
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+        margin-start: 12;
+        margin-end: 12;
+        margin-top: 8;
+        margin-bottom: 8;
+
+        styles [
+          "app-notification",
+        ]
+
+        Label toast_label {
+          label: "";
+          hexpand: true;
+          xalign: 0;
+        }
+      }
+    }
+
+    Box content_box {
+      orientation: vertical;
+      spacing: 16;
+      margin-start: 24;
+      margin-end: 24;
+      margin-top: 16;
+      margin-bottom: 24;
+      vexpand: true;
+
+      Box {
+        orientation: vertical;
+        spacing: 8;
+        halign: center;
+
+        Label {
+          label: "Zapping";
+
+          styles [
+            "dim-label",
+          ]
+        }
+
+        Label lbl_recipient {
+          label: "-";
+          ellipsize: middle;
+          max-width-chars: 30;
+
+          styles [
+            "title-3",
+          ]
+        }
+
+        Label lbl_lud16 {
+          label: "-";
+          ellipsize: end;
+
+          styles [
+            "dim-label",
+            "caption",
+          ]
+        }
+      }
+
+      Box {
+        orientation: vertical;
+        spacing: 8;
+
+        Label {
+          label: "Amount (sats)";
+          xalign: 0;
+
+          styles [
+            "heading",
+          ]
+        }
+
+        FlowBox preset_flow {
+          selection-mode: single;
+          homogeneous: true;
+          max-children-per-line: 4;
+          min-children-per-line: 3;
+          row-spacing: 8;
+          column-spacing: 8;
+
+          ToggleButton btn_21 {
+            label: "21";
+
+            styles [
+              "zap-amount",
+            ]
+          }
+
+          ToggleButton btn_100 {
+            label: "100";
+
+            styles [
+              "zap-amount",
+            ]
+          }
+
+          ToggleButton btn_500 {
+            label: "500";
+
+            styles [
+              "zap-amount",
+            ]
+          }
+
+          ToggleButton btn_1k {
+            label: "1K";
+            active: true;
+
+            styles [
+              "zap-amount",
+            ]
+          }
+
+          ToggleButton btn_5k {
+            label: "5K";
+
+            styles [
+              "zap-amount",
+            ]
+          }
+
+          ToggleButton btn_10k {
+            label: "10K";
+
+            styles [
+              "zap-amount",
+            ]
+          }
+
+          ToggleButton btn_21k {
+            label: "21K";
+
+            styles [
+              "zap-amount",
+            ]
+          }
+
+          ToggleButton btn_custom {
+            label: "Custom";
+
+            styles [
+              "zap-amount",
+            ]
+          }
+        }
+      }
+
+      Box custom_amount_box {
+        orientation: vertical;
+        spacing: 4;
+        visible: false;
+
+        Entry entry_custom_amount {
+          placeholder-text: "Enter amount in sats";
+          input-purpose: number;
+          halign: center;
+          width-chars: 15;
+
+          styles [
+            "zap-custom-entry",
+          ]
+        }
+      }
+
+      Box {
+        orientation: vertical;
+        spacing: 8;
+
+        Label {
+          label: "Comment (optional)";
+          xalign: 0;
+
+          styles [
+            "dim-label",
+          ]
+        }
+
+        Entry entry_comment {
+          placeholder-text: "Add a message...";
+          max-length: 280;
+        }
+      }
+
+      Box {
+        vexpand: true;
+      }
+
+      Box status_box {
+        orientation: horizontal;
+        spacing: 8;
+        halign: center;
+        visible: false;
+
+        Spinner spinner {
+          spinning: true;
+        }
+
+        Label lbl_status {
+          label: "Processing...";
+
+          styles [
+            "dim-label",
+          ]
+        }
+      }
+
+      Button btn_zap {
+        halign: center;
+        tooltip-text: "Send zap payment";
+        clicked => $on_zap_clicked();
+
+        styles [
+          "suggested-action",
+          "pill",
+        ]
+
+        Box {
+          orientation: horizontal;
+          spacing: 8;
+
+          Image {
+            icon-name: "weather-storm-symbolic";
+          }
+
+          Label lbl_zap_button {
+            label: "Zap 1,000 sats";
+          }
+        }
+      }
+    }
+  }
+}
+

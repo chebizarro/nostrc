@@ -1,0 +1,107 @@
+using Gtk 4.0;
+
+Box row {
+  orientation: vertical;
+  spacing: 6;
+  margin-start: 10;
+  margin-end: 10;
+  margin-top: 8;
+  margin-bottom: 8;
+
+  Box header_line {
+    orientation: horizontal;
+    spacing: 8;
+
+    Box thread_indicator {
+      width-request: 4;
+      height-request: 40;
+      halign: start;
+      valign: fill;
+
+      styles [
+        "thread-indicator",
+      ]
+    }
+
+    Box avatar {
+      width-request: 36;
+      height-request: 36;
+      halign: start;
+      valign: start;
+
+      styles [
+        "avatar",
+      ]
+
+      Label avatar_initials {
+        label: "AN";
+        xalign: 0.5;
+        yalign: 0.5;
+      }
+
+      Picture avatar_image {
+        visible: false;
+        halign: fill;
+        valign: fill;
+        content-fit: cover;
+      }
+    }
+
+    Box identity_time {
+      orientation: horizontal;
+      spacing: 6;
+      hexpand: true;
+
+      Label display_name {
+        label: "Anonymous";
+        xalign: 0.0;
+      }
+
+      Label handle {
+        label: "@anon";
+        xalign: 0.0;
+
+        styles [
+          "dim-label",
+        ]
+      }
+
+      Label timestamp {
+        label: "now";
+        hexpand: true;
+        halign: end;
+
+        styles [
+          "dim-label",
+        ]
+      }
+    }
+  }
+
+  Label content {
+    wrap: true;
+    xalign: 0.0;
+    selectable: false;
+  }
+
+  Box actions {
+    orientation: horizontal;
+    spacing: 6;
+
+    Button reply_button {
+      label: "Reply";
+      tooltip-text: "Reply to this note";
+    }
+
+    Button like_button {
+      label: "Like";
+      tooltip-text: "Like this note";
+    }
+
+    Button share_button {
+      label: "Share";
+      tooltip-text: "Share this note";
+    }
+  }
+}
+

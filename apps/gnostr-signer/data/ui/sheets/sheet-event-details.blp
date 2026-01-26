@@ -1,0 +1,350 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetEventDetails: Adw.Dialog {
+  title: _("Event Details");
+  content-width: 520;
+  content-height: 640;
+
+  accessibility {
+    label: "Event details dialog";
+    description: "View detailed information about a signed Nostr event including type, timestamp, identifiers, content, and tags";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      accessibility {
+        label: "Event details header";
+      }
+
+      title-widget: Label {
+        label: _("Event Details");
+      };
+
+      [start]
+      Button btn_close {
+        label: _("Close");
+
+        accessibility {
+          label: "Close";
+          description: "Close this dialog";
+        }
+      }
+    }
+
+    ScrolledWindow {
+      hscrollbar-policy: never;
+      vexpand: true;
+
+      accessibility {
+        label: "Event details container";
+      }
+
+      Adw.Clamp {
+        maximum-size: 600;
+        margin-top: 16;
+        margin-bottom: 16;
+        margin-start: 16;
+        margin-end: 16;
+
+        Box {
+          orientation: vertical;
+          spacing: 16;
+
+          Adw.PreferencesGroup {
+            title: _("Event Type");
+
+            accessibility {
+              label: "Event type information";
+              description: "The kind number and name of this event";
+            }
+
+            Box {
+              orientation: horizontal;
+              spacing: 12;
+              margin-top: 8;
+              margin-bottom: 8;
+              margin-start: 12;
+              margin-end: 12;
+
+              Label {
+                label: _("Kind:");
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Label lbl_kind {
+                label: "0";
+
+                accessibility {
+                  label: "Event kind number";
+                  description: "The numeric kind identifier for this event";
+                }
+
+                styles [
+                  "monospace",
+                  "title-3",
+                ]
+              }
+
+              Label lbl_kind_name {
+                label: _("Metadata");
+                hexpand: true;
+                xalign: 0;
+
+                accessibility {
+                  label: "Event kind name";
+                  description: "Human-readable name for this event type";
+                }
+
+                styles [
+                  "dim-label",
+                ]
+              }
+            }
+          }
+
+          Adw.PreferencesGroup {
+            title: _("Date/Time");
+
+            accessibility {
+              label: "Event timestamp";
+              description: "When this event was created";
+            }
+
+            Box {
+              orientation: horizontal;
+              spacing: 8;
+              margin-top: 8;
+              margin-bottom: 8;
+              margin-start: 12;
+              margin-end: 12;
+
+              Image {
+                icon-name: "appointment-symbolic";
+
+                accessibility {
+                  label: "Calendar icon";
+                  description: "Decorative calendar icon";
+                }
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Label lbl_datetime {
+                label: "2024-01-01 12:00:00";
+                selectable: true;
+
+                accessibility {
+                  label: "Event creation time";
+                  description: "The date and time when this event was signed";
+                }
+
+                styles [
+                  "monospace",
+                ]
+              }
+            }
+          }
+
+          Adw.PreferencesGroup {
+            title: _("Identifiers");
+            description: _("Click copy buttons to copy full values");
+
+            accessibility {
+              label: "Event identifiers";
+              description: "Public key, event ID, and signature for this event";
+            }
+
+            Adw.ActionRow row_pubkey {
+              title: _("Public Key");
+              subtitle: "npub1...";
+              subtitle-selectable: true;
+
+              accessibility {
+                description: "The public key of the signer";
+              }
+
+              styles [
+                "property",
+              ]
+
+              [suffix]
+              Button btn_copy_pubkey {
+                icon-name: "edit-copy-symbolic";
+                tooltip-text: _("Copy public key to clipboard");
+                valign: center;
+
+                accessibility {
+                  label: "Copy public key";
+                  description: "Copy the full public key to clipboard";
+                }
+
+                styles [
+                  "flat",
+                ]
+              }
+            }
+
+            Adw.ActionRow row_event_id {
+              title: _("Event ID");
+              subtitle: "note1...";
+              subtitle-selectable: true;
+
+              accessibility {
+                description: "The unique identifier for this event";
+              }
+
+              styles [
+                "property",
+              ]
+
+              [suffix]
+              Button btn_copy_event_id {
+                icon-name: "edit-copy-symbolic";
+                tooltip-text: _("Copy event ID to clipboard");
+                valign: center;
+
+                accessibility {
+                  label: "Copy event ID";
+                  description: "Copy the full event ID to clipboard";
+                }
+
+                styles [
+                  "flat",
+                ]
+              }
+            }
+
+            Adw.ActionRow row_signature {
+              title: _("Signature");
+              subtitle: "sig...";
+              subtitle-selectable: true;
+
+              accessibility {
+                description: "The cryptographic signature for this event";
+              }
+
+              styles [
+                "property",
+              ]
+
+              [suffix]
+              Button btn_copy_signature {
+                icon-name: "edit-copy-symbolic";
+                tooltip-text: _("Copy signature to clipboard");
+                valign: center;
+
+                accessibility {
+                  label: "Copy signature";
+                  description: "Copy the full signature to clipboard";
+                }
+
+                styles [
+                  "flat",
+                ]
+              }
+            }
+          }
+
+          Adw.PreferencesGroup {
+            title: _("Content");
+
+            accessibility {
+              label: "Event content";
+              description: "The content payload of this event";
+            }
+
+            Expander expander_content {
+              label: _("Show Content");
+              margin-top: 8;
+              margin-bottom: 8;
+              margin-start: 12;
+              margin-end: 12;
+
+              accessibility {
+                label: "Show content";
+                description: "Expand to view the event content";
+              }
+
+              ScrolledWindow {
+                hscrollbar-policy: automatic;
+                vscrollbar-policy: automatic;
+                min-content-height: 60;
+                max-content-height: 200;
+                margin-top: 8;
+
+                Label lbl_content {
+                  label: "(empty)";
+                  wrap: true;
+                  wrap-mode: word_char;
+                  selectable: true;
+                  xalign: 0;
+                  yalign: 0;
+
+                  accessibility {
+                    label: "Event content text";
+                    description: "The full content of the event. Select to copy.";
+                  }
+
+                  styles [
+                    "monospace",
+                  ]
+                }
+              }
+            }
+          }
+
+          Adw.PreferencesGroup {
+            title: _("Tags");
+
+            accessibility {
+              label: "Event tags";
+              description: "The tag array attached to this event";
+            }
+
+            Expander expander_tags {
+              label: _("Show Tags");
+              margin-top: 8;
+              margin-bottom: 8;
+              margin-start: 12;
+              margin-end: 12;
+
+              accessibility {
+                label: "Show tags";
+                description: "Expand to view the event tags";
+              }
+
+              ScrolledWindow {
+                hscrollbar-policy: never;
+                vscrollbar-policy: automatic;
+                min-content-height: 60;
+                max-content-height: 200;
+                margin-top: 8;
+
+                ListBox list_tags {
+                  selection-mode: none;
+
+                  accessibility {
+                    label: "Event tags list";
+                    description: "List of tags attached to this event";
+                  }
+
+                  styles [
+                    "boxed-list",
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+

@@ -1,0 +1,84 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $EventsPage: Adw.Bin {
+  accessibility {
+    label: "Events page";
+    description: "View recent signed events history";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      accessibility {
+        label: "Events page header";
+      }
+
+      title-widget: Adw.WindowTitle {
+        title: _("Recent Events");
+      };
+    }
+
+    Stack stack {
+      transition-type: crossfade;
+      vexpand: true;
+      hexpand: true;
+
+      accessibility {
+        label: "Events content stack";
+        description: "Shows either the empty state or the list of events";
+      }
+
+      StackPage {
+        name: "empty";
+
+        child: Adw.StatusPage empty_state {
+          icon-name: "document-open-recent-symbolic";
+          title: _("No Recent Events");
+          description: _("Signed events will appear here when applications request signatures through the signer.");
+          vexpand: true;
+          valign: center;
+
+          accessibility {
+            label: "No recent events";
+            description: "No events have been signed yet. Events will appear here when applications request signatures.";
+          }
+        };
+      }
+
+      StackPage {
+        name: "list";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+          vexpand: true;
+          hexpand: true;
+
+          accessibility {
+            label: "Events list container";
+            description: "Scrollable container for the list of signed events";
+          }
+
+          Adw.Clamp {
+            maximum-size: 600;
+            tightening-threshold: 400;
+
+            ListView list_view {
+              single-click-activate: true;
+
+              accessibility {
+                label: "Recent events list";
+                description: "List of recently signed events. Use arrow keys to navigate, Enter to view details.";
+              }
+
+              styles [
+                "navigation-sidebar",
+              ]
+            }
+          }
+        };
+      }
+    }
+  }
+}
+

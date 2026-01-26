@@ -1,0 +1,28 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $IdentityRow: Adw.ActionRow {
+  title: _("Identity");
+  subtitle: _("npub...");
+
+  accessibility {
+    label: "Account identity";
+    description: "A Nostr identity/account. Activate or use the Select button to switch to this account.";
+  }
+
+  [suffix]
+  Button btn_select {
+    label: _("Select");
+    valign: center;
+
+    accessibility {
+      label: "Select this account";
+      description: "Switch to this identity as the active signing account";
+    }
+
+    styles [
+      "suggested-action",
+    ]
+  }
+}
+

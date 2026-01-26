@@ -1,0 +1,129 @@
+using Gtk 4.0;
+
+template $GnostrDmInboxView: Widget {
+  Box root {
+    orientation: vertical;
+    hexpand: true;
+    vexpand: true;
+
+    Box header {
+      orientation: horizontal;
+      spacing: 8;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 8;
+      margin-bottom: 8;
+
+      Label {
+        label: "Messages";
+        xalign: 0.0;
+        hexpand: true;
+
+        styles [
+          "title-2",
+        ]
+      }
+
+      Button btn_compose {
+        icon-name: "mail-message-new-symbolic";
+        tooltip-text: "New Message";
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    Stack content_stack {
+      hexpand: true;
+      vexpand: true;
+      transition-type: crossfade;
+
+      StackPage {
+        name: "list";
+
+        child: ScrolledWindow scroller {
+          hexpand: true;
+          vexpand: true;
+          hscrollbar-policy: never;
+
+          ListBox list_box {
+            hexpand: true;
+            vexpand: true;
+            selection-mode: none;
+
+            styles [
+              "dm-list",
+              "boxed-list",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "empty";
+
+        child: Box empty_state {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Image {
+            icon-name: "mail-inbox-symbolic";
+            pixel-size: 64;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Label {
+            label: "No Messages";
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Label {
+            label: "Start a conversation by clicking the compose button above.";
+            wrap: true;
+            justify: center;
+            max-width-chars: 40;
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "loading";
+
+        child: Box {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Spinner loading_spinner {
+            spinning: false;
+            width-request: 32;
+            height-request: 32;
+          }
+
+          Label {
+            label: "Loading messages...";
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+    }
+  }
+}
+

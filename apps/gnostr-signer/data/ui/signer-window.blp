@@ -1,0 +1,358 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SignerWindow: Adw.ApplicationWindow {
+  default-width: 920;
+  default-height: 640;
+  width-request: 320;
+  height-request: 480;
+  focus-visible: true;
+
+  accessibility {
+    label: "GNostr Signer main window";
+    description: "Main application window for managing Nostr signing keys and connected applications";
+  }
+
+  Adw.Breakpoint breakpoint_mobile {
+    condition ("max-width: 500px")
+
+    setters {
+      split_view.collapsed: true;
+      bottom_bar.reveal: true;
+      switcher_title.title-visible: true;
+      sidebar_toggle_btn.visible: true;
+    }
+  }
+
+  Adw.Breakpoint breakpoint_tablet {
+    condition ("max-width: 800px")
+
+    setters {
+      split_view.collapsed: true;
+      bottom_bar.reveal: false;
+      sidebar_toggle_btn.visible: true;
+    }
+  }
+
+  Stack main_stack {
+    transition-type: crossfade;
+    transition-duration: 200;
+
+    accessibility {
+      label: "Application state";
+      description: "Switches between locked and unlocked application state";
+    }
+
+    StackPage {
+      name: "locked";
+
+      child: $GnLockScreen lock_screen {};
+    }
+
+    StackPage {
+      name: "unlocked";
+
+      child: Adw.ToolbarView toolbar_view {
+        [top]
+        Adw.HeaderBar header_bar {
+          accessibility {
+            label: "Main header bar";
+          }
+
+          [start]
+          ToggleButton sidebar_toggle_btn {
+            icon-name: "sidebar-show-symbolic";
+            tooltip-text: _("Toggle sidebar");
+            visible: false;
+
+            accessibility {
+              label: "Toggle sidebar";
+              description: "Show or hide the navigation sidebar";
+            }
+          }
+
+          title-widget: Adw.ViewSwitcherTitle switcher_title {
+            stack: stack;
+            title: "GNostr Signer";
+
+            accessibility {
+              label: "Page switcher";
+              description: "Switch between Permissions, Applications, and Settings pages";
+            }
+          };
+
+          [end]
+          MenuButton menu_btn {
+            icon-name: "open-menu-symbolic";
+            valign: center;
+
+            accessibility {
+              label: "Application menu";
+              description: "Open the application menu with additional options";
+            }
+          }
+        }
+
+        Adw.NavigationSplitView split_view {
+          min-sidebar-width: 220;
+          max-sidebar-width: 300;
+          sidebar-width-fraction: 0.30;
+
+          accessibility {
+            label: "Navigation split view";
+            description: "Main content area with sidebar navigation";
+          }
+
+          [sidebar]
+          Adw.NavigationPage sidebar_page {
+            title: _("Sections");
+
+            accessibility {
+              label: "Section navigation sidebar";
+              description: "Navigate between different sections of the application";
+            }
+
+            child: ScrolledWindow {
+              hscrollbar-policy: never;
+              vexpand: true;
+
+              ListBox sidebar {
+                selection-mode: browse;
+                activate-on-single-click: true;
+                focusable: true;
+                focus-on-click: true;
+
+                styles [
+                  "navigation-sidebar",
+                ]
+
+                accessibility {
+                  label: "Navigation sections list";
+                  description: "List of navigation sections. Use arrow keys to navigate and Enter to select.";
+                }
+
+                ListBoxRow row_permissions {
+                  accessibility {
+                    label: "Permissions and Connection section";
+                    description: "Navigate to permissions and connection settings";
+                  }
+
+                  Box {
+                    orientation: horizontal;
+                    spacing: 12;
+                    margin-start: 12;
+                    margin-end: 12;
+                    margin-top: 10;
+                    margin-bottom: 10;
+
+                    Image {
+                      icon-name: "security-high-symbolic";
+
+                      styles [
+                        "dim-label",
+                      ]
+                    }
+
+                    Label {
+                      label: _("Permissions");
+                      xalign: 0;
+                      hexpand: true;
+                    }
+                  }
+                }
+
+                ListBoxRow row_applications {
+                  accessibility {
+                    label: "Applications section";
+                    description: "Navigate to manage connected applications";
+                  }
+
+                  Box {
+                    orientation: horizontal;
+                    spacing: 12;
+                    margin-start: 12;
+                    margin-end: 12;
+                    margin-top: 10;
+                    margin-bottom: 10;
+
+                    Image {
+                      icon-name: "application-x-executable-symbolic";
+
+                      styles [
+                        "dim-label",
+                      ]
+                    }
+
+                    Label {
+                      label: _("Applications");
+                      xalign: 0;
+                      hexpand: true;
+                    }
+                  }
+                }
+
+                ListBoxRow row_sessions {
+                  accessibility {
+                    label: "Active Sessions section";
+                    description: "Navigate to manage active client sessions";
+                  }
+
+                  Box {
+                    orientation: horizontal;
+                    spacing: 12;
+                    margin-start: 12;
+                    margin-end: 12;
+                    margin-top: 10;
+                    margin-bottom: 10;
+
+                    Image {
+                      icon-name: "network-wireless-symbolic";
+
+                      styles [
+                        "dim-label",
+                      ]
+                    }
+
+                    Label {
+                      label: _("Sessions");
+                      xalign: 0;
+                      hexpand: true;
+                    }
+                  }
+                }
+
+                ListBoxRow row_history {
+                  accessibility {
+                    label: "Event History section";
+                    description: "Navigate to view signing operation history";
+                  }
+
+                  Box {
+                    orientation: horizontal;
+                    spacing: 12;
+                    margin-start: 12;
+                    margin-end: 12;
+                    margin-top: 10;
+                    margin-bottom: 10;
+
+                    Image {
+                      icon-name: "document-open-recent-symbolic";
+
+                      styles [
+                        "dim-label",
+                      ]
+                    }
+
+                    Label {
+                      label: _("History");
+                      xalign: 0;
+                      hexpand: true;
+                    }
+                  }
+                }
+
+                ListBoxRow row_settings {
+                  accessibility {
+                    label: "Settings section";
+                    description: "Navigate to application settings";
+                  }
+
+                  Box {
+                    orientation: horizontal;
+                    spacing: 12;
+                    margin-start: 12;
+                    margin-end: 12;
+                    margin-top: 10;
+                    margin-bottom: 10;
+
+                    Image {
+                      icon-name: "emblem-system-symbolic";
+
+                      styles [
+                        "dim-label",
+                      ]
+                    }
+
+                    Label {
+                      label: _("Settings");
+                      xalign: 0;
+                      hexpand: true;
+                    }
+                  }
+                }
+              }
+            };
+          }
+
+          Adw.NavigationPage content_page {
+            title: _("GNostr Signer");
+
+            accessibility {
+              label: "Main content area";
+              description: "Main content for the selected section";
+            }
+
+            child: Adw.ViewStack stack {
+              accessibility {
+                label: "Content stack";
+                description: "Container for different page views";
+              }
+
+              Adw.ViewStackPage {
+                name: "permissions";
+                title: _("Permissions");
+                icon-name: "security-high-symbolic";
+
+                child: $PagePermissions page_permissions {};
+              }
+
+              Adw.ViewStackPage {
+                name: "applications";
+                title: _("Apps");
+                icon-name: "application-x-executable-symbolic";
+
+                child: $PageApplications page_applications {};
+              }
+
+              Adw.ViewStackPage {
+                name: "sessions";
+                title: _("Sessions");
+                icon-name: "network-wireless-symbolic";
+
+                child: $GnPageSessions page_sessions {};
+              }
+
+              Adw.ViewStackPage {
+                name: "history";
+                title: _("History");
+                icon-name: "document-open-recent-symbolic";
+
+                child: $GnPageHistory page_history {};
+              }
+
+              Adw.ViewStackPage {
+                name: "settings";
+                title: _("Settings");
+                icon-name: "emblem-system-symbolic";
+
+                child: $PageSettings page_settings {};
+              }
+            };
+          }
+        }
+
+        [bottom]
+        Adw.ViewSwitcherBar bottom_bar {
+          stack: stack;
+          reveal: false;
+
+          accessibility {
+            label: "Bottom navigation bar";
+            description: "Navigation bar for narrow screens";
+          }
+        }
+      };
+    }
+  }
+}
+

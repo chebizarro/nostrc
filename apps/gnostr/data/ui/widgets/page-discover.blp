@@ -1,0 +1,457 @@
+using Gtk 4.0;
+
+template $GnostrPageDiscover: Widget {
+  Box root {
+    orientation: vertical;
+    hexpand: true;
+    vexpand: true;
+    spacing: 0;
+
+    Box header {
+      orientation: vertical;
+      spacing: 8;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 12;
+      margin-bottom: 8;
+
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+
+        Label {
+          label: "Discover";
+          xalign: 0.0;
+          hexpand: true;
+
+          styles [
+            "title-2",
+          ]
+        }
+
+        Button btn_communities {
+          tooltip-text: "Browse moderated communities (NIP-72)";
+
+          Box {
+            orientation: horizontal;
+            spacing: 6;
+
+            Image {
+              icon-name: "system-users-symbolic";
+            }
+
+            Label {
+              label: "Communities";
+            }
+          }
+
+          styles [
+            "flat",
+          ]
+        }
+      }
+
+      Box mode_row {
+        orientation: horizontal;
+        spacing: 8;
+        halign: start;
+        margin-bottom: 4;
+
+        ToggleButton btn_mode_people {
+          label: "People";
+          active: true;
+          tooltip-text: "Search for profiles";
+
+          styles [
+            "pill",
+          ]
+        }
+
+        ToggleButton btn_mode_live {
+          label: "Live";
+          tooltip-text: "Browse live streams (NIP-53)";
+
+          styles [
+            "pill",
+          ]
+        }
+
+        ToggleButton btn_mode_articles {
+          label: "Articles";
+          tooltip-text: "Browse Wiki (NIP-54) and Long-form (NIP-23) content";
+
+          styles [
+            "pill",
+          ]
+        }
+      }
+
+      SearchEntry search_entry {
+        placeholder-text: "Search profiles...";
+        hexpand: true;
+      }
+
+      Box filter_row {
+        orientation: horizontal;
+        spacing: 8;
+        hexpand: true;
+
+        ToggleButton btn_local {
+          label: "Local";
+          active: true;
+
+          styles [
+            "pill",
+          ]
+        }
+
+        ToggleButton btn_network {
+          label: "Network";
+
+          styles [
+            "pill",
+          ]
+        }
+
+        Box {
+          hexpand: true;
+        }
+
+        DropDown sort_dropdown {
+          tooltip-text: "Sort profiles";
+
+          model: StringList {
+            strings [
+              "Recently Seen",
+              "Alphabetical",
+              "Following First",
+            ]
+          };
+        }
+
+        Label lbl_profile_count {
+          label: "0 profiles";
+
+          styles [
+            "dim-label",
+          ]
+        }
+      }
+    }
+
+    Separator {
+      orientation: horizontal;
+    }
+
+    Stack content_stack {
+      hexpand: true;
+      vexpand: true;
+      transition-type: crossfade;
+
+      StackPage {
+        name: "results";
+
+        child: ScrolledWindow scroller {
+          hexpand: true;
+          vexpand: true;
+          hscrollbar-policy: never;
+
+          ListView results_list {
+            hexpand: true;
+            vexpand: true;
+
+            styles [
+              "navigation-sidebar",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "empty";
+
+        child: Box empty_state {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Image empty_icon {
+            icon-name: "system-users-symbolic";
+            pixel-size: 64;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Label empty_title {
+            label: "No Profiles Cached";
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Label empty_subtitle {
+            label: "Profiles will appear here as you browse the network.";
+            wrap: true;
+            justify: center;
+            max-width-chars: 40;
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "no-results";
+
+        child: Box no_results_state {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Image {
+            icon-name: "system-search-symbolic";
+            pixel-size: 64;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Label {
+            label: "No Matches";
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Label {
+            label: "No profiles match your search.";
+            wrap: true;
+            justify: center;
+            max-width-chars: 40;
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "loading";
+
+        child: Box {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Spinner loading_spinner {
+            spinning: false;
+            width-request: 32;
+            height-request: 32;
+          }
+
+          Label {
+            label: "Searching...";
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "live";
+
+        child: ScrolledWindow live_scroller {
+          hexpand: true;
+          vexpand: true;
+          hscrollbar-policy: never;
+
+          Box live_content_box {
+            orientation: vertical;
+            spacing: 12;
+            margin-start: 12;
+            margin-end: 12;
+            margin-top: 12;
+            margin-bottom: 12;
+
+            Box live_now_section {
+              orientation: vertical;
+              spacing: 8;
+
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+
+                Image {
+                  icon-name: "media-record-symbolic";
+
+                  styles [
+                    "error",
+                  ]
+                }
+
+                Label lbl_live_now {
+                  label: "Live Now";
+                  xalign: 0.0;
+                  hexpand: true;
+
+                  styles [
+                    "title-3",
+                  ]
+                }
+
+                Button btn_refresh_live {
+                  icon-name: "view-refresh-symbolic";
+                  tooltip-text: "Refresh live activities";
+
+                  styles [
+                    "flat",
+                  ]
+                }
+              }
+
+              FlowBox live_flow_box {
+                selection-mode: none;
+                homogeneous: false;
+                min-children-per-line: 1;
+                max-children-per-line: 3;
+                row-spacing: 12;
+                column-spacing: 12;
+              }
+            }
+
+            Box scheduled_section {
+              orientation: vertical;
+              spacing: 8;
+              margin-top: 12;
+
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+
+                Image {
+                  icon-name: "alarm-symbolic";
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+
+                Label lbl_scheduled {
+                  label: "Scheduled";
+                  xalign: 0.0;
+                  hexpand: true;
+
+                  styles [
+                    "title-3",
+                  ]
+                }
+              }
+
+              FlowBox scheduled_flow_box {
+                selection-mode: none;
+                homogeneous: false;
+                min-children-per-line: 1;
+                max-children-per-line: 3;
+                row-spacing: 12;
+                column-spacing: 12;
+              }
+            }
+          }
+        };
+      }
+
+      StackPage {
+        name: "live-empty";
+
+        child: Box live_empty_state {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Image {
+            icon-name: "video-display-symbolic";
+            pixel-size: 64;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Label {
+            label: "No Live Activities";
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          Label {
+            label: "No one is streaming right now. Check back later!";
+            wrap: true;
+            justify: center;
+            max-width-chars: 40;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Button btn_refresh_live_empty {
+            label: "Refresh";
+            halign: center;
+            margin-top: 8;
+          }
+        };
+      }
+
+      StackPage {
+        name: "live-loading";
+
+        child: Box {
+          orientation: vertical;
+          halign: center;
+          valign: center;
+          spacing: 12;
+
+          Spinner live_loading_spinner {
+            spinning: false;
+            width-request: 32;
+            height-request: 32;
+          }
+
+          Label {
+            label: "Loading live activities...";
+
+            styles [
+              "dim-label",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "articles";
+
+        child: $GnostrArticlesView articles_view {
+          hexpand: "true";
+          vexpand: "true";
+        };
+      }
+    }
+  }
+}
+

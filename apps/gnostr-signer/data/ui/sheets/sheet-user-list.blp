@@ -1,0 +1,177 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetUserList: Adw.Dialog {
+  title: _("User List");
+  content-width: 480;
+  content-height: 600;
+
+  accessibility {
+    label: "User list management dialog";
+    description: "Manage your follow or mute list by adding, removing, and publishing users";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      accessibility {
+        label: "User list header";
+      }
+
+      title-widget: Label lbl_title {
+        label: _("Manage Users");
+      };
+
+      [start]
+      Button btn_cancel {
+        label: _("Cancel");
+
+        accessibility {
+          label: "Cancel";
+          description: "Close without saving changes";
+        }
+      }
+
+      [end]
+      Button btn_publish {
+        label: _("Save & Publish");
+
+        accessibility {
+          label: "Save and publish";
+          description: "Save changes and publish the updated list to relays";
+        }
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    Box {
+      orientation: vertical;
+      spacing: 12;
+      margin-top: 16;
+      margin-bottom: 16;
+      margin-start: 16;
+      margin-end: 16;
+
+      Box {
+        orientation: vertical;
+        spacing: 8;
+
+        accessibility {
+          label: "Add user section";
+          description: "Add a new user to the list by public key";
+        }
+
+        Box {
+          orientation: horizontal;
+          spacing: 8;
+
+          Entry entry_pubkey {
+            placeholder-text: _("npub1... or 64-hex pubkey");
+            hexpand: true;
+
+            accessibility {
+              label: "Public key input";
+              description: "Enter a Nostr public key in npub or hex format";
+            }
+          }
+
+          Button btn_add {
+            icon-name: "list-add-symbolic";
+
+            accessibility {
+              label: "Add user";
+              description: "Add the entered public key to the list";
+            }
+
+            styles [
+              "suggested-action",
+            ]
+          }
+        }
+
+        Entry entry_petname {
+          placeholder-text: _("Petname (optional)");
+          hexpand: true;
+
+          accessibility {
+            label: "Petname";
+            description: "Optional nickname for this user";
+          }
+        }
+      }
+
+      Box {
+        orientation: horizontal;
+        spacing: 12;
+
+        accessibility {
+          label: "Search and sync";
+          description: "Search users and sync from relays";
+        }
+
+        SearchEntry search_entry {
+          placeholder-text: _("Search...");
+          hexpand: true;
+
+          accessibility {
+            label: "Search users";
+            description: "Filter the user list by searching";
+          }
+        }
+
+        Label lbl_count {
+          label: "0 users";
+
+          accessibility {
+            label: "User count";
+            description: "Number of users in the list";
+          }
+
+          styles [
+            "dim-label",
+          ]
+        }
+
+        Button btn_sync {
+          icon-name: "emblem-synchronizing-symbolic";
+          tooltip-text: _("Sync from relays");
+
+          accessibility {
+            label: "Sync from relays";
+            description: "Fetch the latest list from your relays";
+          }
+
+          styles [
+            "flat",
+          ]
+        }
+      }
+
+      ScrolledWindow {
+        vexpand: true;
+        hscrollbar-policy: never;
+
+        accessibility {
+          label: "User list container";
+        }
+
+        ListBox list_users {
+          selection-mode: none;
+
+          accessibility {
+            label: "Users list";
+            description: "List of users. Use keyboard to navigate and manage entries.";
+          }
+
+          styles [
+            "boxed-list",
+          ]
+        }
+      }
+    }
+  }
+}
+

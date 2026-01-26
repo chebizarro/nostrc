@@ -1,0 +1,540 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetSocialRecovery: Adw.Dialog {
+  title: _("Social Recovery");
+  can-close: true;
+  content-width: 550;
+  content-height: -1;
+  follows-content-size: true;
+
+  accessibility {
+    label: "Social recovery dialog";
+    description: "Set up or manage social recovery using trusted guardians";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      [start]
+      Button btn_close {
+        icon-name: "window-close-symbolic";
+        tooltip-text: _("Close dialog");
+
+        accessibility {
+          label: "Close";
+        }
+      }
+    }
+
+    content: Adw.ViewStack view_stack {
+      Adw.ViewStackPage {
+        name: "setup";
+        title: _("Setup");
+        icon-name: "shield-symbolic";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+          vscrollbar-policy: automatic;
+
+          Adw.Clamp {
+            maximum-size: 500;
+            tightening-threshold: 400;
+
+            Box {
+              orientation: vertical;
+              spacing: 18;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 18;
+              margin-bottom: 18;
+
+              Adw.StatusPage {
+                icon-name: "people-symbolic";
+                title: _("Social Recovery");
+                description: _("Split your key into encrypted shares and distribute them to trusted guardians. If you lose access, collect enough shares to recover your key.");
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Account to Protect");
+
+                Adw.ActionRow row_setup_account {
+                  title: _("npub1...");
+                  subtitle: _("Selected identity");
+                  activatable: false;
+
+                  [prefix]
+                  Image {
+                    icon-name: "key-symbolic";
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Add Guardians");
+                description: _("Add trusted contacts who will hold recovery shares. Choose people you trust who are unlikely to collude.");
+
+                Adw.EntryRow entry_guardian_npub {
+                  title: _("Guardian's npub");
+
+                  accessibility {
+                    description: "Enter the guardian's public key";
+                  }
+                }
+
+                Adw.EntryRow entry_guardian_name {
+                  title: _("Name (optional)");
+
+                  accessibility {
+                    description: "Optional friendly name for this guardian";
+                  }
+                }
+
+                Adw.ActionRow {
+                  activatable: false;
+
+                  [suffix]
+                  Button btn_add_guardian {
+                    label: _("Add Guardian");
+                    valign: center;
+
+                    styles [
+                      "suggested-action",
+                    ]
+
+                    accessibility {
+                      label: "Add guardian to list";
+                    }
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Guardians");
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 6;
+                  halign: start;
+                  margin-start: 12;
+                  margin-bottom: 6;
+
+                  Label lbl_guardian_count {
+                    label: "0 guardians";
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+                }
+
+                ListBox list_guardians {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  accessibility {
+                    label: "Guardian list";
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Recovery Threshold");
+                description: _("How many guardians must provide their shares to recover your key.");
+
+                Adw.SpinRow spin_threshold {
+                  title: _("Required Shares");
+                  subtitle: _("Minimum guardians needed for recovery");
+
+                  adjustment: Adjustment {
+                    lower: 2;
+                    upper: 10;
+                    value: 2;
+                    step-increment: 1;
+                    page-increment: 1;
+                  };
+                }
+
+                Box {
+                  orientation: horizontal;
+                  margin-start: 12;
+                  margin-end: 12;
+                  margin-top: 6;
+                  margin-bottom: 6;
+
+                  Label lbl_threshold_info {
+                    label: _("Add at least 2 guardians to continue");
+                    wrap: true;
+
+                    styles [
+                      "dim-label",
+                      "caption",
+                    ]
+                  }
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                halign: center;
+                margin-top: 12;
+
+                Button btn_setup_recovery {
+                  label: _("Set Up Recovery");
+                  sensitive: false;
+
+                  styles [
+                    "suggested-action",
+                    "pill",
+                  ]
+
+                  accessibility {
+                    label: "Generate recovery shares";
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup group_setup_result {
+                visible: false;
+                title: _("Recovery Created");
+
+                Box {
+                  orientation: vertical;
+                  spacing: 12;
+                  margin-start: 12;
+                  margin-end: 12;
+                  margin-top: 12;
+                  margin-bottom: 12;
+
+                  Label lbl_setup_status {
+                    wrap: true;
+                    xalign: 0;
+
+                    accessibility {
+                      label: "Setup status";
+                    }
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup group_shares {
+                visible: false;
+                title: _("Distribute Shares");
+                description: _("Send each guardian their encrypted share. Click the copy button to copy a message you can send them.");
+
+                ListBox list_shares {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  accessibility {
+                    label: "Share distribution list";
+                  }
+                }
+              }
+            }
+          }
+        };
+      }
+
+      Adw.ViewStackPage {
+        name: "manage";
+        title: _("Manage");
+        icon-name: "applications-system-symbolic";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+          vscrollbar-policy: automatic;
+
+          Adw.Clamp {
+            maximum-size: 500;
+            tightening-threshold: 400;
+
+            Box {
+              orientation: vertical;
+              spacing: 18;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 18;
+              margin-bottom: 18;
+
+              Adw.PreferencesGroup {
+                title: _("Account");
+
+                Adw.ActionRow row_manage_account {
+                  title: _("npub1...");
+                  subtitle: _("Selected identity");
+                  activatable: false;
+
+                  [prefix]
+                  Image {
+                    icon-name: "key-symbolic";
+                  }
+                }
+              }
+
+              Adw.StatusPage status_no_config {
+                icon-name: "dialog-information-symbolic";
+                title: _("No Recovery Configured");
+                description: _("Social recovery has not been set up for this identity. Switch to the Setup tab to configure it.");
+              }
+
+              Adw.PreferencesGroup group_config_info {
+                visible: false;
+                title: _("Recovery Configuration");
+
+                Adw.ActionRow row_config_threshold {
+                  title: _("Threshold");
+                  subtitle: "-";
+                  activatable: false;
+
+                  [prefix]
+                  Image {
+                    icon-name: "user-available-symbolic";
+                  }
+                }
+
+                Adw.ActionRow row_config_created {
+                  title: _("Created");
+                  subtitle: "-";
+                  activatable: false;
+
+                  [prefix]
+                  Image {
+                    icon-name: "x-office-calendar-symbolic";
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Guardians");
+
+                ListBox list_manage_guardians {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  accessibility {
+                    label: "Configured guardians";
+                  }
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                spacing: 12;
+                halign: center;
+                margin-top: 12;
+
+                Button btn_delete_recovery {
+                  label: _("Delete Recovery");
+
+                  styles [
+                    "destructive-action",
+                  ]
+
+                  accessibility {
+                    label: "Delete recovery configuration";
+                  }
+                }
+              }
+            }
+          }
+        };
+      }
+
+      Adw.ViewStackPage {
+        name: "recover";
+        title: _("Recover");
+        icon-name: "view-refresh-symbolic";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+          vscrollbar-policy: automatic;
+
+          Adw.Clamp {
+            maximum-size: 500;
+            tightening-threshold: 400;
+
+            Box {
+              orientation: vertical;
+              spacing: 18;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 18;
+              margin-bottom: 18;
+
+              Adw.StatusPage {
+                icon-name: "view-refresh-symbolic";
+                title: _("Recover Your Key");
+                description: _("Collect shares from your guardians and enter them below to reconstruct your private key.");
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Recovery Settings");
+
+                Adw.EntryRow entry_recover_npub {
+                  title: _("Identity to Recover (optional)");
+
+                  accessibility {
+                    description: "Enter the npub of the identity you are recovering";
+                  }
+                }
+
+                Adw.SpinRow spin_recover_threshold {
+                  title: _("Required Shares");
+                  subtitle: _("The threshold set when recovery was configured");
+
+                  adjustment: Adjustment {
+                    lower: 2;
+                    upper: 10;
+                    value: 2;
+                    step-increment: 1;
+                    page-increment: 1;
+                  };
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Add Shares");
+                description: _("Paste each guardian's decrypted share (starting with sss1:).");
+
+                Adw.EntryRow entry_share_input {
+                  title: _("Share Data");
+
+                  accessibility {
+                    description: "Paste a decrypted share from a guardian";
+                  }
+                }
+
+                Adw.ActionRow {
+                  activatable: false;
+
+                  [suffix]
+                  Button btn_add_share {
+                    label: _("Add Share");
+                    valign: center;
+
+                    styles [
+                      "suggested-action",
+                    ]
+
+                    accessibility {
+                      label: "Add share to collection";
+                    }
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Collected Shares");
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 6;
+                  halign: start;
+                  margin-start: 12;
+                  margin-bottom: 6;
+
+                  Label lbl_share_count {
+                    label: "0 of 2 shares collected";
+
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+                }
+
+                ListBox list_collected_shares {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  accessibility {
+                    label: "Collected shares";
+                  }
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                halign: center;
+                margin-top: 12;
+
+                Button btn_recover {
+                  label: _("Recover Key");
+                  sensitive: false;
+
+                  styles [
+                    "suggested-action",
+                    "pill",
+                  ]
+
+                  accessibility {
+                    label: "Reconstruct key from shares";
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup group_recovery_result {
+                visible: false;
+                title: _("Key Recovered");
+
+                Adw.StatusPage {
+                  icon-name: "emblem-ok-symbolic";
+                  title: _("Success!");
+                  description: _("Your key has been reconstructed from the shares.");
+                }
+
+                Adw.ActionRow row_recovered_npub {
+                  title: _("Public Key");
+                  subtitle: "npub1...";
+                  subtitle-selectable: true;
+
+                  [prefix]
+                  Image {
+                    icon-name: "key-symbolic";
+                  }
+                }
+
+                Adw.ActionRow {
+                  activatable: false;
+
+                  [suffix]
+                  Button btn_import_recovered {
+                    label: _("Import Key");
+                    valign: center;
+
+                    styles [
+                      "suggested-action",
+                    ]
+
+                    accessibility {
+                      label: "Import recovered key to wallet";
+                    }
+                  }
+                }
+              }
+            }
+          }
+        };
+      }
+    };
+
+    [bottom]
+    Adw.ViewSwitcherBar {
+      stack: view_stack;
+      reveal: true;
+    }
+  }
+}
+

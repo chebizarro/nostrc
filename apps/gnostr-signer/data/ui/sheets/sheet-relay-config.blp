@@ -1,0 +1,196 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetRelayConfig: Adw.Dialog {
+  title: _("Relay Configuration");
+  content-width: 500;
+  content-height: 550;
+
+  accessibility {
+    label: "Relay configuration dialog";
+    description: "Configure which Nostr relays to use for reading and writing events";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      accessibility {
+        label: "Relay configuration header";
+      }
+
+      title-widget: Label {
+        label: _("Relay Configuration");
+      };
+
+      [start]
+      Button btn_cancel {
+        label: _("Cancel");
+
+        accessibility {
+          label: "Cancel";
+          description: "Close without saving changes";
+        }
+      }
+
+      [end]
+      Button btn_publish {
+        label: _("Save & Publish");
+
+        accessibility {
+          label: "Save and publish";
+          description: "Save relay configuration and publish NIP-65 relay list";
+        }
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    Box {
+      orientation: vertical;
+      spacing: 16;
+      margin-top: 16;
+      margin-bottom: 16;
+      margin-start: 16;
+      margin-end: 16;
+
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+
+        accessibility {
+          label: "Add relay";
+          description: "Add a new relay URL";
+        }
+
+        Entry entry_url {
+          placeholder-text: _("wss://relay.example.com");
+          hexpand: true;
+
+          accessibility {
+            label: "Relay URL";
+            description: "Enter a WebSocket relay URL starting with wss://";
+          }
+        }
+
+        Button btn_add {
+          icon-name: "list-add-symbolic";
+
+          accessibility {
+            label: "Add relay";
+            description: "Add the entered relay URL to your list";
+          }
+
+          styles [
+            "suggested-action",
+          ]
+        }
+      }
+
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+
+        Label {
+          label: _("Identity:");
+
+          styles [
+            "dim-label",
+          ]
+        }
+
+        Label lbl_identity {
+          label: "Global";
+          hexpand: true;
+          xalign: 0;
+          selectable: true;
+          ellipsize: middle;
+
+          accessibility {
+            label: "Current identity";
+            description: "The identity whose relay list is being configured";
+          }
+
+          styles [
+            "monospace",
+          ]
+        }
+      }
+
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+
+        Label {
+          label: _("Configure which relays to use for reading and writing events (NIP-65). Click \"Fetch Info\" to get relay metadata (NIP-11).");
+          wrap: true;
+          xalign: 0;
+          hexpand: true;
+
+          accessibility {
+            label: "Relay configuration instructions";
+            description: "Instructions for configuring relays and fetching relay information";
+          }
+
+          styles [
+            "dim-label",
+          ]
+        }
+
+        Button btn_reset_defaults {
+          label: _("Reset");
+          tooltip-text: _("Reset relay list to default relays");
+
+          accessibility {
+            label: "Reset to defaults";
+            description: "Reset the relay list to the default bootstrap relays";
+          }
+        }
+
+        Button btn_fetch_info {
+          label: _("Fetch Info");
+          tooltip-text: _("Fetch NIP-11 relay information for all relays");
+
+          accessibility {
+            label: "Fetch relay information";
+            description: "Fetch NIP-11 metadata from all configured relays";
+          }
+        }
+
+        Button btn_test_all {
+          label: _("Test All");
+          tooltip-text: _("Test connection to all relays");
+
+          accessibility {
+            label: "Test all relays";
+            description: "Test WebSocket connections to all configured relays";
+          }
+        }
+      }
+
+      ScrolledWindow {
+        vexpand: true;
+        hscrollbar-policy: never;
+
+        accessibility {
+          label: "Relay list container";
+        }
+
+        ListBox list_relays {
+          selection-mode: none;
+
+          accessibility {
+            label: "Configured relays";
+            description: "List of configured relays. Toggle read and write permissions for each relay.";
+          }
+
+          styles [
+            "boxed-list",
+          ]
+        }
+      }
+    }
+  }
+}
+

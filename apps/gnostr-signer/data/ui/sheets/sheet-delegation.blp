@@ -1,0 +1,649 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SheetDelegation: Adw.Dialog {
+  title: _("Delegation Management");
+  can-close: true;
+  content-width: 520;
+  content-height: 680;
+
+  accessibility {
+    label: "Delegation management dialog";
+    description: "Create and manage NIP-26 delegations allowing other keys to sign on your behalf";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      [start]
+      Button btn_back {
+        icon-name: "go-previous-symbolic";
+        visible: false;
+
+        accessibility {
+          label: "Go back";
+        }
+      }
+
+      [end]
+      Button btn_close {
+        label: _("Close");
+
+        accessibility {
+          label: "Close dialog";
+        }
+      }
+    }
+
+    content: Stack stack_main {
+      transition-type: slide_left_right;
+
+      StackPage {
+        name: "list";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+          vscrollbar-policy: automatic;
+
+          Adw.Clamp {
+            maximum-size: 480;
+
+            Box {
+              orientation: vertical;
+              spacing: 18;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 18;
+              margin-bottom: 18;
+
+              Adw.StatusPage status_header {
+                icon-name: "emblem-shared-symbolic";
+                title: _("Delegations");
+                description: _("Allow other keys to sign events on your behalf (NIP-26)");
+              }
+
+              Box {
+                orientation: horizontal;
+                halign: center;
+
+                Button btn_create_new {
+                  label: _("Create New Delegation");
+
+                  styles [
+                    "suggested-action",
+                    "pill",
+                  ]
+
+                  accessibility {
+                    label: "Create a new delegation token";
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup group_active {
+                title: _("Active Delegations");
+                description: _("Keys currently authorized to sign on your behalf");
+
+                ListBox list_delegations {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+                }
+              }
+
+              Adw.StatusPage status_empty {
+                visible: false;
+                icon-name: "emblem-documents-symbolic";
+                title: _("No Active Delegations");
+                description: _("Create a delegation to allow another key to sign events on your behalf.");
+              }
+            }
+          }
+        };
+      }
+
+      StackPage {
+        name: "create";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+          vscrollbar-policy: automatic;
+
+          Adw.Clamp {
+            maximum-size: 480;
+
+            Box {
+              orientation: vertical;
+              spacing: 18;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 18;
+              margin-bottom: 18;
+
+              Adw.Banner banner_info {
+                title: _("Delegations grant signing authority. Only delegate to keys you trust.");
+                revealed: true;
+
+                styles [
+                  "warning",
+                ]
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Delegatee");
+                description: _("The public key that will receive signing authority");
+
+                Adw.EntryRow entry_delegatee {
+                  title: _("Public Key (hex or npub)");
+
+                  accessibility {
+                    description: "Enter the delegatee's public key in hex format (64 characters) or npub format";
+                  }
+                }
+
+                Adw.EntryRow entry_label {
+                  title: _("Label (optional)");
+
+                  accessibility {
+                    description: "A friendly name to identify this delegation";
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Allowed Event Kinds");
+                description: _("Select which event types this delegation can sign");
+
+                Adw.ActionRow {
+                  title: _("All Event Kinds");
+                  subtitle: _("No restrictions on event types");
+
+                  [prefix]
+                  CheckButton chk_all_kinds {
+                    valign: center;
+                    active: true;
+
+                    accessibility {
+                      label: "Allow all event kinds";
+                    }
+                  }
+
+                  activatable-widget: chk_all_kinds;
+                }
+
+                Adw.ExpanderRow expander_kinds {
+                  title: _("Specific Kinds Only");
+                  subtitle: _("Restrict to selected event types");
+                  show-enable-switch: true;
+                  enable-expansion: false;
+
+                  Adw.ActionRow {
+                    title: "Kind 1: Short Text Note";
+
+                    [suffix]
+                    CheckButton chk_kind_1 {
+                      valign: center;
+                    }
+
+                    activatable-widget: chk_kind_1;
+                  }
+
+                  Adw.ActionRow {
+                    title: "Kind 6: Repost";
+
+                    [suffix]
+                    CheckButton chk_kind_6 {
+                      valign: center;
+                    }
+
+                    activatable-widget: chk_kind_6;
+                  }
+
+                  Adw.ActionRow {
+                    title: "Kind 7: Reaction";
+
+                    [suffix]
+                    CheckButton chk_kind_7 {
+                      valign: center;
+                    }
+
+                    activatable-widget: chk_kind_7;
+                  }
+
+                  Adw.ActionRow {
+                    title: "Kind 4: Encrypted DM";
+
+                    [suffix]
+                    CheckButton chk_kind_4 {
+                      valign: center;
+                    }
+
+                    activatable-widget: chk_kind_4;
+                  }
+
+                  Adw.ActionRow {
+                    title: "Kind 0: Profile Metadata";
+
+                    [suffix]
+                    CheckButton chk_kind_0 {
+                      valign: center;
+                    }
+
+                    activatable-widget: chk_kind_0;
+                  }
+
+                  Adw.ActionRow {
+                    title: "Kind 3: Follow List";
+
+                    [suffix]
+                    CheckButton chk_kind_3 {
+                      valign: center;
+                    }
+
+                    activatable-widget: chk_kind_3;
+                  }
+
+                  Adw.EntryRow entry_custom_kind {
+                    title: _("Custom Kind Number");
+                    input-purpose: number;
+
+                    accessibility {
+                      description: "Enter a custom event kind number";
+                    }
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Time Constraints");
+                description: _("Optionally limit when this delegation is valid");
+
+                Adw.ActionRow {
+                  title: _("No Time Limit");
+                  subtitle: _("Delegation valid indefinitely (until revoked)");
+
+                  [prefix]
+                  CheckButton chk_no_time_limit {
+                    valign: center;
+                    active: true;
+
+                    accessibility {
+                      label: "No time limit on delegation";
+                    }
+                  }
+
+                  activatable-widget: chk_no_time_limit;
+                }
+
+                Adw.ExpanderRow expander_time {
+                  title: _("Set Time Window");
+                  subtitle: _("Define when delegation becomes valid and expires");
+                  show-enable-switch: true;
+                  enable-expansion: false;
+
+                  Adw.ActionRow {
+                    title: _("Valid From");
+                    subtitle: _("When delegation becomes active");
+
+                    [suffix]
+                    Box {
+                      spacing: 6;
+
+                      DropDown dropdown_from_preset {
+                        valign: center;
+                      }
+                    }
+                  }
+
+                  Adw.ActionRow {
+                    title: _("Valid Until");
+                    subtitle: _("When delegation expires");
+
+                    [suffix]
+                    Box {
+                      spacing: 6;
+
+                      DropDown dropdown_until_preset {
+                        valign: center;
+                      }
+                    }
+                  }
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                halign: center;
+                spacing: 12;
+                margin-top: 12;
+
+                Button btn_cancel_create {
+                  label: _("Cancel");
+
+                  accessibility {
+                    label: "Cancel creating delegation";
+                  }
+                }
+
+                Button btn_create {
+                  label: _("Create Delegation");
+                  sensitive: false;
+
+                  styles [
+                    "suggested-action",
+                    "pill",
+                  ]
+
+                  accessibility {
+                    label: "Create the delegation token";
+                  }
+                }
+              }
+            }
+          }
+        };
+      }
+
+      StackPage {
+        name: "result";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+          vscrollbar-policy: automatic;
+
+          Adw.Clamp {
+            maximum-size: 480;
+
+            Box {
+              orientation: vertical;
+              spacing: 18;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 18;
+              margin-bottom: 18;
+
+              Adw.StatusPage status_result {
+                icon-name: "emblem-ok-symbolic";
+                title: _("Delegation Created");
+                description: _("Share this delegation tag with the delegatee");
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Delegation Tag");
+                description: _("The delegatee should include this tag in their events");
+
+                Box {
+                  orientation: vertical;
+                  spacing: 12;
+                  margin-start: 12;
+                  margin-end: 12;
+                  margin-top: 6;
+                  margin-bottom: 6;
+
+                  ScrolledWindow {
+                    height-request: 120;
+                    hscrollbar-policy: automatic;
+                    vscrollbar-policy: automatic;
+
+                    Label lbl_delegation_tag {
+                      wrap: true;
+                      wrap-mode: word_char;
+                      selectable: true;
+                      xalign: 0;
+                      yalign: 0;
+
+                      styles [
+                        "monospace",
+                      ]
+                    }
+                  }
+
+                  Button btn_copy_tag {
+                    label: _("Copy Delegation Tag");
+                    halign: center;
+
+                    accessibility {
+                      label: "Copy delegation tag to clipboard";
+                    }
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Summary");
+
+                Adw.ActionRow {
+                  title: _("Delegatee");
+
+                  [suffix]
+                  Label lbl_result_delegatee {
+                    selectable: true;
+
+                    styles [
+                      "dim-label",
+                      "monospace",
+                    ]
+                  }
+                }
+
+                Adw.ActionRow {
+                  title: _("Allowed Kinds");
+
+                  [suffix]
+                  Label lbl_result_kinds {
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+                }
+
+                Adw.ActionRow {
+                  title: _("Validity");
+
+                  [suffix]
+                  Label lbl_result_validity {
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                halign: center;
+                margin-top: 12;
+
+                Button btn_done {
+                  label: _("Done");
+
+                  styles [
+                    "suggested-action",
+                    "pill",
+                  ]
+
+                  accessibility {
+                    label: "Close and return to list";
+                  }
+                }
+              }
+            }
+          }
+        };
+      }
+
+      StackPage {
+        name: "details";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+          vscrollbar-policy: automatic;
+
+          Adw.Clamp {
+            maximum-size: 480;
+
+            Box {
+              orientation: vertical;
+              spacing: 18;
+              margin-start: 12;
+              margin-end: 12;
+              margin-top: 18;
+              margin-bottom: 18;
+
+              Adw.PreferencesGroup {
+                title: _("Delegation Details");
+
+                Adw.ActionRow {
+                  title: _("Label");
+
+                  [suffix]
+                  Label lbl_detail_label {
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+                }
+
+                Adw.ActionRow {
+                  title: _("Delegatee");
+
+                  [suffix]
+                  Label lbl_detail_delegatee {
+                    selectable: true;
+
+                    styles [
+                      "dim-label",
+                      "monospace",
+                    ]
+                  }
+                }
+
+                Adw.ActionRow {
+                  title: _("Allowed Kinds");
+
+                  [suffix]
+                  Label lbl_detail_kinds {
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+                }
+
+                Adw.ActionRow {
+                  title: _("Valid From");
+
+                  [suffix]
+                  Label lbl_detail_from {
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+                }
+
+                Adw.ActionRow {
+                  title: _("Valid Until");
+
+                  [suffix]
+                  Label lbl_detail_until {
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+                }
+
+                Adw.ActionRow {
+                  title: _("Created");
+
+                  [suffix]
+                  Label lbl_detail_created {
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+                }
+
+                Adw.ActionRow {
+                  title: _("Status");
+
+                  [suffix]
+                  Label lbl_detail_status {
+                    styles [
+                      "dim-label",
+                    ]
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: _("Delegation Tag");
+
+                Box {
+                  orientation: vertical;
+                  spacing: 12;
+                  margin-start: 12;
+                  margin-end: 12;
+                  margin-top: 6;
+                  margin-bottom: 6;
+
+                  ScrolledWindow {
+                    height-request: 100;
+                    hscrollbar-policy: automatic;
+                    vscrollbar-policy: automatic;
+
+                    Label lbl_detail_tag {
+                      wrap: true;
+                      wrap-mode: word_char;
+                      selectable: true;
+                      xalign: 0;
+                      yalign: 0;
+
+                      styles [
+                        "monospace",
+                      ]
+                    }
+                  }
+
+                  Button btn_copy_detail_tag {
+                    label: _("Copy Tag");
+                    halign: center;
+                  }
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                halign: center;
+                spacing: 12;
+                margin-top: 12;
+
+                Button btn_back_to_list {
+                  label: _("Back");
+
+                  accessibility {
+                    label: "Return to delegation list";
+                  }
+                }
+
+                Button btn_revoke {
+                  label: _("Revoke Delegation");
+
+                  styles [
+                    "destructive-action",
+                    "pill",
+                  ]
+
+                  accessibility {
+                    label: "Revoke this delegation";
+                  }
+                }
+              }
+            }
+          }
+        };
+      }
+    };
+  }
+}
+

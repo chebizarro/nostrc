@@ -1,0 +1,98 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $WelcomePage: Adw.Bin {
+  accessibility {
+    label: "Welcome page";
+    description: "Initial welcome screen for setting up GNostr Signer";
+  }
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-title: false;
+
+      accessibility {
+        label: "Welcome page header";
+      }
+
+      [end]
+      Button btn_settings {
+        icon-name: "emblem-system-symbolic";
+        tooltip-text: _("Settings");
+        valign: center;
+
+        accessibility {
+          label: "Settings";
+          description: "Open application settings";
+        }
+
+        styles [
+          "flat",
+        ]
+      }
+    }
+
+    Adw.StatusPage {
+      icon-name: "security-high-symbolic";
+      title: _("Welcome to GNostr Signer");
+      description: _("Your secure key manager for Nostr. Keep your private keys safe while signing events for connected applications.");
+      vexpand: true;
+      valign: center;
+
+      accessibility {
+        label: "Welcome to GNostr Signer";
+        description: "Welcome screen with options to create or import a Nostr profile";
+      }
+
+      Box {
+        orientation: vertical;
+        spacing: 12;
+        halign: center;
+        margin-top: 24;
+
+        accessibility {
+          label: "Getting started options";
+          description: "Choose to create a new profile or import an existing one";
+        }
+
+        Button btn_create_profile {
+          label: _("_Create New Profile");
+          use-underline: true;
+          halign: center;
+          width-request: 240;
+          focusable: true;
+          receives-default: true;
+
+          accessibility {
+            label: "Create new profile";
+            description: "Generate a new Nostr keypair and create a new profile. Keyboard shortcut: Alt+C.";
+          }
+
+          styles [
+            "suggested-action",
+            "pill",
+          ]
+        }
+
+        Button btn_import_profile {
+          label: _("_Import Existing Profile");
+          use-underline: true;
+          halign: center;
+          width-request: 240;
+          focusable: true;
+
+          accessibility {
+            label: "Import existing profile";
+            description: "Import an existing Nostr private key or recovery phrase. Keyboard shortcut: Alt+I.";
+          }
+
+          styles [
+            "pill",
+          ]
+        }
+      }
+    }
+  }
+}
+

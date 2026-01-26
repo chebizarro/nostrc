@@ -1,0 +1,134 @@
+using Gtk 4.0;
+
+template $GnostrNotificationRow: Widget {
+  Box root {
+    orientation: horizontal;
+    spacing: 12;
+    margin-start: 12;
+    margin-end: 12;
+    margin-top: 8;
+    margin-bottom: 8;
+
+    styles [
+      "notification-row",
+    ]
+
+    Box unread_indicator {
+      visible: true;
+      width-request: 4;
+      valign: fill;
+
+      styles [
+        "unread-dot",
+      ]
+    }
+
+    Button btn_avatar {
+      has-frame: false;
+      tooltip-text: "View profile";
+
+      styles [
+        "flat",
+      ]
+
+      Overlay avatar_box {
+        width-request: 48;
+        height-request: 48;
+
+        styles [
+          "avatar",
+          "notification-avatar",
+        ]
+
+        Picture avatar_image {
+          visible: false;
+          content-fit: cover;
+          width-request: 48;
+          height-request: 48;
+
+          styles [
+            "notification-avatar-image",
+          ]
+        }
+
+        [overlay]
+        Label avatar_initials {
+          label: "?";
+          xalign: 0.5;
+          yalign: 0.5;
+
+          styles [
+            "avatar-initials",
+          ]
+        }
+      }
+    }
+
+    Box content_box {
+      orientation: vertical;
+      hexpand: true;
+      spacing: 2;
+      valign: center;
+
+      Box top_row {
+        orientation: horizontal;
+        spacing: 6;
+
+        Label lbl_actor {
+          label: "Actor Name";
+          xalign: 0.0;
+          ellipsize: end;
+          max-width-chars: 16;
+
+          styles [
+            "notification-actor",
+          ]
+        }
+
+        Image type_icon {
+          icon-name: "emblem-favorite-symbolic";
+          pixel-size: 16;
+
+          styles [
+            "notification-type-icon",
+          ]
+        }
+
+        Label lbl_action {
+          label: "liked your note";
+          xalign: 0.0;
+          hexpand: true;
+          ellipsize: end;
+
+          styles [
+            "notification-action",
+          ]
+        }
+
+        Label lbl_timestamp {
+          label: "2h";
+          halign: end;
+
+          styles [
+            "notification-timestamp",
+          ]
+        }
+      }
+
+      Label lbl_content {
+        label: "Content preview...";
+        xalign: 0.0;
+        hexpand: true;
+        ellipsize: end;
+        max-width-chars: 50;
+        single-line-mode: true;
+        visible: false;
+
+        styles [
+          "notification-content",
+        ]
+      }
+    }
+  }
+}
+

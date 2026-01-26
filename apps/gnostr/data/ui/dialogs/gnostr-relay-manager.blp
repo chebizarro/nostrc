@@ -1,0 +1,499 @@
+using Gtk 4.0;
+
+Window relay_manager_window {
+  title: "Relays";
+  default-width: 800;
+  default-height: 580;
+
+  Paned main_paned {
+    orientation: horizontal;
+    position: 340;
+    shrink-start-child: false;
+    shrink-end-child: false;
+
+    Box {
+      orientation: vertical;
+      spacing: 12;
+      margin-start: 12;
+      margin-end: 6;
+      margin-top: 12;
+      margin-bottom: 12;
+
+      Box {
+        spacing: 6;
+
+        Entry relay_entry {
+          hexpand: true;
+          placeholder-text: "wss://example.com";
+          tooltip-text: "Enter a relay URL (ws:// or wss://). Press Enter to add.";
+        }
+
+        Button btn_add {
+          label: "_Add";
+          use-underline: true;
+          tooltip-text: "Add relay (Enter in field)";
+        }
+
+        Button btn_remove {
+          label: "_Remove";
+          use-underline: true;
+          tooltip-text: "Remove selected (Delete)";
+        }
+      }
+
+      Label shortcut_hint {
+        xalign: 0.0;
+        use-markup: true;
+        wrap: true;
+        label: "<small>Click a relay to view NIP-11 info. Use the dropdown to set <b>NIP-65</b> permissions (read/write). <b>Enter</b> to add, <b>Delete</b> to remove.</small>";
+      }
+
+      ScrolledWindow {
+        hexpand: true;
+        vexpand: true;
+
+        ListView relay_list {}
+      }
+
+      Box {
+        orientation: horizontal;
+        spacing: 12;
+
+        Label status_label {
+          xalign: 0.0;
+          use-markup: true;
+          wrap: false;
+          hexpand: true;
+          label: "<small>0 relays</small>";
+        }
+
+        Button btn_discover {
+          tooltip-text: "Discover relays via NIP-66 relay monitors";
+
+          Box {
+            orientation: horizontal;
+            spacing: 6;
+
+            Image {
+              icon-name: "system-search-symbolic";
+            }
+
+            Label {
+              label: "_Discover";
+              use-underline: true;
+            }
+          }
+        }
+      }
+
+      Box {
+        halign: end;
+        spacing: 6;
+
+        Button btn_cancel {
+          label: "_Cancel";
+          use-underline: true;
+          tooltip-text: "Close without saving (Esc)";
+        }
+
+        Button btn_save {
+          label: "_Save";
+          use-underline: true;
+          tooltip-text: "Save relays (Ctrl+Enter)";
+        }
+      }
+    }
+
+    Box {
+      orientation: vertical;
+      spacing: 8;
+      margin-start: 6;
+      margin-end: 12;
+      margin-top: 12;
+      margin-bottom: 12;
+
+      Label info_header {
+        xalign: 0.0;
+        use-markup: true;
+        label: "<b>Relay Information</b>";
+      }
+
+      Separator {
+        orientation: horizontal;
+      }
+
+      Stack info_stack {
+        vexpand: true;
+        hexpand: true;
+
+        StackPage {
+          name: "empty";
+
+          child: Box {
+            orientation: vertical;
+            valign: center;
+            halign: center;
+
+            Label {
+              label: "Select a relay to view its information";
+
+              css-classes: [
+                "dim-label",
+              ];
+            }
+          };
+        }
+
+        StackPage {
+          name: "loading";
+
+          child: Box {
+            orientation: vertical;
+            valign: center;
+            halign: center;
+            spacing: 12;
+
+            Spinner info_spinner {
+              spinning: true;
+            }
+
+            Label {
+              label: "Fetching relay info...";
+
+              css-classes: [
+                "dim-label",
+              ];
+            }
+          };
+        }
+
+        StackPage {
+          name: "error";
+
+          child: Box {
+            orientation: vertical;
+            valign: center;
+            halign: center;
+            spacing: 8;
+
+            Label info_error_label {
+              label: "Failed to fetch relay info";
+              wrap: true;
+
+              css-classes: [
+                "error",
+              ];
+            }
+
+            Button btn_retry {
+              label: "_Retry";
+              use-underline: true;
+              halign: center;
+              tooltip-text: "Retry fetching relay info";
+            }
+          };
+        }
+
+        StackPage {
+          name: "info";
+
+          child: ScrolledWindow {
+            vexpand: true;
+            hexpand: true;
+
+            Box {
+              orientation: vertical;
+              spacing: 12;
+              margin-start: 4;
+              margin-end: 4;
+              margin-top: 4;
+              margin-bottom: 4;
+
+              Box info_warnings_box {
+                orientation: horizontal;
+                spacing: 8;
+                visible: false;
+                margin-bottom: 4;
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 2;
+
+                Label {
+                  xalign: 0.0;
+                  use-markup: true;
+                  label: "<b>Name</b>";
+
+                  css-classes: [
+                    "dim-label",
+                  ];
+                }
+
+                Label info_name {
+                  xalign: 0.0;
+                  wrap: true;
+                  selectable: true;
+                  label: "-";
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 2;
+
+                Label {
+                  xalign: 0.0;
+                  use-markup: true;
+                  label: "<b>Description</b>";
+
+                  css-classes: [
+                    "dim-label",
+                  ];
+                }
+
+                Label info_description {
+                  xalign: 0.0;
+                  wrap: true;
+                  selectable: true;
+                  label: "-";
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 2;
+
+                Label {
+                  xalign: 0.0;
+                  use-markup: true;
+                  label: "<b>Software</b>";
+
+                  css-classes: [
+                    "dim-label",
+                  ];
+                }
+
+                Label info_software {
+                  xalign: 0.0;
+                  wrap: true;
+                  selectable: true;
+                  label: "-";
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 2;
+
+                Label {
+                  xalign: 0.0;
+                  use-markup: true;
+                  label: "<b>Contact</b>";
+
+                  css-classes: [
+                    "dim-label",
+                  ];
+                }
+
+                Box info_contact_box {
+                  orientation: horizontal;
+                  spacing: 8;
+
+                  Label info_contact {
+                    xalign: 0.0;
+                    wrap: true;
+                    selectable: true;
+                    label: "-";
+                  }
+
+                  LinkButton info_contact_link {
+                    visible: false;
+                    label: "Open";
+                    valign: center;
+                  }
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 2;
+
+                Label {
+                  xalign: 0.0;
+                  use-markup: true;
+                  label: "<b>Admin Pubkey</b>";
+
+                  css-classes: [
+                    "dim-label",
+                  ];
+                }
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 8;
+
+                  Label info_pubkey {
+                    xalign: 0.0;
+                    wrap: true;
+                    wrap-mode: char;
+                    selectable: true;
+                    label: "-";
+
+                    css-classes: [
+                      "monospace",
+                    ];
+
+                    ellipsize: middle;
+                    max-width-chars: 24;
+                  }
+
+                  Button info_pubkey_copy {
+                    visible: false;
+                    icon-name: "edit-copy-symbolic";
+                    tooltip-text: "Copy pubkey";
+                    valign: center;
+
+                    css-classes: [
+                      "flat",
+                    ];
+                  }
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 4;
+
+                Label {
+                  xalign: 0.0;
+                  use-markup: true;
+                  label: "<b>Supported NIPs</b>";
+
+                  css-classes: [
+                    "dim-label",
+                  ];
+                }
+
+                FlowBox info_nips_flowbox {
+                  selection-mode: none;
+                  homogeneous: false;
+                  row-spacing: 4;
+                  column-spacing: 4;
+                  max-children-per-line: 12;
+                  min-children-per-line: 1;
+                }
+
+                Label info_nips_empty {
+                  xalign: 0.0;
+                  label: "(none)";
+
+                  css-classes: [
+                    "dim-label",
+                  ];
+
+                  visible: false;
+                }
+              }
+
+              Box info_nip65_box {
+                orientation: vertical;
+                spacing: 2;
+
+                Label {
+                  xalign: 0.0;
+                  use-markup: true;
+                  label: "<b>NIP-65 Permission</b>";
+
+                  css-classes: [
+                    "dim-label",
+                  ];
+                }
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 8;
+
+                  Image info_nip65_icon {
+                    icon-name: "network-transmit-receive-symbolic";
+                    icon-size: normal;
+                  }
+
+                  Label info_nip65_label {
+                    xalign: 0.0;
+                    label: "Read + Write";
+                  }
+                }
+
+                Label {
+                  xalign: 0.0;
+                  wrap: true;
+                  use-markup: true;
+                  label: "<small>Use the dropdown in the relay list to change permissions.</small>";
+
+                  css-classes: [
+                    "dim-label",
+                  ];
+                }
+              }
+
+              Box {
+                orientation: vertical;
+                spacing: 2;
+
+                Label {
+                  xalign: 0.0;
+                  use-markup: true;
+                  label: "<b>Limitations</b>";
+
+                  css-classes: [
+                    "dim-label",
+                  ];
+                }
+
+                Label info_limitations {
+                  xalign: 0.0;
+                  wrap: true;
+                  selectable: true;
+                  label: "-";
+                }
+              }
+
+              Box info_policy_box {
+                orientation: vertical;
+                spacing: 2;
+                visible: false;
+
+                Label {
+                  xalign: 0.0;
+                  use-markup: true;
+                  label: "<b>Policies</b>";
+
+                  css-classes: [
+                    "dim-label",
+                  ];
+                }
+
+                Box {
+                  orientation: horizontal;
+                  spacing: 12;
+
+                  LinkButton info_posting_policy_link {
+                    visible: false;
+                    label: "Posting Policy";
+                  }
+
+                  LinkButton info_payments_url_link {
+                    visible: false;
+                    label: "Payments";
+                  }
+                }
+              }
+            }
+          };
+        }
+      }
+    }
+  }
+}
+

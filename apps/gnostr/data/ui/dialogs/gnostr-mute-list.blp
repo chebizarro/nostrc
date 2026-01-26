@@ -1,0 +1,222 @@
+using Gtk 4.0;
+
+template $GnostrMuteListDialog: Window {
+  modal: true;
+  title: "Mute List";
+  default-width: 500;
+  default-height: 600;
+  resizable: true;
+
+  [titlebar]
+  HeaderBar {
+    show-title-buttons: false;
+
+    [start]
+    Button btn_close {
+      label: "Close";
+      tooltip-text: "Close dialog";
+      clicked => $on_close_clicked();
+    }
+
+    [title]
+    Label {
+      label: "Mute List";
+
+      styles [
+        "title",
+      ]
+    }
+
+    [end]
+    Button btn_save {
+      label: "Save";
+      sensitive: false;
+      tooltip-text: "Save mute list changes";
+      clicked => $on_save_clicked();
+
+      styles [
+        "suggested-action",
+      ]
+    }
+
+    [end]
+    Spinner spinner {
+      visible: false;
+    }
+  }
+
+  Box {
+    orientation: vertical;
+    spacing: 0;
+
+    Revealer toast_revealer {
+      reveal-child: false;
+      transition-type: slide_down;
+
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+        margin-start: 12;
+        margin-end: 12;
+        margin-top: 8;
+        margin-bottom: 8;
+
+        styles [
+          "app-notification",
+        ]
+
+        Label toast_label {
+          label: "";
+          hexpand: true;
+          xalign: 0;
+        }
+      }
+    }
+
+    Notebook notebook {
+      vexpand: true;
+
+      NotebookPage {
+        tab-expand: true;
+
+        child: Box {
+          orientation: vertical;
+          spacing: 8;
+          margin-start: 12;
+          margin-end: 12;
+          margin-top: 12;
+          margin-bottom: 12;
+
+          Box {
+            orientation: horizontal;
+            spacing: 8;
+
+            Entry entry_add_user {
+              hexpand: true;
+              placeholder-text: "npub or hex pubkey";
+            }
+
+            Button btn_add_user {
+              icon-name: "list-add-symbolic";
+              tooltip-text: "Add user to mute list";
+              clicked => $on_add_user_clicked();
+            }
+          }
+
+          ScrolledWindow {
+            vexpand: true;
+            hscrollbar-policy: never;
+
+            ListBox list_users {
+              selection-mode: none;
+              show-separators: true;
+
+              styles [
+                "boxed-list",
+              ]
+            }
+          }
+        };
+
+        tab: Label {
+          label: "Users";
+        };
+      }
+
+      NotebookPage {
+        tab-expand: true;
+
+        child: Box {
+          orientation: vertical;
+          spacing: 8;
+          margin-start: 12;
+          margin-end: 12;
+          margin-top: 12;
+          margin-bottom: 12;
+
+          Box {
+            orientation: horizontal;
+            spacing: 8;
+
+            Entry entry_add_word {
+              hexpand: true;
+              placeholder-text: "Word or phrase to mute";
+            }
+
+            Button btn_add_word {
+              icon-name: "list-add-symbolic";
+              tooltip-text: "Add word to mute list";
+              clicked => $on_add_word_clicked();
+            }
+          }
+
+          ScrolledWindow {
+            vexpand: true;
+            hscrollbar-policy: never;
+
+            ListBox list_words {
+              selection-mode: none;
+              show-separators: true;
+
+              styles [
+                "boxed-list",
+              ]
+            }
+          }
+        };
+
+        tab: Label {
+          label: "Words";
+        };
+      }
+
+      NotebookPage {
+        tab-expand: true;
+
+        child: Box {
+          orientation: vertical;
+          spacing: 8;
+          margin-start: 12;
+          margin-end: 12;
+          margin-top: 12;
+          margin-bottom: 12;
+
+          Box {
+            orientation: horizontal;
+            spacing: 8;
+
+            Entry entry_add_hashtag {
+              hexpand: true;
+              placeholder-text: "Hashtag (without #)";
+            }
+
+            Button btn_add_hashtag {
+              icon-name: "list-add-symbolic";
+              tooltip-text: "Add hashtag to mute list";
+              clicked => $on_add_hashtag_clicked();
+            }
+          }
+
+          ScrolledWindow {
+            vexpand: true;
+            hscrollbar-policy: never;
+
+            ListBox list_hashtags {
+              selection-mode: none;
+              show-separators: true;
+
+              styles [
+                "boxed-list",
+              ]
+            }
+          }
+        };
+
+        tab: Label {
+          label: "Hashtags";
+        };
+      }
+    }
+  }
+}
+

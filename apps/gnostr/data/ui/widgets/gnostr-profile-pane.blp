@@ -1,0 +1,631 @@
+using Gtk 4.0;
+
+template $GnostrProfilePane: Widget {
+  Box root {
+    orientation: vertical;
+    spacing: 0;
+
+    styles [
+      "profile-pane",
+    ]
+
+    Overlay {
+      Box {
+        orientation: vertical;
+
+        Box banner_container {
+          height-request: 120;
+          orientation: vertical;
+
+          styles [
+            "profile-banner",
+          ]
+
+          Picture banner_image {
+            height-request: 120;
+            vexpand: false;
+            content-fit: cover;
+            can-shrink: true;
+          }
+        }
+
+        Box {
+          height-request: 8;
+        }
+      }
+
+      [overlay]
+      Box {
+        orientation: vertical;
+        halign: start;
+        valign: start;
+        margin-start: 16;
+        margin-top: 48;
+
+        Frame avatar_box {
+          width-request: 144;
+          height-request: 144;
+
+          styles [
+            "profile-avatar",
+            "profile-avatar-frame",
+          ]
+
+          Overlay {
+            width-request: 132;
+            height-request: 132;
+
+            Box {
+              orientation: vertical;
+              halign: fill;
+              valign: fill;
+              hexpand: true;
+              vexpand: true;
+
+              styles [
+                "profile-avatar-bg",
+              ]
+
+              Label avatar_initials {
+                label: "?";
+                halign: center;
+                valign: center;
+                hexpand: true;
+                vexpand: true;
+
+                styles [
+                  "profile-avatar-initials",
+                ]
+              }
+            }
+
+            [overlay]
+            Picture avatar_image {
+              visible: false;
+              width-request: 132;
+              height-request: 132;
+              content-fit: cover;
+              can-shrink: true;
+              halign: center;
+              valign: center;
+
+              styles [
+                "profile-avatar-image",
+              ]
+            }
+          }
+        }
+      }
+
+      [overlay]
+      Button btn_close {
+        icon-name: "window-close-symbolic";
+        tooltip-text: "Close profile pane";
+        halign: end;
+        valign: start;
+        margin-top: 8;
+        margin-end: 8;
+
+        styles [
+          "circular",
+          "profile-close-button",
+        ]
+      }
+    }
+
+    Box {
+      orientation: vertical;
+      spacing: 2;
+      margin-start: 170;
+      margin-end: 16;
+      margin-top: 0;
+      margin-bottom: 4;
+
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+
+        Label lbl_display_name {
+          label: "Loading...";
+          xalign: 0.0;
+          wrap: true;
+          wrap-mode: word_char;
+
+          styles [
+            "profile-name",
+            "title-2",
+          ]
+        }
+
+        Box bot_badge {
+          orientation: horizontal;
+          spacing: 4;
+          valign: center;
+          visible: false;
+
+          styles [
+            "bot-badge",
+          ]
+
+          Image {
+            icon-name: " application-x-executable-symbolic";
+            pixel-size: 14;
+          }
+
+          Label {
+            label: "Bot";
+
+            styles [
+              "caption",
+            ]
+          }
+        }
+      }
+
+      Label lbl_handle {
+        label: "@loading";
+        xalign: 0.0;
+        wrap: true;
+        wrap-mode: word_char;
+
+        styles [
+          "profile-handle",
+          "dim-label",
+        ]
+      }
+    }
+
+    Box other_profile_actions {
+      orientation: horizontal;
+      spacing: 8;
+      homogeneous: true;
+      margin-start: 170;
+      margin-end: 16;
+      margin-bottom: 12;
+
+      Button btn_follow {
+        label: "Follow";
+        sensitive: false;
+        tooltip-text: "Follow this user";
+
+        styles [
+          "suggested-action",
+        ]
+      }
+
+      Button btn_message {
+        label: "Message";
+        sensitive: false;
+        tooltip-text: "Send direct message";
+      }
+    }
+
+    Box own_profile_actions {
+      orientation: horizontal;
+      spacing: 8;
+      margin-start: 170;
+      margin-end: 16;
+      margin-bottom: 12;
+      visible: false;
+
+      Button btn_edit_profile {
+        hexpand: true;
+        tooltip-text: "Edit your profile";
+        clicked => $on_edit_profile_clicked();
+
+        Box {
+          orientation: horizontal;
+          spacing: 8;
+          halign: center;
+
+          Image {
+            icon-name: "document-edit-symbolic";
+          }
+
+          Label {
+            label: "Edit Profile";
+          }
+        }
+
+        styles [
+          "suggested-action",
+        ]
+      }
+
+      Button btn_set_status {
+        hexpand: true;
+        tooltip-text: "Set your status (NIP-38)";
+        clicked => $on_set_status_clicked();
+
+        Box {
+          orientation: horizontal;
+          spacing: 8;
+          halign: center;
+
+          Image {
+            icon-name: "user-status-symbolic";
+          }
+
+          Label {
+            label: "Set Status";
+          }
+        }
+      }
+    }
+
+    StackSwitcher tab_switcher {
+      stack: content_stack;
+      halign: center;
+      margin-bottom: 8;
+
+      styles [
+        "profile-tabs",
+      ]
+    }
+
+    Stack content_stack {
+      vexpand: true;
+      transition-type: crossfade;
+      transition-duration: 200;
+
+      StackPage {
+        name: "about";
+        title: "About";
+
+        child: ScrolledWindow about_scroll {
+          vexpand: true;
+          hscrollbar-policy: never;
+
+          Box about_content {
+            orientation: vertical;
+            spacing: 12;
+            margin-start: 16;
+            margin-end: 16;
+            margin-top: 8;
+            margin-bottom: 16;
+
+            Label lbl_bio {
+              label: "";
+              xalign: 0.0;
+              wrap: true;
+              wrap-mode: word_char;
+              selectable: true;
+              visible: false;
+
+              styles [
+                "profile-bio",
+              ]
+            }
+
+            Box metadata_box {
+              orientation: vertical;
+              spacing: 8;
+              visible: false;
+
+              styles [
+                "profile-metadata",
+              ]
+            }
+
+            Box stats_box {
+              orientation: horizontal;
+              spacing: 16;
+              visible: false;
+
+              Box {
+                orientation: horizontal;
+                spacing: 4;
+
+                Label lbl_notes_count {
+                  label: "0";
+
+                  styles [
+                    "bold",
+                  ]
+                }
+
+                Label {
+                  label: "Notes";
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                spacing: 4;
+
+                Label lbl_followers_count {
+                  label: "0";
+
+                  styles [
+                    "bold",
+                  ]
+                }
+
+                Label {
+                  label: " Followers";
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+              }
+
+              Box {
+                orientation: horizontal;
+                spacing: 4;
+
+                Label lbl_following_count {
+                  label: "0";
+
+                  styles [
+                    "bold",
+                  ]
+                }
+
+                Label {
+                  label: " Following";
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+              }
+            }
+          }
+        };
+      }
+
+      StackPage {
+        name: "posts";
+        title: "Posts";
+
+        child: Box posts_container {
+          orientation: vertical;
+          vexpand: true;
+
+          ScrolledWindow posts_scroll {
+            vexpand: true;
+            hscrollbar-policy: never;
+
+            ListView posts_list {
+              single-click-activate: true;
+
+              styles [
+                "profile-posts-list",
+              ]
+            }
+          }
+
+          Box posts_loading_box {
+            orientation: vertical;
+            spacing: 8;
+            halign: center;
+            valign: center;
+            vexpand: true;
+            margin-bottom: 32;
+            visible: false;
+
+            Spinner posts_spinner {
+              spinning: true;
+              width-request: 32;
+              height-request: 32;
+            }
+
+            Label {
+              label: "Loading posts...";
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+
+          Box posts_empty_box {
+            orientation: vertical;
+            spacing: 8;
+            halign: center;
+            valign: center;
+            vexpand: true;
+            visible: false;
+
+            Image {
+              icon-name: " text-x-generic-symbolic";
+              pixel-size: 48;
+
+              styles [
+                "dim-label",
+              ]
+            }
+
+            Label posts_empty_label {
+              label: "No posts yet";
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+
+          Button btn_load_more {
+            label: "Load More";
+            halign: center;
+            margin-top: 8;
+            margin-bottom: 16;
+            visible: false;
+            tooltip-text: "Load more posts";
+
+            styles [
+              "pill",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "media";
+        title: "Media";
+
+        child: Box media_container {
+          orientation: vertical;
+          vexpand: true;
+
+          ScrolledWindow media_scroll {
+            vexpand: true;
+            hscrollbar-policy: never;
+
+            GridView media_grid {
+              min-columns: 3;
+              max-columns: 4;
+              single-click-activate: true;
+
+              styles [
+                "profile-media-grid",
+              ]
+            }
+          }
+
+          Box media_loading_box {
+            orientation: vertical;
+            spacing: 8;
+            halign: center;
+            valign: center;
+            vexpand: true;
+            margin-bottom: 32;
+            visible: false;
+
+            Spinner media_spinner {
+              spinning: true;
+              width-request: 32;
+              height-request: 32;
+            }
+
+            Label {
+              label: "Loading media...";
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+
+          Box media_empty_box {
+            orientation: vertical;
+            spacing: 8;
+            halign: center;
+            valign: center;
+            vexpand: true;
+            visible: false;
+
+            Image {
+              icon-name: " image-x-generic-symbolic";
+              pixel-size: 48;
+
+              styles [
+                "dim-label",
+              ]
+            }
+
+            Label media_empty_label {
+              label: "No media yet";
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+
+          Button btn_media_load_more {
+            label: "Load More";
+            halign: center;
+            margin-top: 8;
+            margin-bottom: 16;
+            visible: false;
+            tooltip-text: "Load more media";
+
+            styles [
+              "pill",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "highlights";
+        title: "Highlights";
+
+        child: Box highlights_container {
+          orientation: vertical;
+          vexpand: true;
+
+          ScrolledWindow highlights_scroll {
+            vexpand: true;
+            hscrollbar-policy: never;
+
+            Box highlights_list {
+              orientation: vertical;
+              spacing: 8;
+              margin-start: 8;
+              margin-end: 8;
+              margin-top: 8;
+              margin-bottom: 8;
+            }
+          }
+
+          Box highlights_loading_box {
+            orientation: vertical;
+            spacing: 8;
+            halign: center;
+            valign: center;
+            vexpand: true;
+            visible: true;
+
+            Spinner highlights_spinner {
+              spinning: false;
+              width-request: 32;
+              height-request: 32;
+            }
+
+            Label {
+              label: "Loading highlights...";
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+
+          Box highlights_empty_box {
+            orientation: vertical;
+            spacing: 8;
+            halign: center;
+            valign: center;
+            vexpand: true;
+            visible: false;
+
+            Image {
+              icon-name: " format-text-highlight-symbolic";
+              pixel-size: 48;
+
+              styles [
+                "dim-label",
+              ]
+            }
+
+            Label highlights_empty_label {
+              label: "No highlights yet";
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+        };
+      }
+    }
+  }
+}
+
