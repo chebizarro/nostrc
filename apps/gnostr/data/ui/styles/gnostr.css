@@ -189,13 +189,21 @@ headerbar button:hover image {
 	color: @accent_bg_color;
 }
 
+/* ===== Note Card Styles ===== */
+
 .note-card {
-	border-radius: 12px;
-	padding: 16px;
-	margin: 6px 8px;
-	background: alpha(@theme_bg_color, 0.4);
-	border: 1px solid alpha(@theme_fg_color, 0.06);
-	animation: note-fade-in 400ms ease-out;
+	border-radius: 16px;
+	margin: 8px 12px;
+	background: @theme_bg_color;
+	border: 1px solid alpha(@theme_fg_color, 0.08);
+	box-shadow: 0 1px 3px alpha(black, 0.04), 0 2px 8px alpha(black, 0.02);
+	animation: note-fade-in 300ms ease-out;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.note-card:hover {
+	box-shadow: 0 2px 6px alpha(black, 0.06), 0 4px 12px alpha(black, 0.04);
 }
 
 /* nostrc-7o7: Skip animation for notes added outside visible viewport */
@@ -206,7 +214,7 @@ headerbar button:hover image {
 @keyframes note-fade-in {
 	from {
 		opacity: 0;
-		transform: translateY(8px);
+		transform: translateY(4px);
 	}
 	to {
 		opacity: 1;
@@ -214,29 +222,57 @@ headerbar button:hover image {
 	}
 }
 
+/* Note author name - bold and prominent */
 .note-author {
 	font-weight: 700;
 	font-size: 15px;
+	color: @theme_fg_color;
 }
 
-.note-meta {
-	opacity: 0.7;
+/* Note handle (NIP-05 or npub) */
+.note-handle {
+	font-size: 14px;
+	color: alpha(@theme_fg_color, 0.6);
+}
+
+/* Note timestamp */
+.note-timestamp {
+	font-size: 14px;
+	color: alpha(@theme_fg_color, 0.5);
+}
+
+/* Note relay indicator */
+.note-relay {
 	font-size: 13px;
-	margin-top: 2px;
+	color: alpha(@theme_fg_color, 0.45);
+}
+
+/* Kind badge (e.g., "kind:1") */
+.note-kind-badge {
+	font-size: 13px;
+	color: alpha(@theme_fg_color, 0.5);
+}
+
+/* Legacy meta class for compatibility */
+.note-meta {
+	font-size: 13px;
+	color: alpha(@theme_fg_color, 0.6);
 }
 
 /* NIP-14: Subject heading styling */
 .note-subject {
-	font-weight: bold;
-	font-size: 1.1em;
+	font-weight: 600;
+	font-size: 16px;
 	color: @theme_fg_color;
+	margin-bottom: 4px;
 }
 
+/* Note content text */
 .note-content {
-	line-height: 1.5;
-	font-size: 14px;
-	margin-top: 8px;
-	margin-bottom: 8px;
+	line-height: 1.55;
+	font-size: 15px;
+	color: @theme_fg_color;
+	min-width: 0;
 }
 
 /* Clickable links in note content */
@@ -280,11 +316,11 @@ label a:visited {
 	border-radius: 50%;
 }
 
-/* Note card avatar specific (36px) */
+/* Note card avatar specific (48px) */
 .note-avatar {
 	border-radius: 50%;
-	min-width: 36px;
-	min-height: 36px;
+	min-width: 48px;
+	min-height: 48px;
 	/* Default fallback gradient for avatars without images */
 	background: linear-gradient(
 		135deg,
@@ -295,14 +331,14 @@ label a:visited {
 
 .note-avatar picture {
 	border-radius: 50%;
-	min-width: 36px;
-	min-height: 36px;
+	min-width: 48px;
+	min-height: 48px;
 }
 
 .note-avatar-image {
 	border-radius: 50%;
-	min-width: 36px;
-	min-height: 36px;
+	min-width: 48px;
+	min-height: 48px;
 }
 
 /* Profile Pane Styles */
@@ -1386,62 +1422,125 @@ button.pill:hover {
 
 /* ===== Note Card Action Buttons ===== */
 
-/* Action button container - better spacing and alignment */
+/* Action button container */
 .note-actions {
-	margin-top: 8px;
-	padding-top: 8px;
-	border-top: none;
+	margin-top: 4px;
 }
 
-/* Individual action buttons - consistent sizing and spacing */
-.note-actions button {
-	min-width: 36px;
-	min-height: 36px;
-	padding: 6px;
-	border-radius: 999px;
-	margin: 0 2px;
+/* Action pill buttons - pill-shaped with border */
+.action-pill {
+	min-height: 32px;
+	padding: 4px 12px;
+	border-radius: 9999px;
+	border: 1px solid alpha(@theme_fg_color, 0.12);
 	background: transparent;
-	border: none;
 	transition: all 150ms ease;
 }
 
-.note-actions button:first-child {
-	margin-left: 0;
+.action-pill:hover {
+	background: alpha(@theme_fg_color, 0.06);
+	border-color: alpha(@theme_fg_color, 0.18);
 }
 
-.note-actions button:hover {
+.action-pill:active {
 	background: alpha(@theme_fg_color, 0.1);
 }
 
-.note-actions button:active {
-	background: alpha(@theme_fg_color, 0.15);
+.action-pill image {
+	opacity: 0.6;
+	transition: all 150ms ease;
 }
 
-.note-actions button image {
-	opacity: 0.55;
-	transition: opacity 150ms ease;
+.action-pill:hover image {
+	opacity: 0.9;
 }
 
-.note-actions button:hover image {
-	opacity: 0.85;
+/* Action count labels */
+.action-count {
+	font-size: 13px;
+	font-weight: 500;
+	color: alpha(@theme_fg_color, 0.7);
 }
 
 /* Reply button accent on hover */
-.note-actions button.reply:hover {
-	background: alpha(@blue_3, 0.15);
+.action-pill.reply:hover {
+	background: alpha(#3b82f6, 0.1);
+	border-color: alpha(#3b82f6, 0.25);
 }
-.note-actions button.reply:hover image {
-	color: @blue_3;
+.action-pill.reply:hover image {
+	color: #3b82f6;
 	opacity: 1;
 }
 
 /* Repost button accent on hover */
-.note-actions button.repost:hover {
-	background: alpha(@green_4, 0.15);
+.action-pill.repost:hover {
+	background: alpha(#22c55e, 0.1);
+	border-color: alpha(#22c55e, 0.25);
 }
-.note-actions button.repost:hover image {
-	color: @green_4;
+.action-pill.repost:hover image {
+	color: #22c55e;
 	opacity: 1;
+}
+
+/* Like button accent on hover */
+.action-pill.like:hover {
+	background: alpha(#ec4899, 0.1);
+	border-color: alpha(#ec4899, 0.25);
+}
+.action-pill.like:hover image {
+	color: #ec4899;
+	opacity: 1;
+}
+
+/* Zap button accent on hover */
+.action-pill.zap:hover {
+	background: alpha(#f7931a, 0.1);
+	border-color: alpha(#f7931a, 0.25);
+}
+.action-pill.zap:hover image {
+	color: #f7931a;
+	opacity: 1;
+}
+
+/* Liked state */
+.action-pill.like.liked {
+	border-color: alpha(#ec4899, 0.3);
+}
+.action-pill.like.liked image {
+	color: #ec4899;
+	opacity: 1;
+}
+.action-pill.like.liked .action-count {
+	color: #ec4899;
+}
+
+/* Zapped state */
+.action-pill.zap.zapped {
+	border-color: alpha(#f7931a, 0.3);
+}
+.action-pill.zap.zapped image {
+	color: #f7931a;
+	opacity: 1;
+}
+.action-pill.zap.zapped .action-count {
+	color: #f7931a;
+}
+
+/* Thread indicator badge */
+.thread-indicator {
+	padding: 4px 8px;
+	border-radius: 6px;
+	background: alpha(@accent_bg_color, 0.08);
+	margin-top: 8px;
+}
+
+.thread-indicator image {
+	color: @accent_bg_color;
+}
+
+.thread-indicator label {
+	color: @accent_bg_color;
+	font-weight: 500;
 }
 
 /* ===== NIP-25 Like/Reaction Styles ===== */

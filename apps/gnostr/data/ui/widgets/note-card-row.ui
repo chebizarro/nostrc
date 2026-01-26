@@ -9,376 +9,497 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <template class="GnostrNoteCardRow" parent="GtkWidget">
     <property name="hexpand">true</property>
     <child>
-      <object class="GtkFrame" id="root">
+      <object class="GtkBox" id="root">
+        <property name="orientation">1</property>
         <property name="hexpand">true</property>
         <property name="vexpand">false</property>
-        <property name="child">
-          <object class="GtkBox">
-            <property name="orientation">1</property>
-            <property name="spacing">8</property>
-            <property name="margin-start">10</property>
-            <property name="margin-end">10</property>
-            <property name="margin-top">8</property>
-            <property name="margin-bottom">8</property>
+        <style>
+          <class name="note-card"/>
+        </style>
+        <child>
+          <object class="GtkBox" id="reply_indicator_box">
+            <property name="orientation">0</property>
+            <property name="spacing">6</property>
+            <property name="visible">false</property>
+            <property name="margin-start">16</property>
+            <property name="margin-end">16</property>
+            <property name="margin-top">12</property>
             <style>
-              <class name="note-card"/>
+              <class name="reply-indicator"/>
             </style>
             <child>
-              <object class="GtkBox" id="reply_indicator_box">
-                <property name="orientation">0</property>
-                <property name="spacing">4</property>
-                <property name="visible">false</property>
-                <property name="margin-bottom">4</property>
+              <object class="GtkImage" id="reply_indicator_icon">
+                <property name="icon-name">mail-reply-sender-symbolic</property>
+                <property name="pixel-size">14</property>
                 <style>
-                  <class name="reply-indicator"/>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="reply_indicator_label">
+                <property name="label">In reply to @user</property>
+                <property name="xalign">0</property>
+                <property name="ellipsize">3</property>
+                <style>
+                  <class name="dim-label"/>
+                  <class name="caption"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="main_content">
+            <property name="orientation">0</property>
+            <property name="spacing">12</property>
+            <property name="margin-start">16</property>
+            <property name="margin-end">16</property>
+            <property name="margin-top">12</property>
+            <property name="margin-bottom">12</property>
+            <child>
+              <object class="GtkButton" id="btn_avatar">
+                <property name="has-frame">false</property>
+                <property name="valign">1</property>
+                <property name="tooltip-text">View profile</property>
+                <style>
+                  <class name="flat"/>
+                  <class name="circular"/>
                 </style>
                 <child>
-                  <object class="GtkImage" id="reply_indicator_icon">
-                    <property name="icon-name">mail-reply-sender-symbolic</property>
-                    <property name="icon-size">1</property>
+                  <object class="GtkOverlay" id="avatar_box">
+                    <property name="width-request">48</property>
+                    <property name="height-request">48</property>
                     <style>
-                      <class name="dim-label"/>
+                      <class name="avatar"/>
+                      <class name="note-avatar"/>
                     </style>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel" id="reply_indicator_label">
-                    <property name="label">In reply to @user</property>
-                    <property name="xalign">0</property>
-                    <property name="ellipsize">3</property>
-                    <style>
-                      <class name="dim-label"/>
-                      <class name="reply-to-text"/>
-                    </style>
+                    <child>
+                      <object class="GtkPicture" id="avatar_image">
+                        <property name="visible">false</property>
+                        <property name="content-fit">2</property>
+                        <property name="width-request">48</property>
+                        <property name="height-request">48</property>
+                        <style>
+                          <class name="note-avatar-image"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child type="overlay">
+                      <object class="GtkLabel" id="avatar_initials">
+                        <property name="label">AN</property>
+                        <property name="xalign">0.5</property>
+                        <property name="yalign">0.5</property>
+                        <style>
+                          <class name="avatar-initials"/>
+                        </style>
+                      </object>
+                    </child>
                   </object>
                 </child>
               </object>
             </child>
             <child>
-              <object class="GtkBox" id="header">
-                <property name="orientation">0</property>
+              <object class="GtkBox" id="content_column">
+                <property name="orientation">1</property>
                 <property name="spacing">8</property>
+                <property name="hexpand">true</property>
                 <child>
-                  <object class="GtkButton" id="btn_avatar">
-                    <property name="has-frame">false</property>
-                    <property name="tooltip-text">View profile</property>
-                    <style>
-                      <class name="flat"/>
-                    </style>
-                    <child>
-                      <object class="GtkOverlay" id="avatar_box">
-                        <property name="width-request">36</property>
-                        <property name="height-request">36</property>
-                        <style>
-                          <class name="avatar"/>
-                          <class name="note-avatar"/>
-                        </style>
-                        <child>
-                          <object class="GtkPicture" id="avatar_image">
-                            <property name="visible">false</property>
-                            <property name="content-fit">2</property>
-                            <property name="width-request">36</property>
-                            <property name="height-request">36</property>
-                            <style>
-                              <class name="note-avatar-image"/>
-                            </style>
-                          </object>
-                        </child>
-                        <child type="overlay">
-                          <object class="GtkLabel" id="avatar_initials">
-                            <property name="label">AN</property>
-                            <property name="xalign">0.5</property>
-                            <property name="yalign">0.5</property>
-                            <style>
-                              <class name="avatar-initials"/>
-                            </style>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkBox" id="id_time">
+                  <object class="GtkBox" id="header">
                     <property name="orientation">0</property>
-                    <property name="hexpand">true</property>
-                    <property name="spacing">6</property>
+                    <property name="spacing">0</property>
                     <child>
-                      <object class="GtkButton" id="btn_display_name">
-                        <property name="has-frame">false</property>
-                        <property name="tooltip-text">View profile</property>
-                        <style>
-                          <class name="flat"/>
-                        </style>
+                      <object class="GtkBox" id="header_left">
+                        <property name="orientation">0</property>
+                        <property name="spacing">6</property>
+                        <property name="hexpand">true</property>
                         <child>
-                          <object class="GtkLabel" id="lbl_display">
+                          <object class="GtkButton" id="btn_display_name">
+                            <property name="has-frame">false</property>
+                            <property name="tooltip-text">View profile</property>
+                            <style>
+                              <class name="flat"/>
+                            </style>
+                            <child>
+                              <object class="GtkLabel" id="lbl_display">
+                                <property name="xalign">0</property>
+                                <style>
+                                  <class name="note-author"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="lbl_handle">
+                            <property name="xalign">0</property>
+                            <property name="ellipsize">3</property>
+                            <style>
+                              <class name="note-handle"/>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="lbl_kind_badge">
+                            <property name="visible">false</property>
                             <property name="xalign">0</property>
                             <style>
-                              <class name="note-author"/>
+                              <class name="note-kind-badge"/>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="lbl_timestamp">
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="note-timestamp"/>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="lbl_relay">
+                            <property name="visible">false</property>
+                            <property name="xalign">0</property>
+                            <property name="ellipsize">3</property>
+                            <style>
+                              <class name="note-relay"/>
+                              <class name="dim-label"/>
                             </style>
                           </object>
                         </child>
                       </object>
                     </child>
                     <child>
-                      <object class="GtkLabel" id="lbl_handle">
-                        <property name="xalign">0</property>
+                      <object class="GtkMenuButton" id="btn_menu">
+                        <property name="icon-name">view-more-symbolic</property>
+                        <property name="tooltip-text">More options</property>
+                        <property name="valign">3</property>
                         <style>
-                          <class name="note-meta"/>
-                        </style>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkLabel" id="lbl_timestamp">
-                        <property name="hexpand">true</property>
-                        <property name="halign">2</property>
-                        <style>
-                          <class name="note-meta"/>
+                          <class name="flat"/>
+                          <class name="circular"/>
                         </style>
                       </object>
                     </child>
                   </object>
                 </child>
-              </object>
-            </child>
-            <child>
-              <object class="GtkOverlay" id="sensitive_content_overlay">
-                <property name="visible">false</property>
                 <child>
-                  <object class="GtkBox" id="sensitive_warning_box">
-                    <property name="orientation">1</property>
-                    <property name="spacing">8</property>
-                    <property name="valign">3</property>
-                    <property name="halign">3</property>
-                    <style>
-                      <class name="sensitive-warning-box"/>
-                    </style>
+                  <object class="GtkOverlay" id="sensitive_content_overlay">
+                    <property name="visible">false</property>
                     <child>
-                      <object class="GtkImage" id="sensitive_warning_icon">
-                        <property name="icon-name">dialog-warning-symbolic</property>
-                        <property name="pixel-size">32</property>
-                        <style>
-                          <class name="sensitive-warning-icon"/>
-                        </style>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkLabel" id="sensitive_warning_label">
-                        <property name="label">Sensitive Content</property>
-                        <property name="wrap">true</property>
-                        <property name="max-width-chars">40</property>
-                        <property name="justify">2</property>
-                        <style>
-                          <class name="sensitive-warning-label"/>
-                        </style>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="btn_show_sensitive">
-                        <property name="label">Show Content</property>
+                      <object class="GtkBox" id="sensitive_warning_box">
+                        <property name="orientation">1</property>
+                        <property name="spacing">8</property>
+                        <property name="valign">3</property>
                         <property name="halign">3</property>
                         <style>
-                          <class name="sensitive-show-button"/>
+                          <class name="sensitive-warning-box"/>
                         </style>
+                        <child>
+                          <object class="GtkImage" id="sensitive_warning_icon">
+                            <property name="icon-name">dialog-warning-symbolic</property>
+                            <property name="pixel-size">32</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="sensitive_warning_label">
+                            <property name="label">Sensitive Content</property>
+                            <property name="wrap">true</property>
+                            <property name="max-width-chars">40</property>
+                            <property name="justify">2</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="btn_show_sensitive">
+                            <property name="label">Show Content</property>
+                            <property name="halign">3</property>
+                            <style>
+                              <class name="pill"/>
+                            </style>
+                          </object>
+                        </child>
                       </object>
                     </child>
                   </object>
                 </child>
-              </object>
-            </child>
-            <child>
-              <object class="GtkLabel" id="subject_label">
-                <property name="visible">false</property>
-                <property name="wrap">true</property>
-                <property name="xalign">0</property>
-                <property name="use-markup">true</property>
-                <property name="margin-bottom">4</property>
-                <style>
-                  <class name="note-subject"/>
-                </style>
-              </object>
-            </child>
-            <child>
-              <object class="GtkLabel" id="content_label">
-                <property name="wrap">true</property>
-                <property name="wrap-mode">2</property>
-                <property name="xalign">0</property>
-                <property name="use-markup">true</property>
-                <property name="hexpand">false</property>
-                <property name="natural-wrap-mode">2</property>
-                <style>
-                  <class name="note-content"/>
-                </style>
-              </object>
-            </child>
-            <child>
-              <object class="GtkBox" id="media_box">
-                <property name="orientation">1</property>
-                <property name="spacing">6</property>
-                <property name="visible">false</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkFrame" id="embed_box">
-                <property name="visible">false</property>
-                <style>
-                  <class name="note-embed"/>
-                </style>
-              </object>
-            </child>
-            <child>
-              <object class="GtkBox" id="og_preview_container">
-                <property name="orientation">1</property>
-                <property name="visible">false</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkFlowBox" id="labels_box">
-                <property name="visible">false</property>
-                <property name="selection-mode">0</property>
-                <property name="homogeneous">false</property>
-                <property name="row-spacing">4</property>
-                <property name="column-spacing">6</property>
-                <property name="max-children-per-line">10</property>
-                <property name="min-children-per-line">1</property>
-                <property name="halign">1</property>
-                <property name="margin-top">6</property>
-                <property name="margin-bottom">2</property>
-                <style>
-                  <class name="note-labels-container"/>
-                </style>
-              </object>
-            </child>
-            <child>
-              <object class="GtkFlowBox" id="external_ids_box">
-                <property name="visible">false</property>
-                <property name="selection-mode">0</property>
-                <property name="homogeneous">false</property>
-                <property name="row-spacing">4</property>
-                <property name="column-spacing">6</property>
-                <property name="max-children-per-line">5</property>
-                <property name="min-children-per-line">1</property>
-                <property name="halign">1</property>
-                <property name="margin-top">4</property>
-                <property name="margin-bottom">2</property>
-                <style>
-                  <class name="note-external-ids-container"/>
-                </style>
-              </object>
-            </child>
-            <child>
-              <object class="GtkBox" id="reply_count_box">
-                <property name="orientation">0</property>
-                <property name="spacing">4</property>
-                <property name="visible">false</property>
-                <property name="halign">1</property>
-                <property name="margin-top">4</property>
-                <style>
-                  <class name="thread-root-badge"/>
-                </style>
                 <child>
-                  <object class="GtkImage" id="reply_count_icon">
-                    <property name="icon-name">mail-reply-all-symbolic</property>
-                    <property name="icon-size">1</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel" id="reply_count_label">
-                    <property name="label">0 replies</property>
+                  <object class="GtkLabel" id="subject_label">
+                    <property name="visible">false</property>
+                    <property name="wrap">true</property>
                     <property name="xalign">0</property>
-                  </object>
-                </child>
-              </object>
-            </child>
-            <child>
-              <object class="GtkBox" id="actions_box">
-                <property name="orientation">0</property>
-                <property name="spacing">6</property>
-                <child>
-                  <object class="GtkButton" id="btn_reply">
-                    <property name="icon-name">mail-reply-sender-symbolic</property>
-                    <property name="tooltip-text">Reply</property>
+                    <property name="use-markup">true</property>
+                    <style>
+                      <class name="note-subject"/>
+                    </style>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkButton" id="btn_repost">
-                    <property name="icon-name">object-rotate-right-symbolic</property>
-                    <property name="tooltip-text">Repost</property>
+                  <object class="GtkLabel" id="content_label">
+                    <property name="wrap">true</property>
+                    <property name="wrap-mode">2</property>
+                    <property name="xalign">0</property>
+                    <property name="use-markup">true</property>
+                    <property name="hexpand">false</property>
+                    <property name="natural-wrap-mode">2</property>
+                    <property name="max-width-chars">80</property>
+                    <style>
+                      <class name="note-content"/>
+                    </style>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkButton" id="btn_like">
-                    <property name="tooltip-text">Like</property>
-                    <child>
-                      <object class="GtkBox" id="like_button_box">
-                        <property name="orientation">0</property>
-                        <property name="spacing">4</property>
-                        <child>
-                          <object class="GtkImage" id="like_icon">
-                            <property name="icon-name"> emblem-favorite-symbolic</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkLabel" id="lbl_like_count">
-                            <property name="label"></property>
-                            <property name="visible">false</property>
-                            <style>
-                              <class name="like-count"/>
-                            </style>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkButton" id="btn_zap">
-                    <property name="tooltip-text">Zap</property>
-                    <child>
-                      <object class="GtkBox" id="zap_button_box">
-                        <property name="orientation">0</property>
-                        <property name="spacing">4</property>
-                        <child>
-                          <object class="GtkImage" id="zap_icon">
-                            <property name="icon-name"> camera-flash-symbolic</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkLabel" id="lbl_zap_count">
-                            <property name="label"></property>
-                            <property name="visible">false</property>
-                            <style>
-                              <class name="zap-count"/>
-                            </style>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkButton" id="btn_bookmark">
-                    <property name="icon-name">bookmark-new-symbolic</property>
-                    <property name="tooltip-text">Bookmark</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkButton" id="btn_thread">
-                    <property name="icon-name">view-list-symbolic</property>
-                    <property name="tooltip-text">View thread</property>
+                  <object class="GtkBox" id="media_box">
+                    <property name="orientation">1</property>
+                    <property name="spacing">6</property>
                     <property name="visible">false</property>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkButton" id="btn_menu">
-                    <property name="icon-name">open-menu-symbolic</property>
-                    <property name="tooltip-text">More</property>
+                  <object class="GtkFrame" id="embed_box">
+                    <property name="visible">false</property>
+                    <style>
+                      <class name="note-embed"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox" id="og_preview_container">
+                    <property name="orientation">1</property>
+                    <property name="visible">false</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkFlowBox" id="labels_box">
+                    <property name="visible">false</property>
+                    <property name="selection-mode">0</property>
+                    <property name="homogeneous">false</property>
+                    <property name="row-spacing">4</property>
+                    <property name="column-spacing">6</property>
+                    <property name="max-children-per-line">10</property>
+                    <property name="min-children-per-line">1</property>
+                    <property name="halign">1</property>
+                    <style>
+                      <class name="note-labels-container"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkFlowBox" id="external_ids_box">
+                    <property name="visible">false</property>
+                    <property name="selection-mode">0</property>
+                    <property name="homogeneous">false</property>
+                    <property name="row-spacing">4</property>
+                    <property name="column-spacing">6</property>
+                    <property name="max-children-per-line">5</property>
+                    <property name="min-children-per-line">1</property>
+                    <property name="halign">1</property>
+                    <style>
+                      <class name="note-external-ids-container"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox" id="actions_box">
+                    <property name="orientation">0</property>
+                    <property name="spacing">8</property>
+                    <property name="margin-top">8</property>
+                    <style>
+                      <class name="note-actions"/>
+                    </style>
+                    <child>
+                      <object class="GtkButton" id="btn_reply">
+                        <property name="tooltip-text">Reply</property>
+                        <style>
+                          <class name="flat"/>
+                          <class name="action-pill"/>
+                          <class name="reply"/>
+                        </style>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">0</property>
+                            <property name="spacing">6</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">chat-bubble-symbolic</property>
+                                <property name="pixel-size">16</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="lbl_reply_count">
+                                <property name="label"></property>
+                                <property name="visible">false</property>
+                                <style>
+                                  <class name="action-count"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_repost">
+                        <property name="tooltip-text">Repost</property>
+                        <style>
+                          <class name="flat"/>
+                          <class name="action-pill"/>
+                          <class name="repost"/>
+                        </style>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">0</property>
+                            <property name="spacing">6</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">media-playlist-repeat-symbolic</property>
+                                <property name="pixel-size">16</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="lbl_repost_count">
+                                <property name="label"></property>
+                                <property name="visible">false</property>
+                                <style>
+                                  <class name="action-count"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_like">
+                        <property name="tooltip-text">Like</property>
+                        <style>
+                          <class name="flat"/>
+                          <class name="action-pill"/>
+                          <class name="like"/>
+                        </style>
+                        <child>
+                          <object class="GtkBox" id="like_button_box">
+                            <property name="orientation">0</property>
+                            <property name="spacing">6</property>
+                            <child>
+                              <object class="GtkImage" id="like_icon">
+                                <property name="icon-name">emblem-favorite-symbolic</property>
+                                <property name="pixel-size">16</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="lbl_like_count">
+                                <property name="label"></property>
+                                <property name="visible">false</property>
+                                <style>
+                                  <class name="action-count"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_zap">
+                        <property name="tooltip-text">Zap</property>
+                        <style>
+                          <class name="flat"/>
+                          <class name="action-pill"/>
+                          <class name="zap"/>
+                        </style>
+                        <child>
+                          <object class="GtkBox" id="zap_button_box">
+                            <property name="orientation">0</property>
+                            <property name="spacing">6</property>
+                            <child>
+                              <object class="GtkImage" id="zap_icon">
+                                <property name="icon-name">wallet-symbolic</property>
+                                <property name="pixel-size">16</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="lbl_zap_count">
+                                <property name="label"></property>
+                                <property name="visible">false</property>
+                                <style>
+                                  <class name="action-count"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="hexpand">true</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_link">
+                        <property name="icon-name">chain-link-symbolic</property>
+                        <property name="tooltip-text">Copy link</property>
+                        <style>
+                          <class name="flat"/>
+                          <class name="action-pill"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_bookmark">
+                        <property name="icon-name">bookmark-new-symbolic</property>
+                        <property name="tooltip-text">Bookmark</property>
+                        <style>
+                          <class name="flat"/>
+                          <class name="action-pill"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_thread">
+                        <property name="icon-name">view-list-symbolic</property>
+                        <property name="tooltip-text">View thread</property>
+                        <property name="visible">false</property>
+                        <style>
+                          <class name="flat"/>
+                          <class name="action-pill"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox" id="reply_count_box">
+                    <property name="orientation">0</property>
+                    <property name="spacing">6</property>
+                    <property name="visible">false</property>
+                    <property name="halign">1</property>
+                    <style>
+                      <class name="thread-indicator"/>
+                    </style>
+                    <child>
+                      <object class="GtkImage" id="reply_count_icon">
+                        <property name="icon-name">mail-reply-all-symbolic</property>
+                        <property name="pixel-size">14</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="reply_count_label">
+                        <property name="label">0 replies</property>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="caption"/>
+                        </style>
+                      </object>
+                    </child>
                   </object>
                 </child>
               </object>
             </child>
           </object>
-        </property>
+        </child>
       </object>
     </child>
   </template>

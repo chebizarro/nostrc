@@ -224,12 +224,36 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           <object class="GtkButton" id="btn_relays">
                             <property name="icon-name">network-server-symbolic</property>
                             <property name="tooltip-text" translatable="yes">Manage Relays</property>
+                            <style>
+                              <class name="flat"/>
+                            </style>
                           </object>
                         </child>
                         <child type="end">
                           <object class="GtkMenuButton" id="btn_avatar">
                             <property name="icon-name">avatar-default-symbolic</property>
                             <property name="tooltip-text" translatable="yes">Account</property>
+                            <style>
+                              <class name="flat"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child type="end">
+                          <object class="GtkButton" id="btn_compose">
+                            <property name="icon-name">document-edit-symbolic</property>
+                            <property name="tooltip-text" translatable="yes">Compose</property>
+                            <style>
+                              <class name="suggested-action"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child type="end">
+                          <object class="GtkButton" id="btn_search">
+                            <property name="icon-name">system-search-symbolic</property>
+                            <property name="tooltip-text" translatable="yes">Search</property>
+                            <style>
+                              <class name="flat"/>
+                            </style>
                           </object>
                         </child>
                       </object>

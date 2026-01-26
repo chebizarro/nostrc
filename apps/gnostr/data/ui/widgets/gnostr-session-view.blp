@@ -195,12 +195,40 @@ template $GnostrSessionView: Adw.Bin {
                         Button btn_relays {
                             icon-name: "network-server-symbolic";
                             tooltip-text: _("Manage Relays");
+
+                            styles [
+                                "flat",
+                            ]
                         }
 
                         [end]
                         MenuButton btn_avatar {
                             icon-name: "avatar-default-symbolic";
                             tooltip-text: _("Account");
+
+                            styles [
+                                "flat",
+                            ]
+                        }
+
+                        [end]
+                        Button btn_compose {
+                            icon-name: "document-edit-symbolic";
+                            tooltip-text: _("Compose");
+
+                            styles [
+                                "suggested-action",
+                            ]
+                        }
+
+                        [end]
+                        Button btn_search {
+                            icon-name: "system-search-symbolic";
+                            tooltip-text: _("Search");
+
+                            styles [
+                                "flat",
+                            ]
                         }
                     }
 
