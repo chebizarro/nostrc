@@ -242,7 +242,7 @@ create_filter_bar(GnostrClassifiedsView *self)
   self->search_entry = gtk_search_entry_new();
   gtk_widget_set_hexpand(self->search_entry, TRUE);
   gtk_widget_set_size_request(self->search_entry, 200, -1);
-  gtk_entry_set_placeholder_text(GTK_ENTRY(self->search_entry),
+  gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(self->search_entry),
     _("Search listings..."));
   g_signal_connect(self->search_entry, "search-changed",
     G_CALLBACK(on_search_changed), self);
