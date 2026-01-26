@@ -1,357 +1,359 @@
 using Gtk 4.0;
 
 template $GnostrNoteCardRow: Widget {
-  hexpand: true;
-
-  Frame root {
     hexpand: true;
-    vexpand: false;
 
-    child: Box {
-      orientation: vertical;
-      spacing: 8;
-      margin-start: 10;
-      margin-end: 10;
-      margin-top: 8;
-      margin-bottom: 8;
+    Frame root {
+        hexpand: true;
+        vexpand: false;
 
-      styles [
-        "note-card",
-      ]
-
-      Box reply_indicator_box {
-        orientation: horizontal;
-        spacing: 4;
-        visible: false;
-        margin-bottom: 4;
-
-        styles [
-          "reply-indicator",
-        ]
-
-        Image reply_indicator_icon {
-          icon-name: "mail-reply-sender-symbolic";
-          icon-size: normal;
-
-          styles [
-            "dim-label",
-          ]
-        }
-
-        Label reply_indicator_label {
-          label: "In reply to @user";
-          xalign: 0.0;
-          ellipsize: end;
-
-          styles [
-            "dim-label",
-            "reply-to-text",
-          ]
-        }
-      }
-
-      Box header {
-        orientation: horizontal;
-        spacing: 8;
-
-        Button btn_avatar {
-          has-frame: false;
-          tooltip-text: "View profile";
-
-          styles [
-            "flat",
-          ]
-
-          Overlay avatar_box {
-            width-request: 36;
-            height-request: 36;
+        child: Box {
+            orientation: vertical;
+            spacing: 8;
+            margin-start: 10;
+            margin-end: 10;
+            margin-top: 8;
+            margin-bottom: 8;
 
             styles [
-              "avatar",
-              "note-avatar",
+                "note-card",
             ]
 
-            Picture avatar_image {
-              visible: false;
-              content-fit: cover;
-              width-request: 36;
-              height-request: 36;
+            Box reply_indicator_box {
+                orientation: horizontal;
+                spacing: 4;
+                visible: false;
+                margin-bottom: 4;
 
-              styles [
-                "note-avatar-image",
-              ]
+                styles [
+                    "reply-indicator",
+                ]
+
+                Image reply_indicator_icon {
+                    icon-name: "mail-reply-sender-symbolic";
+                    icon-size: normal;
+
+                    styles [
+                        "dim-label",
+                    ]
+                }
+
+                Label reply_indicator_label {
+                    label: "In reply to @user";
+                    xalign: 0.0;
+                    ellipsize: end;
+
+                    styles [
+                        "dim-label",
+                        "reply-to-text",
+                    ]
+                }
             }
 
-            [overlay]
-            Label avatar_initials {
-              label: "AN";
-              xalign: 0.5;
-              yalign: 0.5;
+            Box header {
+                orientation: horizontal;
+                spacing: 8;
 
-              styles [
-                "avatar-initials",
-              ]
-            }
-          }
-        }
+                Button btn_avatar {
+                    has-frame: false;
+                    tooltip-text: "View profile";
 
-        Box id_time {
-          orientation: horizontal;
-          hexpand: true;
-          spacing: 6;
+                    styles [
+                        "flat",
+                    ]
 
-          Button btn_display_name {
-            has-frame: false;
-            tooltip-text: "View profile";
+                    Overlay avatar_box {
+                        width-request: 36;
+                        height-request: 36;
 
-            styles [
-              "flat",
-            ]
+                        styles [
+                            "avatar",
+                            "note-avatar",
+                        ]
 
-            Label lbl_display {
-              xalign: 0.0;
+                        Picture avatar_image {
+                            visible: false;
+                            content-fit: cover;
+                            width-request: 36;
+                            height-request: 36;
 
-              styles [
-                "note-author",
-              ]
-            }
-          }
+                            styles [
+                                "note-avatar-image",
+                            ]
+                        }
 
-          Label lbl_handle {
-            xalign: 0.0;
+                        [overlay]
+                        Label avatar_initials {
+                            label: "AN";
+                            xalign: 0.5;
+                            yalign: 0.5;
 
-            styles [
-              "note-meta",
-            ]
-          }
+                            styles [
+                                "avatar-initials",
+                            ]
+                        }
+                    }
+                }
 
-          Label lbl_timestamp {
-            hexpand: true;
-            halign: end;
+                Box id_time {
+                    orientation: horizontal;
+                    hexpand: true;
+                    spacing: 6;
 
-            styles [
-              "note-meta",
-            ]
-          }
-        }
-      }
+                    Button btn_display_name {
+                        has-frame: false;
+                        tooltip-text: "View profile";
 
-      Overlay sensitive_content_overlay {
-        visible: false;
+                        styles [
+                            "flat",
+                        ]
 
-        Box sensitive_warning_box {
-          orientation: vertical;
-          spacing: 8;
-          valign: center;
-          halign: center;
+                        Label lbl_display {
+                            xalign: 0.0;
 
-          styles [
-            "sensitive-warning-box",
-          ]
+                            styles [
+                                "note-author",
+                            ]
+                        }
+                    }
 
-          Image sensitive_warning_icon {
-            icon-name: "dialog-warning-symbolic";
-            pixel-size: 32;
+                    Label lbl_handle {
+                        xalign: 0.0;
 
-            styles [
-              "sensitive-warning-icon",
-            ]
-          }
+                        styles [
+                            "note-meta",
+                        ]
+                    }
 
-          Label sensitive_warning_label {
-            label: "Sensitive Content";
-            wrap: true;
-            max-width-chars: 40;
-            justify: center;
+                    Label lbl_timestamp {
+                        hexpand: true;
+                        halign: end;
 
-            styles [
-              "sensitive-warning-label",
-            ]
-          }
-
-          Button btn_show_sensitive {
-            label: "Show Content";
-            halign: center;
-
-            styles [
-              "sensitive-show-button",
-            ]
-          }
-        }
-      }
-
-      Label subject_label {
-        visible: false;
-        wrap: true;
-        xalign: 0.0;
-        use-markup: true;
-        margin-bottom: 4;
-
-        styles [
-          "note-subject",
-        ]
-      }
-
-      Label content_label {
-        wrap: true;
-        xalign: 0.0;
-        use-markup: true;
-
-        styles [
-          "note-content",
-        ]
-      }
-
-      Box media_box {
-        orientation: vertical;
-        spacing: 6;
-        visible: false;
-      }
-
-      Frame embed_box {
-        visible: false;
-
-        styles [
-          "note-embed",
-        ]
-      }
-
-      Box og_preview_container {
-        orientation: vertical;
-        visible: false;
-      }
-
-      FlowBox labels_box {
-        visible: false;
-        selection-mode: none;
-        homogeneous: false;
-        row-spacing: 4;
-        column-spacing: 6;
-        max-children-per-line: 10;
-        min-children-per-line: 1;
-        halign: start;
-        margin-top: 6;
-        margin-bottom: 2;
-
-        styles [
-          "note-labels-container",
-        ]
-      }
-
-      FlowBox external_ids_box {
-        visible: false;
-        selection-mode: none;
-        homogeneous: false;
-        row-spacing: 4;
-        column-spacing: 6;
-        max-children-per-line: 5;
-        min-children-per-line: 1;
-        halign: start;
-        margin-top: 4;
-        margin-bottom: 2;
-
-        styles [
-          "note-external-ids-container",
-        ]
-      }
-
-      Box reply_count_box {
-        orientation: horizontal;
-        spacing: 4;
-        visible: false;
-        halign: start;
-        margin-top: 4;
-
-        styles [
-          "thread-root-badge",
-        ]
-
-        Image reply_count_icon {
-          icon-name: "mail-reply-all-symbolic";
-          icon-size: normal;
-        }
-
-        Label reply_count_label {
-          label: "0 replies";
-          xalign: 0.0;
-        }
-      }
-
-      Box actions_box {
-        orientation: horizontal;
-        spacing: 6;
-
-        Button btn_reply {
-          icon-name: "mail-reply-sender-symbolic";
-          tooltip-text: "Reply";
-        }
-
-        Button btn_repost {
-          icon-name: "object-rotate-right-symbolic";
-          tooltip-text: "Repost";
-        }
-
-        Button btn_like {
-          tooltip-text: "Like";
-
-          Box like_button_box {
-            orientation: horizontal;
-            spacing: 4;
-
-            Image like_icon {
-              icon-name: " emblem-favorite-symbolic";
+                        styles [
+                            "note-meta",
+                        ]
+                    }
+                }
             }
 
-            Label lbl_like_count {
-              label: "";
-              visible: false;
+            Overlay sensitive_content_overlay {
+                visible: false;
 
-              styles [
-                "like-count",
-              ]
+                Box sensitive_warning_box {
+                    orientation: vertical;
+                    spacing: 8;
+                    valign: center;
+                    halign: center;
+
+                    styles [
+                        "sensitive-warning-box",
+                    ]
+
+                    Image sensitive_warning_icon {
+                        icon-name: "dialog-warning-symbolic";
+                        pixel-size: 32;
+
+                        styles [
+                            "sensitive-warning-icon",
+                        ]
+                    }
+
+                    Label sensitive_warning_label {
+                        label: "Sensitive Content";
+                        wrap: true;
+                        max-width-chars: 40;
+                        justify: center;
+
+                        styles [
+                            "sensitive-warning-label",
+                        ]
+                    }
+
+                    Button btn_show_sensitive {
+                        label: "Show Content";
+                        halign: center;
+
+                        styles [
+                            "sensitive-show-button",
+                        ]
+                    }
+                }
             }
-          }
-        }
 
-        Button btn_zap {
-          tooltip-text: "Zap";
+            Label subject_label {
+                visible: false;
+                wrap: true;
+                xalign: 0.0;
+                use-markup: true;
+                margin-bottom: 4;
 
-          Box zap_button_box {
-            orientation: horizontal;
-            spacing: 4;
-
-            Image zap_icon {
-              icon-name: " camera-flash-symbolic";
+                styles [
+                    "note-subject",
+                ]
             }
 
-            Label lbl_zap_count {
-              label: "";
-              visible: false;
+            Label content_label {
+                wrap: true;
+                wrap-mode: word_char;
+                xalign: 0.0;
+                use-markup: true;
+                hexpand: false;
+                natural-wrap-mode: word;
 
-              styles [
-                "zap-count",
-              ]
+                styles [
+                    "note-content",
+                ]
             }
-          }
-        }
 
-        Button btn_bookmark {
-          icon-name: "bookmark-new-symbolic";
-          tooltip-text: "Bookmark";
-        }
+            Box media_box {
+                orientation: vertical;
+                spacing: 6;
+                visible: false;
+            }
 
-        Button btn_thread {
-          icon-name: "view-list-symbolic";
-          tooltip-text: "View thread";
-          visible: false;
-        }
+            Frame embed_box {
+                visible: false;
 
-        Button btn_menu {
-          icon-name: "open-menu-symbolic";
-          tooltip-text: "More";
-        }
-      }
-    };
-  }
+                styles [
+                    "note-embed",
+                ]
+            }
+
+            Box og_preview_container {
+                orientation: vertical;
+                visible: false;
+            }
+
+            FlowBox labels_box {
+                visible: false;
+                selection-mode: none;
+                homogeneous: false;
+                row-spacing: 4;
+                column-spacing: 6;
+                max-children-per-line: 10;
+                min-children-per-line: 1;
+                halign: start;
+                margin-top: 6;
+                margin-bottom: 2;
+
+                styles [
+                    "note-labels-container",
+                ]
+            }
+
+            FlowBox external_ids_box {
+                visible: false;
+                selection-mode: none;
+                homogeneous: false;
+                row-spacing: 4;
+                column-spacing: 6;
+                max-children-per-line: 5;
+                min-children-per-line: 1;
+                halign: start;
+                margin-top: 4;
+                margin-bottom: 2;
+
+                styles [
+                    "note-external-ids-container",
+                ]
+            }
+
+            Box reply_count_box {
+                orientation: horizontal;
+                spacing: 4;
+                visible: false;
+                halign: start;
+                margin-top: 4;
+
+                styles [
+                    "thread-root-badge",
+                ]
+
+                Image reply_count_icon {
+                    icon-name: "mail-reply-all-symbolic";
+                    icon-size: normal;
+                }
+
+                Label reply_count_label {
+                    label: "0 replies";
+                    xalign: 0.0;
+                }
+            }
+
+            Box actions_box {
+                orientation: horizontal;
+                spacing: 6;
+
+                Button btn_reply {
+                    icon-name: "mail-reply-sender-symbolic";
+                    tooltip-text: "Reply";
+                }
+
+                Button btn_repost {
+                    icon-name: "object-rotate-right-symbolic";
+                    tooltip-text: "Repost";
+                }
+
+                Button btn_like {
+                    tooltip-text: "Like";
+
+                    Box like_button_box {
+                        orientation: horizontal;
+                        spacing: 4;
+
+                        Image like_icon {
+                            icon-name: " emblem-favorite-symbolic";
+                        }
+
+                        Label lbl_like_count {
+                            label: "";
+                            visible: false;
+
+                            styles [
+                                "like-count",
+                            ]
+                        }
+                    }
+                }
+
+                Button btn_zap {
+                    tooltip-text: "Zap";
+
+                    Box zap_button_box {
+                        orientation: horizontal;
+                        spacing: 4;
+
+                        Image zap_icon {
+                            icon-name: " camera-flash-symbolic";
+                        }
+
+                        Label lbl_zap_count {
+                            label: "";
+                            visible: false;
+
+                            styles [
+                                "zap-count",
+                            ]
+                        }
+                    }
+                }
+
+                Button btn_bookmark {
+                    icon-name: "bookmark-new-symbolic";
+                    tooltip-text: "Bookmark";
+                }
+
+                Button btn_thread {
+                    icon-name: "view-list-symbolic";
+                    tooltip-text: "View thread";
+                    visible: false;
+                }
+
+                Button btn_menu {
+                    icon-name: "open-menu-symbolic";
+                    tooltip-text: "More";
+                }
+            }
+        };
+    }
 }
-

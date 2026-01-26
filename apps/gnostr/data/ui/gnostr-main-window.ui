@@ -116,8 +116,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 <property name="wrap-mode">2</property>
                                 <property name="max-width-chars">28</property>
                                 <property name="ellipsize">3</property>
-                                <property name="css-classes">
-                                                                    dim-label</property>
+                                <property name="css-classes">dim-label</property>
                               </object>
                             </child>
                             <child>
