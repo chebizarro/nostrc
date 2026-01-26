@@ -205,8 +205,14 @@ static void on_query_single_done_multi(GObject *source, GAsyncResult *res, gpoin
   if (in && in->rows) {
     for (guint i = 0; i < in->rows->len; i++) {
       RowRef *rr = (RowRef*)g_ptr_array_index(in->rows, i);
-      GnostrNoteCardRow *r = rr ? GNOSTR_NOTE_CARD_ROW(g_weak_ref_get(&rr->ref)) : NULL;
-      if (!GNOSTR_IS_NOTE_CARD_ROW(r)) { if (r) g_object_unref(r); continue; }
+      if (!rr) continue;
+      /* Get the weak ref as GObject first, then validate before casting */
+      GObject *obj = g_weak_ref_get(&rr->ref);
+      if (!obj || !GNOSTR_IS_NOTE_CARD_ROW(obj)) { 
+        if (obj) g_object_unref(obj); 
+        continue; 
+      }
+      GnostrNoteCardRow *r = GNOSTR_NOTE_CARD_ROW(obj);
       if (have) gnostr_note_card_row_set_embed_rich(r, title, meta, snipbuf);
       else gnostr_note_card_row_set_embed(r, "Note", "Not found on selected relays");
       g_object_unref(r);
@@ -248,10 +254,12 @@ static void inflight_detach_row(GtkWidget *row) {
     Inflight *in = (Inflight*)v; if (!in || !in->rows) continue;
     guint write = 0; for (guint i = 0; i < in->rows->len; i++) {
       RowRef *rr = (RowRef*)g_ptr_array_index(in->rows, i);
-      GnostrNoteCardRow *r = rr ? GNOSTR_NOTE_CARD_ROW(g_weak_ref_get(&rr->ref)) : NULL;
+      if (!rr) continue;
+      /* Get weak ref as GObject first, validate before casting */
+      GObject *obj = g_weak_ref_get(&rr->ref);
       gboolean keep = TRUE;
-      if (!GNOSTR_IS_NOTE_CARD_ROW(r) || GTK_WIDGET(r) == row) keep = FALSE;
-      if (r) g_object_unref(r);
+      if (!obj || !GNOSTR_IS_NOTE_CARD_ROW(obj) || GTK_WIDGET(obj) == row) keep = FALSE;
+      if (obj) g_object_unref(obj);
       if (keep) {
         g_ptr_array_index(in->rows, write++) = rr;
       } else {
