@@ -173,7 +173,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       </object>
                     </child>
                     <child>
-                      <object class="GtkMenuButton" id="btn_menu">
+                      <object class="GtkButton" id="btn_menu">
                         <property name="icon-name">view-more-symbolic</property>
                         <property name="tooltip-text">More options</property>
                         <property name="valign">3</property>
