@@ -4258,38 +4258,9 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "timeline");
   }
 
-  /* Populate sidebar navigation */
+  /* Sidebar navigation items are defined in the Blueprint template.
+   * Just select the first row (Timeline) as the default. */
   if (self->sidebar_list) {
-    const char *nav_items[][2] = {
-      {"view-list-symbolic", "Timeline"},
-      {"preferences-system-notifications-symbolic", "Notifications"},
-      {"mail-unread-symbolic", "Messages"},
-      {"starred-symbolic", "Discover"},
-      {"edit-find-symbolic", "Search"},
-      {"folder-publicshare-symbolic", "Marketplace"}
-    };
-    
-    for (int i = 0; i < 6; i++) {
-      GtkWidget *row = gtk_list_box_row_new();
-      GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-      gtk_widget_set_margin_start(box, 12);
-      gtk_widget_set_margin_end(box, 12);
-      gtk_widget_set_margin_top(box, 8);
-      gtk_widget_set_margin_bottom(box, 8);
-      
-      GtkWidget *icon = gtk_image_new_from_icon_name(nav_items[i][0]);
-      gtk_image_set_icon_size(GTK_IMAGE(icon), GTK_ICON_SIZE_NORMAL);
-      
-      GtkWidget *label = gtk_label_new(nav_items[i][1]);
-      gtk_label_set_xalign(GTK_LABEL(label), 0.0);
-      gtk_widget_set_hexpand(label, TRUE);
-      
-      gtk_box_append(GTK_BOX(box), icon);
-      gtk_box_append(GTK_BOX(box), label);
-      gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
-      gtk_list_box_append(self->sidebar_list, row);
-    }
-    
     gtk_list_box_select_row(self->sidebar_list, 
                            gtk_list_box_get_row_at_index(self->sidebar_list, 0));
   }
