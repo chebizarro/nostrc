@@ -7,6 +7,7 @@
  */
 
 #include "gnostr-login.h"
+#include <adwaita.h>
 #include "../ipc/signer_ipc.h"
 #include "nostr/nip46/nip46_client.h"
 #include "nostr/nip46/nip46_uri.h"
@@ -83,7 +84,7 @@ struct _GnostrLogin {
   gboolean listening_for_response;
 };
 
-G_DEFINE_TYPE(GnostrLogin, gnostr_login, GTK_TYPE_WINDOW)
+G_DEFINE_TYPE(GnostrLogin, gnostr_login, ADW_TYPE_BIN)
 
 /* Signals */
 enum {
