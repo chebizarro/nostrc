@@ -28,6 +28,7 @@ endif()
 # Blueprint source files (.blp) - these are the source of truth for UI definitions
 set(BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-main-window.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-session-view.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-composer.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.blp
@@ -91,6 +92,7 @@ endif()
 # UI files that are compiled from Blueprint sources
 set(UI_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-main-window.ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-session-view.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-composer.ui
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.ui

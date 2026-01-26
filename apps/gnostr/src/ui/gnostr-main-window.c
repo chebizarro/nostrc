@@ -1,6 +1,7 @@
 #define G_LOG_DOMAIN "gnostr-main-window"
 
 #include "gnostr-main-window.h"
+#include "gnostr-session-view.h"
 #include "gnostr-composer.h"
 #include "gnostr-timeline-view.h"
 #include "gnostr-profile-pane.h"
@@ -89,6 +90,113 @@
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/gnostr-main-window.ui"
 
+typedef enum {
+  PROP_0,
+  PROP_COMPACT,
+  N_PROPS
+} GnostrMainWindowProperty;
+
+static GParamSpec *props[N_PROPS];
+
+/* Define the window instance struct early so functions can access fields */
+struct _GnostrMainWindow {
+  AdwApplicationWindow parent_instance;
+
+  /* New Fractal-style state stack */
+  GtkStack *main_stack;
+  GnostrSessionView *session_view;
+  GtkWidget *login_view;
+  AdwStatusPage *error_page;
+  AdwToastOverlay *toast_overlay;
+
+  /* Responsive mode */
+  gboolean compact;
+
+  /* Session state */
+  GHashTable *seen_texts; /* owned; keys are g_strdup(text), values unused */
+
+  /* GListModel-based timeline (primary data source) */
+  GnNostrEventModel *event_model; /* owned; reactive model over nostrdb */
+  guint model_refresh_pending;    /* debounced refresh source id, 0 if none */
+
+  /* In-memory avatar texture cache: key=url (string), value=GdkTexture* */
+  GHashTable *avatar_tex_cache;
+
+  /* Profile subscription */
+  gulong profile_sub_id;        /* signal handler ID for profile events */
+  GCancellable *profile_sub_cancellable; /* cancellable for profile sub */
+
+  /* Background profile prefetch (paginate kind-1 authors) */
+  gulong bg_prefetch_handler;   /* signal handler ID */
+  GCancellable *bg_prefetch_cancellable; /* cancellable for paginator */
+  guint bg_prefetch_interval_ms; /* default 250ms between pages */
+
+  /* Demand-driven profile fetch (debounced batch) */
+  GPtrArray   *profile_fetch_queue;   /* owned; char* pubkey hex to fetch */
+  guint        profile_fetch_source_id; /* GLib source id for debounce */
+  guint        profile_fetch_debounce_ms; /* default 150ms */
+  GCancellable *profile_fetch_cancellable; /* async cancellable */
+  guint        profile_fetch_active;  /* count of active concurrent fetches */
+  guint        profile_fetch_max_concurrent; /* max concurrent fetches (default 3) */
+
+  /* Remote signer (NIP-46) session */
+  NostrNip46Session *nip46_session; /* owned */
+
+  /* Tuning knobs (UI-editable) */
+  guint batch_max;             /* default 5; max items per UI batch post */
+  guint post_interval_ms;      /* default 150; max ms before forcing a batch */
+  guint eose_quiet_ms;         /* default 150; quiet ms after EOSE to stop */
+  guint per_relay_hard_ms;     /* default 5000; hard cap per relay */
+  guint default_limit;         /* default 30; timeline default limit */
+  gboolean use_since;          /* default FALSE; use since window */
+  guint since_seconds;         /* default 3600; when use_since */
+
+  /* Backfill interval */
+  guint backfill_interval_sec; /* default 0; disabled when 0 */
+  guint backfill_source_id;    /* GLib source id, 0 if none */
+
+  /* SimplePool live stream */
+  GnostrSimplePool *pool;       /* owned */
+  GCancellable    *pool_cancellable; /* owned */
+  NostrFilters    *live_filters; /* owned; current live filter set */
+  gulong           pool_events_handler; /* signal handler id */
+  gboolean         reconnection_in_progress; /* prevent concurrent reconnection attempts */
+  guint            health_check_source_id;   /* GLib source id for relay health check */
+  const char     **live_urls;          /* owned array pointer + strings */
+  size_t           live_url_count;     /* number of current live relays */
+
+  /* Sequential profile batch dispatch state */
+  GPtrArray      *profile_batches;       /* owned; elements: GPtrArray* of char* authors */
+  guint           profile_batch_pos;     /* next batch index */
+  const char    **profile_batch_urls;    /* owned array pointer + strings */
+  size_t          profile_batch_url_count;
+
+  /* Debounced local NostrDB profile sweep */
+  guint           ndb_sweep_source_id;   /* GLib source id, 0 if none */
+  guint           ndb_sweep_debounce_ms; /* default ~150ms */
+
+  /* Sliding window pagination */
+  gboolean        loading_older;         /* TRUE while loading older events */
+  guint           load_older_batch_size; /* default 30 */
+
+  /* Gift wrap (NIP-59) subscription for DMs */
+  uint64_t        sub_gift_wrap;         /* nostrdb subscription ID for kind 1059 */
+  char           *user_pubkey_hex;       /* current user's pubkey (64-char hex), NULL if not signed in */
+  GPtrArray      *gift_wrap_queue;       /* pending gift wrap events to process */
+
+  /* NIP-17 DM Service for decryption and conversation management */
+  GnostrDmService *dm_service;           /* owned; handles gift wrap decryption */
+
+  /* Live relay switching (nostrc-36y.4) */
+  gulong           relay_change_handler_id; /* relay config change handler */
+
+  /* Liked events cache (NIP-25 reactions) */
+  GHashTable      *liked_events;  /* owned; key=event_id_hex (char*), value=unused (GINT_TO_POINTER(1)) */
+
+  /* nostrc-61s.6: Background operation mode */
+  gboolean         background_mode_enabled; /* hide on close instead of quit */
+};
+
 /* Forward declarations for local helpers used before their definitions */
 static char *client_settings_get_current_npub(void);
 static char *hex_encode_lower(const uint8_t *buf, size_t len);
@@ -156,6 +264,8 @@ void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, con
 void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, GnostrNoteCardRow *row);
 static void user_meta_free(gpointer p);
 static void show_toast(GnostrMainWindow *self, const char *msg);
+static void gnostr_main_window_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec);
+static void gnostr_main_window_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec);
 /* Pre-populate profile from local DB */
 static void prepopulate_profile_from_cache(GnostrMainWindow *self);
 /* Initial backfill timeout trampoline */
@@ -288,124 +398,6 @@ static gboolean profile_apply_on_main(gpointer data) {
 }
 
 /* Define the window instance struct early so functions can access fields */
-struct _GnostrMainWindow {
-  AdwApplicationWindow parent_instance;
-  // Template children - responsive layout
-  AdwToolbarView *toolbar_view;
-  AdwHeaderBar *header_bar;
-  AdwNavigationSplitView *split_view;
-  GtkToggleButton *sidebar_toggle_btn;
-  GtkListBox *sidebar_list;
-  AdwViewSwitcherBar *bottom_bar;
-  // Template children - content
-  GtkWidget *stack;
-  GtkWidget *timeline;
-  GWeakRef timeline_ref; /* weak ref to avoid UAF in async */
-  GtkWidget *timeline_overlay;
-  GtkWidget *panel_split;      /* Adw.OverlaySplitView for side panels */
-  GtkWidget *panel_container;  /* Box containing profile_pane and thread_view */
-  GtkWidget *profile_pane;
-  GtkWidget *thread_view;
-  gboolean showing_profile;    /* TRUE if profile pane is active, FALSE if thread view */
-  GtkWidget *btn_settings;
-  GtkWidget *btn_relays;
-  GtkWidget *btn_menu;
-  GtkWidget *btn_avatar;
-  GtkWidget *avatar_popover;
-  GtkWidget *lbl_signin_status;
-  GtkWidget *lbl_profile_name;
-  GtkWidget *btn_login;
-  GtkWidget *btn_logout;
-  GtkWidget *composer;
-  GtkWidget *dm_inbox;
-  GtkWidget *notifications_view;
-  GtkWidget *discover_page;
-  GtkWidget *classifieds_view;
-  GtkWidget *toast_overlay;
-  /* nostrc-yi2: Calm timeline - new notes indicator */
-  GtkWidget *new_notes_revealer;
-  GtkWidget *btn_new_notes;
-  GtkWidget *lbl_new_notes_count;
-  /* Session state */
-  GHashTable *seen_texts; /* owned; keys are g_strdup(text), values unused */
-  /* GListModel-based timeline (primary data source) */
-  GnNostrEventModel *event_model; /* owned; reactive model over nostrdb */
-  guint model_refresh_pending;    /* debounced refresh source id, 0 if none */
-  /* In-memory avatar texture cache: key=url (string), value=GdkTexture* */
-  GHashTable *avatar_tex_cache;
-  
-  /* Profile subscription */
-  gulong profile_sub_id;        /* signal handler ID for profile events */
-  GCancellable *profile_sub_cancellable; /* cancellable for profile sub */
- 
-  /* Background profile prefetch (paginate kind-1 authors) */
-  gulong bg_prefetch_handler;   /* signal handler ID */
-  GCancellable *bg_prefetch_cancellable; /* cancellable for paginator */
-  guint bg_prefetch_interval_ms; /* default 250ms between pages */
-  
-  /* Demand-driven profile fetch (debounced batch) */
-  GPtrArray   *profile_fetch_queue;   /* owned; char* pubkey hex to fetch */
-  guint        profile_fetch_source_id; /* GLib source id for debounce */
-  guint        profile_fetch_debounce_ms; /* default 150ms */
-  GCancellable *profile_fetch_cancellable; /* async cancellable */
-  guint        profile_fetch_active;  /* count of active concurrent fetches */
-  guint        profile_fetch_max_concurrent; /* max concurrent fetches (default 3) */
-  
-  /* Remote signer (NIP-46) session */
-  NostrNip46Session *nip46_session; /* owned */
-  
-  /* Tuning knobs (UI-editable) */
-  guint batch_max;             /* default 5; max items per UI batch post */
-  guint post_interval_ms;      /* default 150; max ms before forcing a batch */
-  guint eose_quiet_ms;         /* default 150; quiet ms after EOSE to stop */
-  guint per_relay_hard_ms;     /* default 5000; hard cap per relay */
-  guint default_limit;         /* default 30; timeline default limit */
-  gboolean use_since;          /* default FALSE; use since window */
-  guint since_seconds;         /* default 3600; when use_since */
-  /* Backfill interval */
-  guint backfill_interval_sec; /* default 0; disabled when 0 */
-  guint backfill_source_id;    /* GLib source id, 0 if none */
-  /* SimplePool live stream */
-  GnostrSimplePool *pool;       /* owned */
-  GCancellable    *pool_cancellable; /* owned */
-  NostrFilters    *live_filters; /* owned; current live filter set */
-  gulong           pool_events_handler; /* signal handler id */
-  gboolean         reconnection_in_progress; /* prevent concurrent reconnection attempts */
-  guint            health_check_source_id;   /* GLib source id for relay health check */
-  const char     **live_urls;          /* owned array pointer + strings */
-  size_t           live_url_count;     /* number of current live relays */
- 
-  /* Sequential profile batch dispatch state */
-  GPtrArray      *profile_batches;       /* owned; elements: GPtrArray* of char* authors */
-  guint           profile_batch_pos;     /* next batch index */
-  const char    **profile_batch_urls;    /* owned array pointer + strings */
-  size_t          profile_batch_url_count;
-
-  /* Debounced local NostrDB profile sweep */
-  guint           ndb_sweep_source_id;   /* GLib source id, 0 if none */
-  guint           ndb_sweep_debounce_ms; /* default ~150ms */
-
-  /* Sliding window pagination */
-  gboolean        loading_older;         /* TRUE while loading older events */
-  guint           load_older_batch_size; /* default 30 */
-
-  /* Gift wrap (NIP-59) subscription for DMs */
-  uint64_t        sub_gift_wrap;         /* nostrdb subscription ID for kind 1059 */
-  char           *user_pubkey_hex;       /* current user's pubkey (64-char hex), NULL if not signed in */
-  GPtrArray      *gift_wrap_queue;       /* pending gift wrap events to process */
-
-  /* NIP-17 DM Service for decryption and conversation management */
-  GnostrDmService *dm_service;           /* owned; handles gift wrap decryption */
-
-  /* Live relay switching (nostrc-36y.4) */
-  gulong           relay_change_handler_id; /* relay config change handler */
-
-  /* Liked events cache (NIP-25 reactions) */
-  GHashTable      *liked_events;  /* owned; key=event_id_hex (char*), value=unused (GINT_TO_POINTER(1)) */
-
-  /* nostrc-61s.6: Background operation mode */
-  gboolean         background_mode_enabled; /* hide on close instead of quit */
-};
 
 /* Old LRU functions removed - now using profile provider */
 
@@ -506,48 +498,42 @@ schedule_only:
 /* ---- Toast helpers and UI signal handlers ---- */
 static void show_toast(GnostrMainWindow *self, const char *msg) {
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !msg) return;
-  if (self->toast_overlay && ADW_IS_TOAST_OVERLAY(self->toast_overlay)) {
+
+  if (self->toast_overlay) {
     AdwToast *toast = adw_toast_new(msg);
     adw_toast_set_timeout(toast, 2);
-    adw_toast_overlay_add_toast(ADW_TOAST_OVERLAY(self->toast_overlay), toast);
+    adw_toast_overlay_add_toast(self->toast_overlay, toast);
   }
 }
 
 /* ---- Panel management helpers for OverlaySplitView ---- */
 static void show_profile_panel(GnostrMainWindow *self) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  /* Hide thread view, show profile pane */
-  if (self->thread_view) gtk_widget_set_visible(self->thread_view, FALSE);
-  if (self->profile_pane) gtk_widget_set_visible(self->profile_pane, TRUE);
-  self->showing_profile = TRUE;
-  if (self->panel_split && ADW_IS_OVERLAY_SPLIT_VIEW(self->panel_split)) {
-    adw_overlay_split_view_set_show_sidebar(ADW_OVERLAY_SPLIT_VIEW(self->panel_split), TRUE);
-  }
+
+  if (self->session_view)
+    gnostr_session_view_show_profile_panel(self->session_view);
 }
 
 static void show_thread_panel(GnostrMainWindow *self) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  /* Hide profile pane, show thread view */
-  if (self->profile_pane) gtk_widget_set_visible(self->profile_pane, FALSE);
-  if (self->thread_view) gtk_widget_set_visible(self->thread_view, TRUE);
-  self->showing_profile = FALSE;
-  if (self->panel_split && ADW_IS_OVERLAY_SPLIT_VIEW(self->panel_split)) {
-    adw_overlay_split_view_set_show_sidebar(ADW_OVERLAY_SPLIT_VIEW(self->panel_split), TRUE);
-  }
+
+  if (self->session_view)
+    gnostr_session_view_show_thread_panel(self->session_view);
 }
 
 static void hide_panel(GnostrMainWindow *self) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
-  if (self->panel_split && ADW_IS_OVERLAY_SPLIT_VIEW(self->panel_split)) {
-    adw_overlay_split_view_set_show_sidebar(ADW_OVERLAY_SPLIT_VIEW(self->panel_split), FALSE);
-  }
+
+  if (self->session_view)
+    gnostr_session_view_hide_side_panel(self->session_view);
 }
 
 static gboolean is_panel_visible(GnostrMainWindow *self) {
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return FALSE;
-  if (self->panel_split && ADW_IS_OVERLAY_SPLIT_VIEW(self->panel_split)) {
-    return adw_overlay_split_view_get_show_sidebar(ADW_OVERLAY_SPLIT_VIEW(self->panel_split));
-  }
+
+  if (self->session_view)
+    return gnostr_session_view_is_side_panel_visible(self->session_view);
+
   return FALSE;
 }
 
@@ -3114,89 +3100,12 @@ static void update_login_ui_state(GnostrMainWindow *self) {
   char *npub = g_settings_get_string(settings, "current-npub");
   g_object_unref(settings);
 
-  gboolean signed_in = npub && *npub;
+  gboolean signed_in = (npub && *npub);
 
-  if (self->lbl_signin_status && GTK_IS_LABEL(self->lbl_signin_status)) {
-    gtk_label_set_text(GTK_LABEL(self->lbl_signin_status),
-                       signed_in ? "Signed in" : "Not signed in");
-  }
-
-  if (self->lbl_profile_name && GTK_IS_LABEL(self->lbl_profile_name)) {
-    if (signed_in && npub) {
-      /* nostrc-loed: Try to show display name from kind-0 profile metadata */
-      char *display_text = NULL;
-
-      /* Decode npub to hex pubkey for profile lookup */
-      if (g_str_has_prefix(npub, "npub1")) {
-        uint8_t pubkey_bytes[32];
-        if (nostr_nip19_decode_npub(npub, pubkey_bytes) == 0) {
-          char pubkey_hex[65];
-          storage_ndb_hex_encode(pubkey_bytes, pubkey_hex);
-
-          /* Fetch profile from provider cache/nostrdb */
-          GnostrProfileMeta *profile = gnostr_profile_provider_get(pubkey_hex);
-          if (profile) {
-            /* Prefer display_name, fall back to name */
-            if (profile->display_name && *profile->display_name) {
-              display_text = g_strdup(profile->display_name);
-            } else if (profile->name && *profile->name) {
-              display_text = g_strdup(profile->name);
-            }
-            gnostr_profile_meta_free(profile);
-          } else {
-            /* Profile not in cache - queue for relay fetch */
-            enqueue_profile_author(self, pubkey_hex);
-          }
-        }
-      }
-
-      /* Fall back to truncated npub if no profile name */
-      if (!display_text) {
-        display_text = g_strdup_printf("%.16s...", npub);
-      }
-
-      gtk_label_set_text(GTK_LABEL(self->lbl_profile_name), display_text);
-      g_free(display_text);
-    } else {
-      gtk_label_set_text(GTK_LABEL(self->lbl_profile_name), "");
-    }
-  }
-
-  /* Show/hide buttons based on state - single Log In/Log Out toggle */
-  if (self->btn_login && GTK_IS_WIDGET(self->btn_login)) {
-    gtk_widget_set_visible(self->btn_login, !signed_in);
-  }
-  if (self->btn_logout && GTK_IS_WIDGET(self->btn_logout)) {
-    gtk_widget_set_visible(self->btn_logout, signed_in);
-  }
-
-  /* nostrc-x3m: Disable Notifications and Messages tabs when logged out.
-   * These features require authentication:
-   * - Notifications: requires pubkey to fetch mentions
-   * - Messages/DM: requires keys for NIP-17 encryption */
-  if (self->notifications_view && GTK_IS_WIDGET(self->notifications_view)) {
-    gtk_widget_set_sensitive(self->notifications_view, signed_in);
-    gtk_widget_set_tooltip_text(self->notifications_view,
-                                signed_in ? NULL : "Log in to view notifications");
-  }
-  if (self->dm_inbox && GTK_IS_WIDGET(self->dm_inbox)) {
-    gtk_widget_set_sensitive(self->dm_inbox, signed_in);
-    gtk_widget_set_tooltip_text(self->dm_inbox,
-                                signed_in ? NULL : "Log in to send and receive messages");
-  }
-
-  /* If user just logged out and is currently on a disabled tab, switch to Timeline */
-  if (!signed_in && self->stack && ADW_IS_VIEW_STACK(self->stack)) {
-    GtkWidget *visible_child = adw_view_stack_get_visible_child(ADW_VIEW_STACK(self->stack));
-    if (visible_child == self->notifications_view || visible_child == self->dm_inbox) {
-      /* Switch to Timeline tab */
-      adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "timeline");
-    }
-  }
-
-  /* nostrc-ct3: Show/hide composer based on login state */
-  if (self->composer && GTK_IS_WIDGET(self->composer)) {
-    gtk_widget_set_visible(self->composer, signed_in);
+  /* SessionView owns auth gating for Notifications/Messages and internal navigation.
+   * MainWindow only computes sign-in state and informs SessionView. */
+  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+    gnostr_session_view_set_authenticated(self->session_view, signed_in);
   }
 
   g_free(npub);
@@ -3208,13 +3117,16 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
 
+  /* Get profile pane from session view */
+  GtkWidget *profile_pane = self->session_view ? gnostr_session_view_get_profile_pane(self->session_view) : NULL;
+
   /* Check if profile pane is currently visible */
   gboolean sidebar_visible = is_panel_visible(self) && self->showing_profile;
 
   /* Check if profile pane is already showing this profile */
   extern const char* gnostr_profile_pane_get_current_pubkey(GnostrProfilePane *pane);
-  if (GNOSTR_IS_PROFILE_PANE(self->profile_pane)) {
-    const char *current = gnostr_profile_pane_get_current_pubkey(GNOSTR_PROFILE_PANE(self->profile_pane));
+  if (profile_pane && GNOSTR_IS_PROFILE_PANE(profile_pane)) {
+    const char *current = gnostr_profile_pane_get_current_pubkey(GNOSTR_PROFILE_PANE(profile_pane));
     if (sidebar_visible && current && strcmp(current, pubkey_hex) == 0) {
       /* Same profile clicked while sidebar is visible - toggle OFF */
       hide_panel(self);
@@ -3226,8 +3138,8 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
   show_profile_panel(self);
   
   /* Set the pubkey on the profile pane */
-  if (GNOSTR_IS_PROFILE_PANE(self->profile_pane)) {
-    gnostr_profile_pane_set_pubkey(GNOSTR_PROFILE_PANE(self->profile_pane), pubkey_hex);
+  if (profile_pane && GNOSTR_IS_PROFILE_PANE(profile_pane)) {
+    gnostr_profile_pane_set_pubkey(GNOSTR_PROFILE_PANE(profile_pane), pubkey_hex);
     
     /* Query nostrdb directly for profile using optimized lookup */
     void *txn = NULL;
@@ -3245,7 +3157,7 @@ static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey
             const char *content = nostr_event_get_content(evt);
             if (content && *content) {
               extern void gnostr_profile_pane_update_from_json(GnostrProfilePane *pane, const char *json);
-              gnostr_profile_pane_update_from_json(GNOSTR_PROFILE_PANE(self->profile_pane), content);
+              gnostr_profile_pane_update_from_json(GNOSTR_PROFILE_PANE(profile_pane), content);
               found = TRUE;
             }
           }
@@ -3316,18 +3228,23 @@ static void on_classifieds_contact_seller(GnostrClassifiedsView *view, const cha
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
 
   /* Open DM conversation with seller by creating a conversation entry */
-  if (self->dm_inbox && GNOSTR_IS_DM_INBOX_VIEW(self->dm_inbox)) {
+  GtkWidget *dm_inbox = (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view))
+                          ? gnostr_session_view_get_dm_inbox(self->session_view)
+                          : NULL;
+
+  if (dm_inbox && GNOSTR_IS_DM_INBOX_VIEW(dm_inbox)) {
     /* Create a minimal conversation for the seller */
     GnostrDmConversation conv = {0};
     conv.peer_pubkey = g_strdup(pubkey_hex);
     conv.display_name = g_strdup("Seller");
     conv.last_timestamp = g_get_real_time() / 1000000;
-    gnostr_dm_inbox_view_upsert_conversation(GNOSTR_DM_INBOX_VIEW(self->dm_inbox), &conv);
+    gnostr_dm_inbox_view_upsert_conversation(GNOSTR_DM_INBOX_VIEW(dm_inbox), &conv);
     g_free(conv.peer_pubkey);
     g_free(conv.display_name);
+
     /* Switch to messages tab */
-    if (self->stack && ADW_IS_VIEW_STACK(self->stack)) {
-      adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "messages");
+    if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+      gnostr_session_view_show_page(self->session_view, "messages");
     }
   }
 }
@@ -3340,8 +3257,9 @@ static void on_classifieds_listing_clicked(GnostrClassifiedsView *view, const ch
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !event_id) return;
 
   /* Show listing details in thread view */
-  if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
-    gnostr_thread_view_set_focus_event(GNOSTR_THREAD_VIEW(self->thread_view), event_id);
+  GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
+  if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
+    gnostr_thread_view_set_focus_event(GNOSTR_THREAD_VIEW(thread_view), event_id);
     show_thread_panel(self);
   }
 }
@@ -3390,8 +3308,9 @@ static void on_discover_open_article(GnostrPageDiscover *page, const char *event
   g_free(msg);
 
   /* Show in thread view for now - could have a dedicated ArticleReader in the future */
-  if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
-    gnostr_thread_view_set_focus_event(GNOSTR_THREAD_VIEW(self->thread_view), event_id);
+  GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
+  if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
+    gnostr_thread_view_set_focus_event(GNOSTR_THREAD_VIEW(thread_view), event_id);
     show_thread_panel(self);
   }
 
@@ -3467,36 +3386,9 @@ static gboolean on_window_close_request(GtkWindow *window, gpointer user_data) {
   return FALSE;
 }
 
-/* Sidebar row activation handler - switch between views */
-static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
-  (void)box;
-  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!self || !self->stack || !row) return;
+/* Sidebar row activation is now handled by GnostrSessionView */
 
-  int idx = gtk_list_box_row_get_index(row);
-  const char *names[] = {"timeline", "notifications", "messages", "discover", "search", "marketplace"};
-  if (idx >= 0 && idx < 6) {
-    adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), names[idx]);
-  }
-
-  /* On narrow screens, hide sidebar after selection */
-  if (self->split_view && adw_navigation_split_view_get_collapsed(self->split_view)) {
-    adw_navigation_split_view_set_show_content(self->split_view, TRUE);
-    if (self->sidebar_toggle_btn) {
-      gtk_toggle_button_set_active(self->sidebar_toggle_btn, FALSE);
-    }
-  }
-}
-
-/* nostrc-3u7j: Responsive navigation - sidebar toggle button handler */
-static void on_sidebar_toggle_clicked(GtkToggleButton *button, gpointer user_data) {
-  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!self || !self->split_view) return;
-
-  gboolean active = gtk_toggle_button_get_active(button);
-  /* When toggle is active, show sidebar; when inactive, show content */
-  adw_navigation_split_view_set_show_content(self->split_view, !active);
-}
+/* Sidebar toggle is now handled by GnostrSessionView */
 
 /* ESC key handler to close profile sidebar */
 static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data) {
@@ -3511,8 +3403,9 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, 
     if (is_panel_visible(self)) {
       if (!self->showing_profile) {
         g_debug("[UI] ESC pressed: closing thread view");
-        if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
-          gnostr_thread_view_clear(GNOSTR_THREAD_VIEW(self->thread_view));
+        GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
+        if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
+          gnostr_thread_view_clear(GNOSTR_THREAD_VIEW(thread_view));
         }
       } else {
         g_debug("[UI] ESC pressed: closing profile sidebar");
@@ -3575,16 +3468,14 @@ void gnostr_main_window_request_reply(GtkWidget *window, const char *id_hex, con
   }
 
   /* Set the reply context on the composer */
-  if (self->composer && GNOSTR_IS_COMPOSER(self->composer)) {
-    gnostr_composer_set_reply_context(GNOSTR_COMPOSER(self->composer),
-                                      id_hex, root_id, pubkey_hex,
-                                      display_name ? display_name : "@user");
-  }
+  /* TODO: Reply context needs to be wired through session view when composer is added */
+  g_debug("[REPLY] Reply context: id=%s root=%s pubkey=%s display=%s",
+          id_hex, root_id ? root_id : "(none)", pubkey_hex, display_name ? display_name : "@user");
   g_free(display_name);
 
-  /* Switch to timeline tab (composer is shown at bottom of timeline) */
-  if (self->stack && ADW_IS_VIEW_STACK(self->stack)) {
-    adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "timeline");
+  /* Switch to timeline tab via session view */
+  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+    gnostr_session_view_show_page(self->session_view, "timeline");
   }
 }
 
@@ -3650,18 +3541,15 @@ void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, con
     }
   }
 
-  /* Set the quote context on the composer */
-  if (self->composer && GNOSTR_IS_COMPOSER(self->composer)) {
-    gnostr_composer_set_quote_context(GNOSTR_COMPOSER(self->composer),
-                                      id_hex, pubkey_hex, nostr_uri,
-                                      display_name ? display_name : "@user");
-  }
+  /* TODO: Quote context needs to be wired through session view when composer is added */
+  g_debug("[QUOTE] Quote context: id=%s pubkey=%s uri=%s display=%s",
+          id_hex, pubkey_hex, nostr_uri, display_name ? display_name : "@user");
   g_free(display_name);
   g_free(nostr_uri);
 
-  /* Switch to timeline tab (composer is shown at bottom of timeline) */
-  if (self->stack && ADW_IS_VIEW_STACK(self->stack)) {
-    adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "timeline");
+  /* Switch to timeline tab via session view */
+  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+    gnostr_session_view_show_page(self->session_view, "timeline");
   }
 }
 
@@ -3710,21 +3598,17 @@ void gnostr_main_window_request_comment(GtkWidget *window, const char *id_hex, i
     }
   }
 
-  /* Set the comment context on the composer */
-  if (self->composer && GNOSTR_IS_COMPOSER(self->composer)) {
-    gnostr_composer_set_comment_context(GNOSTR_COMPOSER(self->composer),
-                                        id_hex, kind, pubkey_hex,
-                                        display_name ? display_name : "@user");
-  }
+  /* TODO: Comment context needs to be wired through session view when composer is added */
+  g_debug("[COMMENT] Comment context: id=%s kind=%d pubkey=%s display=%s",
+          id_hex, kind, pubkey_hex, display_name ? display_name : "@user");
   g_free(display_name);
 
-  /* Switch to timeline tab (composer is shown at bottom of timeline) */
-  if (self->stack && ADW_IS_VIEW_STACK(self->stack)) {
-    adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "timeline");
+  /* Switch to timeline tab via session view */
+  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+    gnostr_session_view_show_page(self->session_view, "timeline");
   }
 }
 
-/* Signal handler for repost-requested from note card */
 static void on_note_card_repost_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
   (void)row;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
@@ -3771,14 +3655,15 @@ void gnostr_main_window_view_thread(GtkWidget *window, const char *root_event_id
   g_debug("[THREAD] View thread requested for root=%s", root_event_id);
 
   /* Show thread view panel */
-  if (!self->thread_view || !GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
+  GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
+  if (!thread_view || !GNOSTR_IS_THREAD_VIEW(thread_view)) {
     g_warning("[THREAD] Thread view widget not available");
     show_toast(self, "Thread view not available");
     return;
   }
 
   /* Set the thread root and load the thread */
-  gnostr_thread_view_set_thread_root(GNOSTR_THREAD_VIEW(self->thread_view), root_event_id);
+  gnostr_thread_view_set_thread_root(GNOSTR_THREAD_VIEW(thread_view), root_event_id);
 
   /* Show the thread panel */
   show_thread_panel(self);
@@ -3795,8 +3680,9 @@ static void on_thread_view_close_requested(GnostrThreadView *view, gpointer user
   hide_panel(self);
 
   /* Clear thread view to free resources */
-  if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
-    gnostr_thread_view_clear(GNOSTR_THREAD_VIEW(self->thread_view));
+  GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
+  if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
+    gnostr_thread_view_clear(GNOSTR_THREAD_VIEW(thread_view));
   }
 }
 
@@ -3808,7 +3694,10 @@ static void on_thread_view_open_profile(GnostrThreadView *view, const char *pubk
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
   /* Close thread view first */
-  on_thread_view_close_requested(GNOSTR_THREAD_VIEW(self->thread_view), self);
+  GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
+  if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
+    on_thread_view_close_requested(GNOSTR_THREAD_VIEW(thread_view), self);
+  }
 
   /* Open profile pane */
   gnostr_main_window_open_profile(GTK_WIDGET(self), pubkey_hex);
@@ -4257,45 +4146,30 @@ static void prepopulate_text_notes_from_cache(GnostrMainWindow *self, guint limi
 }
 
 static void gnostr_main_window_init(GnostrMainWindow *self) {
+  self->compact = FALSE;
   gtk_widget_init_template(GTK_WIDGET(self));
 
-  /* nostrc-3u7j: Setup responsive navigation */
-  if (self->sidebar_toggle_btn) {
-    g_signal_connect(self->sidebar_toggle_btn, "toggled",
-                     G_CALLBACK(on_sidebar_toggle_clicked), self);
-  }
-  if (self->stack) {
-    adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "timeline");
+  if (self->session_view && self->toast_overlay)
+    gnostr_session_view_set_toast_overlay(self->session_view, self->toast_overlay);
+
+  if (self->session_view)
+    g_object_bind_property(self, "compact", self->session_view, "compact",
+                           G_BINDING_SYNC_CREATE);
+
+  if (self->session_view) {
+    g_signal_connect(self->session_view, "settings-requested",
+                     G_CALLBACK(on_settings_clicked), self);
+    g_signal_connect(self->session_view, "relays-requested",
+                     G_CALLBACK(on_relays_clicked), self);
+    g_signal_connect(self->session_view, "login-requested",
+                     G_CALLBACK(on_avatar_login_clicked), self);
+    g_signal_connect(self->session_view, "logout-requested",
+                     G_CALLBACK(on_avatar_logout_clicked), self);
+    g_signal_connect(self->session_view, "new-notes-clicked",
+                     G_CALLBACK(on_new_notes_clicked), self);
   }
 
-  /* Sidebar navigation items are defined in the Blueprint template.
-   * Just select the first row (Timeline) as the default. */
-  if (self->sidebar_list) {
-    gtk_list_box_select_row(self->sidebar_list, 
-                           gtk_list_box_get_row_at_index(self->sidebar_list, 0));
-  }
-
-  /* REMOVED: btn_relays not in new simplified UI */
-  if (self->btn_relays) {
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_relays),
-                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Manage Relays", -1);
-  }
-  if (self->btn_settings) {
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_settings),
-                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Settings", -1);
-  }
-  /* Sanity check and guard for avatar popover attachment */
-  GtkPopover *init_pop = NULL;
-  if (self->btn_avatar) init_pop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(self->btn_avatar));
-  (void)init_pop; /* May be unused depending on avatar_popover state */
-  if (self->btn_avatar && self->avatar_popover) {
-    /* Unconditionally associate the popover to avoid ambiguity */
-    gtk_menu_button_set_popover(GTK_MENU_BUTTON(self->btn_avatar), GTK_WIDGET(self->avatar_popover));
-  }
-  /* REMOVED: composer assertion - not in new simplified UI */
-  /* g_return_if_fail(self->composer != NULL); */
-  /* Initialize weak refs to template children needed in async paths */
-  g_weak_ref_init(&self->timeline_ref, self->timeline);
+  gnostr_main_window_set_page(self, GNOSTR_MAIN_WINDOW_PAGE_LOADING);
   /* Initialize GListModel-based event model */
   self->event_model = gn_nostr_event_model_new();
   
@@ -4316,17 +4190,18 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   /* nostrc-yi2: Calm timeline - connect new items pending signal */
   g_signal_connect(self->event_model, "new-items-pending", G_CALLBACK(on_event_model_new_items_pending), self);
   
-  /* Attach model to timeline view */
-  if (self->timeline && G_TYPE_CHECK_INSTANCE_TYPE(self->timeline, GNOSTR_TYPE_TIMELINE_VIEW)) {
+  /* Attach model to timeline view (accessed via session view) */
+  GtkWidget *timeline = self->session_view ? gnostr_session_view_get_timeline(self->session_view) : NULL;
+  if (timeline && G_TYPE_CHECK_INSTANCE_TYPE(timeline, GNOSTR_TYPE_TIMELINE_VIEW)) {
     /* Wrap GListModel in a selection model */
     GtkSelectionModel *selection = GTK_SELECTION_MODEL(
       gtk_single_selection_new(G_LIST_MODEL(self->event_model))
     );
-    gnostr_timeline_view_set_model(GNOSTR_TIMELINE_VIEW(self->timeline), selection);
+    gnostr_timeline_view_set_model(GNOSTR_TIMELINE_VIEW(timeline), selection);
     g_object_unref(selection); /* View takes ownership */
 
     /* Connect scroll edge detection for sliding window pagination */
-    GtkWidget *scroller = gnostr_timeline_view_get_scrolled_window(GNOSTR_TIMELINE_VIEW(self->timeline));
+    GtkWidget *scroller = gnostr_timeline_view_get_scrolled_window(GNOSTR_TIMELINE_VIEW(timeline));
     if (scroller && GTK_IS_SCROLLED_WINDOW(scroller)) {
       GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
       if (vadj) {
@@ -4372,86 +4247,46 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
 
   /* Register for relay configuration changes (live relay switching, nostrc-36y.4) */
   self->relay_change_handler_id = gnostr_relay_change_connect(on_relay_config_changed, self);
-  /* Build app menu for header button */
-  if (self->btn_menu) {
-    GMenu *menu = g_menu_new();
-    g_menu_append(menu, "About", "win.show-about");
-    g_menu_append(menu, "Quit", "app.quit");
-    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(self->btn_menu), G_MENU_MODEL(menu));
-    g_object_unref(menu);
-
-    /* Register window action for About dialog */
+  /* Register window action for About dialog (menu is now in session view) */
+  {
     GSimpleAction *about_action = g_simple_action_new("show-about", NULL);
     g_signal_connect(about_action, "activate", G_CALLBACK(on_show_about_activated), self);
     g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(about_action));
     g_object_unref(about_action);
   }
-  /* REMOVED: composer signal - not in new simplified UI */
-  if (self->composer) {
-    g_signal_connect(self->composer, "post-requested",
-                     G_CALLBACK(on_composer_post_requested), self);
+  /* Connect discover page signals (nostrc-dr3) - accessed via session view */
+  {
+    GtkWidget *discover_page = self->session_view ? gnostr_session_view_get_discover_page(self->session_view) : NULL;
+    if (discover_page && GNOSTR_IS_PAGE_DISCOVER(discover_page)) {
+      g_signal_connect(discover_page, "open-profile",
+                       G_CALLBACK(on_discover_open_profile), self);
+      g_signal_connect(discover_page, "copy-npub-requested",
+                       G_CALLBACK(on_discover_copy_npub), self);
+      g_signal_connect(discover_page, "open-communities",
+                       G_CALLBACK(on_discover_open_communities), self);
+      g_signal_connect(discover_page, "open-article",
+                       G_CALLBACK(on_discover_open_article), self);
+      g_signal_connect(discover_page, "zap-article-requested",
+                       G_CALLBACK(on_discover_zap_article), self);
+    }
   }
-  /* Re-added: new notes button */
-  if (self->btn_new_notes) {
-    g_signal_connect(self->btn_new_notes, "clicked", G_CALLBACK(on_new_notes_clicked), self);
-  }
-  /* REMOVED: profile pane signals - caused width overflow */
-  /* if (self->profile_pane && GNOSTR_IS_PROFILE_PANE(self->profile_pane)) {
-    g_signal_connect(self->profile_pane, "close-requested",
-                     G_CALLBACK(on_profile_pane_close_requested), self);
-  } */
-  /* REMOVED: thread view signals - caused width overflow */
-  /* if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
-    g_signal_connect(self->thread_view, "close-requested",
-                     G_CALLBACK(on_thread_view_close_requested), self);
-    g_signal_connect(self->thread_view, "open-profile",
-                     G_CALLBACK(on_thread_view_open_profile), self);
-    g_signal_connect(self->thread_view, "need-profile",
-                     G_CALLBACK(on_thread_view_need_profile), self);
-  } */
-  /* Connect discover page signals (nostrc-dr3) */
-  if (self->discover_page && GNOSTR_IS_PAGE_DISCOVER(self->discover_page)) {
-    g_signal_connect(self->discover_page, "open-profile",
-                     G_CALLBACK(on_discover_open_profile), self);
-    g_signal_connect(self->discover_page, "copy-npub-requested",
-                     G_CALLBACK(on_discover_copy_npub), self);
-    g_signal_connect(self->discover_page, "open-communities",
-                     G_CALLBACK(on_discover_open_communities), self);
-    g_signal_connect(self->discover_page, "open-article",
-                     G_CALLBACK(on_discover_open_article), self);
-    g_signal_connect(self->discover_page, "zap-article-requested",
-                     G_CALLBACK(on_discover_zap_article), self);
-  }
-  /* Connect marketplace/classifieds view signals (NIP-15/NIP-99) */
-  if (self->classifieds_view && GNOSTR_IS_CLASSIFIEDS_VIEW(self->classifieds_view)) {
-    g_signal_connect(self->classifieds_view, "open-profile",
-                     G_CALLBACK(on_classifieds_open_profile), self);
-    g_signal_connect(self->classifieds_view, "contact-seller",
-                     G_CALLBACK(on_classifieds_contact_seller), self);
-    g_signal_connect(self->classifieds_view, "listing-clicked",
-                     G_CALLBACK(on_classifieds_listing_clicked), self);
-  }
-  /* Connect stack visible-child-name signal to load discover profiles on demand */
-  if (self->stack && ADW_IS_VIEW_STACK(self->stack)) {
-    g_signal_connect(self->stack, "notify::visible-child",
-                     G_CALLBACK(on_stack_visible_child_changed), self);
+  /* Connect marketplace/classifieds view signals (NIP-15/NIP-99) - accessed via session view */
+  {
+    GtkWidget *classifieds_view = self->session_view ? gnostr_session_view_get_classifieds_view(self->session_view) : NULL;
+    if (classifieds_view && GNOSTR_IS_CLASSIFIEDS_VIEW(classifieds_view)) {
+      g_signal_connect(classifieds_view, "open-profile",
+                       G_CALLBACK(on_classifieds_open_profile), self);
+      g_signal_connect(classifieds_view, "contact-seller",
+                       G_CALLBACK(on_classifieds_contact_seller), self);
+      g_signal_connect(classifieds_view, "listing-clicked",
+                       G_CALLBACK(on_classifieds_listing_clicked), self);
+    }
   }
   /* Add key event controller for ESC to close profile sidebar */
   {
     GtkEventController *key_controller = gtk_event_controller_key_new();
     g_signal_connect(key_controller, "key-pressed", G_CALLBACK(on_key_pressed), self);
     gtk_widget_add_controller(GTK_WIDGET(self), key_controller);
-  }
-  if (self->btn_avatar) {
-    /* Ensure avatar button is interactable */
-    gtk_widget_set_sensitive(self->btn_avatar, TRUE);
-    gtk_widget_set_tooltip_text(self->btn_avatar, "Login / Account");
-  }
-  /* Initialize login UI state from saved settings */
-  update_login_ui_state(self);
-  /* Ensure Timeline page is visible initially */
-  if (self->stack && ADW_IS_VIEW_STACK(self->stack)) {
-    adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "timeline");
   }
   
   /* CRITICAL: Initialize pool and relays BEFORE timeline prepopulation!
@@ -4493,8 +4328,12 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
 
   /* Init NIP-17 DM service and wire to inbox view */
   self->dm_service = gnostr_dm_service_new();
-  if (self->dm_inbox && GNOSTR_IS_DM_INBOX_VIEW(self->dm_inbox)) {
-    gnostr_dm_service_set_inbox_view(self->dm_service, GNOSTR_DM_INBOX_VIEW(self->dm_inbox));
+
+  GtkWidget *dm_inbox = (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view))
+                          ? gnostr_session_view_get_dm_inbox(self->session_view)
+                          : NULL;
+  if (dm_inbox && GNOSTR_IS_DM_INBOX_VIEW(dm_inbox)) {
+    gnostr_dm_service_set_inbox_view(self->dm_service, GNOSTR_DM_INBOX_VIEW(dm_inbox));
     g_debug("[DM_SERVICE] Connected DM service to inbox view");
   }
 
@@ -4537,25 +4376,9 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   {
     g_autofree char *npub = client_settings_get_current_npub();
     gboolean signed_in = (npub && *npub);
-    /* Initialize label */
-    if (self->lbl_signin_status && GTK_IS_LABEL(self->lbl_signin_status)) {
-      gtk_label_set_text(GTK_LABEL(self->lbl_signin_status), signed_in ? "Signed in" : "Not signed in");
-    }
-    /* nostrc-swm: Single Log In/Log Out toggle - set initial visibility */
-    if (self->btn_login && GTK_IS_WIDGET(self->btn_login))
-      gtk_widget_set_visible(self->btn_login, !signed_in);
-    if (self->btn_logout && GTK_IS_WIDGET(self->btn_logout))
-      gtk_widget_set_visible(self->btn_logout, signed_in);
-    /* nostrc-x3m: Initialize Notifications and Messages tabs sensitivity */
-    if (self->notifications_view && GTK_IS_WIDGET(self->notifications_view)) {
-      gtk_widget_set_sensitive(self->notifications_view, signed_in);
-      gtk_widget_set_tooltip_text(self->notifications_view,
-                                  signed_in ? NULL : "Log in to view notifications");
-    }
-    if (self->dm_inbox && GTK_IS_WIDGET(self->dm_inbox)) {
-      gtk_widget_set_sensitive(self->dm_inbox, signed_in);
-      gtk_widget_set_tooltip_text(self->dm_inbox,
-                                  signed_in ? NULL : "Log in to send and receive messages");
+
+    if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+      gnostr_session_view_set_authenticated(self->session_view, signed_in);
     }
   }
 }
@@ -4643,23 +4466,9 @@ static void on_event_model_new_items_pending(GnNostrEventModel *model, guint cou
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
-  if (count > 0) {
-    /* Update label and show indicator */
-    char *label = g_strdup_printf("%u new note%s", count, count == 1 ? "" : "s");
-    if (self->lbl_new_notes_count && GTK_IS_LABEL(self->lbl_new_notes_count)) {
-      gtk_label_set_text(GTK_LABEL(self->lbl_new_notes_count), label);
-    }
-    g_free(label);
-
-    if (self->new_notes_revealer && GTK_IS_REVEALER(self->new_notes_revealer)) {
-      gtk_revealer_set_reveal_child(GTK_REVEALER(self->new_notes_revealer), TRUE);
-    }
-  } else {
-    /* Hide indicator when count is 0 */
-    if (self->new_notes_revealer && GTK_IS_REVEALER(self->new_notes_revealer)) {
-      gtk_revealer_set_reveal_child(GTK_REVEALER(self->new_notes_revealer), FALSE);
-    }
-  }
+  /* TODO: New notes indicator is now in session view - needs signal forwarding */
+  g_debug("[NEW_NOTES] Pending count: %u", count);
+  (void)count;
 }
 
 /* nostrc-9f4: Idle callback to scroll timeline to top after model changes complete */
@@ -4671,8 +4480,9 @@ static gboolean scroll_to_top_idle(gpointer user_data) {
     return G_SOURCE_REMOVE;
   }
 
-  if (self->timeline && GNOSTR_IS_TIMELINE_VIEW(self->timeline)) {
-    GtkWidget *scroller = gnostr_timeline_view_get_scrolled_window(GNOSTR_TIMELINE_VIEW(self->timeline));
+  GtkWidget *timeline = self->session_view ? gnostr_session_view_get_timeline(self->session_view) : NULL;
+  if (timeline && GNOSTR_IS_TIMELINE_VIEW(timeline)) {
+    GtkWidget *scroller = gnostr_timeline_view_get_scrolled_window(GNOSTR_TIMELINE_VIEW(timeline));
     if (scroller && GTK_IS_SCROLLED_WINDOW(scroller)) {
       GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
       if (vadj && GTK_IS_ADJUSTMENT(vadj)) {
@@ -4710,6 +4520,64 @@ static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
     gtk_revealer_set_reveal_child(GTK_REVEALER(self->new_notes_revealer), FALSE);
   }
 }
+
+gboolean gnostr_main_window_get_compact(GnostrMainWindow *self) {
+  g_return_val_if_fail(GNOSTR_IS_MAIN_WINDOW(self), FALSE);
+  return self->compact;
+}
+
+void gnostr_main_window_set_compact(GnostrMainWindow *self, gboolean compact) {
+  g_return_if_fail(GNOSTR_IS_MAIN_WINDOW(self));
+
+  compact = !!compact;
+  if (self->compact == compact) return;
+
+  self->compact = compact;
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_COMPACT]);
+}
+
+void gnostr_main_window_set_page(GnostrMainWindow *self, GnostrMainWindowPage page) {
+  g_return_if_fail(GNOSTR_IS_MAIN_WINDOW(self));
+
+  const char *name = NULL;
+  switch (page) {
+    case GNOSTR_MAIN_WINDOW_PAGE_LOADING: name = "loading"; break;
+    case GNOSTR_MAIN_WINDOW_PAGE_SESSION: name = "session"; break;
+    case GNOSTR_MAIN_WINDOW_PAGE_LOGIN: name = "login"; break;
+    case GNOSTR_MAIN_WINDOW_PAGE_ERROR: name = "error"; break;
+    default: break;
+  }
+
+  if (name && self->main_stack)
+    gtk_stack_set_visible_child_name(self->main_stack, name);
+}
+
+static void gnostr_main_window_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(object);
+
+  switch ((GnostrMainWindowProperty)prop_id) {
+    case PROP_COMPACT:
+      g_value_set_boolean(value, self->compact);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+      break;
+  }
+}
+
+static void gnostr_main_window_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(object);
+
+  switch ((GnostrMainWindowProperty)prop_id) {
+    case PROP_COMPACT:
+      gnostr_main_window_set_compact(self, g_value_get_boolean(value));
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+      break;
+  }
+}
+
 GnostrMainWindow *gnostr_main_window_new(AdwApplication *app) {
   g_return_val_if_fail(ADW_IS_APPLICATION(app), NULL);
   return g_object_new(GNOSTR_TYPE_MAIN_WINDOW, "application", app, NULL);
@@ -4793,67 +4661,28 @@ static void gnostr_main_window_dispose(GObject *object) {
 static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
+
   object_class->dispose = gnostr_main_window_dispose;
+  object_class->get_property = gnostr_main_window_get_property;
+  object_class->set_property = gnostr_main_window_set_property;
+
+  props[PROP_COMPACT] = g_param_spec_boolean("compact", "Compact layout",
+                                             "Whether the window uses the compact responsive layout",
+                                             FALSE,
+                                             G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY);
+  g_object_class_install_properties(object_class, N_PROPS, props);
+
   /* Ensure custom template child types are registered before parsing template */
-  g_type_ensure(GNOSTR_TYPE_TIMELINE_VIEW);
-  g_type_ensure(GNOSTR_TYPE_COMPOSER);
-  g_type_ensure(GNOSTR_TYPE_PROFILE_PANE);
-  g_type_ensure(GNOSTR_TYPE_DM_INBOX_VIEW);
-  g_type_ensure(GNOSTR_TYPE_THREAD_VIEW);
-  g_type_ensure(GNOSTR_TYPE_NOTIFICATIONS_VIEW);
-  g_type_ensure(GNOSTR_TYPE_NOTIFICATION_ROW);
-  g_type_ensure(GNOSTR_TYPE_PAGE_DISCOVER);
-  g_type_ensure(GNOSTR_TYPE_SEARCH_RESULTS_VIEW);
-  g_type_ensure(GNOSTR_TYPE_CLASSIFIEDS_VIEW);
+  g_type_ensure(GNOSTR_TYPE_SESSION_VIEW);
+  g_type_ensure(GNOSTR_TYPE_LOGIN);
+
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
-  /* Bind expected template children (IDs must match the UI file) */
-  /* Responsive layout components (nostrc-3u7j) */
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toolbar_view);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, header_bar);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, split_view);
-  /* REMOVED: sidebar_toggle_btn not in new simplified UI */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, sidebar_toggle_btn); */
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, sidebar_list);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, bottom_bar);
-  /* Content template children */
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, stack);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, timeline);
-  /* REMOVED: timeline_overlay not in new simplified UI */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, timeline_overlay); */
-  /* REMOVED: panel_split, panel_container, profile_pane, thread_view - caused width overflow */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, panel_split); */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, panel_container); */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, profile_pane); */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, thread_view); */
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_settings);
-  /* Re-added: btn_relays */
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_relays);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_menu);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_avatar);
-  /* Re-added: avatar_popover and login/logout controls */
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, avatar_popover);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, lbl_signin_status);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, lbl_profile_name);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_login);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_logout);
-  /* REMOVED: composer not in new simplified UI */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, composer); */
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, dm_inbox);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, notifications_view);
-  /* Re-added: discover_page (renamed from page_discover) and classifieds_view */
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, discover_page);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, classifieds_view);
+
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_overlay);
-  /* Re-added: new notes indicator */
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, new_notes_revealer);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_new_notes);
-  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, lbl_new_notes_count);
-  /* Bind template callbacks referenced by the UI file */
-  gtk_widget_class_bind_template_callback(widget_class, on_sidebar_row_activated);
-  gtk_widget_class_bind_template_callback(widget_class, on_relays_clicked);
-  gtk_widget_class_bind_template_callback(widget_class, on_settings_clicked);
-  gtk_widget_class_bind_template_callback(widget_class, on_avatar_login_clicked);
-  gtk_widget_class_bind_template_callback(widget_class, on_avatar_logout_clicked);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, main_stack);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, session_view);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, login_view);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, error_page);
 }
 
 /* ---- Minimal stub implementations to satisfy build and support cached profiles path ---- */
@@ -4865,6 +4694,8 @@ static void initial_refresh_timeout_cb(gpointer data) {
   if (self->event_model) {
     gn_nostr_event_model_refresh(self->event_model);
   }
+
+  gnostr_main_window_set_page(self, GNOSTR_MAIN_WINDOW_PAGE_SESSION);
 
   g_debug("STARTUP_DEBUG: initial_refresh_timeout_cb EXIT");
 }
@@ -5029,21 +4860,12 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
     show_toast(self, msg);
     g_free(msg);
 
-    /* Clear composer text on success */
-    if (self->composer && GNOSTR_IS_COMPOSER(self->composer)) {
-      /* NIP-37: Delete draft after successful publish */
-      const char *draft_d_tag = gnostr_composer_get_current_draft_d_tag(GNOSTR_COMPOSER(self->composer));
-      if (draft_d_tag) {
-        GnostrDrafts *drafts_mgr = gnostr_drafts_get_default();
-        gnostr_drafts_delete_async(drafts_mgr, draft_d_tag, NULL, NULL);
-        g_message("[PUBLISH] Deleted draft after successful publish: %s", draft_d_tag);
-      }
-      gnostr_composer_clear(GNOSTR_COMPOSER(self->composer));
-    }
+    /* TODO: Clear composer text on success - needs to be wired through session view */
+    g_debug("[PUBLISH] Success - composer clear would happen here");
 
-    /* Switch to timeline tab */
-    if (self->stack && ADW_IS_VIEW_STACK(self->stack)) {
-      adw_view_stack_set_visible_child_name(ADW_VIEW_STACK(self->stack), "timeline");
+    /* Switch to timeline tab via session view */
+    if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+      gnostr_session_view_show_page(self->session_view, "timeline");
     }
   } else {
     if (limit_skip_count > 0 && limit_warnings->len > 0) {
@@ -6664,9 +6486,10 @@ static void update_meta_from_profile_json(GnostrMainWindow *self, const char *pu
   }
 
   /* Update thread view if visible */
-  if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
+  GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
+  if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
     if (is_panel_visible(self) && !self->showing_profile) {
-      gnostr_thread_view_update_profiles(GNOSTR_THREAD_VIEW(self->thread_view));
+      gnostr_thread_view_update_profiles(GNOSTR_THREAD_VIEW(thread_view));
     }
   }
 
