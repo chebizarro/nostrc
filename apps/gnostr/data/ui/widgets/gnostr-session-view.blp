@@ -26,7 +26,6 @@ template $GnostrSessionView: Adw.Bin {
             sidebar-width-fraction: 0.28;
             min-sidebar-width: 220;
             max-sidebar-width: 280;
-
             collapsed: bind template.compact;
 
             sidebar: Adw.NavigationPage sidebar_page {
@@ -202,53 +201,6 @@ template $GnostrSessionView: Adw.Bin {
                         MenuButton btn_avatar {
                             icon-name: "avatar-default-symbolic";
                             tooltip-text: _("Account");
-
-                            popover: Popover avatar_popover {
-                                child: Box {
-                                    orientation: vertical;
-                                    spacing: 6;
-                                    margin-top: 12;
-                                    margin-bottom: 12;
-                                    margin-start: 12;
-                                    margin-end: 12;
-
-                                    Label lbl_signin_status {
-                                        label: _("Not signed in");
-
-                                        styles [
-                                            "dim-label",
-                                        ]
-                                    }
-
-                                    Label lbl_profile_name {
-                                        label: "";
-
-                                        styles [
-                                            "heading",
-                                        ]
-
-                                        visible: false;
-                                    }
-
-                                    Button btn_login {
-                                        label: _("Sign In");
-
-                                        styles [
-                                            "suggested-action",
-                                        ]
-                                    }
-
-                                    Button btn_logout {
-                                        label: _("Sign Out");
-
-                                        styles [
-                                            "destructive-action",
-                                        ]
-
-                                        visible: false;
-                                    }
-                                };
-                            };
                         }
                     }
 

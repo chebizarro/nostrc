@@ -133,8 +133,54 @@ static const char *title_for_page_name(const char *page_name) {
   return NULL;
 }
 
+/* Forward declarations for signal handlers used in ensure_avatar_popover */
+static void on_btn_login_clicked(GtkButton *btn, gpointer user_data);
+static void on_btn_logout_clicked(GtkButton *btn, gpointer user_data);
+
+/* Create avatar popover lazily to avoid GTK4 crash on Linux */
+static void ensure_avatar_popover(GnostrSessionView *self) {
+  if (!self || !self->btn_avatar || self->avatar_popover) return;
+
+  self->avatar_popover = GTK_POPOVER(gtk_popover_new());
+  
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+  gtk_widget_set_margin_top(box, 12);
+  gtk_widget_set_margin_bottom(box, 12);
+  gtk_widget_set_margin_start(box, 12);
+  gtk_widget_set_margin_end(box, 12);
+  
+  self->lbl_signin_status = GTK_LABEL(gtk_label_new(_("Not signed in")));
+  gtk_widget_add_css_class(GTK_WIDGET(self->lbl_signin_status), "dim-label");
+  gtk_box_append(GTK_BOX(box), GTK_WIDGET(self->lbl_signin_status));
+  
+  self->lbl_profile_name = GTK_LABEL(gtk_label_new(""));
+  gtk_widget_add_css_class(GTK_WIDGET(self->lbl_profile_name), "heading");
+  gtk_widget_set_visible(GTK_WIDGET(self->lbl_profile_name), FALSE);
+  gtk_box_append(GTK_BOX(box), GTK_WIDGET(self->lbl_profile_name));
+  
+  self->btn_login = GTK_BUTTON(gtk_button_new_with_label(_("Sign In")));
+  gtk_widget_add_css_class(GTK_WIDGET(self->btn_login), "suggested-action");
+  gtk_box_append(GTK_BOX(box), GTK_WIDGET(self->btn_login));
+  
+  self->btn_logout = GTK_BUTTON(gtk_button_new_with_label(_("Sign Out")));
+  gtk_widget_add_css_class(GTK_WIDGET(self->btn_logout), "destructive-action");
+  gtk_widget_set_visible(GTK_WIDGET(self->btn_logout), FALSE);
+  gtk_box_append(GTK_BOX(box), GTK_WIDGET(self->btn_logout));
+  
+  gtk_popover_set_child(self->avatar_popover, box);
+  gtk_menu_button_set_popover(self->btn_avatar, GTK_WIDGET(self->avatar_popover));
+
+  /* Connect signals for the newly created buttons */
+  g_signal_connect(self->btn_login, "clicked", G_CALLBACK(on_btn_login_clicked), self);
+  g_signal_connect(self->btn_logout, "clicked", G_CALLBACK(on_btn_logout_clicked), self);
+}
+
 static void update_auth_gating(GnostrSessionView *self) {
   if (!self) return;
+
+  /* NOTE: Do NOT call ensure_avatar_popover here - it will be created lazily
+   * when the user clicks the avatar button. Creating it during init causes
+   * GTK4 crash on Linux. */
 
   if (self->row_notifications)
     gtk_widget_set_sensitive(GTK_WIDGET(self->row_notifications), self->authenticated);
@@ -398,11 +444,8 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_relays);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_avatar);
 
-  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, avatar_popover);
-  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, lbl_signin_status);
-  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, lbl_profile_name);
-  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_login);
-  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_logout);
+  /* avatar_popover and its children are now created programmatically to avoid
+   * GTK4 crash on Linux where GtkPopover in template causes gtk_widget_root assertion */
 
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, content_root);
 
@@ -435,6 +478,15 @@ static void gnostr_session_view_init(GnostrSessionView *self) {
   self->showing_profile = TRUE;
 
   gtk_widget_init_template(GTK_WIDGET(self));
+
+  /* Avatar popover will be created lazily in ensure_avatar_popover() to avoid
+   * GTK4 crash on Linux where GtkPopover creation during template init causes
+   * gtk_widget_root assertion failure */
+  self->avatar_popover = NULL;
+  self->lbl_signin_status = NULL;
+  self->lbl_profile_name = NULL;
+  self->btn_login = NULL;
+  self->btn_logout = NULL;
 
   /* ESC closes profile/thread side panel when visible */
   GtkEventController *keys = gtk_event_controller_key_new();

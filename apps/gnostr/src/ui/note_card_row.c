@@ -13,7 +13,6 @@
 #include "../util/zap.h"
 #include "../util/custom_emoji.h"
 #include "../util/nip32_labels.h"
-#include "../util/nip23.h"
 #include "../util/nip71.h"
 #include "../util/nip84_highlights.h"
 #include "../util/nip48_proxy.h"
@@ -249,20 +248,32 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   self->og_preview = NULL;
   /* Clean up the repost popover before disposing template */
   if (self->repost_popover) {
+    if (GTK_IS_POPOVER(self->repost_popover)) {
+      gtk_popover_popdown(GTK_POPOVER(self->repost_popover));
+    }
     gtk_widget_unparent(self->repost_popover);
     self->repost_popover = NULL;
   }
   /* Clean up the menu popover before disposing template */
   if (self->menu_popover) {
+    if (GTK_IS_POPOVER(self->menu_popover)) {
+      gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
+    }
     gtk_widget_unparent(self->menu_popover);
     self->menu_popover = NULL;
   }
   /* NIP-25: Clean up reaction popovers */
   if (self->emoji_picker_popover) {
+    if (GTK_IS_POPOVER(self->emoji_picker_popover)) {
+      gtk_popover_popdown(GTK_POPOVER(self->emoji_picker_popover));
+    }
     gtk_widget_unparent(self->emoji_picker_popover);
     self->emoji_picker_popover = NULL;
   }
   if (self->reactions_popover) {
+    if (GTK_IS_POPOVER(self->reactions_popover)) {
+      gtk_popover_popdown(GTK_POPOVER(self->reactions_popover));
+    }
     gtk_widget_unparent(self->reactions_popover);
     self->reactions_popover = NULL;
   }
@@ -976,7 +987,6 @@ static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
   /* Create popover if not already created */
   if (!self->menu_popover) {
     self->menu_popover = gtk_popover_new();
-    gtk_widget_set_parent(self->menu_popover, GTK_WIDGET(self->btn_menu));
 
     /* Create a vertical box for the menu items */
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
@@ -1156,6 +1166,7 @@ static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
     g_object_set_data(G_OBJECT(delete_btn), "delete-separator", sep3);
 
     gtk_popover_set_child(GTK_POPOVER(self->menu_popover), box);
+    gtk_widget_set_parent(self->menu_popover, GTK_WIDGET(self->btn_menu));
   }
 
   /* Show the popover */
@@ -1177,12 +1188,6 @@ static void show_context_menu_at_point(GnostrNoteCardRow *self, double x, double
   /* Position the popover at the click point */
   GdkRectangle rect = { (int)x, (int)y, 1, 1 };
   gtk_popover_set_pointing_to(GTK_POPOVER(self->menu_popover), &rect);
-
-  /* Re-parent to the note card widget for proper positioning */
-  if (gtk_widget_get_parent(self->menu_popover) != GTK_WIDGET(self)) {
-    gtk_widget_unparent(self->menu_popover);
-    gtk_widget_set_parent(self->menu_popover, GTK_WIDGET(self));
-  }
 
   gtk_popover_popup(GTK_POPOVER(self->menu_popover));
 }
@@ -1258,7 +1263,6 @@ static void on_repost_clicked(GtkButton *btn, gpointer user_data) {
   /* Create popover if not already created */
   if (!self->repost_popover) {
     self->repost_popover = gtk_popover_new();
-    gtk_widget_set_parent(self->repost_popover, GTK_WIDGET(self->btn_repost));
 
     /* Create a vertical box for the menu items */
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
@@ -1292,6 +1296,7 @@ static void on_repost_clicked(GtkButton *btn, gpointer user_data) {
     gtk_box_append(GTK_BOX(box), quote_btn);
 
     gtk_popover_set_child(GTK_POPOVER(self->repost_popover), box);
+    gtk_widget_set_parent(self->repost_popover, GTK_WIDGET(self->btn_repost));
   }
 
   /* Show the popover */
@@ -1321,7 +1326,6 @@ static void ensure_emoji_picker_popover(GnostrNoteCardRow *self) {
   if (self->emoji_picker_popover) return;
 
   self->emoji_picker_popover = gtk_popover_new();
-  gtk_widget_set_parent(self->emoji_picker_popover, GTK_WIDGET(self->btn_like));
 
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
   gtk_widget_set_margin_start(box, 8);
@@ -1346,6 +1350,7 @@ static void ensure_emoji_picker_popover(GnostrNoteCardRow *self) {
   }
 
   gtk_popover_set_child(GTK_POPOVER(self->emoji_picker_popover), box);
+  gtk_widget_set_parent(self->emoji_picker_popover, GTK_WIDGET(self->btn_like));
 }
 
 static void on_like_clicked(GtkButton *btn, gpointer user_data) {
@@ -1375,9 +1380,10 @@ static void on_like_count_clicked(GtkGestureClick *gesture, gint n_press, gdoubl
   if (!self || !self->reaction_breakdown) return;
 
   /* Create/update reactions popover */
+  gboolean popover_created = FALSE;
   if (!self->reactions_popover) {
     self->reactions_popover = gtk_popover_new();
-    gtk_widget_set_parent(self->reactions_popover, GTK_WIDGET(self->btn_like));
+    popover_created = TRUE;
   }
 
   /* Build content showing reaction breakdown */
@@ -1406,6 +1412,9 @@ static void on_like_count_clicked(GtkGestureClick *gesture, gint n_press, gdoubl
   }
 
   gtk_popover_set_child(GTK_POPOVER(self->reactions_popover), box);
+  if (popover_created) {
+    gtk_widget_set_parent(self->reactions_popover, GTK_WIDGET(self->btn_like));
+  }
   gtk_popover_popup(GTK_POPOVER(self->reactions_popover));
 }
 

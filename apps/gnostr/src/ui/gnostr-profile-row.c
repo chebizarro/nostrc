@@ -55,7 +55,9 @@ gnostr_profile_row_dispose(GObject *object)
 
     /* Clean up popover */
     if (self->actions_popover) {
-        gtk_widget_unparent(self->actions_popover);
+        if (self->btn_actions) {
+            gtk_menu_button_set_popover(self->btn_actions, NULL);
+        }
         self->actions_popover = NULL;
     }
 
@@ -156,7 +158,6 @@ create_actions_popover(GnostrProfileRow *self)
     if (self->actions_popover) return;
 
     self->actions_popover = gtk_popover_new();
-    gtk_widget_set_parent(self->actions_popover, GTK_WIDGET(self->btn_actions));
 
     /* Create a vertical box for the menu items */
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
@@ -209,6 +210,14 @@ create_actions_popover(GnostrProfileRow *self)
 
     gtk_popover_set_child(GTK_POPOVER(self->actions_popover), box);
     gtk_menu_button_set_popover(self->btn_actions, self->actions_popover);
+}
+
+static void
+on_actions_button_clicked(GtkButton *btn, GnostrProfileRow *self)
+{
+    (void)btn;
+    if (!self) return;
+    create_actions_popover(self);
 }
 
 static void
@@ -292,8 +301,10 @@ gnostr_profile_row_init(GnostrProfileRow *self)
     self->btn_follow = NULL;
     self->follow_label = NULL;
 
-    /* Create the actions popover */
-    create_actions_popover(self);
+    /* Create the actions popover on demand */
+    if (self->btn_actions) {
+        g_signal_connect(self->btn_actions, "clicked", G_CALLBACK(on_actions_button_clicked), self);
+    }
 
     /* Click gesture for the whole row (but not on the actions button) */
     GtkGesture *click = gtk_gesture_click_new();

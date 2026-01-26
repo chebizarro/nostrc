@@ -230,54 +230,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           <object class="GtkMenuButton" id="btn_avatar">
                             <property name="icon-name">avatar-default-symbolic</property>
                             <property name="tooltip-text" translatable="yes">Account</property>
-                            <property name="popover">
-                              <object class="GtkPopover" id="avatar_popover">
-                                <property name="child">
-                                  <object class="GtkBox">
-                                    <property name="orientation">1</property>
-                                    <property name="spacing">6</property>
-                                    <property name="margin-top">12</property>
-                                    <property name="margin-bottom">12</property>
-                                    <property name="margin-start">12</property>
-                                    <property name="margin-end">12</property>
-                                    <child>
-                                      <object class="GtkLabel" id="lbl_signin_status">
-                                        <property name="label" translatable="yes">Not signed in</property>
-                                        <style>
-                                          <class name="dim-label"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel" id="lbl_profile_name">
-                                        <property name="label"></property>
-                                        <style>
-                                          <class name="heading"/>
-                                        </style>
-                                        <property name="visible">false</property>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkButton" id="btn_login">
-                                        <property name="label" translatable="yes">Sign In</property>
-                                        <style>
-                                          <class name="suggested-action"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkButton" id="btn_logout">
-                                        <property name="label" translatable="yes">Sign Out</property>
-                                        <style>
-                                          <class name="destructive-action"/>
-                                        </style>
-                                        <property name="visible">false</property>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </property>
-                              </object>
-                            </property>
                           </object>
                         </child>
                       </object>

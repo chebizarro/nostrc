@@ -133,8 +133,8 @@ static void update_board_display(GnostrChessCard *self);
 
 /* ---- Widget lifecycle ---- */
 
-static void gnostr_chess_card_dispose(GObject *obj) {
-  GnostrChessCard *self = GNOSTR_CHESS_CARD(obj);
+static void gnostr_chess_card_dispose(GObject *object) {
+  GnostrChessCard *self = GNOSTR_CHESS_CARD(object);
 
   gnostr_chess_card_stop_autoplay(self);
 
@@ -152,6 +152,9 @@ static void gnostr_chess_card_dispose(GObject *obj) {
 #endif
 
   if (self->menu_popover) {
+    if (GTK_IS_POPOVER(self->menu_popover)) {
+      gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
+    }
     gtk_widget_unparent(self->menu_popover);
     self->menu_popover = NULL;
   }
@@ -164,7 +167,7 @@ static void gnostr_chess_card_dispose(GObject *obj) {
     child = next;
   }
 
-  G_OBJECT_CLASS(gnostr_chess_card_parent_class)->dispose(obj);
+  G_OBJECT_CLASS(gnostr_chess_card_parent_class)->dispose(object);
 }
 
 static void gnostr_chess_card_finalize(GObject *obj) {
@@ -809,7 +812,6 @@ static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
 
   if (!self->menu_popover) {
     self->menu_popover = gtk_popover_new();
-    gtk_widget_set_parent(self->menu_popover, GTK_WIDGET(self->btn_menu));
 
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     gtk_widget_set_margin_start(box, 6);
@@ -842,6 +844,7 @@ static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
     gtk_box_append(GTK_BOX(box), profile_btn);
 
     gtk_popover_set_child(GTK_POPOVER(self->menu_popover), box);
+    gtk_widget_set_parent(self->menu_popover, GTK_WIDGET(self->btn_menu));
   }
 
   gtk_popover_popup(GTK_POPOVER(self->menu_popover));
