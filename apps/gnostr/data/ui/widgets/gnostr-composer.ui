@@ -43,7 +43,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="icon-name">window-close-symbolic</property>
                 <property name="tooltip-text">Cancel reply</property>
                 <property name="has-frame">false</property>
-                <signal name="clicked" handler="on_cancel_reply_clicked" swapped="True"/>
+                <signal name="clicked" handler="on_cancel_reply_clicked"/>
                 <style>
                   <class name="flat"/>
                 </style>
@@ -109,7 +109,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="icon-name">mail-attachment-symbolic</property>
                 <property name="tooltip-text">Attach image or file</property>
                 <property name="has-frame">false</property>
-                <signal name="clicked" handler="on_attach_clicked" swapped="True"/>
+                <signal name="clicked" handler="on_attach_clicked"/>
                 <style>
                   <class name="flat"/>
                 </style>
@@ -120,7 +120,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="icon-name">dialog-warning-symbolic</property>
                 <property name="tooltip-text">Mark as sensitive content (NIP-36)</property>
                 <property name="has-frame">false</property>
-                <signal name="toggled" handler="on_sensitive_toggled" swapped="True"/>
+                <signal name="toggled" handler="on_sensitive_toggled"/>
                 <style>
                   <class name="flat"/>
                 </style>
@@ -194,7 +194,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="icon-name">document-save-symbolic</property>
                 <property name="tooltip-text">Save as draft (NIP-37)</property>
                 <property name="has-frame">false</property>
-                <signal name="clicked" handler="on_save_draft_clicked" swapped="True"/>
+                <signal name="clicked" handler="on_save_draft_clicked"/>
                 <style>
                   <class name="flat"/>
                 </style>
@@ -204,7 +204,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="GtkButton" id="btn_post">
                 <property name="label">Post</property>
                 <property name="tooltip-text">Publish note</property>
-                <signal name="clicked" handler="on_post_clicked" swapped="True"/>
+                <signal name="clicked" handler="on_post_clicked"/>
               </object>
             </child>
           </object>

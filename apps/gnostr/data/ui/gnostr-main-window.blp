@@ -168,9 +168,10 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
 
                         ListBox sidebar_list {
                             selection-mode: browse;
-                            activate-on-single-click: false;
+                            activate-on-single-click: true;
                             focusable: true;
                             focus-on-click: true;
+                            row-activated => $on_sidebar_row_activated();
 
                             styles [
                                 "navigation-sidebar",
@@ -394,8 +395,8 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                     vexpand: false;
 
                                     $GnostrTimelineView timeline {
-                                        hexpand: " true";
-                                        vexpand: " true";
+                                        hexpand: true;
+                                        vexpand: true;
                                     }
 
                                     [overlay]
@@ -472,6 +473,17 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                 icon-name: "system-search-symbolic";
 
                                 child: $GnostrSearchResultsView search_view {
+                                    hexpand: true;
+                                    vexpand: true;
+                                };
+                            }
+
+                            Adw.ViewStackPage {
+                                name: "marketplace";
+                                title: _("Marketplace");
+                                icon-name: "view-grid-symbolic";
+
+                                child: $GnostrClassifiedsView classifieds_view {
                                     hexpand: true;
                                     vexpand: true;
                                 };

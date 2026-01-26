@@ -165,9 +165,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <child>
                           <object class="GtkListBox" id="sidebar_list">
                             <property name="selection-mode">2</property>
-                            <property name="activate-on-single-click">false</property>
+                            <property name="activate-on-single-click">true</property>
                             <property name="focusable">true</property>
                             <property name="focus-on-click">true</property>
+                            <signal name="row-activated" handler="on_sidebar_row_activated"/>
                             <style>
                               <class name="navigation-sidebar"/>
                             </style>
@@ -408,8 +409,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="vexpand">false</property>
                                     <child>
                                       <object class="GnostrTimelineView" id="timeline">
-                                        <property name="hexpand"> true</property>
-                                        <property name="vexpand"> true</property>
+                                        <property name="hexpand">true</property>
+                                        <property name="vexpand">true</property>
                                       </object>
                                     </child>
                                     <child type="overlay">
@@ -496,6 +497,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 <property name="icon-name">system-search-symbolic</property>
                                 <property name="child">
                                   <object class="GnostrSearchResultsView" id="search_view">
+                                    <property name="hexpand">true</property>
+                                    <property name="vexpand">true</property>
+                                  </object>
+                                </property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwViewStackPage">
+                                <property name="name">marketplace</property>
+                                <property name="title" translatable="yes">Marketplace</property>
+                                <property name="icon-name">view-grid-symbolic</property>
+                                <property name="child">
+                                  <object class="GnostrClassifiedsView" id="classifieds_view">
                                     <property name="hexpand">true</property>
                                     <property name="vexpand">true</property>
                                   </object>
