@@ -56,16 +56,24 @@ template $GnostrNoteCardRow: Widget {
             Button btn_avatar {
                 has-frame: false;
                 valign: start;
+                halign: start;
+                hexpand: false;
+                vexpand: false;
                 tooltip-text: "View profile";
 
                 styles [
                     "flat",
                     "circular",
+                    "avatar-button",
                 ]
 
                 Overlay avatar_box {
-                    width-request: 48;
-                    height-request: 48;
+                    width-request: 32;
+                    height-request: 32;
+                    hexpand: false;
+                    vexpand: false;
+                    halign: center;
+                    valign: center;
 
                     styles [
                         "avatar",
@@ -75,8 +83,10 @@ template $GnostrNoteCardRow: Widget {
                     Picture avatar_image {
                         visible: false;
                         content-fit: cover;
-                        width-request: 48;
-                        height-request: 48;
+                        width-request: 32;
+                        height-request: 32;
+                        hexpand: false;
+                        vexpand: false;
 
                         styles [
                             "note-avatar-image",

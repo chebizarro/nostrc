@@ -61,15 +61,23 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="GtkButton" id="btn_avatar">
                 <property name="has-frame">false</property>
                 <property name="valign">1</property>
+                <property name="halign">1</property>
+                <property name="hexpand">false</property>
+                <property name="vexpand">false</property>
                 <property name="tooltip-text">View profile</property>
                 <style>
                   <class name="flat"/>
                   <class name="circular"/>
+                  <class name="avatar-button"/>
                 </style>
                 <child>
                   <object class="GtkOverlay" id="avatar_box">
-                    <property name="width-request">48</property>
-                    <property name="height-request">48</property>
+                    <property name="width-request">32</property>
+                    <property name="height-request">32</property>
+                    <property name="hexpand">false</property>
+                    <property name="vexpand">false</property>
+                    <property name="halign">3</property>
+                    <property name="valign">3</property>
                     <style>
                       <class name="avatar"/>
                       <class name="note-avatar"/>
@@ -78,8 +86,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       <object class="GtkPicture" id="avatar_image">
                         <property name="visible">false</property>
                         <property name="content-fit">2</property>
-                        <property name="width-request">48</property>
-                        <property name="height-request">48</property>
+                        <property name="width-request">32</property>
+                        <property name="height-request">32</property>
+                        <property name="hexpand">false</property>
+                        <property name="vexpand">false</property>
                         <style>
                           <class name="note-avatar-image"/>
                         </style>

@@ -316,11 +316,19 @@ label a:visited {
 	border-radius: 50%;
 }
 
-/* Note card avatar specific (48px) */
+/* Avatar button - constrained sizing */
+.avatar-button {
+	padding: 0;
+	margin: 0;
+	min-width: 32px;
+	min-height: 32px;
+}
+
+/* Note card avatar specific (32px default, configurable) */
 .note-avatar {
 	border-radius: 50%;
-	min-width: 48px;
-	min-height: 48px;
+	min-width: 32px;
+	min-height: 32px;
 	/* Default fallback gradient for avatars without images */
 	background: linear-gradient(
 		135deg,
@@ -331,14 +339,14 @@ label a:visited {
 
 .note-avatar picture {
 	border-radius: 50%;
-	min-width: 48px;
-	min-height: 48px;
+	min-width: 32px;
+	min-height: 32px;
 }
 
 .note-avatar-image {
 	border-radius: 50%;
-	min-width: 48px;
-	min-height: 48px;
+	min-width: 32px;
+	min-height: 32px;
 }
 
 /* Profile Pane Styles */
