@@ -161,6 +161,30 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                                     }
                                 }
                             }
+
+                            ListBoxRow row_classifieds {
+                                Box {
+                                    orientation: horizontal;
+                                    spacing: 12;
+                                    margin-start: 12;
+                                    margin-end: 12;
+                                    margin-top: 10;
+                                    margin-bottom: 10;
+
+                                    Image {
+                                        icon-name: "emblem-shopping-cart-symbolic";
+
+                                        styles [
+                                            "dim-label",
+                                        ]
+                                    }
+
+                                    Label {
+                                        label: _("Marketplace");
+                                        xalign: 0;
+                                    }
+                                }
+                            }
                         }
                     };
                 };
@@ -169,74 +193,196 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
             content: Adw.NavigationPage content_page {
                 title: _("Timeline");
 
-                child: Adw.ToolbarView toolbar_view {
-                    [top]
-                    Adw.HeaderBar header_bar {
-                        [end]
-                        MenuButton btn_avatar {
-                            icon-name: "avatar-default-symbolic";
-                            tooltip-text: _("Account");
+                child: Adw.OverlaySplitView panel_split {
+                    show-sidebar: false;
+                    sidebar-position: end;
+                    min-sidebar-width: 320;
+                    max-sidebar-width: 400;
+
+                    content: Adw.ToolbarView toolbar_view {
+                        [top]
+                        Adw.HeaderBar header_bar {
+                            [start]
+                            Button btn_relays {
+                                icon-name: "network-server-symbolic";
+                                tooltip-text: _("Manage Relays");
+                            }
+
+                            [end]
+                            MenuButton btn_avatar {
+                                icon-name: "avatar-default-symbolic";
+                                tooltip-text: _("Account");
+
+                                popover: Popover avatar_popover {
+                                    Box {
+                                        orientation: vertical;
+                                        spacing: 6;
+                                        margin-top: 12;
+                                        margin-bottom: 12;
+                                        margin-start: 12;
+                                        margin-end: 12;
+
+                                        Label lbl_signin_status {
+                                            label: _("Not signed in");
+
+                                            styles [
+                                                "dim-label",
+                                            ]
+                                        }
+
+                                        Label lbl_profile_name {
+                                            label: "";
+
+                                            styles [
+                                                "heading",
+                                            ]
+
+                                            visible: false;
+                                        }
+
+                                        Button btn_login {
+                                            label: _("Sign In");
+
+                                            styles [
+                                                "suggested-action",
+                                            ]
+                                        }
+
+                                        Button btn_logout {
+                                            label: _("Sign Out");
+
+                                            styles [
+                                                "destructive-action",
+                                            ]
+
+                                            visible: false;
+                                        }
+                                    }
+                                };
+                            }
                         }
-                    }
 
-                    content: Adw.ViewStack stack {
-                        vexpand: true;
+                        content: Box {
+                            orientation: vertical;
 
-                        Adw.ViewStackPage {
-                            name: "timeline";
-                            title: _("Timeline");
-                            icon-name: "view-list-symbolic";
+                            Revealer new_notes_revealer {
+                                reveal-child: false;
+                                transition-type: slide_down;
+                                halign: center;
+                                valign: start;
 
-                            child: ScrolledWindow {
-                                hscrollbar-policy: never;
-                                vexpand: true;
+                                Button btn_new_notes {
+                                    halign: center;
+                                    margin-top: 8;
+                                    margin-bottom: 8;
 
-                                $GnostrTimelineView timeline {
-                                    hexpand: true;
-                                    vexpand: true;
+                                    styles [
+                                        "pill",
+                                        "suggested-action",
+                                    ]
+
+                                    Box {
+                                        orientation: horizontal;
+                                        spacing: 6;
+
+                                        Image {
+                                            icon-name: "go-up-symbolic";
+                                        }
+
+                                        Label lbl_new_notes_count {
+                                            label: _("New notes");
+                                        }
+                                    }
                                 }
-                            };
-                        }
+                            }
 
-                        Adw.ViewStackPage {
-                            name: "notifications";
-                            title: _("Notifications");
-                            icon-name: "preferences-system-notifications-symbolic";
-
-                            child: $GnostrNotificationsView notifications_view {
-                                hexpand: true;
+                            Adw.ViewStack stack {
                                 vexpand: true;
-                            };
-                        }
 
-                        Adw.ViewStackPage {
-                            name: "messages";
-                            title: _("Messages");
-                            icon-name: "mail-unread-symbolic";
+                                Adw.ViewStackPage {
+                                    name: "timeline";
+                                    title: _("Timeline");
+                                    icon-name: "view-list-symbolic";
 
-                            child: $GnostrDmInboxView dm_inbox {
-                                hexpand: true;
-                                vexpand: true;
-                            };
-                        }
+                                    child: ScrolledWindow {
+                                        hscrollbar-policy: never;
+                                        vexpand: true;
 
-                        Adw.ViewStackPage {
-                            name: "discover";
-                            title: _("Discover");
-                            icon-name: "system-search-symbolic";
+                                        $GnostrTimelineView timeline {
+                                            hexpand: true;
+                                            vexpand: true;
+                                        }
+                                    };
+                                }
 
-                            child: $GnostrPageDiscover discover_page {
-                                hexpand: true;
-                                vexpand: true;
-                            };
+                                Adw.ViewStackPage {
+                                    name: "notifications";
+                                    title: _("Notifications");
+                                    icon-name: "preferences-system-notifications-symbolic";
+
+                                    child: $GnostrNotificationsView notifications_view {
+                                        hexpand: true;
+                                        vexpand: true;
+                                    };
+                                }
+
+                                Adw.ViewStackPage {
+                                    name: "messages";
+                                    title: _("Messages");
+                                    icon-name: "mail-unread-symbolic";
+
+                                    child: $GnostrDmInboxView dm_inbox {
+                                        hexpand: true;
+                                        vexpand: true;
+                                    };
+                                }
+
+                                Adw.ViewStackPage {
+                                    name: "discover";
+                                    title: _("Discover");
+                                    icon-name: "system-search-symbolic";
+
+                                    child: $GnostrPageDiscover discover_page {
+                                        hexpand: true;
+                                        vexpand: true;
+                                    };
+                                }
+
+                                Adw.ViewStackPage {
+                                    name: "classifieds";
+                                    title: _("Marketplace");
+                                    icon-name: "emblem-shopping-cart-symbolic";
+
+                                    child: $GnostrClassifiedsView classifieds_view {
+                                        hexpand: true;
+                                        vexpand: true;
+                                    };
+                                }
+                            }
+                        };
+
+                        [bottom]
+                        Adw.ViewSwitcherBar bottom_bar {
+                            stack: stack;
+                            reveal: false;
                         }
                     };
 
-                    [bottom]
-                    Adw.ViewSwitcherBar bottom_bar {
-                        stack: stack;
-                        reveal: false;
-                    }
+                    sidebar: Box panel_container {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        $GnostrProfilePane profile_pane {
+                            hexpand: true;
+                            vexpand: true;
+                        }
+
+                        $GnostrThreadView thread_view {
+                            hexpand: true;
+                            vexpand: true;
+                            visible: false;
+                        }
+                    };
                 };
             };
         }

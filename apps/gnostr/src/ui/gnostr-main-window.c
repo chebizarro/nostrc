@@ -319,7 +319,7 @@ struct _GnostrMainWindow {
   GtkWidget *composer;
   GtkWidget *dm_inbox;
   GtkWidget *notifications_view;
-  GtkWidget *page_discover;
+  GtkWidget *discover_page;
   GtkWidget *classifieds_view;
   GtkWidget *toast_overlay;
   /* nostrc-yi2: Calm timeline - new notes indicator */
@@ -3436,9 +3436,9 @@ static void on_stack_visible_child_changed(GObject *stack, GParamSpec *pspec, gp
   }
 
   /* When Discover page becomes visible, load profiles */
-  if (visible_child == self->page_discover) {
-    if (GNOSTR_IS_PAGE_DISCOVER(self->page_discover)) {
-      gnostr_page_discover_load_profiles(GNOSTR_PAGE_DISCOVER(self->page_discover));
+  if (visible_child == self->discover_page) {
+    if (GNOSTR_IS_PAGE_DISCOVER(self->discover_page)) {
+      gnostr_page_discover_load_profiles(GNOSTR_PAGE_DISCOVER(self->discover_page));
     }
   }
 
@@ -4391,35 +4391,35 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     g_signal_connect(self->composer, "post-requested",
                      G_CALLBACK(on_composer_post_requested), self);
   }
-  /* REMOVED: new notes button - not in new simplified UI */
-  /* if (self->btn_new_notes) {
+  /* Re-added: new notes button */
+  if (self->btn_new_notes) {
     g_signal_connect(self->btn_new_notes, "clicked", G_CALLBACK(on_new_notes_clicked), self);
-  } */
-  /* REMOVED: profile pane signals - not in new simplified UI */
-  /* if (self->profile_pane && GNOSTR_IS_PROFILE_PANE(self->profile_pane)) {
+  }
+  /* Re-added: profile pane signals */
+  if (self->profile_pane && GNOSTR_IS_PROFILE_PANE(self->profile_pane)) {
     g_signal_connect(self->profile_pane, "close-requested",
                      G_CALLBACK(on_profile_pane_close_requested), self);
-  } */
-  /* REMOVED: thread view signals - not in new simplified UI */
-  /* if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
+  }
+  /* Re-added: thread view signals */
+  if (self->thread_view && GNOSTR_IS_THREAD_VIEW(self->thread_view)) {
     g_signal_connect(self->thread_view, "close-requested",
                      G_CALLBACK(on_thread_view_close_requested), self);
     g_signal_connect(self->thread_view, "open-profile",
                      G_CALLBACK(on_thread_view_open_profile), self);
     g_signal_connect(self->thread_view, "need-profile",
                      G_CALLBACK(on_thread_view_need_profile), self);
-  } */
+  }
   /* Connect discover page signals (nostrc-dr3) */
-  if (self->page_discover && GNOSTR_IS_PAGE_DISCOVER(self->page_discover)) {
-    g_signal_connect(self->page_discover, "open-profile",
+  if (self->discover_page && GNOSTR_IS_PAGE_DISCOVER(self->discover_page)) {
+    g_signal_connect(self->discover_page, "open-profile",
                      G_CALLBACK(on_discover_open_profile), self);
-    g_signal_connect(self->page_discover, "copy-npub-requested",
+    g_signal_connect(self->discover_page, "copy-npub-requested",
                      G_CALLBACK(on_discover_copy_npub), self);
-    g_signal_connect(self->page_discover, "open-communities",
+    g_signal_connect(self->discover_page, "open-communities",
                      G_CALLBACK(on_discover_open_communities), self);
-    g_signal_connect(self->page_discover, "open-article",
+    g_signal_connect(self->discover_page, "open-article",
                      G_CALLBACK(on_discover_open_article), self);
-    g_signal_connect(self->page_discover, "zap-article-requested",
+    g_signal_connect(self->discover_page, "zap-article-requested",
                      G_CALLBACK(on_discover_zap_article), self);
   }
   /* Connect marketplace/classifieds view signals (NIP-15/NIP-99) */
@@ -4820,42 +4820,34 @@ static void gnostr_main_window_class_init(GnostrMainWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, timeline);
   /* REMOVED: timeline_overlay not in new simplified UI */
   /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, timeline_overlay); */
-  /* REMOVED: panel_split not in new simplified UI */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, panel_split); */
-  /* REMOVED: panel_container not in new simplified UI */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, panel_container); */
-  /* REMOVED: profile_pane not in new simplified UI */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, profile_pane); */
-  /* REMOVED: thread_view not in new simplified UI */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, thread_view); */
+  /* Re-added: panel_split, panel_container, profile_pane, thread_view */
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, panel_split);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, panel_container);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, profile_pane);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, thread_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_settings);
-  /* REMOVED: btn_relays not in new simplified UI */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_relays); */
+  /* Re-added: btn_relays */
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_relays);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_menu);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_avatar);
-  /* REMOVED: avatar_popover not in new simplified UI */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, avatar_popover); */
-  /* REMOVED: lbl_signin_status not in new simplified UI */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, lbl_signin_status); */
-  /* REMOVED: lbl_profile_name not in new simplified UI */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, lbl_profile_name); */
-  /* REMOVED: btn_login not in new simplified UI */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_login); */
-  /* REMOVED: btn_logout not in new simplified UI */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_logout); */
+  /* Re-added: avatar_popover and login/logout controls */
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, avatar_popover);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, lbl_signin_status);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, lbl_profile_name);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_login);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_logout);
   /* REMOVED: composer not in new simplified UI */
   /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, composer); */
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, dm_inbox);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, notifications_view);
-  /* RENAMED: page_discover -> discover_page in new UI */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, page_discover); */
-  /* REMOVED: classifieds_view not in new simplified UI */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, classifieds_view); */
+  /* Re-added: discover_page (renamed from page_discover) and classifieds_view */
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, discover_page);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, classifieds_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, toast_overlay);
-  /* REMOVED: new notes indicator not in new simplified UI */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, new_notes_revealer); */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_new_notes); */
-  /* gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, lbl_new_notes_count); */
+  /* Re-added: new notes indicator */
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, new_notes_revealer);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, btn_new_notes);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, lbl_new_notes_count);
   /* Bind template callbacks referenced by the UI file */
   gtk_widget_class_bind_template_callback(widget_class, on_sidebar_row_activated);
   gtk_widget_class_bind_template_callback(widget_class, on_relays_clicked);
