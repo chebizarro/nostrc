@@ -14,10 +14,12 @@ template $GnostrProfilePane: Widget {
             Box {
                 orientation: vertical;
 
-                Box banner_container {
+                ScrolledWindow banner_container {
                     height-request: 192;
                     vexpand: false;
-                    orientation: vertical;
+                    hexpand: true;
+                    hscrollbar-policy: never;
+                    vscrollbar-policy: never;
 
                     styles [
                         "profile-banner",

@@ -21,10 +21,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="GtkBox">
                 <property name="orientation">1</property>
                 <child>
-                  <object class="GtkBox" id="banner_container">
+                  <object class="GtkScrolledWindow" id="banner_container">
                     <property name="height-request">192</property>
                     <property name="vexpand">false</property>
-                    <property name="orientation">1</property>
+                    <property name="hexpand">true</property>
+                    <property name="hscrollbar-policy">2</property>
+                    <property name="vscrollbar-policy">2</property>
                     <style>
                       <class name="profile-banner"/>
                     </style>
