@@ -4472,9 +4472,12 @@ static void on_event_model_new_items_pending(GnNostrEventModel *model, guint cou
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
-  /* TODO: New notes indicator is now in session view - needs signal forwarding */
   g_debug("[NEW_NOTES] Pending count: %u", count);
-  (void)count;
+
+  /* Forward to session view to update the new notes indicator */
+  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+    gnostr_session_view_set_new_notes_count(self->session_view, count);
+  }
 }
 
 /* nostrc-9f4: Idle callback to scroll timeline to top after model changes complete */
@@ -4508,6 +4511,11 @@ static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
 
+  /* Hide new notes indicator immediately */
+  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+    gnostr_session_view_set_new_notes_count(self->session_view, 0);
+  }
+
   /* Flush pending notes - this schedules model changes via idle */
   if (self->event_model && GN_IS_NOSTR_EVENT_MODEL(self->event_model)) {
     gn_nostr_event_model_flush_pending(self->event_model);
@@ -4520,8 +4528,6 @@ static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
    * iterations to complete its internal updates before we scroll.
    * We ref the window to ensure it stays valid until the timeout fires. */
   g_timeout_add(50, scroll_to_top_idle, g_object_ref(self));
-
-  /* TODO: Hide new notes indicator - now in session view */
 }
 
 gboolean gnostr_main_window_get_compact(GnostrMainWindow *self) {

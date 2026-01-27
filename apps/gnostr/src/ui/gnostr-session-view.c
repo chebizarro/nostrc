@@ -687,3 +687,22 @@ gboolean gnostr_session_view_is_showing_profile(GnostrSessionView *self) {
   g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), FALSE);
   return self->showing_profile;
 }
+
+void gnostr_session_view_set_new_notes_count(GnostrSessionView *self, guint count) {
+  g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
+
+  if (count > 0) {
+    char *label_text = g_strdup_printf(ngettext("%u New Note", "%u New Notes", count), count);
+    if (self->lbl_new_notes_count) {
+      gtk_label_set_text(self->lbl_new_notes_count, label_text);
+    }
+    g_free(label_text);
+    if (self->new_notes_revealer) {
+      gtk_revealer_set_reveal_child(self->new_notes_revealer, TRUE);
+    }
+  } else {
+    if (self->new_notes_revealer) {
+      gtk_revealer_set_reveal_child(self->new_notes_revealer, FALSE);
+    }
+  }
+}

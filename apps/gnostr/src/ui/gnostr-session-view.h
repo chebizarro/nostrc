@@ -45,6 +45,9 @@ GtkWidget *gnostr_session_view_get_thread_view(GnostrSessionView *self);
 /* Panel state queries */
 gboolean gnostr_session_view_is_showing_profile(GnostrSessionView *self);
 
+/* New notes indicator */
+void gnostr_session_view_set_new_notes_count(GnostrSessionView *self, guint count);
+
 G_END_DECLS
 
 #endif /* GNOSTR_SESSION_VIEW_H */

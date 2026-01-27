@@ -69,7 +69,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="halign">1</property>
                     <property name="hexpand">false</property>
                     <property name="vexpand">false</property>
-                    <property name="tooltip-text">View profile</property>
+                    <property name="tooltip-text" translatable="yes">View profile</property>
                     <style>
                       <class name="flat"/>
                       <class name="circular"/>
@@ -123,11 +123,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <child>
                       <object class="GtkBox" id="header_top">
                         <property name="orientation">0</property>
-                        <property name="spacing">6</property>
+                        <property name="spacing">4</property>
                         <child>
                           <object class="GtkButton" id="btn_display_name">
                             <property name="has-frame">false</property>
-                            <property name="tooltip-text">View profile</property>
+                            <property name="tooltip-text" translatable="yes">View profile</property>
                             <style>
                               <class name="flat"/>
                             </style>
@@ -142,10 +142,42 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           </object>
                         </child>
                         <child>
+                          <object class="GtkLabel" id="lbl_nip05_separator">
+                            <property name="label">·</property>
+                            <property name="visible">false</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="note-handle"/>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="lbl_nip05">
+                            <property name="visible">false</property>
+                            <property name="xalign">0</property>
+                            <property name="ellipsize">3</property>
+                            <style>
+                              <class name="note-handle"/>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="lbl_timestamp_separator">
+                            <property name="label">·</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="note-handle"/>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
                           <object class="GtkLabel" id="lbl_timestamp">
                             <property name="xalign">0</property>
                             <style>
-                              <class name="note-timestamp"/>
+                              <class name="note-handle"/>
                               <class name="dim-label"/>
                             </style>
                           </object>
@@ -158,7 +190,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <child>
                           <object class="GtkButton" id="btn_menu">
                             <property name="icon-name">view-more-symbolic</property>
-                            <property name="tooltip-text">More options</property>
+                            <property name="tooltip-text" translatable="yes">More options</property>
                             <property name="valign">3</property>
                             <style>
                               <class name="flat"/>
@@ -234,7 +266,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="GtkLabel" id="sensitive_warning_label">
-                            <property name="label">Sensitive Content</property>
+                            <property name="label" translatable="yes">Sensitive Content</property>
                             <property name="wrap">true</property>
                             <property name="max-width-chars">40</property>
                             <property name="justify">2</property>
@@ -242,7 +274,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="GtkButton" id="btn_show_sensitive">
-                            <property name="label">Show Content</property>
+                            <property name="label" translatable="yes">Show Content</property>
                             <property name="halign">3</property>
                             <style>
                               <class name="pill"/>
@@ -339,7 +371,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </style>
                     <child>
                       <object class="GtkButton" id="btn_reply">
-                        <property name="tooltip-text">Reply</property>
+                        <property name="tooltip-text" translatable="yes">Reply</property>
                         <style>
                           <class name="flat"/>
                           <class name="action-pill"/>
@@ -370,7 +402,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkButton" id="btn_repost">
-                        <property name="tooltip-text">Repost</property>
+                        <property name="tooltip-text" translatable="yes">Repost</property>
                         <style>
                           <class name="flat"/>
                           <class name="action-pill"/>
@@ -401,7 +433,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkButton" id="btn_like">
-                        <property name="tooltip-text">Like</property>
+                        <property name="tooltip-text" translatable="yes">Like</property>
                         <style>
                           <class name="flat"/>
                           <class name="action-pill"/>
@@ -432,7 +464,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkButton" id="btn_zap">
-                        <property name="tooltip-text">Zap</property>
+                        <property name="tooltip-text" translatable="yes">Zap</property>
                         <style>
                           <class name="flat"/>
                           <class name="action-pill"/>
@@ -469,7 +501,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <child>
                       <object class="GtkButton" id="btn_link">
                         <property name="icon-name">chain-link-symbolic</property>
-                        <property name="tooltip-text">Copy link</property>
+                        <property name="tooltip-text" translatable="yes">Copy link</property>
                         <style>
                           <class name="flat"/>
                           <class name="action-pill"/>
@@ -479,7 +511,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <child>
                       <object class="GtkButton" id="btn_bookmark">
                         <property name="icon-name">bookmark-new-symbolic</property>
-                        <property name="tooltip-text">Bookmark</property>
+                        <property name="tooltip-text" translatable="yes">Bookmark</property>
                         <style>
                           <class name="flat"/>
                           <class name="action-pill"/>
@@ -489,7 +521,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <child>
                       <object class="GtkButton" id="btn_thread">
                         <property name="icon-name">view-list-symbolic</property>
-                        <property name="tooltip-text">View thread</property>
+                        <property name="tooltip-text" translatable="yes">View thread</property>
                         <property name="visible">false</property>
                         <style>
                           <class name="flat"/>

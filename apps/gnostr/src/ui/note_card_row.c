@@ -49,6 +49,9 @@ struct _GnostrNoteCardRow {
   GtkWidget *avatar_image;
   GtkWidget *lbl_display;
   GtkWidget *lbl_handle;
+  GtkWidget *lbl_nip05_separator;
+  GtkWidget *lbl_nip05;
+  GtkWidget *lbl_timestamp_separator;
   GtkWidget *lbl_timestamp;
   GtkWidget *content_label;
   GtkWidget *emoji_box;  /* NIP-30: Custom emoji display box */
@@ -285,7 +288,8 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   }
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_CARD_ROW);
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
-  self->lbl_display = NULL; self->lbl_handle = NULL; self->lbl_timestamp = NULL; self->content_label = NULL;
+  self->lbl_display = NULL; self->lbl_handle = NULL; self->lbl_nip05_separator = NULL; self->lbl_nip05 = NULL;
+  self->lbl_timestamp_separator = NULL; self->lbl_timestamp = NULL; self->content_label = NULL;
   self->emoji_box = NULL; self->media_box = NULL; self->embed_box = NULL; self->og_preview_container = NULL; self->actions_box = NULL;
   self->btn_repost = NULL; self->btn_like = NULL; self->btn_bookmark = NULL; self->btn_thread = NULL;
   self->reply_indicator_box = NULL; self->reply_indicator_label = NULL;
@@ -1549,6 +1553,9 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, avatar_image);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_display);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_handle);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_nip05_separator);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_nip05);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_timestamp_separator);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_timestamp);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, content_label);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, media_box);
@@ -3382,8 +3389,26 @@ void gnostr_note_card_row_set_nip05(GnostrNoteCardRow *self, const char *nip05, 
     gtk_widget_set_visible(self->nip05_badge, FALSE);
   }
 
+  /* Hide nip-05 label and separator if no nip-05 */
+  if (GTK_IS_WIDGET(self->lbl_nip05)) {
+    gtk_widget_set_visible(self->lbl_nip05, FALSE);
+  }
+  if (GTK_IS_WIDGET(self->lbl_nip05_separator)) {
+    gtk_widget_set_visible(self->lbl_nip05_separator, FALSE);
+  }
+
   if (!nip05 || !*nip05 || !pubkey_hex || strlen(pubkey_hex) != 64) {
     return;
+  }
+
+  /* Set nip-05 label in header (show after display name) */
+  if (GTK_IS_LABEL(self->lbl_nip05)) {
+    gtk_label_set_text(GTK_LABEL(self->lbl_nip05), nip05);
+    gtk_widget_set_visible(self->lbl_nip05, TRUE);
+    gtk_widget_set_tooltip_text(self->lbl_nip05, nip05);
+  }
+  if (GTK_IS_WIDGET(self->lbl_nip05_separator)) {
+    gtk_widget_set_visible(self->lbl_nip05_separator, TRUE);
   }
 
   /* Store NIP-05 identifier */

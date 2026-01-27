@@ -64,7 +64,7 @@ template $GnostrNoteCardRow: Widget {
                     halign: start;
                     hexpand: false;
                     vexpand: false;
-                    tooltip-text: "View profile";
+                    tooltip-text: _("View profile");
 
                     styles [
                         "flat",
@@ -119,11 +119,11 @@ template $GnostrNoteCardRow: Widget {
 
                     Box header_top {
                         orientation: horizontal;
-                        spacing: 6;
+                        spacing: 4;
 
                         Button btn_display_name {
                             has-frame: false;
-                            tooltip-text: "View profile";
+                            tooltip-text: _("View profile");
 
                             styles [
                                 "flat",
@@ -138,11 +138,43 @@ template $GnostrNoteCardRow: Widget {
                             }
                         }
 
+                        Label lbl_nip05_separator {
+                            label: "·";
+                            visible: false;
+                            xalign: 0.0;
+
+                            styles [
+                                "note-handle",
+                                "dim-label",
+                            ]
+                        }
+
+                        Label lbl_nip05 {
+                            visible: false;
+                            xalign: 0.0;
+                            ellipsize: end;
+
+                            styles [
+                                "note-handle",
+                                "dim-label",
+                            ]
+                        }
+
+                        Label lbl_timestamp_separator {
+                            label: "·";
+                            xalign: 0.0;
+
+                            styles [
+                                "note-handle",
+                                "dim-label",
+                            ]
+                        }
+
                         Label lbl_timestamp {
                             xalign: 0.0;
 
                             styles [
-                                "note-timestamp",
+                                "note-handle",
                                 "dim-label",
                             ]
                         }
@@ -153,7 +185,7 @@ template $GnostrNoteCardRow: Widget {
 
                         Button btn_menu {
                             icon-name: "view-more-symbolic";
-                            tooltip-text: "More options";
+                            tooltip-text: _("More options");
                             valign: center;
 
                             styles [
@@ -225,14 +257,14 @@ template $GnostrNoteCardRow: Widget {
                         }
 
                         Label sensitive_warning_label {
-                            label: "Sensitive Content";
+                            label: _("Sensitive Content");
                             wrap: true;
                             max-width-chars: 40;
                             justify: center;
                         }
 
                         Button btn_show_sensitive {
-                            label: "Show Content";
+                            label: _("Show Content");
                             halign: center;
 
                             styles [
@@ -326,7 +358,7 @@ template $GnostrNoteCardRow: Widget {
                     ]
 
                     Button btn_reply {
-                        tooltip-text: "Reply";
+                        tooltip-text: _("Reply");
 
                         styles [
                             "flat",
@@ -355,7 +387,7 @@ template $GnostrNoteCardRow: Widget {
                     }
 
                     Button btn_repost {
-                        tooltip-text: "Repost";
+                        tooltip-text: _("Repost");
 
                         styles [
                             "flat",
@@ -384,7 +416,7 @@ template $GnostrNoteCardRow: Widget {
                     }
 
                     Button btn_like {
-                        tooltip-text: "Like";
+                        tooltip-text: _("Like");
 
                         styles [
                             "flat",
@@ -413,7 +445,7 @@ template $GnostrNoteCardRow: Widget {
                     }
 
                     Button btn_zap {
-                        tooltip-text: "Zap";
+                        tooltip-text: _("Zap");
 
                         styles [
                             "flat",
@@ -447,7 +479,7 @@ template $GnostrNoteCardRow: Widget {
 
                     Button btn_link {
                         icon-name: "chain-link-symbolic";
-                        tooltip-text: "Copy link";
+                        tooltip-text: _("Copy link");
 
                         styles [
                             "flat",
@@ -457,7 +489,7 @@ template $GnostrNoteCardRow: Widget {
 
                     Button btn_bookmark {
                         icon-name: "bookmark-new-symbolic";
-                        tooltip-text: "Bookmark";
+                        tooltip-text: _("Bookmark");
 
                         styles [
                             "flat",
@@ -467,7 +499,7 @@ template $GnostrNoteCardRow: Widget {
 
                     Button btn_thread {
                         icon-name: "view-list-symbolic";
-                        tooltip-text: "View thread";
+                        tooltip-text: _("View thread");
                         visible: false;
 
                         styles [
