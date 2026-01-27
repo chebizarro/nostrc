@@ -77,6 +77,7 @@ struct _GnostrSessionView {
   GtkRevealer *new_notes_revealer;
   GtkButton *btn_new_notes;
   GtkLabel *lbl_new_notes_count;
+  guint pending_new_notes_count;  /* Track pending count for re-showing toast */
 
   AdwOverlaySplitView *panel_split;
   GtkBox *panel_container;
@@ -580,9 +581,14 @@ void gnostr_session_view_show_page(GnostrSessionView *self, const char *page_nam
     page_name = "timeline";
   }
 
-  /* Hide new notes toast when switching away from timeline */
-  if (self->new_notes_revealer && g_strcmp0(page_name, "timeline") != 0) {
-    gtk_revealer_set_reveal_child(self->new_notes_revealer, FALSE);
+  /* Hide new notes toast when switching away from timeline,
+   * show it when switching back if there are pending notes */
+  if (self->new_notes_revealer) {
+    if (g_strcmp0(page_name, "timeline") != 0) {
+      gtk_revealer_set_reveal_child(self->new_notes_revealer, FALSE);
+    } else if (self->pending_new_notes_count > 0) {
+      gtk_revealer_set_reveal_child(self->new_notes_revealer, TRUE);
+    }
   }
 
   adw_view_stack_set_visible_child_name(self->stack, page_name);
@@ -695,6 +701,9 @@ gboolean gnostr_session_view_is_showing_profile(GnostrSessionView *self) {
 
 void gnostr_session_view_set_new_notes_count(GnostrSessionView *self, guint count) {
   g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
+
+  /* Store the count for re-showing when switching back to timeline */
+  self->pending_new_notes_count = count;
 
   if (count > 0) {
     char *label_text = g_strdup_printf(ngettext("%u New Note", "%u New Notes", count), count);

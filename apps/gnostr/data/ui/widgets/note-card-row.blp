@@ -116,10 +116,12 @@ template $GnostrNoteCardRow: Widget {
                     spacing: 2;
                     hexpand: true;
                     valign: center;
+                    halign: start;
 
                     Box header_top {
                         orientation: horizontal;
                         spacing: 4;
+                        halign: start;
 
                         Button btn_display_name {
                             has-frame: false;
@@ -198,6 +200,7 @@ template $GnostrNoteCardRow: Widget {
                     Box header_bottom {
                         orientation: horizontal;
                         spacing: 6;
+                        halign: start;
 
                         Label lbl_handle {
                             xalign: 0.0;
@@ -318,22 +321,6 @@ template $GnostrNoteCardRow: Widget {
                     visible: false;
                 }
 
-                FlowBox hashtags_box {
-                    visible: false;
-                    selection-mode: none;
-                    homogeneous: false;
-                    row-spacing: 4;
-                    column-spacing: 6;
-                    max-children-per-line: 10;
-                    min-children-per-line: 1;
-                    halign: start;
-                    margin-top: 8;
-
-                    styles [
-                        "note-hashtags-container",
-                    ]
-                }
-
                 FlowBox labels_box {
                     visible: false;
                     selection-mode: none;
@@ -387,7 +374,7 @@ template $GnostrNoteCardRow: Widget {
                             spacing: 6;
 
                             Image {
-                                icon-name: "chat-bubble-symbolic";
+                                icon-name: "mail-reply-sender-symbolic";
                                 pixel-size: 16;
                             }
 
@@ -474,7 +461,7 @@ template $GnostrNoteCardRow: Widget {
                             spacing: 6;
 
                             Image zap_icon {
-                                icon-name: "wallet-symbolic";
+                                icon-name: "bolt-symbolic";
                                 pixel-size: 16;
                             }
 
@@ -494,7 +481,7 @@ template $GnostrNoteCardRow: Widget {
                     }
 
                     Button btn_link {
-                        icon-name: "chain-link-symbolic";
+                        icon-name: "edit-copy-symbolic";
                         tooltip-text: _("Copy link");
 
                         styles [
@@ -523,6 +510,22 @@ template $GnostrNoteCardRow: Widget {
                             "action-pill",
                         ]
                     }
+                }
+
+                FlowBox hashtags_box {
+                    visible: false;
+                    selection-mode: none;
+                    homogeneous: false;
+                    row-spacing: 4;
+                    column-spacing: 6;
+                    max-children-per-line: 10;
+                    min-children-per-line: 1;
+                    halign: start;
+                    margin-top: 8;
+
+                    styles [
+                        "note-hashtags-container",
+                    ]
                 }
 
                 Box reply_count_box {
