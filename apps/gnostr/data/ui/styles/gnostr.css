@@ -281,6 +281,9 @@ headerbar button:hover image {
 	font-size: 15px;
 	color: @theme_fg_color;
 	min-width: 0;
+	word-wrap: break-word;
+	overflow-wrap: break-word;
+	word-break: break-word;
 }
 
 /* Clickable links in note content */
@@ -1670,6 +1673,16 @@ button.liked image {
 
 .profile-row-avatar-image {
 	border-radius: 50%;
+}
+
+/* Profile row avatar initials - constrained to 48x48 */
+.profile-row-avatar .avatar-initials {
+	min-width: 48px;
+	max-width: 48px;
+	min-height: 48px;
+	max-height: 48px;
+	font-size: 18px;
+	font-weight: 600;
 }
 
 /* NIP-05 verification badge */

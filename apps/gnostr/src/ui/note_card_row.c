@@ -2614,10 +2614,19 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
           /* For www. URLs, use https:// in href */
           gchar *href = g_str_has_prefix(clean, "www.") ? g_strdup_printf("https://%s", clean) : g_strdup(clean);
           gchar *esc_href = g_markup_escape_text(href, -1);
-          gchar *esc_display = g_markup_escape_text(clean, -1);
-          g_string_append_printf(out, "<a href=\"%s\">%s</a>", esc_href, esc_display);
+          /* Shorten display URL if longer than 40 chars to fit 640px width */
+          gchar *display_url = NULL;
+          gsize clean_len = strlen(clean);
+          if (clean_len > 40) {
+            display_url = g_strdup_printf("%.35s...", clean);
+          } else {
+            display_url = g_strdup(clean);
+          }
+          gchar *esc_display = g_markup_escape_text(display_url, -1);
+          g_string_append_printf(out, "<a href=\"%s\" title=\"%s\">%s</a>", esc_href, esc_href, esc_display);
           g_free(esc_href);
           g_free(esc_display);
+          g_free(display_url);
           g_free(href);
           if (suffix && *suffix) {
             gchar *esc_suffix = g_markup_escape_text(suffix, -1);
@@ -2911,10 +2920,19 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
         if (clean && *clean) {
           gchar *href = g_str_has_prefix(clean, "www.") ? g_strdup_printf("https://%s", clean) : g_strdup(clean);
           gchar *esc_href = g_markup_escape_text(href, -1);
-          gchar *esc_display = g_markup_escape_text(clean, -1);
-          g_string_append_printf(out, "<a href=\"%s\">%s</a>", esc_href, esc_display);
+          /* Shorten display URL if longer than 40 chars to fit 640px width */
+          gchar *display_url = NULL;
+          gsize clean_len = strlen(clean);
+          if (clean_len > 40) {
+            display_url = g_strdup_printf("%.35s...", clean);
+          } else {
+            display_url = g_strdup(clean);
+          }
+          gchar *esc_display = g_markup_escape_text(display_url, -1);
+          g_string_append_printf(out, "<a href=\"%s\" title=\"%s\">%s</a>", esc_href, esc_href, esc_display);
           g_free(esc_href);
           g_free(esc_display);
+          g_free(display_url);
           g_free(href);
           if (suffix && *suffix) {
             gchar *esc_suffix = g_markup_escape_text(suffix, -1);

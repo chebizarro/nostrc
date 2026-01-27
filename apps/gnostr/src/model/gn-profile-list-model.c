@@ -120,11 +120,21 @@ compare_by_alphabetical(gconstpointer a, gconstpointer b)
     const ProfileEntry *ea = *(const ProfileEntry **)a;
     const ProfileEntry *eb = *(const ProfileEntry **)b;
 
+    /* Sort by display_name first, then name, then pubkey as fallback */
     const char *name_a = gn_nostr_profile_get_display_name(ea->profile);
     const char *name_b = gn_nostr_profile_get_display_name(eb->profile);
 
-    if (!name_a) name_a = gn_nostr_profile_get_pubkey(ea->profile);
-    if (!name_b) name_b = gn_nostr_profile_get_pubkey(eb->profile);
+    /* Fall back to name if display_name is empty or null */
+    if (!name_a || *name_a == '\0')
+        name_a = gn_nostr_profile_get_name(ea->profile);
+    if (!name_b || *name_b == '\0')
+        name_b = gn_nostr_profile_get_name(eb->profile);
+
+    /* Fall back to pubkey if both display_name and name are empty */
+    if (!name_a || *name_a == '\0')
+        name_a = gn_nostr_profile_get_pubkey(ea->profile);
+    if (!name_b || *name_b == '\0')
+        name_b = gn_nostr_profile_get_pubkey(eb->profile);
 
     return g_utf8_collate(name_a ? name_a : "", name_b ? name_b : "");
 }
@@ -488,13 +498,24 @@ load_profiles_complete(GObject *source, GAsyncResult *result, gpointer user_data
         /* Clear old profiles */
         g_ptr_array_set_size(self->all_profiles, 0);
 
-        /* Transfer loaded profiles */
+        /* Hash table to deduplicate by pubkey */
+        GHashTable *seen_pubkeys = g_hash_table_new(g_str_hash, g_str_equal);
+
+        /* Transfer loaded profiles, deduplicating by pubkey */
         for (guint i = 0; i < data->loaded_profiles->len; i++) {
             ProfileEntry *entry = g_ptr_array_index(data->loaded_profiles, i);
 
             /* Update following and muted status */
             const char *pubkey = gn_nostr_profile_get_pubkey(entry->profile);
+
+            /* Skip duplicate pubkeys - keep the first (most recent) one */
+            if (pubkey && g_hash_table_contains(seen_pubkeys, pubkey)) {
+                profile_entry_free(entry);
+                continue;
+            }
+
             if (pubkey) {
+                g_hash_table_add(seen_pubkeys, (gpointer)pubkey);
                 if (g_hash_table_contains(self->following_set, pubkey)) {
                     entry->is_following = TRUE;
                 }
@@ -505,6 +526,8 @@ load_profiles_complete(GObject *source, GAsyncResult *result, gpointer user_data
 
             g_ptr_array_add(self->all_profiles, entry);
         }
+
+        g_hash_table_destroy(seen_pubkeys);
 
         /* Clear the loaded array - entries are now owned by all_profiles */
         g_ptr_array_set_size(data->loaded_profiles, 0);
