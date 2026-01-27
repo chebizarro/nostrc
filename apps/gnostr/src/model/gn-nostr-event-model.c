@@ -327,8 +327,10 @@ static void profile_cache_evict(GnNostrEventModel *self) {
          !g_queue_is_empty(self->profile_cache_lru)) {
     char *oldest = g_queue_pop_head(self->profile_cache_lru);
     if (oldest) {
+      /* Use g_hash_table_remove which frees both key and value via destroy funcs.
+       * We only free our LRU queue copy (oldest), not the hash table's key. */
       g_hash_table_remove(self->profile_cache, oldest);
-      g_free(oldest);
+      g_free(oldest);  /* Free LRU queue's copy of the key */
       evicted++;
     }
   }
