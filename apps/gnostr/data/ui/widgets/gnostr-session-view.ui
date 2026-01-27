@@ -298,6 +298,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <child>
                           <object class="AdwOverlaySplitView" id="panel_split">
                             <property name="show-sidebar">false</property>
+                            <property name="sidebar-position">1</property>
                             <property name="collapsed">true</property>
                             <property name="min-sidebar-width">320</property>
                             <property name="max-sidebar-width">320</property>

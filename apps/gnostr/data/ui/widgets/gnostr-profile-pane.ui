@@ -22,14 +22,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="orientation">1</property>
                 <child>
                   <object class="GtkBox" id="banner_container">
-                    <property name="height-request">120</property>
+                    <property name="height-request">192</property>
                     <property name="orientation">1</property>
                     <style>
                       <class name="profile-banner"/>
                     </style>
                     <child>
                       <object class="GtkPicture" id="banner_image">
-                        <property name="height-request">120</property>
+                        <property name="height-request">192</property>
                         <property name="vexpand">false</property>
                         <property name="content-fit">2</property>
                         <property name="can-shrink">true</property>
@@ -39,7 +39,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 </child>
                 <child>
                   <object class="GtkBox">
-                    <property name="height-request">8</property>
+                    <property name="height-request">32</property>
                   </object>
                 </child>
               </object>
@@ -50,19 +50,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="halign">1</property>
                 <property name="valign">1</property>
                 <property name="margin-start">16</property>
-                <property name="margin-top">48</property>
+                <property name="margin-top">168</property>
                 <child>
                   <object class="GtkFrame" id="avatar_box">
-                    <property name="width-request">144</property>
-                    <property name="height-request">144</property>
+                    <property name="width-request">48</property>
+                    <property name="height-request">48</property>
                     <style>
                       <class name="profile-avatar"/>
                       <class name="profile-avatar-frame"/>
                     </style>
                     <child>
                       <object class="GtkOverlay">
-                        <property name="width-request">132</property>
-                        <property name="height-request">132</property>
+                        <property name="width-request">48</property>
+                        <property name="height-request">48</property>
                         <child>
                           <object class="GtkBox">
                             <property name="orientation">1</property>
@@ -90,8 +90,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <child type="overlay">
                           <object class="GtkPicture" id="avatar_image">
                             <property name="visible">false</property>
-                            <property name="width-request">132</property>
-                            <property name="height-request">132</property>
+                            <property name="width-request">48</property>
+                            <property name="height-request">48</property>
                             <property name="content-fit">2</property>
                             <property name="can-shrink">true</property>
                             <property name="halign">3</property>
@@ -127,7 +127,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <object class="GtkBox">
             <property name="orientation">1</property>
             <property name="spacing">2</property>
-            <property name="margin-start">170</property>
+            <property name="margin-start">16</property>
             <property name="margin-end">16</property>
             <property name="margin-top">0</property>
             <property name="margin-bottom">4</property>
@@ -193,7 +193,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="orientation">0</property>
             <property name="spacing">8</property>
             <property name="homogeneous">true</property>
-            <property name="margin-start">170</property>
+            <property name="margin-start">16</property>
             <property name="margin-end">16</property>
             <property name="margin-bottom">12</property>
             <child>
@@ -219,7 +219,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <object class="GtkBox" id="own_profile_actions">
             <property name="orientation">0</property>
             <property name="spacing">8</property>
-            <property name="margin-start">170</property>
+            <property name="margin-start">16</property>
             <property name="margin-end">16</property>
             <property name="margin-bottom">12</property>
             <property name="visible">false</property>

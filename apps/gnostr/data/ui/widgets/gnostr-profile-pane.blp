@@ -15,7 +15,7 @@ template $GnostrProfilePane: Widget {
                 orientation: vertical;
 
                 Box banner_container {
-                    height-request: 120;
+                    height-request: 192;
                     orientation: vertical;
 
                     styles [
@@ -23,7 +23,7 @@ template $GnostrProfilePane: Widget {
                     ]
 
                     Picture banner_image {
-                        height-request: 120;
+                        height-request: 192;
                         vexpand: false;
                         content-fit: cover;
                         can-shrink: true;
@@ -31,7 +31,7 @@ template $GnostrProfilePane: Widget {
                 }
 
                 Box {
-                    height-request: 8;
+                    height-request: 32;
                 }
             }
 
@@ -41,11 +41,11 @@ template $GnostrProfilePane: Widget {
                 halign: start;
                 valign: start;
                 margin-start: 16;
-                margin-top: 48;
+                margin-top: 168;
 
                 Frame avatar_box {
-                    width-request: 144;
-                    height-request: 144;
+                    width-request: 48;
+                    height-request: 48;
 
                     styles [
                         "profile-avatar",
@@ -53,8 +53,8 @@ template $GnostrProfilePane: Widget {
                     ]
 
                     Overlay {
-                        width-request: 132;
-                        height-request: 132;
+                        width-request: 48;
+                        height-request: 48;
 
                         Box {
                             orientation: vertical;
@@ -83,8 +83,8 @@ template $GnostrProfilePane: Widget {
                         [overlay]
                         Picture avatar_image {
                             visible: false;
-                            width-request: 132;
-                            height-request: 132;
+                            width-request: 48;
+                            height-request: 48;
                             content-fit: cover;
                             can-shrink: true;
                             halign: center;
@@ -117,7 +117,7 @@ template $GnostrProfilePane: Widget {
         Box {
             orientation: vertical;
             spacing: 2;
-            margin-start: 170;
+            margin-start: 16;
             margin-end: 16;
             margin-top: 0;
             margin-bottom: 4;
@@ -180,7 +180,7 @@ template $GnostrProfilePane: Widget {
             orientation: horizontal;
             spacing: 8;
             homogeneous: true;
-            margin-start: 170;
+            margin-start: 16;
             margin-end: 16;
             margin-bottom: 12;
 
@@ -204,7 +204,7 @@ template $GnostrProfilePane: Widget {
         Box own_profile_actions {
             orientation: horizontal;
             spacing: 8;
-            margin-start: 170;
+            margin-start: 16;
             margin-end: 16;
             margin-bottom: 12;
             visible: false;
