@@ -258,15 +258,15 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       </object>
                     </child>
                     <property name="content">
-                      <object class="GtkOverlay" id="content_root">
-                        <child>
-                          <object class="AdwOverlaySplitView" id="panel_split">
-                            <property name="show-sidebar">false</property>
-                            <property name="sidebar-position">1</property>
-                            <property name="collapsed">true</property>
-                            <property name="min-sidebar-width">320</property>
-                            <property name="max-sidebar-width">320</property>
-                            <property name="content">
+                      <object class="AdwOverlaySplitView" id="panel_split">
+                        <property name="show-sidebar">false</property>
+                        <property name="sidebar-position">1</property>
+                        <property name="collapsed">true</property>
+                        <property name="min-sidebar-width">320</property>
+                        <property name="max-sidebar-width">320</property>
+                        <property name="content">
+                          <object class="GtkOverlay" id="content_root">
+                            <child>
                               <object class="AdwClamp" id="middle_clamp">
                                 <property name="maximum-size">760</property>
                                 <property name="tightening-threshold">560</property>
@@ -350,64 +350,64 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                   </object>
                                 </property>
                               </object>
-                            </property>
-                            <property name="sidebar">
-                              <object class="GtkBox" id="panel_container">
-                                <property name="orientation">1</property>
-                                <property name="width-request">320</property>
-                                <child>
-                                  <object class="GnostrProfilePane" id="profile_pane">
-                                    <property name="hexpand">true</property>
-                                    <property name="vexpand">true</property>
-                                    <property name="visible">false</property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GnostrThreadView" id="thread_view">
-                                    <property name="hexpand">true</property>
-                                    <property name="vexpand">true</property>
-                                    <property name="visible">false</property>
-                                  </object>
-                                </child>
-                              </object>
-                            </property>
-                          </object>
-                        </child>
-                        <child type="overlay">
-                          <object class="GtkRevealer" id="new_notes_revealer">
-                            <property name="reveal-child">false</property>
-                            <property name="transition-type">5</property>
-                            <property name="halign">3</property>
-                            <property name="valign">1</property>
-                            <property name="child">
-                              <object class="GtkButton" id="btn_new_notes">
+                            </child>
+                            <child type="overlay">
+                              <object class="GtkRevealer" id="new_notes_revealer">
+                                <property name="reveal-child">false</property>
+                                <property name="transition-type">5</property>
                                 <property name="halign">3</property>
-                                <property name="margin-top">8</property>
-                                <property name="margin-bottom">8</property>
-                                <style>
-                                  <class name="pill"/>
-                                  <class name="suggested-action"/>
-                                </style>
+                                <property name="valign">1</property>
                                 <property name="child">
-                                  <object class="GtkBox">
-                                    <property name="orientation">0</property>
-                                    <property name="spacing">6</property>
-                                    <child>
-                                      <object class="GtkImage">
-                                        <property name="icon-name">go-up-symbolic</property>
+                                  <object class="GtkButton" id="btn_new_notes">
+                                    <property name="halign">3</property>
+                                    <property name="margin-top">8</property>
+                                    <property name="margin-bottom">8</property>
+                                    <style>
+                                      <class name="pill"/>
+                                      <class name="suggested-action"/>
+                                    </style>
+                                    <property name="child">
+                                      <object class="GtkBox">
+                                        <property name="orientation">0</property>
+                                        <property name="spacing">6</property>
+                                        <child>
+                                          <object class="GtkImage">
+                                            <property name="icon-name">go-up-symbolic</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkLabel" id="lbl_new_notes_count">
+                                            <property name="label" translatable="yes">New notes</property>
+                                          </object>
+                                        </child>
                                       </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel" id="lbl_new_notes_count">
-                                        <property name="label" translatable="yes">New notes</property>
-                                      </object>
-                                    </child>
+                                    </property>
                                   </object>
                                 </property>
                               </object>
-                            </property>
+                            </child>
                           </object>
-                        </child>
+                        </property>
+                        <property name="sidebar">
+                          <object class="GtkBox" id="panel_container">
+                            <property name="orientation">1</property>
+                            <property name="width-request">320</property>
+                            <child>
+                              <object class="GnostrProfilePane" id="profile_pane">
+                                <property name="hexpand">true</property>
+                                <property name="vexpand">true</property>
+                                <property name="visible">false</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GnostrThreadView" id="thread_view">
+                                <property name="hexpand">true</property>
+                                <property name="vexpand">true</property>
+                                <property name="visible">false</property>
+                              </object>
+                            </child>
+                          </object>
+                        </property>
                       </object>
                     </property>
                     <child type="bottom">

@@ -46,7 +46,7 @@ template $GnostrProfilePane: Widget {
                 valign: start;
                 margin-start: 16;
                 margin-top: 128;
-                spacing: 16;
+                spacing: 8;
 
                 Frame avatar_box {
                     width-request: 128;
@@ -106,7 +106,7 @@ template $GnostrProfilePane: Widget {
                     orientation: vertical;
                     spacing: 2;
                     valign: end;
-                    margin-top: 80;
+                    margin-top: 72;
                     margin-end: 16;
 
                     Box {
@@ -167,7 +167,7 @@ template $GnostrProfilePane: Widget {
             [overlay]
             Button btn_close {
                 icon-name: "window-close-symbolic";
-                tooltip-text: "Close profile pane";
+                tooltip-text: _("Close profile pane");
                 halign: end;
                 valign: start;
                 margin-top: 8;
@@ -186,13 +186,13 @@ template $GnostrProfilePane: Widget {
             homogeneous: true;
             margin-start: 16;
             margin-end: 16;
-            margin-top: 12;
+            margin-top: 8;
             margin-bottom: 12;
 
             Button btn_follow {
-                label: "Follow";
+                label: _("Follow");
                 sensitive: false;
-                tooltip-text: "Follow this user";
+                tooltip-text: _("Follow this user");
 
                 styles [
                     "suggested-action",
@@ -200,9 +200,9 @@ template $GnostrProfilePane: Widget {
             }
 
             Button btn_message {
-                label: "Message";
+                label: _("Message");
                 sensitive: false;
-                tooltip-text: "Send direct message";
+                tooltip-text: _("Send direct message");
             }
         }
 
@@ -216,7 +216,7 @@ template $GnostrProfilePane: Widget {
 
             Button btn_edit_profile {
                 hexpand: true;
-                tooltip-text: "Edit your profile";
+                tooltip-text: _("Edit your profile");
                 clicked => $on_edit_profile_clicked();
 
                 Box {
@@ -229,7 +229,7 @@ template $GnostrProfilePane: Widget {
                     }
 
                     Label {
-                        label: "Edit Profile";
+                        label: _("Edit Profile");
                     }
                 }
 
@@ -240,7 +240,7 @@ template $GnostrProfilePane: Widget {
 
             Button btn_set_status {
                 hexpand: true;
-                tooltip-text: "Set your status (NIP-38)";
+                tooltip-text: _("Set your status (NIP-38)");
                 clicked => $on_set_status_clicked();
 
                 Box {
@@ -253,7 +253,7 @@ template $GnostrProfilePane: Widget {
                     }
 
                     Label {
-                        label: "Set Status";
+                        label: _("Set Status");
                     }
                 }
             }

@@ -231,15 +231,15 @@ template $GnostrSessionView: Adw.Bin {
                         }
                     }
 
-                    content: Overlay content_root {
-                        Adw.OverlaySplitView panel_split {
-                            show-sidebar: false;
-                            sidebar-position: end;
-                            collapsed: true;
-                            min-sidebar-width: 320;
-                            max-sidebar-width: 320;
+                    content: Adw.OverlaySplitView panel_split {
+                        show-sidebar: false;
+                        sidebar-position: end;
+                        collapsed: true;
+                        min-sidebar-width: 320;
+                        max-sidebar-width: 320;
 
-                            content: Adw.Clamp middle_clamp {
+                        content: Overlay content_root {
+                            Adw.Clamp middle_clamp {
                                 maximum-size: 760;
                                 tightening-threshold: 560;
                                 hexpand: true;
@@ -309,57 +309,57 @@ template $GnostrSessionView: Adw.Bin {
                                         };
                                     }
                                 };
-                            };
+                            }
 
-                            sidebar: Box panel_container {
-                                orientation: vertical;
-                                width-request: 320;
-
-                                $GnostrProfilePane profile_pane {
-                                    hexpand: true;
-                                    vexpand: true;
-                                    visible: false;
-                                }
-
-                                $GnostrThreadView thread_view {
-                                    hexpand: true;
-                                    vexpand: true;
-                                    visible: false;
-                                }
-                            };
-                        }
-
-                        [overlay]
-                        Revealer new_notes_revealer {
-                            reveal-child: false;
-                            transition-type: slide_down;
-                            halign: center;
-                            valign: start;
-
-                            child: Button btn_new_notes {
+                            [overlay]
+                            Revealer new_notes_revealer {
+                                reveal-child: false;
+                                transition-type: slide_down;
                                 halign: center;
-                                margin-top: 8;
-                                margin-bottom: 8;
+                                valign: start;
 
-                                styles [
-                                    "pill",
-                                    "suggested-action",
-                                ]
+                                child: Button btn_new_notes {
+                                    halign: center;
+                                    margin-top: 8;
+                                    margin-bottom: 8;
 
-                                child: Box {
-                                    orientation: horizontal;
-                                    spacing: 6;
+                                    styles [
+                                        "pill",
+                                        "suggested-action",
+                                    ]
 
-                                    Image {
-                                        icon-name: "go-up-symbolic";
-                                    }
+                                    child: Box {
+                                        orientation: horizontal;
+                                        spacing: 6;
 
-                                    Label lbl_new_notes_count {
-                                        label: _("New notes");
-                                    }
+                                        Image {
+                                            icon-name: "go-up-symbolic";
+                                        }
+
+                                        Label lbl_new_notes_count {
+                                            label: _("New notes");
+                                        }
+                                    };
                                 };
-                            };
-                        }
+                            }
+                        };
+
+                        sidebar: Box panel_container {
+                            orientation: vertical;
+                            width-request: 320;
+
+                            $GnostrProfilePane profile_pane {
+                                hexpand: true;
+                                vexpand: true;
+                                visible: false;
+                            }
+
+                            $GnostrThreadView thread_view {
+                                hexpand: true;
+                                vexpand: true;
+                                visible: false;
+                            }
+                        };
                     };
 
                     [bottom]
