@@ -1094,7 +1094,7 @@ static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
     /* NIP-84: Highlight Text button */
     GtkWidget *highlight_btn = gtk_button_new();
     GtkWidget *highlight_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    GtkWidget *highlight_icon = gtk_image_new_from_icon_name("format-text-highlight-symbolic");
+    GtkWidget *highlight_icon = gtk_image_new_from_icon_name("edit-select-all-symbolic");
     GtkWidget *highlight_label = gtk_label_new("Highlight Selection");
     gtk_box_append(GTK_BOX(highlight_box), highlight_icon);
     gtk_box_append(GTK_BOX(highlight_box), highlight_label);

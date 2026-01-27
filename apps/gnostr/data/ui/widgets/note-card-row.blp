@@ -2,12 +2,14 @@ using Gtk 4.0;
 
 template $GnostrNoteCardRow: Widget {
     hexpand: false;
+    halign: center;
 
     Box root {
         orientation: vertical;
         width-request: 640;
         hexpand: false;
         vexpand: false;
+        halign: center;
 
         styles [
             "note-card",
@@ -181,20 +183,6 @@ template $GnostrNoteCardRow: Widget {
                             ]
                         }
 
-                        Box {
-                            hexpand: true;
-                        }
-
-                        Button btn_menu {
-                            icon-name: "view-more-symbolic";
-                            tooltip-text: _("More options");
-                            valign: center;
-
-                            styles [
-                                "flat",
-                                "circular",
-                            ]
-                        }
                     }
 
                     Box header_bottom {
@@ -233,6 +221,18 @@ template $GnostrNoteCardRow: Widget {
                             ]
                         }
                     }
+                }
+
+                Button btn_menu {
+                    icon-name: "view-more-symbolic";
+                    tooltip-text: _("More options");
+                    valign: start;
+                    halign: end;
+
+                    styles [
+                        "flat",
+                        "circular",
+                    ]
                 }
             }
 
