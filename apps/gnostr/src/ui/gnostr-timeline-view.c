@@ -1292,59 +1292,24 @@ static void on_item_notify_is_liked(GObject *obj, GParamSpec *pspec, gpointer us
     gnostr_note_card_row_set_liked(GNOSTR_NOTE_CARD_ROW(row), is_liked);
 }
 
-/* Unbind cleanup: disconnect any notify handlers tied to this row */
+/* Unbind cleanup: detach row from any inflight operations.
+ * 
+ * CRITICAL: We do NOT access gtk_list_item_get_item() here because during
+ * fast scrolling, the underlying GObject may already be freed and its memory
+ * reused. Even calling G_IS_OBJECT() on freed memory can corrupt the heap.
+ * 
+ * Signal disconnection is handled automatically by g_signal_connect_object()
+ * which we use in factory_bind_cb - signals auto-disconnect when row is destroyed.
+ */
 static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
-  GObject *obj = gtk_list_item_get_item(item);
   GtkWidget *row = gtk_list_item_get_child(item);
   
-  /* CRITICAL: Validate objects before disconnecting signals
-   * During scrolling, GTK may unbind items that are being recycled.
-   * If obj is NULL or invalid, we can't safely disconnect signals. */
-  if (!obj) {
-    g_warning("factory_unbind: obj is NULL (item=%p row=%p)", (void*)item, (void*)row);
-    /* Still try to clean up row if it's valid */
-    if (GTK_IS_WIDGET(row)) {
-      inflight_detach_row(row);
-    }
-    return;
+  /* Only access the row widget, never the item's underlying object */
+  if (GTK_IS_WIDGET(row)) {
+    /* Detach this row from any inflight embed fetches */
+    inflight_detach_row(row);
   }
-  
-  if (!G_IS_OBJECT(obj)) {
-    /* DON'T try to access obj here - it's invalid/freed memory!
-     * Accessing G_OBJECT_TYPE_NAME(obj) would cause use-after-free */
-    g_warning("factory_unbind: obj is not a valid GObject (obj=%p) - likely freed", (void*)obj);
-    /* Still try to clean up row if it's valid */
-    if (GTK_IS_WIDGET(row)) {
-      inflight_detach_row(row);
-    }
-    return;
-  }
-  
-  /* CRITICAL: Also check if it's actually a TimelineItem, not just any GObject
-   * This catches cases where the memory has been reused for a different object type */
-  if (!G_TYPE_CHECK_INSTANCE_TYPE(obj, timeline_item_get_type())) {
-    g_warning("factory_unbind: obj is not a TimelineItem (obj=%p) - likely freed and reused", (void*)obj);
-    /* Still try to clean up row if it's valid */
-    if (GTK_IS_WIDGET(row)) {
-      inflight_detach_row(row);
-    }
-    return;
-  }
-  
-  if (!GTK_IS_WIDGET(row)) {
-    g_debug("factory_unbind: row is not a valid widget");
-    return;
-  }
-  
-  g_debug("factory_unbind: cleaning up (obj=%p row=%p)", (void*)obj, (void*)row);
-  /* NOTE: We no longer manually disconnect ANY signals here because:
-   * 1. notify signals use g_signal_connect_object() - auto-disconnect when row destroyed
-   * 2. request-embed signal is on row itself - auto-disconnect when row destroyed
-   * This avoids race conditions where objects might be freed during disconnect. */
-  
-  /* Detach this row from any inflight embed fetches */
-  inflight_detach_row(row);
 }
 
 /**
