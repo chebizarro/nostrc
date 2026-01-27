@@ -23,6 +23,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <child>
                   <object class="GtkBox" id="banner_container">
                     <property name="height-request">192</property>
+                    <property name="vexpand">false</property>
                     <property name="orientation">1</property>
                     <style>
                       <class name="profile-banner"/>
@@ -31,6 +32,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       <object class="GtkPicture" id="banner_image">
                         <property name="height-request">192</property>
                         <property name="vexpand">false</property>
+                        <property name="hexpand">true</property>
                         <property name="content-fit">2</property>
                         <property name="can-shrink">true</property>
                       </object>
