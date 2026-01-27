@@ -331,11 +331,11 @@ label a:visited {
 	min-height: 24px;
 }
 
-/* Note card avatar specific (24px default) */
+/* Note card avatar specific (48px) */
 .note-avatar {
 	border-radius: 50%;
-	min-width: 24px;
-	min-height: 24px;
+	min-width: 48px;
+	min-height: 48px;
 	/* Force the overlay to maintain size even without image */
 	-gtk-icon-size: 24px;
 	/* Default fallback gradient for avatars without images */
@@ -356,14 +356,14 @@ label a:visited {
 
 .note-avatar picture {
 	border-radius: 50%;
-	min-width: 24px;
-	min-height: 24px;
+	min-width: 48px;
+	min-height: 48px;
 }
 
 .note-avatar-image {
 	border-radius: 50%;
-	min-width: 24px;
-	min-height: 24px;
+	min-width: 48px;
+	min-height: 48px;
 }
 
 /* Profile Pane Styles */
@@ -1596,8 +1596,14 @@ button.liked image {
 
 /* Note card avatar with icon fallback */
 .note-avatar .avatar-default-icon {
-	min-width: 20px;
-	min-height: 20px;
+	min-width: 24px;
+	min-height: 24px;
+}
+
+/* Note card avatar initials - sized for 48px avatar */
+.note-avatar .avatar-initials {
+	font-size: 18px;
+	font-weight: 600;
 }
 
 /* Profile avatar with icon fallback */

@@ -1,11 +1,12 @@
 using Gtk 4.0;
 
 template $GnostrNoteCardRow: Widget {
-    hexpand: true;
+    hexpand: false;
 
     Box root {
         orientation: vertical;
-        hexpand: true;
+        width-request: 640;
+        hexpand: false;
         vexpand: false;
 
         styles [
@@ -46,79 +47,79 @@ template $GnostrNoteCardRow: Widget {
         }
 
         Box main_content {
-            orientation: horizontal;
-            spacing: 12;
+            orientation: vertical;
+            spacing: 8;
             margin-start: 16;
             margin-end: 16;
             margin-top: 12;
             margin-bottom: 12;
 
-            Button btn_avatar {
-                has-frame: false;
-                valign: start;
-                halign: start;
-                hexpand: false;
-                vexpand: false;
-                tooltip-text: "View profile";
+            Box header {
+                orientation: horizontal;
+                spacing: 12;
 
-                styles [
-                    "flat",
-                    "circular",
-                    "avatar-button",
-                ]
-
-                Overlay avatar_box {
-                    width-request: 24;
-                    height-request: 24;
+                Button btn_avatar {
+                    has-frame: false;
+                    valign: center;
+                    halign: start;
                     hexpand: false;
                     vexpand: false;
-                    halign: center;
-                    valign: center;
+                    tooltip-text: "View profile";
 
                     styles [
-                        "avatar",
-                        "note-avatar",
+                        "flat",
+                        "circular",
+                        "avatar-button",
                     ]
 
-                    Picture avatar_image {
-                        visible: false;
-                        content-fit: cover;
-                        width-request: 24;
-                        height-request: 24;
+                    Overlay avatar_box {
+                        width-request: 48;
+                        height-request: 48;
                         hexpand: false;
                         vexpand: false;
+                        halign: center;
+                        valign: center;
 
                         styles [
-                            "note-avatar-image",
+                            "avatar",
+                            "note-avatar",
                         ]
-                    }
 
-                    [overlay]
-                    Label avatar_initials {
-                        label: "AN";
-                        xalign: 0.5;
-                        yalign: 0.5;
+                        Picture avatar_image {
+                            visible: false;
+                            content-fit: cover;
+                            width-request: 48;
+                            height-request: 48;
+                            hexpand: false;
+                            vexpand: false;
 
-                        styles [
-                            "avatar-initials",
-                        ]
+                            styles [
+                                "note-avatar-image",
+                            ]
+                        }
+
+                        [overlay]
+                        Label avatar_initials {
+                            label: "AN";
+                            xalign: 0.5;
+                            yalign: 0.5;
+
+                            styles [
+                                "avatar-initials",
+                            ]
+                        }
                     }
                 }
-            }
 
-            Box content_column {
-                orientation: vertical;
-                spacing: 8;
-                hexpand: true;
+                Box header_info {
+                    orientation: vertical;
+                    spacing: 2;
+                    hexpand: true;
+                    valign: center;
 
-                Box header {
-                    orientation: horizontal;
-                    spacing: 0;
-
-                    Box header_left {
+                    Box header_top {
                         orientation: horizontal;
                         spacing: 6;
-                        hexpand: true;
 
                         Button btn_display_name {
                             has-frame: false;
@@ -136,6 +137,35 @@ template $GnostrNoteCardRow: Widget {
                                 ]
                             }
                         }
+
+                        Label lbl_timestamp {
+                            xalign: 0.0;
+
+                            styles [
+                                "note-timestamp",
+                                "dim-label",
+                            ]
+                        }
+
+                        Box {
+                            hexpand: true;
+                        }
+
+                        Button btn_menu {
+                            icon-name: "view-more-symbolic";
+                            tooltip-text: "More options";
+                            valign: center;
+
+                            styles [
+                                "flat",
+                                "circular",
+                            ]
+                        }
+                    }
+
+                    Box header_bottom {
+                        orientation: horizontal;
+                        spacing: 6;
 
                         Label lbl_handle {
                             xalign: 0.0;
@@ -157,15 +187,6 @@ template $GnostrNoteCardRow: Widget {
                             ]
                         }
 
-                        Label lbl_timestamp {
-                            xalign: 0.0;
-
-                            styles [
-                                "note-timestamp",
-                                "dim-label",
-                            ]
-                        }
-
                         Label lbl_relay {
                             visible: false;
                             xalign: 0.0;
@@ -177,18 +198,13 @@ template $GnostrNoteCardRow: Widget {
                             ]
                         }
                     }
-
-                    Button btn_menu {
-                        icon-name: "view-more-symbolic";
-                        tooltip-text: "More options";
-                        valign: center;
-
-                        styles [
-                            "flat",
-                            "circular",
-                        ]
-                    }
                 }
+            }
+
+            Box content_column {
+                orientation: vertical;
+                spacing: 8;
+                hexpand: true;
 
                 Overlay sensitive_content_overlay {
                     visible: false;

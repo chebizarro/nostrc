@@ -1746,8 +1746,19 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
     }
   }
   
-  /* Update display name */
-  const char *final_display = display_name ? display_name : (name ? name : "Anonymous");
+  /* Update display name - NIP-24: display_name > name > shortened hex key */
+  char *shortened_key = NULL;
+  const char *final_display = NULL;
+  if (display_name && *display_name) {
+    final_display = display_name;
+  } else if (name && *name) {
+    final_display = name;
+  } else if (self->current_pubkey && strlen(self->current_pubkey) >= 8) {
+    shortened_key = g_strdup_printf("%.8s...", self->current_pubkey);
+    final_display = shortened_key;
+  } else {
+    final_display = "Unknown";
+  }
   gtk_label_set_text(GTK_LABEL(self->lbl_display_name), final_display);
 
   /* NIP-24: Show/hide bot indicator badge */
@@ -1761,6 +1772,7 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
   /* Store profile info for posts */
   g_free(self->current_display_name);
   self->current_display_name = g_strdup(final_display);
+  g_free(shortened_key); /* Free after storing copy */
 
   /* Update handle */
   char *handle_text = NULL;
