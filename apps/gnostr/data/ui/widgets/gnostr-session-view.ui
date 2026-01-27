@@ -27,9 +27,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <object class="GtkOverlay" id="session_overlay">
         <property name="child">
           <object class="AdwNavigationSplitView" id="split_view">
-            <property name="sidebar-width-fraction">0.28</property>
-            <property name="min-sidebar-width">220</property>
-            <property name="max-sidebar-width">280</property>
+            <property name="min-sidebar-width">240</property>
+            <property name="max-sidebar-width">240</property>
             <property name="collapsed" bind-source="GnostrSessionView" bind-property="compact" bind-flags="sync-create"/>
             <property name="sidebar">
               <object class="AdwNavigationPage" id="sidebar_page">
@@ -299,86 +298,98 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <child>
                           <object class="AdwOverlaySplitView" id="panel_split">
                             <property name="show-sidebar">false</property>
+                            <property name="collapsed">true</property>
+                            <property name="min-sidebar-width">320</property>
+                            <property name="max-sidebar-width">320</property>
                             <property name="content">
-                              <object class="AdwViewStack" id="stack">
+                              <object class="AdwClamp" id="middle_clamp">
+                                <property name="maximum-size">760</property>
+                                <property name="tightening-threshold">560</property>
+                                <property name="hexpand">true</property>
                                 <property name="vexpand">true</property>
-                                <child>
-                                  <object class="AdwViewStackPage">
-                                    <property name="name">timeline</property>
-                                    <property name="title" translatable="yes">Timeline</property>
-                                    <property name="icon-name">view-list-symbolic</property>
-                                    <property name="child">
-                                      <object class="GtkScrolledWindow" id="timeline_scroller">
-                                        <property name="hscrollbar-policy">2</property>
-                                        <property name="vexpand">true</property>
+                                <property name="halign">3</property>
+                                <property name="child">
+                                  <object class="AdwViewStack" id="stack">
+                                    <property name="vexpand">true</property>
+                                    <child>
+                                      <object class="AdwViewStackPage">
+                                        <property name="name">timeline</property>
+                                        <property name="title" translatable="yes">Timeline</property>
+                                        <property name="icon-name">view-list-symbolic</property>
                                         <property name="child">
-                                          <object class="GnostrTimelineView" id="timeline">
+                                          <object class="GtkScrolledWindow" id="timeline_scroller">
+                                            <property name="hscrollbar-policy">2</property>
+                                            <property name="vexpand">true</property>
+                                            <property name="child">
+                                              <object class="GnostrTimelineView" id="timeline">
+                                                <property name="hexpand">true</property>
+                                                <property name="vexpand">true</property>
+                                              </object>
+                                            </property>
+                                          </object>
+                                        </property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="AdwViewStackPage">
+                                        <property name="name">notifications</property>
+                                        <property name="title" translatable="yes">Notifications</property>
+                                        <property name="icon-name">preferences-system-notifications-symbolic</property>
+                                        <property name="child">
+                                          <object class="GnostrNotificationsView" id="notifications_view">
                                             <property name="hexpand">true</property>
                                             <property name="vexpand">true</property>
                                           </object>
                                         </property>
                                       </object>
-                                    </property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="AdwViewStackPage">
-                                    <property name="name">notifications</property>
-                                    <property name="title" translatable="yes">Notifications</property>
-                                    <property name="icon-name">preferences-system-notifications-symbolic</property>
-                                    <property name="child">
-                                      <object class="GnostrNotificationsView" id="notifications_view">
-                                        <property name="hexpand">true</property>
-                                        <property name="vexpand">true</property>
+                                    </child>
+                                    <child>
+                                      <object class="AdwViewStackPage">
+                                        <property name="name">messages</property>
+                                        <property name="title" translatable="yes">Messages</property>
+                                        <property name="icon-name">mail-unread-symbolic</property>
+                                        <property name="child">
+                                          <object class="GnostrDmInboxView" id="dm_inbox">
+                                            <property name="hexpand">true</property>
+                                            <property name="vexpand">true</property>
+                                          </object>
+                                        </property>
                                       </object>
-                                    </property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="AdwViewStackPage">
-                                    <property name="name">messages</property>
-                                    <property name="title" translatable="yes">Messages</property>
-                                    <property name="icon-name">mail-unread-symbolic</property>
-                                    <property name="child">
-                                      <object class="GnostrDmInboxView" id="dm_inbox">
-                                        <property name="hexpand">true</property>
-                                        <property name="vexpand">true</property>
+                                    </child>
+                                    <child>
+                                      <object class="AdwViewStackPage">
+                                        <property name="name">discover</property>
+                                        <property name="title" translatable="yes">Discover</property>
+                                        <property name="icon-name">system-search-symbolic</property>
+                                        <property name="child">
+                                          <object class="GnostrPageDiscover" id="discover_page">
+                                            <property name="hexpand">true</property>
+                                            <property name="vexpand">true</property>
+                                          </object>
+                                        </property>
                                       </object>
-                                    </property>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="AdwViewStackPage">
-                                    <property name="name">discover</property>
-                                    <property name="title" translatable="yes">Discover</property>
-                                    <property name="icon-name">system-search-symbolic</property>
-                                    <property name="child">
-                                      <object class="GnostrPageDiscover" id="discover_page">
-                                        <property name="hexpand">true</property>
-                                        <property name="vexpand">true</property>
+                                    </child>
+                                    <child>
+                                      <object class="AdwViewStackPage">
+                                        <property name="name">classifieds</property>
+                                        <property name="title" translatable="yes">Marketplace</property>
+                                        <property name="icon-name">emblem-shopping-cart-symbolic</property>
+                                        <property name="child">
+                                          <object class="GnostrClassifiedsView" id="classifieds_view">
+                                            <property name="hexpand">true</property>
+                                            <property name="vexpand">true</property>
+                                          </object>
+                                        </property>
                                       </object>
-                                    </property>
+                                    </child>
                                   </object>
-                                </child>
-                                <child>
-                                  <object class="AdwViewStackPage">
-                                    <property name="name">classifieds</property>
-                                    <property name="title" translatable="yes">Marketplace</property>
-                                    <property name="icon-name">emblem-shopping-cart-symbolic</property>
-                                    <property name="child">
-                                      <object class="GnostrClassifiedsView" id="classifieds_view">
-                                        <property name="hexpand">true</property>
-                                        <property name="vexpand">true</property>
-                                      </object>
-                                    </property>
-                                  </object>
-                                </child>
+                                </property>
                               </object>
                             </property>
                             <property name="sidebar">
                               <object class="GtkBox" id="panel_container">
                                 <property name="orientation">1</property>
-                                <property name="width-request">360</property>
+                                <property name="width-request">320</property>
                                 <child>
                                   <object class="GnostrProfilePane" id="profile_pane">
                                     <property name="hexpand">true</property>

@@ -23,9 +23,8 @@ menu primary_menu {
 template $GnostrSessionView: Adw.Bin {
     Gtk.Overlay session_overlay {
         child: Adw.NavigationSplitView split_view {
-            sidebar-width-fraction: 0.28;
-            min-sidebar-width: 220;
-            max-sidebar-width: 280;
+            min-sidebar-width: 240;
+            max-sidebar-width: 240;
             collapsed: bind template.compact;
 
             sidebar: Adw.NavigationPage sidebar_page {
@@ -268,74 +267,85 @@ template $GnostrSessionView: Adw.Bin {
 
                         Adw.OverlaySplitView panel_split {
                             show-sidebar: false;
+                            collapsed: true;
+                            min-sidebar-width: 320;
+                            max-sidebar-width: 320;
 
-                            content: Adw.ViewStack stack {
+                            content: Adw.Clamp middle_clamp {
+                                maximum-size: 760;
+                                tightening-threshold: 560;
+                                hexpand: true;
                                 vexpand: true;
+                                halign: center;
 
-                                Adw.ViewStackPage {
-                                    name: "timeline";
-                                    title: _("Timeline");
-                                    icon-name: "view-list-symbolic";
+                                child: Adw.ViewStack stack {
+                                    vexpand: true;
 
-                                    child: ScrolledWindow timeline_scroller {
-                                        hscrollbar-policy: never;
-                                        vexpand: true;
+                                    Adw.ViewStackPage {
+                                        name: "timeline";
+                                        title: _("Timeline");
+                                        icon-name: "view-list-symbolic";
 
-                                        child: $GnostrTimelineView timeline {
+                                        child: ScrolledWindow timeline_scroller {
+                                            hscrollbar-policy: never;
+                                            vexpand: true;
+
+                                            child: $GnostrTimelineView timeline {
+                                                hexpand: true;
+                                                vexpand: true;
+                                            };
+                                        };
+                                    }
+
+                                    Adw.ViewStackPage {
+                                        name: "notifications";
+                                        title: _("Notifications");
+                                        icon-name: "preferences-system-notifications-symbolic";
+
+                                        child: $GnostrNotificationsView notifications_view {
                                             hexpand: true;
                                             vexpand: true;
                                         };
-                                    };
-                                }
+                                    }
 
-                                Adw.ViewStackPage {
-                                    name: "notifications";
-                                    title: _("Notifications");
-                                    icon-name: "preferences-system-notifications-symbolic";
+                                    Adw.ViewStackPage {
+                                        name: "messages";
+                                        title: _("Messages");
+                                        icon-name: "mail-unread-symbolic";
 
-                                    child: $GnostrNotificationsView notifications_view {
-                                        hexpand: true;
-                                        vexpand: true;
-                                    };
-                                }
+                                        child: $GnostrDmInboxView dm_inbox {
+                                            hexpand: true;
+                                            vexpand: true;
+                                        };
+                                    }
 
-                                Adw.ViewStackPage {
-                                    name: "messages";
-                                    title: _("Messages");
-                                    icon-name: "mail-unread-symbolic";
+                                    Adw.ViewStackPage {
+                                        name: "discover";
+                                        title: _("Discover");
+                                        icon-name: "system-search-symbolic";
 
-                                    child: $GnostrDmInboxView dm_inbox {
-                                        hexpand: true;
-                                        vexpand: true;
-                                    };
-                                }
+                                        child: $GnostrPageDiscover discover_page {
+                                            hexpand: true;
+                                            vexpand: true;
+                                        };
+                                    }
 
-                                Adw.ViewStackPage {
-                                    name: "discover";
-                                    title: _("Discover");
-                                    icon-name: "system-search-symbolic";
+                                    Adw.ViewStackPage {
+                                        name: "classifieds";
+                                        title: _("Marketplace");
+                                        icon-name: "emblem-shopping-cart-symbolic";
 
-                                    child: $GnostrPageDiscover discover_page {
-                                        hexpand: true;
-                                        vexpand: true;
-                                    };
-                                }
-
-                                Adw.ViewStackPage {
-                                    name: "classifieds";
-                                    title: _("Marketplace");
-                                    icon-name: "emblem-shopping-cart-symbolic";
-
-                                    child: $GnostrClassifiedsView classifieds_view {
-                                        hexpand: true;
-                                        vexpand: true;
-                                    };
-                                }
+                                        child: $GnostrClassifiedsView classifieds_view {
+                                            hexpand: true;
+                                            vexpand: true;
+                                        };
+                                    }
+                                };
                             };
 
                             sidebar: Box panel_container {
                                 orientation: vertical;
-                                width-request: 360;
+                                width-request: 320;
 
                                 $GnostrProfilePane profile_pane {
                                     hexpand: true;

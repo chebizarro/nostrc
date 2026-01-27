@@ -63,6 +63,17 @@ viewstack > box {
 
 /* Content views should fill available space naturally */
 
+/* REPOMARK:SCOPE: 1 - Add .middle-clamp padding and scoped note-card margin overrides near layout rules to provide consistent insets in the clamped middle column */
+.middle-clamp {
+	padding-left: 12px;
+	padding-right: 12px;
+}
+
+.middle-clamp .note-card {
+	margin-left: 0;
+	margin-right: 0;
+}
+
 headerbar button {
 	border-radius: 6px;
 	padding: 6px;
@@ -363,7 +374,6 @@ label a:visited {
 .profile-pane {
 	background: @theme_bg_color;
 	border-left: 1px solid alpha(@theme_fg_color, 0.1);
-	min-width: 450px;
 }
 
 /* Profile close button on banner */
