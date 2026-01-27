@@ -179,15 +179,23 @@ static OgMetadata *parse_og_metadata(const char *html, const char *url) {
   return meta;
 }
 
-/* Async image loading callback */
+/* Async image loading callback.
+ * user_data is a weak ref pointer that will be NULL if widget was destroyed. */
 static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
   SoupSession *session = SOUP_SESSION(source);
-  OgPreviewWidget *self = OG_PREVIEW_WIDGET(user_data);
+  GObject **weak_ref = (GObject **)user_data;
+  OgPreviewWidget *self = NULL;
   GError *error = NULL;
   
-  /* Check if widget is still valid */
-  if (!OG_IS_PREVIEW_WIDGET(self)) {
-    g_object_unref(self);
+  /* Check weak reference - if NULL, widget was destroyed */
+  if (weak_ref && *weak_ref) {
+    self = OG_PREVIEW_WIDGET(*weak_ref);
+  }
+  
+  /* Clean up weak ref container */
+  g_free(weak_ref);
+  
+  if (!self) {
     return;
   }
   
@@ -197,13 +205,11 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
       g_debug("OG: Failed to load image: %s", error->message);
     }
     g_error_free(error);
-    g_object_unref(self);
     return;
   }
   
   if (!bytes || g_bytes_get_size(bytes) == 0) {
     if (bytes) g_bytes_unref(bytes);
-    g_object_unref(self);
     return;
   }
   
@@ -214,18 +220,16 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
   if (error) {
     g_debug("OG: Failed to create texture: %s", error->message);
     g_error_free(error);
-    g_object_unref(self);
     return;
   }
   
-  /* Update UI */
-  if (self->image_widget && GTK_IS_PICTURE(self->image_widget)) {
+  /* Update UI - verify widget is still valid */
+  if (OG_IS_PREVIEW_WIDGET(self) && self->image_widget && GTK_IS_PICTURE(self->image_widget)) {
     gtk_picture_set_paintable(GTK_PICTURE(self->image_widget), GDK_PAINTABLE(texture));
     gtk_widget_set_visible(self->image_widget, TRUE);
   }
   
   g_object_unref(texture);
-  g_object_unref(self);
 }
 
 /* Load image asynchronously */
@@ -246,14 +250,18 @@ static void load_image_async(OgPreviewWidget *self, const char *url) {
     return;
   }
   
-  /* Start async fetch - take a reference to keep self alive until callback */
+  /* Start async fetch - use weak reference to safely handle widget destruction */
+  GObject **weak_ref = g_new0(GObject *, 1);
+  *weak_ref = G_OBJECT(self);
+  g_object_add_weak_pointer(G_OBJECT(self), (gpointer *)weak_ref);
+  
   soup_session_send_and_read_async(
     self->session,
     msg,
     G_PRIORITY_LOW,
     self->image_cancellable,
     on_image_loaded,
-    g_object_ref(self)
+    weak_ref
   );
   
   g_object_unref(msg);
@@ -294,15 +302,23 @@ static void update_ui_with_metadata(OgPreviewWidget *self, OgMetadata *meta) {
   }
 }
 
-/* Async HTML fetch callback */
+/* Async HTML fetch callback.
+ * user_data is a weak ref pointer that will be NULL if widget was destroyed. */
 static void on_html_fetched(GObject *source, GAsyncResult *res, gpointer user_data) {
   SoupSession *session = SOUP_SESSION(source);
-  OgPreviewWidget *self = OG_PREVIEW_WIDGET(user_data);
+  GObject **weak_ref = (GObject **)user_data;
+  OgPreviewWidget *self = NULL;
   GError *error = NULL;
   
-  /* Check if widget is still valid */
-  if (!OG_IS_PREVIEW_WIDGET(self)) {
-    g_object_unref(self);
+  /* Check weak reference - if NULL, widget was destroyed */
+  if (weak_ref && *weak_ref) {
+    self = OG_PREVIEW_WIDGET(*weak_ref);
+  }
+  
+  /* Clean up weak ref container */
+  g_free(weak_ref);
+  
+  if (!self) {
     return;
   }
   
@@ -312,15 +328,19 @@ static void on_html_fetched(GObject *source, GAsyncResult *res, gpointer user_da
       g_debug("OG: Failed to fetch URL: %s", error->message);
     }
     g_error_free(error);
-    if (self->spinner) gtk_widget_set_visible(self->spinner, FALSE);
-    g_object_unref(self);
+    if (OG_IS_PREVIEW_WIDGET(self) && self->spinner) gtk_widget_set_visible(self->spinner, FALSE);
     return;
   }
   
   if (!bytes || g_bytes_get_size(bytes) == 0) {
     if (bytes) g_bytes_unref(bytes);
-    if (self->spinner) gtk_widget_set_visible(self->spinner, FALSE);
-    g_object_unref(self);
+    if (OG_IS_PREVIEW_WIDGET(self) && self->spinner) gtk_widget_set_visible(self->spinner, FALSE);
+    return;
+  }
+  
+  /* Verify widget is still valid before accessing members */
+  if (!OG_IS_PREVIEW_WIDGET(self)) {
+    g_bytes_unref(bytes);
     return;
   }
   
@@ -343,7 +363,6 @@ static void on_html_fetched(GObject *source, GAsyncResult *res, gpointer user_da
   update_ui_with_metadata(self, meta);
   
   g_bytes_unref(bytes);
-  g_object_unref(self);
 }
 
 /* Fetch Open Graph metadata asynchronously */
@@ -380,14 +399,18 @@ static void fetch_og_metadata_async(OgPreviewWidget *self, const char *url) {
   /* Set timeout and size limits */
   soup_message_set_priority(msg, SOUP_MESSAGE_PRIORITY_LOW);
   
-  /* Start async fetch - take a reference to keep self alive until callback */
+  /* Start async fetch - use weak reference to safely handle widget destruction */
+  GObject **weak_ref = g_new0(GObject *, 1);
+  *weak_ref = G_OBJECT(self);
+  g_object_add_weak_pointer(G_OBJECT(self), (gpointer *)weak_ref);
+  
   soup_session_send_and_read_async(
     self->session,
     msg,
     G_PRIORITY_LOW,
     self->cancellable,
     on_html_fetched,
-    g_object_ref(self)
+    weak_ref
   );
   
   g_object_unref(msg);
