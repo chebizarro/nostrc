@@ -35,6 +35,9 @@ struct _OgPreviewWidget {
   
   /* Image loading */
   GCancellable *image_cancellable;
+  
+  /* Disposal flag - set during dispose to prevent callbacks from accessing widget */
+  gboolean disposed;
 };
 
 G_DEFINE_TYPE(OgPreviewWidget, og_preview_widget, GTK_TYPE_WIDGET)
@@ -195,7 +198,8 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
   /* Clean up weak ref container */
   g_free(weak_ref);
   
-  if (!self) {
+  /* Exit early if widget was destroyed or is being disposed */
+  if (!self || self->disposed) {
     return;
   }
   
@@ -213,6 +217,12 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
     return;
   }
   
+  /* Re-check disposed flag before creating texture */
+  if (self->disposed) {
+    g_bytes_unref(bytes);
+    return;
+  }
+  
   /* Create texture from bytes */
   GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
   g_bytes_unref(bytes);
@@ -223,8 +233,8 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
     return;
   }
   
-  /* Update UI - verify widget is still valid */
-  if (OG_IS_PREVIEW_WIDGET(self) && self->image_widget && GTK_IS_PICTURE(self->image_widget)) {
+  /* Update UI - verify widget is still valid and not disposed */
+  if (!self->disposed && self->image_widget && GTK_IS_PICTURE(self->image_widget)) {
     gtk_picture_set_paintable(GTK_PICTURE(self->image_widget), GDK_PAINTABLE(texture));
     gtk_widget_set_visible(self->image_widget, TRUE);
   }
@@ -318,7 +328,8 @@ static void on_html_fetched(GObject *source, GAsyncResult *res, gpointer user_da
   /* Clean up weak ref container */
   g_free(weak_ref);
   
-  if (!self) {
+  /* Exit early if widget was destroyed or is being disposed */
+  if (!self || self->disposed) {
     return;
   }
   
@@ -328,18 +339,18 @@ static void on_html_fetched(GObject *source, GAsyncResult *res, gpointer user_da
       g_debug("OG: Failed to fetch URL: %s", error->message);
     }
     g_error_free(error);
-    if (OG_IS_PREVIEW_WIDGET(self) && self->spinner) gtk_widget_set_visible(self->spinner, FALSE);
+    if (!self->disposed && self->spinner) gtk_widget_set_visible(self->spinner, FALSE);
     return;
   }
   
   if (!bytes || g_bytes_get_size(bytes) == 0) {
     if (bytes) g_bytes_unref(bytes);
-    if (OG_IS_PREVIEW_WIDGET(self) && self->spinner) gtk_widget_set_visible(self->spinner, FALSE);
+    if (!self->disposed && self->spinner) gtk_widget_set_visible(self->spinner, FALSE);
     return;
   }
   
-  /* Verify widget is still valid before accessing members */
-  if (!OG_IS_PREVIEW_WIDGET(self)) {
+  /* Re-check disposed flag before accessing widget members */
+  if (self->disposed) {
     g_bytes_unref(bytes);
     return;
   }
@@ -351,7 +362,7 @@ static void on_html_fetched(GObject *source, GAsyncResult *res, gpointer user_da
   OgMetadata *meta = parse_og_metadata(html, self->current_url);
   
   /* Cache result with size limit to prevent unbounded memory growth */
-  if (meta && self->current_url) {
+  if (meta && self->current_url && !self->disposed) {
     /* Clear cache if it exceeds limit */
     if (g_hash_table_size(self->cache) >= OG_CACHE_MAX) {
       g_hash_table_remove_all(self->cache);
@@ -359,8 +370,10 @@ static void on_html_fetched(GObject *source, GAsyncResult *res, gpointer user_da
     g_hash_table_insert(self->cache, g_strdup(self->current_url), meta);
   }
   
-  /* Update UI */
-  update_ui_with_metadata(self, meta);
+  /* Update UI - only if not disposed */
+  if (!self->disposed) {
+    update_ui_with_metadata(self, meta);
+  }
   
   g_bytes_unref(bytes);
 }
@@ -420,7 +433,10 @@ static void fetch_og_metadata_async(OgPreviewWidget *self, const char *url) {
 static void og_preview_widget_dispose(GObject *object) {
   OgPreviewWidget *self = OG_PREVIEW_WIDGET(object);
   
-  /* Cancel any in-flight requests */
+  /* Mark as disposed FIRST - this prevents callbacks from accessing widget state */
+  self->disposed = TRUE;
+  
+  /* Cancel any in-flight requests BEFORE aborting session */
   if (self->cancellable) {
     g_cancellable_cancel(self->cancellable);
     g_clear_object(&self->cancellable);
@@ -431,7 +447,13 @@ static void og_preview_widget_dispose(GObject *object) {
     g_clear_object(&self->image_cancellable);
   }
   
-  g_clear_object(&self->session);
+  /* Abort all pending requests on the session before unreffing it.
+   * This ensures callbacks complete before we destroy widget state. */
+  if (self->session) {
+    soup_session_abort(self->session);
+    g_clear_object(&self->session);
+  }
+  
   g_clear_pointer(&self->cache, g_hash_table_unref);
   
   /* Unparent children */
