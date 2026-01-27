@@ -1774,9 +1774,11 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
   self->current_display_name = g_strdup(final_display);
   g_free(shortened_key); /* Free after storing copy */
 
-  /* Update handle */
+  /* Update handle - show nip-05 if available, otherwise @name or truncated npub */
   char *handle_text = NULL;
-  if (name && *name) {
+  if (nip05 && *nip05) {
+    handle_text = g_strdup(nip05);
+  } else if (name && *name) {
     handle_text = g_strdup_printf("@%s", name);
   } else if (self->current_pubkey) {
     /* Show truncated npub */
