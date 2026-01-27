@@ -1690,6 +1690,20 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
     gtk_label_set_text(GTK_LABEL(self->lbl_handle), self->current_pubkey ? self->current_pubkey : "");
     return;
   }
+
+  /* Clear existing metadata rows to prevent duplicates on re-update */
+  if (self->metadata_box) {
+    GtkWidget *child = gtk_widget_get_first_child(self->metadata_box);
+    while (child) {
+      GtkWidget *next = gtk_widget_get_next_sibling(child);
+      gtk_box_remove(GTK_BOX(self->metadata_box), child);
+      child = next;
+    }
+    gtk_widget_set_visible(self->metadata_box, FALSE);
+  }
+  /* Reset NIP-05 state */
+  self->nip05_row = NULL;
+  self->nip05_badge = NULL;
   
   /* Extract fields - NIP-01 standard plus NIP-24 extra metadata */
   const char *name = NULL;
