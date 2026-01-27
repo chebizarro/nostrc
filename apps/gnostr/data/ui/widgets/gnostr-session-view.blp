@@ -231,40 +231,7 @@ template $GnostrSessionView: Adw.Bin {
                         }
                     }
 
-                    content: Box content_root {
-                        orientation: vertical;
-
-                        Revealer new_notes_revealer {
-                            reveal-child: false;
-                            transition-type: slide_down;
-                            halign: center;
-                            valign: start;
-
-                            child: Button btn_new_notes {
-                                halign: center;
-                                margin-top: 8;
-                                margin-bottom: 8;
-
-                                styles [
-                                    "pill",
-                                    "suggested-action",
-                                ]
-
-                                child: Box {
-                                    orientation: horizontal;
-                                    spacing: 6;
-
-                                    Image {
-                                        icon-name: "go-up-symbolic";
-                                    }
-
-                                    Label lbl_new_notes_count {
-                                        label: _("New notes");
-                                    }
-                                };
-                            };
-                        }
-
+                    content: Overlay content_root {
                         Adw.OverlaySplitView panel_split {
                             show-sidebar: false;
                             sidebar-position: end;
@@ -359,6 +326,38 @@ template $GnostrSessionView: Adw.Bin {
                                     vexpand: true;
                                     visible: false;
                                 }
+                            };
+                        }
+
+                        [overlay]
+                        Revealer new_notes_revealer {
+                            reveal-child: false;
+                            transition-type: slide_down;
+                            halign: center;
+                            valign: start;
+
+                            child: Button btn_new_notes {
+                                halign: center;
+                                margin-top: 8;
+                                margin-bottom: 8;
+
+                                styles [
+                                    "pill",
+                                    "suggested-action",
+                                ]
+
+                                child: Box {
+                                    orientation: horizontal;
+                                    spacing: 6;
+
+                                    Image {
+                                        icon-name: "go-up-symbolic";
+                                    }
+
+                                    Label lbl_new_notes_count {
+                                        label: _("New notes");
+                                    }
+                                };
                             };
                         }
                     };

@@ -50,11 +50,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </child>
             <child type="overlay">
               <object class="GtkBox">
-                <property name="orientation">1</property>
+                <property name="orientation">0</property>
                 <property name="halign">1</property>
                 <property name="valign">1</property>
                 <property name="margin-start">16</property>
                 <property name="margin-top">128</property>
+                <property name="spacing">16</property>
                 <child>
                   <object class="GtkFrame" id="avatar_box">
                     <property name="width-request">128</property>
@@ -109,6 +110,70 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                   </object>
                 </child>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">1</property>
+                    <property name="spacing">2</property>
+                    <property name="valign">2</property>
+                    <property name="margin-top">80</property>
+                    <property name="margin-end">16</property>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">0</property>
+                        <property name="spacing">8</property>
+                        <child>
+                          <object class="GtkLabel" id="lbl_display_name">
+                            <property name="label">Loading...</property>
+                            <property name="xalign">0</property>
+                            <property name="wrap">true</property>
+                            <property name="wrap-mode">2</property>
+                            <style>
+                              <class name="profile-name"/>
+                              <class name="title-2"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkBox" id="bot_badge">
+                            <property name="orientation">0</property>
+                            <property name="spacing">4</property>
+                            <property name="valign">3</property>
+                            <property name="visible">false</property>
+                            <style>
+                              <class name="bot-badge"/>
+                            </style>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name"> application-x-executable-symbolic</property>
+                                <property name="pixel-size">14</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label">Bot</property>
+                                <style>
+                                  <class name="caption"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="lbl_handle">
+                        <property name="label">@loading</property>
+                        <property name="xalign">0</property>
+                        <property name="wrap">true</property>
+                        <property name="wrap-mode">2</property>
+                        <style>
+                          <class name="profile-handle"/>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
               </object>
             </child>
             <child type="overlay">
@@ -122,71 +187,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <style>
                   <class name="circular"/>
                   <class name="profile-close-button"/>
-                </style>
-              </object>
-            </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkBox">
-            <property name="orientation">1</property>
-            <property name="spacing">2</property>
-            <property name="margin-start">16</property>
-            <property name="margin-end">16</property>
-            <property name="margin-top">16</property>
-            <property name="margin-bottom">4</property>
-            <child>
-              <object class="GtkBox">
-                <property name="orientation">0</property>
-                <property name="spacing">8</property>
-                <child>
-                  <object class="GtkLabel" id="lbl_display_name">
-                    <property name="label">Loading...</property>
-                    <property name="xalign">0</property>
-                    <property name="wrap">true</property>
-                    <property name="wrap-mode">2</property>
-                    <style>
-                      <class name="profile-name"/>
-                      <class name="title-2"/>
-                    </style>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkBox" id="bot_badge">
-                    <property name="orientation">0</property>
-                    <property name="spacing">4</property>
-                    <property name="valign">3</property>
-                    <property name="visible">false</property>
-                    <style>
-                      <class name="bot-badge"/>
-                    </style>
-                    <child>
-                      <object class="GtkImage">
-                        <property name="icon-name"> application-x-executable-symbolic</property>
-                        <property name="pixel-size">14</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkLabel">
-                        <property name="label">Bot</property>
-                        <style>
-                          <class name="caption"/>
-                        </style>
-                      </object>
-                    </child>
-                  </object>
-                </child>
-              </object>
-            </child>
-            <child>
-              <object class="GtkLabel" id="lbl_handle">
-                <property name="label">@loading</property>
-                <property name="xalign">0</property>
-                <property name="wrap">true</property>
-                <property name="wrap-mode">2</property>
-                <style>
-                  <class name="profile-handle"/>
-                  <class name="dim-label"/>
                 </style>
               </object>
             </child>

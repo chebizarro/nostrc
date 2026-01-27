@@ -72,7 +72,7 @@ struct _GnostrSessionView {
   GtkButton *btn_login;
   GtkButton *btn_logout;
 
-  GtkBox *content_root;
+  GtkOverlay *content_root;
 
   GtkRevealer *new_notes_revealer;
   GtkButton *btn_new_notes;

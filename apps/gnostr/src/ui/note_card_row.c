@@ -2706,8 +2706,9 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
           else if (is_video_url(url)) {
             GnostrVideoPlayer *player = gnostr_video_player_new();
             gtk_widget_add_css_class(GTK_WIDGET(player), "note-media-video");
-            gtk_widget_set_size_request(GTK_WIDGET(player), -1, 300);
-            gtk_widget_set_hexpand(GTK_WIDGET(player), TRUE);
+            /* Constrain video width to card width (640px) less margins (16px each side) */
+            gtk_widget_set_size_request(GTK_WIDGET(player), 608, 300);
+            gtk_widget_set_hexpand(GTK_WIDGET(player), FALSE);
             gtk_widget_set_vexpand(GTK_WIDGET(player), FALSE);
 
             /* Set video URI - settings (autoplay/loop) are read from GSettings */
@@ -3014,16 +3015,18 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
             /* Use enhanced video player with controls overlay */
             GnostrVideoPlayer *player = gnostr_video_player_new();
             gtk_widget_add_css_class(GTK_WIDGET(player), "note-media-video");
+            /* Constrain video width to card width (640px) less margins (16px each side) */
+            int max_width = 608;
             int height = 300;
             if (imeta && imeta->width > 0 && imeta->height > 0) {
-              int cw = 400;
+              int cw = max_width;
               height = imeta->width <= cw ? imeta->height : (int)((double)imeta->height * cw / imeta->width);
               if (height > 400) height = 400;
               if (height < 100) height = 100;
             }
-            gtk_widget_set_size_request(GTK_WIDGET(player), -1, height);
+            gtk_widget_set_size_request(GTK_WIDGET(player), max_width, height);
             if (imeta && imeta->alt && *imeta->alt) gtk_widget_set_tooltip_text(GTK_WIDGET(player), imeta->alt);
-            gtk_widget_set_hexpand(GTK_WIDGET(player), TRUE);
+            gtk_widget_set_hexpand(GTK_WIDGET(player), FALSE);
             gtk_widget_set_vexpand(GTK_WIDGET(player), FALSE);
             /* Set video URI - settings (autoplay/loop) are read from GSettings */
             gnostr_video_player_set_uri(player, url);

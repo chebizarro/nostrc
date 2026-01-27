@@ -258,43 +258,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       </object>
                     </child>
                     <property name="content">
-                      <object class="GtkBox" id="content_root">
-                        <property name="orientation">1</property>
-                        <child>
-                          <object class="GtkRevealer" id="new_notes_revealer">
-                            <property name="reveal-child">false</property>
-                            <property name="transition-type">5</property>
-                            <property name="halign">3</property>
-                            <property name="valign">1</property>
-                            <property name="child">
-                              <object class="GtkButton" id="btn_new_notes">
-                                <property name="halign">3</property>
-                                <property name="margin-top">8</property>
-                                <property name="margin-bottom">8</property>
-                                <style>
-                                  <class name="pill"/>
-                                  <class name="suggested-action"/>
-                                </style>
-                                <property name="child">
-                                  <object class="GtkBox">
-                                    <property name="orientation">0</property>
-                                    <property name="spacing">6</property>
-                                    <child>
-                                      <object class="GtkImage">
-                                        <property name="icon-name">go-up-symbolic</property>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel" id="lbl_new_notes_count">
-                                        <property name="label" translatable="yes">New notes</property>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </property>
-                              </object>
-                            </property>
-                          </object>
-                        </child>
+                      <object class="GtkOverlay" id="content_root">
                         <child>
                           <object class="AdwOverlaySplitView" id="panel_split">
                             <property name="show-sidebar">false</property>
@@ -405,6 +369,41 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="visible">false</property>
                                   </object>
                                 </child>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                        <child type="overlay">
+                          <object class="GtkRevealer" id="new_notes_revealer">
+                            <property name="reveal-child">false</property>
+                            <property name="transition-type">5</property>
+                            <property name="halign">3</property>
+                            <property name="valign">1</property>
+                            <property name="child">
+                              <object class="GtkButton" id="btn_new_notes">
+                                <property name="halign">3</property>
+                                <property name="margin-top">8</property>
+                                <property name="margin-bottom">8</property>
+                                <style>
+                                  <class name="pill"/>
+                                  <class name="suggested-action"/>
+                                </style>
+                                <property name="child">
+                                  <object class="GtkBox">
+                                    <property name="orientation">0</property>
+                                    <property name="spacing">6</property>
+                                    <child>
+                                      <object class="GtkImage">
+                                        <property name="icon-name">go-up-symbolic</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="lbl_new_notes_count">
+                                        <property name="label" translatable="yes">New notes</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </property>
                               </object>
                             </property>
                           </object>
