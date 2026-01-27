@@ -3377,12 +3377,28 @@ void gnostr_note_card_row_set_embed_rich(GnostrNoteCardRow *self, const char *ti
   gtk_widget_set_visible(self->embed_box, TRUE);
 }
 
-/* NIP-05 verification callback for note card */
+/* NIP-05 verification callback for note card.
+ * user_data is a weak ref pointer that will be NULL if widget was destroyed. */
 static void on_note_nip05_verified(GnostrNip05Result *result, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  GObject **weak_ref = (GObject **)user_data;
+  GnostrNoteCardRow *self = NULL;
 
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !result) {
+  /* Check weak reference - if NULL, widget was destroyed */
+  if (weak_ref && *weak_ref) {
+    self = GNOSTR_NOTE_CARD_ROW(*weak_ref);
+  }
+
+  /* Clean up weak ref container */
+  g_free(weak_ref);
+
+  if (!self || !result) {
     if (result) gnostr_nip05_result_free(result);
+    return;
+  }
+
+  /* Double-check widget is still valid */
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) {
+    gnostr_nip05_result_free(result);
     return;
   }
 
@@ -3473,9 +3489,15 @@ void gnostr_note_card_row_set_nip05(GnostrNoteCardRow *self, const char *nip05, 
     return;
   }
 
-  /* Verify async */
+  /* Verify async - use weak reference to safely handle callback after widget destruction */
   self->nip05_cancellable = g_cancellable_new();
-  gnostr_nip05_verify_async(nip05, pubkey_hex, on_note_nip05_verified, self, self->nip05_cancellable);
+  
+  /* Create weak reference container that will be set to NULL when widget is destroyed */
+  GObject **weak_ref = g_new0(GObject *, 1);
+  *weak_ref = G_OBJECT(self);
+  g_object_add_weak_pointer(G_OBJECT(self), (gpointer *)weak_ref);
+  
+  gnostr_nip05_verify_async(nip05, pubkey_hex, on_note_nip05_verified, weak_ref, self->nip05_cancellable);
 }
 
 /* Set bookmark state and update button icon */
