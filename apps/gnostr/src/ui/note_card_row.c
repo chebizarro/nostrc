@@ -137,6 +137,8 @@ struct _GnostrNoteCardRow {
   GtkWidget *sensitive_warning_box;   /* Box with warning icon/text/button */
   GtkWidget *sensitive_warning_label; /* Label showing "Sensitive Content: reason" */
   GtkWidget *btn_show_sensitive;      /* Button to reveal sensitive content */
+  /* Hashtags from "t" tags */
+  GtkWidget *hashtags_box;            /* FlowBox container for hashtag chips */
   /* NIP-32 Labels state */
   GtkWidget *labels_box;              /* FlowBox container for label chips */
   /* NIP-23 Long-form Content state */
@@ -1569,6 +1571,8 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, sensitive_warning_box);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, sensitive_warning_label);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_show_sensitive);
+  /* Hashtags container */
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, hashtags_box);
   /* NIP-32 labels container */
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, labels_box);
   /* NIP-73 external content IDs container */
@@ -4067,6 +4071,69 @@ void gnostr_note_card_row_clear_labels(GnostrNoteCardRow *self) {
   }
 
   gtk_widget_set_visible(self->labels_box, FALSE);
+}
+
+/* ============================================
+   Hashtag "t" Tags Implementation
+   ============================================ */
+
+/* Callback for hashtag chip clicks */
+static void on_hashtag_chip_clicked(GtkButton *btn, gpointer user_data) {
+  const char *tag = g_object_get_data(G_OBJECT(btn), "hashtag");
+  if (tag && GNOSTR_IS_NOTE_CARD_ROW(user_data)) {
+    g_signal_emit(user_data, signals[SIGNAL_SEARCH_HASHTAG], 0, tag);
+  }
+}
+
+/* Create a hashtag chip button */
+static GtkWidget *create_hashtag_chip(const char *hashtag) {
+  if (!hashtag || !*hashtag) return NULL;
+
+  GtkWidget *btn = gtk_button_new();
+  gtk_button_set_has_frame(GTK_BUTTON(btn), FALSE);
+  gtk_widget_add_css_class(btn, "pill");
+  gtk_widget_add_css_class(btn, "note-hashtag");
+
+  gchar *label_text = g_strdup_printf("#%s", hashtag);
+  gtk_button_set_label(GTK_BUTTON(btn), label_text);
+  g_free(label_text);
+
+  return btn;
+}
+
+/* Set hashtags from "t" tags to display on this note */
+void gnostr_note_card_row_set_hashtags(GnostrNoteCardRow *self, const char * const *hashtags) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!GTK_IS_FLOW_BOX(self->hashtags_box)) return;
+
+  /* Clear existing hashtags */
+  GtkWidget *child = gtk_widget_get_first_child(self->hashtags_box);
+  while (child) {
+    GtkWidget *next = gtk_widget_get_next_sibling(child);
+    gtk_flow_box_remove(GTK_FLOW_BOX(self->hashtags_box), child);
+    child = next;
+  }
+
+  if (!hashtags || !hashtags[0]) {
+    gtk_widget_set_visible(self->hashtags_box, FALSE);
+    return;
+  }
+
+  /* Add each hashtag as a chip */
+  for (int i = 0; hashtags[i]; i++) {
+    const char *tag = hashtags[i];
+    if (!tag || !*tag) continue;
+
+    GtkWidget *chip = create_hashtag_chip(tag);
+    if (chip) {
+      g_object_set_data_full(G_OBJECT(chip), "hashtag", g_strdup(tag), g_free);
+      g_signal_connect(chip, "clicked", G_CALLBACK(on_hashtag_chip_clicked), self);
+      gtk_flow_box_append(GTK_FLOW_BOX(self->hashtags_box), chip);
+    }
+  }
+
+  /* Show the hashtags container if we have hashtags */
+  gtk_widget_set_visible(self->hashtags_box, TRUE);
 }
 
 /* ============================================

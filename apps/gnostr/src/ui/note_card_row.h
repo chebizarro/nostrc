@@ -133,6 +133,9 @@ gboolean gnostr_note_card_row_is_content_blurred(GnostrNoteCardRow *self);
 /* NIP-36: Reveal sensitive content (show hidden content) */
 void gnostr_note_card_row_reveal_sensitive_content(GnostrNoteCardRow *self);
 
+/* Hashtags: Set hashtags from "t" tags to display on this note */
+void gnostr_note_card_row_set_hashtags(GnostrNoteCardRow *self, const char * const *hashtags);
+
 /* NIP-32 Labels: Set labels to display on this note */
 void gnostr_note_card_row_set_labels(GnostrNoteCardRow *self, GPtrArray *labels);
 

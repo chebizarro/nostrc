@@ -318,6 +318,22 @@ template $GnostrNoteCardRow: Widget {
                     visible: false;
                 }
 
+                FlowBox hashtags_box {
+                    visible: false;
+                    selection-mode: none;
+                    homogeneous: false;
+                    row-spacing: 4;
+                    column-spacing: 6;
+                    max-children-per-line: 10;
+                    min-children-per-line: 1;
+                    halign: start;
+                    margin-top: 8;
+
+                    styles [
+                        "note-hashtags-container",
+                    ]
+                }
+
                 FlowBox labels_box {
                     visible: false;
                     selection-mode: none;

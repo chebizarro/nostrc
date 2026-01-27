@@ -1,6 +1,7 @@
 #include "gnostr-profile-pane.h"
 #include "gnostr-profile-edit.h"
 #include "gnostr-status-dialog.h"
+#include "gnostr-image-viewer.h"
 #include "note_card_row.h"
 #include "gnostr-highlight-card.h"
 #include <glib.h>
@@ -256,6 +257,7 @@ struct _GnostrProfilePane {
   /* Template children */
   GtkWidget *root;
   GtkWidget *btn_close;
+  GtkWidget *btn_avatar;
   GtkWidget *banner_image;
   GtkWidget *avatar_box;
   GtkWidget *avatar_image;
@@ -502,6 +504,21 @@ static void on_close_clicked(GtkButton *btn, gpointer user_data) {
   g_signal_emit(self, signals[SIGNAL_CLOSE_REQUESTED], 0);
 }
 
+static void on_avatar_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  (void)btn;
+
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
+  if (!self->current_avatar_url || !*self->current_avatar_url) return;
+
+  /* Open avatar image in image viewer */
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
+  GnostrImageViewer *viewer = gnostr_image_viewer_new(parent);
+  gnostr_image_viewer_set_image_url(viewer, self->current_avatar_url);
+  gnostr_image_viewer_present(viewer);
+}
+
 /* Callback when profile is saved from edit dialog */
 static void on_profile_saved(GnostrProfileEdit *edit_dialog, const char *profile_json, gpointer user_data) {
   GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
@@ -691,6 +708,7 @@ static void gnostr_profile_pane_class_init(GnostrProfilePaneClass *klass) {
   
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, root);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_close);
+  gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, btn_avatar);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, banner_image);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, avatar_box);
   gtk_widget_class_bind_template_child(wclass, GnostrProfilePane, avatar_image);
@@ -769,6 +787,11 @@ static void gnostr_profile_pane_init(GnostrProfilePane *self) {
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_close),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Close Profile", -1);
   g_signal_connect(self->btn_close, "clicked", G_CALLBACK(on_close_clicked), self);
+
+  /* Connect avatar button to open image viewer */
+  if (self->btn_avatar) {
+    g_signal_connect(self->btn_avatar, "clicked", G_CALLBACK(on_avatar_clicked), self);
+  }
 
   /* Connect edit profile button */
   if (self->btn_edit_profile) {

@@ -2057,6 +2057,30 @@ profile-row.muted .profile-row-avatar {
 
 /* ===== NIP-32 Label/Tag Styles ===== */
 
+/* Container for note hashtags */
+.note-hashtags-container {
+	margin-top: 4px;
+}
+
+.note-hashtags-container flowboxchild {
+	padding: 0;
+	margin: 0;
+}
+
+.note-hashtag {
+	border-radius: 9999px;
+	padding: 4px 12px;
+	font-size: 12px;
+	background: alpha(@accent_bg_color, 0.1);
+	color: @accent_fg_color;
+	border: none;
+	transition: all 150ms ease;
+}
+
+.note-hashtag:hover {
+	background: alpha(@accent_bg_color, 0.2);
+}
+
 /* Container for note labels */
 .note-labels-container {
 	margin-top: 4px;

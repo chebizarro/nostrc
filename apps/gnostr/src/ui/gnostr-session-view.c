@@ -580,6 +580,11 @@ void gnostr_session_view_show_page(GnostrSessionView *self, const char *page_nam
     page_name = "timeline";
   }
 
+  /* Hide new notes toast when switching away from timeline */
+  if (self->new_notes_revealer && g_strcmp0(page_name, "timeline") != 0) {
+    gtk_revealer_set_reveal_child(self->new_notes_revealer, FALSE);
+  }
+
   adw_view_stack_set_visible_child_name(self->stack, page_name);
 
   if (self->content_page) {
@@ -698,7 +703,10 @@ void gnostr_session_view_set_new_notes_count(GnostrSessionView *self, guint coun
     }
     g_free(label_text);
     if (self->new_notes_revealer) {
-      gtk_revealer_set_reveal_child(self->new_notes_revealer, TRUE);
+      /* Only show new notes toast on timeline view */
+      const char *visible_name = self->stack ? adw_view_stack_get_visible_child_name(self->stack) : NULL;
+      gboolean on_timeline = visible_name && g_strcmp0(visible_name, "timeline") == 0;
+      gtk_revealer_set_reveal_child(self->new_notes_revealer, on_timeline);
     }
   } else {
     if (self->new_notes_revealer) {
