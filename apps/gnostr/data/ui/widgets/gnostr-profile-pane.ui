@@ -50,19 +50,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="halign">1</property>
                 <property name="valign">1</property>
                 <property name="margin-start">16</property>
-                <property name="margin-top">168</property>
+                <property name="margin-top">128</property>
                 <child>
                   <object class="GtkFrame" id="avatar_box">
-                    <property name="width-request">48</property>
-                    <property name="height-request">48</property>
+                    <property name="width-request">128</property>
+                    <property name="height-request">128</property>
                     <style>
                       <class name="profile-avatar"/>
                       <class name="profile-avatar-frame"/>
                     </style>
                     <child>
                       <object class="GtkOverlay">
-                        <property name="width-request">48</property>
-                        <property name="height-request">48</property>
+                        <property name="width-request">128</property>
+                        <property name="height-request">128</property>
                         <child>
                           <object class="GtkBox">
                             <property name="orientation">1</property>
@@ -90,8 +90,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <child type="overlay">
                           <object class="GtkPicture" id="avatar_image">
                             <property name="visible">false</property>
-                            <property name="width-request">48</property>
-                            <property name="height-request">48</property>
+                            <property name="width-request">128</property>
+                            <property name="height-request">128</property>
                             <property name="content-fit">2</property>
                             <property name="can-shrink">true</property>
                             <property name="halign">3</property>

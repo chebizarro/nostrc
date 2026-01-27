@@ -422,15 +422,15 @@ label a:visited {
 
 .profile-avatar picture {
 	border-radius: 50%;
-	min-width: 48px;
-	min-height: 48px;
+	min-width: 128px;
+	min-height: 128px;
 }
 
 /* Avatar image styling */
 .profile-avatar-image {
 	border-radius: 50%;
-	min-width: 48px;
-	min-height: 48px;
+	min-width: 128px;
+	min-height: 128px;
 }
 
 /* Avatar background for initials fallback */
@@ -441,8 +441,8 @@ label a:visited {
 		alpha(@accent_bg_color, 0.2) 0%,
 		alpha(@accent_bg_color, 0.35) 100%
 	);
-	min-width: 48px;
-	min-height: 48px;
+	min-width: 128px;
+	min-height: 128px;
 }
 
 /* Large circular avatar (for profile) */
@@ -459,7 +459,7 @@ label a:visited {
 
 /* Avatar initials text */
 .profile-avatar-initials {
-	font-size: 18px;
+	font-size: 48px;
 	font-weight: 700;
 	color: alpha(@theme_fg_color, 0.65);
 }
@@ -1606,8 +1606,8 @@ button.liked image {
 
 /* Profile avatar with icon fallback */
 .profile-avatar .avatar-default-icon {
-	min-width: 48px;
-	min-height: 48px;
+	min-width: 128px;
+	min-height: 128px;
 }
 
 /* Embed avatar with icon fallback */

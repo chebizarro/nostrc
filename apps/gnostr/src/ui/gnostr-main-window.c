@@ -4160,6 +4160,21 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                      G_CALLBACK(on_new_notes_clicked), self);
   }
 
+  /* Connect profile pane and thread view close signals */
+  {
+    GtkWidget *profile_pane = self->session_view ? gnostr_session_view_get_profile_pane(self->session_view) : NULL;
+    if (profile_pane && GNOSTR_IS_PROFILE_PANE(profile_pane)) {
+      g_signal_connect(profile_pane, "close-requested",
+                       G_CALLBACK(on_profile_pane_close_requested), self);
+    }
+    
+    GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
+    if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
+      g_signal_connect(thread_view, "close-requested",
+                       G_CALLBACK(on_thread_view_close_requested), self);
+    }
+  }
+
   gnostr_main_window_set_page(self, GNOSTR_MAIN_WINDOW_PAGE_LOADING);
   /* Initialize GListModel-based event model */
   self->event_model = gn_nostr_event_model_new();
