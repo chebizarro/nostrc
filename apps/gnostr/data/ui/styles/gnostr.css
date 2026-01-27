@@ -399,13 +399,11 @@ label a:visited {
 		alpha(shade(@accent_bg_color, 0.8), 0.5) 100%
 	);
 	min-height: 192px;
-	max-height: 192px;
 }
 
 /* Banner image fixed height with cover fit */
 .profile-banner picture {
 	min-height: 192px;
-	max-height: 192px;
 }
 
 /* Avatar frame with border and shadow */
