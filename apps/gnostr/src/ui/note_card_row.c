@@ -308,6 +308,11 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
     self->reactors = NULL;
   }
   
+  /* Clear avatar image to prevent corrupted image definition during disposal */
+  if (self->avatar_image && GTK_IS_IMAGE(self->avatar_image)) {
+    gtk_image_clear(GTK_IMAGE(self->avatar_image));
+  }
+  
   /* Clear label attributes to prevent Pango attribute corruption during disposal.
    * Labels with markup have PangoAttrList that can become corrupted. Clearing
    * attributes releases them cleanly before GTK disposes the labels. */
