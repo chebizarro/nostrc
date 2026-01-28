@@ -299,6 +299,19 @@ gboolean gnostr_note_card_row_has_external_ids(GnostrNoteCardRow *self);
 /* NIP-73 External Content IDs: Clear all external ID badges */
 void gnostr_note_card_row_clear_external_ids(GnostrNoteCardRow *self);
 
+/**
+ * gnostr_note_card_row_get_cancellable:
+ * @self: note card row
+ *
+ * Returns the shared cancellable for all async operations on this note card.
+ * Child widgets (og-preview, note-embed, etc.) should use this cancellable
+ * for their async operations. When the note card is disposed, this cancellable
+ * is cancelled, stopping all child operations.
+ *
+ * Returns: (transfer none): the shared GCancellable, or NULL if disposed
+ */
+GCancellable *gnostr_note_card_row_get_cancellable(GnostrNoteCardRow *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_NOTE_CARD_ROW_H */

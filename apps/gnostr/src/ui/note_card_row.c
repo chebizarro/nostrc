@@ -189,6 +189,10 @@ struct _GnostrNoteCardRow {
   GPtrArray *external_ids;            /* Array of GnostrExternalContentId* */
   /* Disposal state - prevents async callbacks from accessing widget after dispose starts */
   gboolean disposed;
+  
+  /* Shared cancellable for ALL async operations (avatar, og-preview, note-embed, etc.)
+   * When this widget is disposed, cancelling this single cancellable stops all child operations */
+  GCancellable *async_cancellable;
 };
 
 G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
@@ -226,13 +230,20 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   /* Mark as disposed FIRST to prevent async callbacks from accessing widget */
   self->disposed = TRUE;
 
+  /* Cancel the shared async_cancellable - this stops ALL child async operations
+   * (avatar downloads, og-preview fetches, note-embed queries, etc.) */
+  if (self->async_cancellable) {
+    g_cancellable_cancel(self->async_cancellable);
+    g_clear_object(&self->async_cancellable);
+  }
+
   /* Remove timestamp timer */
   if (self->timestamp_timer_id > 0) {
     g_source_remove(self->timestamp_timer_id);
     self->timestamp_timer_id = 0;
   }
 
-  /* Cancel NIP-05 verification */
+  /* Cancel NIP-05 verification (legacy - will migrate to shared cancellable) */
   if (self->nip05_cancellable) {
     g_cancellable_cancel(self->nip05_cancellable);
     g_clear_object(&self->nip05_cancellable);
@@ -1651,6 +1662,10 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
 
 static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+  
+  /* Create shared cancellable for all async operations */
+  self->async_cancellable = g_cancellable_new();
+  
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_reply),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Note Reply", -1);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_menu),
@@ -2769,6 +2784,9 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
       if (first_nostr_ref) {
         /* Create the NIP-21 embed widget */
         self->note_embed = gnostr_note_embed_new();
+        
+        /* Use parent's cancellable for lifecycle management */
+        gnostr_note_embed_set_cancellable(self->note_embed, self->async_cancellable);
 
         /* Connect profile-clicked signal to relay to main window */
         g_signal_connect(self->note_embed, "profile-clicked",
@@ -2823,8 +2841,8 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
         gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
         gtk_widget_set_visible(self->og_preview_container, TRUE);
         
-        /* Set URL to fetch metadata */
-        og_preview_widget_set_url(self->og_preview, url_start);
+        /* Set URL to fetch metadata - use parent's cancellable for lifecycle management */
+        og_preview_widget_set_url_with_cancellable(self->og_preview, url_start, self->async_cancellable);
       }
       
       if (tokens) g_strfreev(tokens);
@@ -3217,6 +3235,9 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
       if (first_nostr_ref) {
         /* Create the NIP-21 embed widget */
         self->note_embed = gnostr_note_embed_new();
+        
+        /* Use parent's cancellable for lifecycle management */
+        gnostr_note_embed_set_cancellable(self->note_embed, self->async_cancellable);
 
         /* Connect profile-clicked signal to relay to main window */
         g_signal_connect(self->note_embed, "profile-clicked",
@@ -3260,7 +3281,8 @@ void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const 
         self->og_preview = og_preview_widget_new();
         gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
         gtk_widget_set_visible(self->og_preview_container, TRUE);
-        og_preview_widget_set_url(self->og_preview, url_start);
+        /* Use parent's cancellable for lifecycle management */
+        og_preview_widget_set_url_with_cancellable(self->og_preview, url_start, self->async_cancellable);
       }
       if (tokens) g_strfreev(tokens);
     }
@@ -5224,4 +5246,14 @@ void gnostr_note_card_row_clear_external_ids(GnostrNoteCardRow *self) {
   }
 
   gtk_widget_set_visible(self->external_ids_box, FALSE);
+}
+
+/**
+ * gnostr_note_card_row_get_cancellable:
+ *
+ * Returns the shared cancellable for all async operations on this note card.
+ */
+GCancellable *gnostr_note_card_row_get_cancellable(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
+  return self->async_cancellable;
 }

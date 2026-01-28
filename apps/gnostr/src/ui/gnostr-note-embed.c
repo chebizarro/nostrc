@@ -65,6 +65,9 @@ struct _GnostrNoteEmbed {
 
   /* Cancellable for async operations */
   GCancellable *cancellable;
+  
+  /* External cancellable from parent widget (not owned, just referenced) */
+  GCancellable *external_cancellable;
 
   /* Track whether relay hints have been attempted (for fallback to main pool) */
   gboolean hints_attempted;
@@ -90,6 +93,11 @@ static void fetch_event_from_relays(GnostrNoteEmbed *self, const char *id_hex);
 static void fetch_profile_from_local(GnostrNoteEmbed *self, const unsigned char pk32[32]);
 static void fetch_profile_from_relays(GnostrNoteEmbed *self, const char *pubkey_hex);
 static void update_ui_state(GnostrNoteEmbed *self);
+
+/* Helper: get effective cancellable (external from parent if set, otherwise internal) */
+static GCancellable *get_effective_cancellable(GnostrNoteEmbed *self) {
+  return self->external_cancellable ? self->external_cancellable : self->cancellable;
+}
 
 static void gnostr_note_embed_dispose(GObject *obj) {
   GnostrNoteEmbed *self = GNOSTR_NOTE_EMBED(obj);
@@ -991,7 +999,7 @@ static void fetch_event_from_relays(GnostrNoteEmbed *self, const char *id_hex) {
     }
 
     gnostr_simple_pool_query_single_async(embed_pool, url_arr, urls->len, filter,
-                                           self->cancellable, on_relay_query_done, self);
+                                           get_effective_cancellable(self), on_relay_query_done, self);
 
     g_free(url_arr);
     g_ptr_array_free(urls, TRUE);
@@ -1025,7 +1033,7 @@ static void fetch_event_from_main_pool(GnostrNoteEmbed *self, const char *id_hex
   }
 
   gnostr_simple_pool_query_single_async(embed_pool, url_arr, urls->len, filter,
-                                         self->cancellable, on_relay_query_done, self);
+                                         get_effective_cancellable(self), on_relay_query_done, self);
 
   g_free(url_arr);
   g_ptr_array_free(urls, TRUE);
@@ -1164,7 +1172,7 @@ static void fetch_profile_from_relays(GnostrNoteEmbed *self, const char *pubkey_
 
     gnostr_simple_pool_fetch_profiles_by_authors_async(embed_pool, url_arr, self->relay_hints_count,
                                                         authors, 1, 1,
-                                                        self->cancellable, on_profile_relay_query_done, self);
+                                                        get_effective_cancellable(self), on_profile_relay_query_done, self);
 
     g_free(url_arr);
     return;
@@ -1191,7 +1199,7 @@ static void fetch_profile_from_main_pool(GnostrNoteEmbed *self, const char *pubk
 
   gnostr_simple_pool_fetch_profiles_by_authors_async(embed_pool, url_arr, urls->len,
                                                       authors, 1, 1,
-                                                      self->cancellable, on_profile_relay_query_done, self);
+                                                      get_effective_cancellable(self), on_profile_relay_query_done, self);
 
   g_free(url_arr);
   g_ptr_array_free(urls, TRUE);
@@ -1269,4 +1277,14 @@ static void fetch_profile_from_local(GnostrNoteEmbed *self, const unsigned char 
   }
 
   storage_ndb_end_query(txn);
+}
+
+/**
+ * gnostr_note_embed_set_cancellable:
+ *
+ * Sets an external cancellable for all async operations.
+ */
+void gnostr_note_embed_set_cancellable(GnostrNoteEmbed *self, GCancellable *cancellable) {
+  g_return_if_fail(GNOSTR_IS_NOTE_EMBED(self));
+  self->external_cancellable = cancellable;
 }

@@ -36,6 +36,9 @@ struct _OgPreviewWidget {
   /* Image loading */
   GCancellable *image_cancellable;
   
+  /* External cancellable from parent widget (not owned, just referenced) */
+  GCancellable *external_cancellable;
+  
   /* Disposal flag - set during dispose to prevent callbacks from accessing widget */
   gboolean disposed;
 };
@@ -399,7 +402,14 @@ static void fetch_og_metadata_async(OgPreviewWidget *self, const char *url) {
     g_clear_object(&self->cancellable);
   }
   
-  self->cancellable = g_cancellable_new();
+  /* Use external cancellable from parent if available, otherwise create our own */
+  GCancellable *effective_cancellable;
+  if (self->external_cancellable) {
+    effective_cancellable = self->external_cancellable;
+  } else {
+    self->cancellable = g_cancellable_new();
+    effective_cancellable = self->cancellable;
+  }
   
   /* Show loading state */
   gtk_widget_set_visible(self->card_box, FALSE);
@@ -425,7 +435,7 @@ static void fetch_og_metadata_async(OgPreviewWidget *self, const char *url) {
     self->session,
     msg,
     G_PRIORITY_LOW,
-    self->cancellable,
+    effective_cancellable,
     on_html_fetched,
     weak_ref
   );
@@ -615,6 +625,18 @@ void og_preview_widget_set_url(OgPreviewWidget *self, const char *url) {
   fetch_og_metadata_async(self, url);
 }
 
+void og_preview_widget_set_url_with_cancellable(OgPreviewWidget *self, 
+                                                 const char *url,
+                                                 GCancellable *cancellable) {
+  g_return_if_fail(OG_IS_PREVIEW_WIDGET(self));
+  
+  /* Store external cancellable (not owned, just referenced) */
+  self->external_cancellable = cancellable;
+  
+  /* Delegate to set_url which will use the external cancellable */
+  og_preview_widget_set_url(self, url);
+}
+
 void og_preview_widget_clear(OgPreviewWidget *self) {
   g_return_if_fail(OG_IS_PREVIEW_WIDGET(self));
   
@@ -628,6 +650,9 @@ void og_preview_widget_clear(OgPreviewWidget *self) {
     g_cancellable_cancel(self->image_cancellable);
     g_clear_object(&self->image_cancellable);
   }
+  
+  /* Clear external cancellable reference (not owned) */
+  self->external_cancellable = NULL;
   
   /* Clear URL */
   g_free(self->current_url);

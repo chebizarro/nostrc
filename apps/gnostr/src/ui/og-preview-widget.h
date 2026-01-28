@@ -35,6 +35,20 @@ void og_preview_widget_set_url(OgPreviewWidget *self, const char *url);
  */
 void og_preview_widget_clear(OgPreviewWidget *self);
 
+/**
+ * og_preview_widget_set_url_with_cancellable:
+ * @self: An #OgPreviewWidget
+ * @url: The URL to fetch and preview
+ * @cancellable: (nullable): External cancellable from parent widget
+ *
+ * Sets the URL to fetch Open Graph metadata from, using an external cancellable.
+ * When the parent widget is disposed, it cancels this cancellable, stopping
+ * all async operations and preventing use-after-free in callbacks.
+ */
+void og_preview_widget_set_url_with_cancellable(OgPreviewWidget *self, 
+                                                 const char *url,
+                                                 GCancellable *cancellable);
+
 G_END_DECLS
 
 #endif /* OG_PREVIEW_WIDGET_H */

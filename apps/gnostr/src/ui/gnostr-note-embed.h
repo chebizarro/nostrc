@@ -142,6 +142,17 @@ const char *gnostr_note_embed_get_target_id(GnostrNoteEmbed *self);
  */
 gboolean gnostr_note_embed_is_profile(GnostrNoteEmbed *self);
 
+/**
+ * gnostr_note_embed_set_cancellable:
+ * @self: a #GnostrNoteEmbed
+ * @cancellable: (nullable): External cancellable from parent widget
+ *
+ * Sets an external cancellable for all async operations. When the parent
+ * widget is disposed, it cancels this cancellable, stopping all async
+ * operations and preventing use-after-free in callbacks.
+ */
+void gnostr_note_embed_set_cancellable(GnostrNoteEmbed *self, GCancellable *cancellable);
+
 G_END_DECLS
 
 #endif /* GNOSTR_NOTE_EMBED_H */
