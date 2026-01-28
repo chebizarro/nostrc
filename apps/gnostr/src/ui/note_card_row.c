@@ -388,6 +388,11 @@ static void gnostr_note_card_row_finalize(GObject *obj) {
   /* NIP-48 proxy state cleanup */
   g_clear_pointer(&self->proxy_id, g_free);
   g_clear_pointer(&self->proxy_protocol, g_free);
+  /* NIP-71 video state cleanup */
+  g_clear_pointer(&self->video_d_tag, g_free);
+  g_clear_pointer(&self->video_url, g_free);
+  g_clear_pointer(&self->video_thumb_url, g_free);
+  g_clear_pointer(&self->video_title, g_free);
   G_OBJECT_CLASS(gnostr_note_card_row_parent_class)->finalize(obj);
 }
 
@@ -1802,8 +1807,9 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
 
 #ifdef HAVE_SOUP3
   self->avatar_cancellable = g_cancellable_new();
-  self->media_session = soup_session_new();
-  soup_session_set_timeout(self->media_session, 30); /* 30 second timeout for media */
+  /* Use shared session instead of per-widget session to reduce memory overhead.
+   * Each SoupSession has significant overhead (TLS state, connection pool, etc.) */
+  self->media_session = NULL; /* Will use gnostr_get_shared_soup_session() */
   self->media_cancellables = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
 #endif
 }
@@ -1964,9 +1970,9 @@ static void load_media_image_internal(GnostrNoteCardRow *self, const char *url, 
   /* Take a reference to the picture to keep it alive during async operation */
   g_object_ref(picture);
 
-  /* Start async fetch */
+  /* Start async fetch - use shared session */
   soup_session_send_and_read_async(
-    self->media_session,
+    gnostr_get_shared_soup_session(),
     msg,
     G_PRIORITY_LOW,
     cancellable,
@@ -4307,7 +4313,6 @@ static void on_article_image_loaded(GObject *source, GAsyncResult *res, gpointer
 /* Load article header image asynchronously */
 static void load_article_header_image(GnostrNoteCardRow *self, const char *url) {
   if (!url || !*url) return;
-  if (!self->media_session) return;
 
   /* Cancel any previous image fetch */
   if (self->article_image_cancellable) {
@@ -4321,7 +4326,7 @@ static void load_article_header_image(GnostrNoteCardRow *self, const char *url) 
   if (!msg) return;
 
   soup_session_send_and_read_async(
-    self->media_session,
+    gnostr_get_shared_soup_session(),
     msg,
     G_PRIORITY_LOW,
     self->article_image_cancellable,

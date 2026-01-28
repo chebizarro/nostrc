@@ -8,6 +8,7 @@
  */
 
 #include "gnostr-emoji-content.h"
+#include "../util/utils.h"
 #include <string.h>
 
 #ifdef HAVE_SOUP3
@@ -162,17 +163,15 @@ static void add_emoji_image(GnostrEmojiContent *self, GnostrCustomEmoji *emoji) 
     gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(cached));
     g_object_unref(cached);
   } else {
-    /* Load asynchronously */
+    /* Load asynchronously - use shared session to reduce memory overhead */
 #ifdef HAVE_SOUP3
     EmojiLoadCtx *ctx = g_new0(EmojiLoadCtx, 1);
     ctx->picture = GTK_PICTURE(g_object_ref(picture));
     ctx->url = g_strdup(emoji->url);
 
-    SoupSession *sess = soup_session_new();
     SoupMessage *msg = soup_message_new("GET", emoji->url);
-    soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_emoji_loaded, ctx);
+    soup_session_send_and_read_async(gnostr_get_shared_soup_session(), msg, G_PRIORITY_DEFAULT, NULL, on_emoji_loaded, ctx);
     g_object_unref(msg);
-    g_object_unref(sess);
 #endif
     /* Prefetch to cache */
     gnostr_emoji_cache_prefetch(emoji->url);

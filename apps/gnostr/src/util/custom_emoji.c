@@ -6,6 +6,7 @@
  */
 
 #include "custom_emoji.h"
+#include "utils.h"
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -262,10 +263,7 @@ static GdkTexture *try_load_emoji_from_disk(const char *url);
 static void on_emoji_http_done(GObject *source, GAsyncResult *res, gpointer user_data);
 #endif
 
-/* Helper to check HTTP prefix */
-static gboolean str_has_prefix_http(const char *s) {
-  return s && (g_str_has_prefix(s, "http://") || g_str_has_prefix(s, "https://"));
-}
+/* str_has_prefix_http is now provided by utils.h */
 
 /* Read configuration from environment variables */
 static void emoji_init_config(void) {
@@ -496,8 +494,7 @@ void gnostr_emoji_cache_prefetch(const char *url) {
   }
 
 #ifdef HAVE_SOUP3
-  /* Fetch asynchronously */
-  SoupSession *sess = soup_session_new();
+  /* Fetch asynchronously - use shared session to avoid per-request session overhead */
   SoupMessage *msg = soup_message_new("GET", url);
   EmojiCacheCtx *ctx = g_new0(EmojiCacheCtx, 1);
   ctx->url = g_strdup(url);
@@ -505,9 +502,8 @@ void gnostr_emoji_cache_prefetch(const char *url) {
 
   g_debug("emoji prefetch: fetching url=%s", url);
   s_emoji_metrics.http_start++;
-  soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_emoji_http_done, ctx);
+  soup_session_send_and_read_async(gnostr_get_shared_soup_session(), msg, G_PRIORITY_DEFAULT, NULL, on_emoji_http_done, ctx);
   g_object_unref(msg);
-  g_object_unref(sess);
 #endif
 }
 
