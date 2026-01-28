@@ -306,51 +306,10 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
     self->reactors = NULL;
   }
   
-  /* Clear avatar picture to prevent corrupted paintable during disposal.
-   * Note: avatar_image is a GtkPicture, not GtkImage (per Blueprint definition) */
-  if (self->avatar_image && GTK_IS_PICTURE(self->avatar_image)) {
-    gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), NULL);
-  }
-  
-  /* Clear label attributes to prevent Pango attribute corruption during disposal.
-   * Labels with markup have PangoAttrList that can become corrupted. Clearing
-   * attributes releases them cleanly before GTK disposes the labels. */
-  if (self->lbl_display && GTK_IS_LABEL(self->lbl_display)) {
-    gtk_label_set_attributes(GTK_LABEL(self->lbl_display), NULL);
-  }
-  if (self->lbl_handle && GTK_IS_LABEL(self->lbl_handle)) {
-    gtk_label_set_attributes(GTK_LABEL(self->lbl_handle), NULL);
-  }
-  if (self->lbl_nip05 && GTK_IS_LABEL(self->lbl_nip05)) {
-    gtk_label_set_attributes(GTK_LABEL(self->lbl_nip05), NULL);
-  }
-  if (self->lbl_timestamp && GTK_IS_LABEL(self->lbl_timestamp)) {
-    gtk_label_set_attributes(GTK_LABEL(self->lbl_timestamp), NULL);
-  }
-  if (self->content_label && GTK_IS_LABEL(self->content_label)) {
-    gtk_label_set_attributes(GTK_LABEL(self->content_label), NULL);
-  }
-  if (self->lbl_like_count && GTK_IS_LABEL(self->lbl_like_count)) {
-    gtk_label_set_attributes(GTK_LABEL(self->lbl_like_count), NULL);
-  }
-  if (self->lbl_zap_count && GTK_IS_LABEL(self->lbl_zap_count)) {
-    gtk_label_set_attributes(GTK_LABEL(self->lbl_zap_count), NULL);
-  }
-  if (self->lbl_repost_count && GTK_IS_LABEL(self->lbl_repost_count)) {
-    gtk_label_set_attributes(GTK_LABEL(self->lbl_repost_count), NULL);
-  }
-  if (self->reply_indicator_label && GTK_IS_LABEL(self->reply_indicator_label)) {
-    gtk_label_set_attributes(GTK_LABEL(self->reply_indicator_label), NULL);
-  }
-  if (self->reply_count_label && GTK_IS_LABEL(self->reply_count_label)) {
-    gtk_label_set_attributes(GTK_LABEL(self->reply_count_label), NULL);
-  }
-  if (self->repost_indicator_label && GTK_IS_LABEL(self->repost_indicator_label)) {
-    gtk_label_set_attributes(GTK_LABEL(self->repost_indicator_label), NULL);
-  }
-  if (self->subject_label && GTK_IS_LABEL(self->subject_label)) {
-    gtk_label_set_attributes(GTK_LABEL(self->subject_label), NULL);
-  }
+  /* Do NOT manipulate widgets during disposal - any calls to gtk_label_set_text(),
+   * gtk_label_set_attributes(), gtk_picture_set_paintable(), etc. can trigger
+   * recalculation/rendering while the widget is being disposed, causing crashes.
+   * GTK will handle all widget cleanup automatically during finalization. */
   
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_CARD_ROW);
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
