@@ -43,7 +43,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 </child>
                 <child>
                   <object class="GtkBox">
-                    <property name="height-request">64</property>
+                    <property name="height-request">72</property>
                   </object>
                 </child>
               </object>
@@ -130,7 +130,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <child>
                       <object class="GtkBox">
                         <property name="orientation">0</property>
-                        <property name="spacing">8</property>
+                        <property name="spacing">16</property>
                         <child>
                           <object class="GtkLabel" id="lbl_display_name">
                             <property name="label">Loading...</property>

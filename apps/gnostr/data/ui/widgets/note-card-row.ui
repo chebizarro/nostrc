@@ -8,12 +8,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <requires lib="gtk" version="4.0"/>
   <template class="GnostrNoteCardRow" parent="GtkWidget">
     <property name="hexpand">false</property>
+    <property name="halign">3</property>
     <child>
       <object class="GtkBox" id="root">
         <property name="orientation">1</property>
         <property name="width-request">640</property>
         <property name="hexpand">false</property>
         <property name="vexpand">false</property>
+        <property name="halign">3</property>
         <style>
           <class name="note-card"/>
         </style>
@@ -120,10 +122,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="spacing">2</property>
                     <property name="hexpand">true</property>
                     <property name="valign">3</property>
+                    <property name="halign">1</property>
                     <child>
                       <object class="GtkBox" id="header_top">
                         <property name="orientation">0</property>
                         <property name="spacing">4</property>
+                        <property name="halign">1</property>
                         <child>
                           <object class="GtkButton" id="btn_display_name">
                             <property name="has-frame">false</property>
@@ -182,28 +186,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </style>
                           </object>
                         </child>
-                        <child>
-                          <object class="GtkBox">
-                            <property name="hexpand">true</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkButton" id="btn_menu">
-                            <property name="icon-name">view-more-symbolic</property>
-                            <property name="tooltip-text" translatable="yes">More options</property>
-                            <property name="valign">3</property>
-                            <style>
-                              <class name="flat"/>
-                              <class name="circular"/>
-                            </style>
-                          </object>
-                        </child>
                       </object>
                     </child>
                     <child>
                       <object class="GtkBox" id="header_bottom">
                         <property name="orientation">0</property>
                         <property name="spacing">6</property>
+                        <property name="halign">1</property>
                         <child>
                           <object class="GtkLabel" id="lbl_handle">
                             <property name="xalign">0</property>
@@ -237,6 +226,18 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                       </object>
                     </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_menu">
+                    <property name="icon-name">view-more-symbolic</property>
+                    <property name="tooltip-text" translatable="yes">More options</property>
+                    <property name="valign">1</property>
+                    <property name="halign">2</property>
+                    <style>
+                      <class name="flat"/>
+                      <class name="circular"/>
+                    </style>
                   </object>
                 </child>
               </object>
@@ -332,22 +333,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   </object>
                 </child>
                 <child>
-                  <object class="GtkFlowBox" id="hashtags_box">
-                    <property name="visible">false</property>
-                    <property name="selection-mode">0</property>
-                    <property name="homogeneous">false</property>
-                    <property name="row-spacing">4</property>
-                    <property name="column-spacing">6</property>
-                    <property name="max-children-per-line">10</property>
-                    <property name="min-children-per-line">1</property>
-                    <property name="halign">1</property>
-                    <property name="margin-top">8</property>
-                    <style>
-                      <class name="note-hashtags-container"/>
-                    </style>
-                  </object>
-                </child>
-                <child>
                   <object class="GtkFlowBox" id="labels_box">
                     <property name="visible">false</property>
                     <property name="selection-mode">0</property>
@@ -399,7 +384,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="spacing">6</property>
                             <child>
                               <object class="GtkImage">
-                                <property name="icon-name">chat-bubble-symbolic</property>
+                                <property name="icon-name">mail-reply-sender-symbolic</property>
                                 <property name="pixel-size">16</property>
                               </object>
                             </child>
@@ -492,7 +477,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="spacing">6</property>
                             <child>
                               <object class="GtkImage" id="zap_icon">
-                                <property name="icon-name">wallet-symbolic</property>
+                                <property name="icon-name">bolt-symbolic</property>
                                 <property name="pixel-size">16</property>
                               </object>
                             </child>
@@ -516,7 +501,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkButton" id="btn_link">
-                        <property name="icon-name">chain-link-symbolic</property>
+                        <property name="icon-name">edit-copy-symbolic</property>
                         <property name="tooltip-text" translatable="yes">Copy link</property>
                         <style>
                           <class name="flat"/>
@@ -545,6 +530,22 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </style>
                       </object>
                     </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkFlowBox" id="hashtags_box">
+                    <property name="visible">false</property>
+                    <property name="selection-mode">0</property>
+                    <property name="homogeneous">false</property>
+                    <property name="row-spacing">4</property>
+                    <property name="column-spacing">6</property>
+                    <property name="max-children-per-line">10</property>
+                    <property name="min-children-per-line">1</property>
+                    <property name="halign">1</property>
+                    <property name="margin-top">8</property>
+                    <style>
+                      <class name="note-hashtags-container"/>
+                    </style>
                   </object>
                 </child>
                 <child>

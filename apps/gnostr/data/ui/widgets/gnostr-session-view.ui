@@ -188,7 +188,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="margin-bottom">10</property>
                                     <child>
                                       <object class="GtkImage">
-                                        <property name="icon-name">emblem-shopping-cart-symbolic</property>
+                                        <property name="icon-name">basket-symbolic</property>
                                         <style>
                                           <class name="dim-label"/>
                                         </style>
@@ -364,7 +364,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="margin-bottom">8</property>
                                     <style>
                                       <class name="pill"/>
-                                      <class name="suggested-action"/>
+                                      <class name="osd"/>
                                     </style>
                                     <property name="child">
                                       <object class="GtkBox">
