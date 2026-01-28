@@ -6,6 +6,7 @@
 
 #include "gnostr-note-embed.h"
 #include "gnostr-avatar-cache.h"
+#include "../util/utils.h"
 #include "../storage_ndb.h"
 #include <nostr/nip19/nip19.h>
 #include <nostr-event.h>
@@ -74,7 +75,7 @@ struct _GnostrNoteEmbed {
   gboolean main_pool_attempted;
 
 #ifdef HAVE_SOUP3
-  SoupSession *session;
+  /* Uses gnostr_get_shared_soup_session() instead of per-widget session */
 #endif
 };
 
@@ -108,7 +109,7 @@ static void gnostr_note_embed_dispose(GObject *obj) {
   }
 
 #ifdef HAVE_SOUP3
-  g_clear_object(&self->session);
+  /* Shared session is managed globally - do not clear here */
 #endif
 
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_EMBED);
@@ -185,8 +186,7 @@ static void gnostr_note_embed_init(GnostrNoteEmbed *self) {
   self->cancellable = g_cancellable_new();
 
 #ifdef HAVE_SOUP3
-  self->session = soup_session_new();
-  soup_session_set_timeout(self->session, 15);
+  /* Uses shared session from gnostr_get_shared_soup_session() */
 #endif
 
   /* Add click gesture */

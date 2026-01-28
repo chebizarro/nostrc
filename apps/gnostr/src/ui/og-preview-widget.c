@@ -1,4 +1,5 @@
 #include "og-preview-widget.h"
+#include "../util/utils.h"
 #include <libsoup/soup.h>
 #include <string.h>
 #include <ctype.h>
@@ -29,7 +30,7 @@ struct _OgPreviewWidget {
   
   /* State */
   char *current_url;
-  SoupSession *session;
+  /* Note: Uses gnostr_get_shared_soup_session() instead of per-widget session */
   GCancellable *cancellable;
   GHashTable *cache; /* URL -> OgMetadata */
   
@@ -271,7 +272,7 @@ static void load_image_async(OgPreviewWidget *self, const char *url) {
   g_object_add_weak_pointer(G_OBJECT(self), (gpointer *)weak_ref);
   
   soup_session_send_and_read_async(
-    self->session,
+    gnostr_get_shared_soup_session(),
     msg,
     G_PRIORITY_LOW,
     self->image_cancellable,
@@ -432,7 +433,7 @@ static void fetch_og_metadata_async(OgPreviewWidget *self, const char *url) {
   g_object_add_weak_pointer(G_OBJECT(self), (gpointer *)weak_ref);
   
   soup_session_send_and_read_async(
-    self->session,
+    gnostr_get_shared_soup_session(),
     msg,
     G_PRIORITY_LOW,
     effective_cancellable,
@@ -490,8 +491,7 @@ static void og_preview_widget_dispose(GObject *object) {
   
   G_OBJECT_CLASS(og_preview_widget_parent_class)->dispose(object);
   
-  /* Clear the session AFTER parent dispose to ensure libsoup has finished cleanup */
-  g_clear_object(&self->session);
+  /* Shared session is managed globally - do not clear here */
 }
 
 static void og_preview_widget_finalize(GObject *object) {
@@ -533,9 +533,7 @@ static void on_card_clicked(GtkGestureClick *gesture, int n_press, double x, dou
 }
 
 static void og_preview_widget_init(OgPreviewWidget *self) {
-  /* Initialize session and cache */
-  self->session = soup_session_new();
-  soup_session_set_timeout(self->session, 10); /* 10 second timeout */
+  /* Uses shared session from gnostr_get_shared_soup_session() */
   
   self->cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)og_metadata_free);
   
