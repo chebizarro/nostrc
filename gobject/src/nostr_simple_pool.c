@@ -1087,20 +1087,32 @@ static void *fetch_profiles_goroutine(void *arg) {
     }
     nostr_filters_add(filters, f);
     
+    /* First pass: Ensure all relays exist and are connected.
+     * This is CRITICAL - the goroutine was previously just looking for existing relays
+     * but not ensuring they were added to the pool first! */
+    GnostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
+    if (!gobj_pool || !gobj_pool->pool) {
+        g_critical("[GOROUTINE] Pool GObject or underlying pool is NULL!");
+        goto cleanup_and_exit;
+    }
+    NostrSimplePool *pool = gobj_pool->pool;
+    
+    g_debug("[GOROUTINE] Ensuring %zu relays are connected...", ctx->url_count);
+    for (size_t i = 0; i < ctx->url_count; i++) {
+        const char *url = ctx->urls[i];
+        if (!url || !*url) continue;
+        
+        /* This will add the relay if not present, or reconnect if disconnected */
+        nostr_simple_pool_ensure_relay(pool, url);
+    }
+    g_debug("[GOROUTINE] Pool now has %zu relays after ensure", pool->relay_count);
+    
     /* Create subscriptions for each relay */
     for (size_t i = 0; i < ctx->url_count; i++) {
         const char *url = ctx->urls[i];
         if (!url || !*url) continue;
         
-        /* Get relay from pool - CRITICAL: Access pool through GObject to ensure it's still valid */
-        GnostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
-        if (!gobj_pool || !gobj_pool->pool) {
-            g_critical("[GOROUTINE] Pool GObject or underlying pool is NULL!");
-            continue;
-        }
-        NostrSimplePool *pool = gobj_pool->pool;
-        g_debug("[GOROUTINE] Accessing pool=%p (has %zu relays)", (void*)pool, pool->relay_count);
-        
+        /* Get relay from pool - should exist now after ensure_relay */
         NostrRelay *relay = NULL;
         pthread_mutex_lock(&pool->pool_mutex);
         for (size_t j = 0; j < pool->relay_count; j++) {
@@ -1112,13 +1124,12 @@ static void *fetch_profiles_goroutine(void *arg) {
         pthread_mutex_unlock(&pool->pool_mutex);
         
         if (!relay) {
-            g_warning("[GOROUTINE] CRITICAL: Relay not in pool (skipping): %s", url);
-            g_warning("[GOROUTINE] Pool has %zu relays, but '%s' not found!", pool->relay_count, url);
+            g_warning("[GOROUTINE] Relay not in pool after ensure (skipping): %s", url);
             continue;
         }
         
         if (!nostr_relay_is_connected(relay)) {
-            g_warning("[GOROUTINE] CRITICAL: Relay not connected (skipping): %s", url);
+            g_warning("[GOROUTINE] Relay not connected after ensure (skipping): %s", url);
             continue;
         }
         
@@ -1332,6 +1343,7 @@ static void *fetch_profiles_goroutine(void *arg) {
         g_usleep(10000); // 10ms (reduced from 50ms for faster EOSE detection)
     }
     
+cleanup_and_exit:
     /* Cleanup filters */
     if (filters) {
         nostr_filters_free(filters);
