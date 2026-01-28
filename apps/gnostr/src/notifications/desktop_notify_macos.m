@@ -47,6 +47,22 @@ void gnostr_desktop_notify_handle_action(GnostrDesktopNotify *self,
                                           const char *action,
                                           const char *event_id);
 
+/* Callback data for g_idle_add - structs defined here, functions defined after _GnostrDesktopNotify */
+typedef struct {
+    GnostrDesktopNotify *owner;
+    char *action;
+    char *event_id;
+} NotifyActionData;
+
+typedef struct {
+    GnostrDesktopNotify *owner;
+    gboolean granted;
+} PermissionData;
+
+/* Forward declarations for idle callbacks - defined after struct _GnostrDesktopNotify */
+static gboolean notify_action_idle_cb(gpointer user_data);
+static gboolean permission_idle_cb(gpointer user_data);
+
 /* ============================================================
  * Objective-C Delegate for notification handling
  * ============================================================ */
@@ -101,11 +117,11 @@ void gnostr_desktop_notify_handle_action(GnostrDesktopNotify *self,
 
     /* Dispatch callback to GLib main loop */
     if (self.owner) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            /* Get the callback from the owner and invoke it */
-            gnostr_desktop_notify_handle_action(self.owner, action,
-                                                 eventId ? [eventId UTF8String] : NULL);
-        });
+        NotifyActionData *data = g_new0(NotifyActionData, 1);
+        data->owner = self.owner;
+        data->action = g_strdup(action);
+        data->event_id = eventId ? g_strdup([eventId UTF8String]) : NULL;
+        g_idle_add(notify_action_idle_cb, data);
     }
 
     completionHandler();
@@ -147,6 +163,27 @@ struct _GnostrDesktopNotify {
 G_DEFINE_TYPE(GnostrDesktopNotify, gnostr_desktop_notify, G_TYPE_OBJECT)
 
 static GnostrDesktopNotify *g_default_notify = NULL;
+
+/* Idle callback implementations - now that struct is defined */
+static gboolean notify_action_idle_cb(gpointer user_data) {
+    NotifyActionData *data = user_data;
+    if (data->owner && GNOSTR_IS_DESKTOP_NOTIFY(data->owner)) {
+        gnostr_desktop_notify_handle_action(data->owner, data->action, data->event_id);
+    }
+    g_free(data->action);
+    g_free(data->event_id);
+    g_free(data);
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean permission_idle_cb(gpointer user_data) {
+    PermissionData *data = user_data;
+    if (data->owner && GNOSTR_IS_DESKTOP_NOTIFY(data->owner)) {
+        data->owner->has_permission = data->granted;
+    }
+    g_free(data);
+    return G_SOURCE_REMOVE;
+}
 
 /* Forward declarations */
 static void load_settings(GnostrDesktopNotify *self);
@@ -396,16 +433,19 @@ gnostr_desktop_notify_request_permission(GnostrDesktopNotify *self)
                                          UNAuthorizationOptionSound |
                                          UNAuthorizationOptionBadge;
 
+        GnostrDesktopNotify *weak_self = self;
         [center requestAuthorizationWithOptions:options
                               completionHandler:^(BOOL granted, NSError * _Nullable error) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                self->has_permission = granted;
-                if (error) {
-                    NSLog(@"desktop-notify-macos: Permission request error: %@", error);
-                } else {
-                    NSLog(@"desktop-notify-macos: Permission %@", granted ? @"granted" : @"denied");
-                }
-            });
+            if (error) {
+                NSLog(@"desktop-notify-macos: Permission request error: %@", error);
+            } else {
+                NSLog(@"desktop-notify-macos: Permission %@", granted ? @"granted" : @"denied");
+            }
+            /* Use g_idle_add to update state on GLib main loop */
+            PermissionData *data = g_new0(PermissionData, 1);
+            data->owner = weak_self;
+            data->granted = granted;
+            g_idle_add(permission_idle_cb, data);
         }];
     }
 }

@@ -651,21 +651,28 @@ static void enforce_window(GnNostrEventModel *self) {
   guint to_remove = self->notes->len - cap;
   guint old_len = self->notes->len;
 
-  /* Remove oldest entries (tail) and their cached state. */
+  /* Collect keys to remove BEFORE modifying any data structures */
+  uint64_t *keys_to_remove = g_new(uint64_t, to_remove);
   for (guint i = 0; i < to_remove; i++) {
     guint idx = old_len - 1 - i;
     NoteEntry *old = &g_array_index(self->notes, NoteEntry, idx);
-    uint64_t k = old->note_key;
+    keys_to_remove[i] = old->note_key;
+  }
 
-    /* Ensure we remove from LRU queue before removing from item_cache (which frees key ptr). */
+  /* Resize array and emit items_changed FIRST so GTK can tear down widgets
+   * while the cached items are still valid */
+  g_array_set_size(self->notes, cap);
+  g_list_model_items_changed(G_LIST_MODEL(self), cap, to_remove, 0);
+
+  /* NOW clean up caches after GTK has finished with the widgets */
+  for (guint i = 0; i < to_remove; i++) {
+    uint64_t k = keys_to_remove[i];
     cache_lru_remove_key(self, k);
-
     g_hash_table_remove(self->thread_info, &k);
     g_hash_table_remove(self->item_cache, &k);
   }
 
-  g_array_set_size(self->notes, cap);
-  g_list_model_items_changed(G_LIST_MODEL(self), cap, to_remove, 0);
+  g_free(keys_to_remove);
 }
 
 /* Pending queue: pubkey -> array of PendingEntry. Returns TRUE if this pubkey had no pending queue before. */
@@ -752,14 +759,15 @@ static gboolean remove_note_by_key(GnNostrEventModel *self, uint64_t note_key) {
     NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
     if (entry->note_key != note_key) continue;
 
-    /* Cleanup caches */
+    /* Remove visible entry and emit change FIRST so GTK can tear down widgets
+     * while cached items are still valid */
+    g_array_remove_index(self->notes, i);
+    g_list_model_items_changed(G_LIST_MODEL(self), i, 1, 0);
+
+    /* NOW cleanup caches after GTK has finished with widgets */
     cache_lru_remove_key(self, note_key);
     g_hash_table_remove(self->thread_info, &note_key);
     g_hash_table_remove(self->item_cache, &note_key);
-
-    /* Remove visible entry and emit change */
-    g_array_remove_index(self->notes, i);
-    g_list_model_items_changed(G_LIST_MODEL(self), i, 1, 0);
 
     return TRUE;
   }
@@ -1427,13 +1435,16 @@ void gn_nostr_event_model_clear(GnNostrEventModel *self) {
     return;
   }
 
+  /* Resize array and emit items_changed FIRST so GTK can tear down widgets
+   * while cached items are still valid */
   g_array_set_size(self->notes, 0);
+  g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, 0);
+
+  /* NOW clear caches after GTK has finished with widgets */
   g_hash_table_remove_all(self->item_cache);
   g_queue_clear(self->cache_lru);
   g_hash_table_remove_all(self->thread_info);
   g_hash_table_remove_all(self->pending_by_author);
-
-  g_list_model_items_changed(G_LIST_MODEL(self), 0, old_size, 0);
 
   g_debug("[MODEL] Cleared %u items", old_size);
 }
@@ -1552,19 +1563,27 @@ void gn_nostr_event_model_trim_newer(GnNostrEventModel *self, guint keep_count) 
 
   guint to_remove = self->notes->len - keep_count;
 
-  /* Remove newest entries (head) and their cached state */
+  /* Collect keys to remove BEFORE modifying data structures */
+  uint64_t *keys_to_remove = g_new(uint64_t, to_remove);
   for (guint i = 0; i < to_remove; i++) {
     NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
-    uint64_t k = entry->note_key;
+    keys_to_remove[i] = entry->note_key;
+  }
+
+  /* Remove from array and emit items_changed FIRST so GTK can tear down widgets
+   * while cached items are still valid */
+  g_array_remove_range(self->notes, 0, to_remove);
+  g_list_model_items_changed(G_LIST_MODEL(self), 0, to_remove, 0);
+
+  /* NOW cleanup caches after GTK has finished with widgets */
+  for (guint i = 0; i < to_remove; i++) {
+    uint64_t k = keys_to_remove[i];
     cache_lru_remove_key(self, k);
     g_hash_table_remove(self->thread_info, &k);
     g_hash_table_remove(self->item_cache, &k);
   }
 
-  /* Remove from front of array */
-  g_array_remove_range(self->notes, 0, to_remove);
-  g_list_model_items_changed(G_LIST_MODEL(self), 0, to_remove, 0);
-
+  g_free(keys_to_remove);
   g_debug("[MODEL] Trimmed %u newer items, %u remaining", to_remove, self->notes->len);
 }
 
@@ -1731,19 +1750,27 @@ void gn_nostr_event_model_trim_older(GnNostrEventModel *self, guint keep_count) 
   guint to_remove = self->notes->len - keep_count;
   guint start_idx = keep_count; /* Remove from end */
 
-  /* Remove oldest entries (tail) and their cached state */
-  for (guint i = start_idx; i < self->notes->len; i++) {
-    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
-    uint64_t k = entry->note_key;
+  /* Collect keys to remove BEFORE modifying data structures */
+  uint64_t *keys_to_remove = g_new(uint64_t, to_remove);
+  for (guint i = 0; i < to_remove; i++) {
+    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, start_idx + i);
+    keys_to_remove[i] = entry->note_key;
+  }
+
+  /* Remove from array and emit items_changed FIRST so GTK can tear down widgets
+   * while cached items are still valid */
+  g_array_remove_range(self->notes, start_idx, to_remove);
+  g_list_model_items_changed(G_LIST_MODEL(self), start_idx, to_remove, 0);
+
+  /* NOW cleanup caches after GTK has finished with widgets */
+  for (guint i = 0; i < to_remove; i++) {
+    uint64_t k = keys_to_remove[i];
     cache_lru_remove_key(self, k);
     g_hash_table_remove(self->thread_info, &k);
     g_hash_table_remove(self->item_cache, &k);
   }
 
-  /* Remove from end of array */
-  g_array_remove_range(self->notes, start_idx, to_remove);
-  g_list_model_items_changed(G_LIST_MODEL(self), start_idx, to_remove, 0);
-
+  g_free(keys_to_remove);
   g_debug("[MODEL] Trimmed %u older items, %u remaining", to_remove, self->notes->len);
 }
 

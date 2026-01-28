@@ -347,119 +347,187 @@
 
 #pragma mark - Menu Actions
 
+/* Helper struct for passing data to GLib idle callbacks */
+typedef struct {
+    GtkWindow *window;
+    GtkApplication *app;
+    void *helper; /* weak ref to GnostrMenuBarHelper */
+} MenuBarCallbackData;
+
+static gboolean show_hide_window_idle(gpointer user_data) {
+    MenuBarCallbackData *data = user_data;
+    if (!data->window || !GTK_IS_WINDOW(data->window)) {
+        g_free(data);
+        return G_SOURCE_REMOVE;
+    }
+    if (gtk_widget_get_visible(GTK_WIDGET(data->window))) {
+        gtk_widget_set_visible(GTK_WIDGET(data->window), FALSE);
+    } else {
+        gtk_widget_set_visible(GTK_WIDGET(data->window), TRUE);
+        gtk_window_present(data->window);
+        if (data->app && GTK_IS_APPLICATION(data->app)) {
+            g_application_activate(G_APPLICATION(data->app));
+        }
+    }
+    /* Update label on main thread */
+    if (data->helper) {
+        @autoreleasepool {
+            GnostrMenuBarHelper *helper = (__bridge GnostrMenuBarHelper *)data->helper;
+            [helper updateShowHideLabel];
+        }
+    }
+    g_free(data);
+    return G_SOURCE_REMOVE;
+}
+
 - (void)showHideWindow:(id)sender {
     (void)sender;
     if (!_window) return;
 
     /* Execute on GLib main loop to be thread-safe with GTK */
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (gtk_widget_get_visible(GTK_WIDGET(self->_window))) {
-            gtk_widget_set_visible(GTK_WIDGET(self->_window), FALSE);
+    MenuBarCallbackData *data = g_new0(MenuBarCallbackData, 1);
+    data->window = _window;
+    data->app = _app;
+    data->helper = (__bridge void *)self;
+    g_idle_add(show_hide_window_idle, data);
+}
+
+static gboolean new_note_idle(gpointer user_data) {
+    MenuBarCallbackData *data = user_data;
+    if (!data->window || !GTK_IS_WINDOW(data->window)) {
+        g_free(data);
+        return G_SOURCE_REMOVE;
+    }
+    if (!gtk_widget_get_visible(GTK_WIDGET(data->window))) {
+        gtk_widget_set_visible(GTK_WIDGET(data->window), TRUE);
+    }
+    gtk_window_present(data->window);
+    if (data->app && GTK_IS_APPLICATION(data->app)) {
+        g_application_activate(G_APPLICATION(data->app));
+        GAction *action = g_action_map_lookup_action(G_ACTION_MAP(data->app), "new-note");
+        if (action) {
+            g_action_activate(action, NULL);
         } else {
-            gtk_widget_set_visible(GTK_WIDGET(self->_window), TRUE);
-            /* Present and activate application for proper focus */
-            gtk_window_present(self->_window);
-            if (self->_app) {
-                g_application_activate(G_APPLICATION(self->_app));
-            }
+            action = g_action_map_lookup_action(G_ACTION_MAP(data->window), "new-note");
+            if (action) g_action_activate(action, NULL);
         }
-        [self updateShowHideLabel];
-    });
+    }
+    if (data->helper) {
+        @autoreleasepool {
+            GnostrMenuBarHelper *helper = (__bridge GnostrMenuBarHelper *)data->helper;
+            [helper updateShowHideLabel];
+        }
+    }
+    g_free(data);
+    return G_SOURCE_REMOVE;
 }
 
 - (void)newNote:(id)sender {
     (void)sender;
     if (!_window) return;
 
-    dispatch_async(dispatch_get_main_queue(), ^{
-        /* Show window if hidden, then activate the new note action */
-        if (!gtk_widget_get_visible(GTK_WIDGET(self->_window))) {
-            gtk_widget_set_visible(GTK_WIDGET(self->_window), TRUE);
-        }
-        gtk_window_present(self->_window);
-        if (self->_app) g_application_activate(G_APPLICATION(self->_app));
+    MenuBarCallbackData *data = g_new0(MenuBarCallbackData, 1);
+    data->window = _window;
+    data->app = _app;
+    data->helper = (__bridge void *)self;
+    g_idle_add(new_note_idle, data);
+}
 
-        /* Activate the app action for new note if it exists */
-        if (self->_app) {
-            GAction *action = g_action_map_lookup_action(G_ACTION_MAP(self->_app), "new-note");
-            if (action) {
-                g_action_activate(action, NULL);
-            } else {
-                /* Try window action */
-                action = g_action_map_lookup_action(G_ACTION_MAP(self->_window), "new-note");
-                if (action) {
-                    g_action_activate(action, NULL);
-                }
-            }
+static gboolean check_dms_idle(gpointer user_data) {
+    MenuBarCallbackData *data = user_data;
+    if (!data->window || !GTK_IS_WINDOW(data->window)) {
+        g_free(data);
+        return G_SOURCE_REMOVE;
+    }
+    if (!gtk_widget_get_visible(GTK_WIDGET(data->window))) {
+        gtk_widget_set_visible(GTK_WIDGET(data->window), TRUE);
+    }
+    gtk_window_present(data->window);
+    if (data->app && GTK_IS_APPLICATION(data->app)) {
+        g_application_activate(G_APPLICATION(data->app));
+        GAction *action = g_action_map_lookup_action(G_ACTION_MAP(data->app), "show-dms");
+        if (action) {
+            g_action_activate(action, NULL);
+        } else {
+            action = g_action_map_lookup_action(G_ACTION_MAP(data->window), "show-dms");
+            if (action) g_action_activate(action, NULL);
         }
-        [self updateShowHideLabel];
-    });
+    }
+    if (data->helper) {
+        @autoreleasepool {
+            GnostrMenuBarHelper *helper = (__bridge GnostrMenuBarHelper *)data->helper;
+            [helper updateShowHideLabel];
+        }
+    }
+    g_free(data);
+    return G_SOURCE_REMOVE;
 }
 
 - (void)checkDMs:(id)sender {
     (void)sender;
     if (!_window) return;
 
-    dispatch_async(dispatch_get_main_queue(), ^{
-        /* Show window if hidden */
-        if (!gtk_widget_get_visible(GTK_WIDGET(self->_window))) {
-            gtk_widget_set_visible(GTK_WIDGET(self->_window), TRUE);
-        }
-        gtk_window_present(self->_window);
-        if (self->_app) g_application_activate(G_APPLICATION(self->_app));
+    MenuBarCallbackData *data = g_new0(MenuBarCallbackData, 1);
+    data->window = _window;
+    data->app = _app;
+    data->helper = (__bridge void *)self;
+    g_idle_add(check_dms_idle, data);
+}
 
-        /* Activate the DM view action if it exists */
-        if (self->_app) {
-            GAction *action = g_action_map_lookup_action(G_ACTION_MAP(self->_app), "show-dms");
-            if (action) {
-                g_action_activate(action, NULL);
-            } else {
-                action = g_action_map_lookup_action(G_ACTION_MAP(self->_window), "show-dms");
-                if (action) {
-                    g_action_activate(action, NULL);
-                }
-            }
+static gboolean open_preferences_idle(gpointer user_data) {
+    MenuBarCallbackData *data = user_data;
+    if (!data->window || !GTK_IS_WINDOW(data->window)) {
+        g_free(data);
+        return G_SOURCE_REMOVE;
+    }
+    if (!gtk_widget_get_visible(GTK_WIDGET(data->window))) {
+        gtk_widget_set_visible(GTK_WIDGET(data->window), TRUE);
+    }
+    gtk_window_present(data->window);
+    if (data->app && GTK_IS_APPLICATION(data->app)) {
+        g_application_activate(G_APPLICATION(data->app));
+        GAction *action = g_action_map_lookup_action(G_ACTION_MAP(data->app), "preferences");
+        if (action) {
+            g_action_activate(action, NULL);
+        } else {
+            action = g_action_map_lookup_action(G_ACTION_MAP(data->window), "preferences");
+            if (action) g_action_activate(action, NULL);
         }
-        [self updateShowHideLabel];
-    });
+    }
+    if (data->helper) {
+        @autoreleasepool {
+            GnostrMenuBarHelper *helper = (__bridge GnostrMenuBarHelper *)data->helper;
+            [helper updateShowHideLabel];
+        }
+    }
+    g_free(data);
+    return G_SOURCE_REMOVE;
 }
 
 - (void)openPreferences:(id)sender {
     (void)sender;
     if (!_window) return;
 
-    dispatch_async(dispatch_get_main_queue(), ^{
-        /* Show window if hidden */
-        if (!gtk_widget_get_visible(GTK_WIDGET(self->_window))) {
-            gtk_widget_set_visible(GTK_WIDGET(self->_window), TRUE);
-        }
-        gtk_window_present(self->_window);
-        if (self->_app) g_application_activate(G_APPLICATION(self->_app));
+    MenuBarCallbackData *data = g_new0(MenuBarCallbackData, 1);
+    data->window = _window;
+    data->app = _app;
+    data->helper = (__bridge void *)self;
+    g_idle_add(open_preferences_idle, data);
+}
 
-        /* Activate the preferences action */
-        if (self->_app) {
-            GAction *action = g_action_map_lookup_action(G_ACTION_MAP(self->_app), "preferences");
-            if (action) {
-                g_action_activate(action, NULL);
-            } else {
-                action = g_action_map_lookup_action(G_ACTION_MAP(self->_window), "preferences");
-                if (action) {
-                    g_action_activate(action, NULL);
-                }
-            }
-        }
-        [self updateShowHideLabel];
-    });
+static gboolean quit_app_idle(gpointer user_data) {
+    GtkApplication *app = user_data;
+    if (app && GTK_IS_APPLICATION(app)) {
+        g_application_quit(G_APPLICATION(app));
+    }
+    return G_SOURCE_REMOVE;
 }
 
 - (void)quitApp:(id)sender {
     (void)sender;
+    if (!_app) return;
 
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (self->_app) {
-            g_application_quit(G_APPLICATION(self->_app));
-        }
-    });
+    g_idle_add(quit_app_idle, _app);
 }
 
 @end

@@ -248,9 +248,19 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   }
   g_clear_object(&self->media_session);
 #endif
-  /* Don't manually clear og_preview - it's a child widget that will be
-   * automatically disposed when the template is disposed */
+  /* Remove dynamically added widgets from containers BEFORE template disposal to prevent double-dispose.
+   * These widgets are not part of the template, so we must remove them explicitly. */
+  if (self->og_preview && self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
+    gtk_box_remove(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
+  }
   self->og_preview = NULL;
+  
+  /* Remove note_embed from embed_box frame */
+  if (self->note_embed && self->embed_box && GTK_IS_FRAME(self->embed_box)) {
+    gtk_frame_set_child(GTK_FRAME(self->embed_box), NULL);
+  }
+  self->note_embed = NULL;
+  
   /* Clean up the repost popover before disposing template */
   if (self->repost_popover) {
     if (GTK_IS_POPOVER(self->repost_popover)) {
