@@ -8,7 +8,7 @@
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
-#include "utils.h"
+#include "../util/utils.h"
 
 /* Avatar context for async HTTP downloads */
 typedef struct _AvatarCtx {
@@ -376,8 +376,7 @@ void gnostr_avatar_prefetch(const char *url) {
       return;
     }
   #ifdef HAVE_SOUP3
-    /* Fetch asynchronously and store in cache */
-    SoupSession *sess = soup_session_new();
+    /* Fetch asynchronously and store in cache - use shared session */
     SoupMessage *msg = soup_message_new("GET", url);
     AvatarCtx *ctx = g_new0(AvatarCtx, 1);
     ctx->image = NULL;    /* no UI to update */
@@ -385,9 +384,8 @@ void gnostr_avatar_prefetch(const char *url) {
     ctx->url = g_strdup(url);
     g_message("avatar prefetch: fetching via HTTP url=%s", url);
     s_avatar_metrics.http_start++;
-    soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
+    soup_session_send_and_read_async(gnostr_get_shared_soup_session(), msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
     g_object_unref(msg);
-    g_object_unref(sess);
   #else
     (void)url; /* libsoup not available; skip */
   #endif
@@ -442,7 +440,7 @@ void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *
       s_avatar_metrics.requests_total++;
       s_avatar_metrics.http_start++;
       
-      SoupSession *sess = soup_session_new();
+      /* Use shared session to avoid TLS cleanup issues on macOS */
       SoupMessage *msg = soup_message_new("GET", url);
       AvatarCtx *ctx = g_new0(AvatarCtx, 1);
       /* Use weak references - if widget is destroyed, pointer becomes NULL */
@@ -454,9 +452,8 @@ void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *
       if (image) g_object_weak_ref(G_OBJECT(image), on_image_weak_notify, ctx);
       if (initials) g_object_weak_ref(G_OBJECT(initials), on_initials_weak_notify, ctx);
       
-      soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
+      soup_session_send_and_read_async(gnostr_get_shared_soup_session(), msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
       g_object_unref(msg);
-      g_object_unref(sess);
     #else
       (void)url; (void)image; (void)initials;
     #endif
