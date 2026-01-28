@@ -709,15 +709,12 @@ static gpointer query_single_thread(gpointer user_data) {
                 continue;
             }
 
-            // Add new relay to pool for future reuse
-            if (gobj_pool && gobj_pool->pool) {
-                nostr_simple_pool_add_relay(gobj_pool->pool, relay);
-                relay_from_pool = TRUE;
-                g_debug("query_single: Added NEW relay %s to pool", url);
-            } else {
-                // Track for cleanup since not added to pool
-                g_ptr_array_add(created_relays, relay);
-            }
+            // DO NOT add hint relays to pool - they should be temporary connections
+            // that are cleaned up after the query completes. Adding them to the pool
+            // causes relay connection accumulation as users scroll through notes with
+            // different relay hints. Only configured relays should stay in the pool.
+            g_ptr_array_add(created_relays, relay);
+            g_debug("query_single: Created temporary relay %s (will disconnect after query)", url);
         }
 
         // Check if relay is connected
