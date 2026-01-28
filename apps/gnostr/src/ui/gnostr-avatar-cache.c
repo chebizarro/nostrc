@@ -75,6 +75,8 @@ static GdkTexture *try_load_avatar_from_disk(const char *url);
 static gboolean avatar_cache_log_cb(gpointer data);
 #ifdef HAVE_SOUP3
 static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer user_data);
+static void on_image_weak_notify(gpointer data, GObject *where_the_object_was);
+static void on_initials_weak_notify(gpointer data, GObject *where_the_object_was);
 #endif
 
 /* Periodic logger for avatar cache */
@@ -343,8 +345,9 @@ static GdkTexture *try_load_avatar_from_disk(const char *url) {
 
 static void avatar_ctx_free(AvatarCtx *c) {
   if (!c) return;
-  if (c->image) g_object_unref(c->image);
-  if (c->initials) g_object_unref(c->initials);
+  /* Remove weak references if widgets still exist */
+  if (c->image) g_object_weak_unref(G_OBJECT(c->image), on_image_weak_notify, c);
+  if (c->initials) g_object_weak_unref(G_OBJECT(c->initials), on_initials_weak_notify, c);
   g_free(c->url);
   g_free(c);
 }  
@@ -418,6 +421,19 @@ GdkTexture *gnostr_avatar_try_load_cached(const char *url) {
     return NULL;
 }
 
+/* Weak notify callback to clear widget pointer when widget is destroyed */
+static void on_image_weak_notify(gpointer data, GObject *where_the_object_was) {
+  AvatarCtx *ctx = (AvatarCtx *)data;
+  if (ctx) ctx->image = NULL;
+  (void)where_the_object_was;
+}
+
+static void on_initials_weak_notify(gpointer data, GObject *where_the_object_was) {
+  AvatarCtx *ctx = (AvatarCtx *)data;
+  if (ctx) ctx->initials = NULL;
+  (void)where_the_object_was;
+}
+
 /* Public: Download avatar asynchronously and update widgets when done. */
 void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *initials) {
     #ifdef HAVE_SOUP3
@@ -429,9 +445,14 @@ void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *
       SoupSession *sess = soup_session_new();
       SoupMessage *msg = soup_message_new("GET", url);
       AvatarCtx *ctx = g_new0(AvatarCtx, 1);
-      ctx->image = image ? g_object_ref(image) : NULL;
-      ctx->initials = initials ? g_object_ref(initials) : NULL;
+      /* Use weak references - if widget is destroyed, pointer becomes NULL */
+      ctx->image = image;
+      ctx->initials = initials;
       ctx->url = g_strdup(url);
+      
+      /* Add weak references so we know if widgets are destroyed */
+      if (image) g_object_weak_ref(G_OBJECT(image), on_image_weak_notify, ctx);
+      if (initials) g_object_weak_ref(G_OBJECT(initials), on_initials_weak_notify, ctx);
       
       soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
       g_object_unref(msg);

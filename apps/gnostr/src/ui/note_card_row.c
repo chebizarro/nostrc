@@ -2119,7 +2119,8 @@ void gnostr_note_card_row_set_author(GnostrNoteCardRow *self, const char *displa
 static gboolean update_timestamp_tick(gpointer user_data) {
   GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
   
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->lbl_timestamp)) {
+  /* Check disposed flag first - widget may be in disposal state */
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || self->disposed || !GTK_IS_LABEL(self->lbl_timestamp)) {
     return G_SOURCE_REMOVE;
   }
   
