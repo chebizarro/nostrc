@@ -12,8 +12,14 @@ static void ws_http_send_json(struct lws *wsi, const char *json) {
   unsigned char *buf = (unsigned char*)malloc(LWS_PRE + blen + 512);
   if (!buf) return;
   unsigned char *p = &buf[LWS_PRE];
-  (void)lws_add_http_common_headers(wsi, HTTP_STATUS_OK, "application/json", blen, &p, buf + LWS_PRE + blen + 512);
-  (void)lws_finalize_http_header(wsi, &p, buf + LWS_PRE + blen + 512);
+  if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK, "application/json", blen, &p, buf + LWS_PRE + blen + 512)) {
+    free(buf);
+    return;
+  }
+  if (lws_finalize_http_header(wsi, &p, buf + LWS_PRE + blen + 512)) {
+    free(buf);
+    return;
+  }
   memcpy(p, json, blen);
   lws_write(wsi, &buf[LWS_PRE], (size_t)(p - &buf[LWS_PRE]) + blen, LWS_WRITE_HTTP);
   free(buf);
@@ -48,8 +54,8 @@ int relayd_handle_nip11_root(struct lws *wsi, const RelaydCtx *ctx) {
   const char *name = (ctx && ctx->cfg.name[0]) ? ctx->cfg.name : "nostrc-relayd";
   const char *software = (ctx && ctx->cfg.software[0]) ? ctx->cfg.software : "nostrc";
   const char *version = (ctx && ctx->cfg.version[0]) ? ctx->cfg.version : "0.1";
-  char tmp[512];
-  snprintf(tmp, sizeof(tmp), "{\"name\":\"%s\",\"software\":\"%s\",\"version\":\"%s\"}", name, software, version);
+  char tmp[1024];
+  snprintf(tmp, sizeof(tmp), "{\"name\":\"%.255s\",\"software\":\"%.255s\",\"version\":\"%.255s\"}", name, software, version);
   body = strdup(tmp);
   need_free = 1;
 #endif
