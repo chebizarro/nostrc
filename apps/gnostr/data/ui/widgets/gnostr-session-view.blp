@@ -242,9 +242,12 @@ template $GnostrSessionView: Adw.Bin {
                             Adw.Clamp middle_clamp {
                                 maximum-size: 760;
                                 tightening-threshold: 560;
-                                hexpand: true;
                                 vexpand: true;
                                 halign: center;
+
+                                styles [
+                                    "middle-clamp",
+                                ]
 
                                 child: Adw.ViewStack stack {
                                     vexpand: true;

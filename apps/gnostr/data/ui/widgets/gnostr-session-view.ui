@@ -270,9 +270,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               <object class="AdwClamp" id="middle_clamp">
                                 <property name="maximum-size">760</property>
                                 <property name="tightening-threshold">560</property>
-                                <property name="hexpand">true</property>
                                 <property name="vexpand">true</property>
                                 <property name="halign">3</property>
+                                <style>
+                                  <class name="middle-clamp"/>
+                                </style>
                                 <property name="child">
                                   <object class="AdwViewStack" id="stack">
                                     <property name="vexpand">true</property>
