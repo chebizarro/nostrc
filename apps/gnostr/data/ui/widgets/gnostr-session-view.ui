@@ -282,15 +282,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                         <property name="title" translatable="yes">Timeline</property>
                                         <property name="icon-name">view-list-symbolic</property>
                                         <property name="child">
-                                          <object class="GtkScrolledWindow" id="timeline_scroller">
-                                            <property name="hscrollbar-policy">2</property>
+                                          <object class="GnostrTimelineView" id="timeline">
                                             <property name="vexpand">true</property>
-                                            <property name="child">
-                                              <object class="GnostrTimelineView" id="timeline">
-                                                <property name="hexpand">true</property>
-                                                <property name="vexpand">true</property>
-                                              </object>
-                                            </property>
                                           </object>
                                         </property>
                                       </object>

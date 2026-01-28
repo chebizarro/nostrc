@@ -254,14 +254,8 @@ template $GnostrSessionView: Adw.Bin {
                                         title: _("Timeline");
                                         icon-name: "view-list-symbolic";
 
-                                        child: ScrolledWindow timeline_scroller {
-                                            hscrollbar-policy: never;
+                                        child: $GnostrTimelineView timeline {
                                             vexpand: true;
-
-                                            child: $GnostrTimelineView timeline {
-                                                hexpand: true;
-                                                vexpand: true;
-                                            };
                                         };
                                     }
 
