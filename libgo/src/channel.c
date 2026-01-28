@@ -239,6 +239,9 @@ static inline __attribute__((unused)) size_t go_channel_next_out_idx(const GoCha
 /* channel_send_pred removed: predicates must not read atomic state. */
 
 int go_channel_is_closed(GoChannel *chan) {
+    if (NOSTR_UNLIKELY(chan == NULL)) {
+        return 1; /* Treat NULL channel as closed */
+    }
     int closed = 0;
     ensure_spin_env();
     NLOCK(&chan->mutex);
@@ -263,6 +266,10 @@ int go_channel_has_space(const void *chan) {
 
 /* Non-blocking send: returns 0 on success, -1 if full or closed */
 int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
+    if (NOSTR_UNLIKELY(chan == NULL)) {
+        nostr_metric_counter_add("go_chan_try_send_failures", 1);
+        return -1;
+    }
     if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
         nostr_metric_counter_add("go_chan_try_send_failures", 1);
         return -1;
@@ -407,6 +414,10 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
 
 /* Non-blocking receive: returns 0 on success, -1 if empty (or closed and empty) */
 int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
+    if (NOSTR_UNLIKELY(chan == NULL)) {
+        nostr_metric_counter_add("go_chan_try_recv_failures", 1);
+        return -1;
+    }
     if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
@@ -642,6 +653,9 @@ void go_channel_free(GoChannel *chan) {
 
 /* Send data to the channel */
 int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
+    if (NOSTR_UNLIKELY(chan == NULL)) {
+        return -1;
+    }
     nostr_metric_timer t; nostr_metric_timer_start(&t);
     int blocked = 0;
     int have_tw = 0; // whether we started wake->progress timer
@@ -806,6 +820,9 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
 
 /* Receive data from the channel */
 int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
+    if (NOSTR_UNLIKELY(chan == NULL)) {
+        return -1;
+    }
     nostr_metric_timer t; nostr_metric_timer_start(&t);
     int blocked = 0;
     int have_tw = 0; // whether we started wake->progress timer
