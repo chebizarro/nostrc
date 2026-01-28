@@ -5257,3 +5257,52 @@ GCancellable *gnostr_note_card_row_get_cancellable(GnostrNoteCardRow *self) {
   g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), NULL);
   return self->async_cancellable;
 }
+
+/**
+ * gnostr_note_card_row_prepare_for_unbind:
+ *
+ * Prepares the row for unbinding from a list item. This cancels all async
+ * operations and marks the row as disposed to prevent callbacks from
+ * corrupting Pango state during the unbind/dispose process.
+ */
+void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
+  g_return_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self));
+  
+  /* Mark as disposed FIRST to prevent any async callbacks from running */
+  self->disposed = TRUE;
+  
+  /* Cancel all async operations immediately */
+  if (self->async_cancellable) {
+    g_cancellable_cancel(self->async_cancellable);
+  }
+  
+  /* Cancel legacy cancellables */
+  if (self->nip05_cancellable) {
+    g_cancellable_cancel(self->nip05_cancellable);
+  }
+  
+#ifdef HAVE_SOUP3
+  if (self->avatar_cancellable) {
+    g_cancellable_cancel(self->avatar_cancellable);
+  }
+  if (self->article_image_cancellable) {
+    g_cancellable_cancel(self->article_image_cancellable);
+  }
+  /* Cancel all media fetches */
+  if (self->media_cancellables) {
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, self->media_cancellables);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+      GCancellable *cancellable = G_CANCELLABLE(value);
+      if (cancellable) g_cancellable_cancel(cancellable);
+    }
+  }
+#endif
+
+  /* Remove timestamp timer to prevent it from firing during disposal */
+  if (self->timestamp_timer_id > 0) {
+    g_source_remove(self->timestamp_timer_id);
+    self->timestamp_timer_id = 0;
+  }
+}

@@ -1309,6 +1309,13 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
   if (GTK_IS_WIDGET(row)) {
     /* Detach this row from any inflight embed fetches */
     inflight_detach_row(row);
+    
+    /* CRITICAL: Prepare the row for unbinding BEFORE GTK disposes it.
+     * This cancels all async operations and sets the disposed flag to prevent
+     * callbacks from corrupting Pango state during the unbind/dispose process. */
+    if (GNOSTR_IS_NOTE_CARD_ROW(row)) {
+      gnostr_note_card_row_prepare_for_unbind(GNOSTR_NOTE_CARD_ROW(row));
+    }
   }
 }
 

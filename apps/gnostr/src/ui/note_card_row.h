@@ -64,10 +64,10 @@ void gnostr_note_card_row_set_nip05(GnostrNoteCardRow *self, const char *nip05, 
 
 /* NIP-10 threading: set thread info and update reply indicator */
 void gnostr_note_card_row_set_thread_info(GnostrNoteCardRow *self,
-                                           const char *root_id,
-                                           const char *parent_id,
-                                           const char *parent_author_name,
-                                           gboolean is_reply);
+					  const char *root_id,
+					  const char *parent_id,
+					  const char *parent_author_name,
+					  gboolean is_reply);
 
 /* Bookmark state: update the bookmark button icon based on state */
 void gnostr_note_card_row_set_bookmarked(GnostrNoteCardRow *self, gboolean is_bookmarked);
@@ -107,9 +107,9 @@ void gnostr_note_card_row_set_logged_in(GnostrNoteCardRow *self, gboolean logged
 
 /* NIP-18 Reposts: set repost information to display "reposted by X" attribution */
 void gnostr_note_card_row_set_repost_info(GnostrNoteCardRow *self,
-                                           const char *reposter_pubkey_hex,
-                                           const char *reposter_display_name,
-                                           gint64 repost_created_at);
+					  const char *reposter_pubkey_hex,
+					  const char *reposter_display_name,
+					  gint64 repost_created_at);
 
 /* NIP-18 Reposts: set whether this card represents a repost (kind 6/16) */
 void gnostr_note_card_row_set_is_repost(GnostrNoteCardRow *self, gboolean is_repost);
@@ -119,13 +119,13 @@ void gnostr_note_card_row_set_repost_count(GnostrNoteCardRow *self, guint count)
 
 /* NIP-18 Quote Reposts: set quote post info to display the quoted note inline */
 void gnostr_note_card_row_set_quote_info(GnostrNoteCardRow *self,
-                                          const char *quoted_event_id_hex,
-                                          const char *quoted_content,
-                                          const char *quoted_author_name);
+					 const char *quoted_event_id_hex,
+					 const char *quoted_content,
+					 const char *quoted_author_name);
 
 /* NIP-36 Sensitive Content: set content-warning for sensitive/NSFW content */
 void gnostr_note_card_row_set_content_warning(GnostrNoteCardRow *self,
-                                               const char *content_warning_reason);
+					      const char *content_warning_reason);
 
 /* NIP-36: Check if content is currently blurred (sensitive content hidden) */
 gboolean gnostr_note_card_row_is_content_blurred(GnostrNoteCardRow *self);
@@ -134,7 +134,7 @@ gboolean gnostr_note_card_row_is_content_blurred(GnostrNoteCardRow *self);
 void gnostr_note_card_row_reveal_sensitive_content(GnostrNoteCardRow *self);
 
 /* Hashtags: Set hashtags from "t" tags to display on this note */
-void gnostr_note_card_row_set_hashtags(GnostrNoteCardRow *self, const char * const *hashtags);
+void gnostr_note_card_row_set_hashtags(GnostrNoteCardRow *self, const char *const *hashtags);
 
 /* NIP-32 Labels: Set labels to display on this note */
 void gnostr_note_card_row_set_labels(GnostrNoteCardRow *self, GPtrArray *labels);
@@ -162,12 +162,12 @@ void gnostr_note_card_row_clear_labels(GnostrNoteCardRow *self);
  * - Uses publication date instead of created_at
  */
 void gnostr_note_card_row_set_article_mode(GnostrNoteCardRow *self,
-                                            const char *title,
-                                            const char *summary,
-                                            const char *image_url,
-                                            gint64 published_at,
-                                            const char *d_tag,
-                                            const char * const *hashtags);
+					   const char *title,
+					   const char *summary,
+					   const char *image_url,
+					   gint64 published_at,
+					   const char *d_tag,
+					   const char *const *hashtags);
 
 /* NIP-23: Check if this card is displaying an article */
 gboolean gnostr_note_card_row_is_article(GnostrNoteCardRow *self);
@@ -194,14 +194,14 @@ const char *gnostr_note_card_row_get_article_d_tag(GnostrNoteCardRow *self);
  * - Adapts layout for vertical videos
  */
 void gnostr_note_card_row_set_video_mode(GnostrNoteCardRow *self,
-                                          const char *video_url,
-                                          const char *thumb_url,
-                                          const char *title,
-                                          const char *summary,
-                                          gint64 duration,
-                                          gboolean is_vertical,
-                                          const char *d_tag,
-                                          const char * const *hashtags);
+					 const char *video_url,
+					 const char *thumb_url,
+					 const char *title,
+					 const char *summary,
+					 gint64 duration,
+					 gboolean is_vertical,
+					 const char *d_tag,
+					 const char *const *hashtags);
 
 /* NIP-71: Check if this card is displaying a video */
 gboolean gnostr_note_card_row_is_video(GnostrNoteCardRow *self);
@@ -234,8 +234,8 @@ const char *gnostr_note_card_row_get_pubkey(GnostrNoteCardRow *self);
  * a clickable link to the original source.
  */
 void gnostr_note_card_row_set_proxy_info(GnostrNoteCardRow *self,
-                                          const char *proxy_id,
-                                          const char *protocol);
+					 const char *proxy_id,
+					 const char *protocol);
 
 /* NIP-48 Proxy Tags: Set proxy information from event tags JSON
  * @self: note card row
@@ -245,7 +245,7 @@ void gnostr_note_card_row_set_proxy_info(GnostrNoteCardRow *self,
  * Equivalent to calling set_proxy_info with extracted values.
  */
 void gnostr_note_card_row_set_proxy_from_tags(GnostrNoteCardRow *self,
-                                               const char *tags_json);
+					      const char *tags_json);
 
 /* NIP-48: Check if this note is bridged from another protocol */
 gboolean gnostr_note_card_row_is_proxied(GnostrNoteCardRow *self);
@@ -274,9 +274,9 @@ void gnostr_note_card_row_set_ots_proof(GnostrNoteCardRow *self, const char *tag
  * Directly sets the OTS display status, useful when proof is already parsed.
  */
 void gnostr_note_card_row_set_ots_status(GnostrNoteCardRow *self,
-                                          gint status,
-                                          gint64 verified_timestamp,
-                                          guint block_height);
+					 gint status,
+					 gint64 verified_timestamp,
+					 guint block_height);
 
 /* NIP-03 OpenTimestamps: Check if note has OTS proof */
 gboolean gnostr_note_card_row_has_ots_proof(GnostrNoteCardRow *self);
@@ -311,6 +311,17 @@ void gnostr_note_card_row_clear_external_ids(GnostrNoteCardRow *self);
  * Returns: (transfer none): the shared GCancellable, or NULL if disposed
  */
 GCancellable *gnostr_note_card_row_get_cancellable(GnostrNoteCardRow *self);
+
+/**
+ * gnostr_note_card_row_prepare_for_unbind:
+ *
+ * Prepares the row for unbinding from a list item. This cancels all async
+ * operations and marks the row as disposed to prevent callbacks from
+ * corrupting Pango state during the unbind/dispose process.
+ *
+ * Call this from factory_unbind_cb BEFORE GTK disposes the row.
+ */
+void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self);
 
 G_END_DECLS
 
