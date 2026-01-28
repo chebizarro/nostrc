@@ -8,6 +8,7 @@
 #include "gnostr-avatar-cache.h"
 #include "../util/nip05.h"
 #include "../util/markdown_pango.h"
+#include "../util/utils.h"
 #include <glib/gi18n.h>
 
 #ifdef HAVE_SOUP3
@@ -68,7 +69,7 @@ struct _GnostrClassifiedCard {
 
 #ifdef HAVE_SOUP3
   GCancellable *image_cancellable;
-  SoupSession *session;
+  /* Uses gnostr_get_shared_soup_session() instead of per-widget session */
 #endif
 
   GCancellable *nip05_cancellable;
@@ -109,7 +110,7 @@ gnostr_classified_card_dispose(GObject *obj)
     g_cancellable_cancel(self->image_cancellable);
     g_clear_object(&self->image_cancellable);
   }
-  g_clear_object(&self->session);
+  /* Shared session is managed globally - do not clear here */
 #endif
 
   /* Unparent root */
@@ -573,8 +574,7 @@ gnostr_classified_card_init(GnostrClassifiedCard *self)
 
 #ifdef HAVE_SOUP3
   self->image_cancellable = g_cancellable_new();
-  self->session = soup_session_new();
-  soup_session_set_timeout(self->session, 30);
+  /* Uses shared session from gnostr_get_shared_soup_session() */
 #endif
 
   /* Build main layout */

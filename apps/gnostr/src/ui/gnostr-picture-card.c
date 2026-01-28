@@ -8,6 +8,7 @@
 #include "gnostr-avatar-cache.h"
 #include "gnostr-image-viewer.h"
 #include "../util/nip05.h"
+#include "../util/utils.h"
 #include <glib/gi18n.h>
 #include <string.h>
 
@@ -85,7 +86,7 @@ struct _GnostrPictureCard {
   GCancellable *nip05_cancellable;
 
 #ifdef HAVE_SOUP3
-  SoupSession *session;
+  /* Uses gnostr_get_shared_soup_session() instead of per-widget session */
 #endif
 };
 
@@ -127,7 +128,7 @@ gnostr_picture_card_dispose(GObject *object) {
   }
 
 #ifdef HAVE_SOUP3
-  g_clear_object(&self->session);
+  /* Shared session is managed globally - do not clear here */
 #endif
 
   /* Unparent all children */
@@ -320,8 +321,7 @@ gnostr_picture_card_init(GnostrPictureCard *self) {
   self->content_revealed = FALSE;
 
 #ifdef HAVE_SOUP3
-  self->session = soup_session_new();
-  soup_session_set_timeout(self->session, 30);
+  /* Uses shared session from gnostr_get_shared_soup_session() */
 #endif
 
   self->image_cancellable = g_cancellable_new();

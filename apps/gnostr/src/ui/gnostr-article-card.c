@@ -9,6 +9,7 @@
 #include "../util/markdown_pango.h"
 #include "../util/nip05.h"
 #include "../util/nip84_highlights.h"
+#include "../util/utils.h"
 #include <glib/gi18n.h>
 #include <json-glib/json-glib.h>
 #include <nostr/nip19/nip19.h>
@@ -67,7 +68,7 @@ struct _GnostrArticleCard {
 #ifdef HAVE_SOUP3
   GCancellable *avatar_cancellable;
   GCancellable *header_cancellable;
-  SoupSession *session;
+  /* Uses gnostr_get_shared_soup_session() instead of per-widget session */
 #endif
 
   GCancellable *nip05_cancellable;
@@ -104,7 +105,7 @@ static void gnostr_article_card_dispose(GObject *object) {
     g_cancellable_cancel(self->header_cancellable);
     g_clear_object(&self->header_cancellable);
   }
-  g_clear_object(&self->session);
+  /* Shared session is managed globally - do not clear here */
 #endif
 
   if (self->menu_popover) {
@@ -460,8 +461,7 @@ static void gnostr_article_card_init(GnostrArticleCard *self) {
 #ifdef HAVE_SOUP3
   self->avatar_cancellable = g_cancellable_new();
   self->header_cancellable = g_cancellable_new();
-  self->session = soup_session_new();
-  soup_session_set_timeout(self->session, 30);
+  /* Uses shared session from gnostr_get_shared_soup_session() */
 #endif
 }
 
@@ -513,7 +513,7 @@ static void load_header_image(GnostrArticleCard *self, const char *url) {
   if (!msg) return;
 
   soup_session_send_and_read_async(
-    self->session,
+    gnostr_get_shared_soup_session(),
     msg,
     G_PRIORITY_LOW,
     self->header_cancellable,

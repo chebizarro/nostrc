@@ -9,6 +9,7 @@
 #include <json-glib/json-glib.h>
 #include "gnostr-avatar-cache.h"
 #include "../util/nip05.h"
+#include "../util/utils.h"
 #include "../util/imeta.h"
 #include "../util/zap.h"
 #include "../util/custom_emoji.h"
@@ -72,7 +73,7 @@ struct _GnostrNoteCardRow {
   char *avatar_url;
 #ifdef HAVE_SOUP3
   GCancellable *avatar_cancellable;
-  SoupSession *media_session;
+  /* Uses gnostr_get_shared_soup_session() instead of per-widget session */
   GHashTable *media_cancellables; /* URL -> GCancellable */
 #endif
   guint depth;
@@ -262,7 +263,7 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
     }
     g_clear_pointer(&self->media_cancellables, g_hash_table_unref);
   }
-  g_clear_object(&self->media_session);
+  /* Shared session is managed globally - do not clear here */
 #endif
   /* Do NOT remove og_preview from container during disposal - removing triggers disposal
    * of og_preview while the parent is also being disposed, causing Pango layout corruption.
@@ -1776,8 +1777,7 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
 
 #ifdef HAVE_SOUP3
   self->avatar_cancellable = g_cancellable_new();
-  self->media_session = soup_session_new();
-  soup_session_set_timeout(self->media_session, 30); /* 30 second timeout for media */
+  /* Uses shared session from gnostr_get_shared_soup_session() */
   self->media_cancellables = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
 #endif
 }
@@ -1940,7 +1940,7 @@ static void load_media_image_internal(GnostrNoteCardRow *self, const char *url, 
 
   /* Start async fetch */
   soup_session_send_and_read_async(
-    self->media_session,
+    gnostr_get_shared_soup_session(),
     msg,
     G_PRIORITY_LOW,
     cancellable,
@@ -4281,7 +4281,7 @@ static void on_article_image_loaded(GObject *source, GAsyncResult *res, gpointer
 /* Load article header image asynchronously */
 static void load_article_header_image(GnostrNoteCardRow *self, const char *url) {
   if (!url || !*url) return;
-  if (!self->media_session) return;
+  /* Uses shared session from gnostr_get_shared_soup_session() */
 
   /* Cancel any previous image fetch */
   if (self->article_image_cancellable) {
@@ -4295,7 +4295,7 @@ static void load_article_header_image(GnostrNoteCardRow *self, const char *url) 
   if (!msg) return;
 
   soup_session_send_and_read_async(
-    self->media_session,
+    gnostr_get_shared_soup_session(),
     msg,
     G_PRIORITY_LOW,
     self->article_image_cancellable,
@@ -4588,18 +4588,15 @@ static void load_video_thumbnail(GnostrNoteCardRow *self, const char *thumb_url)
 
   self->video_thumb_cancellable = g_cancellable_new();
 
-  SoupSession *session = soup_session_new();
   SoupMessage *msg = soup_message_new("GET", thumb_url);
   if (!msg) {
-    g_object_unref(session);
     return;
   }
 
-  soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT,
+  soup_session_send_and_read_async(gnostr_get_shared_soup_session(), msg, G_PRIORITY_DEFAULT,
                                     self->video_thumb_cancellable,
                                     on_video_thumb_bytes_ready, self);
   g_object_unref(msg);
-  g_object_unref(session);
 }
 #endif
 

@@ -8,6 +8,7 @@
 #include "gnostr-avatar-cache.h"
 #include "../util/nip64_chess.h"
 #include "../util/nip05.h"
+#include "../util/utils.h"
 #include <glib/gi18n.h>
 
 #ifdef HAVE_SOUP3
@@ -97,7 +98,7 @@ struct _GnostrChessCard {
 
 #ifdef HAVE_SOUP3
   GCancellable *avatar_cancellable;
-  SoupSession *session;
+  /* Uses gnostr_get_shared_soup_session() instead of per-widget session */
 #endif
 };
 
@@ -148,7 +149,7 @@ static void gnostr_chess_card_dispose(GObject *object) {
     g_cancellable_cancel(self->avatar_cancellable);
     g_clear_object(&self->avatar_cancellable);
   }
-  g_clear_object(&self->session);
+  /* Shared session is managed globally - do not clear here */
 #endif
 
   if (self->menu_popover) {
@@ -682,8 +683,7 @@ static void gnostr_chess_card_init(GnostrChessCard *self) {
 
 #ifdef HAVE_SOUP3
   self->avatar_cancellable = g_cancellable_new();
-  self->session = soup_session_new();
-  soup_session_set_timeout(self->session, 30);
+  /* Uses shared session from gnostr_get_shared_soup_session() */
 #endif
 }
 

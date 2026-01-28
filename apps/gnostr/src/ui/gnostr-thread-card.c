@@ -8,6 +8,7 @@
 #include "gnostr-avatar-cache.h"
 #include "../util/nip7d_threads.h"
 #include "../util/nip05.h"
+#include "../util/utils.h"
 #include <glib/gi18n.h>
 #include <string.h>
 
@@ -72,7 +73,7 @@ struct _GnostrThreadCard {
 
 #ifdef HAVE_SOUP3
     GCancellable *avatar_cancellable;
-    SoupSession *session;
+    /* Uses gnostr_get_shared_soup_session() instead of per-widget session */
 #endif
 };
 
@@ -110,7 +111,7 @@ gnostr_thread_card_dispose(GObject *obj)
         g_cancellable_cancel(self->avatar_cancellable);
         g_clear_object(&self->avatar_cancellable);
     }
-    g_clear_object(&self->session);
+    /* Shared session is managed globally - do not clear here */
 #endif
 
     /* Clear child widgets before dispose */
@@ -456,8 +457,7 @@ gnostr_thread_card_init(GnostrThreadCard *self)
 
 #ifdef HAVE_SOUP3
     self->avatar_cancellable = g_cancellable_new();
-    self->session = soup_session_new();
-    soup_session_set_timeout(self->session, 30);
+    /* Uses shared session from gnostr_get_shared_soup_session() */
 #endif
 
     setup_card_ui(self);

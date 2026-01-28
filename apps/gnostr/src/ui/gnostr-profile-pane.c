@@ -10,6 +10,7 @@
 #include <gtk/gtk.h>
 #include "gnostr-avatar-cache.h"
 #include "../util/nip05.h"
+#include "../util/utils.h"
 #include "../util/relays.h"
 #include "../util/nip58_badges.h"
 #include "../util/user_status.h"
@@ -344,7 +345,7 @@ struct _GnostrProfilePane {
   GPtrArray *nip65_relays;        /* Cached NIP-65 relay list (GnostrNip65Relay*) */
   gboolean nip65_fetched;         /* Whether NIP-65 lookup was attempted */
 #ifdef HAVE_SOUP3
-  SoupSession *soup_session;
+  /* Uses gnostr_get_shared_soup_session() instead of per-widget session */
   GCancellable *banner_cancellable;
   GCancellable *avatar_cancellable;
   GHashTable *image_cache; /* URL -> GdkTexture */
@@ -443,7 +444,7 @@ static void gnostr_profile_pane_dispose(GObject *obj) {
     g_cancellable_cancel(self->avatar_cancellable);
     g_clear_object(&self->avatar_cancellable);
   }
-  g_clear_object(&self->soup_session);
+  /* Shared session is managed globally - do not clear here */
   g_clear_pointer(&self->image_cache, g_hash_table_unref);
   if (self->image_cache_lru) {
     g_queue_free_full(self->image_cache_lru, g_free);
@@ -818,11 +819,7 @@ static void gnostr_profile_pane_init(GnostrProfilePane *self) {
   setup_posts_list(self);
 
 #ifdef HAVE_SOUP3
-  /* Create session with connection limits to avoid overwhelming the TLS stack */
-  self->soup_session = soup_session_new_with_options(
-    "max-conns", 2,
-    "max-conns-per-host", 1,
-    NULL);
+  /* Uses shared session from gnostr_get_shared_soup_session() */
   self->image_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
   self->image_cache_lru = g_queue_new();
 #endif
@@ -1682,10 +1679,7 @@ static void load_banner_async(GnostrProfilePane *self, const char *url) {
   }
   self->banner_cancellable = g_cancellable_new();
 
-  /* Create soup session if needed */
-  if (!self->soup_session) {
-    self->soup_session = soup_session_new();
-  }
+  /* Uses shared session from gnostr_get_shared_soup_session() */
 
   /* Setup context */
   BannerLoadCtx *ctx = g_new0(BannerLoadCtx, 1);
@@ -1701,7 +1695,7 @@ static void load_banner_async(GnostrProfilePane *self, const char *url) {
   }
 
   g_debug("profile_pane: loading banner at full resolution url=%s", url);
-  soup_session_send_and_read_async(self->soup_session, msg, G_PRIORITY_DEFAULT,
+  soup_session_send_and_read_async(gnostr_get_shared_soup_session(), msg, G_PRIORITY_DEFAULT,
                                     self->banner_cancellable, on_banner_loaded, ctx);
   g_object_unref(msg);
 }

@@ -6,6 +6,7 @@
 
 #include "gnostr-image-viewer.h"
 #include "gnostr-main-window.h"
+#include "../util/utils.h"
 #include <glib/gi18n.h>
 #include <math.h>
 
@@ -52,7 +53,7 @@ struct _GnostrImageViewer {
   guint gallery_index;    /* Current image index */
 
 #ifdef HAVE_SOUP3
-  SoupSession *session;
+  /* Uses gnostr_get_shared_soup_session() instead of per-widget session */
   GCancellable *cancellable;
 #endif
 };
@@ -111,7 +112,7 @@ static void gnostr_image_viewer_dispose(GObject *obj) {
     g_cancellable_cancel(self->cancellable);
     g_clear_object(&self->cancellable);
   }
-  g_clear_object(&self->session);
+  /* Shared session is managed globally - do not clear here */
 #endif
 
   g_clear_object(&self->texture);
@@ -145,8 +146,7 @@ static void gnostr_image_viewer_init(GnostrImageViewer *self) {
   self->is_dragging = FALSE;
 
 #ifdef HAVE_SOUP3
-  self->session = soup_session_new();
-  soup_session_set_timeout(self->session, 60);
+  /* Uses shared session from gnostr_get_shared_soup_session() */
   self->cancellable = g_cancellable_new();
 #endif
 
@@ -675,7 +675,7 @@ void gnostr_image_viewer_set_image_url(GnostrImageViewer *self, const char *url)
   }
 
   soup_session_send_and_read_async(
-    self->session,
+    gnostr_get_shared_soup_session(),
     msg,
     G_PRIORITY_DEFAULT,
     self->cancellable,

@@ -9,6 +9,7 @@
 #include "../util/markdown_pango.h"
 #include "../util/nip54_wiki.h"
 #include "../util/nip05.h"
+#include "../util/utils.h"
 #include <glib/gi18n.h>
 #include <json-glib/json-glib.h>
 #include <nostr/nip19/nip19.h>
@@ -94,7 +95,7 @@ struct _GnostrWikiCard {
 
 #ifdef HAVE_SOUP3
   GCancellable *avatar_cancellable;
-  SoupSession *session;
+  /* Uses gnostr_get_shared_soup_session() instead of per-widget session */
 #endif
 
   GCancellable *nip05_cancellable;
@@ -133,7 +134,7 @@ static void gnostr_wiki_card_dispose(GObject *object) {
     g_cancellable_cancel(self->avatar_cancellable);
     g_clear_object(&self->avatar_cancellable);
   }
-  g_clear_object(&self->session);
+  /* Shared session is managed globally - do not clear here */
 #endif
 
   if (self->menu_popover) {
@@ -788,8 +789,7 @@ static void gnostr_wiki_card_init(GnostrWikiCard *self) {
 
 #ifdef HAVE_SOUP3
   self->avatar_cancellable = g_cancellable_new();
-  self->session = soup_session_new();
-  soup_session_set_timeout(self->session, 30);
+  /* Uses shared session from gnostr_get_shared_soup_session() */
 #endif
 
   self->is_expanded = FALSE;

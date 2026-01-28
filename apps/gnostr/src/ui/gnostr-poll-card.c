@@ -8,6 +8,7 @@
 #include "gnostr-poll-card.h"
 #include "gnostr-avatar-cache.h"
 #include "../util/nip88_polls.h"
+#include "../util/utils.h"
 #include <glib/gi18n.h>
 
 #ifdef HAVE_SOUP3
@@ -62,7 +63,7 @@ struct _GnostrPollCard {
 
 #ifdef HAVE_SOUP3
   GCancellable *avatar_cancellable;
-  SoupSession *session;
+  /* Uses gnostr_get_shared_soup_session() instead of per-widget session */
 #endif
 };
 
@@ -96,7 +97,7 @@ static void gnostr_poll_card_dispose(GObject *obj) {
     g_cancellable_cancel(self->avatar_cancellable);
     g_clear_object(&self->avatar_cancellable);
   }
-  g_clear_object(&self->session);
+  /* Shared session is managed globally - do not clear here */
 #endif
 
   /* Clear child widgets */
@@ -697,8 +698,7 @@ static void gnostr_poll_card_init(GnostrPollCard *self) {
 
 #ifdef HAVE_SOUP3
   self->avatar_cancellable = g_cancellable_new();
-  self->session = soup_session_new();
-  soup_session_set_timeout(self->session, 15);
+  /* Uses shared session from gnostr_get_shared_soup_session() */
 #endif
 }
 
