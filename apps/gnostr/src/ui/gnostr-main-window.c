@@ -558,12 +558,20 @@ struct _RelayManagerCtx {
   gchar *selected_url;  /* Currently selected relay URL */
   gboolean modified;    /* Track if relays list was modified */
   GHashTable *relay_types; /* URL -> GnostrRelayType (as GINT_TO_POINTER) */
+  gboolean destroyed;   /* Set to TRUE when window is destroyed */
+  gint ref_count;       /* Reference count for safe async cleanup */
 };
 
-static void relay_manager_ctx_free(RelayManagerCtx *ctx) {
+static void relay_manager_ctx_ref(RelayManagerCtx *ctx) {
+  if (ctx) g_atomic_int_inc(&ctx->ref_count);
+}
+
+static void relay_manager_ctx_unref(RelayManagerCtx *ctx) {
   if (!ctx) return;
+  if (!g_atomic_int_dec_and_test(&ctx->ref_count)) return;
+
+  /* Last reference - actually free */
   if (ctx->fetch_cancellable) {
-    g_cancellable_cancel(ctx->fetch_cancellable);
     g_object_unref(ctx->fetch_cancellable);
   }
   if (ctx->relay_types) {
@@ -571,6 +579,15 @@ static void relay_manager_ctx_free(RelayManagerCtx *ctx) {
   }
   g_free(ctx->selected_url);
   g_free(ctx);
+}
+
+static void relay_manager_ctx_free(RelayManagerCtx *ctx) {
+  if (!ctx) return;
+  if (ctx->fetch_cancellable) {
+    g_cancellable_cancel(ctx->fetch_cancellable);
+  }
+  /* Don't unref cancellable here - let unref handle it */
+  relay_manager_ctx_unref(ctx);
 }
 
 static void relay_manager_update_status(RelayManagerCtx *ctx) {
@@ -868,26 +885,19 @@ static void relay_manager_populate_info(RelayManagerCtx *ctx, GnostrRelayInfo *i
 
 static void on_relay_info_fetched(GObject *source, GAsyncResult *result, gpointer user_data) {
   (void)source;
+  RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
 
-  /* CRITICAL: Check result BEFORE accessing user_data to avoid use-after-free.
-   * If the request was cancelled (window destroyed), user_data may be freed. */
+  /* Always consume the result to avoid leaks */
   GError *err = NULL;
   GnostrRelayInfo *info = gnostr_relay_info_fetch_finish(result, &err);
 
-  if (err) {
-    /* If cancelled, user_data is likely freed - do NOT access it */
-    if (g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_clear_error(&err);
-      if (info) gnostr_relay_info_free(info);
-      return;
-    }
-  }
-
-  /* Only now is it safe to access user_data */
-  RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
-  if (!ctx || !ctx->builder) {
+  /* CRITICAL: Check if context was destroyed before accessing any GTK widgets.
+   * The context is kept alive via ref counting until this callback completes. */
+  if (!ctx || ctx->destroyed || !ctx->builder) {
+    /* Context was destroyed - clean up and release our reference */
     if (info) gnostr_relay_info_free(info);
     g_clear_error(&err);
+    if (ctx) relay_manager_ctx_unref(ctx);
     return;
   }
 
@@ -895,6 +905,7 @@ static void on_relay_info_fetched(GObject *source, GAsyncResult *result, gpointe
   if (!stack) {
     if (info) gnostr_relay_info_free(info);
     g_clear_error(&err);
+    relay_manager_ctx_unref(ctx);
     return;
   }
 
@@ -907,6 +918,7 @@ static void on_relay_info_fetched(GObject *source, GAsyncResult *result, gpointe
     }
     gtk_stack_set_visible_child_name(stack, "error");
     g_clear_error(&err);
+    relay_manager_ctx_unref(ctx);
     return;
   }
 
@@ -914,11 +926,13 @@ static void on_relay_info_fetched(GObject *source, GAsyncResult *result, gpointe
     GtkLabel *error_label = GTK_LABEL(gtk_builder_get_object(ctx->builder, "info_error_label"));
     if (error_label) gtk_label_set_text(error_label, "Failed to parse relay info");
     gtk_stack_set_visible_child_name(stack, "error");
+    relay_manager_ctx_unref(ctx);
     return;
   }
 
   relay_manager_populate_info(ctx, info);
   gnostr_relay_info_free(info);
+  relay_manager_ctx_unref(ctx);
 }
 
 static void relay_manager_fetch_info(RelayManagerCtx *ctx, const gchar *url) {
@@ -928,6 +942,8 @@ static void relay_manager_fetch_info(RelayManagerCtx *ctx, const gchar *url) {
   if (ctx->fetch_cancellable) {
     g_cancellable_cancel(ctx->fetch_cancellable);
     g_object_unref(ctx->fetch_cancellable);
+    /* Previous fetch held a ref - release it */
+    relay_manager_ctx_unref(ctx);
   }
   ctx->fetch_cancellable = g_cancellable_new();
 
@@ -937,6 +953,8 @@ static void relay_manager_fetch_info(RelayManagerCtx *ctx, const gchar *url) {
   GtkStack *stack = GTK_STACK(gtk_builder_get_object(ctx->builder, "info_stack"));
   if (stack) gtk_stack_set_visible_child_name(stack, "loading");
 
+  /* Take a reference for the async callback */
+  relay_manager_ctx_ref(ctx);
   gnostr_relay_info_fetch_async(url, ctx->fetch_cancellable, on_relay_info_fetched, ctx);
 }
 
@@ -1076,10 +1094,25 @@ static void relay_manager_on_cancel_clicked(GtkButton *btn, gpointer user_data) 
 static void relay_manager_on_destroy(GtkWidget *widget, gpointer user_data) {
   (void)widget;
   RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
-  if (ctx && ctx->builder) {
+  if (!ctx) return;
+
+  /* Mark as destroyed so pending callbacks know not to access widgets */
+  ctx->destroyed = TRUE;
+  ctx->window = NULL;
+
+  if (ctx->builder) {
     g_object_unref(ctx->builder);
     ctx->builder = NULL;
   }
+
+  /* Cancel any pending fetch - this will cause the callback to be invoked
+   * with a cancellation error, at which point it will see destroyed=TRUE
+   * and clean up properly */
+  if (ctx->fetch_cancellable) {
+    g_cancellable_cancel(ctx->fetch_cancellable);
+  }
+
+  /* Free context now - the callback checks destroyed flag before accessing fields */
   relay_manager_ctx_free(ctx);
 }
 
@@ -1985,6 +2018,7 @@ static void on_relays_clicked(GtkButton *btn, gpointer user_data) {
 
   /* Create context */
   RelayManagerCtx *ctx = g_new0(RelayManagerCtx, 1);
+  ctx->ref_count = 1;  /* Initial reference for the window */
   ctx->window = win;
   ctx->builder = builder;
   ctx->modified = FALSE;
