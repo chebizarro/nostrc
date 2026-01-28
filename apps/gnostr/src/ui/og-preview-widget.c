@@ -285,35 +285,43 @@ static void load_image_async(OgPreviewWidget *self, const char *url) {
 
 /* Update UI with parsed metadata */
 static void update_ui_with_metadata(OgPreviewWidget *self, OgMetadata *meta) {
+  /* Defensive check - widget may be disposed */
+  if (self->disposed) return;
+  
   if (!meta) {
-    gtk_widget_set_visible(self->card_box, FALSE);
+    if (self->card_box && GTK_IS_WIDGET(self->card_box))
+      gtk_widget_set_visible(self->card_box, FALSE);
     return;
   }
   
-  /* Hide spinner, show card */
-  gtk_widget_set_visible(self->spinner, FALSE);
-  gtk_widget_set_visible(self->card_box, TRUE);
+  /* Hide spinner, show card - with validity checks */
+  if (self->spinner && GTK_IS_WIDGET(self->spinner))
+    gtk_widget_set_visible(self->spinner, FALSE);
+  if (self->card_box && GTK_IS_WIDGET(self->card_box))
+    gtk_widget_set_visible(self->card_box, TRUE);
   
-  /* Update labels */
-  if (meta->title) {
+  /* Update labels - with validity checks to prevent Pango crashes */
+  if (meta->title && self->title_label && GTK_IS_LABEL(self->title_label)) {
     gtk_label_set_text(GTK_LABEL(self->title_label), meta->title);
   }
   
-  if (meta->description) {
-    gtk_label_set_text(GTK_LABEL(self->description_label), meta->description);
-    gtk_widget_set_visible(self->description_label, TRUE);
-  } else {
-    gtk_widget_set_visible(self->description_label, FALSE);
+  if (self->description_label && GTK_IS_LABEL(self->description_label)) {
+    if (meta->description) {
+      gtk_label_set_text(GTK_LABEL(self->description_label), meta->description);
+      gtk_widget_set_visible(self->description_label, TRUE);
+    } else {
+      gtk_widget_set_visible(self->description_label, FALSE);
+    }
   }
   
-  if (meta->site_name) {
+  if (meta->site_name && self->site_label && GTK_IS_LABEL(self->site_label)) {
     gtk_label_set_text(GTK_LABEL(self->site_label), meta->site_name);
   }
   
   /* Load image if available */
   if (meta->image_url && *meta->image_url) {
     load_image_async(self, meta->image_url);
-  } else {
+  } else if (self->image_widget && GTK_IS_WIDGET(self->image_widget)) {
     gtk_widget_set_visible(self->image_widget, FALSE);
   }
 }
@@ -470,7 +478,8 @@ static void og_preview_widget_dispose(GObject *object) {
    * when widgets are being disposed. GTK will handle all label and Pango cleanup
    * automatically during finalization. */
   
-  /* Clear widget pointers before unparenting */
+  /* Clear widget pointers BEFORE unparenting to prevent any callbacks
+   * from accessing them during the disposal process. */
   self->title_label = NULL;
   self->description_label = NULL;
   self->site_label = NULL;
@@ -478,15 +487,17 @@ static void og_preview_widget_dispose(GObject *object) {
   self->text_box = NULL;
   
   /* For programmatic widgets (not template-based), we must unparent children.
-   * Do this BEFORE calling parent dispose. */
-  if (self->card_box) {
-    gtk_widget_unparent(self->card_box);
-    self->card_box = NULL;
-  }
+   * Store pointers locally and clear struct fields first to prevent race conditions. */
+  GtkWidget *card = self->card_box;
+  GtkWidget *spin = self->spinner;
+  self->card_box = NULL;
+  self->spinner = NULL;
   
-  if (self->spinner) {
-    gtk_widget_unparent(self->spinner);
-    self->spinner = NULL;
+  if (card) {
+    gtk_widget_unparent(card);
+  }
+  if (spin) {
+    gtk_widget_unparent(spin);
   }
   
   G_OBJECT_CLASS(og_preview_widget_parent_class)->dispose(object);
