@@ -455,6 +455,24 @@ static void og_preview_widget_dispose(GObject *object) {
   
   g_clear_pointer(&self->cache, g_hash_table_unref);
   
+  /* Clear label text to release Pango layouts before disposal */
+  if (self->title_label && GTK_IS_LABEL(self->title_label)) {
+    gtk_label_set_text(GTK_LABEL(self->title_label), "");
+  }
+  if (self->description_label && GTK_IS_LABEL(self->description_label)) {
+    gtk_label_set_text(GTK_LABEL(self->description_label), "");
+  }
+  if (self->site_label && GTK_IS_LABEL(self->site_label)) {
+    gtk_label_set_text(GTK_LABEL(self->site_label), "");
+  }
+  
+  /* Clear widget pointers before unparenting to prevent dangling references */
+  self->title_label = NULL;
+  self->description_label = NULL;
+  self->site_label = NULL;
+  self->image_widget = NULL;
+  self->text_box = NULL;
+  
   /* Unparent children */
   if (self->card_box) {
     gtk_widget_unparent(self->card_box);
