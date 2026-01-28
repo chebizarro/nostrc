@@ -239,18 +239,12 @@ template $GnostrSessionView: Adw.Bin {
                         max-sidebar-width: 672;
 
                         content: Overlay content_root {
-                            Adw.Clamp middle_clamp {
-                                maximum-size: 760;
-                                tightening-threshold: 560;
+                            hexpand: true;
+                            vexpand: true;
+
+                            Adw.ViewStack stack {
+                                hexpand: true;
                                 vexpand: true;
-                                halign: center;
-
-                                styles [
-                                    "middle-clamp",
-                                ]
-
-                                child: Adw.ViewStack stack {
-                                    vexpand: true;
 
                                     Adw.ViewStackPage {
                                         name: "timeline";
@@ -305,7 +299,6 @@ template $GnostrSessionView: Adw.Bin {
                                             vexpand: true;
                                         };
                                     }
-                                };
                             }
 
                             [overlay]
