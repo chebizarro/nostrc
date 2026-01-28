@@ -27,6 +27,11 @@ static guint s_avatar_size = 0;                   /* target decode size in pixel
 static gboolean s_avatar_log_started = FALSE;     /* periodic logging started */
 static gboolean s_config_initialized = FALSE;     /* env vars read */
 
+/* Failed URL tracking to avoid log spam */
+static GHashTable *s_failed_urls = NULL;          /* key=url -> gint64 timestamp */
+static GMutex s_failed_urls_mutex;
+#define FAILED_URL_RETRY_SECONDS 300              /* Don't retry failed URLs for 5 minutes */
+
 /* Metrics */
 static GnostrAvatarMetrics s_avatar_metrics = {0};
 
@@ -432,10 +437,45 @@ static void on_initials_weak_notify(gpointer data, GObject *where_the_object_was
   (void)where_the_object_was;
 }
 
+/* Check if URL recently failed (rate limiting) */
+static gboolean avatar_url_recently_failed(const char *url) {
+  if (!url) return FALSE;
+  g_mutex_lock(&s_failed_urls_mutex);
+  if (!s_failed_urls) {
+    s_failed_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  }
+  gpointer val = g_hash_table_lookup(s_failed_urls, url);
+  g_mutex_unlock(&s_failed_urls_mutex);
+  if (!val) return FALSE;
+  gint64 failed_at = GPOINTER_TO_SIZE(val);
+  gint64 now = g_get_monotonic_time() / G_USEC_PER_SEC;
+  return (now - failed_at) < FAILED_URL_RETRY_SECONDS;
+}
+
+/* Record URL as failed */
+static void avatar_url_mark_failed(const char *url) {
+  if (!url) return;
+  g_mutex_lock(&s_failed_urls_mutex);
+  if (!s_failed_urls) {
+    s_failed_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  }
+  gint64 now = g_get_monotonic_time() / G_USEC_PER_SEC;
+  g_hash_table_replace(s_failed_urls, g_strdup(url), GSIZE_TO_POINTER((gsize)now));
+  g_mutex_unlock(&s_failed_urls_mutex);
+}
+
 /* Public: Download avatar asynchronously and update widgets when done. */
 void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *initials) {
     #ifdef HAVE_SOUP3
       if (!url || !*url || !str_has_prefix_http(url)) return;
+      
+      /* Skip URLs that recently failed to avoid log spam and wasted requests */
+      if (avatar_url_recently_failed(url)) {
+        /* Silently show initials fallback */
+        if (GTK_IS_WIDGET(initials)) gtk_widget_set_visible(initials, TRUE);
+        if (GTK_IS_PICTURE(image)) gtk_widget_set_visible(image, FALSE);
+        return;
+      }
       
       s_avatar_metrics.requests_total++;
       s_avatar_metrics.http_start++;
@@ -469,7 +509,8 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
     s_avatar_metrics.http_error++;
     s_avatar_metrics.initials_shown++;
     g_debug("avatar http: error fetching url=%s: %s", ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
-    g_message("avatar http: fetch failed; showing initials fallback (url=%s)", ctx && ctx->url ? ctx->url : "(null)");
+    /* Mark as failed to avoid retrying for a while */
+    avatar_url_mark_failed(ctx->url);
     /* Ensure initials fallback is visible */
     if (GTK_IS_WIDGET(ctx->initials)) gtk_widget_set_visible(ctx->initials, TRUE);
     if (GTK_IS_PICTURE(ctx->image)) gtk_widget_set_visible(ctx->image, FALSE);
@@ -479,14 +520,16 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
   }
   gsize blen = 0; (void)g_bytes_get_data(bytes, &blen);
   s_avatar_metrics.http_ok++;
-  g_message("avatar http: fetched url=%s bytes=%zu", ctx && ctx->url ? ctx->url : "(null)", (size_t)blen);
+  g_debug("avatar http: fetched url=%s bytes=%zu", ctx && ctx->url ? ctx->url : "(null)", (size_t)blen);
   
   /* CRITICAL: Validate it's actually an image BEFORE caching, and decode at bounded size */
   GdkTexture *tex = avatar_texture_from_bytes_scaled(bytes, &error);
   if (!tex) {
     s_avatar_metrics.initials_shown++;
-    g_warning("avatar http: INVALID IMAGE DATA for url=%s: %s (likely HTML error page)",
-              ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
+    g_debug("avatar http: invalid image data for url=%s: %s",
+             ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
+    /* Mark as failed to avoid retrying for a while */
+    avatar_url_mark_failed(ctx->url);
     /* Ensure initials fallback is visible for invalid images */
     if (GTK_IS_WIDGET(ctx->initials)) gtk_widget_set_visible(ctx->initials, TRUE);
     if (GTK_IS_PICTURE(ctx->image)) gtk_widget_set_visible(ctx->image, FALSE);
