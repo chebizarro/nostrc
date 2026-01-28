@@ -594,10 +594,30 @@ static void on_zoom_scale_changed(GtkGestureZoom *gesture,
   apply_zoom(self);
 }
 
+/* Context struct for image loading - prevents use-after-free */
+typedef struct {
+  GnostrImageViewer *viewer;  /* Weak reference */
+  char *url;
+} ImageLoadCtx;
+
+static void on_image_viewer_destroyed(gpointer data, GObject *where_the_object_was) {
+  ImageLoadCtx *ctx = (ImageLoadCtx *)data;
+  (void)where_the_object_was;
+  if (ctx) ctx->viewer = NULL;
+}
+
+static void image_load_ctx_free(ImageLoadCtx *ctx) {
+  if (!ctx) return;
+  if (ctx->viewer) {
+    g_object_weak_unref(G_OBJECT(ctx->viewer), on_image_viewer_destroyed, ctx);
+  }
+  g_free(ctx->url);
+  g_free(ctx);
+}
+
 #ifdef HAVE_SOUP3
 static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
-  /* CRITICAL: Check result BEFORE casting user_data to avoid GLib warning on freed object.
-   * If the request was cancelled (viewer destroyed), user_data may be a dangling pointer. */
+  ImageLoadCtx *ctx = (ImageLoadCtx *)user_data;
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
 
@@ -606,23 +626,29 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
       g_warning("ImageViewer: Failed to load image: %s", error->message);
     }
     g_error_free(error);
-    return;  /* Do NOT access user_data - may be freed if cancelled */
-  }
-
-  /* Only now is it safe to access user_data - request completed successfully */
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-  if (!GNOSTR_IS_IMAGE_VIEWER(self)) {
-    if (bytes) g_bytes_unref(bytes);
+    image_load_ctx_free(ctx);
     return;
   }
 
+  /* Check if viewer was destroyed via weak reference */
+  if (!ctx->viewer || !GNOSTR_IS_IMAGE_VIEWER(ctx->viewer)) {
+    if (bytes) g_bytes_unref(bytes);
+    image_load_ctx_free(ctx);
+    return;
+  }
+
+  GnostrImageViewer *self = ctx->viewer;
+
   /* Hide spinner */
-  gtk_widget_set_visible(self->spinner, FALSE);
-  gtk_spinner_stop(GTK_SPINNER(self->spinner));
+  if (GTK_IS_WIDGET(self->spinner)) {
+    gtk_widget_set_visible(self->spinner, FALSE);
+    gtk_spinner_stop(GTK_SPINNER(self->spinner));
+  }
 
   if (!bytes || g_bytes_get_size(bytes) == 0) {
     if (bytes) g_bytes_unref(bytes);
     g_warning("ImageViewer: Empty image data");
+    image_load_ctx_free(ctx);
     return;
   }
 
@@ -633,6 +659,7 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
   if (error) {
     g_warning("ImageViewer: Failed to create texture: %s", error->message);
     g_error_free(error);
+    image_load_ctx_free(ctx);
     return;
   }
 
@@ -646,6 +673,8 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
 
   /* Apply initial fit zoom */
   zoom_to_fit(self);
+  
+  image_load_ctx_free(ctx);
 }
 #endif
 
@@ -678,13 +707,19 @@ void gnostr_image_viewer_set_image_url(GnostrImageViewer *self, const char *url)
     return;
   }
 
+  /* Create context with weak reference to viewer */
+  ImageLoadCtx *ctx = g_new0(ImageLoadCtx, 1);
+  ctx->viewer = self;
+  ctx->url = g_strdup(url);
+  g_object_weak_ref(G_OBJECT(self), on_image_viewer_destroyed, ctx);
+
   soup_session_send_and_read_async(
     gnostr_get_shared_soup_session(),
     msg,
     G_PRIORITY_DEFAULT,
     self->cancellable,
     on_image_loaded,
-    self
+    ctx
   );
 
   g_object_unref(msg);
