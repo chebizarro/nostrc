@@ -253,11 +253,9 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   }
   g_clear_object(&self->media_session);
 #endif
-  /* Remove dynamically added widgets from containers BEFORE template disposal to prevent double-dispose.
-   * These widgets are not part of the template, so we must remove them explicitly. */
-  if (self->og_preview && self->og_preview_container && GTK_IS_BOX(self->og_preview_container)) {
-    gtk_box_remove(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
-  }
+  /* Do NOT remove og_preview from container during disposal - removing triggers disposal
+   * of og_preview while the parent is also being disposed, causing Pango layout corruption.
+   * Just clear the pointer and let GTK handle cleanup during template disposal. */
   self->og_preview = NULL;
   
   /* Remove note_embed from embed_box frame.
@@ -308,9 +306,10 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
     self->reactors = NULL;
   }
   
-  /* Clear avatar image to prevent corrupted image definition during disposal */
-  if (self->avatar_image && GTK_IS_IMAGE(self->avatar_image)) {
-    gtk_image_clear(GTK_IMAGE(self->avatar_image));
+  /* Clear avatar picture to prevent corrupted paintable during disposal.
+   * Note: avatar_image is a GtkPicture, not GtkImage (per Blueprint definition) */
+  if (self->avatar_image && GTK_IS_PICTURE(self->avatar_image)) {
+    gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), NULL);
   }
   
   /* Clear label attributes to prevent Pango attribute corruption during disposal.
@@ -1605,6 +1604,7 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_menu);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_reply);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_repost);
+  gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_repost_count);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_like);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, lbl_like_count);
   gtk_widget_class_bind_template_child(wclass, GnostrNoteCardRow, btn_zap);

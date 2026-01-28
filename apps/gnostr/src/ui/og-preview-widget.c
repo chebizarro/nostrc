@@ -454,9 +454,10 @@ static void og_preview_widget_dispose(GObject *object) {
   
   g_clear_pointer(&self->cache, g_hash_table_unref);
   
-  /* Do NOT call gtk_label_set_text() during disposal - it triggers Pango layout
-   * recalculation which crashes when the widget is being disposed. GTK will handle
-   * Pango layout cleanup automatically during label finalization. */
+  /* Do NOT manipulate labels during disposal - any calls to gtk_label_set_text() or
+   * gtk_label_set_attributes() can trigger Pango layout recalculation which crashes
+   * when widgets are being disposed. GTK will handle all label and Pango cleanup
+   * automatically during finalization. */
   
   /* Clear widget pointers before unparenting to prevent dangling references */
   self->title_label = NULL;
