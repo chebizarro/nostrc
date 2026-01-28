@@ -31,11 +31,19 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
             return -1;
         }
         // Token-bucket admission: frames/sec and bytes/sec
-        if (!tb_allow(&conn->priv->tb_frames, 1.0) || !tb_allow(&conn->priv->tb_bytes, (double)len)) {
-            // Drop the frame silently to avoid closing during receive callback.
-            // Closing here can race with libwebsockets' internal state and cause heap issues.
-            nostr_rl_log(NLOG_DEBUG, "ws", "drop: rate limit exceeded (len=%zu)", len);
-            return 0;
+        // DISABLED for clients - rate limiting is more useful for relay servers protecting
+        // against malicious clients. Clients receiving from relays don't need this protection.
+        // Can be re-enabled via NOSTR_CLIENT_RATE_LIMIT=1 environment variable.
+        static int rate_limit_enabled = -1;
+        if (rate_limit_enabled < 0) {
+            const char *env = getenv("NOSTR_CLIENT_RATE_LIMIT");
+            rate_limit_enabled = (env && env[0] == '1') ? 1 : 0;
+        }
+        if (rate_limit_enabled) {
+            if (!tb_allow(&conn->priv->tb_frames, 1.0) || !tb_allow(&conn->priv->tb_bytes, (double)len)) {
+                nostr_rl_log(NLOG_DEBUG, "ws", "drop: rate limit exceeded (len=%zu)", len);
+                return 0;
+            }
         }
         // Update RX timing/progress
         uint64_t now_us = (uint64_t)lws_now_usecs();
