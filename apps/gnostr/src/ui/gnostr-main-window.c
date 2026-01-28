@@ -938,12 +938,11 @@ static void on_relay_info_fetched(GObject *source, GAsyncResult *result, gpointe
 static void relay_manager_fetch_info(RelayManagerCtx *ctx, const gchar *url) {
   if (!ctx || !url) return;
 
-  /* Cancel any pending fetch */
+  /* Cancel any pending fetch - the callback will handle its own unref */
   if (ctx->fetch_cancellable) {
     g_cancellable_cancel(ctx->fetch_cancellable);
     g_object_unref(ctx->fetch_cancellable);
-    /* Previous fetch held a ref - release it */
-    relay_manager_ctx_unref(ctx);
+    /* Note: Don't unref here - the cancelled callback will do it */
   }
   ctx->fetch_cancellable = g_cancellable_new();
 
