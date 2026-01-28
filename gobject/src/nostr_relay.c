@@ -68,6 +68,10 @@ GNostrRelay *gnostr_relay_new(const gchar *url) {
         g_warning("nostr_relay_new: %s", err->message ? err->message : "unknown error");
         free_error(err);
     }
+    /* Skip signature verification - nostrdb handles this during ingestion */
+    if (self->relay) {
+        self->relay->assume_valid = true;
+    }
     return self;
 }
 
