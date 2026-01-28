@@ -286,12 +286,28 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
 
 do_template_dispose:
   
-  /* Do NOT unparent popovers during disposal - GTK will handle cleanup automatically.
-   * Calling gtk_widget_unparent or gtk_popover_popdown during disposal can trigger
-   * Pango layout recalculation on widgets that are being finalized, causing crashes. */
+  /* Unparent popovers BEFORE template disposal to prevent GTK warnings about
+   * "Finalizing GtkButton but it still has children left". The popovers are
+   * parented to buttons in the template, so they must be unparented first.
+   * Use g_clear_pointer with gtk_widget_unparent to safely handle NULL. */
+  if (self->repost_popover && GTK_IS_WIDGET(self->repost_popover)) {
+    gtk_widget_unparent(self->repost_popover);
+  }
   self->repost_popover = NULL;
+  
+  if (self->menu_popover && GTK_IS_WIDGET(self->menu_popover)) {
+    gtk_widget_unparent(self->menu_popover);
+  }
   self->menu_popover = NULL;
+  
+  if (self->emoji_picker_popover && GTK_IS_WIDGET(self->emoji_picker_popover)) {
+    gtk_widget_unparent(self->emoji_picker_popover);
+  }
   self->emoji_picker_popover = NULL;
+  
+  if (self->reactions_popover && GTK_IS_WIDGET(self->reactions_popover)) {
+    gtk_widget_unparent(self->reactions_popover);
+  }
   self->reactions_popover = NULL;
   /* NIP-25: Clean up reaction breakdown */
   g_clear_pointer(&self->reaction_breakdown, g_hash_table_unref);
