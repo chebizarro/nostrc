@@ -260,9 +260,13 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   }
   self->og_preview = NULL;
   
-  /* Remove note_embed from embed_box frame */
-  if (self->note_embed && self->embed_box && GTK_IS_FRAME(self->embed_box)) {
-    gtk_frame_set_child(GTK_FRAME(self->embed_box), NULL);
+  /* Remove note_embed from embed_box frame.
+   * Disconnect signal handlers BEFORE destroying to prevent invalid closure notify. */
+  if (self->note_embed) {
+    g_signal_handlers_disconnect_by_data(self->note_embed, self);
+    if (self->embed_box && GTK_IS_FRAME(self->embed_box)) {
+      gtk_frame_set_child(GTK_FRAME(self->embed_box), NULL);
+    }
   }
   self->note_embed = NULL;
   
