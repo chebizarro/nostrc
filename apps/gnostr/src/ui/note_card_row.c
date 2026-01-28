@@ -258,47 +258,20 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
    * Just clear the pointer and let GTK handle cleanup during template disposal. */
   self->og_preview = NULL;
   
-  /* Remove note_embed from embed_box frame.
-   * Disconnect signal handlers BEFORE destroying to prevent invalid closure notify. */
+  /* Disconnect signal handlers from note_embed to prevent invalid closure notify.
+   * Do NOT call gtk_frame_set_child(NULL) - let GTK handle cleanup automatically. */
   if (self->note_embed) {
     g_signal_handlers_disconnect_by_data(self->note_embed, self);
-    if (self->embed_box && GTK_IS_FRAME(self->embed_box)) {
-      gtk_frame_set_child(GTK_FRAME(self->embed_box), NULL);
-    }
   }
   self->note_embed = NULL;
   
-  /* Clean up the repost popover before disposing template */
-  if (self->repost_popover) {
-    if (GTK_IS_POPOVER(self->repost_popover)) {
-      gtk_popover_popdown(GTK_POPOVER(self->repost_popover));
-    }
-    gtk_widget_unparent(self->repost_popover);
-    self->repost_popover = NULL;
-  }
-  /* Clean up the menu popover before disposing template */
-  if (self->menu_popover) {
-    if (GTK_IS_POPOVER(self->menu_popover)) {
-      gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
-    }
-    gtk_widget_unparent(self->menu_popover);
-    self->menu_popover = NULL;
-  }
-  /* NIP-25: Clean up reaction popovers */
-  if (self->emoji_picker_popover) {
-    if (GTK_IS_POPOVER(self->emoji_picker_popover)) {
-      gtk_popover_popdown(GTK_POPOVER(self->emoji_picker_popover));
-    }
-    gtk_widget_unparent(self->emoji_picker_popover);
-    self->emoji_picker_popover = NULL;
-  }
-  if (self->reactions_popover) {
-    if (GTK_IS_POPOVER(self->reactions_popover)) {
-      gtk_popover_popdown(GTK_POPOVER(self->reactions_popover));
-    }
-    gtk_widget_unparent(self->reactions_popover);
-    self->reactions_popover = NULL;
-  }
+  /* Do NOT unparent popovers during disposal - GTK will handle cleanup automatically.
+   * Calling gtk_widget_unparent or gtk_popover_popdown during disposal can trigger
+   * Pango layout recalculation on widgets that are being finalized, causing crashes. */
+  self->repost_popover = NULL;
+  self->menu_popover = NULL;
+  self->emoji_picker_popover = NULL;
+  self->reactions_popover = NULL;
   /* NIP-25: Clean up reaction breakdown */
   g_clear_pointer(&self->reaction_breakdown, g_hash_table_unref);
   if (self->reactors) {

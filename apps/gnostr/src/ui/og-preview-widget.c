@@ -459,14 +459,15 @@ static void og_preview_widget_dispose(GObject *object) {
    * when widgets are being disposed. GTK will handle all label and Pango cleanup
    * automatically during finalization. */
   
-  /* Clear widget pointers before unparenting to prevent dangling references */
+  /* Clear widget pointers before unparenting */
   self->title_label = NULL;
   self->description_label = NULL;
   self->site_label = NULL;
   self->image_widget = NULL;
   self->text_box = NULL;
   
-  /* Unparent children */
+  /* For programmatic widgets (not template-based), we must unparent children.
+   * Do this BEFORE calling parent dispose. */
   if (self->card_box) {
     gtk_widget_unparent(self->card_box);
     self->card_box = NULL;

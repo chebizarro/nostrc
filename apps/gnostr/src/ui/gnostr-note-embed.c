@@ -828,24 +828,34 @@ static void fetch_event_from_main_pool(GnostrNoteEmbed *self, const char *id_hex
 
 /* Callback for relay query */
 static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrNoteEmbed *self = GNOSTR_NOTE_EMBED(user_data);
-
-  if (!GNOSTR_IS_NOTE_EMBED(self)) return;
-
   GError *err = NULL;
   GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
 
+  /* Check for cancellation FIRST before accessing user_data - the widget may be freed */
   if (err) {
-    if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      /* If hints were tried and failed (but main pool not yet), fall back to main pool */
-      if (self->hints_attempted && !self->main_pool_attempted && self->relay_hints_count > 0) {
-        g_debug("note_embed: hint relays failed, falling back to main pool");
-        g_error_free(err);
-        fetch_event_from_main_pool(self, self->target_id);
-        return;
-      }
-      gnostr_note_embed_set_error(self, "Network error");
+    if (g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_error_free(err);
+      if (results) g_ptr_array_unref(results);
+      return;  /* Widget was disposed, don't access user_data */
     }
+  }
+
+  GnostrNoteEmbed *self = GNOSTR_NOTE_EMBED(user_data);
+  if (!GNOSTR_IS_NOTE_EMBED(self)) {
+    g_clear_error(&err);
+    if (results) g_ptr_array_unref(results);
+    return;
+  }
+
+  if (err) {
+    /* If hints were tried and failed (but main pool not yet), fall back to main pool */
+    if (self->hints_attempted && !self->main_pool_attempted && self->relay_hints_count > 0) {
+      g_debug("note_embed: hint relays failed, falling back to main pool");
+      g_error_free(err);
+      fetch_event_from_main_pool(self, self->target_id);
+      return;
+    }
+    gnostr_note_embed_set_error(self, "Network error");
     g_error_free(err);
     return;
   }
@@ -1027,24 +1037,34 @@ static void fetch_profile_from_main_pool(GnostrNoteEmbed *self, const char *pubk
 
 /* Callback for profile relay query */
 static void on_profile_relay_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrNoteEmbed *self = GNOSTR_NOTE_EMBED(user_data);
-
-  if (!GNOSTR_IS_NOTE_EMBED(self)) return;
-
   GError *err = NULL;
   GPtrArray *results = gnostr_simple_pool_fetch_profiles_by_authors_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
 
+  /* Check for cancellation FIRST before accessing user_data - the widget may be freed */
   if (err) {
-    if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      /* If hints were tried and failed (but main pool not yet), fall back to main pool */
-      if (self->hints_attempted && !self->main_pool_attempted && self->relay_hints_count > 0) {
-        g_error_free(err);
-        fetch_profile_from_main_pool(self, self->target_id);
-        return;
-      }
-      /* Show basic profile with just pubkey on error */
-      gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
+    if (g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_error_free(err);
+      if (results) g_ptr_array_unref(results);
+      return;  /* Widget was disposed, don't access user_data */
     }
+  }
+
+  GnostrNoteEmbed *self = GNOSTR_NOTE_EMBED(user_data);
+  if (!GNOSTR_IS_NOTE_EMBED(self)) {
+    g_clear_error(&err);
+    if (results) g_ptr_array_unref(results);
+    return;
+  }
+
+  if (err) {
+    /* If hints were tried and failed (but main pool not yet), fall back to main pool */
+    if (self->hints_attempted && !self->main_pool_attempted && self->relay_hints_count > 0) {
+      g_error_free(err);
+      fetch_profile_from_main_pool(self, self->target_id);
+      return;
+    }
+    /* Show basic profile with just pubkey on error */
+    gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
     g_error_free(err);
     return;
   }
