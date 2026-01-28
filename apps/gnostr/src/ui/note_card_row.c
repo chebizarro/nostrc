@@ -4555,11 +4555,31 @@ static void on_video_play_clicked(GtkButton *btn, gpointer user_data) {
   video_show_player(self);
 }
 
+/* Context struct for video thumbnail loading - prevents use-after-free */
+typedef struct {
+  GtkWidget *picture;  /* Weak reference to the picture widget */
+  char *url;           /* URL being fetched (for debugging) */
+} VideoThumbCtx;
+
+static void on_video_thumb_picture_destroyed(gpointer data, GObject *where_the_object_was) {
+  VideoThumbCtx *ctx = (VideoThumbCtx *)data;
+  (void)where_the_object_was;
+  if (ctx) ctx->picture = NULL;
+}
+
+static void video_thumb_ctx_free(VideoThumbCtx *ctx) {
+  if (!ctx) return;
+  if (ctx->picture) {
+    g_object_weak_unref(G_OBJECT(ctx->picture), on_video_thumb_picture_destroyed, ctx);
+  }
+  g_free(ctx->url);
+  g_free(ctx);
+}
+
 #ifdef HAVE_SOUP3
-/* NIP-71: Async thumbnail image loader */
+/* NIP-71: Async thumbnail image loader - uses context struct with weak reference */
 static void on_video_thumb_bytes_ready(GObject *source, GAsyncResult *result, gpointer user_data) {
-  /* CRITICAL: Check result BEFORE accessing user_data to avoid use-after-free.
-   * If the request was cancelled (widget destroyed), user_data may be a dangling pointer. */
+  VideoThumbCtx *ctx = (VideoThumbCtx *)user_data;
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), result, &error);
 
@@ -4568,27 +4588,20 @@ static void on_video_thumb_bytes_ready(GObject *source, GAsyncResult *result, gp
       g_debug("NIP-71: Thumbnail load error: %s", error->message);
     }
     g_error_free(error);
-    return;  /* Do NOT access user_data - may be freed if cancelled */
-  }
-
-  /* Only now is it safe to access user_data - request completed successfully */
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(g_object_ref(user_data));
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || self->disposed) {
-    if (bytes) g_bytes_unref(bytes);
-    g_object_unref(self);
+    video_thumb_ctx_free(ctx);
     return;
   }
 
   if (!bytes || g_bytes_get_size(bytes) == 0) {
     if (bytes) g_bytes_unref(bytes);
-    g_object_unref(self);
+    video_thumb_ctx_free(ctx);
     return;
   }
 
-  /* Re-check disposed before accessing widget members */
-  if (self->disposed) {
+  /* Check if widget was destroyed via weak reference */
+  if (!ctx->picture || !GTK_IS_PICTURE(ctx->picture)) {
     g_bytes_unref(bytes);
-    g_object_unref(self);
+    video_thumb_ctx_free(ctx);
     return;
   }
 
@@ -4596,19 +4609,20 @@ static void on_video_thumb_bytes_ready(GObject *source, GAsyncResult *result, gp
   GdkTexture *texture = gdk_texture_new_from_bytes(bytes, NULL);
   g_bytes_unref(bytes);
 
-  if (texture && !self->disposed && GTK_IS_PICTURE(self->video_thumb_picture)) {
-    gtk_picture_set_paintable(GTK_PICTURE(self->video_thumb_picture), GDK_PAINTABLE(texture));
-    gtk_widget_set_visible(self->video_thumb_picture, TRUE);
+  if (texture && GTK_IS_PICTURE(ctx->picture)) {
+    gtk_picture_set_paintable(GTK_PICTURE(ctx->picture), GDK_PAINTABLE(texture));
+    gtk_widget_set_visible(ctx->picture, TRUE);
     g_object_unref(texture);
   } else if (texture) {
     g_object_unref(texture);
   }
 
-  g_object_unref(self);
+  video_thumb_ctx_free(ctx);
 }
 
 static void load_video_thumbnail(GnostrNoteCardRow *self, const char *thumb_url) {
   if (!self || !thumb_url || !*thumb_url) return;
+  if (!GTK_IS_PICTURE(self->video_thumb_picture)) return;
 
   /* Cancel any previous fetch */
   if (self->video_thumb_cancellable) {
@@ -4625,9 +4639,15 @@ static void load_video_thumbnail(GnostrNoteCardRow *self, const char *thumb_url)
     return;
   }
 
+  /* Create context with weak reference to picture widget */
+  VideoThumbCtx *ctx = g_new0(VideoThumbCtx, 1);
+  ctx->picture = self->video_thumb_picture;
+  ctx->url = g_strdup(thumb_url);
+  g_object_weak_ref(G_OBJECT(ctx->picture), on_video_thumb_picture_destroyed, ctx);
+
   soup_session_send_and_read_async(gnostr_get_shared_soup_session(), msg, G_PRIORITY_DEFAULT,
                                     self->video_thumb_cancellable,
-                                    on_video_thumb_bytes_ready, self);
+                                    on_video_thumb_bytes_ready, ctx);
   g_object_unref(msg);
 }
 #endif
