@@ -13,6 +13,7 @@
 #include "../util/nip23.h"
 #include "../util/nip54_wiki.h"
 #include "../util/relays.h"
+#include "../util/utils.h"
 #include "nostr-event.h"
 #include "nostr-json.h"
 #include "nostr-filter.h"
@@ -73,7 +74,7 @@ struct _GnostrArticlesView {
 
   /* Async fetch state */
   GCancellable *fetch_cancellable;
-  GnostrSimplePool *pool;
+  /* Uses gnostr_get_shared_query_pool() instead of per-widget pool */
   gboolean fetch_in_progress;
 };
 
@@ -519,10 +520,7 @@ static void fetch_articles_from_relays(GnostrArticlesView *self) {
   nostr_filter_set_kinds(filter, kinds, 2);
   nostr_filter_set_limit(filter, ARTICLES_FETCH_LIMIT);
 
-  /* Create pool if needed */
-  if (!self->pool) {
-    self->pool = gnostr_simple_pool_new();
-  }
+  /* Uses shared query pool from gnostr_get_shared_query_pool() */
 
   /* Create cancellable */
   if (self->fetch_cancellable) {
@@ -536,7 +534,7 @@ static void fetch_articles_from_relays(GnostrArticlesView *self) {
   g_debug("articles-view: Fetching articles from %u relays", relay_arr->len);
 
   gnostr_simple_pool_query_single_async(
-    self->pool,
+    gnostr_get_shared_query_pool(),
     urls,
     relay_arr->len,
     filter,
@@ -946,7 +944,7 @@ static void gnostr_articles_view_dispose(GObject *object) {
     g_clear_object(&self->fetch_cancellable);
   }
 
-  g_clear_object(&self->pool);
+  /* Shared query pool is managed globally - do not clear here */
   g_clear_object(&self->custom_filter);
   g_clear_object(&self->filtered_model);
   g_clear_object(&self->articles_model);
@@ -1048,7 +1046,7 @@ static void gnostr_articles_view_init(GnostrArticlesView *self) {
   self->is_logged_in = FALSE;
   self->search_debounce_id = 0;
   self->fetch_cancellable = NULL;
-  self->pool = NULL;
+  /* Uses shared query pool from gnostr_get_shared_query_pool() */
   self->fetch_in_progress = FALSE;
 
   /* Create model with filter */

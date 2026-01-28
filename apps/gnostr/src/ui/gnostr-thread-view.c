@@ -88,7 +88,7 @@ struct _GnostrThreadView {
   GHashTable *events_by_id;    /* id_hex -> ThreadEventItem* (owned) */
   GPtrArray *sorted_events;    /* ThreadEventItem* (borrowed refs) */
   GCancellable *fetch_cancellable;
-  GnostrSimplePool *simple_pool;
+  /* Uses gnostr_get_shared_query_pool() instead of per-widget pool */
   gboolean is_loading;
 
   /* Profile fetch tracking */
@@ -216,7 +216,7 @@ static void gnostr_thread_view_dispose(GObject *obj) {
     self->sorted_events = NULL;
   }
 
-  g_clear_object(&self->simple_pool);
+  /* Shared query pool is managed globally - do not clear here */
 
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_THREAD_VIEW);
   G_OBJECT_CLASS(gnostr_thread_view_parent_class)->dispose(obj);
@@ -327,7 +327,7 @@ static void gnostr_thread_view_init(GnostrThreadView *self) {
                                              (GDestroyNotify)thread_event_item_free);
   self->sorted_events = g_ptr_array_new();
   self->profiles_requested = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  self->simple_pool = gnostr_simple_pool_new();
+  /* Uses shared query pool from gnostr_get_shared_query_pool() */
 
   /* Connect close button */
   if (self->btn_close) {
@@ -887,7 +887,7 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
   nostr_filter_set_limit(filter_replies, MAX_THREAD_EVENTS);
 
   gnostr_simple_pool_query_single_async(
-    self->simple_pool,
+    gnostr_get_shared_query_pool(),
     urls,
     relay_arr->len,
     filter_replies,
@@ -927,7 +927,7 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
   nostr_filter_set_limit(filter_ids, MAX_THREAD_EVENTS);
 
   gnostr_simple_pool_query_single_async(
-    self->simple_pool,
+    gnostr_get_shared_query_pool(),
     urls,
     relay_arr->len,
     filter_ids,
@@ -946,7 +946,7 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
   nostr_filter_set_limit(filter_nip22, MAX_THREAD_EVENTS);
 
   gnostr_simple_pool_query_single_async(
-    self->simple_pool,
+    gnostr_get_shared_query_pool(),
     urls,
     relay_arr->len,
     filter_nip22,

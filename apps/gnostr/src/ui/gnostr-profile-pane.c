@@ -352,8 +352,7 @@ struct _GnostrProfilePane {
   GQueue *image_cache_lru; /* LRU queue of URL keys (head=oldest) */
 #endif
 
-  /* SimplePool for fetching posts */
-  GnostrSimplePool *simple_pool;
+  /* Uses gnostr_get_shared_query_pool() instead of per-widget pool */
 
   /* Profile fetch state */
   GCancellable *profile_cancellable;  /* For network profile fetch */
@@ -470,7 +469,7 @@ static void gnostr_profile_pane_dispose(GObject *obj) {
   g_clear_object(&self->media_selection);
   g_clear_object(&self->media_model);
 
-  g_clear_object(&self->simple_pool);
+  /* Shared query pool is managed globally - do not clear here */
 
   /* Cancel NIP-38 user status loading */
   if (self->status_cancellable) {
@@ -824,8 +823,7 @@ static void gnostr_profile_pane_init(GnostrProfilePane *self) {
   self->image_cache_lru = g_queue_new();
 #endif
 
-  /* Create SimplePool for fetching posts */
-  self->simple_pool = gnostr_simple_pool_new();
+  /* Uses shared query pool from gnostr_get_shared_query_pool() */
 
   /* Show default banner from GResource */
   GdkTexture *default_banner = get_default_banner_texture();
@@ -2134,7 +2132,7 @@ static void load_posts_with_relays(GnostrProfilePane *self, GPtrArray *relay_url
 
   /* Start query */
   gnostr_simple_pool_query_single_async(
-    self->simple_pool,
+    gnostr_get_shared_query_pool(),
     urls,
     relay_urls->len,
     filter,
@@ -2568,7 +2566,7 @@ static void load_media(GnostrProfilePane *self) {
 
   /* Start query */
   gnostr_simple_pool_query_single_async(
-    self->simple_pool,
+    gnostr_get_shared_query_pool(),
     urls,
     relay_urls->len,
     filter,
@@ -2745,7 +2743,7 @@ static void fetch_profile_from_cache_or_network(GnostrProfilePane *self) {
 
   /* Fetch profile from network */
   gnostr_simple_pool_fetch_profiles_by_authors_async(
-    self->simple_pool,
+    gnostr_get_shared_query_pool(),
     urls,
     relay_urls->len,
     authors,

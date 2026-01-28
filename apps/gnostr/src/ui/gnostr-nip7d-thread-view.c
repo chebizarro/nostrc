@@ -8,6 +8,7 @@
 #include "gnostr-avatar-cache.h"
 #include "gnostr-profile-provider.h"
 #include "../util/nip7d_threads.h"
+#include "../util/utils.h"
 #include "../storage_ndb.h"
 #include "../util/relays.h"
 #include "nostr-event.h"
@@ -115,7 +116,7 @@ struct _GnostrNip7dThreadView {
 
     /* Network */
     GCancellable *fetch_cancellable;
-    GnostrSimplePool *simple_pool;
+    /* Uses gnostr_get_shared_query_pool() instead of per-widget pool */
 
     /* Profile tracking */
     GHashTable *profiles_requested;  /* pubkey_hex -> gboolean */
@@ -159,7 +160,7 @@ gnostr_nip7d_thread_view_dispose(GObject *obj)
         g_clear_object(&self->fetch_cancellable);
     }
 
-    g_clear_object(&self->simple_pool);
+    /* Shared query pool is managed globally - do not clear here */
 
 #ifdef HAVE_SOUP3
     g_clear_object(&self->session);
@@ -923,7 +924,7 @@ fetch_thread_from_relays(GnostrNip7dThreadView *self)
     nostr_filter_set_limit(filter, DEFAULT_REPLY_LIMIT);
 
     gnostr_simple_pool_query_single_async(
-        self->simple_pool,
+        gnostr_get_shared_query_pool(),
         urls,
         relay_arr->len,
         filter,
@@ -941,7 +942,7 @@ fetch_thread_from_relays(GnostrNip7dThreadView *self)
     nostr_filter_set_limit(filter2, DEFAULT_REPLY_LIMIT);
 
     gnostr_simple_pool_query_single_async(
-        self->simple_pool,
+        gnostr_get_shared_query_pool(),
         urls,
         relay_arr->len,
         filter2,
@@ -1001,7 +1002,7 @@ gnostr_nip7d_thread_view_init(GnostrNip7dThreadView *self)
     self->reply_widgets = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     self->collapsed_replies = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     self->profiles_requested = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-    self->simple_pool = gnostr_simple_pool_new();
+    /* Uses shared query pool from gnostr_get_shared_query_pool() */
 
 #ifdef HAVE_SOUP3
     self->session = soup_session_new();
@@ -1162,7 +1163,7 @@ gnostr_nip7d_thread_view_load_thread(GnostrNip7dThreadView *self,
     nostr_filter_set_limit(filter, 1);
 
     gnostr_simple_pool_query_single_async(
-        self->simple_pool,
+        gnostr_get_shared_query_pool(),
         urls,
         relay_arr->len,
         filter,
@@ -1453,7 +1454,7 @@ gnostr_nip7d_thread_view_load_more_replies(GnostrNip7dThreadView *self,
     }
 
     gnostr_simple_pool_query_single_async(
-        self->simple_pool,
+        gnostr_get_shared_query_pool(),
         urls,
         relay_arr->len,
         filter,

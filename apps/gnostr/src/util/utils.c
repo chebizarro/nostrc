@@ -40,6 +40,33 @@ void gnostr_cleanup_shared_soup_session(void) {
 
 #endif /* HAVE_SOUP3 */
 
+/* Shared GnostrSimplePool singleton for one-shot queries */
+static GnostrSimplePool *s_shared_query_pool = NULL;
+static GMutex s_query_pool_mutex;
+
+GnostrSimplePool *gnostr_get_shared_query_pool(void) {
+  g_mutex_lock(&s_query_pool_mutex);
+  
+  if (!s_shared_query_pool) {
+    s_shared_query_pool = gnostr_simple_pool_new();
+    g_debug("gnostr: Created shared query pool for relay queries");
+  }
+  
+  g_mutex_unlock(&s_query_pool_mutex);
+  return s_shared_query_pool;
+}
+
+void gnostr_cleanup_shared_query_pool(void) {
+  g_mutex_lock(&s_query_pool_mutex);
+  
+  if (s_shared_query_pool) {
+    g_clear_object(&s_shared_query_pool);
+    g_debug("gnostr: Cleaned up shared query pool");
+  }
+  
+  g_mutex_unlock(&s_query_pool_mutex);
+}
+
 gboolean str_has_prefix_http(const char *s) {
   return s && (g_str_has_prefix(s, "http://") || g_str_has_prefix(s, "https://"));
 }
