@@ -1,15 +1,12 @@
 using Gtk 4.0;
 
 template $GnostrNoteCardRow: Widget {
-    hexpand: false;
-    halign: start;
+    hexpand: true;
 
     Box root {
         orientation: vertical;
-        width-request: 640;
-        hexpand: false;
+        hexpand: true;
         vexpand: false;
-        halign: start;
 
         styles [
             "note-card",

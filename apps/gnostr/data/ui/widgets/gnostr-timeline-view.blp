@@ -1,12 +1,17 @@
 using Gtk 4.0;
 
 template $GnostrTimelineView: Widget {
+    hexpand: true;
+    vexpand: true;
+
     ScrolledWindow root_scroller {
+        hexpand: true;
         vexpand: true;
         hscrollbar-policy: never;
         vscrollbar-policy: automatic;
 
         ListView list_view {
+            hexpand: true;
             vexpand: true;
         }
     }

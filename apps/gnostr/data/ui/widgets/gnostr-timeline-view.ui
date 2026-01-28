@@ -7,13 +7,17 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="GnostrTimelineView" parent="GtkWidget">
+    <property name="hexpand">true</property>
+    <property name="vexpand">true</property>
     <child>
       <object class="GtkScrolledWindow" id="root_scroller">
+        <property name="hexpand">true</property>
         <property name="vexpand">true</property>
         <property name="hscrollbar-policy">2</property>
         <property name="vscrollbar-policy">1</property>
         <child>
           <object class="GtkListView" id="list_view">
+            <property name="hexpand">true</property>
             <property name="vexpand">true</property>
           </object>
         </child>
