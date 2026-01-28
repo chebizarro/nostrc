@@ -868,11 +868,28 @@ static void relay_manager_populate_info(RelayManagerCtx *ctx, GnostrRelayInfo *i
 
 static void on_relay_info_fetched(GObject *source, GAsyncResult *result, gpointer user_data) {
   (void)source;
-  RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
-  if (!ctx || !ctx->builder) return;
 
+  /* CRITICAL: Check result BEFORE accessing user_data to avoid use-after-free.
+   * If the request was cancelled (window destroyed), user_data may be freed. */
   GError *err = NULL;
   GnostrRelayInfo *info = gnostr_relay_info_fetch_finish(result, &err);
+
+  if (err) {
+    /* If cancelled, user_data is likely freed - do NOT access it */
+    if (g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_clear_error(&err);
+      if (info) gnostr_relay_info_free(info);
+      return;
+    }
+  }
+
+  /* Only now is it safe to access user_data */
+  RelayManagerCtx *ctx = (RelayManagerCtx*)user_data;
+  if (!ctx || !ctx->builder) {
+    if (info) gnostr_relay_info_free(info);
+    g_clear_error(&err);
+    return;
+  }
 
   GtkStack *stack = GTK_STACK(gtk_builder_get_object(ctx->builder, "info_stack"));
   if (!stack) {
