@@ -22,10 +22,17 @@ headerbar .title {
 .toolbar-view,
 .navigation-split-view > *,
 overlay,
+overlay > *,
+viewstack,
+viewstack > *,
+scrolledwindow,
+scrolledwindow > viewport,
 scrolledwindow > viewport > *,
 listview,
 listview > row,
-listview > row > * {
+listview > row > *,
+navigation-page,
+navigation-page > * {
 	min-width: 0;
 }
 
