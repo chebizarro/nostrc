@@ -193,6 +193,8 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
   /* Check weak reference - if NULL, widget was destroyed */
   if (weak_ref && *weak_ref) {
     self = OG_PREVIEW_WIDGET(*weak_ref);
+    /* Remove weak pointer before freeing container - widget is still alive */
+    g_object_remove_weak_pointer(G_OBJECT(self), (gpointer *)weak_ref);
   }
   
   /* Clean up weak ref container */
@@ -323,6 +325,8 @@ static void on_html_fetched(GObject *source, GAsyncResult *res, gpointer user_da
   /* Check weak reference - if NULL, widget was destroyed */
   if (weak_ref && *weak_ref) {
     self = OG_PREVIEW_WIDGET(*weak_ref);
+    /* Remove weak pointer before freeing container - widget is still alive */
+    g_object_remove_weak_pointer(G_OBJECT(self), (gpointer *)weak_ref);
   }
   
   /* Clean up weak ref container */
