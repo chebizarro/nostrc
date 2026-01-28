@@ -23,8 +23,9 @@ menu primary_menu {
 template $GnostrSessionView: Adw.Bin {
     Gtk.Overlay session_overlay {
         child: Adw.NavigationSplitView split_view {
-            min-sidebar-width: 240;
-            max-sidebar-width: 240;
+            min-sidebar-width: 200;
+            max-sidebar-width: 280;
+            sidebar-width-fraction: 0.25;
             collapsed: bind template.compact;
 
             sidebar: Adw.NavigationPage sidebar_page {

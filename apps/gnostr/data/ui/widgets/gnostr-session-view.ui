@@ -27,8 +27,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <object class="GtkOverlay" id="session_overlay">
         <property name="child">
           <object class="AdwNavigationSplitView" id="split_view">
-            <property name="min-sidebar-width">240</property>
-            <property name="max-sidebar-width">240</property>
+            <property name="min-sidebar-width">200</property>
+            <property name="max-sidebar-width">280</property>
+            <property name="sidebar-width-fraction">0.25</property>
             <property name="collapsed" bind-source="GnostrSessionView" bind-property="compact" bind-flags="sync-create"/>
             <property name="sidebar">
               <object class="AdwNavigationPage" id="sidebar_page">
