@@ -1890,26 +1890,18 @@ static void show_loaded_image(GtkWidget *container) {
 
 /* Callback for media image loading */
 static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GtkPicture *picture = GTK_PICTURE(user_data);
   GError *error = NULL;
   
   /* First, finish the async operation to get the error status */
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
   
-  /* Check for cancellation FIRST - if cancelled, widget may be freed */
+  /* Check for cancellation - if cancelled, just clean up and return.
+   * We hold a reference to the picture, so it's still valid even if parent disposed. */
   if (error && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
     g_error_free(error);
     if (bytes) g_bytes_unref(bytes);
-    /* Release the reference we took - but picture may be invalid if parent disposed */
-    if (GTK_IS_PICTURE(user_data)) g_object_unref(user_data);
-    return;
-  }
-  
-  GtkPicture *picture = GTK_PICTURE(user_data);
-  
-  /* Verify picture is still a valid widget before accessing */
-  if (!GTK_IS_PICTURE(picture)) {
-    g_clear_error(&error);
-    if (bytes) g_bytes_unref(bytes);
+    g_object_unref(picture);
     return;
   }
 
