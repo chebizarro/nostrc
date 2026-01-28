@@ -109,7 +109,8 @@ static gboolean ensure_note_loaded(GnNostrEventItem *self)
     self->is_repost = (self->kind == 6);
 
     /* Cache tags JSON for NIP-92 imeta support */
-    self->cached_tags_json = storage_ndb_note_tags_json(note);
+    /* DISABLED: Tag JSON generation causes heap corruption with malformed events */
+    self->cached_tags_json = NULL; // storage_ndb_note_tags_json(note);
 
     /* NIP-40: Cache expiration timestamp */
     self->expiration = storage_ndb_note_get_expiration(note);

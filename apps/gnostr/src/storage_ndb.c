@@ -445,20 +445,45 @@ char *storage_ndb_note_tags_json(storage_ndb_note *note)
 
   gboolean first_tag = TRUE;
   while (ndb_tags_iterate_next(&iter)) {
+    if (!iter.tag) continue; /* Skip invalid tags */
+    
     if (!first_tag) g_string_append_c(json, ',');
     first_tag = FALSE;
 
     g_string_append_c(json, '[');
     struct ndb_tag *tag = iter.tag;
     int nelem = ndb_tag_count(tag);
+    
+    /* Safety check: limit tag element count to prevent excessive processing */
+    if (nelem > 100) {
+      g_warning("Tag with excessive element count (%d), skipping", nelem);
+      g_string_append(json, "]");
+      continue;
+    }
+    
     for (int i = 0; i < nelem; i++) {
       if (i > 0) g_string_append_c(json, ',');
       struct ndb_str str = ndb_tag_str(note, tag, i);
-      if (str.str) {
-        /* Escape and quote the string */
+      
+      if (str.flag == NDB_PACKED_STR && str.str) {
+        /* Validate string pointer before use */
+        if (!g_utf8_validate(str.str, -1, NULL)) {
+          /* Invalid UTF-8, escape as hex */
+          g_string_append(json, "\"[invalid]\"");
+          continue;
+        }
         gchar *escaped = g_strescape(str.str, NULL);
-        g_string_append_printf(json, "\"%s\"", escaped);
-        g_free(escaped);
+        if (escaped) {
+          g_string_append_printf(json, "\"%s\"", escaped);
+          g_free(escaped);
+        } else {
+          g_string_append(json, "\"\"");
+        }
+      } else if (str.flag == NDB_PACKED_ID && str.id) {
+        /* Handle ID type - convert to hex */
+        char hex[65];
+        storage_ndb_hex_encode(str.id, hex);
+        g_string_append_printf(json, "\"%s\"", hex);
       } else {
         g_string_append(json, "\"\"");
       }
