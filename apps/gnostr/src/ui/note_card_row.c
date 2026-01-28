@@ -1799,44 +1799,20 @@ static void set_avatar_initials(GnostrNoteCardRow *self, const char *display, co
 
 #ifdef HAVE_SOUP3
 static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || self->disposed) return;
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
-  
-  /* Check for cancellation FIRST - if cancelled, widget may be freed */
-  if (error && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-    g_error_free(error);
-    if (bytes) g_bytes_unref(bytes);
-    return;
-  }
-  
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || self->disposed) {
-    g_clear_error(&error);
-    if (bytes) g_bytes_unref(bytes);
-    return;
-  }
-  
-  if (!bytes) {
-    g_clear_error(&error);
-    set_avatar_initials(self, NULL, NULL);
-    return;
-  }
-  
+  if (!bytes) { g_clear_error(&error); if (!self->disposed) set_avatar_initials(self, NULL, NULL); return; }
+  if (self->disposed) { g_bytes_unref(bytes); return; }
   GdkTexture *tex = gdk_texture_new_from_bytes(bytes, &error);
   g_bytes_unref(bytes);
-  if (!tex) {
-    g_clear_error(&error);
-    if (!self->disposed) set_avatar_initials(self, NULL, NULL);
-    return;
-  }
-  
+  if (!tex) { g_clear_error(&error); if (!self->disposed) set_avatar_initials(self, NULL, NULL); return; }
   if (!self->disposed && GTK_IS_PICTURE(self->avatar_image)) {
     gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), GDK_PAINTABLE(tex));
     gtk_widget_set_visible(self->avatar_image, TRUE);
   }
-  if (!self->disposed && GTK_IS_WIDGET(self->avatar_initials)) {
-    gtk_widget_set_visible(self->avatar_initials, FALSE);
-  }
+  if (!self->disposed && GTK_IS_WIDGET(self->avatar_initials)) gtk_widget_set_visible(self->avatar_initials, FALSE);
   g_object_unref(tex);
 }
 
@@ -1892,21 +1868,11 @@ static void show_loaded_image(GtkWidget *container) {
 static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
   GtkPicture *picture = GTK_PICTURE(user_data);
   GError *error = NULL;
-  
-  /* First, finish the async operation to get the error status */
-  GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
-  
-  /* Check for cancellation - if cancelled, just clean up and return.
-   * We hold a reference to the picture, so it's still valid even if parent disposed. */
-  if (error && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-    g_error_free(error);
-    if (bytes) g_bytes_unref(bytes);
-    g_object_unref(picture);
-    return;
-  }
 
   /* Get the parent container (GtkOverlay) for spinner/error handling */
-  GtkWidget *container = gtk_widget_get_parent(GTK_WIDGET(picture));
+  GtkWidget *container = GTK_IS_WIDGET(picture) ? gtk_widget_get_parent(GTK_WIDGET(picture)) : NULL;
+
+  GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_debug("Media: Failed to load image: %s", error->message);
@@ -4272,28 +4238,24 @@ static gchar *format_article_date(gint64 timestamp) {
 #ifdef HAVE_SOUP3
 /* Callback for article header image loading */
 static void on_article_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
+
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || self->disposed) return;
+
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
 
-  /* Check for cancellation FIRST - if cancelled, widget may be freed */
-  if (error && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-    g_error_free(error);
-    if (bytes) g_bytes_unref(bytes);
-    return;
-  }
-
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || self->disposed) {
-    g_clear_error(&error);
-    if (bytes) g_bytes_unref(bytes);
-    return;
-  }
-
   if (!bytes || error) {
-    if (error) {
+    if (error && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_debug("NIP-23: Failed to load article image: %s", error->message);
-      g_error_free(error);
     }
+    if (error) g_error_free(error);
+    return;
+  }
+
+  /* Re-check disposed before accessing widget members */
+  if (self->disposed) {
+    g_bytes_unref(bytes);
     return;
   }
 
