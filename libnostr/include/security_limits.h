@@ -5,8 +5,8 @@
 
 /* Transport/websocket */
 #define NOSTR_MAX_FRAME_LEN_BYTES (2 * 1024 * 1024) /* 2MB */
-#define NOSTR_MAX_FRAMES_PER_SEC 500		    /* 500 frames/sec (was 100) */
-#define NOSTR_MAX_BYTES_PER_SEC (10 * 1024 * 1024)  /* 10MB/s (was 2MB/s) */
+#define NOSTR_MAX_FRAMES_PER_SEC 2000		    /* 2000 frames/sec - high for burst traffic */
+#define NOSTR_MAX_BYTES_PER_SEC (50 * 1024 * 1024)  /* 50MB/s - high for burst traffic */
 
 /* Event/JSON */
 #define NOSTR_MAX_EVENT_SIZE_BYTES (256 * 1024) /* 256KB */
