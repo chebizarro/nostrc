@@ -596,15 +596,8 @@ static void on_zoom_scale_changed(GtkGestureZoom *gesture,
 
 #ifdef HAVE_SOUP3
 static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-
-  /* Check if we're still valid */
-  if (!GNOSTR_IS_IMAGE_VIEWER(self)) return;
-
-  /* Hide spinner */
-  gtk_widget_set_visible(self->spinner, FALSE);
-  gtk_spinner_stop(GTK_SPINNER(self->spinner));
-
+  /* CRITICAL: Check result BEFORE casting user_data to avoid GLib warning on freed object.
+   * If the request was cancelled (viewer destroyed), user_data may be a dangling pointer. */
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
 
@@ -613,8 +606,19 @@ static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_da
       g_warning("ImageViewer: Failed to load image: %s", error->message);
     }
     g_error_free(error);
+    return;  /* Do NOT access user_data - may be freed if cancelled */
+  }
+
+  /* Only now is it safe to access user_data - request completed successfully */
+  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
+  if (!GNOSTR_IS_IMAGE_VIEWER(self)) {
+    if (bytes) g_bytes_unref(bytes);
     return;
   }
+
+  /* Hide spinner */
+  gtk_widget_set_visible(self->spinner, FALSE);
+  gtk_spinner_stop(GTK_SPINNER(self->spinner));
 
   if (!bytes || g_bytes_get_size(bytes) == 0) {
     if (bytes) g_bytes_unref(bytes);

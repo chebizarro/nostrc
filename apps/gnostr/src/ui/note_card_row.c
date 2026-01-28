@@ -4541,19 +4541,23 @@ static void on_video_play_clicked(GtkButton *btn, gpointer user_data) {
 #ifdef HAVE_SOUP3
 /* NIP-71: Async thumbnail image loader */
 static void on_video_thumb_bytes_ready(GObject *source, GAsyncResult *result, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(g_object_ref(user_data));
+  /* CRITICAL: Check result BEFORE accessing user_data to avoid use-after-free.
+   * If the request was cancelled (widget destroyed), user_data may be a dangling pointer. */
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), result, &error);
 
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || self->disposed) {
-    if (bytes) g_bytes_unref(bytes);
-    g_object_unref(self);
-    return;
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_debug("NIP-71: Thumbnail load error: %s", error->message);
+    }
+    g_error_free(error);
+    return;  /* Do NOT access user_data - may be freed if cancelled */
   }
 
-  if (error) {
-    g_debug("NIP-71: Thumbnail load error: %s", error->message);
-    g_error_free(error);
+  /* Only now is it safe to access user_data - request completed successfully */
+  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(g_object_ref(user_data));
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || self->disposed) {
+    if (bytes) g_bytes_unref(bytes);
     g_object_unref(self);
     return;
   }
