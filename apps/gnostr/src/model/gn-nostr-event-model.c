@@ -521,47 +521,30 @@ static gboolean flush_deferred_notes_cb(gpointer user_data) {
 
   g_debug("[CALM] Flushing %u deferred notes", self->deferred_notes->len);
 
-  /* Insert all deferred notes */
-  guint inserted = 0;
+  /* Insert all deferred notes one at a time with correct signals.
+   * We must emit items_changed for each insertion at the correct position,
+   * otherwise GTK ListView will misrender and show duplicates. */
   for (guint i = 0; i < self->deferred_notes->len; i++) {
     NoteEntry *entry = &g_array_index(self->deferred_notes, NoteEntry, i);
 
     /* Check if already in model */
-    gboolean found = FALSE;
-    for (guint j = 0; j < self->notes->len; j++) {
-      NoteEntry *existing = &g_array_index(self->notes, NoteEntry, j);
-      if (existing->note_key == entry->note_key) {
-        found = TRUE;
-        break;
-      }
-    }
-    if (found) continue;
+    if (has_note_key(self, entry->note_key)) continue;
 
-    /* Find insertion position */
-    guint pos = 0;
-    for (guint j = 0; j < self->notes->len; j++) {
-      NoteEntry *e = &g_array_index(self->notes, NoteEntry, j);
-      if (e->created_at < entry->created_at) {
-        pos = j;
-        break;
-      }
-      pos = j + 1;
-    }
+    /* Find insertion position (sorted by created_at, newest first) */
+    guint pos = find_sorted_position(self, entry->created_at);
 
     /* Insert at position */
     g_array_insert_val(self->notes, pos, *entry);
-    inserted++;
+    
+    /* Emit correct signal for this specific insertion */
+    g_list_model_items_changed(G_LIST_MODEL(self), pos, 0, 1);
   }
 
   /* Clear deferred queue */
   g_array_set_size(self->deferred_notes, 0);
 
-  /* Update timestamp and emit batch signal */
+  /* Update timestamp */
   self->last_update_time_ms = now_ms;
-  if (inserted > 0) {
-    /* Emit a single items-changed for all insertions (position 0, added inserted) */
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, inserted);
-  }
 
   /* Clear pending count and notify */
   self->pending_new_count = 0;
@@ -580,6 +563,9 @@ static void schedule_deferred_flush(GnNostrEventModel *self) {
 
 /* nostrc-yi2: Defer note insertion (when user is not at top) */
 static void defer_note_insertion(GnNostrEventModel *self, uint64_t note_key, gint64 created_at) {
+  /* Check if already in main notes array - prevents duplicates */
+  if (has_note_key(self, note_key)) return;
+
   /* Check if already in deferred queue */
   for (guint i = 0; i < self->deferred_notes->len; i++) {
     NoteEntry *entry = &g_array_index(self->deferred_notes, NoteEntry, i);
