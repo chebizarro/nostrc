@@ -188,6 +188,8 @@ static void cache_add(GnNostrEventModel *self, uint64_t key, GnNostrEventItem *i
   while (g_queue_get_length(self->cache_lru) > ITEM_CACHE_SIZE) {
     uint64_t *old_key = g_queue_pop_tail(self->cache_lru);
     if (old_key) {
+      /* Remove from thread_info before removing from item_cache to prevent dangling pointers */
+      g_hash_table_remove(self->thread_info, old_key);
       g_hash_table_remove(self->item_cache, old_key);
       /* Note: key is freed by hash table; queue just dropped its pointer */
     }

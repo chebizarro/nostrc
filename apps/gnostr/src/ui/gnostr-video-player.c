@@ -66,6 +66,9 @@ struct _GnostrVideoPlayer {
   gboolean is_visible_in_viewport;     /* Whether currently visible in scrolled parent */
   gulong scroll_adj_changed_handler;   /* Signal handler for scroll adjustment changes */
   GtkAdjustment *scroll_vadjustment;   /* Vertical adjustment of parent scroll */
+  
+  /* Disposal flag */
+  gboolean disposed;
 };
 
 G_DEFINE_TYPE(GnostrVideoPlayer, gnostr_video_player, GTK_TYPE_WIDGET)
@@ -228,6 +231,8 @@ static void show_controls(GnostrVideoPlayer *self) {
 static gboolean hide_controls_timeout(gpointer user_data) {
   GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(user_data);
 
+  if (self->disposed) return G_SOURCE_REMOVE;
+
   self->controls_hide_timer_id = 0;
   self->controls_visible = FALSE;
 
@@ -257,9 +262,10 @@ static void schedule_hide_controls(GnostrVideoPlayer *self) {
 static gboolean position_update_tick(gpointer user_data) {
   GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(user_data);
 
+  if (self->disposed) return G_SOURCE_REMOVE;
+
   if (!self->media_file) {
-    self->position_update_timer_id = 0;
-    return G_SOURCE_REMOVE;
+    return G_SOURCE_CONTINUE;
   }
 
   GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
@@ -286,6 +292,8 @@ static gboolean position_update_tick(gpointer user_data) {
 }
 
 static void update_time_labels(GnostrVideoPlayer *self) {
+  if (self->disposed) return;
+  
   GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
   if (!stream) return;
 
@@ -307,6 +315,8 @@ static void update_time_labels(GnostrVideoPlayer *self) {
 }
 
 static void update_play_pause_icon(GnostrVideoPlayer *self) {
+  if (self->disposed) return;
+  
   GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
   gboolean playing = stream && gtk_media_stream_get_playing(stream);
 
@@ -574,6 +584,9 @@ static void on_video_player_realize(GtkWidget *widget, gpointer user_data) {
 static void gnostr_video_player_dispose(GObject *obj) {
   GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(obj);
 
+  /* Mark as disposed FIRST to prevent callbacks from accessing widget state */
+  self->disposed = TRUE;
+
   /* Disconnect scroll adjustment handler */
   if (self->scroll_vadjustment && self->scroll_adj_changed_handler > 0) {
     g_signal_handler_disconnect(self->scroll_vadjustment, self->scroll_adj_changed_handler);
@@ -608,6 +621,21 @@ static void gnostr_video_player_dispose(GObject *obj) {
 
   /* Clear media file */
   g_clear_object(&self->media_file);
+
+  /* Clear widget pointers before unparenting to prevent dangling references */
+  self->btn_play_pause = NULL;
+  self->play_icon = NULL;
+  self->pause_icon = NULL;
+  self->btn_stop = NULL;
+  self->seek_scale = NULL;
+  self->lbl_time_current = NULL;
+  self->lbl_time_duration = NULL;
+  self->btn_mute = NULL;
+  self->volume_scale = NULL;
+  self->btn_loop = NULL;
+  self->btn_fullscreen = NULL;
+  self->controls_box = NULL;
+  self->picture = NULL;
 
   /* Unparent the overlay (which contains picture and controls) */
   if (self->overlay) {

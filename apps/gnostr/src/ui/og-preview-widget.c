@@ -440,7 +440,9 @@ static void og_preview_widget_dispose(GObject *object) {
   /* Mark as disposed FIRST - this prevents callbacks from accessing widget state */
   self->disposed = TRUE;
   
-  /* Cancel any in-flight requests BEFORE aborting session */
+  /* Cancel any in-flight requests - this will trigger cleanup in libsoup.
+   * Do NOT call soup_session_abort() as it will try to disconnect handlers
+   * that were already cleaned up by the cancellation. */
   if (self->cancellable) {
     g_cancellable_cancel(self->cancellable);
     g_clear_object(&self->cancellable);
@@ -449,13 +451,6 @@ static void og_preview_widget_dispose(GObject *object) {
   if (self->image_cancellable) {
     g_cancellable_cancel(self->image_cancellable);
     g_clear_object(&self->image_cancellable);
-  }
-  
-  /* Abort all pending requests on the session before unreffing it.
-   * This ensures callbacks complete before we destroy widget state. */
-  if (self->session) {
-    soup_session_abort(self->session);
-    g_clear_object(&self->session);
   }
   
   g_clear_pointer(&self->cache, g_hash_table_unref);
@@ -472,6 +467,9 @@ static void og_preview_widget_dispose(GObject *object) {
   }
   
   G_OBJECT_CLASS(og_preview_widget_parent_class)->dispose(object);
+  
+  /* Clear the session AFTER parent dispose to ensure libsoup has finished cleanup */
+  g_clear_object(&self->session);
 }
 
 static void og_preview_widget_finalize(GObject *object) {
