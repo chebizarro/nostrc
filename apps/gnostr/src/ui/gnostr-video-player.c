@@ -619,8 +619,18 @@ static void gnostr_video_player_dispose(GObject *obj) {
   /* Clear settings */
   g_clear_object(&self->settings);
 
-  /* Clear media file */
-  g_clear_object(&self->media_file);
+  /* Stop playback and clear media file - MUST stop before unreffing to allow
+   * GStreamer audio backend (OpenAL/PipeWire) threads to finish cleanly.
+   * Without this, audio threads may access freed memory causing heap-use-after-free. */
+  if (self->media_file) {
+    /* Stop playback and seek to start to fully stop the pipeline */
+    gtk_media_stream_pause(GTK_MEDIA_STREAM(self->media_file));
+    gtk_media_stream_seek(GTK_MEDIA_STREAM(self->media_file), 0);
+    /* Clear the file to stop any pending I/O */
+    gtk_media_file_set_file(self->media_file, NULL);
+    /* Now safe to unref */
+    g_clear_object(&self->media_file);
+  }
 
   /* Clear widget pointers before unparenting to prevent dangling references */
   self->btn_play_pause = NULL;
