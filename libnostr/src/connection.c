@@ -34,7 +34,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         if (!tb_allow(&conn->priv->tb_frames, 1.0) || !tb_allow(&conn->priv->tb_bytes, (double)len)) {
             // Drop the frame silently to avoid closing during receive callback.
             // Closing here can race with libwebsockets' internal state and cause heap issues.
-            nostr_rl_log(NLOG_WARN, "ws", "drop: rate limit exceeded (len=%zu)", len);
+            nostr_rl_log(NLOG_DEBUG, "ws", "drop: rate limit exceeded (len=%zu)", len);
             return 0;
         }
         // Update RX timing/progress
