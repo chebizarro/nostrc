@@ -227,6 +227,12 @@ static guint signals[N_SIGNALS];
 static void gnostr_note_card_row_dispose(GObject *obj) {
   GnostrNoteCardRow *self = (GnostrNoteCardRow*)obj;
 
+  /* If already disposed (e.g., by prepare_for_unbind), skip cleanup that was already done.
+   * We still need to call parent dispose and dispose_template though. */
+  if (self->disposed) {
+    goto do_template_dispose;
+  }
+
   /* Mark as disposed FIRST to prevent async callbacks from accessing widget */
   self->disposed = TRUE;
 
@@ -270,11 +276,14 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   self->og_preview = NULL;
   
   /* Disconnect signal handlers from note_embed to prevent invalid closure notify.
-   * Do NOT call gtk_frame_set_child(NULL) - let GTK handle cleanup automatically. */
-  if (self->note_embed) {
+   * Do NOT call gtk_frame_set_child(NULL) - let GTK handle cleanup automatically.
+   * Check GNOSTR_IS_NOTE_EMBED to ensure the widget hasn't been freed already. */
+  if (self->note_embed && GNOSTR_IS_NOTE_EMBED(self->note_embed)) {
     g_signal_handlers_disconnect_by_data(self->note_embed, self);
   }
   self->note_embed = NULL;
+
+do_template_dispose:
   
   /* Do NOT unparent popovers during disposal - GTK will handle cleanup automatically.
    * Calling gtk_widget_unparent or gtk_popover_popdown during disposal can trigger
