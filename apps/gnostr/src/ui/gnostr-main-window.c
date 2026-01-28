@@ -602,9 +602,24 @@ static void relay_manager_update_status(RelayManagerCtx *ctx) {
 
 /* Helper to clear all children from a container */
 static void relay_manager_clear_container(GtkWidget *container) {
-  GtkWidget *child;
-  while ((child = gtk_widget_get_first_child(container)) != NULL) {
-    gtk_widget_unparent(child);
+  if (!container || !GTK_IS_WIDGET(container)) return;
+
+  /* For GtkFlowBox, use gtk_flow_box_remove to properly handle GtkFlowBoxChild wrappers */
+  if (GTK_IS_FLOW_BOX(container)) {
+    GtkWidget *child;
+    while ((child = gtk_widget_get_first_child(container)) != NULL) {
+      gtk_flow_box_remove(GTK_FLOW_BOX(container), child);
+    }
+  } else if (GTK_IS_BOX(container)) {
+    GtkWidget *child;
+    while ((child = gtk_widget_get_first_child(container)) != NULL) {
+      gtk_box_remove(GTK_BOX(container), child);
+    }
+  } else {
+    GtkWidget *child;
+    while ((child = gtk_widget_get_first_child(container)) != NULL) {
+      gtk_widget_unparent(child);
+    }
   }
 }
 
@@ -777,13 +792,15 @@ static void relay_manager_populate_info(RelayManagerCtx *ctx, GnostrRelayInfo *i
   }
 
   /* Populate NIP badges */
-  if (nips_flowbox) {
+  if (nips_flowbox && GTK_IS_FLOW_BOX(nips_flowbox)) {
     relay_manager_clear_container(nips_flowbox);
 
     if (info->supported_nips && info->supported_nips_count > 0) {
       for (gsize i = 0; i < info->supported_nips_count; i++) {
         GtkWidget *badge = relay_manager_create_nip_badge(info->supported_nips[i]);
-        gtk_flow_box_append(GTK_FLOW_BOX(nips_flowbox), badge);
+        if (badge && GTK_IS_WIDGET(badge)) {
+          gtk_flow_box_append(GTK_FLOW_BOX(nips_flowbox), badge);
+        }
       }
       gtk_widget_set_visible(nips_flowbox, TRUE);
       if (nips_empty) gtk_widget_set_visible(nips_empty, FALSE);
