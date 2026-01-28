@@ -77,7 +77,7 @@ char *nostr_normalize_url(const char *u) {
         } else if (strcmp(scheme, "https") == 0) {
             strcpy(scheme, "wss");
         }
-        strncpy(url, scheme, strlen(scheme));
+        memcpy(url, scheme, strlen(scheme));
         free(scheme);
     }
 
