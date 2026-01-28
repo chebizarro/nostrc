@@ -212,13 +212,6 @@ create_actions_popover(GnostrProfileRow *self)
     gtk_menu_button_set_popover(self->btn_actions, self->actions_popover);
 }
 
-static void
-on_actions_button_clicked(GtkButton *btn, GnostrProfileRow *self)
-{
-    (void)btn;
-    if (!self) return;
-    create_actions_popover(self);
-}
 
 static void
 gnostr_profile_row_class_init(GnostrProfileRowClass *klass)
@@ -301,9 +294,10 @@ gnostr_profile_row_init(GnostrProfileRow *self)
     self->btn_follow = NULL;
     self->follow_label = NULL;
 
-    /* Create the actions popover on demand */
+    /* Create the actions popover and set it on the menu button.
+     * GtkMenuButton doesn't have a 'clicked' signal - it shows its popover automatically. */
     if (self->btn_actions) {
-        g_signal_connect(self->btn_actions, "clicked", G_CALLBACK(on_actions_button_clicked), self);
+        create_actions_popover(self);
     }
 
     /* Click gesture for the whole row (but not on the actions button) */
