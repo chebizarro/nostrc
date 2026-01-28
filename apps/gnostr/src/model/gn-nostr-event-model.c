@@ -12,6 +12,8 @@
 #define ITEM_CACHE_SIZE 100
 #define PROFILE_CACHE_MAX 500
 #define AUTHORS_READY_MAX 1000
+#define DEFERRED_NOTES_MAX 200       /* Max deferred notes before force flush */
+#define PENDING_BY_AUTHOR_MAX 500    /* Max pending authors before cleanup */
 
 /* nostrc-yi2: Calm timeline - debounce and rate limiting */
 #define DEBOUNCE_INTERVAL_MS 500     /* Batch rapid updates */
@@ -575,6 +577,15 @@ static void defer_note_insertion(GnNostrEventModel *self, uint64_t note_key, gin
   NoteEntry entry = { .note_key = note_key, .created_at = created_at };
   g_array_append_val(self->deferred_notes, entry);
 
+  /* Enforce limit to prevent unbounded memory growth */
+  if (self->deferred_notes->len > DEFERRED_NOTES_MAX) {
+    g_debug("[CALM] Deferred notes exceeded limit (%u > %u), force flushing",
+            self->deferred_notes->len, DEFERRED_NOTES_MAX);
+    /* Remove oldest entries to stay within limit */
+    guint to_remove = self->deferred_notes->len - DEFERRED_NOTES_MAX;
+    g_array_remove_range(self->deferred_notes, 0, to_remove);
+  }
+
   /* Update pending count and notify UI */
   self->pending_new_count = self->deferred_notes->len;
   g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->pending_new_count);
@@ -666,6 +677,23 @@ static void enforce_window(GnNostrEventModel *self) {
 /* Pending queue: pubkey -> array of PendingEntry. Returns TRUE if this pubkey had no pending queue before. */
 static gboolean add_pending(GnNostrEventModel *self, const char *pubkey_hex, uint64_t note_key, gint64 created_at) {
   if (!self || !self->pending_by_author || !pubkey_hex) return FALSE;
+
+  /* Enforce limit on pending_by_author to prevent unbounded memory growth */
+  guint pending_size = g_hash_table_size(self->pending_by_author);
+  if (pending_size > PENDING_BY_AUTHOR_MAX) {
+    g_debug("[MODEL] pending_by_author exceeded limit (%u > %u), clearing oldest entries",
+            pending_size, PENDING_BY_AUTHOR_MAX);
+    /* Clear half the entries to avoid frequent cleanup */
+    GHashTableIter iter;
+    gpointer k, v;
+    guint to_remove = pending_size / 2;
+    guint removed = 0;
+    g_hash_table_iter_init(&iter, self->pending_by_author);
+    while (g_hash_table_iter_next(&iter, &k, &v) && removed < to_remove) {
+      g_hash_table_iter_remove(&iter);
+      removed++;
+    }
+  }
 
   GArray *arr = g_hash_table_lookup(self->pending_by_author, pubkey_hex);
   gboolean first = (arr == NULL);

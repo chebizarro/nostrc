@@ -1005,8 +1005,8 @@ gnostr_nip7d_thread_view_init(GnostrNip7dThreadView *self)
     /* Uses shared query pool from gnostr_get_shared_query_pool() */
 
 #ifdef HAVE_SOUP3
-    self->session = soup_session_new();
-    soup_session_set_timeout(self->session, 30);
+    /* Use shared session to reduce memory overhead */
+    self->session = NULL; /* Will use gnostr_get_shared_soup_session() */
 #endif
 
     setup_view_ui(self);
