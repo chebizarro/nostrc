@@ -187,6 +187,8 @@ struct _GnostrNoteCardRow {
   /* NIP-73 External Content IDs state */
   GtkWidget *external_ids_box;        /* FlowBox container for external ID badges */
   GPtrArray *external_ids;            /* Array of GnostrExternalContentId* */
+  /* Disposal state - prevents async callbacks from accessing widget after dispose starts */
+  gboolean disposed;
 };
 
 G_DEFINE_TYPE(GnostrNoteCardRow, gnostr_note_card_row, GTK_TYPE_WIDGET)
@@ -220,6 +222,9 @@ static guint signals[N_SIGNALS];
 
 static void gnostr_note_card_row_dispose(GObject *obj) {
   GnostrNoteCardRow *self = (GnostrNoteCardRow*)obj;
+
+  /* Mark as disposed FIRST to prevent async callbacks from accessing widget */
+  self->disposed = TRUE;
 
   /* Remove timestamp timer */
   if (self->timestamp_timer_id > 0) {
@@ -1798,18 +1803,19 @@ static void set_avatar_initials(GnostrNoteCardRow *self, const char *display, co
 #ifdef HAVE_SOUP3
 static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || self->disposed) return;
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
-  if (!bytes) { g_clear_error(&error); set_avatar_initials(self, NULL, NULL); return; }
+  if (!bytes) { g_clear_error(&error); if (!self->disposed) set_avatar_initials(self, NULL, NULL); return; }
+  if (self->disposed) { g_bytes_unref(bytes); return; }
   GdkTexture *tex = gdk_texture_new_from_bytes(bytes, &error);
   g_bytes_unref(bytes);
-  if (!tex) { g_clear_error(&error); set_avatar_initials(self, NULL, NULL); return; }
-  if (GTK_IS_PICTURE(self->avatar_image)) {
+  if (!tex) { g_clear_error(&error); if (!self->disposed) set_avatar_initials(self, NULL, NULL); return; }
+  if (!self->disposed && GTK_IS_PICTURE(self->avatar_image)) {
     gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), GDK_PAINTABLE(tex));
     gtk_widget_set_visible(self->avatar_image, TRUE);
   }
-  if (GTK_IS_WIDGET(self->avatar_initials)) gtk_widget_set_visible(self->avatar_initials, FALSE);
+  if (!self->disposed && GTK_IS_WIDGET(self->avatar_initials)) gtk_widget_set_visible(self->avatar_initials, FALSE);
   g_object_unref(tex);
 }
 
@@ -3406,8 +3412,8 @@ static void on_note_nip05_verified(GnostrNip05Result *result, gpointer user_data
     return;
   }
 
-  /* Double-check widget is still valid */
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) {
+  /* Double-check widget is still valid and not disposed */
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || self->disposed) {
     gnostr_nip05_result_free(result);
     return;
   }
@@ -4229,7 +4235,7 @@ static gchar *format_article_date(gint64 timestamp) {
 static void on_article_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
   GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
 
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || self->disposed) return;
 
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
@@ -4239,6 +4245,12 @@ static void on_article_image_loaded(GObject *source, GAsyncResult *res, gpointer
       g_debug("NIP-23: Failed to load article image: %s", error->message);
     }
     if (error) g_error_free(error);
+    return;
+  }
+
+  /* Re-check disposed before accessing widget members */
+  if (self->disposed) {
+    g_bytes_unref(bytes);
     return;
   }
 
@@ -4253,7 +4265,7 @@ static void on_article_image_loaded(GObject *source, GAsyncResult *res, gpointer
     return;
   }
 
-  if (GTK_IS_PICTURE(self->article_image)) {
+  if (!self->disposed && GTK_IS_PICTURE(self->article_image)) {
     gtk_picture_set_paintable(GTK_PICTURE(self->article_image), GDK_PAINTABLE(texture));
     gtk_widget_set_visible(self->article_image_box, TRUE);
   }
@@ -4519,7 +4531,7 @@ static void on_video_thumb_bytes_ready(GObject *source, GAsyncResult *result, gp
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), result, &error);
 
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || self->disposed) {
     if (bytes) g_bytes_unref(bytes);
     g_object_unref(self);
     return;
@@ -4538,13 +4550,22 @@ static void on_video_thumb_bytes_ready(GObject *source, GAsyncResult *result, gp
     return;
   }
 
+  /* Re-check disposed before accessing widget members */
+  if (self->disposed) {
+    g_bytes_unref(bytes);
+    g_object_unref(self);
+    return;
+  }
+
   /* Load image from bytes */
   GdkTexture *texture = gdk_texture_new_from_bytes(bytes, NULL);
   g_bytes_unref(bytes);
 
-  if (texture && GTK_IS_PICTURE(self->video_thumb_picture)) {
+  if (texture && !self->disposed && GTK_IS_PICTURE(self->video_thumb_picture)) {
     gtk_picture_set_paintable(GTK_PICTURE(self->video_thumb_picture), GDK_PAINTABLE(texture));
     gtk_widget_set_visible(self->video_thumb_picture, TRUE);
+    g_object_unref(texture);
+  } else if (texture) {
     g_object_unref(texture);
   }
 
