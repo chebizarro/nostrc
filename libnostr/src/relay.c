@@ -728,28 +728,19 @@ NostrSubscription *nostr_relay_prepare_subscription(NostrRelay *relay, GoContext
         return NULL;
     }
 
-    // Generate a unique subscription ID
-    static int64_t subscription_counter = 1;
-    int64_t subscription_id = subscription_counter++;
-
+    // Create subscription - nostr_subscription_new() already generates a unique ID
+    // from the global g_sub_counter and sets up the context derived from relay's
+    // connection context. We use that ID directly to avoid counter desync issues.
     NostrSubscription *subscription = nostr_subscription_new(relay, filters);
     if (!subscription) return NULL;
-    // Initialize the subscription fields
-    subscription->priv->counter = subscription_id;
-    // Generate id string from counter
-    char idbuf[32];
-    snprintf(idbuf, sizeof(idbuf), "%lld", (long long)subscription_id);
-    free(subscription->priv->id);  // free the id set by nostr_subscription_new
-    subscription->priv->id = strdup(idbuf);
+    
     // Note: nostr_subscription_new() already creates a context derived from the relay's
     // connection context and starts the lifecycle thread. We don't create a new context
     // here to avoid orphaning the lifecycle thread which is waiting on the original context.
-    // The ctx parameter is accepted for API compatibility but the subscription's context
-    // will be derived from relay->priv->connection_context as set up in nostr_subscription_new().
     (void)ctx; // Mark as intentionally unused
     subscription->priv->match = nostr_filters_match; // Function for matching filters with events
 
-    // Store subscription in relay subscriptions map
+    // Store subscription in relay subscriptions map using the ID set by nostr_subscription_new
     go_hash_map_insert_int(relay->subscriptions, subscription->priv->counter, subscription);
 
     return subscription;
