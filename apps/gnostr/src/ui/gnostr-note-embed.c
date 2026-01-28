@@ -682,7 +682,8 @@ void gnostr_note_embed_set_profile(GnostrNoteEmbed *self,
   self->embed_type = EMBED_TYPE_PROFILE;
   self->state = EMBED_STATE_LOADED;
 
-  /* Duplicate pubkey_hex BEFORE freeing target_id in case they point to same memory */
+  /* Duplicate pubkey_hex BEFORE freeing target_id in case they point to same memory.
+   * After this point, use self->target_id instead of pubkey_hex parameter! */
   char *new_target_id = g_strdup(pubkey_hex);
   g_clear_pointer(&self->target_id, g_free);
   self->target_id = new_target_id;
@@ -700,8 +701,8 @@ void gnostr_note_embed_set_profile(GnostrNoteEmbed *self,
       } else {
         handle_text = g_strdup(handle);
       }
-    } else if (pubkey_hex && strlen(pubkey_hex) >= 8) {
-      handle_text = g_strdup_printf("%.8s...", pubkey_hex);
+    } else if (self->target_id && strlen(self->target_id) >= 8) {
+      handle_text = g_strdup_printf("%.8s...", self->target_id);
     }
     gtk_label_set_text(GTK_LABEL(self->handle_label), handle_text ? handle_text : "");
     g_free(handle_text);
