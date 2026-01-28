@@ -308,43 +308,9 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
     self->reactors = NULL;
   }
   
-  /* Clear all label text to release Pango layouts before template disposal */
-  if (self->lbl_display && GTK_IS_LABEL(self->lbl_display)) {
-    gtk_label_set_text(GTK_LABEL(self->lbl_display), "");
-  }
-  if (self->lbl_handle && GTK_IS_LABEL(self->lbl_handle)) {
-    gtk_label_set_text(GTK_LABEL(self->lbl_handle), "");
-  }
-  if (self->lbl_nip05 && GTK_IS_LABEL(self->lbl_nip05)) {
-    gtk_label_set_text(GTK_LABEL(self->lbl_nip05), "");
-  }
-  if (self->lbl_timestamp && GTK_IS_LABEL(self->lbl_timestamp)) {
-    gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), "");
-  }
-  if (self->content_label && GTK_IS_LABEL(self->content_label)) {
-    gtk_label_set_text(GTK_LABEL(self->content_label), "");
-  }
-  if (self->lbl_like_count && GTK_IS_LABEL(self->lbl_like_count)) {
-    gtk_label_set_text(GTK_LABEL(self->lbl_like_count), "");
-  }
-  if (self->lbl_zap_count && GTK_IS_LABEL(self->lbl_zap_count)) {
-    gtk_label_set_text(GTK_LABEL(self->lbl_zap_count), "");
-  }
-  if (self->lbl_repost_count && GTK_IS_LABEL(self->lbl_repost_count)) {
-    gtk_label_set_text(GTK_LABEL(self->lbl_repost_count), "");
-  }
-  if (self->reply_indicator_label && GTK_IS_LABEL(self->reply_indicator_label)) {
-    gtk_label_set_text(GTK_LABEL(self->reply_indicator_label), "");
-  }
-  if (self->reply_count_label && GTK_IS_LABEL(self->reply_count_label)) {
-    gtk_label_set_text(GTK_LABEL(self->reply_count_label), "");
-  }
-  if (self->repost_indicator_label && GTK_IS_LABEL(self->repost_indicator_label)) {
-    gtk_label_set_text(GTK_LABEL(self->repost_indicator_label), "");
-  }
-  if (self->subject_label && GTK_IS_LABEL(self->subject_label)) {
-    gtk_label_set_text(GTK_LABEL(self->subject_label), "");
-  }
+  /* Do NOT call gtk_label_set_text() during disposal - it triggers Pango layout
+   * recalculation which crashes when the widget is being disposed. GTK will handle
+   * Pango layout cleanup automatically during label finalization. */
   
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_CARD_ROW);
   self->root = NULL; self->avatar_box = NULL; self->avatar_initials = NULL; self->avatar_image = NULL;
@@ -488,7 +454,7 @@ static void ensure_ndb_initialized(void) {
   /* storage_ndb_init is idempotent; if already initialized it returns 1 */
   gchar *dbdir = g_build_filename(g_get_user_cache_dir(), "gnostr", "ndb", NULL);
   (void)g_mkdir_with_parents(dbdir, 0700);
-  const char *opts = "{\"mapsize\":1073741824,\"ingester_threads\":4,\"ingest_skip_validation\":1}";
+  const char *opts = "{\"mapsize\":1073741824,\"ingester_threads\":4}";
   storage_ndb_init(dbdir, opts);
   g_free(dbdir);
 }

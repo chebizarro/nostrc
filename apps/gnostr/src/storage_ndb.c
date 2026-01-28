@@ -62,7 +62,7 @@ int storage_ndb_init(const char *dbdir, const char *opts_json)
   fprintf(stderr, "[storage_ndb_init] Calling ln_store_open...\n");
   fflush(stderr);
   int rc = ln_store_open("nostrdb", dbdir ? dbdir : ".ndb-demo",
-                         opts_json ? opts_json : "{\"mapsize\":1073741824,\"ingester_threads\":1,\"ingest_skip_validation\":1}",
+                         opts_json ? opts_json : "{\"mapsize\":1073741824,\"ingester_threads\":1}",
                          &s);
   fprintf(stderr, "[storage_ndb_init] ln_store_open returned rc=%d (LN_OK=%d)\n", rc, LN_OK);
   fflush(stderr);

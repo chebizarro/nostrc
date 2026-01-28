@@ -80,10 +80,9 @@ int main(int argc, char **argv) {
   if (mkdir_rc != 0) {
     g_warning("g_mkdir_with_parents failed: %d (%s)", mkdir_rc, g_strerror(errno));
   }
-  /* NOTE: ingest_skip_validation=1 is set because some relay events have invalid signatures.
-   * This should be investigated and potentially fixed by validating events before ingestion.
+  /* Enable signature validation to prevent storing malformed events that cause heap corruption.
    * ingester_threads=1 to minimize reader slot contention (LMDB default is ~126 slots). */
-  const char *opts = "{\"mapsize\":1073741824,\"ingester_threads\":1,\"ingest_skip_validation\":1}";
+  const char *opts = "{\"mapsize\":1073741824,\"ingester_threads\":1}";
   fprintf(stderr, "[main] About to call storage_ndb_init(dbdir=%s, opts=%s)\n", dbdir, opts);
   fflush(stderr);
   if (!storage_ndb_init(dbdir, opts)) {

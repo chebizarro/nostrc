@@ -441,30 +441,22 @@ static void og_preview_widget_dispose(GObject *object) {
   self->disposed = TRUE;
   
   /* Cancel any in-flight requests - this will trigger cleanup in libsoup.
-   * Do NOT call soup_session_abort() as it will try to disconnect handlers
-   * that were already cleaned up by the cancellation. */
+   * Do NOT call g_clear_object on cancellables immediately - let them be
+   * cleaned up naturally to avoid file descriptor corruption in GLib main loop.
+   * The cancellables will be freed when the widget is finalized. */
   if (self->cancellable) {
     g_cancellable_cancel(self->cancellable);
-    g_clear_object(&self->cancellable);
   }
   
   if (self->image_cancellable) {
     g_cancellable_cancel(self->image_cancellable);
-    g_clear_object(&self->image_cancellable);
   }
   
   g_clear_pointer(&self->cache, g_hash_table_unref);
   
-  /* Clear label text to release Pango layouts before disposal */
-  if (self->title_label && GTK_IS_LABEL(self->title_label)) {
-    gtk_label_set_text(GTK_LABEL(self->title_label), "");
-  }
-  if (self->description_label && GTK_IS_LABEL(self->description_label)) {
-    gtk_label_set_text(GTK_LABEL(self->description_label), "");
-  }
-  if (self->site_label && GTK_IS_LABEL(self->site_label)) {
-    gtk_label_set_text(GTK_LABEL(self->site_label), "");
-  }
+  /* Do NOT call gtk_label_set_text() during disposal - it triggers Pango layout
+   * recalculation which crashes when the widget is being disposed. GTK will handle
+   * Pango layout cleanup automatically during label finalization. */
   
   /* Clear widget pointers before unparenting to prevent dangling references */
   self->title_label = NULL;
@@ -492,6 +484,10 @@ static void og_preview_widget_dispose(GObject *object) {
 
 static void og_preview_widget_finalize(GObject *object) {
   OgPreviewWidget *self = OG_PREVIEW_WIDGET(object);
+  
+  /* Clean up cancellables that were only cancelled in dispose */
+  g_clear_object(&self->cancellable);
+  g_clear_object(&self->image_cancellable);
   
   g_free(self->current_url);
   
