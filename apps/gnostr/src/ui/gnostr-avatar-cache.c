@@ -31,6 +31,7 @@ static gboolean s_config_initialized = FALSE;     /* env vars read */
 static GHashTable *s_failed_urls = NULL;          /* key=url -> gint64 timestamp */
 static GMutex s_failed_urls_mutex;
 #define FAILED_URL_RETRY_SECONDS 300              /* Don't retry failed URLs for 5 minutes */
+#define FAILED_URL_MAX_ENTRIES 1000               /* Max entries before cleanup */
 
 /* Metrics */
 static GnostrAvatarMetrics s_avatar_metrics = {0};
@@ -452,6 +453,28 @@ static gboolean avatar_url_recently_failed(const char *url) {
   return (now - failed_at) < FAILED_URL_RETRY_SECONDS;
 }
 
+/* Evict expired entries from failed URL cache (call with mutex held) */
+static void avatar_failed_urls_evict_expired_unlocked(gint64 now) {
+  if (!s_failed_urls) return;
+  
+  GHashTableIter iter;
+  gpointer key, value;
+  GPtrArray *to_remove = g_ptr_array_new();
+  
+  g_hash_table_iter_init(&iter, s_failed_urls);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    gint64 failed_at = GPOINTER_TO_SIZE(value);
+    if ((now - failed_at) >= FAILED_URL_RETRY_SECONDS) {
+      g_ptr_array_add(to_remove, key);
+    }
+  }
+  
+  for (guint i = 0; i < to_remove->len; i++) {
+    g_hash_table_remove(s_failed_urls, to_remove->pdata[i]);
+  }
+  g_ptr_array_free(to_remove, TRUE);
+}
+
 /* Record URL as failed */
 static void avatar_url_mark_failed(const char *url) {
   if (!url) return;
@@ -460,7 +483,16 @@ static void avatar_url_mark_failed(const char *url) {
     s_failed_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   }
   gint64 now = g_get_monotonic_time() / G_USEC_PER_SEC;
-  g_hash_table_replace(s_failed_urls, g_strdup(url), GSIZE_TO_POINTER((gsize)now));
+  
+  /* Evict expired entries if we're at capacity */
+  if (g_hash_table_size(s_failed_urls) >= FAILED_URL_MAX_ENTRIES) {
+    avatar_failed_urls_evict_expired_unlocked(now);
+  }
+  
+  /* If still at capacity after eviction, just skip adding (bounded growth) */
+  if (g_hash_table_size(s_failed_urls) < FAILED_URL_MAX_ENTRIES) {
+    g_hash_table_replace(s_failed_urls, g_strdup(url), GSIZE_TO_POINTER((gsize)now));
+  }
   g_mutex_unlock(&s_failed_urls_mutex);
 }
 
