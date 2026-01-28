@@ -2742,8 +2742,8 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
           else if (is_video_url(url)) {
             GnostrVideoPlayer *player = gnostr_video_player_new();
             gtk_widget_add_css_class(GTK_WIDGET(player), "note-media-video");
-            /* Constrain video width to card width (640px) less margins (16px each side) */
-            gtk_widget_set_size_request(GTK_WIDGET(player), 608, 300);
+            /* Set minimum height only - let width be flexible */
+            gtk_widget_set_size_request(GTK_WIDGET(player), -1, 300);
             gtk_widget_set_hexpand(GTK_WIDGET(player), FALSE);
             gtk_widget_set_vexpand(GTK_WIDGET(player), FALSE);
 
