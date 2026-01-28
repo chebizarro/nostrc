@@ -8,6 +8,7 @@
 #include <gtk/gtk.h>
 #include <json-glib/json-glib.h>
 #include "gnostr-avatar-cache.h"
+#include "../util/utils.h"
 #include "../util/nip05.h"
 #include "../util/imeta.h"
 #include "../util/zap.h"
@@ -4601,18 +4602,17 @@ static void load_video_thumbnail(GnostrNoteCardRow *self, const char *thumb_url)
 
   self->video_thumb_cancellable = g_cancellable_new();
 
-  SoupSession *session = soup_session_new();
+  /* Use shared session - do NOT create per-request session as it gets disposed
+   * while the async request is still in flight, causing libsoup crashes */
   SoupMessage *msg = soup_message_new("GET", thumb_url);
   if (!msg) {
-    g_object_unref(session);
     return;
   }
 
-  soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT,
+  soup_session_send_and_read_async(gnostr_get_shared_soup_session(), msg, G_PRIORITY_DEFAULT,
                                     self->video_thumb_cancellable,
                                     on_video_thumb_bytes_ready, self);
   g_object_unref(msg);
-  g_object_unref(session);
 }
 #endif
 
