@@ -682,8 +682,10 @@ void gnostr_note_embed_set_profile(GnostrNoteEmbed *self,
   self->embed_type = EMBED_TYPE_PROFILE;
   self->state = EMBED_STATE_LOADED;
 
+  /* Duplicate pubkey_hex BEFORE freeing target_id in case they point to same memory */
+  char *new_target_id = g_strdup(pubkey_hex);
   g_clear_pointer(&self->target_id, g_free);
-  self->target_id = g_strdup(pubkey_hex);
+  self->target_id = new_target_id;
 
   if (GTK_IS_LABEL(self->author_label)) {
     gtk_label_set_text(GTK_LABEL(self->author_label),
