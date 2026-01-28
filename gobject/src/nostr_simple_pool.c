@@ -232,6 +232,8 @@ static gpointer paginate_with_interval_thread(gpointer user_data) {
                 if (err) { free_error(err); }
                 continue;
             }
+            /* Skip signature verification - nostrdb handles this during ingestion */
+            relay->assume_valid = true;
             if (!nostr_relay_connect(relay, &err)) {
                 if (err) { free_error(err); }
                 nostr_relay_free(relay);
@@ -413,6 +415,8 @@ static gpointer subscribe_many_thread(gpointer user_data) {
                 if (err) free_error(err);
                 continue;
             }
+            /* Skip signature verification - nostrdb handles this during ingestion */
+            relay->assume_valid = true;
             if (!nostr_relay_connect(relay, &err)) {
                 g_warning("simple_pool: connect failed for %s: %s", url, (err && err->message) ? err->message : "(no detail)");
                 if (err) free_error(err);
@@ -693,6 +697,8 @@ static gpointer query_single_thread(gpointer user_data) {
                 if (err) { free_error(err); err = NULL; }
                 continue;
             }
+            /* Skip signature verification - nostrdb handles this during ingestion */
+            relay->assume_valid = true;
 
             // Connect to the relay
             if (!nostr_relay_connect(relay, &err)) {

@@ -429,6 +429,11 @@ void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url) {
         if (err) free_error(err);
         return;
     }
+    
+    /* Skip signature verification - nostrdb handles this during ingestion.
+     * This avoids duplicate verification and "Signature verification failed" warnings. */
+    relay->assume_valid = true;
+    
     (void)nostr_relay_connect(relay, &err);
     if (err) free_error(err);
 
