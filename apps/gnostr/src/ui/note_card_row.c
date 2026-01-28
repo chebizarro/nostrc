@@ -276,6 +276,36 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
    * Just clear the pointer and let GTK handle cleanup during template disposal. */
   self->og_preview = NULL;
   
+  /* NIP-71: Stop ALL video players BEFORE template disposal to prevent GStreamer from
+   * accessing Pango layouts while the widget is being disposed. This fixes crashes
+   * when many items are removed at once (e.g., clicking "New Notes" toast).
+   * Video players can be in:
+   * 1. self->video_player (NIP-71 dedicated video events)
+   * 2. self->media_box (inline videos from note content) */
+  if (self->video_player && GNOSTR_IS_VIDEO_PLAYER(self->video_player)) {
+    gnostr_video_player_stop(GNOSTR_VIDEO_PLAYER(self->video_player));
+  }
+  self->video_player = NULL;
+  
+  /* Stop any video players in media_box (inline videos from note content) */
+  if (self->media_box && GTK_IS_BOX(self->media_box)) {
+    GtkWidget *child = gtk_widget_get_first_child(self->media_box);
+    while (child) {
+      if (GNOSTR_IS_VIDEO_PLAYER(child)) {
+        gnostr_video_player_stop(GNOSTR_VIDEO_PLAYER(child));
+      }
+      child = gtk_widget_get_next_sibling(child);
+    }
+  }
+  
+#ifdef HAVE_SOUP3
+  /* Cancel video thumbnail fetch */
+  if (self->video_thumb_cancellable) {
+    g_cancellable_cancel(self->video_thumb_cancellable);
+    g_clear_object(&self->video_thumb_cancellable);
+  }
+#endif
+  
   /* Disconnect signal handlers from note_embed to prevent invalid closure notify.
    * Do NOT call gtk_frame_set_child(NULL) - let GTK handle cleanup automatically.
    * Check GNOSTR_IS_NOTE_EMBED to ensure the widget hasn't been freed already. */
