@@ -85,7 +85,6 @@ struct _GnostrSessionView {
   GtkWidget *thread_view;
 
   AdwViewStack *stack;
-  GtkScrolledWindow *timeline_scroller;
   GtkWidget *timeline;
   GtkWidget *notifications_view;
   GtkWidget *dm_inbox;
@@ -460,7 +459,6 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, thread_view);
 
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, stack);
-  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, timeline_scroller);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, timeline);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, notifications_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, dm_inbox);
