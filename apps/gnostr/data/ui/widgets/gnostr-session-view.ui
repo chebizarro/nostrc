@@ -262,8 +262,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="show-sidebar">false</property>
                         <property name="sidebar-position">1</property>
                         <property name="collapsed">true</property>
-                        <property name="min-sidebar-width">672</property>
-                        <property name="max-sidebar-width">672</property>
+                        <property name="min-sidebar-width">320</property>
+                        <property name="max-sidebar-width">480</property>
                         <property name="content">
                           <object class="GtkOverlay" id="content_root">
                             <property name="hexpand">true</property>
@@ -378,7 +378,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="sidebar">
                           <object class="GtkBox" id="panel_container">
                             <property name="orientation">1</property>
-                            <property name="width-request">672</property>
+                            <property name="hexpand">true</property>
                             <child>
                               <object class="GnostrProfilePane" id="profile_pane">
                                 <property name="hexpand">true</property>

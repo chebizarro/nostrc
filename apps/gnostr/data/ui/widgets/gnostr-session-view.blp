@@ -235,8 +235,8 @@ template $GnostrSessionView: Adw.Bin {
                         show-sidebar: false;
                         sidebar-position: end;
                         collapsed: true;
-                        min-sidebar-width: 672;
-                        max-sidebar-width: 672;
+                        min-sidebar-width: 320;
+                        max-sidebar-width: 480;
 
                         content: Overlay content_root {
                             hexpand: true;
@@ -336,7 +336,7 @@ template $GnostrSessionView: Adw.Bin {
 
                         sidebar: Box panel_container {
                             orientation: vertical;
-                            width-request: 672;
+                            hexpand: true;
 
                             $GnostrProfilePane profile_pane {
                                 hexpand: true;
