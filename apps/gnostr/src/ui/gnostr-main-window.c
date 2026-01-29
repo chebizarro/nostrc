@@ -4612,18 +4612,23 @@ static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
     gnostr_session_view_set_new_notes_count(self->session_view, 0);
   }
 
-  /* Flush pending notes - this schedules model changes via idle */
+  /* Mark user as at top BEFORE flushing so new items insert directly */
+  if (self->event_model && GN_IS_NOSTR_EVENT_MODEL(self->event_model)) {
+    gn_nostr_event_model_set_user_at_top(self->event_model, TRUE);
+  }
+
+  /* Flush pending notes - this now uses batched insertion with single signal */
   if (self->event_model && GN_IS_NOSTR_EVENT_MODEL(self->event_model)) {
     gn_nostr_event_model_flush_pending(self->event_model);
   }
 
   /* nostrc-9f4: Defer scroll using timeout to avoid GTK4 ListView crash.
-   * When flush_pending is called synchronously, GTK's internal ListView
-   * processing (tile management, widget recycling) continues asynchronously.
-   * Using a timeout instead of idle ensures GTK has multiple main loop
+   * When flush_pending is called, GTK's internal ListView processing
+   * (tile management, widget recycling) continues asynchronously.
+   * Using a longer timeout (150ms) ensures GTK has multiple main loop
    * iterations to complete its internal updates before we scroll.
    * We ref the window to ensure it stays valid until the timeout fires. */
-  g_timeout_add(50, scroll_to_top_idle, g_object_ref(self));
+  g_timeout_add(150, scroll_to_top_idle, g_object_ref(self));
 }
 
 gboolean gnostr_main_window_get_compact(GnostrMainWindow *self) {

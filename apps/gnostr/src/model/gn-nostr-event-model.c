@@ -500,7 +500,27 @@ static gint64 get_current_time_ms(void) {
   return g_get_monotonic_time() / 1000;
 }
 
-/* nostrc-yi2: Actually insert deferred notes into the model */
+/* Compare function for sorting NoteEntry by created_at (newest first) */
+static gint note_entry_compare_newest_first(gconstpointer a, gconstpointer b) {
+  const NoteEntry *ea = (const NoteEntry *)a;
+  const NoteEntry *eb = (const NoteEntry *)b;
+  /* Newest first: higher created_at comes first */
+  if (ea->created_at > eb->created_at) return -1;
+  if (ea->created_at < eb->created_at) return 1;
+  return 0;
+}
+
+/* nostrc-yi2: Actually insert deferred notes into the model
+ * 
+ * OPTIMIZATION: Instead of emitting items_changed for each insertion (which
+ * causes GTK ListView to recalculate layout N times), we:
+ * 1. Filter and sort all deferred notes
+ * 2. Insert them all at position 0 (they're all newer than existing items)
+ * 3. Emit a SINGLE items_changed signal covering all insertions
+ * 
+ * This reduces O(N) layout recalculations to O(1), dramatically improving
+ * performance when flushing many deferred notes (e.g., clicking "N new notes").
+ */
 static gboolean flush_deferred_notes_cb(gpointer user_data) {
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
   if (!GN_IS_NOSTR_EVENT_MODEL(self)) return G_SOURCE_REMOVE;
@@ -521,26 +541,45 @@ static gboolean flush_deferred_notes_cb(gpointer user_data) {
     return G_SOURCE_REMOVE;
   }
 
-  g_debug("[CALM] Flushing %u deferred notes", self->deferred_notes->len);
+  guint total_deferred = self->deferred_notes->len;
+  g_debug("[CALM] Flushing %u deferred notes (batched)", total_deferred);
 
-  /* Insert all deferred notes one at a time with correct signals.
-   * We must emit items_changed for each insertion at the correct position,
-   * otherwise GTK ListView will misrender and show duplicates. */
+  /* Step 1: Filter out duplicates and collect valid entries */
+  GArray *to_insert = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
   for (guint i = 0; i < self->deferred_notes->len; i++) {
     NoteEntry *entry = &g_array_index(self->deferred_notes, NoteEntry, i);
-
-    /* Check if already in model */
-    if (has_note_key(self, entry->note_key)) continue;
-
-    /* Find insertion position (sorted by created_at, newest first) */
-    guint pos = find_sorted_position(self, entry->created_at);
-
-    /* Insert at position */
-    g_array_insert_val(self->notes, pos, *entry);
-    
-    /* Emit correct signal for this specific insertion */
-    g_list_model_items_changed(G_LIST_MODEL(self), pos, 0, 1);
+    if (!has_note_key(self, entry->note_key)) {
+      g_array_append_val(to_insert, *entry);
+    }
   }
+
+  guint n_to_insert = to_insert->len;
+  if (n_to_insert == 0) {
+    g_array_free(to_insert, TRUE);
+    g_array_set_size(self->deferred_notes, 0);
+    self->pending_new_count = 0;
+    g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
+    return G_SOURCE_REMOVE;
+  }
+
+  /* Step 2: Sort by created_at (newest first) */
+  g_array_sort(to_insert, note_entry_compare_newest_first);
+
+  /* Step 3: Insert all at the front of the notes array
+   * Since deferred notes are all newer than existing notes (they arrived
+   * while user was scrolled down), they all go at the beginning.
+   * We insert in reverse order so newest ends up at position 0. */
+  for (gint i = (gint)n_to_insert - 1; i >= 0; i--) {
+    NoteEntry *entry = &g_array_index(to_insert, NoteEntry, (guint)i);
+    g_array_prepend_val(self->notes, *entry);
+  }
+
+  g_array_free(to_insert, TRUE);
+
+  /* Step 4: Emit a SINGLE items_changed signal for all insertions at position 0 */
+  g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, n_to_insert);
+
+  g_debug("[CALM] Batch inserted %u notes with single signal", n_to_insert);
 
   /* Clear deferred queue */
   g_array_set_size(self->deferred_notes, 0);
@@ -551,6 +590,9 @@ static gboolean flush_deferred_notes_cb(gpointer user_data) {
   /* Clear pending count and notify */
   self->pending_new_count = 0;
   g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
+
+  /* Enforce window size to prevent unbounded growth */
+  enforce_window(self);
 
   return G_SOURCE_REMOVE;
 }
