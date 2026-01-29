@@ -370,11 +370,14 @@ static void on_html_fetched(GObject *source, GAsyncResult *res, gpointer user_da
     return;
   }
   
-  /* Parse HTML */
+  /* Parse HTML - g_bytes_get_data returns non-null-terminated data,
+   * so we must create a null-terminated copy for string functions */
   gsize size;
-  const char *html = g_bytes_get_data(bytes, &size);
+  const char *data = g_bytes_get_data(bytes, &size);
+  char *html = g_strndup(data, size);
   
   OgMetadata *meta = parse_og_metadata(html, self->current_url);
+  g_free(html);
   
   /* Cache result with size limit to prevent unbounded memory growth */
   if (meta && self->current_url && !self->disposed) {
