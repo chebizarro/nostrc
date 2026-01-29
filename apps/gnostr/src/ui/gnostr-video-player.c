@@ -66,7 +66,16 @@ struct _GnostrVideoPlayer {
   gboolean is_visible_in_viewport;     /* Whether currently visible in scrolled parent */
   gulong scroll_adj_changed_handler;   /* Signal handler for scroll adjustment changes */
   GtkAdjustment *scroll_vadjustment;   /* Vertical adjustment of parent scroll */
-  
+
+  /* Error state */
+  GtkWidget *error_box;              /* Error overlay shown when video fails */
+  GtkWidget *loading_spinner;        /* Loading spinner shown while preparing */
+  gboolean has_error;                /* TRUE if video failed to load */
+
+  /* Media stream signal handlers */
+  gulong media_error_handler;
+  gulong media_prepared_handler;
+
   /* Disposal flag */
   gboolean disposed;
 };
@@ -81,6 +90,108 @@ static gboolean hide_controls_timeout(gpointer user_data);
 static void show_controls(GnostrVideoPlayer *self);
 static void schedule_hide_controls(GnostrVideoPlayer *self);
 static gboolean position_update_tick(gpointer user_data);
+static void show_error_state(GnostrVideoPlayer *self, const char *message);
+static void show_loading_state(GnostrVideoPlayer *self, gboolean loading);
+
+/* Media stream error callback - called when video fails to load or play */
+static void on_media_error(GtkMediaStream *stream, GParamSpec *pspec, gpointer user_data) {
+  GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(user_data);
+  (void)pspec;
+
+  if (!GNOSTR_IS_VIDEO_PLAYER(self) || self->disposed) return;
+
+  const GError *error = gtk_media_stream_get_error(stream);
+  if (error) {
+    g_warning("Video playback error: %s", error->message);
+    show_error_state(self, error->message);
+  }
+}
+
+/* Media stream prepared callback - called when video metadata is available and ready to play */
+static void on_media_prepared(GtkMediaStream *stream, GParamSpec *pspec, gpointer user_data) {
+  GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(user_data);
+  (void)pspec;
+
+  if (!GNOSTR_IS_VIDEO_PLAYER(self) || self->disposed) return;
+
+  gboolean prepared = gtk_media_stream_is_prepared(stream);
+  if (prepared) {
+    g_debug("Video prepared: %s", self->uri ? self->uri : "(null)");
+    show_loading_state(self, FALSE);
+    /* If autoplay is enabled and no error, start playing */
+    if (self->autoplay && !self->has_error) {
+      gtk_media_stream_play(stream);
+    }
+    update_time_labels(self);
+  }
+}
+
+/* Show error overlay when video fails to load */
+static void show_error_state(GnostrVideoPlayer *self, const char *message) {
+  self->has_error = TRUE;
+  show_loading_state(self, FALSE);
+
+  /* Hide the picture and controls */
+  if (GTK_IS_WIDGET(self->picture)) {
+    gtk_widget_set_visible(self->picture, FALSE);
+  }
+  if (GTK_IS_WIDGET(self->controls_box)) {
+    gtk_widget_set_visible(self->controls_box, FALSE);
+  }
+
+  /* Create error box if not exists */
+  if (!self->error_box) {
+    self->error_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_add_css_class(self->error_box, "video-error");
+    gtk_widget_set_halign(self->error_box, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(self->error_box, GTK_ALIGN_CENTER);
+
+    GtkWidget *icon = gtk_image_new_from_icon_name("dialog-error-symbolic");
+    gtk_image_set_pixel_size(GTK_IMAGE(icon), 48);
+    gtk_box_append(GTK_BOX(self->error_box), icon);
+
+    GtkWidget *label = gtk_label_new(_("Video unavailable"));
+    gtk_widget_add_css_class(label, "error-title");
+    gtk_box_append(GTK_BOX(self->error_box), label);
+
+    GtkWidget *detail = gtk_label_new(NULL);
+    gtk_widget_add_css_class(detail, "error-detail");
+    gtk_label_set_wrap(GTK_LABEL(detail), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(detail), 40);
+    g_object_set_data(G_OBJECT(self->error_box), "detail-label", detail);
+    gtk_box_append(GTK_BOX(self->error_box), detail);
+
+    gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->error_box);
+  }
+
+  /* Update error detail */
+  GtkWidget *detail = g_object_get_data(G_OBJECT(self->error_box), "detail-label");
+  if (GTK_IS_LABEL(detail) && message) {
+    gtk_label_set_text(GTK_LABEL(detail), message);
+  }
+
+  gtk_widget_set_visible(self->error_box, TRUE);
+}
+
+/* Show/hide loading spinner */
+static void show_loading_state(GnostrVideoPlayer *self, gboolean loading) {
+  if (loading) {
+    if (!self->loading_spinner) {
+      self->loading_spinner = gtk_spinner_new();
+      gtk_widget_set_size_request(self->loading_spinner, 48, 48);
+      gtk_widget_set_halign(self->loading_spinner, GTK_ALIGN_CENTER);
+      gtk_widget_set_valign(self->loading_spinner, GTK_ALIGN_CENTER);
+      gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->loading_spinner);
+    }
+    gtk_spinner_start(GTK_SPINNER(self->loading_spinner));
+    gtk_widget_set_visible(self->loading_spinner, TRUE);
+  } else {
+    if (GTK_IS_SPINNER(self->loading_spinner)) {
+      gtk_spinner_stop(GTK_SPINNER(self->loading_spinner));
+      gtk_widget_set_visible(self->loading_spinner, FALSE);
+    }
+  }
+}
 
 /* Format time in MM:SS or HH:MM:SS format */
 static char *format_time(gint64 microseconds) {
@@ -623,9 +734,19 @@ static void gnostr_video_player_dispose(GObject *obj) {
    * GStreamer audio backend (OpenAL/PipeWire) threads to finish cleanly.
    * Without this, audio threads may access freed memory causing heap-use-after-free. */
   if (self->media_file) {
+    /* Disconnect signal handlers FIRST to prevent callbacks during cleanup */
+    GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
+    if (self->media_error_handler > 0) {
+      g_signal_handler_disconnect(stream, self->media_error_handler);
+      self->media_error_handler = 0;
+    }
+    if (self->media_prepared_handler > 0) {
+      g_signal_handler_disconnect(stream, self->media_prepared_handler);
+      self->media_prepared_handler = 0;
+    }
     /* Stop playback and seek to start to fully stop the pipeline */
-    gtk_media_stream_pause(GTK_MEDIA_STREAM(self->media_file));
-    gtk_media_stream_seek(GTK_MEDIA_STREAM(self->media_file), 0);
+    gtk_media_stream_pause(stream);
+    gtk_media_stream_seek(stream, 0);
     /* Clear the file to stop any pending I/O */
     gtk_media_file_set_file(self->media_file, NULL);
     /* Now safe to unref */
@@ -646,6 +767,8 @@ static void gnostr_video_player_dispose(GObject *obj) {
   self->btn_fullscreen = NULL;
   self->controls_box = NULL;
   self->picture = NULL;
+  self->error_box = NULL;
+  self->loading_spinner = NULL;
 
   /* Unparent the overlay (which contains picture and controls) */
   if (self->overlay) {
@@ -708,6 +831,13 @@ static void gnostr_video_player_init(GnostrVideoPlayer *self) {
   self->media_file = GTK_MEDIA_FILE(gtk_media_file_new());
   gtk_media_stream_set_loop(GTK_MEDIA_STREAM(self->media_file), self->loop);
 
+  /* Connect to media stream signals for error handling and load notification */
+  GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
+  self->media_error_handler = g_signal_connect(stream, "notify::error",
+                                                 G_CALLBACK(on_media_error), self);
+  self->media_prepared_handler = g_signal_connect(stream, "notify::prepared",
+                                                    G_CALLBACK(on_media_prepared), self);
+
   /* Create picture widget to display the media (no controls, unlike GtkVideo) */
   self->picture = gtk_picture_new_for_paintable(GDK_PAINTABLE(self->media_file));
   gtk_widget_add_css_class(self->picture, "video-content");
@@ -753,7 +883,22 @@ void gnostr_video_player_set_uri(GnostrVideoPlayer *self, const char *uri) {
   g_free(self->uri);
   self->uri = g_strdup(uri);
 
+  /* Reset error state when loading new video */
+  self->has_error = FALSE;
+  if (GTK_IS_WIDGET(self->error_box)) {
+    gtk_widget_set_visible(self->error_box, FALSE);
+  }
+  if (GTK_IS_WIDGET(self->picture)) {
+    gtk_widget_set_visible(self->picture, TRUE);
+  }
+  if (GTK_IS_WIDGET(self->controls_box)) {
+    gtk_widget_set_visible(self->controls_box, TRUE);
+  }
+
   if (self->media_file && uri) {
+    /* Show loading spinner while video prepares */
+    show_loading_state(self, TRUE);
+
     GFile *file = g_file_new_for_uri(uri);
     gtk_media_file_set_file(self->media_file, file);
     g_object_unref(file);
@@ -764,10 +909,9 @@ void gnostr_video_player_set_uri(GnostrVideoPlayer *self, const char *uri) {
     gtk_media_stream_set_muted(stream, self->muted);
     gtk_media_stream_set_volume(stream, self->volume);
 
-    /* Start playback if autoplay is enabled */
-    if (self->autoplay) {
-      gtk_media_stream_play(stream);
-    }
+    /* Note: Autoplay is handled in on_media_prepared callback to ensure
+     * video is ready before starting playback. This prevents silent failures
+     * when trying to play before the media pipeline is prepared. */
   }
 }
 

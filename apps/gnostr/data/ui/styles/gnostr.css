@@ -638,6 +638,29 @@ gnostr-video-player {
 	opacity: 1;
 }
 
+/* Video error state */
+.video-error {
+	padding: 24px;
+	color: @error_color;
+}
+
+.video-error image {
+	opacity: 0.7;
+	margin-bottom: 8px;
+}
+
+.video-error .error-title {
+	font-size: 16px;
+	font-weight: 600;
+	color: @theme_fg_color;
+}
+
+.video-error .error-detail {
+	font-size: 12px;
+	color: alpha(@theme_fg_color, 0.6);
+	margin-top: 4px;
+}
+
 /* Seek bar row */
 .video-seek-row {
 	margin-bottom: 8px;
