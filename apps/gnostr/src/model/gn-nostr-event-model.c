@@ -566,19 +566,47 @@ static gboolean flush_deferred_notes_cb(gpointer user_data) {
   /* Step 2: Sort by created_at (newest first) */
   g_array_sort(to_insert, note_entry_compare_newest_first);
 
-  /* Step 3: Insert all at the front of the notes array
-   * Since deferred notes are all newer than existing notes (they arrived
-   * while user was scrolled down), they all go at the beginning.
-   * We insert in reverse order so newest ends up at position 0. */
-  for (gint i = (gint)n_to_insert - 1; i >= 0; i--) {
-    NoteEntry *entry = &g_array_index(to_insert, NoteEntry, (guint)i);
-    g_array_prepend_val(self->notes, *entry);
+  /* Step 3: Merge deferred notes with existing notes using "replace all" strategy.
+   * Instead of inserting at position 0 (which triggers aggressive widget recycling),
+   * we rebuild the entire notes array and emit a single "replace all" signal.
+   * This tells GTK "the model changed completely" which is handled more gracefully
+   * than "N items inserted at front" which causes widget recycling storms. */
+  
+  guint old_count = self->notes->len;
+  
+  /* Create new array with deferred notes first, then existing notes */
+  GArray *new_notes = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
+  g_array_set_size(new_notes, n_to_insert + old_count);
+  
+  /* Copy deferred notes (already sorted newest first) */
+  for (guint i = 0; i < n_to_insert; i++) {
+    NoteEntry *entry = &g_array_index(to_insert, NoteEntry, i);
+    g_array_index(new_notes, NoteEntry, i) = *entry;
   }
-
+  
+  /* Copy existing notes after deferred notes */
+  for (guint i = 0; i < old_count; i++) {
+    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
+    g_array_index(new_notes, NoteEntry, n_to_insert + i) = *entry;
+  }
+  
+  /* Swap arrays */
+  g_array_free(self->notes, TRUE);
+  self->notes = new_notes;
   g_array_free(to_insert, TRUE);
-
-  /* Step 4: Emit a SINGLE items_changed signal for all insertions at position 0 */
-  g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, n_to_insert);
+  
+  /* Clear item cache - items will be re-fetched on demand with correct positions */
+  if (self->item_cache) {
+    g_hash_table_remove_all(self->item_cache);
+  }
+  if (self->cache_lru) {
+    g_queue_clear(self->cache_lru);
+  }
+  
+  /* Step 4: Emit "replace all" signal - this is gentler on GTK's widget recycling
+   * than inserting at position 0. We tell GTK "old_count items removed, new total added"
+   * which causes it to treat this as a model reset rather than a mass insertion. */
+  g_list_model_items_changed(G_LIST_MODEL(self), 0, old_count, self->notes->len);
 
   g_debug("[CALM] Batch inserted %u notes with single signal", n_to_insert);
 
