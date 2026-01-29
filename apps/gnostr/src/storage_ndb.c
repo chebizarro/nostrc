@@ -23,6 +23,10 @@
 #  pragma GCC diagnostic pop
 #endif
 
+/* bolt11 parsing from nostrdb for NIP-57 zap amount extraction */
+#include "bolt11/bolt11.h"
+#include "bolt11/amount.h"
+
 /* Backend impl structure from ndb_backend.h */
 struct ln_ndb_impl {
   void *db;
@@ -629,6 +633,120 @@ GHashTable *storage_ndb_get_reaction_breakdown(const char *event_id_hex, GPtrArr
   if (results) storage_ndb_free_results(results, count);
 
   return breakdown;
+}
+
+/* ============== NIP-57 Zap Stats API ============== */
+
+/* Count zap receipts (kind 9735) for a given event.
+ * Uses a NIP-01 filter query to find all kind 9735 events that reference the given event ID. */
+guint storage_ndb_count_zaps(const char *event_id_hex)
+{
+  if (!event_id_hex || strlen(event_id_hex) != 64) return 0;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return 0;
+
+  /* Build filter: {"kinds":[9735],"#e":["<event_id>"]} */
+  gchar *filter_json = g_strdup_printf("{\"kinds\":[9735],\"#e\":[\"%s\"]}", event_id_hex);
+
+  char **results = NULL;
+  int count = 0;
+  int rc = storage_ndb_query(txn, filter_json, &results, &count);
+  g_free(filter_json);
+
+  storage_ndb_end_query(txn);
+
+  if (rc != 0) return 0;
+
+  guint zap_count = (guint)count;
+
+  /* Free the results - we only need the count */
+  if (results) {
+    storage_ndb_free_results(results, count);
+  }
+
+  return zap_count;
+}
+
+/* Get zap statistics for an event - count and total amount in millisatoshis.
+ * Parses bolt11 invoices from zap receipt tags to extract amounts. */
+gboolean storage_ndb_get_zap_stats(const char *event_id_hex, guint *zap_count, gint64 *total_msat)
+{
+  if (zap_count) *zap_count = 0;
+  if (total_msat) *total_msat = 0;
+
+  if (!event_id_hex || strlen(event_id_hex) != 64) return FALSE;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) return FALSE;
+
+  /* Build filter: {"kinds":[9735],"#e":["<event_id>"]} */
+  gchar *filter_json = g_strdup_printf("{\"kinds\":[9735],\"#e\":[\"%s\"]}", event_id_hex);
+
+  char **results = NULL;
+  int count = 0;
+  int rc = storage_ndb_query(txn, filter_json, &results, &count);
+  g_free(filter_json);
+
+  storage_ndb_end_query(txn);
+
+  if (rc != 0 || count == 0) {
+    if (results) storage_ndb_free_results(results, count);
+    return (rc == 0);  /* Return TRUE if query succeeded with 0 results */
+  }
+
+  if (zap_count) *zap_count = (guint)count;
+
+  /* Parse each zap receipt to extract amount from bolt11 */
+  gint64 total = 0;
+  for (int i = 0; i < count; i++) {
+    if (!results[i]) continue;
+
+    json_error_t err;
+    json_t *event = json_loads(results[i], 0, &err);
+    if (!event) continue;
+
+    json_t *tags = json_object_get(event, "tags");
+    if (tags && json_is_array(tags)) {
+      size_t j;
+      json_t *tag;
+      json_array_foreach(tags, j, tag) {
+        if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+
+        json_t *tag_name = json_array_get(tag, 0);
+        json_t *tag_value = json_array_get(tag, 1);
+
+        if (!json_is_string(tag_name) || !json_is_string(tag_value)) continue;
+
+        const char *name = json_string_value(tag_name);
+        const char *value = json_string_value(tag_value);
+
+        if (g_strcmp0(name, "bolt11") == 0 && value && *value) {
+          /* Parse bolt11 invoice to get amount */
+          char *fail = NULL;
+          struct bolt11 *b11 = bolt11_decode_minimal(NULL, value, &fail);
+          if (b11) {
+            if (b11->msat) {
+              total += (gint64)b11->msat->millisatoshis;
+            }
+            tal_free(b11);
+          } else if (fail) {
+            g_debug("storage_ndb: failed to parse bolt11: %s", fail);
+            free(fail);
+          }
+          break;  /* Found bolt11, no need to continue tag iteration */
+        }
+      }
+    }
+
+    json_decref(event);
+  }
+
+  if (total_msat) *total_msat = total;
+
+  if (results) storage_ndb_free_results(results, count);
+
+  return TRUE;
 }
 
 /* ============== NIP-40 Expiration Timestamp API ============== */

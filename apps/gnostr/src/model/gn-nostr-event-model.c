@@ -7,6 +7,7 @@
 #include "../util/mute_list.h"
 #include <nostr.h>
 #include <string.h>
+#include <jansson.h>
 
 /* Window sizing and cache sizes */
 #define MODEL_MAX_ITEMS 100
@@ -22,9 +23,11 @@
 #define MIN_UPDATE_INTERVAL_MS (1000 / MAX_UPDATES_PER_SEC)
 
 /* Subscription filters - storage_ndb_subscribe expects a single filter object, not an array */
-#define FILTER_TIMELINE "{\"kinds\":[1,6]}"
-#define FILTER_PROFILES "{\"kinds\":[0]}"
-#define FILTER_DELETES  "{\"kinds\":[5]}"
+#define FILTER_TIMELINE   "{\"kinds\":[1,6]}"
+#define FILTER_PROFILES   "{\"kinds\":[0]}"
+#define FILTER_DELETES    "{\"kinds\":[5]}"
+#define FILTER_REACTIONS  "{\"kinds\":[7]}"
+#define FILTER_ZAPS       "{\"kinds\":[9735]}"
 
 /* Note entry for sorted storage */
 typedef struct {
@@ -60,9 +63,15 @@ struct _GnNostrEventModel {
   GArray *notes;  /* element-type: NoteEntry */
 
   /* Lifetime nostrdb subscriptions (via dispatcher) */
-  uint64_t sub_timeline; /* kinds 1/6 */
-  uint64_t sub_profiles; /* kind 0 */
-  uint64_t sub_deletes;  /* kind 5 */
+  uint64_t sub_timeline;   /* kinds 1/6 */
+  uint64_t sub_profiles;   /* kind 0 */
+  uint64_t sub_deletes;    /* kind 5 */
+  uint64_t sub_reactions;  /* kind 7 (NIP-25) */
+  uint64_t sub_zaps;       /* kind 9735 (NIP-57) */
+
+  /* Reaction/zap stats caches - event_id_hex -> stats */
+  GHashTable *reaction_cache;  /* key: event_id (string), value: guint count via GUINT_TO_POINTER */
+  GHashTable *zap_stats_cache; /* key: event_id (string), value: ZapStats* */
 
   /* Windowing */
   guint window_size;
@@ -105,11 +114,21 @@ typedef struct {
   guint depth;
 } ThreadInfo;
 
+/* NIP-57: Zap stats for caching */
+typedef struct {
+  guint count;
+  gint64 total_msat;
+} ZapStats;
+
 static void thread_info_free(ThreadInfo *info) {
   if (!info) return;
   g_free(info->root_id);
   g_free(info->parent_id);
   g_free(info);
+}
+
+static void zap_stats_free(ZapStats *stats) {
+  g_free(stats);
 }
 
 static guint uint64_hash(gconstpointer key) {
@@ -173,6 +192,8 @@ static gint64 get_current_time_ms(void);
 static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
 static void on_sub_profiles_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
 static void on_sub_deletes_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
+static void on_sub_reactions_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
+static void on_sub_zaps_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
 
 /* LRU cache management */
 static void cache_touch(GnNostrEventModel *self, uint64_t key) {
@@ -1220,15 +1241,265 @@ static void on_sub_deletes_batch(uint64_t subid, const uint64_t *note_keys, guin
   storage_ndb_end_query(txn);
 }
 
+/* Helper: Update cached item's reaction count */
+static void update_item_reaction_count(GnNostrEventModel *self, const char *event_id_hex) {
+  if (!self || !self->item_cache || !event_id_hex) return;
+
+  /* Find the item in cache by iterating (items are keyed by note_key, not event_id) */
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->item_cache);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    GnNostrEventItem *item = GN_NOSTR_EVENT_ITEM(value);
+    const char *item_id = gn_nostr_event_item_get_event_id(item);
+    if (item_id && g_strcmp0(item_id, event_id_hex) == 0) {
+      /* Found matching item - update its reaction count from cache */
+      gpointer cached = g_hash_table_lookup(self->reaction_cache, event_id_hex);
+      guint count = cached ? GPOINTER_TO_UINT(cached) : 0;
+      gn_nostr_event_item_set_like_count(item, count);
+      break;
+    }
+  }
+}
+
+/* Helper: Update cached item's zap stats */
+static void update_item_zap_stats(GnNostrEventModel *self, const char *event_id_hex) {
+  if (!self || !self->item_cache || !event_id_hex) return;
+
+  /* Find the item in cache by iterating */
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->item_cache);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    GnNostrEventItem *item = GN_NOSTR_EVENT_ITEM(value);
+    const char *item_id = gn_nostr_event_item_get_event_id(item);
+    if (item_id && g_strcmp0(item_id, event_id_hex) == 0) {
+      /* Found matching item - update its zap stats from cache */
+      ZapStats *stats = g_hash_table_lookup(self->zap_stats_cache, event_id_hex);
+      if (stats) {
+        gn_nostr_event_item_set_zap_count(item, stats->count);
+        gn_nostr_event_item_set_zap_total_msat(item, stats->total_msat);
+      }
+      break;
+    }
+  }
+}
+
+/* NIP-25: Process incoming reaction events (kind 7) */
+static void on_sub_reactions_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
+  (void)subid;
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
+  if (!self->reaction_cache) return;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
+
+  /* Track which event IDs we need to update */
+  GHashTable *events_to_update = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+  for (guint i = 0; i < n_keys; i++) {
+    uint64_t note_key = note_keys[i];
+    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
+    if (!note) continue;
+
+    uint32_t kind = storage_ndb_note_kind(note);
+    if (kind != 7) continue;
+
+    /* Extract target event ID from tags using tag iteration */
+    char *target_event_id = NULL;
+    storage_ndb_note_get_nip10_thread(note, NULL, &target_event_id);
+
+    /* If no reply_id, try getting from the first e-tag manually */
+    if (!target_event_id) {
+      /* Query the note JSON to parse tags */
+      const unsigned char *id32 = storage_ndb_note_id(note);
+      if (!id32) continue;
+
+      char id_hex[65];
+      storage_ndb_hex_encode(id32, id_hex);
+
+      char **arr = NULL;
+      int n = 0;
+      char *filter = g_strdup_printf("[{\"ids\":[\"%s\"]}]", id_hex);
+      int qrc = storage_ndb_query(txn, filter, &arr, &n);
+      g_free(filter);
+
+      if (qrc == 0 && arr && n > 0 && arr[0]) {
+        /* Parse JSON to find e-tag */
+        json_error_t err;
+        json_t *event = json_loads(arr[0], 0, &err);
+        if (event) {
+          json_t *tags = json_object_get(event, "tags");
+          if (tags && json_is_array(tags)) {
+            size_t j;
+            json_t *tag;
+            json_array_foreach(tags, j, tag) {
+              if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+              const char *tag_name = json_string_value(json_array_get(tag, 0));
+              const char *tag_value = json_string_value(json_array_get(tag, 1));
+              if (g_strcmp0(tag_name, "e") == 0 && tag_value && strlen(tag_value) == 64) {
+                target_event_id = g_strdup(tag_value);
+                break;
+              }
+            }
+          }
+          json_decref(event);
+        }
+      }
+      storage_ndb_free_results(arr, n);
+    }
+
+    if (target_event_id) {
+      /* Increment reaction count in cache */
+      gpointer existing = g_hash_table_lookup(self->reaction_cache, target_event_id);
+      guint new_count = (existing ? GPOINTER_TO_UINT(existing) : 0) + 1;
+      g_hash_table_insert(self->reaction_cache, g_strdup(target_event_id), GUINT_TO_POINTER(new_count));
+
+      /* Mark for UI update */
+      g_hash_table_add(events_to_update, g_strdup(target_event_id));
+      g_free(target_event_id);
+    }
+  }
+
+  storage_ndb_end_query(txn);
+
+  /* Update cached items */
+  GHashTableIter iter;
+  gpointer key;
+  g_hash_table_iter_init(&iter, events_to_update);
+  while (g_hash_table_iter_next(&iter, &key, NULL)) {
+    update_item_reaction_count(self, (const char *)key);
+  }
+
+  g_hash_table_unref(events_to_update);
+}
+
+/* NIP-57: Process incoming zap receipt events (kind 9735) */
+static void on_sub_zaps_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
+  (void)subid;
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self) || !note_keys || n_keys == 0) return;
+  if (!self->zap_stats_cache) return;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
+
+  /* Track which event IDs we need to update */
+  GHashTable *events_to_update = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+  for (guint i = 0; i < n_keys; i++) {
+    uint64_t note_key = note_keys[i];
+    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
+    if (!note) continue;
+
+    uint32_t kind = storage_ndb_note_kind(note);
+    if (kind != 9735) continue;
+
+    /* Query the note JSON to parse tags for target event and bolt11 */
+    const unsigned char *id32 = storage_ndb_note_id(note);
+    if (!id32) continue;
+
+    char id_hex[65];
+    storage_ndb_hex_encode(id32, id_hex);
+
+    char **arr = NULL;
+    int n = 0;
+    char *filter = g_strdup_printf("[{\"ids\":[\"%s\"]}]", id_hex);
+    int qrc = storage_ndb_query(txn, filter, &arr, &n);
+    g_free(filter);
+
+    if (qrc != 0 || !arr || n == 0 || !arr[0]) {
+      storage_ndb_free_results(arr, n);
+      continue;
+    }
+
+    /* Parse JSON to find e-tag (target event) and bolt11 (amount) */
+    json_error_t err;
+    json_t *event = json_loads(arr[0], 0, &err);
+    if (!event) {
+      storage_ndb_free_results(arr, n);
+      continue;
+    }
+
+    char *target_event_id = NULL;
+    gint64 amount_msat = 0;
+
+    json_t *tags = json_object_get(event, "tags");
+    if (tags && json_is_array(tags)) {
+      size_t j;
+      json_t *tag;
+      json_array_foreach(tags, j, tag) {
+        if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+        const char *tag_name = json_string_value(json_array_get(tag, 0));
+        const char *tag_value = json_string_value(json_array_get(tag, 1));
+
+        if (g_strcmp0(tag_name, "e") == 0 && tag_value && strlen(tag_value) == 64 && !target_event_id) {
+          target_event_id = g_strdup(tag_value);
+        } else if (g_strcmp0(tag_name, "bolt11") == 0 && tag_value && *tag_value) {
+          /* Parse bolt11 to get amount - using storage_ndb_get_zap_stats for this event
+           * would be cleaner but we already have the bolt11 here */
+          guint zap_count = 0;
+          gint64 total = 0;
+          if (target_event_id && storage_ndb_get_zap_stats(target_event_id, &zap_count, &total)) {
+            amount_msat = total;  /* Use the aggregated total from storage */
+          }
+        }
+      }
+    }
+
+    json_decref(event);
+    storage_ndb_free_results(arr, n);
+
+    if (target_event_id) {
+      /* Get fresh stats from storage (includes this new zap) */
+      guint zap_count = 0;
+      gint64 total_msat = 0;
+      storage_ndb_get_zap_stats(target_event_id, &zap_count, &total_msat);
+
+      /* Update cache */
+      ZapStats *stats = g_hash_table_lookup(self->zap_stats_cache, target_event_id);
+      if (!stats) {
+        stats = g_new0(ZapStats, 1);
+        g_hash_table_insert(self->zap_stats_cache, g_strdup(target_event_id), stats);
+      }
+      stats->count = zap_count;
+      stats->total_msat = total_msat;
+
+      /* Mark for UI update */
+      g_hash_table_add(events_to_update, g_strdup(target_event_id));
+      g_free(target_event_id);
+    }
+  }
+
+  storage_ndb_end_query(txn);
+
+  /* Update cached items */
+  GHashTableIter iter;
+  gpointer key;
+  g_hash_table_iter_init(&iter, events_to_update);
+  while (g_hash_table_iter_next(&iter, &key, NULL)) {
+    update_item_zap_stats(self, (const char *)key);
+  }
+
+  g_hash_table_unref(events_to_update);
+}
+
 /* -------------------- GObject boilerplate -------------------- */
 
 static void gn_nostr_event_model_finalize(GObject *object) {
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(object);
 
   /* Unsubscribe from nostrdb via dispatcher */
-  if (self->sub_timeline > 0) { gn_ndb_unsubscribe(self->sub_timeline); self->sub_timeline = 0; }
-  if (self->sub_profiles > 0) { gn_ndb_unsubscribe(self->sub_profiles); self->sub_profiles = 0; }
-  if (self->sub_deletes > 0)  { gn_ndb_unsubscribe(self->sub_deletes);  self->sub_deletes = 0;  }
+  if (self->sub_timeline > 0)   { gn_ndb_unsubscribe(self->sub_timeline);   self->sub_timeline = 0;   }
+  if (self->sub_profiles > 0)   { gn_ndb_unsubscribe(self->sub_profiles);   self->sub_profiles = 0;   }
+  if (self->sub_deletes > 0)    { gn_ndb_unsubscribe(self->sub_deletes);    self->sub_deletes = 0;    }
+  if (self->sub_reactions > 0)  { gn_ndb_unsubscribe(self->sub_reactions);  self->sub_reactions = 0;  }
+  if (self->sub_zaps > 0)       { gn_ndb_unsubscribe(self->sub_zaps);       self->sub_zaps = 0;       }
+
+  /* NIP-25/57: Clean up reaction and zap caches */
+  if (self->reaction_cache) g_hash_table_unref(self->reaction_cache);
+  if (self->zap_stats_cache) g_hash_table_unref(self->zap_stats_cache);
 
   /* Free timeline query */
   if (self->timeline_query) {
@@ -1358,10 +1629,16 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
   self->last_update_time_ms = 0;
   self->pending_new_count = 0;
 
+  /* NIP-25/57: Initialize reaction and zap caches */
+  self->reaction_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->zap_stats_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)zap_stats_free);
+
   /* Install lifetime subscriptions via dispatcher (marshals to main loop) */
-  self->sub_profiles = gn_ndb_subscribe(FILTER_PROFILES, on_sub_profiles_batch, self, NULL);
-  self->sub_timeline = gn_ndb_subscribe(FILTER_TIMELINE, on_sub_timeline_batch, self, NULL);
-  self->sub_deletes  = gn_ndb_subscribe(FILTER_DELETES,  on_sub_deletes_batch,  self, NULL);
+  self->sub_profiles  = gn_ndb_subscribe(FILTER_PROFILES,  on_sub_profiles_batch,  self, NULL);
+  self->sub_timeline  = gn_ndb_subscribe(FILTER_TIMELINE,  on_sub_timeline_batch,  self, NULL);
+  self->sub_deletes   = gn_ndb_subscribe(FILTER_DELETES,   on_sub_deletes_batch,   self, NULL);
+  self->sub_reactions = gn_ndb_subscribe(FILTER_REACTIONS, on_sub_reactions_batch, self, NULL);
+  self->sub_zaps      = gn_ndb_subscribe(FILTER_ZAPS,      on_sub_zaps_batch,      self, NULL);
 }
 
 /* -------------------- Public API -------------------- */

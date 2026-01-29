@@ -55,6 +55,12 @@ void gn_nostr_event_item_set_like_count(GnNostrEventItem *self, guint count);
 gboolean gn_nostr_event_item_get_is_liked(GnNostrEventItem *self);
 void gn_nostr_event_item_set_is_liked(GnNostrEventItem *self, gboolean is_liked);
 
+/* NIP-57: Zap stats support */
+guint gn_nostr_event_item_get_zap_count(GnNostrEventItem *self);
+void gn_nostr_event_item_set_zap_count(GnNostrEventItem *self, guint count);
+gint64 gn_nostr_event_item_get_zap_total_msat(GnNostrEventItem *self);
+void gn_nostr_event_item_set_zap_total_msat(GnNostrEventItem *self, gint64 total_msat);
+
 /* NIP-40: Expiration timestamp support */
 gint64 gn_nostr_event_item_get_expiration(GnNostrEventItem *self);
 gboolean gn_nostr_event_item_get_is_expired(GnNostrEventItem *self);

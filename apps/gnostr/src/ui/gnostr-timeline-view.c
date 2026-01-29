@@ -1336,6 +1336,32 @@ static void on_item_notify_is_liked(GObject *obj, GParamSpec *pspec, gpointer us
     gnostr_note_card_row_set_liked(GNOSTR_NOTE_CARD_ROW(row), is_liked);
 }
 
+/* NIP-57: Notify handler for zap count changes */
+static void on_item_notify_zap_count(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  GtkWidget *row = GTK_WIDGET(user_data);
+  if (!GTK_IS_WIDGET(row)) return;
+  if (!obj || !G_IS_OBJECT(obj)) return;
+  guint zap_count = 0;
+  gint64 total_msat = 0;
+  g_object_get(obj, "zap-count", &zap_count, "zap-total-msat", &total_msat, NULL);
+  if (GNOSTR_IS_NOTE_CARD_ROW(row))
+    gnostr_note_card_row_set_zap_stats(GNOSTR_NOTE_CARD_ROW(row), zap_count, total_msat);
+}
+
+/* NIP-57: Notify handler for zap total changes */
+static void on_item_notify_zap_total_msat(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  GtkWidget *row = GTK_WIDGET(user_data);
+  if (!GTK_IS_WIDGET(row)) return;
+  if (!obj || !G_IS_OBJECT(obj)) return;
+  guint zap_count = 0;
+  gint64 total_msat = 0;
+  g_object_get(obj, "zap-count", &zap_count, "zap-total-msat", &total_msat, NULL);
+  if (GNOSTR_IS_NOTE_CARD_ROW(row))
+    gnostr_note_card_row_set_zap_stats(GNOSTR_NOTE_CARD_ROW(row), zap_count, total_msat);
+}
+
 /* Unbind cleanup: detach row from any inflight operations.
  * 
  * CRITICAL: We do NOT access gtk_list_item_get_item() here because during
@@ -1843,6 +1869,26 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 
       gnostr_note_card_row_set_like_count(GNOSTR_NOTE_CARD_ROW(row), like_count);
       gnostr_note_card_row_set_liked(GNOSTR_NOTE_CARD_ROW(row), is_liked);
+
+      /* NIP-57: Set zap stats from model or local storage */
+      guint zap_count = gn_nostr_event_item_get_zap_count(GN_NOSTR_EVENT_ITEM(obj));
+      gint64 zap_total = gn_nostr_event_item_get_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj));
+
+      /* If model doesn't have zap data, fetch from local storage */
+      if (zap_count == 0 && id_hex && strlen(id_hex) == 64) {
+        guint fetched_count = 0;
+        gint64 fetched_total = 0;
+        if (storage_ndb_get_zap_stats(id_hex, &fetched_count, &fetched_total)) {
+          if (fetched_count > 0) {
+            gn_nostr_event_item_set_zap_count(GN_NOSTR_EVENT_ITEM(obj), fetched_count);
+            gn_nostr_event_item_set_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj), fetched_total);
+            zap_count = fetched_count;
+            zap_total = fetched_total;
+          }
+        }
+      }
+
+      gnostr_note_card_row_set_zap_stats(GNOSTR_NOTE_CARD_ROW(row), zap_count, zap_total);
     }
 
     g_free(user_pubkey);
@@ -1885,6 +1931,10 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     /* NIP-25: Connect reaction count/state change handlers */
     g_signal_connect_object(obj, "notify::like-count",   G_CALLBACK(on_item_notify_like_count),   row, 0);
     g_signal_connect_object(obj, "notify::is-liked",     G_CALLBACK(on_item_notify_is_liked),     row, 0);
+
+    /* NIP-57: Connect zap stats change handlers */
+    g_signal_connect_object(obj, "notify::zap-count",      G_CALLBACK(on_item_notify_zap_count),      row, 0);
+    g_signal_connect_object(obj, "notify::zap-total-msat", G_CALLBACK(on_item_notify_zap_total_msat), row, 0);
   }
 }
 

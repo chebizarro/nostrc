@@ -39,6 +39,10 @@ struct _GnNostrEventItem {
   guint like_count;
   gboolean is_liked;  /* Whether current user has liked this event */
 
+  /* NIP-57: Zap stats */
+  guint zap_count;
+  gint64 zap_total_msat;
+
   /* NIP-40: Expiration timestamp (cached) */
   gint64 expiration;
   gboolean expiration_loaded;
@@ -64,6 +68,8 @@ enum {
   PROP_SKIP_ANIMATION,
   PROP_LIKE_COUNT,
   PROP_IS_LIKED,
+  PROP_ZAP_COUNT,
+  PROP_ZAP_TOTAL_MSAT,
   PROP_EXPIRATION,
   PROP_IS_EXPIRED,
   N_PROPS
@@ -209,6 +215,12 @@ static void gn_nostr_event_item_get_property(GObject *object, guint prop_id, GVa
     case PROP_IS_LIKED:
       g_value_set_boolean(value, self->is_liked);
       break;
+    case PROP_ZAP_COUNT:
+      g_value_set_uint(value, self->zap_count);
+      break;
+    case PROP_ZAP_TOTAL_MSAT:
+      g_value_set_int64(value, self->zap_total_msat);
+      break;
     case PROP_EXPIRATION:
       ensure_expiration_loaded(self);
       g_value_set_int64(value, self->expiration);
@@ -243,6 +255,12 @@ static void gn_nostr_event_item_set_property(GObject *object, guint prop_id, con
       break;
     case PROP_IS_LIKED:
       self->is_liked = g_value_get_boolean(value);
+      break;
+    case PROP_ZAP_COUNT:
+      self->zap_count = g_value_get_uint(value);
+      break;
+    case PROP_ZAP_TOTAL_MSAT:
+      self->zap_total_msat = g_value_get_int64(value);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -291,6 +309,12 @@ static void gn_nostr_event_item_class_init(GnNostrEventItemClass *klass) {
   properties[PROP_IS_LIKED] = g_param_spec_boolean("is-liked", "Is Liked",
                                                     "Whether current user has liked this event", FALSE,
                                                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_ZAP_COUNT] = g_param_spec_uint("zap-count", "Zap Count",
+                                                  "NIP-57 zap receipt count", 0, G_MAXUINT, 0,
+                                                  G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_ZAP_TOTAL_MSAT] = g_param_spec_int64("zap-total-msat", "Zap Total Millisats",
+                                                        "Total zap amount in millisatoshis", 0, G_MAXINT64, 0,
+                                                        G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
   properties[PROP_EXPIRATION] = g_param_spec_int64("expiration", "Expiration",
                                                     "NIP-40 expiration Unix timestamp (0 if none)", 0, G_MAXINT64, 0,
                                                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
@@ -540,6 +564,33 @@ void gn_nostr_event_item_set_is_liked(GnNostrEventItem *self, gboolean is_liked)
   if (self->is_liked != is_liked) {
     self->is_liked = is_liked;
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_IS_LIKED]);
+  }
+}
+
+/* NIP-57: Zap stats support */
+guint gn_nostr_event_item_get_zap_count(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), 0);
+  return self->zap_count;
+}
+
+void gn_nostr_event_item_set_zap_count(GnNostrEventItem *self, guint count) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
+  if (self->zap_count != count) {
+    self->zap_count = count;
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_ZAP_COUNT]);
+  }
+}
+
+gint64 gn_nostr_event_item_get_zap_total_msat(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), 0);
+  return self->zap_total_msat;
+}
+
+void gn_nostr_event_item_set_zap_total_msat(GnNostrEventItem *self, gint64 total_msat) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
+  if (self->zap_total_msat != total_msat) {
+    self->zap_total_msat = total_msat;
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_ZAP_TOTAL_MSAT]);
   }
 }
 

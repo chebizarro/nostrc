@@ -129,6 +129,20 @@ gboolean storage_ndb_user_has_reacted(const char *event_id_hex, const char *user
  * Caller must free the returned hash table with g_hash_table_unref(). */
 GHashTable *storage_ndb_get_reaction_breakdown(const char *event_id_hex, GPtrArray **reactor_pubkeys);
 
+/* ============== NIP-57 Zap Stats API ============== */
+
+/* Count zap receipts (kind 9735) for a given event.
+ * event_id_hex is the 64-char hex ID of the event to count zaps for.
+ * Returns the number of zaps found, or 0 if none/error. */
+guint storage_ndb_count_zaps(const char *event_id_hex);
+
+/* Get zap statistics for an event.
+ * event_id_hex: 64-char hex ID of the event
+ * zap_count: (out) number of zaps received
+ * total_msat: (out) total amount in millisatoshis
+ * Returns TRUE on success, FALSE on error. */
+gboolean storage_ndb_get_zap_stats(const char *event_id_hex, guint *zap_count, gint64 *total_msat);
+
 /* ============== NIP-40 Expiration Timestamp API ============== */
 
 /* Get expiration timestamp from note tags.
