@@ -253,12 +253,16 @@ static void relay_free_impl(NostrRelay *relay) {
             node = next;
         }
         relay->priv->invalid_sig_head = NULL;
-        // Free connection context (was leaked before)
-        // Note: go_context_free -> base_context_free now properly frees the done channel
-        if (relay->priv->connection_context) {
-            go_context_free(relay->priv->connection_context);
-            relay->priv->connection_context = NULL;
-        }
+        // IMPORTANT: Do NOT free connection_context here!
+        // The done channel inside it may still be referenced by go_select in message_loop
+        // even after go_wait_group_wait returns (due to the 1ms polling sleep in go_select).
+        // Instead, we leave it allocated - it will be cleaned up when the process exits.
+        // This is a small, bounded leak that prevents use-after-free crashes.
+        // TODO: Implement proper reference counting for contexts to fix this properly.
+        // if (relay->priv->connection_context) {
+        //     go_context_free(relay->priv->connection_context);
+        //     relay->priv->connection_context = NULL;
+        // }
     }
     if (relay->subscriptions) { go_hash_map_destroy(relay->subscriptions); relay->subscriptions = NULL; }
     if (relay->url) { free(relay->url); relay->url = NULL; }
