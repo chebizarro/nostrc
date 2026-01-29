@@ -1159,8 +1159,21 @@ static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec
   }
 }
 
+/* Handler for search-hashtag signal from note card rows */
+static void on_note_card_search_hashtag(GnostrNoteCardRow *row, const char *hashtag, gpointer user_data) {
+  (void)row;
+  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(user_data);
+  if (!self || !hashtag || !*hashtag) return;
+
+  g_debug("timeline_view: search-hashtag signal received for #%s", hashtag);
+
+  /* Add a new hashtag tab */
+  gnostr_timeline_view_add_hashtag_tab(self, hashtag);
+}
+
 static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
-  (void)f; (void)data;
+  (void)f;
+  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(data);
   GtkWidget *row = GTK_WIDGET(gnostr_note_card_row_new());
 
   /* Connect the open-profile signal */
@@ -1195,6 +1208,10 @@ static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpo
   g_signal_connect(row, "report-note-requested", G_CALLBACK(on_note_card_report_note_requested_relay), NULL);
   /* Connect the label-note-requested signal (NIP-32) */
   g_signal_connect(row, "label-note-requested", G_CALLBACK(on_note_card_label_note_requested_relay), NULL);
+  /* Connect the search-hashtag signal (Phase 3: timeline tabs) */
+  if (self) {
+    g_signal_connect(row, "search-hashtag", G_CALLBACK(on_note_card_search_hashtag), self);
+  }
 
   gtk_list_item_set_child(item, row);
 }
@@ -1786,9 +1803,9 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 
 static void setup_default_factory(GnostrTimelineView *self) {
   GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
-  g_signal_connect(factory, "setup", G_CALLBACK(factory_setup_cb), NULL);
-  g_signal_connect(factory, "bind", G_CALLBACK(factory_bind_cb), NULL);
-  g_signal_connect(factory, "unbind", G_CALLBACK(factory_unbind_cb), NULL);
+  g_signal_connect(factory, "setup", G_CALLBACK(factory_setup_cb), self);
+  g_signal_connect(factory, "bind", G_CALLBACK(factory_bind_cb), self);
+  g_signal_connect(factory, "unbind", G_CALLBACK(factory_unbind_cb), self);
   gtk_list_view_set_factory(GTK_LIST_VIEW(self->list_view), factory);
   g_object_unref(factory);
   g_debug("setup_default_factory: list_view=%p", (void*)self->list_view);
@@ -1827,7 +1844,11 @@ static void gnostr_timeline_view_class_init(GnostrTimelineViewClass *klass) {
   gobj_class->finalize = gnostr_timeline_view_finalize;
   /* Ensure this widget can have children in templates by declaring a layout manager type */
   gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BOX_LAYOUT);
+  /* Ensure GnTimelineTabs type is registered before loading template */
+  g_type_ensure(GN_TYPE_TIMELINE_TABS);
   gtk_widget_class_set_template_from_resource(widget_class, UI_RESOURCE);
+  gtk_widget_class_bind_template_child(widget_class, GnostrTimelineView, root_box);
+  gtk_widget_class_bind_template_child(widget_class, GnostrTimelineView, tabs);
   gtk_widget_class_bind_template_child(widget_class, GnostrTimelineView, root_scroller);
   gtk_widget_class_bind_template_child(widget_class, GnostrTimelineView, list_view);
 }

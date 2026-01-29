@@ -4,15 +4,25 @@ template $GnostrTimelineView: Widget {
     hexpand: true;
     vexpand: true;
 
-    ScrolledWindow root_scroller {
+    Box root_box {
+        orientation: vertical;
         hexpand: true;
         vexpand: true;
-        hscrollbar-policy: never;
-        vscrollbar-policy: automatic;
 
-        ListView list_view {
+        $GnTimelineTabs tabs {
+            visible: false;
+        }
+
+        ScrolledWindow root_scroller {
             hexpand: true;
             vexpand: true;
+            hscrollbar-policy: never;
+            vscrollbar-policy: automatic;
+
+            ListView list_view {
+                hexpand: true;
+                vexpand: true;
+            }
         }
     }
 }
