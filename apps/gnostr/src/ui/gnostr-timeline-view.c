@@ -1364,6 +1364,67 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
 }
 
 /**
+ * parse_hashtags_from_tags_json:
+ * @tags_json: JSON array string of event tags
+ *
+ * Parses the tags array to find all "t" (hashtag) tags.
+ * Format: ["t", "hashtag"]
+ *
+ * Returns: (transfer full) (nullable): NULL-terminated array of hashtag strings,
+ *          or NULL if none found. Free with g_strfreev().
+ */
+static gchar **parse_hashtags_from_tags_json(const char *tags_json) {
+  if (!tags_json || !*tags_json) return NULL;
+
+  JsonParser *parser = json_parser_new();
+  GError *error = NULL;
+
+  if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
+    if (error) g_error_free(error);
+    g_object_unref(parser);
+    return NULL;
+  }
+
+  JsonNode *root = json_parser_get_root(parser);
+  if (!root || !JSON_NODE_HOLDS_ARRAY(root)) {
+    g_object_unref(parser);
+    return NULL;
+  }
+
+  JsonArray *tags = json_node_get_array(root);
+  guint n_tags = json_array_get_length(tags);
+
+  GPtrArray *hashtags = g_ptr_array_new();
+
+  for (guint i = 0; i < n_tags; i++) {
+    JsonNode *tag_node = json_array_get_element(tags, i);
+    if (!tag_node || !JSON_NODE_HOLDS_ARRAY(tag_node)) continue;
+
+    JsonArray *tag = json_node_get_array(tag_node);
+    guint tag_len = json_array_get_length(tag);
+    if (tag_len < 2) continue;
+
+    const gchar *tag_name = json_array_get_string_element(tag, 0);
+    if (!tag_name || g_strcmp0(tag_name, "t") != 0) continue;
+
+    const gchar *hashtag = json_array_get_string_element(tag, 1);
+    if (hashtag && *hashtag) {
+      g_ptr_array_add(hashtags, g_strdup(hashtag));
+    }
+  }
+
+  g_object_unref(parser);
+
+  if (hashtags->len == 0) {
+    g_ptr_array_free(hashtags, TRUE);
+    return NULL;
+  }
+
+  g_ptr_array_add(hashtags, NULL);  /* NULL-terminate */
+  return (gchar **)g_ptr_array_free(hashtags, FALSE);
+}
+
+/**
  * parse_content_warning_from_tags_json:
  * @tags_json: JSON array string of event tags
  *
@@ -1571,6 +1632,13 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       if (content_warning) {
         gnostr_note_card_row_set_content_warning(GNOSTR_NOTE_CARD_ROW(row), content_warning);
         g_free(content_warning);
+      }
+
+      /* Extract and set hashtags from "t" tags for regular notes */
+      gchar **hashtags = parse_hashtags_from_tags_json(tags_json);
+      if (hashtags) {
+        gnostr_note_card_row_set_hashtags(GNOSTR_NOTE_CARD_ROW(row), (const char * const *)hashtags);
+        g_strfreev(hashtags);
       }
     } else {
       gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
