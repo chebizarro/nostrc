@@ -270,6 +270,11 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
         nostr_metric_counter_add("go_chan_try_send_failures", 1);
         return -1;
     }
+    // Validate magic number to detect garbage/freed channel pointers
+    if (NOSTR_UNLIKELY(chan->magic != GO_CHANNEL_MAGIC)) {
+        nostr_metric_counter_add("go_chan_invalid_magic_send", 1);
+        return -1;
+    }
     if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
         nostr_metric_counter_add("go_chan_try_send_failures", 1);
         return -1;
@@ -416,6 +421,11 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
 int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
     if (NOSTR_UNLIKELY(chan == NULL)) {
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
+        return -1;
+    }
+    // Validate magic number to detect garbage/freed channel pointers
+    if (NOSTR_UNLIKELY(chan->magic != GO_CHANNEL_MAGIC)) {
+        nostr_metric_counter_add("go_chan_invalid_magic_recv", 1);
         return -1;
     }
     if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
