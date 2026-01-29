@@ -91,7 +91,8 @@ struct _GnNostrEventModel {
   gint64 last_update_time_ms;     /* Timestamp of last items-changed emission */
   guint pending_new_count;        /* Count of new items waiting (for indicator) */
 
-  /* Batch mode removed - was causing GTK ListView crashes */
+  /* Deferred enforce_window to avoid nested items_changed signals */
+  guint enforce_window_idle_id;
 };
 
 typedef struct {
@@ -681,13 +682,17 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
   g_list_model_items_changed(G_LIST_MODEL(self), pos, 0, 1);
 }
 
-/* Enforce window size (~100 items) and evict oldest, including cache cleanup. */
-static void enforce_window(GnNostrEventModel *self) {
-  if (!self) return;
-  if (self->is_thread_view) return;
+/* Actual enforce_window implementation - called from idle to avoid nested signals */
+static gboolean enforce_window_idle_cb(gpointer user_data) {
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self)) return G_SOURCE_REMOVE;
+
+  self->enforce_window_idle_id = 0;
+
+  if (self->is_thread_view) return G_SOURCE_REMOVE;
   guint cap = self->window_size ? self->window_size : MODEL_MAX_ITEMS;
 
-  if (self->notes->len <= cap) return;
+  if (self->notes->len <= cap) return G_SOURCE_REMOVE;
 
   guint to_remove = self->notes->len - cap;
   guint old_len = self->notes->len;
@@ -714,6 +719,15 @@ static void enforce_window(GnNostrEventModel *self) {
   }
 
   g_free(keys_to_remove);
+  return G_SOURCE_REMOVE;
+}
+
+/* Schedule enforce_window to run in idle - prevents nested items_changed signals
+ * which cause GTK ListView widget teardown corruption */
+static void enforce_window(GnNostrEventModel *self) {
+  if (!self) return;
+  if (self->enforce_window_idle_id > 0) return;  /* Already scheduled */
+  self->enforce_window_idle_id = g_idle_add(enforce_window_idle_cb, self);
 }
 
 /* Pending queue: pubkey -> array of PendingEntry. Returns TRUE if this pubkey had no pending queue before. */
@@ -1148,6 +1162,10 @@ static void gn_nostr_event_model_finalize(GObject *object) {
   if (self->debounce_source_id > 0) {
     g_source_remove(self->debounce_source_id);
     self->debounce_source_id = 0;
+  }
+  if (self->enforce_window_idle_id > 0) {
+    g_source_remove(self->enforce_window_idle_id);
+    self->enforce_window_idle_id = 0;
   }
   if (self->deferred_notes) g_array_unref(self->deferred_notes);
 
