@@ -2077,6 +2077,9 @@ void gnostr_timeline_view_add_hashtag_tab(GnostrTimelineView *self, const char *
 
   if (!self->tabs) return;
 
+  /* Show the tabs bar */
+  gtk_widget_set_visible(self->tabs, TRUE);
+
   /* Format label with # prefix */
   char *label = g_strdup_printf("#%s", hashtag);
   guint index = gn_timeline_tabs_add_tab(GN_TIMELINE_TABS(self->tabs),
@@ -2087,6 +2090,8 @@ void gnostr_timeline_view_add_hashtag_tab(GnostrTimelineView *self, const char *
 
   /* Switch to the new tab */
   gn_timeline_tabs_set_selected(GN_TIMELINE_TABS(self->tabs), index);
+
+  g_debug("timeline_view: added hashtag tab #%s at index %u", hashtag, index);
 }
 
 void gnostr_timeline_view_add_author_tab(GnostrTimelineView *self, const char *pubkey_hex, const char *display_name) {
@@ -2094,6 +2099,9 @@ void gnostr_timeline_view_add_author_tab(GnostrTimelineView *self, const char *p
   g_return_if_fail(pubkey_hex != NULL);
 
   if (!self->tabs) return;
+
+  /* Show the tabs bar */
+  gtk_widget_set_visible(self->tabs, TRUE);
 
   /* Use display name or truncated pubkey as label */
   char *label;
@@ -2107,6 +2115,8 @@ void gnostr_timeline_view_add_author_tab(GnostrTimelineView *self, const char *p
                                           GN_TIMELINE_TAB_AUTHOR,
                                           label,
                                           pubkey_hex);
+
+  g_debug("timeline_view: added author tab '%s' at index %u", label, index);
   g_free(label);
 
   /* Switch to the new tab */
