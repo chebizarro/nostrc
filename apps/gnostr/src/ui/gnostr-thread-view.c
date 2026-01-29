@@ -187,11 +187,15 @@ static void parse_nip10_from_json(const char *json_str, char **root_id, char **r
 
   /* If no markers found, use positional (NIP-10 fallback):
    * - First e-tag = root
-   * - Last e-tag = reply (if different from root) */
+   * - Last e-tag = reply target (event being replied to)
+   * When there's only one e-tag (first == last), the event is a direct reply
+   * to that event, so both root and reply should point to it.
+   * nostrc-5b8: Fix single e-tag case where reply_id was incorrectly left NULL */
   if (!*root_id && first_e_id) {
     *root_id = g_strdup(first_e_id);
   }
-  if (!*reply_id && last_e_id && g_strcmp0(last_e_id, first_e_id) != 0) {
+  if (!*reply_id && last_e_id) {
+    /* Any e-tag (even if same as root) indicates this is a reply */
     *reply_id = g_strdup(last_e_id);
   }
 

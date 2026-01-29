@@ -513,11 +513,15 @@ static void parse_nip10_tags(NostrEvent *evt, char **root_id, char **reply_id) {
     }
   }
 
-  /* NIP-10 positional fallback: if no explicit markers found */
+  /* NIP-10 positional fallback: if no explicit markers found.
+   * When there's only one e-tag (first == last), the event is a direct reply
+   * to that event, so both root and reply should point to it.
+   * nostrc-5b8: Fix single e-tag case where reply_id was incorrectly left NULL */
   if (!*root_id && first_e_id) {
     *root_id = g_strdup(first_e_id);
   }
-  if (!*reply_id && last_e_id && g_strcmp0(last_e_id, first_e_id) != 0) {
+  if (!*reply_id && last_e_id) {
+    /* Any e-tag (even if same as root) indicates this is a reply */
     *reply_id = g_strdup(last_e_id);
   }
 }
@@ -1018,6 +1022,12 @@ static gpointer gn_nostr_event_model_get_item(GListModel *list, guint position) 
     /* nostrc-7o7: Check if this item should skip animation */
     gboolean skip_anim = g_hash_table_contains(self->skip_animation_keys, &key);
     gn_nostr_event_item_set_skip_animation(item, skip_anim);
+    /* nostrc-5b8: Apply thread info even for cached items, in case it was added
+     * after the item was first cached (e.g., during refresh or later processing) */
+    ThreadInfo *tinfo = g_hash_table_lookup(self->thread_info, &key);
+    if (tinfo) {
+      gn_nostr_event_item_set_thread_info(item, tinfo->root_id, tinfo->parent_id, tinfo->depth);
+    }
     return g_object_ref(item);
   }
 
