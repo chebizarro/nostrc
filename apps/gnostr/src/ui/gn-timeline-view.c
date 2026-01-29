@@ -143,6 +143,10 @@ static void factory_bind_cb(GtkListItemFactory *factory, GtkListItem *list_item,
   gnostr_note_card_row_set_ids(row, id_hex, root_id, pubkey);
   gnostr_note_card_row_set_depth(row, depth);
 
+  /* nostrc-5b8: Set thread info to show reply indicator for events with e-tags */
+  gboolean is_reply = (parent_id != NULL && *parent_id != '\0');
+  gnostr_note_card_row_set_thread_info(row, root_id, parent_id, NULL, is_reply);
+
   if (nip05 && pubkey) {
     gnostr_note_card_row_set_nip05(row, nip05, pubkey);
   }
