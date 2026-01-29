@@ -5422,6 +5422,51 @@ GCancellable *gnostr_note_card_row_get_cancellable(GnostrNoteCardRow *self) {
 }
 
 /**
+ * gnostr_note_card_row_prepare_for_bind:
+ *
+ * Prepares the row for binding to a new list item. This resets the disposed
+ * flag and reinitializes async state so the row can be safely reused.
+ *
+ * CRITICAL: Call this from factory_bind_cb BEFORE populating the row with data.
+ * After prepare_for_unbind cancelled the cancellables, we need fresh ones for
+ * the new binding.
+ */
+void gnostr_note_card_row_prepare_for_bind(GnostrNoteCardRow *self) {
+  g_return_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self));
+
+  /* Reset disposed flag - widget is being reused */
+  self->disposed = FALSE;
+
+  /* Create fresh cancellable since the old one was cancelled during unbind.
+   * GCancellable cannot be reused after cancellation. */
+  if (self->async_cancellable) {
+    g_object_unref(self->async_cancellable);
+  }
+  self->async_cancellable = g_cancellable_new();
+
+  /* Reset legacy cancellables too */
+  if (self->nip05_cancellable) {
+    g_object_unref(self->nip05_cancellable);
+    self->nip05_cancellable = NULL;
+  }
+
+#ifdef HAVE_SOUP3
+  if (self->avatar_cancellable) {
+    g_object_unref(self->avatar_cancellable);
+    self->avatar_cancellable = NULL;
+  }
+  if (self->article_image_cancellable) {
+    g_object_unref(self->article_image_cancellable);
+    self->article_image_cancellable = NULL;
+  }
+  /* Clear media cancellables - they'll be created on demand */
+  if (self->media_cancellables) {
+    g_hash_table_remove_all(self->media_cancellables);
+  }
+#endif
+}
+
+/**
  * gnostr_note_card_row_prepare_for_unbind:
  *
  * Prepares the row for unbinding from a list item. This cancels all async

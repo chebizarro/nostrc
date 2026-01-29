@@ -96,6 +96,14 @@ static void factory_bind_cb(GtkListItemFactory *factory, GtkListItem *list_item,
   if (!GNOSTR_IS_NOTE_CARD_ROW(child)) return;
 
   GnostrNoteCardRow *row = GNOSTR_NOTE_CARD_ROW(child);
+
+  /*
+   * CRITICAL: Prepare for bind FIRST - this resets the disposed flag and
+   * creates fresh cancellables. Without this, widgets that were unbound
+   * (disposed=TRUE) would fail to work properly when rebound.
+   */
+  gnostr_note_card_row_prepare_for_bind(row);
+
   GnNostrEventItem *item = GN_NOSTR_EVENT_ITEM(gtk_list_item_get_item(list_item));
 
   if (!GN_IS_NOSTR_EVENT_ITEM(item)) return;

@@ -313,6 +313,17 @@ void gnostr_note_card_row_clear_external_ids(GnostrNoteCardRow *self);
 GCancellable *gnostr_note_card_row_get_cancellable(GnostrNoteCardRow *self);
 
 /**
+ * gnostr_note_card_row_prepare_for_bind:
+ *
+ * Prepares the row for binding to a new list item. This resets the disposed
+ * flag and reinitializes async state so the row can be safely reused.
+ *
+ * Call this from factory_bind_cb BEFORE populating the row with data.
+ * This is the counterpart to prepare_for_unbind.
+ */
+void gnostr_note_card_row_prepare_for_bind(GnostrNoteCardRow *self);
+
+/**
  * gnostr_note_card_row_prepare_for_unbind:
  *
  * Prepares the row for unbinding from a list item. This cancels all async

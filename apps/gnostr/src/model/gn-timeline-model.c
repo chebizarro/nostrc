@@ -31,6 +31,7 @@
 #define MODEL_MAX_CACHED 200        /* Max cached items */
 #define PROFILE_CACHE_MAX 500       /* Max cached profiles */
 #define UPDATE_DEBOUNCE_MS 50       /* Debounce UI updates during rapid ingestion */
+#define MODEL_MAX_WINDOW 1000       /* Max items in model - oldest evicted beyond this */
 
 /* Note entry for internal tracking */
 typedef struct {
@@ -60,10 +61,13 @@ struct _GnTimelineModel {
   GHashTable *profile_cache;
   GQueue *profile_cache_lru;
 
-  /* Pending new items */
-  GArray *pending_notes;
-  guint pending_count;
+  /* New items tracking (for "N new notes" indicator) */
+  guint unseen_count;        /* Items at top not yet seen by user */
   gboolean user_at_top;
+
+  /* Batch insertion tracking for debounce */
+  GArray *batch_buffer;      /* Temp buffer for sorting incoming items */
+  guint batch_insert_count;  /* Items to insert at position 0 */
 
   /* Update debouncing for crash resistance */
   guint update_debounce_id;
@@ -86,6 +90,7 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
 static void gn_timeline_model_schedule_update(GnTimelineModel *self);
 static gboolean on_update_debounce_timeout(gpointer user_data);
 static gboolean on_initial_load_timeout(gpointer user_data);
+static guint enforce_window_size(GnTimelineModel *self, gboolean emit_signal);
 
 #define INITIAL_LOAD_TIMEOUT_MS 500  /* Time to wait for initial subscription data */
 
@@ -204,18 +209,20 @@ static gboolean on_update_debounce_timeout(gpointer user_data) {
   if (!self->needs_refresh) return G_SOURCE_REMOVE;
   self->needs_refresh = FALSE;
 
-  /* Calculate delta since batch started */
-  guint new_count = self->notes->len;
-  guint old_count = self->pending_update_old_count;
-
-  if (new_count != old_count) {
-    g_debug("[TIMELINE] Debounced update: %u -> %u items", old_count, new_count);
-    /* Emit a single "replace all" signal to minimize widget recycling */
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_count, new_count);
+  guint inserted = self->batch_insert_count;
+  if (inserted > 0) {
+    g_debug("[TIMELINE] Debounced insert: %u items at position 0", inserted);
+    /* Emit incremental insert signal - GTK handles scroll position adjustment */
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, inserted);
   }
 
-  /* Reset for next batch */
-  self->pending_update_old_count = new_count;
+  /* Enforce window size - evict oldest items if needed.
+   * Do this AFTER the insert signal so eviction signal is separate. */
+  enforce_window_size(self, TRUE);
+
+  /* Reset batch counter for next debounce window */
+  self->batch_insert_count = 0;
+  self->pending_update_old_count = self->notes->len;
 
   return G_SOURCE_REMOVE;
 }
@@ -270,6 +277,45 @@ static gint note_entry_compare_newest_first(gconstpointer a, gconstpointer b) {
   if (ea->created_at > eb->created_at) return -1;
   if (ea->created_at < eb->created_at) return 1;
   return 0;
+}
+
+/**
+ * enforce_window_size:
+ * @self: The model
+ * @emit_signal: Whether to emit items_changed signal for evicted items
+ *
+ * Evicts oldest items if array exceeds MODEL_MAX_WINDOW.
+ * Returns the number of items evicted.
+ *
+ * This ensures bounded memory regardless of scroll history.
+ */
+static guint enforce_window_size(GnTimelineModel *self, gboolean emit_signal) {
+  if (self->notes->len <= MODEL_MAX_WINDOW) return 0;
+
+  guint to_evict = self->notes->len - MODEL_MAX_WINDOW;
+  guint evict_start = MODEL_MAX_WINDOW;  /* First item to evict */
+
+  /* Remove evicted items from the note_key_set */
+  for (guint i = evict_start; i < self->notes->len; i++) {
+    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
+    g_hash_table_remove(self->note_key_set, &entry->note_key);
+  }
+
+  /* Truncate the array */
+  g_array_set_size(self->notes, MODEL_MAX_WINDOW);
+
+  /* Update oldest_timestamp from new last item */
+  if (self->notes->len > 0) {
+    NoteEntry *last = &g_array_index(self->notes, NoteEntry, self->notes->len - 1);
+    self->oldest_timestamp = last->created_at;
+  }
+
+  if (emit_signal && to_evict > 0) {
+    g_debug("[TIMELINE] Evicted %u oldest items to enforce window size", to_evict);
+    g_list_model_items_changed(G_LIST_MODEL(self), evict_start, to_evict, 0);
+  }
+
+  return to_evict;
 }
 
 /* ============== GListModel Interface ============== */
@@ -345,23 +391,14 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
     self->pending_update_old_count = self->notes->len;
   }
 
-  guint added = 0;
+  /* Clear batch buffer for this batch */
+  g_array_set_size(self->batch_buffer, 0);
+
   for (guint i = 0; i < n_keys; i++) {
     uint64_t note_key = note_keys[i];
 
     /* Skip if already have this note */
     if (has_note_key(self, note_key)) continue;
-
-    /* Check pending array too */
-    gboolean in_pending = FALSE;
-    for (guint j = 0; j < self->pending_notes->len; j++) {
-      NoteEntry *pe = &g_array_index(self->pending_notes, NoteEntry, j);
-      if (pe->note_key == note_key) {
-        in_pending = TRUE;
-        break;
-      }
-    }
-    if (in_pending) continue;
 
     /* Get note from NostrDB */
     storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
@@ -397,36 +434,45 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
     gint64 created_at = storage_ndb_note_created_at(note);
     NoteEntry entry = { .note_key = note_key, .created_at = created_at };
 
-    if (self->user_at_top) {
-      /* Add directly to notes array */
-      g_array_append_val(self->notes, entry);
-      add_note_key_to_set(self, note_key);
-      added++;
+    /* Add to batch buffer - we'll insert at position 0 after sorting */
+    g_array_append_val(self->batch_buffer, entry);
+    add_note_key_to_set(self, note_key);
 
-      /* Update timestamps */
-      if (created_at > self->newest_timestamp || self->newest_timestamp == 0) {
-        self->newest_timestamp = created_at;
-      }
-      if (created_at < self->oldest_timestamp || self->oldest_timestamp == 0) {
-        self->oldest_timestamp = created_at;
-      }
-    } else {
-      /* Add to pending */
-      g_array_append_val(self->pending_notes, entry);
-      self->pending_count++;
+    /* Update timestamps */
+    if (created_at > self->newest_timestamp || self->newest_timestamp == 0) {
+      self->newest_timestamp = created_at;
+    }
+    if (created_at < self->oldest_timestamp || self->oldest_timestamp == 0) {
+      self->oldest_timestamp = created_at;
     }
   }
 
   storage_ndb_end_query(txn);
 
-  if (self->user_at_top && added > 0) {
-    /* Sort - don't clear cache since it's keyed by note_key not position */
-    g_array_sort(self->notes, note_entry_compare_newest_first);
-    /* Schedule debounced UI update instead of immediate signal */
+  guint batch_count = self->batch_buffer->len;
+  if (batch_count > 0) {
+    /* Sort batch by created_at descending (newest first) */
+    g_array_sort(self->batch_buffer, note_entry_compare_newest_first);
+
+    /* Insert sorted batch at position 0 */
+    g_array_prepend_vals(self->notes, self->batch_buffer->data, batch_count);
+
+    /* Track batch for debounced signal emission */
+    self->batch_insert_count += batch_count;
+
+    /* If user is not at top, these are "unseen" items */
+    if (!self->user_at_top) {
+      self->unseen_count += batch_count;
+    }
+
+    /* Schedule debounced UI update */
     self->needs_refresh = TRUE;
     gn_timeline_model_schedule_update(self);
-  } else if (self->pending_count > 0) {
-    g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->pending_count);
+
+    /* Emit pending signal for toast if user is scrolled down */
+    if (!self->user_at_top && self->unseen_count > 0) {
+      g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->unseen_count);
+    }
   }
 }
 
@@ -468,12 +514,13 @@ void gn_timeline_model_refresh(GnTimelineModel *self) {
 
   /* Clear everything */
   g_array_set_size(self->notes, 0);
-  g_array_set_size(self->pending_notes, 0);
+  g_array_set_size(self->batch_buffer, 0);
   g_hash_table_remove_all(self->note_key_set);
   cache_clear(self);
   self->newest_timestamp = 0;
   self->oldest_timestamp = 0;
-  self->pending_count = 0;
+  self->unseen_count = 0;
+  self->batch_insert_count = 0;
 
   /* Query initial items from NostrDB */
   if (self->query) {
@@ -503,12 +550,13 @@ void gn_timeline_model_clear(GnTimelineModel *self) {
 
   guint old_count = self->notes->len;
   g_array_set_size(self->notes, 0);
-  g_array_set_size(self->pending_notes, 0);
+  g_array_set_size(self->batch_buffer, 0);
   g_hash_table_remove_all(self->note_key_set);
   cache_clear(self);
   self->newest_timestamp = 0;
   self->oldest_timestamp = 0;
-  self->pending_count = 0;
+  self->unseen_count = 0;
+  self->batch_insert_count = 0;
 
   if (old_count > 0) {
     g_list_model_items_changed(G_LIST_MODEL(self), 0, old_count, 0);
@@ -620,10 +668,26 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
 
   if (added > 0) {
     guint old_count = self->notes->len - added;
-    /* Sort to ensure proper order (older items at the end) */
-    g_array_sort(self->notes, note_entry_compare_newest_first);
-    /* Emit "replace all" since sorted items may have moved to any position */
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_count, self->notes->len);
+    /*
+     * Sort only the newly added items (they're all at the end, all older than existing).
+     * This is safer than sorting the entire array and won't disturb existing positions.
+     */
+    if (added > 1) {
+      /* Sort just the appended portion */
+      NoteEntry *new_start = &g_array_index(self->notes, NoteEntry, old_count);
+      qsort(new_start, added, sizeof(NoteEntry),
+            (int (*)(const void *, const void *))note_entry_compare_newest_first);
+    }
+    /*
+     * Emit incremental append signal instead of replace-all.
+     * This tells GTK to create widgets only for new items at the end,
+     * without disturbing existing widgets - much safer during scroll.
+     */
+    g_list_model_items_changed(G_LIST_MODEL(self), old_count, 0, added);
+    g_debug("[TIMELINE] load_older: appended %u items at position %u", added, old_count);
+
+    /* Enforce window size - evict oldest items if we exceeded the max */
+    enforce_window_size(self, TRUE);
   }
 
   return added;
@@ -641,62 +705,35 @@ gint64 gn_timeline_model_get_newest_timestamp(GnTimelineModel *self) {
 
 void gn_timeline_model_set_user_at_top(GnTimelineModel *self, gboolean at_top) {
   g_return_if_fail(GN_IS_TIMELINE_MODEL(self));
+
+  gboolean was_at_top = self->user_at_top;
   self->user_at_top = at_top;
+
+  /* When user scrolls to top, mark all items as seen */
+  if (at_top && !was_at_top && self->unseen_count > 0) {
+    self->unseen_count = 0;
+    g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
+  }
 }
 
 guint gn_timeline_model_get_pending_count(GnTimelineModel *self) {
   g_return_val_if_fail(GN_IS_TIMELINE_MODEL(self), 0);
-  return self->pending_count;
+  return self->unseen_count;
 }
 
 void gn_timeline_model_flush_pending(GnTimelineModel *self) {
   g_return_if_fail(GN_IS_TIMELINE_MODEL(self));
 
-  if (self->pending_notes->len == 0) return;
+  /*
+   * New design: Items are already inserted at position 0 as they arrive.
+   * "Flush" just clears the unseen count - no data manipulation needed.
+   * This makes clicking "New Notes" instant (< 100ms latency).
+   */
+  if (self->unseen_count == 0) return;
 
-  g_debug("[TIMELINE] Flushing %u pending notes", self->pending_notes->len);
+  g_debug("[TIMELINE] Marking %u notes as seen (instant flush)", self->unseen_count);
 
-  guint old_count = self->notes->len;
-  guint n_pending = self->pending_notes->len;
-
-  /* Sort pending by created_at */
-  g_array_sort(self->pending_notes, note_entry_compare_newest_first);
-
-  /* Create new array with pending first, then existing */
-  GArray *new_notes = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
-  g_array_set_size(new_notes, n_pending + old_count);
-
-  /* Copy pending notes */
-  for (guint i = 0; i < n_pending; i++) {
-    NoteEntry *entry = &g_array_index(self->pending_notes, NoteEntry, i);
-    g_array_index(new_notes, NoteEntry, i) = *entry;
-    add_note_key_to_set(self, entry->note_key);
-
-    /* Update timestamps */
-    if (entry->created_at > self->newest_timestamp || self->newest_timestamp == 0) {
-      self->newest_timestamp = entry->created_at;
-    }
-  }
-
-  /* Copy existing notes */
-  for (guint i = 0; i < old_count; i++) {
-    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
-    g_array_index(new_notes, NoteEntry, n_pending + i) = *entry;
-  }
-
-  /* Swap arrays */
-  g_array_free(self->notes, TRUE);
-  self->notes = new_notes;
-
-  /* Clear pending */
-  g_array_set_size(self->pending_notes, 0);
-  self->pending_count = 0;
-
-  /* Clear cache - items will be re-fetched with correct positions */
-  cache_clear(self);
-
-  /* Emit single "replace all" signal */
-  g_list_model_items_changed(G_LIST_MODEL(self), 0, old_count, self->notes->len);
+  self->unseen_count = 0;
 
   /* Clear pending indicator */
   g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
@@ -829,7 +866,7 @@ static void gn_timeline_model_dispose(GObject *object) {
 
   /* Free arrays and hash set */
   g_clear_pointer(&self->notes, g_array_unref);
-  g_clear_pointer(&self->pending_notes, g_array_unref);
+  g_clear_pointer(&self->batch_buffer, g_array_unref);
   g_clear_pointer(&self->note_key_set, g_hash_table_unref);
 
   /* Free query */
@@ -861,7 +898,7 @@ static void gn_timeline_model_class_init(GnTimelineModelClass *klass) {
 
 static void gn_timeline_model_init(GnTimelineModel *self) {
   self->notes = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
-  self->pending_notes = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
+  self->batch_buffer = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
   self->note_key_set = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
 
   self->item_cache = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, g_object_unref);
