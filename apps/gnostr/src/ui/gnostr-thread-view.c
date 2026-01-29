@@ -522,38 +522,49 @@ static ThreadEventItem *add_event_from_json(GnostrThreadView *self, const char *
 }
 
 /* Internal: fetch profile for pubkey using profile provider.
- * If not found in cache/nostrdb, emits "need-profile" signal to request fetch from relays. */
+ * If not found in cache/nostrdb, emits "need-profile" signal to request fetch from relays.
+ * nostrc-oz5: Always populate profile fields on the item, even if we've already requested
+ * the profile for another item from the same author. The profiles_requested hash only
+ * prevents duplicate relay fetch requests, not duplicate cache lookups. */
 static void fetch_profile_for_event(GnostrThreadView *self, ThreadEventItem *item) {
   if (!item || !item->pubkey_hex) return;
 
-  /* Check if already requested */
-  if (g_hash_table_contains(self->profiles_requested, item->pubkey_hex)) {
-    return;
-  }
-  g_hash_table_insert(self->profiles_requested, g_strdup(item->pubkey_hex), GINT_TO_POINTER(1));
+  /* Check if we've already requested this profile from relays */
+  gboolean already_requested = g_hash_table_contains(self->profiles_requested, item->pubkey_hex);
 
-  /* Try to get profile from provider (checks cache + nostrdb) */
+  /* Always try to get profile from provider (checks cache + nostrdb).
+   * Each ThreadEventItem has its own profile fields that need populating,
+   * even if another item from the same author was already processed. */
   GnostrProfileMeta *meta = gnostr_profile_provider_get(item->pubkey_hex);
   if (meta) {
-    /* Profile found - populate the item */
+    /* Profile found - populate the item (freeing any stale values first) */
     if (meta->display_name && *meta->display_name) {
+      g_free(item->display_name);
       item->display_name = g_strdup(meta->display_name);
-    } else if (meta->name && *meta->name) {
+    } else if (meta->name && *meta->name && !item->display_name) {
       item->display_name = g_strdup(meta->name);
     }
     if (meta->name && *meta->name) {
+      g_free(item->handle);
       item->handle = g_strdup_printf("@%s", meta->name);
     }
     if (meta->picture && *meta->picture) {
+      g_free(item->avatar_url);
       item->avatar_url = g_strdup(meta->picture);
     }
     if (meta->nip05 && *meta->nip05) {
+      g_free(item->nip05);
       item->nip05 = g_strdup(meta->nip05);
     }
     gnostr_profile_meta_free(meta);
-  } else {
-    /* Profile not in cache/db - request fetch from relays */
+  } else if (!already_requested) {
+    /* Profile not in cache/db and we haven't requested yet - request fetch from relays */
     g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, item->pubkey_hex);
+  }
+
+  /* Track that we've requested this profile (to prevent duplicate relay fetches) */
+  if (!already_requested) {
+    g_hash_table_insert(self->profiles_requested, g_strdup(item->pubkey_hex), GINT_TO_POINTER(1));
   }
 }
 
