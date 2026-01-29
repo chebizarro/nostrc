@@ -710,7 +710,15 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
     }
 
     if (msg) {
-        if (msg->length > 0) {
+        // Validate message structure before use
+        if (!msg->data && msg->length > 0) {
+            // Corrupted message: length > 0 but data is NULL
+            if (err) *err = new_error(1, "Corrupted message: data is NULL");
+            free(msg);
+            return;
+        }
+
+        if (msg->length > 0 && msg->data) {
             // Check if the buffer can accommodate the message and the null terminator
             if (msg->length < buffer_size) {
                 strncpy(buffer, msg->data, msg->length);
@@ -721,7 +729,7 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
                     *err = new_error(1, "Buffer too small to hold message");
                 }
                 // Free memory and return early to avoid issues
-                free(msg->data);
+                if (msg->data) free(msg->data);
                 free(msg);
                 return;
             }
@@ -732,7 +740,7 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
         nostr_metric_counter_add("ws_rx_dequeued_messages", 1);
 
         // Free message memory
-        free(msg->data);
+        if (msg->data) free(msg->data);
         free(msg);
     }
 }

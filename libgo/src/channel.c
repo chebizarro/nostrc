@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 
 // TSAN-aware mutex/condvar helpers for nsync_mu/nsync_cv
 #if defined(__has_feature)
@@ -617,6 +618,7 @@ GoChannel *go_channel_create(size_t capacity) {
     _Atomic(void*) *buf = NULL;
     size_t bytes = sizeof(void *) * cap;
     buf = (_Atomic(void*)*)go_aligned_alloc(64, bytes);
+    if (buf) memset(buf, 0, bytes);  // Zero the buffer to avoid garbage pointers
     chan->buffer = buf;
     chan->capacity = cap;
     // Capacity is enforced to a power of two; compute mask for fast wrap
