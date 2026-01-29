@@ -334,7 +334,7 @@ static void on_row_request_embed(GnostrNoteCardRow *row, const char *target, gpo
         /* Build filter by id */
         NostrFilter *f = nostr_filter_new();
         char idhex[65];
-        for (int i=0;i<32;i++) sprintf(&idhex[i*2], "%02x", id32[i]);
+        for (int i=0;i<32;i++) snprintf(&idhex[i*2], 3, "%02x", id32[i]);
         idhex[64] = '\0';
         const char *ids[1] = { idhex };
         nostr_filter_set_ids(f, ids, 1);

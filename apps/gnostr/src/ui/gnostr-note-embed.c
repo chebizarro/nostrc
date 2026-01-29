@@ -299,7 +299,7 @@ static gboolean hex_to_bytes_32(const char *hex, unsigned char out[32]) {
 /* Convert 32-byte binary to hex string */
 static void bytes_to_hex(const unsigned char *bytes, size_t len, char *out) {
   for (size_t i = 0; i < len; i++) {
-    sprintf(out + i*2, "%02x", bytes[i]);
+    snprintf(out + i*2, 3, "%02x", bytes[i]);
   }
   out[len*2] = '\0';
 }
