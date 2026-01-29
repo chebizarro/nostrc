@@ -22,11 +22,11 @@ void gnostr_timeline_view_prepend_text(GnostrTimelineView *self, const char *tex
 
 /* New: prepend a structured item with identity/time/depth. */
 void gnostr_timeline_view_prepend(GnostrTimelineView *self,
-                                  const char *display,
-                                  const char *handle,
-                                  const char *ts,
-                                  const char *content,
-                                  guint depth);
+				  const char *display,
+				  const char *handle,
+				  const char *ts,
+				  const char *content,
+				  guint depth);
 
 /* Set a tree of TimelineItem roots (GListModel of internal items); view flattens via GtkTreeListModel. */
 void gnostr_timeline_view_set_tree_roots(GnostrTimelineView *self, GListModel *roots);
@@ -40,6 +40,21 @@ GListModel *gnostr_timeline_item_get_children(TimelineItem *item);
 
 /* Get the internal scrolled window for scroll position monitoring */
 GtkWidget *gnostr_timeline_view_get_scrolled_window(GnostrTimelineView *self);
+
+/* Timeline tabs support (Phase 3) */
+#include "gn-timeline-tabs.h"
+
+/* Get the timeline tabs widget */
+GnTimelineTabs *gnostr_timeline_view_get_tabs(GnostrTimelineView *self);
+
+/* Show/hide the timeline tabs bar */
+void gnostr_timeline_view_set_tabs_visible(GnostrTimelineView *self, gboolean visible);
+
+/* Add a hashtag tab and switch to it */
+void gnostr_timeline_view_add_hashtag_tab(GnostrTimelineView *self, const char *hashtag);
+
+/* Add an author tab and switch to it */
+void gnostr_timeline_view_add_author_tab(GnostrTimelineView *self, const char *pubkey_hex, const char *display_name);
 
 G_END_DECLS
 

@@ -1,4 +1,5 @@
 #include "gnostr-timeline-view.h"
+#include "gn-timeline-tabs.h"
 #include "gnostr-main-window.h"
 #include "note_card_row.h"
 #include "gnostr-zap-dialog.h"
@@ -722,6 +723,8 @@ GListModel *gnostr_timeline_item_get_children(TimelineItem *item) {
 
 struct _GnostrTimelineView {
   GtkWidget parent_instance;
+  GtkWidget *root_box;                /* vertical box containing tabs + scroller */
+  GtkWidget *tabs;                    /* GnTimelineTabs widget */
   GtkWidget *root_scroller;
   GtkWidget *list_view;
   GtkSelectionModel *selection_model; /* owned */
@@ -2031,4 +2034,60 @@ void gnostr_timeline_view_prepend(GnostrTimelineView *self,
 GtkWidget *gnostr_timeline_view_get_scrolled_window(GnostrTimelineView *self) {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_VIEW(self), NULL);
   return self->root_scroller;
+}
+
+/* ============== Timeline Tabs Support (Phase 3) ============== */
+
+GnTimelineTabs *gnostr_timeline_view_get_tabs(GnostrTimelineView *self) {
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_VIEW(self), NULL);
+  return GN_TIMELINE_TABS(self->tabs);
+}
+
+void gnostr_timeline_view_set_tabs_visible(GnostrTimelineView *self, gboolean visible) {
+  g_return_if_fail(GNOSTR_IS_TIMELINE_VIEW(self));
+  if (self->tabs) {
+    gtk_widget_set_visible(self->tabs, visible);
+  }
+}
+
+void gnostr_timeline_view_add_hashtag_tab(GnostrTimelineView *self, const char *hashtag) {
+  g_return_if_fail(GNOSTR_IS_TIMELINE_VIEW(self));
+  g_return_if_fail(hashtag != NULL);
+
+  if (!self->tabs) return;
+
+  /* Format label with # prefix */
+  char *label = g_strdup_printf("#%s", hashtag);
+  guint index = gn_timeline_tabs_add_tab(GN_TIMELINE_TABS(self->tabs),
+                                          GN_TIMELINE_TAB_HASHTAG,
+                                          label,
+                                          hashtag);
+  g_free(label);
+
+  /* Switch to the new tab */
+  gn_timeline_tabs_set_selected(GN_TIMELINE_TABS(self->tabs), index);
+}
+
+void gnostr_timeline_view_add_author_tab(GnostrTimelineView *self, const char *pubkey_hex, const char *display_name) {
+  g_return_if_fail(GNOSTR_IS_TIMELINE_VIEW(self));
+  g_return_if_fail(pubkey_hex != NULL);
+
+  if (!self->tabs) return;
+
+  /* Use display name or truncated pubkey as label */
+  char *label;
+  if (display_name && *display_name) {
+    label = g_strdup(display_name);
+  } else {
+    label = g_strndup(pubkey_hex, 8);
+  }
+
+  guint index = gn_timeline_tabs_add_tab(GN_TIMELINE_TABS(self->tabs),
+                                          GN_TIMELINE_TAB_AUTHOR,
+                                          label,
+                                          pubkey_hex);
+  g_free(label);
+
+  /* Switch to the new tab */
+  gn_timeline_tabs_set_selected(GN_TIMELINE_TABS(self->tabs), index);
 }
