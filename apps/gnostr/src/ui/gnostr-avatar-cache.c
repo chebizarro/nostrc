@@ -351,9 +351,15 @@ static GdkTexture *try_load_avatar_from_disk(const char *url) {
 
 static void avatar_ctx_free(AvatarCtx *c) {
   if (!c) return;
-  /* Remove weak references if widgets still exist */
-  if (c->image) g_object_weak_unref(G_OBJECT(c->image), on_image_weak_notify, c);
-  if (c->initials) g_object_weak_unref(G_OBJECT(c->initials), on_initials_weak_notify, c);
+  /* Remove weak references if widgets still exist and are valid GObjects.
+   * During shutdown, objects may be partially finalized, so we must validate
+   * before calling g_object_weak_unref to avoid assertion failures. */
+  if (c->image && G_IS_OBJECT(c->image)) {
+    g_object_weak_unref(G_OBJECT(c->image), on_image_weak_notify, c);
+  }
+  if (c->initials && G_IS_OBJECT(c->initials)) {
+    g_object_weak_unref(G_OBJECT(c->initials), on_initials_weak_notify, c);
+  }
   g_free(c->url);
   g_free(c);
 }  
