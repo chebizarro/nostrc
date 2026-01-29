@@ -153,6 +153,20 @@ gboolean gnostr_note_embed_is_profile(GnostrNoteEmbed *self);
  */
 void gnostr_note_embed_set_cancellable(GnostrNoteEmbed *self, GCancellable *cancellable);
 
+/**
+ * gnostr_note_embed_prepare_for_unbind:
+ * @self: a #GnostrNoteEmbed
+ *
+ * Prepares the widget for unbinding from a list item. This cancels all async
+ * operations and marks the widget as disposed to prevent callbacks from
+ * accessing widget state during the unbind/dispose process.
+ *
+ * CRITICAL: Call this from the parent widget's prepare_for_unbind BEFORE
+ * the parent starts its own cleanup. This prevents crashes where async
+ * callbacks try to access widget memory during disposal.
+ */
+void gnostr_note_embed_prepare_for_unbind(GnostrNoteEmbed *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_NOTE_EMBED_H */

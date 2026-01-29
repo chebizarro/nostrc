@@ -74,6 +74,9 @@ struct _GnostrNoteEmbed {
   gboolean hints_attempted;
   gboolean main_pool_attempted;
 
+  /* Disposal flag - set during prepare_for_unbind to prevent callbacks from accessing widget */
+  gboolean disposed;
+
 #ifdef HAVE_SOUP3
   /* Uses gnostr_get_shared_soup_session() instead of per-widget session */
 #endif
@@ -849,7 +852,7 @@ static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer use
   }
 
   GnostrNoteEmbed *self = GNOSTR_NOTE_EMBED(user_data);
-  if (!GNOSTR_IS_NOTE_EMBED(self)) {
+  if (!GNOSTR_IS_NOTE_EMBED(self) || self->disposed) {
     g_clear_error(&err);
     if (results) g_ptr_array_unref(results);
     return;
@@ -1058,7 +1061,7 @@ static void on_profile_relay_query_done(GObject *source, GAsyncResult *res, gpoi
   }
 
   GnostrNoteEmbed *self = GNOSTR_NOTE_EMBED(user_data);
-  if (!GNOSTR_IS_NOTE_EMBED(self)) {
+  if (!GNOSTR_IS_NOTE_EMBED(self) || self->disposed) {
     g_clear_error(&err);
     if (results) g_ptr_array_unref(results);
     return;
@@ -1287,4 +1290,27 @@ static void fetch_profile_from_local(GnostrNoteEmbed *self, const unsigned char 
 void gnostr_note_embed_set_cancellable(GnostrNoteEmbed *self, GCancellable *cancellable) {
   g_return_if_fail(GNOSTR_IS_NOTE_EMBED(self));
   self->external_cancellable = cancellable;
+}
+
+/**
+ * gnostr_note_embed_prepare_for_unbind:
+ *
+ * Prepares the widget for unbinding from a list item. This cancels all async
+ * operations and marks the widget as disposed to prevent callbacks from
+ * accessing widget state during the unbind/dispose process.
+ */
+void gnostr_note_embed_prepare_for_unbind(GnostrNoteEmbed *self) {
+  g_return_if_fail(GNOSTR_IS_NOTE_EMBED(self));
+
+  /* Mark as disposed FIRST to prevent any async callbacks from running.
+   * This is the same pattern as note_card_row_prepare_for_unbind. */
+  self->disposed = TRUE;
+
+  /* Cancel internal cancellable - external one will be cancelled by parent */
+  if (self->cancellable) {
+    g_cancellable_cancel(self->cancellable);
+  }
+
+  /* Clear external cancellable reference - it's owned by the parent */
+  self->external_cancellable = NULL;
 }

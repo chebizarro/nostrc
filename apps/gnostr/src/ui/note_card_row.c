@@ -5515,6 +5515,12 @@ void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
     og_preview_widget_prepare_for_unbind(self->og_preview);
   }
 
+  /* Note Embed: Same pattern - cancel async operations and mark as disposed.
+   * nostrc-ofq: Prevent crashes during scroll with embedded notes. */
+  if (self->note_embed && GNOSTR_IS_NOTE_EMBED(self->note_embed)) {
+    gnostr_note_embed_prepare_for_unbind(self->note_embed);
+  }
+
   /* Cancel all async operations immediately */
   if (self->async_cancellable) {
     g_cancellable_cancel(self->async_cancellable);
