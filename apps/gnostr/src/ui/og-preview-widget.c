@@ -85,9 +85,16 @@ static const char *stristr(const char *haystack, const char *needle) {
   if (!haystack || !needle) return NULL;
   
   size_t needle_len = strlen(needle);
-  for (const char *p = haystack; *p; p++) {
-    if (g_ascii_strncasecmp(p, needle, needle_len) == 0) {
-      return p;
+  if (needle_len == 0) return haystack;
+  
+  size_t haystack_len = strlen(haystack);
+  if (haystack_len < needle_len) return NULL;
+  
+  /* Only iterate while there are enough bytes remaining for a match */
+  size_t max_start = haystack_len - needle_len;
+  for (size_t i = 0; i <= max_start; i++) {
+    if (g_ascii_strncasecmp(haystack + i, needle, needle_len) == 0) {
+      return haystack + i;
     }
   }
   return NULL;
