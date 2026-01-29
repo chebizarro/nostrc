@@ -30,6 +30,62 @@
 
 /* No longer using mutex - proper fix is at backend level */
 
+/* Media image cache to reduce memory usage - LRU with bounded size */
+#define MEDIA_IMAGE_CACHE_MAX 50  /* Max cached media images */
+static GHashTable *s_media_image_cache = NULL;  /* URL -> GdkTexture */
+static GQueue *s_media_image_lru = NULL;        /* URL strings in LRU order */
+static GHashTable *s_media_image_lru_nodes = NULL; /* URL -> GList* node */
+
+static void ensure_media_image_cache(void) {
+  if (!s_media_image_cache) {
+    s_media_image_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
+    s_media_image_lru = g_queue_new();
+    s_media_image_lru_nodes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  }
+}
+
+static GdkTexture *media_image_cache_get(const char *url) {
+  if (!url || !s_media_image_cache) return NULL;
+  GdkTexture *tex = g_hash_table_lookup(s_media_image_cache, url);
+  if (tex) {
+    /* Touch LRU */
+    GList *node = g_hash_table_lookup(s_media_image_lru_nodes, url);
+    if (node) {
+      g_queue_unlink(s_media_image_lru, node);
+      g_queue_push_tail_link(s_media_image_lru, node);
+    }
+    return g_object_ref(tex);
+  }
+  return NULL;
+}
+
+static void media_image_cache_put(const char *url, GdkTexture *tex) {
+  if (!url || !tex) return;
+  ensure_media_image_cache();
+  
+  /* Already cached? */
+  if (g_hash_table_contains(s_media_image_cache, url)) return;
+  
+  /* Evict oldest if over limit */
+  while (g_hash_table_size(s_media_image_cache) >= MEDIA_IMAGE_CACHE_MAX &&
+         !g_queue_is_empty(s_media_image_lru)) {
+    char *oldest = g_queue_pop_head(s_media_image_lru);
+    if (oldest) {
+      g_hash_table_remove(s_media_image_lru_nodes, oldest);
+      g_hash_table_remove(s_media_image_cache, oldest);
+      g_free(oldest);
+    }
+  }
+  
+  /* Insert new entry */
+  g_hash_table_insert(s_media_image_cache, g_strdup(url), g_object_ref(tex));
+  char *lru_key = g_strdup(url);
+  GList *node = g_list_alloc();
+  node->data = lru_key;
+  g_queue_push_tail_link(s_media_image_lru, node);
+  g_hash_table_insert(s_media_image_lru_nodes, g_strdup(url), node);
+}
+
 struct _GnostrNoteCardRow {
   GtkWidget parent_instance;
   // template children
@@ -1933,6 +1989,9 @@ static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer u
 
   /* Get the parent container (GtkOverlay) for spinner/error handling */
   GtkWidget *container = GTK_IS_WIDGET(picture) ? gtk_widget_get_parent(GTK_WIDGET(picture)) : NULL;
+  
+  /* Get URL for caching */
+  const char *url = g_object_get_data(G_OBJECT(picture), "image-url");
 
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
   if (error) {
@@ -1970,6 +2029,11 @@ static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer u
     return;
   }
 
+  /* Cache the texture for reuse */
+  if (url) {
+    media_image_cache_put(url, texture);
+  }
+
   /* Update picture widget - check if still valid */
   if (GTK_IS_PICTURE(picture)) {
     gtk_picture_set_paintable(picture, GDK_PAINTABLE(texture));
@@ -1985,6 +2049,16 @@ static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer u
 /* Load media image asynchronously - internal function that starts the actual fetch */
 static void load_media_image_internal(GnostrNoteCardRow *self, const char *url, GtkPicture *picture) {
   if (!url || !*url || !GTK_IS_PICTURE(picture)) return;
+
+  /* Check cache first */
+  GdkTexture *cached = media_image_cache_get(url);
+  if (cached) {
+    gtk_picture_set_paintable(picture, GDK_PAINTABLE(cached));
+    GtkWidget *container = gtk_widget_get_parent(GTK_WIDGET(picture));
+    if (container) show_loaded_image(container);
+    g_object_unref(cached);
+    return;
+  }
 
   /* Create cancellable for this request */
   GCancellable *cancellable = g_cancellable_new();
