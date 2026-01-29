@@ -99,6 +99,18 @@ void nostr_subscription_free(NostrSubscription *sub) {
         go_hash_map_remove_int(sub->relay->subscriptions, sub->priv->counter);
     }
 
+    // Drain any remaining events from the channel to prevent memory leaks
+    // Events in the channel are owned by the subscription and must be freed
+    if (sub->events) {
+        void *ev = NULL;
+        while (go_channel_try_receive(sub->events, &ev) == 0) {
+            if (ev) {
+                nostr_event_free((NostrEvent *)ev);
+                ev = NULL;
+            }
+        }
+    }
+
     go_channel_free(sub->events);
     go_channel_free(sub->end_of_stored_events);
     go_channel_free(sub->closed_reason);
@@ -629,6 +641,17 @@ static void *async_cleanup_worker(void *arg) {
     /* If we got here without timeout, do the actual cleanup */
     if (success) {
         go_wait_group_wait(&sub->priv->wg);
+        
+        /* Drain any remaining events from the channel to prevent memory leaks */
+        if (sub->events) {
+            void *ev = NULL;
+            while (go_channel_try_receive(sub->events, &ev) == 0) {
+                if (ev) {
+                    nostr_event_free((NostrEvent *)ev);
+                    ev = NULL;
+                }
+            }
+        }
         
         /* Free resources */
         go_channel_free(sub->events);
