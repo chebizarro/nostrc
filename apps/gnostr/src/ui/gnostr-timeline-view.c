@@ -1537,8 +1537,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", tm_info);
       ts = g_strdup(buf);
     }
-    g_debug("[BIND] GnNostrEventItem: id=%s depth=%u profile=%s", 
-            id_hex ? id_hex : "(null)", depth, display ? display : "(none)");
+    /* Debug logging removed - too verbose for per-item binding */
   }
   /* OLD: TimelineItem binding (fallback for compatibility) */
   else if (G_IS_OBJECT(obj) && G_TYPE_CHECK_INSTANCE_TYPE(obj, timeline_item_get_type())) {
@@ -1598,7 +1597,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                                                (const char * const *)article_meta->hashtags);
 
         gnostr_article_meta_free(article_meta);
-        g_debug("[BIND] NIP-23: Article mode set for event %s", id_hex ? id_hex : "(null)");
+        /* Debug logging removed - too verbose */
       } else {
         /* Fallback to regular note display if parsing fails */
         gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
@@ -1619,7 +1618,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                                              (const char * const *)video_meta->hashtags);
 
         gnostr_video_meta_free(video_meta);
-        g_debug("[BIND] NIP-71: Video mode set for event %s (kind %d)", id_hex ? id_hex : "(null)", event_kind);
+        /* Debug logging removed - too verbose */
       } else {
         /* Fallback to regular note display if parsing fails */
         gnostr_note_card_row_set_content_with_imeta(GNOSTR_NOTE_CARD_ROW(row), content, tags_json);
@@ -1853,7 +1852,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 
     /* Connect to profile change notification to update author when profile loads */
     if (!display && !handle) {
-      g_debug("[BIND] Using pubkey fallback for event %s", id_hex ? id_hex : "(null)");
+      /* Debug logging removed - too verbose */
       g_signal_connect_object(obj, "notify::profile",
                               G_CALLBACK(on_event_item_profile_changed),
                               item, 0);
@@ -1867,11 +1866,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     g_signal_connect(row, "request-embed", G_CALLBACK(on_row_request_embed), NULL);
   }
 
-  g_debug("factory bind: item=%p content=%.60s depth=%u is_reply=%s id=%s root_id=%s", 
-           (void*)item, content ? content : "", depth, 
-           is_reply ? "TRUE" : "FALSE", 
-           id_hex ? id_hex : "(null)",
-           root_id ? root_id : "(null)");
+  /* Debug logging removed - too verbose for per-item binding */
   g_free(display); g_free(handle); g_free(ts); g_free(content); g_free(root_id); g_free(id_hex);
   g_free(avatar_url); g_free(parent_id); g_free(parent_pubkey); g_free(nip05);
 
