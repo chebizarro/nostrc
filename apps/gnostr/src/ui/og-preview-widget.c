@@ -660,26 +660,49 @@ void og_preview_widget_set_url_with_cancellable(OgPreviewWidget *self,
 
 void og_preview_widget_clear(OgPreviewWidget *self) {
   g_return_if_fail(OG_IS_PREVIEW_WIDGET(self));
-  
+
   /* Cancel requests */
   if (self->cancellable) {
     g_cancellable_cancel(self->cancellable);
     g_clear_object(&self->cancellable);
   }
-  
+
   if (self->image_cancellable) {
     g_cancellable_cancel(self->image_cancellable);
     g_clear_object(&self->image_cancellable);
   }
-  
+
   /* Clear external cancellable reference (not owned) */
   self->external_cancellable = NULL;
-  
+
   /* Clear URL */
   g_free(self->current_url);
   self->current_url = NULL;
-  
+
   /* Hide UI */
   gtk_widget_set_visible(self->spinner, FALSE);
   gtk_widget_set_visible(self->card_box, FALSE);
+}
+
+void og_preview_widget_prepare_for_unbind(OgPreviewWidget *self) {
+  g_return_if_fail(OG_IS_PREVIEW_WIDGET(self));
+
+  /* Mark as disposed FIRST to prevent any async callbacks from running.
+   * This is the same pattern as note_card_row_prepare_for_unbind. */
+  self->disposed = TRUE;
+
+  /* Cancel all async operations - this prevents callbacks from trying to
+   * access widget memory during disposal. Cancel but don't clear the objects
+   * here - finalize will handle that. This matches the dispose() behavior. */
+  if (self->cancellable) {
+    g_cancellable_cancel(self->cancellable);
+  }
+
+  if (self->image_cancellable) {
+    g_cancellable_cancel(self->image_cancellable);
+  }
+
+  /* Clear external cancellable reference - it's owned by the parent and
+   * will be cancelled by the parent's prepare_for_unbind */
+  self->external_cancellable = NULL;
 }

@@ -5508,6 +5508,13 @@ void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
     }
   }
 
+  /* OG Preview: Cancel async operations and mark as disposed to prevent
+   * callbacks from accessing widget memory during disposal. Same pattern as
+   * video player fix. nostrc-ofq: Fix crash during scroll. */
+  if (self->og_preview && OG_IS_PREVIEW_WIDGET(self->og_preview)) {
+    og_preview_widget_prepare_for_unbind(self->og_preview);
+  }
+
   /* Cancel all async operations immediately */
   if (self->async_cancellable) {
     g_cancellable_cancel(self->async_cancellable);

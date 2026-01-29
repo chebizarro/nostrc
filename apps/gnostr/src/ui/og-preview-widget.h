@@ -36,6 +36,20 @@ void og_preview_widget_set_url(OgPreviewWidget *self, const char *url);
 void og_preview_widget_clear(OgPreviewWidget *self);
 
 /**
+ * og_preview_widget_prepare_for_unbind:
+ * @self: An #OgPreviewWidget
+ *
+ * Prepares the widget for unbinding from a list item. This cancels all async
+ * operations and marks the widget as disposed to prevent callbacks from
+ * accessing widget state during the unbind/dispose process.
+ *
+ * CRITICAL: Call this from the parent widget's prepare_for_unbind BEFORE
+ * the parent starts its own cleanup. This prevents crashes where async
+ * callbacks try to access widget memory during disposal.
+ */
+void og_preview_widget_prepare_for_unbind(OgPreviewWidget *self);
+
+/**
  * og_preview_widget_set_url_with_cancellable:
  * @self: An #OgPreviewWidget
  * @url: The URL to fetch and preview
