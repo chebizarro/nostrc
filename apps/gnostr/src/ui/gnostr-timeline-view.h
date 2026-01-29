@@ -56,6 +56,13 @@ void gnostr_timeline_view_add_hashtag_tab(GnostrTimelineView *self, const char *
 /* Add an author tab and switch to it */
 void gnostr_timeline_view_add_author_tab(GnostrTimelineView *self, const char *pubkey_hex, const char *display_name);
 
+/**
+ * Signals:
+ * - "tab-filter-changed": Emitted when the active tab changes.
+ *   Handler signature: void handler(GnostrTimelineView *view, GnTimelineTabType type, const char *filter_value, gpointer user_data)
+ *   The main window should connect to this signal to update the model query.
+ */
+
 G_END_DECLS
 
 #endif /* GNOSTR_TIMELINE_VIEW_H */

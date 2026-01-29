@@ -735,6 +735,30 @@ struct _GnostrTimelineView {
 
 G_DEFINE_TYPE(GnostrTimelineView, gnostr_timeline_view, GTK_TYPE_WIDGET)
 
+/* Signals */
+enum {
+  SIGNAL_TAB_FILTER_CHANGED,
+  N_SIGNALS
+};
+
+static guint timeline_view_signals[N_SIGNALS];
+
+/* Handler for tab-selected signal from GnTimelineTabs */
+static void on_tabs_tab_selected(GnTimelineTabs *tabs, guint index, gpointer user_data) {
+  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(user_data);
+  if (!self || !tabs) return;
+
+  GnTimelineTabType type = gn_timeline_tabs_get_tab_type(tabs, index);
+  const char *filter_value = gn_timeline_tabs_get_tab_filter_value(tabs, index);
+
+  g_debug("timeline_view: tab selected index=%u type=%d filter='%s'",
+          index, type, filter_value ? filter_value : "(null)");
+
+  /* Emit signal so main window can update the model query */
+  g_signal_emit(self, timeline_view_signals[SIGNAL_TAB_FILTER_CHANGED], 0,
+                (guint)type, filter_value);
+}
+
 static void gnostr_timeline_view_dispose(GObject *obj) {
   GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(obj);
   g_warning("🔥🔥🔥 TIMELINE_VIEW DISPOSE STARTING: list_view=%p list_model=%p tree_model=%p", 
@@ -1851,6 +1875,14 @@ static void gnostr_timeline_view_class_init(GnostrTimelineViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrTimelineView, tabs);
   gtk_widget_class_bind_template_child(widget_class, GnostrTimelineView, root_scroller);
   gtk_widget_class_bind_template_child(widget_class, GnostrTimelineView, list_view);
+
+  /* Register signals */
+  timeline_view_signals[SIGNAL_TAB_FILTER_CHANGED] =
+    g_signal_new("tab-filter-changed",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 0, NULL, NULL, NULL,
+                 G_TYPE_NONE, 2, G_TYPE_UINT, G_TYPE_STRING);
 }
 
 static void gnostr_timeline_view_init(GnostrTimelineView *self) {
@@ -1860,8 +1892,14 @@ static void gnostr_timeline_view_init(GnostrTimelineView *self) {
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->root_scroller),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Timeline Scroll", -1);
   /* Child widgets already have hexpand/vexpand in template */
-  g_debug("timeline_view init: self=%p root_scroller=%p list_view=%p", (void*)self, (void*)self->root_scroller, (void*)self->list_view);
+  g_debug("timeline_view init: self=%p root_scroller=%p list_view=%p tabs=%p",
+          (void*)self, (void*)self->root_scroller, (void*)self->list_view, (void*)self->tabs);
   setup_default_factory(self);
+
+  /* Connect to tabs signals */
+  if (self->tabs && GN_IS_TIMELINE_TABS(self->tabs)) {
+    g_signal_connect(self->tabs, "tab-selected", G_CALLBACK(on_tabs_tab_selected), self);
+  }
 
   /* Install minimal CSS for thread indicator and avatar */
   static const char *css =
