@@ -46,6 +46,7 @@ struct _GnTimelineModel {
 
   /* Note keys array - sorted by created_at descending */
   GArray *notes;
+  GHashTable *note_key_set;  /* note_key -> TRUE for O(1) dedup lookups */
 
   /* Timestamps for pagination */
   gint64 newest_timestamp;
@@ -69,6 +70,7 @@ struct _GnTimelineModel {
   gboolean needs_refresh;
   guint pending_update_old_count;  /* Count before batch started */
   gboolean in_batch_mode;          /* Suppress signals during initial load */
+  guint initial_load_timeout_id;   /* Timer to end initial batch mode */
 
   /* Visible range for prefetching */
   guint visible_start;
@@ -83,6 +85,9 @@ static void gn_timeline_model_list_model_iface_init(GListModelInterface *iface);
 static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
 static void gn_timeline_model_schedule_update(GnTimelineModel *self);
 static gboolean on_update_debounce_timeout(gpointer user_data);
+static gboolean on_initial_load_timeout(gpointer user_data);
+
+#define INITIAL_LOAD_TIMEOUT_MS 500  /* Time to wait for initial subscription data */
 
 G_DEFINE_TYPE_WITH_CODE(GnTimelineModel, gn_timeline_model, G_TYPE_OBJECT,
                         G_IMPLEMENT_INTERFACE(G_TYPE_LIST_MODEL, gn_timeline_model_list_model_iface_init))
@@ -233,14 +238,30 @@ static void gn_timeline_model_schedule_update(GnTimelineModel *self) {
   );
 }
 
+static gboolean on_initial_load_timeout(gpointer user_data) {
+  GnTimelineModel *self = GN_TIMELINE_MODEL(user_data);
+  if (!GN_IS_TIMELINE_MODEL(self)) return G_SOURCE_REMOVE;
+
+  self->initial_load_timeout_id = 0;
+
+  if (self->in_batch_mode) {
+    g_debug("[TIMELINE] Initial load complete, ending batch mode");
+    gn_timeline_model_end_batch(self);
+  }
+
+  return G_SOURCE_REMOVE;
+}
+
 /* ============== Note Helpers ============== */
 
 static gboolean has_note_key(GnTimelineModel *self, uint64_t key) {
-  for (guint i = 0; i < self->notes->len; i++) {
-    NoteEntry *entry = &g_array_index(self->notes, NoteEntry, i);
-    if (entry->note_key == key) return TRUE;
-  }
-  return FALSE;
+  return g_hash_table_contains(self->note_key_set, &key);
+}
+
+static void add_note_key_to_set(GnTimelineModel *self, uint64_t key) {
+  uint64_t *key_copy = g_new(uint64_t, 1);
+  *key_copy = key;
+  g_hash_table_add(self->note_key_set, key_copy);
 }
 
 static gint note_entry_compare_newest_first(gconstpointer a, gconstpointer b) {
@@ -379,6 +400,7 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
     if (self->user_at_top) {
       /* Add directly to notes array */
       g_array_append_val(self->notes, entry);
+      add_note_key_to_set(self, note_key);
       added++;
 
       /* Update timestamps */
@@ -447,6 +469,7 @@ void gn_timeline_model_refresh(GnTimelineModel *self) {
   /* Clear everything */
   g_array_set_size(self->notes, 0);
   g_array_set_size(self->pending_notes, 0);
+  g_hash_table_remove_all(self->note_key_set);
   cache_clear(self);
   self->newest_timestamp = 0;
   self->oldest_timestamp = 0;
@@ -481,6 +504,7 @@ void gn_timeline_model_clear(GnTimelineModel *self) {
   guint old_count = self->notes->len;
   g_array_set_size(self->notes, 0);
   g_array_set_size(self->pending_notes, 0);
+  g_hash_table_remove_all(self->note_key_set);
   cache_clear(self);
   self->newest_timestamp = 0;
   self->oldest_timestamp = 0;
@@ -534,14 +558,21 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
         continue;
       }
 
-      /* Convert hex ID to binary */
+      /* Convert hex ID to binary - must convert all 32 bytes */
       unsigned char id32[32];
+      int bytes_converted = 0;
       for (int j = 0; j < 32; j++) {
         unsigned int byte;
         if (sscanf(id_hex + j*2, "%2x", &byte) != 1) {
           break;
         }
         id32[j] = (unsigned char)byte;
+        bytes_converted++;
+      }
+      if (bytes_converted != 32) {
+        g_debug("[TIMELINE] Incomplete hex conversion: only %d/32 bytes", bytes_converted);
+        json_decref(event);
+        continue;
       }
 
       /* Get note_key from ID */
@@ -557,9 +588,20 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
         continue;
       }
 
+      /* Check mute list */
+      const char *pubkey_hex = json_string_value(json_object_get(event, "pubkey"));
+      if (pubkey_hex) {
+        GnostrMuteList *mute_list = gnostr_mute_list_get_default();
+        if (mute_list && gnostr_mute_list_is_pubkey_muted(mute_list, pubkey_hex)) {
+          json_decref(event);
+          continue;
+        }
+      }
+
       /* Add to notes array at the end (older items) */
       NoteEntry entry = { .note_key = note_key, .created_at = created_at };
       g_array_append_val(self->notes, entry);
+      add_note_key_to_set(self, note_key);
       added++;
 
       /* Update oldest timestamp */
@@ -577,10 +619,11 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
   g_free(filter_json);
 
   if (added > 0) {
+    guint old_count = self->notes->len - added;
     /* Sort to ensure proper order (older items at the end) */
     g_array_sort(self->notes, note_entry_compare_newest_first);
-    /* Emit items_changed for the appended items */
-    g_list_model_items_changed(G_LIST_MODEL(self), self->notes->len - added, 0, added);
+    /* Emit "replace all" since sorted items may have moved to any position */
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, old_count, self->notes->len);
   }
 
   return added;
@@ -627,6 +670,7 @@ void gn_timeline_model_flush_pending(GnTimelineModel *self) {
   for (guint i = 0; i < n_pending; i++) {
     NoteEntry *entry = &g_array_index(self->pending_notes, NoteEntry, i);
     g_array_index(new_notes, NoteEntry, i) = *entry;
+    add_note_key_to_set(self, entry->note_key);
 
     /* Update timestamps */
     if (entry->created_at > self->newest_timestamp || self->newest_timestamp == 0) {
@@ -762,6 +806,12 @@ static void gn_timeline_model_dispose(GObject *object) {
     self->update_debounce_id = 0;
   }
 
+  /* Cancel initial load timer */
+  if (self->initial_load_timeout_id > 0) {
+    g_source_remove(self->initial_load_timeout_id);
+    self->initial_load_timeout_id = 0;
+  }
+
   /* Unsubscribe */
   if (self->sub_timeline > 0) {
     gn_ndb_unsubscribe(self->sub_timeline);
@@ -777,9 +827,10 @@ static void gn_timeline_model_dispose(GObject *object) {
     self->profile_cache_lru = NULL;
   }
 
-  /* Free arrays */
+  /* Free arrays and hash set */
   g_clear_pointer(&self->notes, g_array_unref);
   g_clear_pointer(&self->pending_notes, g_array_unref);
+  g_clear_pointer(&self->note_key_set, g_hash_table_unref);
 
   /* Free query */
   gn_timeline_query_free(self->query);
@@ -811,6 +862,7 @@ static void gn_timeline_model_class_init(GnTimelineModelClass *klass) {
 static void gn_timeline_model_init(GnTimelineModel *self) {
   self->notes = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
   self->pending_notes = g_array_new(FALSE, FALSE, sizeof(NoteEntry));
+  self->note_key_set = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
 
   self->item_cache = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, g_object_unref);
   self->cache_lru = g_queue_new();
@@ -820,7 +872,18 @@ static void gn_timeline_model_init(GnTimelineModel *self) {
 
   self->user_at_top = TRUE;
 
+  /* Start in batch mode to prevent widget recycling storms during initial load */
+  self->in_batch_mode = TRUE;
+  self->pending_update_old_count = 0;
+
   /* Subscribe to timeline events */
   const char *filter = "{\"kinds\":[1,6]}";
   self->sub_timeline = gn_ndb_subscribe(filter, on_sub_timeline_batch, self, NULL);
+
+  /* Schedule end of batch mode after initial load window */
+  self->initial_load_timeout_id = g_timeout_add(
+    INITIAL_LOAD_TIMEOUT_MS,
+    on_initial_load_timeout,
+    self
+  );
 }
