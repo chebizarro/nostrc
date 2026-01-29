@@ -1,6 +1,7 @@
 #define G_LOG_DOMAIN "gnostr-event-model"
 
 #include "gn-nostr-event-model.h"
+#include "gn-timeline-query.h"
 #include "gn-ndb-sub-dispatcher.h"
 #include "../storage_ndb.h"
 #include "../util/mute_list.h"
@@ -39,7 +40,10 @@ typedef struct {
 struct _GnNostrEventModel {
   GObject parent_instance;
 
-  /* Query parameters */
+  /* Query parameters (new API) */
+  GnTimelineQuery *timeline_query;
+
+  /* Query parameters (legacy - kept for compatibility) */
   gint *kinds;
   gsize n_kinds;
   char **authors;
@@ -1165,6 +1169,12 @@ static void gn_nostr_event_model_finalize(GObject *object) {
   if (self->sub_profiles > 0) { gn_ndb_unsubscribe(self->sub_profiles); self->sub_profiles = 0; }
   if (self->sub_deletes > 0)  { gn_ndb_unsubscribe(self->sub_deletes);  self->sub_deletes = 0;  }
 
+  /* Free timeline query */
+  if (self->timeline_query) {
+    gn_timeline_query_free(self->timeline_query);
+    self->timeline_query = NULL;
+  }
+
   g_free(self->kinds);
   g_strfreev(self->authors);
   g_free(self->root_event_id);
@@ -1299,6 +1309,67 @@ GnNostrEventModel *gn_nostr_event_model_new(void) {
   return g_object_new(GN_TYPE_NOSTR_EVENT_MODEL, NULL);
 }
 
+GnNostrEventModel *gn_nostr_event_model_new_with_query(GnTimelineQuery *query) {
+  GnNostrEventModel *self = gn_nostr_event_model_new();
+  if (query) {
+    gn_nostr_event_model_set_timeline_query(self, query);
+  }
+  return self;
+}
+
+void gn_nostr_event_model_set_timeline_query(GnNostrEventModel *self, GnTimelineQuery *query) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
+
+  /* Free old query */
+  if (self->timeline_query) {
+    gn_timeline_query_free(self->timeline_query);
+    self->timeline_query = NULL;
+  }
+
+  if (!query) return;
+
+  /* Store a copy of the query */
+  self->timeline_query = gn_timeline_query_copy(query);
+
+  /* Sync to legacy fields for compatibility */
+  g_free(self->kinds);
+  self->kinds = NULL;
+  self->n_kinds = 0;
+
+  if (query->n_kinds > 0) {
+    self->kinds = g_new(gint, query->n_kinds);
+    memcpy(self->kinds, query->kinds, query->n_kinds * sizeof(gint));
+    self->n_kinds = query->n_kinds;
+  }
+
+  g_strfreev(self->authors);
+  self->authors = NULL;
+  self->n_authors = 0;
+
+  if (query->n_authors > 0) {
+    self->authors = g_new(char*, query->n_authors + 1);
+    for (gsize i = 0; i < query->n_authors; i++) {
+      self->authors[i] = g_strdup(query->authors[i]);
+    }
+    self->authors[query->n_authors] = NULL;
+    self->n_authors = query->n_authors;
+  }
+
+  self->since = query->since;
+  self->until = query->until;
+  self->limit = query->limit > 0 ? query->limit : MODEL_MAX_ITEMS;
+  self->window_size = MIN((guint)MODEL_MAX_ITEMS, self->limit);
+
+  g_debug("[MODEL] Timeline query set: kinds=%zu authors=%zu window=%u",
+          self->n_kinds, self->n_authors, self->window_size);
+}
+
+GnTimelineQuery *gn_nostr_event_model_get_timeline_query(GnNostrEventModel *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_MODEL(self), NULL);
+  return self->timeline_query;
+}
+
+/* Legacy API - deprecated, use gn_nostr_event_model_set_timeline_query instead */
 void gn_nostr_event_model_set_query(GnNostrEventModel *self, const GnNostrQueryParams *params) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
   g_return_if_fail(params != NULL);
