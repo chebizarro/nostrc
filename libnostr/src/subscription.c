@@ -91,16 +91,21 @@ void nostr_subscription_free(NostrSubscription *sub) {
     if (!sub)
         return;
 
-    // Ensure lifecycle worker has exited (caller should have unsubscribed)
-    go_wait_group_wait(&sub->priv->wg);
-
-    // Remove from relay map at final free to allow late EOSE/CLOSED routing during teardown
+    // IMPORTANT: Remove from relay map FIRST to prevent message_loop from
+    // dispatching events to this subscription while we're freeing it.
+    // This must happen before waiting for the lifecycle worker.
     if (sub->relay && sub->relay->subscriptions) {
         go_hash_map_remove_int(sub->relay->subscriptions, sub->priv->counter);
     }
 
+    // Ensure lifecycle worker has exited (caller should have unsubscribed)
+    go_wait_group_wait(&sub->priv->wg);
+
     // Drain any remaining events from the channel to prevent memory leaks
     // Events in the channel are owned by the subscription and must be freed
+    // Safe to drain now since:
+    // 1. Subscription removed from relay map (no new dispatches)
+    // 2. Lifecycle worker exited (channel is closed)
     if (sub->events) {
         void *ev = NULL;
         while (go_channel_try_receive(sub->events, &ev) == 0) {
@@ -590,6 +595,12 @@ static void *async_cleanup_worker(void *arg) {
     if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
         fprintf(stderr, "[sub %s] async_cleanup: starting (timeout=%lums)\n", 
                 sub->priv->id, (unsigned long)timeout_ms);
+    }
+    
+    /* IMPORTANT: Remove from relay map FIRST to prevent message_loop from
+     * dispatching events to this subscription while we're freeing it. */
+    if (sub->relay && sub->relay->subscriptions) {
+        go_hash_map_remove_int(sub->relay->subscriptions, sub->priv->counter);
     }
     
     bool success = true;
