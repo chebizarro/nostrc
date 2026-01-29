@@ -164,6 +164,26 @@ void gn_timeline_model_set_visible_range(GnTimelineModel *self, guint start, gui
  */
 void gn_timeline_model_update_profile(GnTimelineModel *self, const char *pubkey_hex);
 
+/* ============== Batch Mode ============== */
+
+/**
+ * gn_timeline_model_begin_batch:
+ * @self: The model
+ *
+ * Begin batch mode. UI updates are suppressed until end_batch() is called.
+ * Use this during initial load to prevent widget recycling storms.
+ */
+void gn_timeline_model_begin_batch(GnTimelineModel *self);
+
+/**
+ * gn_timeline_model_end_batch:
+ * @self: The model
+ *
+ * End batch mode and emit a single items_changed signal for all
+ * accumulated changes since begin_batch() was called.
+ */
+void gn_timeline_model_end_batch(GnTimelineModel *self);
+
 G_END_DECLS
 
 #endif /* GN_TIMELINE_MODEL_H */

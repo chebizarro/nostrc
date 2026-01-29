@@ -198,6 +198,29 @@ The existing `GnNostrEventModel` API (`set_query()` with `GnNostrQueryParams`) c
 - `apps/gnostr/src/model/gn-nostr-event-model.h` - Added GnTimelineQuery API
 - `apps/gnostr/src/model/gn-nostr-event-model.c` - Implemented GnTimelineQuery integration
 
+## Crash Resistance Features
+
+### Update Debouncing
+When events arrive rapidly from nostrdb, updates are debounced (default 50ms) to prevent widget recycling storms:
+- Multiple batches are coalesced into a single UI update
+- Cache is NOT cleared on sort (cache is keyed by note_key, not position)
+- Single `items_changed` signal covers all accumulated changes
+
+### Batch Mode
+For initial load, use batch mode to suppress signals entirely:
+```c
+gn_timeline_model_begin_batch(model);
+// ... initial loading happens via subscription ...
+gn_timeline_model_end_batch(model);  // Single items_changed emitted
+```
+
+### Pagination
+`gn_timeline_model_load_older()` is now fully implemented:
+- Queries nostrdb with `until=oldest_timestamp-1`
+- Parses JSON results to extract note keys
+- Appends older items to the model
+- Emits proper `items_changed` signal
+
 ## Future Work
 
 - [ ] Add search query support to GnTimelineQuery
