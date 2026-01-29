@@ -95,6 +95,11 @@ static gboolean avatar_cache_log_cb(gpointer data) {
   return TRUE;
 }
 
+/* Public: Get current cache size for memory stats */
+guint gnostr_avatar_cache_size(void) {
+  return avatar_texture_cache ? g_hash_table_size(avatar_texture_cache) : 0;
+}
+
 static void ensure_avatar_cache(void) {
   avatar_init_config(); /* Read env vars on first call */
   if (!avatar_texture_cache) avatar_texture_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);

@@ -86,6 +86,11 @@ static void media_image_cache_put(const char *url, GdkTexture *tex) {
   g_hash_table_insert(s_media_image_lru_nodes, g_strdup(url), node);
 }
 
+/* Public: Get current cache size for memory stats */
+guint gnostr_media_image_cache_size(void) {
+  return s_media_image_cache ? g_hash_table_size(s_media_image_cache) : 0;
+}
+
 struct _GnostrNoteCardRow {
   GtkWidget parent_instance;
   // template children

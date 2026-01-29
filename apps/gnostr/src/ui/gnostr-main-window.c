@@ -417,9 +417,23 @@ static gboolean memory_stats_cb(gpointer data) {
   guint avatar_size = self->avatar_tex_cache ? g_hash_table_size(self->avatar_tex_cache) : 0;
   guint model_items = self->event_model ? g_list_model_get_n_items(G_LIST_MODEL(self->event_model)) : 0;
   guint liked_events_size = self->liked_events ? g_hash_table_size(self->liked_events) : 0;
+  guint profile_batches = self->profile_batches ? self->profile_batches->len : 0;
+  guint gift_wrap_queue = self->gift_wrap_queue ? self->gift_wrap_queue->len : 0;
 
-  g_debug("[MEMORY] model=%u seen_texts=%u avatars=%u profile_q=%u liked=%u",
-          model_items, seen_texts_size, avatar_size, profile_queue, liked_events_size);
+  /* Get external cache stats */
+  extern guint gnostr_avatar_cache_size(void);
+  extern guint gnostr_media_image_cache_size(void);
+  guint avatar_cache = gnostr_avatar_cache_size();
+  guint media_cache = gnostr_media_image_cache_size();
+  
+  /* Get profile provider stats */
+  GnostrProfileProviderStats pstats = {0};
+  gnostr_profile_provider_get_stats(&pstats);
+
+  g_message("[MEMORY] model=%u seen=%u avatar_tex=%u avatar_cache=%u media_cache=%u profile_q=%u liked=%u batches=%u giftwrap=%u profile_cache=%u/%u",
+          model_items, seen_texts_size, avatar_size, avatar_cache, media_cache,
+          profile_queue, liked_events_size, profile_batches, gift_wrap_queue,
+          pstats.cache_size, pstats.cache_cap);
   
   /* Prune caches if they exceed limits to prevent unbounded memory growth */
   gboolean pruned = FALSE;
