@@ -560,6 +560,7 @@ struct _RelayManagerCtx {
   GHashTable *relay_types; /* URL -> GnostrRelayType (as GINT_TO_POINTER) */
   gboolean destroyed;   /* Set to TRUE when window is destroyed */
   gint ref_count;       /* Reference count for safe async cleanup */
+  GnostrMainWindow *main_window; /* Reference to main window for pool access */
 };
 
 static void relay_manager_ctx_ref(RelayManagerCtx *ctx) {
@@ -1707,6 +1708,7 @@ typedef struct {
   GtkWidget *name_label;
   GtkWidget *url_label;
   GtkWidget *status_icon;
+  GtkWidget *connection_icon;  /* Live connection status indicator */
   GtkWidget *nips_box;
   GtkWidget *warning_icon;
   GtkWidget *type_dropdown;
@@ -1721,7 +1723,14 @@ static void relay_manager_setup_factory_cb(GtkSignalListItemFactory *factory, Gt
   gtk_widget_set_margin_top(row, 4);
   gtk_widget_set_margin_bottom(row, 4);
 
-  /* Status indicator (colored dot) */
+  /* Connection status indicator (live connection) */
+  GtkWidget *connection_icon = gtk_image_new_from_icon_name("network-offline-symbolic");
+  gtk_widget_set_size_request(connection_icon, 16, 16);
+  gtk_widget_add_css_class(connection_icon, "dim-label");
+  gtk_widget_set_tooltip_text(connection_icon, "Not connected");
+  gtk_box_append(GTK_BOX(row), connection_icon);
+
+  /* Status indicator (relay info fetch status) */
   GtkWidget *status_icon = gtk_image_new_from_icon_name("network-offline-symbolic");
   gtk_widget_set_size_request(status_icon, 16, 16);
   gtk_widget_add_css_class(status_icon, "dim-label");
@@ -1778,6 +1787,7 @@ static void relay_manager_setup_factory_cb(GtkSignalListItemFactory *factory, Gt
   widgets->name_label = name_label;
   widgets->url_label = url_label;
   widgets->status_icon = status_icon;
+  widgets->connection_icon = connection_icon;
   widgets->nips_box = nips_box;
   widgets->warning_icon = warning_icon;
   widgets->type_dropdown = type_dropdown;
@@ -1909,6 +1919,24 @@ static void relay_manager_bind_factory_cb(GtkSignalListItemFactory *factory, Gtk
   const gchar *url = gtk_string_object_get_string(obj);
   if (!url) return;
 
+  /* Update connection status indicator */
+  if (widgets->connection_icon && ctx && ctx->main_window && ctx->main_window->pool) {
+    gboolean connected = gnostr_simple_pool_is_relay_connected(ctx->main_window->pool, url);
+    if (connected) {
+      gtk_image_set_from_icon_name(GTK_IMAGE(widgets->connection_icon), "network-wired-symbolic");
+      gtk_widget_remove_css_class(widgets->connection_icon, "dim-label");
+      gtk_widget_remove_css_class(widgets->connection_icon, "error");
+      gtk_widget_add_css_class(widgets->connection_icon, "success");
+      gtk_widget_set_tooltip_text(widgets->connection_icon, "Connected");
+    } else {
+      gtk_image_set_from_icon_name(GTK_IMAGE(widgets->connection_icon), "network-offline-symbolic");
+      gtk_widget_remove_css_class(widgets->connection_icon, "success");
+      gtk_widget_remove_css_class(widgets->connection_icon, "error");
+      gtk_widget_add_css_class(widgets->connection_icon, "dim-label");
+      gtk_widget_set_tooltip_text(widgets->connection_icon, "Not connected");
+    }
+  }
+
   /* Setup type dropdown for this relay */
   if (widgets->type_dropdown && ctx && ctx->relay_types) {
     /* Disconnect any previous signal handler */
@@ -2039,6 +2067,7 @@ static void on_relays_clicked(GtkButton *btn, gpointer user_data) {
   ctx->builder = builder;
   ctx->modified = FALSE;
   ctx->relay_types = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  ctx->main_window = self;  /* Store reference for pool access */
 
   /* Create relay list model */
   ctx->relay_model = gtk_string_list_new(NULL);
