@@ -5348,12 +5348,25 @@ GCancellable *gnostr_note_card_row_get_cancellable(GnostrNoteCardRow *self) {
  * Prepares the row for unbinding from a list item. This cancels all async
  * operations and marks the row as disposed to prevent callbacks from
  * corrupting Pango state during the unbind/dispose process.
+ *
+ * CRITICAL: Also clears the avatar image's paintable to prevent
+ * gtk_image_definition_unref crashes during rapid widget recycling.
  */
 void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
   g_return_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self));
   
   /* Mark as disposed FIRST to prevent any async callbacks from running */
   self->disposed = TRUE;
+  
+  /* CRITICAL: Clear avatar image paintable BEFORE any async cancellation.
+   * This prevents gtk_image_definition_unref crashes when GTK tries to
+   * unreference an image that's in an invalid state during rapid widget
+   * recycling (e.g., when clicking "New Notes" toast to flush many items).
+   * The crash happens because the GtkPicture's internal image definition
+   * can get corrupted during async callback cancellation. */
+  if (self->avatar_image && GTK_IS_PICTURE(self->avatar_image)) {
+    gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), NULL);
+  }
   
   /* Cancel all async operations immediately */
   if (self->async_cancellable) {
