@@ -549,9 +549,15 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
     g_debug("avatar http: error fetching url=%s: %s", ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
     /* Mark as failed to avoid retrying for a while */
     avatar_url_mark_failed(ctx->url);
-    /* Ensure initials fallback is visible */
-    if (GTK_IS_WIDGET(ctx->initials)) gtk_widget_set_visible(ctx->initials, TRUE);
-    if (GTK_IS_PICTURE(ctx->image)) gtk_widget_set_visible(ctx->image, FALSE);
+    /* Ensure initials fallback is visible - validate widgets are still valid */
+    if (ctx->initials && G_IS_OBJECT(ctx->initials) && GTK_IS_WIDGET(ctx->initials) &&
+        gtk_widget_get_parent(ctx->initials) != NULL) {
+      gtk_widget_set_visible(ctx->initials, TRUE);
+    }
+    if (ctx->image && G_IS_OBJECT(ctx->image) && GTK_IS_PICTURE(ctx->image) &&
+        gtk_widget_get_parent(ctx->image) != NULL) {
+      gtk_widget_set_visible(ctx->image, FALSE);
+    }
     g_clear_error(&error);
     avatar_ctx_free(ctx);
     return;
@@ -568,9 +574,15 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
              ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
     /* Mark as failed to avoid retrying for a while */
     avatar_url_mark_failed(ctx->url);
-    /* Ensure initials fallback is visible for invalid images */
-    if (GTK_IS_WIDGET(ctx->initials)) gtk_widget_set_visible(ctx->initials, TRUE);
-    if (GTK_IS_PICTURE(ctx->image)) gtk_widget_set_visible(ctx->image, FALSE);
+    /* Ensure initials fallback is visible for invalid images - validate widgets */
+    if (ctx->initials && G_IS_OBJECT(ctx->initials) && GTK_IS_WIDGET(ctx->initials) &&
+        gtk_widget_get_parent(ctx->initials) != NULL) {
+      gtk_widget_set_visible(ctx->initials, TRUE);
+    }
+    if (ctx->image && G_IS_OBJECT(ctx->image) && GTK_IS_PICTURE(ctx->image) &&
+        gtk_widget_get_parent(ctx->image) != NULL) {
+      gtk_widget_set_visible(ctx->image, FALSE);
+    }
     g_clear_error(&error);
     g_bytes_unref(bytes);
     avatar_ctx_free(ctx);
@@ -599,8 +611,18 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
   avatar_lru_insert(ctx->url);
   avatar_lru_evict_if_needed();
   g_debug("avatar http: cached texture for url=%s", ctx && ctx->url ? ctx->url : "(null)");
-  if (GTK_IS_PICTURE(ctx->image)) { gtk_picture_set_paintable(GTK_PICTURE(ctx->image), GDK_PAINTABLE(tex)); gtk_widget_set_visible(ctx->image, TRUE); }
-  if (GTK_IS_WIDGET(ctx->initials)) gtk_widget_set_visible(ctx->initials, FALSE);
+  /* Only update widgets if they are still valid and not being disposed.
+   * GTK_IS_PICTURE can return true during disposal, so also check the widget
+   * has a parent (disposed widgets lose their parent) and is a valid GObject. */
+  if (ctx->image && G_IS_OBJECT(ctx->image) && GTK_IS_PICTURE(ctx->image) && 
+      gtk_widget_get_parent(ctx->image) != NULL) {
+    gtk_picture_set_paintable(GTK_PICTURE(ctx->image), GDK_PAINTABLE(tex));
+    gtk_widget_set_visible(ctx->image, TRUE);
+  }
+  if (ctx->initials && G_IS_OBJECT(ctx->initials) && GTK_IS_WIDGET(ctx->initials) &&
+      gtk_widget_get_parent(ctx->initials) != NULL) {
+    gtk_widget_set_visible(ctx->initials, FALSE);
+  }
   g_object_unref(tex);
   avatar_ctx_free(ctx);
 }
