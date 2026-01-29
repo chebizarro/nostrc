@@ -697,3 +697,94 @@ gboolean storage_ndb_is_event_expired(uint64_t note_key)
   storage_ndb_end_query(txn);
   return expired;
 }
+
+/* ============== NIP-10 Thread Info API ============== */
+
+/* Extract NIP-10 thread context (root_id, reply_id) from note tags.
+ * Supports both preferred marker style and positional fallback.
+ * Returns allocated strings via out parameters. Caller must g_free().
+ * Pass NULL for outputs you don't need. */
+void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_out, char **reply_id_out)
+{
+  if (root_id_out) *root_id_out = NULL;
+  if (reply_id_out) *reply_id_out = NULL;
+  if (!note) return;
+
+  struct ndb_tags *tags = ndb_note_tags(note);
+  if (!tags || ndb_tags_count(tags) == 0) return;
+
+  char *found_root = NULL;
+  char *found_reply = NULL;
+  const char *first_e_id = NULL;
+  const char *last_e_id = NULL;
+  char first_e_buf[65] = {0};
+  char last_e_buf[65] = {0};
+
+  struct ndb_iterator iter;
+  ndb_tags_iterate_start(note, &iter);
+
+  while (ndb_tags_iterate_next(&iter)) {
+    struct ndb_tag *tag = iter.tag;
+    int nelem = ndb_tag_count(tag);
+    if (nelem < 2) continue;
+
+    struct ndb_str key = ndb_tag_str(note, tag, 0);
+    if (!key.str || strcmp(key.str, "e") != 0) continue;
+
+    /* Get the event ID (may be packed ID or string) */
+    char id_hex[65];
+    struct ndb_str id_str = ndb_tag_str(note, tag, 1);
+    if (id_str.flag == NDB_PACKED_ID && id_str.id) {
+      storage_ndb_hex_encode(id_str.id, id_hex);
+    } else if (id_str.flag == NDB_PACKED_STR && id_str.str && strlen(id_str.str) == 64) {
+      strncpy(id_hex, id_str.str, 64);
+      id_hex[64] = '\0';
+    } else {
+      continue; /* Invalid ID format */
+    }
+
+    /* Check for marker at position 3 */
+    const char *marker = NULL;
+    if (nelem >= 4) {
+      struct ndb_str marker_str = ndb_tag_str(note, tag, 3);
+      if (marker_str.flag == NDB_PACKED_STR && marker_str.str) {
+        marker = marker_str.str;
+      }
+    }
+
+    if (marker && strcmp(marker, "root") == 0) {
+      g_free(found_root);
+      found_root = g_strdup(id_hex);
+    } else if (marker && strcmp(marker, "reply") == 0) {
+      g_free(found_reply);
+      found_reply = g_strdup(id_hex);
+    } else if (marker && strcmp(marker, "mention") == 0) {
+      /* Skip mentions - not part of reply chain */
+      continue;
+    } else {
+      /* No marker - track for positional fallback */
+      if (!first_e_id) {
+        strncpy(first_e_buf, id_hex, 64);
+        first_e_buf[64] = '\0';
+        first_e_id = first_e_buf;
+      }
+      strncpy(last_e_buf, id_hex, 64);
+      last_e_buf[64] = '\0';
+      last_e_id = last_e_buf;
+    }
+  }
+
+  /* NIP-10 positional fallback */
+  if (!found_root && first_e_id) {
+    found_root = g_strdup(first_e_id);
+  }
+  if (!found_reply && last_e_id && g_strcmp0(last_e_id, first_e_id) != 0) {
+    found_reply = g_strdup(last_e_id);
+  }
+
+  if (root_id_out) *root_id_out = found_root;
+  else g_free(found_root);
+
+  if (reply_id_out) *reply_id_out = found_reply;
+  else g_free(found_reply);
+}

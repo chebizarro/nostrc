@@ -185,11 +185,13 @@ static void parse_nip10_from_json(const char *json_str, char **root_id, char **r
     last_e_id = event_id;
   }
 
-  /* If no markers found, use positional */
+  /* If no markers found, use positional (NIP-10 fallback):
+   * - First e-tag = root
+   * - Last e-tag = reply (if different from root) */
   if (!*root_id && first_e_id) {
     *root_id = g_strdup(first_e_id);
   }
-  if (!*reply_id && last_e_id && last_e_id != first_e_id) {
+  if (!*reply_id && last_e_id && g_strcmp0(last_e_id, first_e_id) != 0) {
     *reply_id = g_strdup(last_e_id);
   }
 
@@ -772,6 +774,9 @@ static void rebuild_thread_ui(GnostrThreadView *self) {
   }
 }
 
+/* Forward declaration */
+static void fetch_missing_ancestors(GnostrThreadView *self);
+
 /* Callback for relay query completion */
 static void on_thread_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
@@ -817,6 +822,9 @@ static void on_thread_query_done(GObject *source, GAsyncResult *res, gpointer us
 
   /* Rebuild UI */
   rebuild_thread_ui(self);
+
+  /* Check if new events reference ancestors we don't have yet */
+  fetch_missing_ancestors(self);
 }
 
 /* Callback for root event fetch completion */
@@ -851,9 +859,139 @@ static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user
 
     /* Rebuild UI with new events */
     rebuild_thread_ui(self);
+
+    /* Check if new events reference ancestors we don't have yet */
+    fetch_missing_ancestors(self);
   }
 
   if (results) g_ptr_array_unref(results);
+}
+
+/* Callback for missing ancestor fetch completion */
+static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+
+  if (!GNOSTR_IS_THREAD_VIEW(self)) return;
+
+  GError *error = NULL;
+  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_debug("[THREAD_VIEW] Missing ancestors fetch failed: %s", error->message);
+    }
+    g_error_free(error);
+    return;
+  }
+
+  if (results && results->len > 0) {
+    g_debug("[THREAD_VIEW] Fetched %u missing ancestor events", results->len);
+
+    for (guint i = 0; i < results->len; i++) {
+      const char *json = g_ptr_array_index(results, i);
+      if (json) {
+        storage_ndb_ingest_event_json(json, NULL);
+        add_event_from_json(self, json);
+      }
+    }
+
+    rebuild_thread_ui(self);
+
+    /* Recursively check for more missing ancestors (with depth limit handled by MAX_THREAD_DEPTH) */
+    fetch_missing_ancestors(self);
+  }
+
+  if (results) g_ptr_array_unref(results);
+}
+
+/* Internal: fetch any missing parent/root events referenced by loaded events.
+ * This is called after receiving new events to ensure complete thread chains. */
+static void fetch_missing_ancestors(GnostrThreadView *self) {
+  if (!self || g_hash_table_size(self->events_by_id) == 0) return;
+
+  /* Collect missing event IDs */
+  GPtrArray *missing_ids = g_ptr_array_new_with_free_func(g_free);
+
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->events_by_id);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    ThreadEventItem *item = (ThreadEventItem *)value;
+
+    if (item->parent_id && strlen(item->parent_id) == 64 &&
+        !g_hash_table_contains(self->events_by_id, item->parent_id)) {
+      /* Check if we already have this in our missing list */
+      gboolean found = FALSE;
+      for (guint i = 0; i < missing_ids->len; i++) {
+        if (g_strcmp0(g_ptr_array_index(missing_ids, i), item->parent_id) == 0) {
+          found = TRUE;
+          break;
+        }
+      }
+      if (!found) {
+        g_ptr_array_add(missing_ids, g_strdup(item->parent_id));
+      }
+    }
+
+    if (item->root_id && strlen(item->root_id) == 64 &&
+        !g_hash_table_contains(self->events_by_id, item->root_id)) {
+      gboolean found = FALSE;
+      for (guint i = 0; i < missing_ids->len; i++) {
+        if (g_strcmp0(g_ptr_array_index(missing_ids, i), item->root_id) == 0) {
+          found = TRUE;
+          break;
+        }
+      }
+      if (!found) {
+        g_ptr_array_add(missing_ids, g_strdup(item->root_id));
+      }
+    }
+  }
+
+  if (missing_ids->len == 0) {
+    g_ptr_array_unref(missing_ids);
+    return;
+  }
+
+  g_debug("[THREAD_VIEW] Fetching %u missing ancestor events", missing_ids->len);
+
+  /* Build filter with missing IDs */
+  NostrFilter *filter = nostr_filter_new();
+  int kinds[2] = { 1, 1111 };
+  nostr_filter_set_kinds(filter, kinds, 2);
+
+  for (guint i = 0; i < missing_ids->len; i++) {
+    nostr_filter_add_id(filter, g_ptr_array_index(missing_ids, i));
+  }
+  nostr_filter_set_limit(filter, MAX_THREAD_EVENTS);
+
+  g_ptr_array_unref(missing_ids);
+
+  /* Get relay URLs */
+  GPtrArray *relay_arr = gnostr_get_read_relay_urls();
+  const char **urls = g_new0(const char*, relay_arr->len);
+  for (guint i = 0; i < relay_arr->len; i++) {
+    urls[i] = g_ptr_array_index(relay_arr, i);
+  }
+
+  /* Query relays (reuse existing cancellable) */
+  if (!self->fetch_cancellable) {
+    self->fetch_cancellable = g_cancellable_new();
+  }
+
+  gnostr_simple_pool_query_single_async(
+    gnostr_get_shared_query_pool(),
+    urls,
+    relay_arr->len,
+    filter,
+    self->fetch_cancellable,
+    on_missing_ancestors_done,
+    self
+  );
+
+  nostr_filter_free(filter);
+  g_free(urls);
+  g_ptr_array_unref(relay_arr);
 }
 
 /* Internal: fetch thread from relays */

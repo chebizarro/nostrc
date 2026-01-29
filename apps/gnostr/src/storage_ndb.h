@@ -145,6 +145,14 @@ gboolean storage_ndb_note_is_expired(storage_ndb_note *note);
  * Returns TRUE if expired, FALSE otherwise. */
 gboolean storage_ndb_is_event_expired(uint64_t note_key);
 
+/* ============== NIP-10 Thread Info API ============== */
+
+/* Extract NIP-10 thread context (root_id, reply_id) from note tags.
+ * Supports both preferred marker style and positional fallback.
+ * Returns allocated strings via out parameters. Caller must g_free().
+ * Pass NULL for outputs you don't need. */
+void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_out, char **reply_id_out);
+
 #ifdef __cplusplus
 }
 #endif

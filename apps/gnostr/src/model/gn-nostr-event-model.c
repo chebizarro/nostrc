@@ -470,13 +470,20 @@ static gboolean has_note_key(GnNostrEventModel *self, uint64_t key) {
   return FALSE;
 }
 
-/* Parse NIP-10 tags for threading (best-effort; used on refresh paths that have full event JSON) */
+/* Parse NIP-10 tags for threading (best-effort; used on refresh paths that have full event JSON).
+ * NIP-10 specifies two modes:
+ *   1. Preferred: explicit markers - ["e", id, relay, "root"|"reply"|"mention"]
+ *   2. Fallback: positional - first e-tag = root, last e-tag = reply (if different)
+ */
 static void parse_nip10_tags(NostrEvent *evt, char **root_id, char **reply_id) {
   *root_id = NULL;
   *reply_id = NULL;
 
   NostrTags *tags = (NostrTags*)nostr_event_get_tags(evt);
   if (!tags) return;
+
+  const char *first_e_id = NULL;
+  const char *last_e_id = NULL;
 
   for (size_t i = 0; i < nostr_tags_size(tags); i++) {
     NostrTag *tag = nostr_tags_get(tags, i);
@@ -491,12 +498,27 @@ static void parse_nip10_tags(NostrEvent *evt, char **root_id, char **reply_id) {
     const char *marker = (nostr_tag_size(tag) >= 4) ? nostr_tag_get(tag, 3) : NULL;
 
     if (marker && strcmp(marker, "root") == 0) {
+      g_free(*root_id);
       *root_id = g_strdup(event_id);
     } else if (marker && strcmp(marker, "reply") == 0) {
+      g_free(*reply_id);
       *reply_id = g_strdup(event_id);
-    } else if (!*root_id && i == 0) {
-      *root_id = g_strdup(event_id);
+    } else if (marker && strcmp(marker, "mention") == 0) {
+      /* Mentions are not part of the reply chain, skip */
+      continue;
+    } else {
+      /* No marker - track for positional fallback */
+      if (!first_e_id) first_e_id = event_id;
+      last_e_id = event_id;
     }
+  }
+
+  /* NIP-10 positional fallback: if no explicit markers found */
+  if (!*root_id && first_e_id) {
+    *root_id = g_strdup(first_e_id);
+  }
+  if (!*reply_id && last_e_id && g_strcmp0(last_e_id, first_e_id) != 0) {
+    *reply_id = g_strdup(last_e_id);
   }
 }
 
@@ -814,9 +836,30 @@ static void flush_pending_notes(GnNostrEventModel *self, const char *pubkey_hex)
     return;
   }
 
+  /* Open transaction to access note tags for NIP-10 parsing */
+  void *txn = NULL;
+  gboolean have_txn = (storage_ndb_begin_query(&txn) == 0 && txn != NULL);
+
   for (guint i = 0; i < arr->len; i++) {
     PendingEntry *pe = &g_array_index(arr, PendingEntry, i);
-    add_note_internal(self, pe->note_key, pe->created_at, NULL, NULL, 0);
+
+    /* Extract NIP-10 thread info if we have a transaction */
+    char *root_id = NULL;
+    char *reply_id = NULL;
+    if (have_txn) {
+      storage_ndb_note *note = storage_ndb_get_note_ptr(txn, pe->note_key);
+      if (note) {
+        storage_ndb_note_get_nip10_thread(note, &root_id, &reply_id);
+      }
+    }
+
+    add_note_internal(self, pe->note_key, pe->created_at, root_id, reply_id, 0);
+    g_free(root_id);
+    g_free(reply_id);
+  }
+
+  if (have_txn) {
+    storage_ndb_end_query(txn);
   }
 
   g_array_unref(arr);
@@ -1087,8 +1130,15 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
 
     if (!note_matches_query(self, kind, pubkey_hex, created_at)) { filtered++; continue; }
 
+    /* Extract NIP-10 thread info from note tags */
+    char *root_id = NULL;
+    char *reply_id = NULL;
+    storage_ndb_note_get_nip10_thread(note, &root_id, &reply_id);
+
     if (author_is_ready(self, pubkey_hex)) {
-      add_note_internal(self, note_key, created_at, NULL, NULL, 0);
+      add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
+      g_free(root_id);
+      g_free(reply_id);
       added++;
       continue;
     }
@@ -1097,10 +1147,15 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
     GnNostrProfile *p = profile_cache_ensure_from_db(self, txn, pk32, pubkey_hex);
     if (p) {
       (void)p;
-      add_note_internal(self, note_key, created_at, NULL, NULL, 0);
+      add_note_internal(self, note_key, created_at, root_id, reply_id, 0);
+      g_free(root_id);
+      g_free(reply_id);
       added++;
       continue;
     }
+
+    g_free(root_id);
+    g_free(reply_id);
 
     /* Still not ready: queue note and request profile fetch */
     gboolean first_pending = add_pending(self, pubkey_hex, note_key, created_at);
