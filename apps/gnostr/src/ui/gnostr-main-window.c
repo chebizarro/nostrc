@@ -533,6 +533,14 @@ static void show_thread_panel(GnostrMainWindow *self) {
 
   if (self->session_view)
     gnostr_session_view_show_thread_panel(self->session_view);
+
+  /* nostrc-oz5: Refresh thread view profiles when showing the panel.
+   * Profiles may have arrived from relays while the panel was hidden
+   * or while viewing the profile pane. */
+  GtkWidget *thread_view = self->session_view ? gnostr_session_view_get_thread_view(self->session_view) : NULL;
+  if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
+    gnostr_thread_view_update_profiles(GNOSTR_THREAD_VIEW(thread_view));
+  }
 }
 
 static void hide_panel(GnostrMainWindow *self) {
