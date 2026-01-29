@@ -348,6 +348,9 @@ int storage_ndb_poll_notes(uint64_t subid, uint64_t *note_keys, int capacity)
 
 void storage_ndb_invalidate_txn_cache(void)
 {
+  /* Guard against use-after-free: don't invalidate if store is already closed */
+  if (!g_store) return;
+  
   /* Call the ndb_backend function to invalidate thread-local transaction cache.
    * This function is defined in libnostr's ndb_backend.c when LIBNOSTR_WITH_NOSTRDB=ON.
    * When the backend isn't compiled in, we provide a local no-op stub. */

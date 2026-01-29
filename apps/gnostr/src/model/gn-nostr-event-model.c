@@ -599,13 +599,9 @@ static gboolean flush_deferred_notes_cb(gpointer user_data) {
   self->notes = new_notes;
   g_array_free(to_insert, TRUE);
   
-  /* Clear item cache - items will be re-fetched on demand with correct positions */
-  if (self->item_cache) {
-    g_hash_table_remove_all(self->item_cache);
-  }
-  if (self->cache_lru) {
-    g_queue_clear(self->cache_lru);
-  }
+  /* DON'T clear item cache - existing items are still valid, just at different positions.
+   * The cache is keyed by note_key, not position, so items remain valid.
+   * This avoids expensive DB transactions when GTK calls get_item after the signal. */
   
   /* Step 4: Emit "replace all" signal - this is gentler on GTK's widget recycling
    * than inserting at position 0. We tell GTK "old_count items removed, new total added"
