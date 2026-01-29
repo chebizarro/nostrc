@@ -492,8 +492,19 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         return -1;
     }
 #endif
+    // Check freed flag before taking mutex to avoid use-after-free
+    if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
+        nostr_metric_counter_add("go_chan_try_recv_failures", 1);
+        return -1;
+    }
     int rc = -1;
     NLOCK(&chan->mutex);
+    // Re-check freed flag under mutex in case of race
+    if (NOSTR_UNLIKELY(atomic_load_explicit(&chan->freed, memory_order_acquire))) {
+        NUNLOCK(&chan->mutex);
+        nostr_metric_counter_add("go_chan_try_recv_failures", 1);
+        return -1;
+    }
     if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
         NUNLOCK(&chan->mutex);
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
