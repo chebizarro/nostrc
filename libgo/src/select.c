@@ -16,6 +16,8 @@ int go_select(GoSelectCase *cases, size_t num_cases) {
         for (size_t i = 0; i < num_cases; i++) {
             size_t idx = (start + i) % num_cases;
             GoSelectCase *c = &cases[idx];
+            // Skip cases with NULL channels to avoid use-after-free
+            if (c->chan == NULL) continue;
             if (c->op == GO_SELECT_SEND) {
                 if (go_channel_try_send(c->chan, c->value) == 0) return (int)idx;
             } else { // GO_SELECT_RECEIVE
@@ -50,7 +52,8 @@ GoSelectResult go_select_timeout(GoSelectCase *cases, size_t num_cases, uint64_t
         for (size_t i = 0; i < num_cases; i++) {
             size_t idx = (start_idx + i) % num_cases;
             GoSelectCase *c = &cases[idx];
-            
+            // Skip cases with NULL channels to avoid use-after-free
+            if (c->chan == NULL) continue;
             if (c->op == GO_SELECT_SEND) {
                 if (go_channel_try_send(c->chan, c->value) == 0) {
                     result.selected_case = (int)idx;

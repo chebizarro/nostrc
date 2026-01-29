@@ -38,7 +38,11 @@ void go_context_cancel(GoContext *ctx) {
 // Base functions (common for all contexts)
 void base_context_free(void *ctx) {
     GoContext *base_ctx = (GoContext *)ctx;
-    go_channel_close(base_ctx->done);
+    if (base_ctx->done) {
+        go_channel_close(base_ctx->done);
+        go_channel_free(base_ctx->done);
+        base_ctx->done = NULL;
+    }
     free(base_ctx->vtable);
     free(base_ctx);
 }

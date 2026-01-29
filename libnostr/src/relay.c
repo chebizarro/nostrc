@@ -252,6 +252,12 @@ static void relay_free_impl(NostrRelay *relay) {
             node = next;
         }
         relay->priv->invalid_sig_head = NULL;
+        // Free connection context (was leaked before)
+        // Note: go_context_free -> base_context_free now properly frees the done channel
+        if (relay->priv->connection_context) {
+            go_context_free(relay->priv->connection_context);
+            relay->priv->connection_context = NULL;
+        }
     }
     if (relay->subscriptions) { go_hash_map_destroy(relay->subscriptions); relay->subscriptions = NULL; }
     if (relay->url) { free(relay->url); relay->url = NULL; }
