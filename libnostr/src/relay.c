@@ -15,6 +15,7 @@
 #include "security_limits_runtime.h"
 #include "nostr_log.h"
 #include "go.h"
+#include "channel.h"
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -420,8 +421,14 @@ static void *message_loop(void *arg) {
             strcpy(buf, priority_buf);
             has_priority = 0;
         } else {
+            // Validate context before use - exit if context is invalid/freed
+            GoContext *ctx = r->priv->connection_context;
+            if (!ctx || !ctx->done || ctx->done->magic != GO_CHANNEL_MAGIC) {
+                if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: context invalid, exiting\n");
+                break;
+            }
             // Read next message
-            nostr_connection_read_message(conn, r->priv->connection_context, buf, sizeof(buf), &err);
+            nostr_connection_read_message(conn, ctx, buf, sizeof(buf), &err);
             if (err) {
                 free_error(err);
                 err = NULL;
