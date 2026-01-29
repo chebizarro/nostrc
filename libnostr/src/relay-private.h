@@ -21,6 +21,7 @@ struct _NostrRelayPrivate {
     GoWaitGroup workers;
     /* Security: invalid signature tracker (pubkey->counters/bans). Impl in relay.c */
     void *invalid_sig_head;
+    int invalid_sig_count;    /* current number of nodes in list */
 };
 
 typedef struct _NostrRelayWriteRequest {

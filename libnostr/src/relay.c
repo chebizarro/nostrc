@@ -33,6 +33,11 @@ static int shutdown_dbg_enabled(void) {
 }
 
 /* === Security: invalid signature tracking (per-pubkey sliding window + ban) === */
+
+/* Max entries in invalid signature list to prevent unbounded memory growth.
+ * When exceeded, expired entries are evicted. If still over limit, oldest entries removed. */
+#define INVALIDSIG_MAX_ENTRIES 10000
+
 typedef struct InvalidSigNode {
     char *pk;                    /* hex npub (x-only hex) */
     int count;                   /* fails in current window */
@@ -54,17 +59,61 @@ static InvalidSigNode *invalidsig_find(InvalidSigNode *head, const char *pk) {
     return NULL;
 }
 
+/* Evict expired/stale entries from the invalid signature list.
+ * Caller should hold r->priv->mutex. */
+static void invalidsig_evict(NostrRelay *r) {
+    if (!r || !r->priv) return;
+    time_t now = now_epoch_s();
+    int64_t window_sec = nostr_limit_invalidsig_window_seconds();
+
+    /* First pass: remove entries that are not banned and have expired windows */
+    InvalidSigNode **pp = (InvalidSigNode **)&r->priv->invalid_sig_head;
+    while (*pp) {
+        InvalidSigNode *n = *pp;
+        int expired_window = (now - n->window_start > window_sec);
+        int not_banned = (n->banned_until <= now);
+        if (expired_window && not_banned) {
+            *pp = n->next;
+            free(n->pk);
+            free(n);
+            r->priv->invalid_sig_count--;
+        } else {
+            pp = &n->next;
+        }
+    }
+
+    /* If still over limit, remove oldest (tail) entries */
+    while (r->priv->invalid_sig_count > INVALIDSIG_MAX_ENTRIES / 2) {
+        /* Find and remove tail node - O(n) but only happens during eviction */
+        InvalidSigNode **tail_pp = (InvalidSigNode **)&r->priv->invalid_sig_head;
+        if (!*tail_pp) break;
+        while ((*tail_pp)->next) tail_pp = &(*tail_pp)->next;
+        InvalidSigNode *tail = *tail_pp;
+        *tail_pp = NULL;
+        free(tail->pk);
+        free(tail);
+        r->priv->invalid_sig_count--;
+    }
+}
+
 /* Caller should hold r->priv->mutex */
 static InvalidSigNode *invalidsig_get_or_add(NostrRelay *r, const char *pk) {
     InvalidSigNode *head = (InvalidSigNode *)r->priv->invalid_sig_head;
     InvalidSigNode *n = invalidsig_find(head, pk);
     if (n) return n;
+
+    /* Evict if over limit before adding new entry */
+    if (r->priv->invalid_sig_count >= INVALIDSIG_MAX_ENTRIES) {
+        invalidsig_evict(r);
+    }
+
     n = (InvalidSigNode *)calloc(1, sizeof(InvalidSigNode));
     if (!n) return NULL;
     n->pk = strdup(pk ? pk : "");
     n->window_start = now_epoch_s();
-    n->next = head;
+    n->next = (InvalidSigNode *)r->priv->invalid_sig_head;
     r->priv->invalid_sig_head = n;
+    r->priv->invalid_sig_count++;
     return n;
 }
 
@@ -253,16 +302,13 @@ static void relay_free_impl(NostrRelay *relay) {
             node = next;
         }
         relay->priv->invalid_sig_head = NULL;
-        // IMPORTANT: Do NOT free connection_context here!
-        // The done channel inside it may still be referenced by go_select in message_loop
-        // even after go_wait_group_wait returns (due to the 1ms polling sleep in go_select).
-        // Instead, we leave it allocated - it will be cleaned up when the process exits.
-        // This is a small, bounded leak that prevents use-after-free crashes.
-        // TODO: Implement proper reference counting for contexts to fix this properly.
-        // if (relay->priv->connection_context) {
-        //     go_context_free(relay->priv->connection_context);
-        //     relay->priv->connection_context = NULL;
-        // }
+        // Use reference counting to safely free connection_context.
+        // The context starts with refcount=1 from go_context_with_cancel.
+        // go_context_unref decrements and frees when refcount hits 0.
+        if (relay->priv->connection_context) {
+            go_context_unref(relay->priv->connection_context);
+            relay->priv->connection_context = NULL;
+        }
     }
     if (relay->subscriptions) { go_hash_map_destroy(relay->subscriptions); relay->subscriptions = NULL; }
     if (relay->url) { free(relay->url); relay->url = NULL; }

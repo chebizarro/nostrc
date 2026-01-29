@@ -35,6 +35,22 @@ void go_context_cancel(GoContext *ctx) {
     nsync_mu_unlock(&ctx->mutex);
 }
 
+// Reference counting for safe context lifecycle
+GoContext *go_context_ref(GoContext *ctx) {
+    if (!ctx) return NULL;
+    atomic_fetch_add_explicit(&ctx->refcount, 1, memory_order_relaxed);
+    return ctx;
+}
+
+void go_context_unref(GoContext *ctx) {
+    if (!ctx) return;
+    int old = atomic_fetch_sub_explicit(&ctx->refcount, 1, memory_order_acq_rel);
+    if (old == 1) {
+        // Refcount hit zero, actually free the context
+        go_context_free(ctx);
+    }
+}
+
 // Base functions (common for all contexts)
 void base_context_free(void *ctx) {
     GoContext *base_ctx = (GoContext *)ctx;
@@ -118,6 +134,7 @@ GoContext *go_context_background(void) {
     ctx->done = go_channel_create(1);
     atomic_store_explicit(&ctx->canceled, 0, memory_order_relaxed);
     atomic_store_explicit(&ctx->err_msg, NULL, memory_order_relaxed);
+    atomic_store_explicit(&ctx->refcount, 1, memory_order_relaxed);
     return ctx;
 }
 
@@ -129,6 +146,7 @@ void go_context_init(GoContext *ctx, int timeout_seconds) {
     ctx->done = go_channel_create(1);
     atomic_store_explicit(&ctx->canceled, 0, memory_order_relaxed);
     atomic_store_explicit(&ctx->err_msg, NULL, memory_order_relaxed);
+    atomic_store_explicit(&ctx->refcount, 1, memory_order_relaxed);
 }
 
 // Deadline context functions

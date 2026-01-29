@@ -305,6 +305,36 @@ static int g_lws_running = 0;
 static int g_lws_refcount = 0;
 static pthread_mutex_t g_lws_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+/* Deferred cleanup queue for conn->priv structs that can't be freed immediately
+ * because the service thread is still running. Queue is processed when the
+ * service thread stops (g_lws_refcount hits 0). */
+typedef struct DeferredPriv {
+    NostrConnectionPrivate *priv;
+    struct DeferredPriv *next;
+} DeferredPriv;
+static DeferredPriv *g_deferred_cleanup_head = NULL;
+
+/* Must hold g_lws_mutex when calling */
+static void deferred_cleanup_add(NostrConnectionPrivate *priv) {
+    DeferredPriv *node = malloc(sizeof(DeferredPriv));
+    if (!node) return; /* leak on OOM, but better than crash */
+    node->priv = priv;
+    node->next = g_deferred_cleanup_head;
+    g_deferred_cleanup_head = node;
+}
+
+/* Must hold g_lws_mutex when calling */
+static void deferred_cleanup_process(void) {
+    DeferredPriv *node = g_deferred_cleanup_head;
+    while (node) {
+        DeferredPriv *next = node->next;
+        if (node->priv) free(node->priv);
+        free(node);
+        node = next;
+    }
+    g_deferred_cleanup_head = NULL;
+}
+
 static void *lws_service_loop(void *arg) {
     (void)arg;
     for (;;) {
@@ -565,14 +595,21 @@ void nostr_connection_close(NostrConnection *conn) {
             lws_cancel_service(ctx_to_destroy);
             pthread_join(g_lws_service_thread, NULL);
             lws_context_destroy(ctx_to_destroy);
+            /* Process deferred cleanup queue now that service thread is stopped */
+            pthread_mutex_lock(&g_lws_mutex);
+            deferred_cleanup_process();
+            pthread_mutex_unlock(&g_lws_mutex);
         }
-        /* Only free conn->priv if we stopped the service thread, otherwise it's unsafe */
+        /* Free conn->priv: either immediately if service stopped, or defer until later */
         if (should_free_priv) {
             free(conn->priv);
+        } else if (conn->priv) {
+            /* Can't free now - service thread may still reference via WSI callbacks.
+             * Add to deferred cleanup queue, will be processed when service stops. */
+            pthread_mutex_lock(&g_lws_mutex);
+            deferred_cleanup_add(conn->priv);
+            pthread_mutex_unlock(&g_lws_mutex);
         }
-        /* Note: If we don't free conn->priv here, it will leak. This is a known limitation
-         * of the current architecture where we can't safely free while service thread is running.
-         * A proper fix would require refcounting or deferred cleanup. */
     }
 
     // Do not free channels here; the owner (relay) will free them after worker threads exit.

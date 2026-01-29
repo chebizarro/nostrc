@@ -5,6 +5,11 @@
 #include <string.h>
 #include <stdlib.h>
 
+/* Thread safety: all cache operations are protected by this mutex.
+ * GTK apps commonly access profiles from multiple threads (main thread,
+ * async callbacks, etc.) so we must protect shared state. */
+G_LOCK_DEFINE_STATIC(profile_provider);
+
 static GHashTable *s_cache = NULL;
 static GQueue *s_lru = NULL;
 static GHashTable *s_lru_nodes = NULL;
@@ -13,9 +18,10 @@ static gboolean s_init = FALSE;
 static GnostrProfileProviderStats s_stats = {0};
 
 void gnostr_profile_provider_init(guint cap) {
-  if (s_init) return;
+  G_LOCK(profile_provider);
+  if (s_init) { G_UNLOCK(profile_provider); return; }
   s_init = TRUE;
-  
+
   if (cap == 0) {
     const char *env = g_getenv("GNOSTR_PROFILE_CAP");
     if (env && *env) {
@@ -26,16 +32,18 @@ void gnostr_profile_provider_init(guint cap) {
     s_cap = cap;
   }
   if (s_cap == 0) s_cap = 3000;
-  
+
   s_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)gnostr_profile_meta_free);
   s_lru = g_queue_new();
   s_lru_nodes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  
+  G_UNLOCK(profile_provider);
+
   g_message("[PROFILE_PROVIDER] Init cap=%u", s_cap);
 }
 
 void gnostr_profile_provider_shutdown(void) {
-  if (!s_init) return;
+  G_LOCK(profile_provider);
+  if (!s_init) { G_UNLOCK(profile_provider); return; }
   if (s_cache) { g_hash_table_destroy(s_cache); s_cache = NULL; }
   if (s_lru) {
     while (!g_queue_is_empty(s_lru)) g_free(g_queue_pop_head(s_lru));
@@ -44,6 +52,7 @@ void gnostr_profile_provider_shutdown(void) {
   }
   if (s_lru_nodes) { g_hash_table_destroy(s_lru_nodes); s_lru_nodes = NULL; }
   s_init = FALSE;
+  G_UNLOCK(profile_provider);
 }
 
 /* LRU helpers */
@@ -132,8 +141,15 @@ static GnostrProfileMeta *meta_from_db(const char *pk) {
   char *json = NULL; int len = 0;
   int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &json, &len);
   storage_ndb_end_query(txn);
-  if (rc != 0 || !json) { s_stats.db_misses++; return NULL; }
+  if (rc != 0 || !json) {
+    G_LOCK(profile_provider);
+    s_stats.db_misses++;
+    G_UNLOCK(profile_provider);
+    return NULL;
+  }
+  G_LOCK(profile_provider);
   s_stats.db_hits++;
+  G_UNLOCK(profile_provider);
   GnostrProfileMeta *m = meta_from_json(pk, json);
   free(json);
   return m;
@@ -154,21 +170,33 @@ static GnostrProfileMeta *meta_copy(const GnostrProfileMeta *src) {
 }
 
 GnostrProfileMeta *gnostr_profile_provider_get(const char *pk) {
-  if (!s_init || !pk || strlen(pk) != 64) return NULL;
+  if (!pk || strlen(pk) != 64) return NULL;
+
+  G_LOCK(profile_provider);
+  if (!s_init) { G_UNLOCK(profile_provider); return NULL; }
   GnostrProfileMeta *cached = g_hash_table_lookup(s_cache, pk);
   if (cached) {
     s_stats.hits++;
     lru_touch(pk);
-    return meta_copy(cached);
+    GnostrProfileMeta *result = meta_copy(cached);
+    G_UNLOCK(profile_provider);
+    return result;
   }
   s_stats.misses++;
+  G_UNLOCK(profile_provider);
+
+  /* Query DB without holding lock (I/O can be slow) */
   GnostrProfileMeta *m = meta_from_db(pk);
   if (m) {
-    GnostrProfileMeta *tc = meta_copy(m);
-    g_hash_table_replace(s_cache, g_strdup(pk), tc);
-    lru_insert(pk);
-    lru_evict();
-    s_stats.cache_size = g_hash_table_size(s_cache);
+    G_LOCK(profile_provider);
+    if (s_init) { /* re-check in case of shutdown race */
+      GnostrProfileMeta *tc = meta_copy(m);
+      g_hash_table_replace(s_cache, g_strdup(pk), tc);
+      lru_insert(pk);
+      lru_evict();
+      s_stats.cache_size = g_hash_table_size(s_cache);
+    }
+    G_UNLOCK(profile_provider);
   }
   return m;
 }
@@ -187,13 +215,22 @@ int gnostr_profile_provider_get_batch(const char **pks, guint cnt, GnostrProfile
 }
 
 int gnostr_profile_provider_update(const char *pk, const char *json) {
-  if (!s_init || !pk || !json) return -1;
+  if (!pk || !json) return -1;
+  /* Parse JSON without holding lock (can be slow) */
   GnostrProfileMeta *m = meta_from_json(pk, json);
   if (!m) return -1;
+
+  G_LOCK(profile_provider);
+  if (!s_init) {
+    G_UNLOCK(profile_provider);
+    gnostr_profile_meta_free(m);
+    return -1;
+  }
   g_hash_table_replace(s_cache, g_strdup(pk), m);
   lru_insert(pk);
   lru_evict();
   s_stats.cache_size = g_hash_table_size(s_cache);
+  G_UNLOCK(profile_provider);
   return 0;
 }
 
@@ -210,17 +247,26 @@ void gnostr_profile_meta_free(GnostrProfileMeta *m) {
 
 void gnostr_profile_provider_get_stats(GnostrProfileProviderStats *st) {
   if (!st) return;
+  G_LOCK(profile_provider);
   st->cache_size = s_stats.cache_size;
   st->cache_cap = s_cap;
   st->hits = s_stats.hits;
   st->misses = s_stats.misses;
   st->db_hits = s_stats.db_hits;
   st->db_misses = s_stats.db_misses;
+  G_UNLOCK(profile_provider);
 }
 
 void gnostr_profile_provider_log_stats(void) {
+  G_LOCK(profile_provider);
+  guint cache_size = s_stats.cache_size;
+  guint cap = s_cap;
+  guint64 hits = s_stats.hits;
+  guint64 misses = s_stats.misses;
+  guint64 db_hits = s_stats.db_hits;
+  guint64 db_misses = s_stats.db_misses;
+  G_UNLOCK(profile_provider);
   g_message("[PROFILE_PROVIDER] cache=%u/%u hits=%" G_GUINT64_FORMAT " misses=%" G_GUINT64_FORMAT
             " db_hits=%" G_GUINT64_FORMAT " db_misses=%" G_GUINT64_FORMAT,
-            s_stats.cache_size, s_cap, s_stats.hits, s_stats.misses, 
-            s_stats.db_hits, s_stats.db_misses);
+            cache_size, cap, hits, misses, db_hits, db_misses);
 }
