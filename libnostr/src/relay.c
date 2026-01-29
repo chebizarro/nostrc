@@ -844,11 +844,22 @@ NostrEvent **nostr_relay_query_sync(NostrRelay *relay, GoContext *ctx, NostrFilt
         return NULL;
     }
 
+    // Hold a reference to connection_context to prevent use-after-free if relay
+    // is freed while we're in go_select. The context's refcount ensures it won't
+    // be freed until we release our reference.
+    GoContext *conn_ctx = relay->priv->connection_context;
+    if (!conn_ctx) {
+        *err = new_error(1, "relay has no connection context");
+        return NULL;
+    }
+    go_context_ref(conn_ctx);
+
     // Create an array to store the events
     size_t max_events = (filter->limit > 0) ? filter->limit : 250; // Default to 250 if no limit is specified
     NostrEvent **events = (NostrEvent **)malloc(max_events * sizeof(NostrEvent *));
     if (!events) {
         *err = new_error(1, "failed to allocate memory for events");
+        go_context_unref(conn_ctx);
         return NULL;
     }
 
@@ -863,12 +874,14 @@ NostrEvent **nostr_relay_query_sync(NostrRelay *relay, GoContext *ctx, NostrFilt
     if (!subscription) {
         *err = new_error(1, "failed to prepare subscription");
         free(events);
+        go_context_unref(conn_ctx);
         return NULL;
     }
 
     // Fire the subscription (send REQ)
     if (!nostr_subscription_fire(subscription, err)) {
         free(events);
+        go_context_unref(conn_ctx);
         return NULL;
     }
 
@@ -879,7 +892,7 @@ NostrEvent **nostr_relay_query_sync(NostrRelay *relay, GoContext *ctx, NostrFilt
     GoSelectCase cases[] = {
         (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = subscription->events, .value = NULL, .recv_buf = NULL },
         (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = subscription->end_of_stored_events, .value = NULL, .recv_buf = NULL },
-        (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = relay->priv->connection_context->done, .value = NULL, .recv_buf = NULL },
+        (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = conn_ctx->done, .value = NULL, .recv_buf = NULL },
         (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = timeout->c, .value = NULL, .recv_buf = NULL },
     };
 
@@ -890,11 +903,15 @@ NostrEvent **nostr_relay_query_sync(NostrRelay *relay, GoContext *ctx, NostrFilt
         case 0: { // New event received
             if (received_count >= max_events) {
                 max_events *= 2; // Expand the events array if needed
-                events = (NostrEvent **)realloc(events, max_events * sizeof(NostrEvent *));
-                if (!events) {
+                NostrEvent **new_events = (NostrEvent **)realloc(events, max_events * sizeof(NostrEvent *));
+                if (!new_events) {
                     if (err) *err = new_error(1, "failed to expand event array");
+                    stop_ticker(timeout);
+                    free(events);
+                    go_context_unref(conn_ctx);
                     return NULL;
                 }
+                events = new_events;
             }
 
             NostrEvent *event = NULL;
@@ -906,12 +923,14 @@ NostrEvent **nostr_relay_query_sync(NostrRelay *relay, GoContext *ctx, NostrFilt
             nostr_subscription_unsubscribe(subscription); // Unsubscribe from the relay
             *event_count = (int)received_count;    // Set the event count for the caller
             stop_ticker(timeout);
+            go_context_unref(conn_ctx);
             return events;                    // Return the array of events
         }
         case 2: { // Connection context is canceled (relay is closing)
             if (err) *err = new_error(1, "relay connection closed while querying events");
             stop_ticker(timeout);
             free(events);
+            go_context_unref(conn_ctx);
             return NULL;
         }
         case 3: { // Timeout waiting for events
@@ -919,6 +938,7 @@ NostrEvent **nostr_relay_query_sync(NostrRelay *relay, GoContext *ctx, NostrFilt
             nostr_subscription_unsubscribe(subscription);
             *event_count = (int)received_count;
             stop_ticker(timeout);
+            go_context_unref(conn_ctx);
             return events;
         }
         default:
