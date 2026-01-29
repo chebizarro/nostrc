@@ -368,7 +368,7 @@ static void avatar_ctx_free(AvatarCtx *c) {
 void gnostr_avatar_prefetch(const char *url) {
     if (!url || !*url) return;
     if (!str_has_prefix_http(url)) { g_debug("avatar prefetch: invalid url=%s", url ? url : "(null)"); return; }
-    g_message("avatar prefetch: entry url=%s", url);
+    g_debug("avatar prefetch: entry url=%s", url);
     s_avatar_metrics.requests_total++;
     ensure_avatar_cache();
     /* Already in-memory cached? */
@@ -394,7 +394,7 @@ void gnostr_avatar_prefetch(const char *url) {
     ctx->image = NULL;    /* no UI to update */
     ctx->initials = NULL; /* no UI to update */
     ctx->url = g_strdup(url);
-    g_message("avatar prefetch: fetching via HTTP url=%s", url);
+    g_debug("avatar prefetch: fetching via HTTP url=%s", url);
     s_avatar_metrics.http_start++;
     soup_session_send_and_read_async(gnostr_get_shared_soup_session(), msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
     g_object_unref(msg);

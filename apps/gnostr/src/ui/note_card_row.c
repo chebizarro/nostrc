@@ -2138,12 +2138,12 @@ void gnostr_note_card_row_set_author(GnostrNoteCardRow *self, const char *displa
 #ifdef HAVE_SOUP3
   /* OPTIMIZATION: Check cache before downloading */
   if (avatar_url && *avatar_url && GTK_IS_PICTURE(self->avatar_image)) {
-    g_message("note_card: set_author called with avatar_url=%s", avatar_url);
+    g_debug("note_card: set_author called with avatar_url=%s", avatar_url);
     /* First, try to load from cache (memory or disk) */
     GdkTexture *cached = gnostr_avatar_try_load_cached(avatar_url);
     if (cached) {
       /* Cache hit! Apply immediately without HTTP request */
-      g_message("note_card: avatar cache HIT, displaying url=%s", avatar_url);
+      g_debug("note_card: avatar cache HIT, displaying url=%s", avatar_url);
       gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), GDK_PAINTABLE(cached));
       gtk_widget_set_visible(self->avatar_image, TRUE);
       if (GTK_IS_WIDGET(self->avatar_initials)) {
@@ -2152,7 +2152,7 @@ void gnostr_note_card_row_set_author(GnostrNoteCardRow *self, const char *displa
       g_object_unref(cached);
     } else {
       /* Cache miss - download asynchronously */
-      g_message("note_card: avatar cache MISS, downloading url=%s", avatar_url);
+      g_debug("note_card: avatar cache MISS, downloading url=%s", avatar_url);
       gnostr_avatar_download_async(avatar_url, self->avatar_image, self->avatar_initials);
     }
   } else {
