@@ -27,7 +27,11 @@ int go_select(GoSelectCase *cases, size_t num_cases) {
                 void **dst = c->recv_buf ? c->recv_buf : &dummy;
                 if (go_channel_try_receive(c->chan, dst) == 0) return (int)idx;
                 // If the receive channel is closed, also consider it ready
-                if (go_channel_is_closed(c->chan)) return (int)idx;
+                // CRITICAL: Set *dst to NULL to prevent caller from using garbage pointer
+                if (go_channel_is_closed(c->chan)) {
+                    if (c->recv_buf) *c->recv_buf = NULL;
+                    return (int)idx;
+                }
             }
         }
 
@@ -74,7 +78,9 @@ GoSelectResult go_select_timeout(GoSelectCase *cases, size_t num_cases, uint64_t
                     return result;
                 }
                 // If the receive channel is closed, also consider it ready
+                // CRITICAL: Set recv_buf to NULL to prevent caller from using garbage pointer
                 if (go_channel_is_closed(c->chan)) {
+                    if (c->recv_buf) *c->recv_buf = NULL;
                     result.selected_case = (int)idx;
                     result.ok = false; // Channel closed
                     return result;
