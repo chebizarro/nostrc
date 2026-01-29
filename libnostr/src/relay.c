@@ -144,10 +144,14 @@ void nostr_invalidsig_record_fail(NostrRelay *r, const char *pk) {
     }
 }
 
-// Forward declaration for worker used before its definition
+// Forward declarations for workers and helpers used before their definition
 static void *write_error(void *arg);
 static void *write_operations(void *arg);
 static void *message_loop(void *arg);
+static void relay_set_state(NostrRelay *relay, NostrRelayConnectionState new_state);
+static uint64_t get_monotonic_time_ms(void);
+static uint64_t calculate_backoff_with_jitter(int attempt);
+static bool relay_attempt_reconnect(NostrRelay *r);
 static void relay_debug_emit(NostrRelay *r, const char *s) {
     if (!r || !r->priv || !r->priv->debug_raw || !s) return;
     char *copy = strdup(s);
@@ -247,6 +251,16 @@ NostrRelay *nostr_relay_new(GoContext *context, const char *url, Error **err) {
     relay->priv->notice_handler = NULL;
     relay->priv->custom_handler = NULL;
 
+    /* Initialize reconnection state (nostrc-4du) */
+    relay->priv->connection_state = NOSTR_RELAY_STATE_DISCONNECTED;
+    relay->priv->reconnect_attempt = 0;
+    relay->priv->backoff_ms = 0;
+    relay->priv->next_reconnect_time_ms = 0;
+    relay->priv->auto_reconnect = true;  /* Enabled by default */
+    relay->priv->reconnect_requested = false;
+    relay->priv->state_callback = NULL;
+    relay->priv->state_callback_user_data = NULL;
+
     return (NostrRelay *)relay;
 }
 
@@ -339,12 +353,23 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
         return false;
     }
 
+    /* Set state to connecting (nostrc-4du) */
+    relay_set_state(relay, NOSTR_RELAY_STATE_CONNECTING);
+
     NostrConnection *conn = nostr_connection_new(relay->url);
     if (!conn) {
+        relay_set_state(relay, NOSTR_RELAY_STATE_DISCONNECTED);
         if (err) *err = new_error(1, "error opening websocket to '%s'\n", relay->url);
         return false;
     }
     relay->connection = conn;
+
+    /* Reset reconnect state on successful connection (nostrc-4du) */
+    nsync_mu_lock(&relay->priv->mutex);
+    relay->priv->reconnect_attempt = 0;
+    relay->priv->backoff_ms = 0;
+    nsync_mu_unlock(&relay->priv->mutex);
+    relay_set_state(relay, NOSTR_RELAY_STATE_CONNECTED);
 
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] relay_connect: starting workers\n");
     go_wait_group_add(&relay->priv->workers, 2);
@@ -425,6 +450,104 @@ static void *write_operations(void *arg) {
     return NULL;
 }
 
+/* Forward declaration for subscription re-firing */
+#include "nostr-subscription.h"
+#include "subscription-private.h"
+
+/* Global state for subscription re-firing (used by callback) */
+static int g_refire_count = 0;
+static int g_refire_debug = -1;
+
+/* Callback for go_hash_map_for_each to re-fire a subscription */
+static bool refire_subscription_cb(HashKey *key, void *value) {
+    (void)key;  /* unused - subscriptions keyed by counter */
+    NostrSubscription *sub = (NostrSubscription *)value;
+    if (!sub || !sub->filters) return true;  /* continue iteration */
+
+    Error *err = NULL;
+    if (nostr_subscription_fire(sub, &err)) {
+        g_refire_count++;
+        if (g_refire_debug) {
+            fprintf(stderr, "[RECONNECT] Re-fired subscription sid=%s\n",
+                    sub->priv && sub->priv->id ? sub->priv->id : "?");
+        }
+    } else {
+        if (g_refire_debug) {
+            fprintf(stderr, "[RECONNECT] Failed to re-fire subscription sid=%s: %s\n",
+                    sub->priv && sub->priv->id ? sub->priv->id : "?",
+                    err ? err->message : "unknown");
+        }
+        if (err) free_error(err);
+    }
+    return true;  /* continue iteration */
+}
+
+/* Helper to re-fire all active subscriptions after reconnection (nostrc-4du)
+ * This iterates the subscriptions hashmap and re-sends REQ messages. */
+static void relay_refire_subscriptions(NostrRelay *r) {
+    if (!r || !r->subscriptions) return;
+
+    /* Initialize debug flag once */
+    if (g_refire_debug < 0) {
+        g_refire_debug = getenv("NOSTR_DEBUG_LIFECYCLE") ? 1 : 0;
+    }
+
+    /* Reset counter before iteration */
+    g_refire_count = 0;
+
+    /* Iterate and re-fire all subscriptions */
+    go_hash_map_for_each(r->subscriptions, refire_subscription_cb);
+
+    if (g_refire_count > 0 || g_refire_debug) {
+        fprintf(stderr, "[RECONNECT] Re-fired %d subscription(s) for %s\n",
+                g_refire_count, r->url ? r->url : "unknown");
+    }
+    nostr_metric_counter_add("relay_subscriptions_refired", (uint64_t)g_refire_count);
+}
+
+/* Attempt to reconnect the relay (nostrc-4du)
+ * Returns true if reconnection succeeded, false otherwise.
+ * Does NOT start new workers - the calling worker continues after reconnection. */
+static bool relay_attempt_reconnect(NostrRelay *r) {
+    if (!r || !r->priv) return false;
+
+    relay_set_state(r, NOSTR_RELAY_STATE_CONNECTING);
+
+    /* Close old connection if it exists */
+    nsync_mu_lock(&r->priv->mutex);
+    NostrConnection *old_conn = r->connection;
+    r->connection = NULL;
+    nsync_mu_unlock(&r->priv->mutex);
+
+    if (old_conn) {
+        nostr_connection_close(old_conn);
+    }
+
+    /* Create new connection */
+    NostrConnection *new_conn = nostr_connection_new(r->url);
+    if (!new_conn) {
+        relay_set_state(r, NOSTR_RELAY_STATE_DISCONNECTED);
+        return false;
+    }
+
+    /* Install new connection */
+    nsync_mu_lock(&r->priv->mutex);
+    r->connection = new_conn;
+    r->priv->reconnect_attempt = 0;
+    r->priv->backoff_ms = 0;
+    nsync_mu_unlock(&r->priv->mutex);
+
+    relay_set_state(r, NOSTR_RELAY_STATE_CONNECTED);
+
+    /* Re-fire active subscriptions */
+    relay_refire_subscriptions(r);
+
+    nostr_metric_counter_add("relay_reconnect_success", 1);
+    fprintf(stderr, "[RECONNECT] Successfully reconnected to %s\n", r->url ? r->url : "unknown");
+
+    return true;
+}
+
 // Cached environment variables to avoid repeated getenv() calls
 static int metrics_sample_rate = 0;
 static int debug_incoming_cached = -1;
@@ -447,45 +570,56 @@ static void init_cached_env(void) {
 
 // Worker: reads messages from the connection, parses envelopes, dispatches,
 // and emits concise debug summaries on the optional debug_raw channel.
+// Handles automatic reconnection with exponential backoff (nostrc-4du).
 static void *message_loop(void *arg) {
     NostrRelay *r = (NostrRelay *)arg;
     if (!r || !r->priv) return NULL;
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: start\n");
 
     init_cached_env();
-    
+
     char buf[4096];
     char priority_buf[4096];  // Buffer for priority messages
     Error *err = NULL;
     uint64_t msg_count = 0;
     int has_priority = 0;
-    
-    for (;;) {
-        nsync_mu_lock(&r->priv->mutex);
-        NostrConnection *conn = r->connection;
-        nsync_mu_unlock(&r->priv->mutex);
-        if (!conn) break;
+    bool context_canceled = false;  /* Track if context was canceled (vs connection lost) */
 
-        // Check for priority message first if we have one pending
-        if (has_priority) {
-            strcpy(buf, priority_buf);
-            has_priority = 0;
-        } else {
-            // Validate context before use - exit if context is invalid/freed
-            GoContext *ctx = r->priv->connection_context;
-            if (!ctx || !ctx->done || ctx->done->magic != GO_CHANNEL_MAGIC) {
-                if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: context invalid, exiting\n");
-                break;
+    /* Outer loop for reconnection (nostrc-4du) */
+    for (;;) {
+        /* Inner loop: process messages while connected */
+        for (;;) {
+            nsync_mu_lock(&r->priv->mutex);
+            NostrConnection *conn = r->connection;
+            nsync_mu_unlock(&r->priv->mutex);
+            if (!conn) break;
+
+            // Check for priority message first if we have one pending
+            if (has_priority) {
+                strcpy(buf, priority_buf);
+                has_priority = 0;
+            } else {
+                // Validate context before use - exit if context is invalid/freed
+                GoContext *ctx = r->priv->connection_context;
+                if (!ctx || !ctx->done || ctx->done->magic != GO_CHANNEL_MAGIC) {
+                    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: context invalid, exiting\n");
+                    context_canceled = true;
+                    break;
+                }
+                // Check if context is canceled (relay is being closed)
+                if (go_context_is_canceled(ctx)) {
+                    context_canceled = true;
+                    break;
+                }
+                // Read next message
+                nostr_connection_read_message(conn, ctx, buf, sizeof(buf), &err);
+                if (err) {
+                    free_error(err);
+                    err = NULL;
+                    break;
+                }
+                if (buf[0] == '\0') continue;
             }
-            // Read next message
-            nostr_connection_read_message(conn, ctx, buf, sizeof(buf), &err);
-            if (err) {
-                free_error(err);
-                err = NULL;
-                break;
-            }
-            if (buf[0] == '\0') continue;
-        }
         
         msg_count++;
 
@@ -674,7 +808,92 @@ static void *message_loop(void *arg) {
         }
 
         nostr_envelope_free(envelope);
-    }
+        }  /* end inner message processing loop */
+
+        /* ================================================================
+         * Reconnection logic (nostrc-4du)
+         * ================================================================ */
+
+        /* If context was canceled (relay being closed), exit without reconnecting */
+        if (context_canceled) {
+            relay_set_state(r, NOSTR_RELAY_STATE_DISCONNECTED);
+            break;  /* exit outer loop */
+        }
+
+        /* Check if auto-reconnect is enabled */
+        nsync_mu_lock(&r->priv->mutex);
+        bool should_reconnect = r->priv->auto_reconnect;
+        GoContext *ctx = r->priv->connection_context;
+        nsync_mu_unlock(&r->priv->mutex);
+
+        if (!should_reconnect || !ctx) {
+            relay_set_state(r, NOSTR_RELAY_STATE_DISCONNECTED);
+            break;  /* exit outer loop */
+        }
+
+        /* Check context again (may have been canceled during processing) */
+        if (go_context_is_canceled(ctx)) {
+            relay_set_state(r, NOSTR_RELAY_STATE_DISCONNECTED);
+            break;  /* exit outer loop */
+        }
+
+        /* Connection lost, attempt reconnection with backoff */
+        relay_set_state(r, NOSTR_RELAY_STATE_DISCONNECTED);
+
+        /* Increment reconnect attempt counter */
+        nsync_mu_lock(&r->priv->mutex);
+        r->priv->reconnect_attempt++;
+        int attempt = r->priv->reconnect_attempt;
+        nsync_mu_unlock(&r->priv->mutex);
+
+        /* Calculate backoff with jitter */
+        uint64_t backoff_ms = calculate_backoff_with_jitter(attempt - 1);
+
+        fprintf(stderr, "[RECONNECT] Connection lost to %s, attempt %d, waiting %llums\n",
+                r->url ? r->url : "unknown", attempt, (unsigned long long)backoff_ms);
+        nostr_metric_counter_add("relay_reconnect_attempt", 1);
+
+        /* Set state to backoff */
+        nsync_mu_lock(&r->priv->mutex);
+        r->priv->backoff_ms = backoff_ms;
+        r->priv->next_reconnect_time_ms = get_monotonic_time_ms() + backoff_ms;
+        nsync_mu_unlock(&r->priv->mutex);
+        relay_set_state(r, NOSTR_RELAY_STATE_BACKOFF);
+
+        /* Wait for backoff period, checking for context cancellation */
+        uint64_t wait_start = get_monotonic_time_ms();
+        while (get_monotonic_time_ms() - wait_start < backoff_ms) {
+            /* Check if context is canceled or reconnect_now was called */
+            nsync_mu_lock(&r->priv->mutex);
+            bool reconnect_now = r->priv->reconnect_requested;
+            r->priv->reconnect_requested = false;
+            ctx = r->priv->connection_context;
+            nsync_mu_unlock(&r->priv->mutex);
+
+            if (reconnect_now) break;  /* Skip remaining backoff */
+            if (!ctx || go_context_is_canceled(ctx)) {
+                context_canceled = true;
+                break;  /* Cancel reconnection */
+            }
+            usleep(100000);  /* Sleep 100ms between checks */
+        }
+
+        if (context_canceled) {
+            relay_set_state(r, NOSTR_RELAY_STATE_DISCONNECTED);
+            break;  /* exit outer loop */
+        }
+
+        /* Attempt reconnection */
+        if (relay_attempt_reconnect(r)) {
+            /* Success! Reset counters and continue processing messages */
+            has_priority = 0;
+            msg_count = 0;
+            continue;  /* back to outer loop -> inner loop */
+        }
+
+        /* Reconnection failed, will retry with increased backoff */
+        /* Continue outer loop to try again */
+    }  /* end outer reconnection loop */
 
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: exit\n");
     go_wait_group_done(&((NostrRelay *)arg)->priv->workers);
@@ -1035,3 +1254,144 @@ void nostr_relay_disconnect(NostrRelay *relay) {
 
 /* Legacy relay_unsubscribe removed. Use nostr_subscription_unsubscribe() via NostrSubscription* or
  * provide a thin wrapper in higher layers if needed. */
+
+/* ========================================================================
+ * Auto-reconnection with exponential backoff (nostrc-4du)
+ * ======================================================================== */
+
+/* Configuration constants */
+#define RECONNECT_INITIAL_DELAY_MS    1000    /* 1 second */
+#define RECONNECT_MAX_DELAY_MS        300000  /* 5 minutes */
+#define RECONNECT_JITTER_FACTOR       0.5     /* ±50% jitter */
+
+static uint64_t get_monotonic_time_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
+
+/* Simple pseudo-random for jitter (doesn't need crypto quality) */
+static double random_double(void) {
+    static unsigned int seed = 0;
+    if (seed == 0) {
+        seed = (unsigned int)time(NULL) ^ (unsigned int)getpid();
+    }
+    seed = seed * 1103515245 + 12345;
+    return (double)(seed % 10000) / 10000.0;
+}
+
+/* Calculate backoff with jitter: backoff * (1 - jitter/2 + random * jitter) */
+static uint64_t calculate_backoff_with_jitter(int attempt) {
+    /* Exponential backoff: initial * 2^attempt */
+    uint64_t backoff = RECONNECT_INITIAL_DELAY_MS;
+    for (int i = 0; i < attempt && backoff < RECONNECT_MAX_DELAY_MS; i++) {
+        backoff *= 2;
+    }
+    if (backoff > RECONNECT_MAX_DELAY_MS) {
+        backoff = RECONNECT_MAX_DELAY_MS;
+    }
+
+    /* Apply jitter: backoff * (0.5 + random(0, 0.5)) = backoff * [0.5, 1.0] */
+    double jitter_multiplier = (1.0 - RECONNECT_JITTER_FACTOR / 2.0) +
+                               random_double() * RECONNECT_JITTER_FACTOR;
+    return (uint64_t)(backoff * jitter_multiplier);
+}
+
+/* Helper to update state and invoke callback */
+static void relay_set_state(NostrRelay *relay, NostrRelayConnectionState new_state) {
+    if (!relay || !relay->priv) return;
+
+    NostrRelayConnectionState old_state;
+    NostrRelayStateCallback callback = NULL;
+    void *user_data = NULL;
+
+    nsync_mu_lock(&relay->priv->mutex);
+    old_state = relay->priv->connection_state;
+    if (old_state != new_state) {
+        relay->priv->connection_state = new_state;
+        callback = relay->priv->state_callback;
+        user_data = relay->priv->state_callback_user_data;
+    }
+    nsync_mu_unlock(&relay->priv->mutex);
+
+    /* Invoke callback outside the lock */
+    if (callback && old_state != new_state) {
+        callback(relay, old_state, new_state, user_data);
+    }
+}
+
+const char *nostr_relay_get_connection_state_name(NostrRelayConnectionState state) {
+    switch (state) {
+        case NOSTR_RELAY_STATE_DISCONNECTED: return "disconnected";
+        case NOSTR_RELAY_STATE_CONNECTING:   return "connecting";
+        case NOSTR_RELAY_STATE_CONNECTED:    return "connected";
+        case NOSTR_RELAY_STATE_BACKOFF:      return "backoff";
+        default:                              return "unknown";
+    }
+}
+
+void nostr_relay_set_auto_reconnect(NostrRelay *relay, bool enable) {
+    if (!relay || !relay->priv) return;
+    nsync_mu_lock(&relay->priv->mutex);
+    relay->priv->auto_reconnect = enable;
+    nsync_mu_unlock(&relay->priv->mutex);
+}
+
+bool nostr_relay_get_auto_reconnect(NostrRelay *relay) {
+    if (!relay || !relay->priv) return false;
+    nsync_mu_lock(&relay->priv->mutex);
+    bool result = relay->priv->auto_reconnect;
+    nsync_mu_unlock(&relay->priv->mutex);
+    return result;
+}
+
+NostrRelayConnectionState nostr_relay_get_connection_state(NostrRelay *relay) {
+    if (!relay || !relay->priv) return NOSTR_RELAY_STATE_DISCONNECTED;
+    nsync_mu_lock(&relay->priv->mutex);
+    NostrRelayConnectionState state = relay->priv->connection_state;
+    nsync_mu_unlock(&relay->priv->mutex);
+    return state;
+}
+
+void nostr_relay_set_state_callback(NostrRelay *relay,
+                                    NostrRelayStateCallback callback,
+                                    void *user_data) {
+    if (!relay || !relay->priv) return;
+    nsync_mu_lock(&relay->priv->mutex);
+    relay->priv->state_callback = callback;
+    relay->priv->state_callback_user_data = user_data;
+    nsync_mu_unlock(&relay->priv->mutex);
+}
+
+int nostr_relay_get_reconnect_attempt(NostrRelay *relay) {
+    if (!relay || !relay->priv) return 0;
+    nsync_mu_lock(&relay->priv->mutex);
+    int attempt = relay->priv->reconnect_attempt;
+    nsync_mu_unlock(&relay->priv->mutex);
+    return attempt;
+}
+
+uint64_t nostr_relay_get_next_reconnect_ms(NostrRelay *relay) {
+    if (!relay || !relay->priv) return 0;
+    nsync_mu_lock(&relay->priv->mutex);
+    NostrRelayConnectionState state = relay->priv->connection_state;
+    uint64_t next_time = relay->priv->next_reconnect_time_ms;
+    nsync_mu_unlock(&relay->priv->mutex);
+
+    if (state != NOSTR_RELAY_STATE_BACKOFF) return 0;
+
+    uint64_t now = get_monotonic_time_ms();
+    if (next_time <= now) return 0;
+    return next_time - now;
+}
+
+void nostr_relay_reconnect_now(NostrRelay *relay) {
+    if (!relay || !relay->priv) return;
+    nsync_mu_lock(&relay->priv->mutex);
+    NostrRelayConnectionState state = relay->priv->connection_state;
+    if (state == NOSTR_RELAY_STATE_DISCONNECTED || state == NOSTR_RELAY_STATE_BACKOFF) {
+        relay->priv->reconnect_requested = true;
+        relay->priv->next_reconnect_time_ms = 0;  /* Clear backoff delay */
+    }
+    nsync_mu_unlock(&relay->priv->mutex);
+}

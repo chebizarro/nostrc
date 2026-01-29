@@ -213,6 +213,119 @@ GoChannel *nostr_relay_get_write_channel(const NostrRelay *relay);
  */
 GoChannel *nostr_relay_write(NostrRelay *relay, char *msg);
 
+/* ========================================================================
+ * Auto-reconnection with exponential backoff (nostrc-4du)
+ * ======================================================================== */
+
+/**
+ * NostrRelayConnectionState:
+ * @NOSTR_RELAY_STATE_DISCONNECTED: Not connected
+ * @NOSTR_RELAY_STATE_CONNECTING: Connection attempt in progress
+ * @NOSTR_RELAY_STATE_CONNECTED: Successfully connected
+ * @NOSTR_RELAY_STATE_BACKOFF: Waiting before next reconnection attempt
+ *
+ * Connection state for a relay.
+ */
+#ifndef NOSTR_RELAY_CONNECTION_STATE_DEFINED
+#define NOSTR_RELAY_CONNECTION_STATE_DEFINED
+typedef enum NostrRelayConnectionState_ {
+    NOSTR_RELAY_STATE_DISCONNECTED = 0,
+    NOSTR_RELAY_STATE_CONNECTING,
+    NOSTR_RELAY_STATE_CONNECTED,
+    NOSTR_RELAY_STATE_BACKOFF
+} NostrRelayConnectionState;
+#endif
+
+/**
+ * NostrRelayStateCallback:
+ * @relay: The relay whose state changed
+ * @old_state: Previous connection state
+ * @new_state: New connection state
+ * @user_data: User data passed to nostr_relay_set_state_callback()
+ *
+ * Callback invoked when relay connection state changes.
+ * Called from relay worker thread - use thread-safe operations.
+ */
+typedef void (*NostrRelayStateCallback)(NostrRelay *relay,
+                                        NostrRelayConnectionState old_state,
+                                        NostrRelayConnectionState new_state,
+                                        void *user_data);
+
+/**
+ * nostr_relay_set_auto_reconnect:
+ * @relay: (nullable): relay
+ * @enable: Whether to enable auto-reconnection
+ *
+ * Enable or disable automatic reconnection with exponential backoff.
+ * When enabled, the relay will automatically attempt to reconnect
+ * when the connection is lost.
+ *
+ * Default: enabled (true)
+ */
+void nostr_relay_set_auto_reconnect(NostrRelay *relay, bool enable);
+
+/**
+ * nostr_relay_get_auto_reconnect:
+ * @relay: (nullable): relay
+ *
+ * Returns: Whether auto-reconnection is enabled
+ */
+bool nostr_relay_get_auto_reconnect(NostrRelay *relay);
+
+/**
+ * nostr_relay_get_connection_state:
+ * @relay: (nullable): relay
+ *
+ * Returns: Current connection state
+ */
+NostrRelayConnectionState nostr_relay_get_connection_state(NostrRelay *relay);
+
+/**
+ * nostr_relay_get_connection_state_name:
+ * @state: Connection state
+ *
+ * Returns: Human-readable state name (static string)
+ */
+const char *nostr_relay_get_connection_state_name(NostrRelayConnectionState state);
+
+/**
+ * nostr_relay_set_state_callback:
+ * @relay: (nullable): relay
+ * @callback: (nullable): Callback function, or NULL to remove
+ * @user_data: (nullable): User data passed to callback
+ *
+ * Set a callback to be notified of connection state changes.
+ * The callback is invoked from the relay worker thread.
+ */
+void nostr_relay_set_state_callback(NostrRelay *relay,
+                                    NostrRelayStateCallback callback,
+                                    void *user_data);
+
+/**
+ * nostr_relay_get_reconnect_attempt:
+ * @relay: (nullable): relay
+ *
+ * Returns: Number of consecutive failed reconnection attempts (0 if connected)
+ */
+int nostr_relay_get_reconnect_attempt(NostrRelay *relay);
+
+/**
+ * nostr_relay_get_next_reconnect_ms:
+ * @relay: (nullable): relay
+ *
+ * Returns: Milliseconds until next reconnection attempt (0 if not in backoff)
+ */
+uint64_t nostr_relay_get_next_reconnect_ms(NostrRelay *relay);
+
+/**
+ * nostr_relay_reconnect_now:
+ * @relay: (nullable): relay
+ *
+ * Request immediate reconnection, bypassing backoff delay.
+ * Has no effect if already connected or connection attempt in progress.
+ */
+void nostr_relay_reconnect_now(NostrRelay *relay);
+
 #ifdef __cplusplus
 }
 #endif
