@@ -6,6 +6,7 @@
 #include <nsync.h>
 #include <stdatomic.h>
 #include <stddef.h> // offsetof
+#include <stdint.h> // uint32_t
 
 #ifndef NOSTR_CACHELINE
 #define NOSTR_CACHELINE 64
@@ -16,7 +17,12 @@
 #define NOSTR_CHANNEL_ENFORCE_POW2_CAP 1
 #endif
 
+// Magic number to detect valid vs freed/garbage channel pointers
+#define GO_CHANNEL_MAGIC 0xC4A77E10  // "CHANNEL0"
+
 typedef struct GoChannel {
+    // Magic number for validation (must be first field)
+    uint32_t magic;
     // Immutable after create
     _Atomic(void*) *buffer;
     size_t capacity;

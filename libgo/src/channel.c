@@ -584,6 +584,9 @@ int go_channel_has_data(const void *chan) {
 /* Create a new channel with the given capacity */
 GoChannel *go_channel_create(size_t capacity) {
     GoChannel *chan = malloc(sizeof(GoChannel));
+    if (!chan) return NULL;
+    // Set magic number for validation
+    chan->magic = GO_CHANNEL_MAGIC;
     // Optionally round capacity up to next power of two for faster masking
     size_t cap = capacity;
 #if NOSTR_CHANNEL_ENFORCE_POW2_CAP
@@ -637,6 +640,12 @@ void go_channel_free(GoChannel *chan) {
         return;
     }
 
+    // Magic number validation: detect garbage/invalid pointers
+    if (chan->magic != GO_CHANNEL_MAGIC) {
+        nostr_metric_counter_add("go_chan_invalid_magic_free", 1);
+        return;
+    }
+
     // Double-free guard: if already freed, return immediately
     int was = atomic_exchange_explicit(&chan->freed, 1, memory_order_acq_rel);
     if (NOSTR_UNLIKELY(was)) {
@@ -644,6 +653,9 @@ void go_channel_free(GoChannel *chan) {
         nostr_metric_counter_add("go_chan_double_free_guard", 1);
         return;
     }
+
+    // Clear magic to detect use-after-free
+    chan->magic = 0;
 
     NLOCK(&chan->mutex);
     // Mark closed and wake all waiters to prevent further use
