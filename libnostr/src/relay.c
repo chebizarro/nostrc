@@ -552,10 +552,14 @@ static void *message_loop(void *arg) {
                     }
                     nostr_subscription_dispatch_eose(subscription);
                 } else {
-                    /* This should not happen if subscriptions are properly managed.
-                     * Subscriptions should only be closed AFTER receiving EOSE. */
-                    fprintf(stderr, "[EOSE_LATE] relay=%s sid=%s serial=%d - ERROR: EOSE for unknown subscription (subscription closed prematurely?)\n",
-                            r->url ? r->url : "unknown", env->message, serial);
+                    /* This is NORMAL when a subscription is closed due to timeout before EOSE arrives.
+                     * The subscription_free removes from the map, then EOSE arrives from the relay.
+                     * Only log in debug mode to avoid noise during normal operation. */
+                    if (getenv("NOSTR_DEBUG_LIFECYCLE")) {
+                        fprintf(stderr, "[SUB_LIFECYCLE] EOSE_LATE relay=%s sid=%s serial=%d (subscription already freed - normal for slow relays)\n",
+                                r->url ? r->url : "unknown", env->message, serial);
+                    }
+                    nostr_metric_counter_add("eose_late_arrival", 1);
                 }
             }
             char tmp[128]; snprintf(tmp, sizeof(tmp), "EOSE sid=%s", env->message ? env->message : "");

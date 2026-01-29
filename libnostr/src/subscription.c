@@ -84,12 +84,27 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     go(nostr_subscription_start, sub);
     nostr_metric_counter_add("sub_created", 1);
 
+    // LIFECYCLE: Log subscription creation
+    if (getenv("NOSTR_DEBUG_LIFECYCLE")) {
+        fprintf(stderr, "[SUB_LIFECYCLE] CREATE sid=%s counter=%d\n",
+                sub->priv->id, sub->priv->counter);
+    }
+
     return sub;
 }
 
 void nostr_subscription_free(NostrSubscription *sub) {
     if (!sub)
         return;
+
+    // LIFECYCLE: Log subscription free
+    if (getenv("NOSTR_DEBUG_LIFECYCLE")) {
+        bool eosed = sub->priv ? atomic_load(&sub->priv->eosed) : false;
+        bool unsubbed = sub->priv ? atomic_load(&sub->priv->unsubbed) : false;
+        fprintf(stderr, "[SUB_LIFECYCLE] FREE sid=%s eosed=%d unsubbed=%d\n",
+                sub->priv && sub->priv->id ? sub->priv->id : "null",
+                eosed ? 1 : 0, unsubbed ? 1 : 0);
+    }
 
     // IMPORTANT: Remove from relay map FIRST to prevent message_loop from
     // dispatching events to this subscription while we're freeing it.
@@ -212,6 +227,13 @@ void nostr_subscription_dispatch_eose(NostrSubscription *sub) {
     if (!sub)
         return;
 
+    // LIFECYCLE: Log EOSE dispatch
+    if (getenv("NOSTR_DEBUG_LIFECYCLE")) {
+        fprintf(stderr, "[SUB_LIFECYCLE] EOSE_DISPATCH sid=%s counter=%d\n",
+                sub->priv && sub->priv->id ? sub->priv->id : "null",
+                sub->priv ? sub->priv->counter : -1);
+    }
+
     // Change the match behavior and signal the end of stored events
     if (atomic_exchange(&sub->priv->eosed, true) == false) {
         sub->priv->match = nostr_filters_match_ignoring_timestamp;
@@ -274,6 +296,15 @@ void nostr_subscription_unsubscribe(NostrSubscription *sub) {
     if (!sub)
         return;
 
+    // LIFECYCLE: Log unsubscribe
+    if (getenv("NOSTR_DEBUG_LIFECYCLE")) {
+        bool already_unsubbed = sub->priv ? atomic_load(&sub->priv->unsubbed) : false;
+        bool eosed = sub->priv ? atomic_load(&sub->priv->eosed) : false;
+        fprintf(stderr, "[SUB_LIFECYCLE] UNSUBSCRIBE sid=%s already_unsubbed=%d eosed=%d\n",
+                sub->priv && sub->priv->id ? sub->priv->id : "null",
+                already_unsubbed ? 1 : 0, eosed ? 1 : 0);
+    }
+
     // Idempotent: ensure we only execute unsubscribe logic once
     if (atomic_exchange(&sub->priv->unsubbed, true)) {
         return;
@@ -298,6 +329,15 @@ void nostr_subscription_close(NostrSubscription *sub, Error **err) {
     if (!sub || !sub->relay) {
         if (err) *err = new_error(1, "subscription or relay is NULL");
         return;
+    }
+
+    // LIFECYCLE: Log subscription close
+    if (getenv("NOSTR_DEBUG_LIFECYCLE")) {
+        bool eosed = sub->priv ? atomic_load(&sub->priv->eosed) : false;
+        fprintf(stderr, "[SUB_LIFECYCLE] CLOSE sid=%s eosed=%d relay=%s\n",
+                sub->priv && sub->priv->id ? sub->priv->id : "null",
+                eosed ? 1 : 0,
+                sub->relay && sub->relay->url ? sub->relay->url : "null");
     }
 
     if (nostr_relay_is_connected(sub->relay)) {
@@ -504,6 +544,13 @@ bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
     atomic_store(&subscription->priv->live, true);
     if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
         fprintf(stderr, "[sub %s] fire: live=1\n", subscription->priv->id);
+    }
+
+    // LIFECYCLE: Log subscription fired
+    if (getenv("NOSTR_DEBUG_LIFECYCLE")) {
+        fprintf(stderr, "[SUB_LIFECYCLE] FIRE sid=%s counter=%d relay=%s\n",
+                subscription->priv->id, subscription->priv->counter,
+                subscription->relay && subscription->relay->url ? subscription->relay->url : "null");
     }
 
     return true;
