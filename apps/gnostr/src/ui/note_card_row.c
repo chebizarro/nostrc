@@ -5437,15 +5437,10 @@ void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
   /* Mark as disposed FIRST to prevent any async callbacks from running */
   self->disposed = TRUE;
   
-  /* CRITICAL: Clear avatar image paintable BEFORE any async cancellation.
-   * This prevents gtk_image_definition_unref crashes when GTK tries to
-   * unreference an image that's in an invalid state during rapid widget
-   * recycling (e.g., when clicking "New Notes" toast to flush many items).
-   * The crash happens because the GtkPicture's internal image definition
-   * can get corrupted during async callback cancellation. */
-  if (self->avatar_image && GTK_IS_PICTURE(self->avatar_image)) {
-    gtk_picture_set_paintable(GTK_PICTURE(self->avatar_image), NULL);
-  }
+  /* Do NOT call gtk_picture_set_paintable(NULL) here - it can trigger
+   * gtk_image_definition_unref crashes if the GtkPicture is already in
+   * an invalid state during rapid widget recycling. Let GTK handle
+   * cleanup automatically during disposal. */
   
   /* Cancel all async operations immediately */
   if (self->async_cancellable) {
