@@ -5433,25 +5433,46 @@ GCancellable *gnostr_note_card_row_get_cancellable(GnostrNoteCardRow *self) {
  */
 void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
   g_return_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self));
-  
+
   /* Mark as disposed FIRST to prevent any async callbacks from running */
   self->disposed = TRUE;
-  
+
   /* Do NOT call gtk_picture_set_paintable(NULL) here - it can trigger
    * gtk_image_definition_unref crashes if the GtkPicture is already in
    * an invalid state during rapid widget recycling. Let GTK handle
    * cleanup automatically during disposal. */
-  
+
+  /* NIP-71: Stop ALL video players IMMEDIATELY to prevent GStreamer from
+   * accessing Pango layouts or other widget memory while the widget is being
+   * disposed. This is CRITICAL - if dispose() is called with disposed==TRUE
+   * (from a prior prepare_for_unbind call), it will jump to do_template_dispose
+   * and skip the video player stopping code, causing memory corruption and crashes
+   * like gtk_image_definition_unref when GStreamer writes to freed memory.
+   * nostrc-7lv: Fix ASAN crash when clicking "New Notes" toast. */
+  if (self->video_player && GNOSTR_IS_VIDEO_PLAYER(self->video_player)) {
+    gnostr_video_player_stop(GNOSTR_VIDEO_PLAYER(self->video_player));
+  }
+  /* Stop any video players in media_box (inline videos from note content) */
+  if (self->media_box && GTK_IS_BOX(self->media_box)) {
+    GtkWidget *child = gtk_widget_get_first_child(self->media_box);
+    while (child) {
+      if (GNOSTR_IS_VIDEO_PLAYER(child)) {
+        gnostr_video_player_stop(GNOSTR_VIDEO_PLAYER(child));
+      }
+      child = gtk_widget_get_next_sibling(child);
+    }
+  }
+
   /* Cancel all async operations immediately */
   if (self->async_cancellable) {
     g_cancellable_cancel(self->async_cancellable);
   }
-  
+
   /* Cancel legacy cancellables */
   if (self->nip05_cancellable) {
     g_cancellable_cancel(self->nip05_cancellable);
   }
-  
+
 #ifdef HAVE_SOUP3
   if (self->avatar_cancellable) {
     g_cancellable_cancel(self->avatar_cancellable);
