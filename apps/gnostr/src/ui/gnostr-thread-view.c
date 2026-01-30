@@ -3,6 +3,7 @@
 #include "gnostr-avatar-cache.h"
 #include "gnostr-profile-provider.h"
 #include "../storage_ndb.h"
+#include "../model/gn-ndb-sub-dispatcher.h"
 #include "../util/relays.h"
 #include "../util/utils.h"
 #include "nostr-event.h"
@@ -98,6 +99,10 @@ struct _GnostrThreadView {
    * to prevent duplicate requests and enable proper chain traversal */
   GHashTable *ancestors_fetched; /* event_id_hex -> gboolean */
   guint ancestor_fetch_depth;    /* Current chain traversal depth */
+
+  /* nostrc-50t: nostrdb subscription for live thread updates */
+  uint64_t ndb_sub_thread;       /* Subscription ID for thread events */
+  guint rebuild_pending_id;      /* Timeout source for debounced UI rebuild */
 };
 
 G_DEFINE_TYPE(GnostrThreadView, gnostr_thread_view, GTK_TYPE_WIDGET)
@@ -117,6 +122,8 @@ static void rebuild_thread_ui(GnostrThreadView *self);
 static void set_loading_state(GnostrThreadView *self, gboolean loading);
 static void fetch_thread_from_relays(GnostrThreadView *self);
 static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data);
+static void setup_thread_subscription(GnostrThreadView *self);
+static void teardown_thread_subscription(GnostrThreadView *self);
 
 /* Helper: convert hex string to 32-byte binary */
 static gboolean hex_to_bytes_32(const char *hex, unsigned char out[32]) {
@@ -253,10 +260,19 @@ static void parse_nip10_from_json(const char *json_str, char **root_id, char **r
 static void gnostr_thread_view_dispose(GObject *obj) {
   GnostrThreadView *self = GNOSTR_THREAD_VIEW(obj);
 
+  /* nostrc-50t: Teardown nostrdb subscription */
+  teardown_thread_subscription(self);
+
   /* Cancel pending fetch */
   if (self->fetch_cancellable) {
     g_cancellable_cancel(self->fetch_cancellable);
     g_clear_object(&self->fetch_cancellable);
+  }
+
+  /* Cancel pending rebuild timeout */
+  if (self->rebuild_pending_id > 0) {
+    g_source_remove(self->rebuild_pending_id);
+    self->rebuild_pending_id = 0;
   }
 
   /* Clear hash tables */
@@ -443,10 +459,19 @@ void gnostr_thread_view_set_thread_root(GnostrThreadView *self, const char *root
 void gnostr_thread_view_clear(GnostrThreadView *self) {
   g_return_if_fail(GNOSTR_IS_THREAD_VIEW(self));
 
+  /* nostrc-50t: Teardown nostrdb subscription when clearing */
+  teardown_thread_subscription(self);
+
   /* Cancel pending fetch */
   if (self->fetch_cancellable) {
     g_cancellable_cancel(self->fetch_cancellable);
     g_clear_object(&self->fetch_cancellable);
+  }
+
+  /* Cancel pending rebuild timeout */
+  if (self->rebuild_pending_id > 0) {
+    g_source_remove(self->rebuild_pending_id);
+    self->rebuild_pending_id = 0;
   }
 
   /* Clear events */
@@ -1342,6 +1367,9 @@ static void load_thread(GnostrThreadView *self) {
     rebuild_thread_ui(self);
   }
 
+  /* nostrc-50t: Setup nostrdb subscription for live updates */
+  setup_thread_subscription(self);
+
   /* Fetch more from relays */
   fetch_thread_from_relays(self);
 }
@@ -1421,5 +1449,150 @@ void gnostr_thread_view_update_profiles(GnostrThreadView *self) {
       idx++;
     }
     child = gtk_widget_get_next_sibling(child);
+  }
+}
+
+/* ========== nostrc-50t: nostrdb subscription for live thread updates ========== */
+
+/* Debounce interval for UI rebuild after receiving new events (ms) */
+#define THREAD_REBUILD_DEBOUNCE_MS 150
+
+/* Timeout callback to rebuild the UI after receiving new events */
+static gboolean on_rebuild_debounce_timeout(gpointer user_data) {
+  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+  if (!GNOSTR_IS_THREAD_VIEW(self)) return G_SOURCE_REMOVE;
+
+  self->rebuild_pending_id = 0;
+
+  /* Rebuild UI with newly arrived events */
+  rebuild_thread_ui(self);
+
+  /* Check if new events reference ancestors we don't have yet */
+  fetch_missing_ancestors(self);
+
+  return G_SOURCE_REMOVE;
+}
+
+/* Schedule a debounced UI rebuild */
+static void schedule_thread_rebuild(GnostrThreadView *self) {
+  if (self->rebuild_pending_id > 0) {
+    /* Already scheduled, don't reschedule */
+    return;
+  }
+
+  self->rebuild_pending_id = g_timeout_add(THREAD_REBUILD_DEBOUNCE_MS,
+                                           on_rebuild_debounce_timeout, self);
+}
+
+/* Callback for nostrdb subscription - called when new thread events arrive */
+static void on_ndb_thread_batch(uint64_t subid, const uint64_t *note_keys,
+                                 guint n_keys, gpointer user_data) {
+  (void)subid;
+  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+  if (!GNOSTR_IS_THREAD_VIEW(self) || !note_keys || n_keys == 0) return;
+
+  g_debug("[THREAD_VIEW] Received %u events from nostrdb subscription", n_keys);
+
+  gboolean found_new = FALSE;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
+
+  for (guint i = 0; i < n_keys; i++) {
+    uint64_t key = note_keys[i];
+
+    /* Get note pointer from key */
+    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, key);
+    if (!note) continue;
+
+    /* Get event ID */
+    const unsigned char *id_bin = storage_ndb_note_id(note);
+    if (!id_bin) continue;
+
+    char id_hex[65];
+    storage_ndb_hex_encode(id_bin, id_hex);
+
+    /* Skip if we already have this event */
+    if (g_hash_table_contains(self->events_by_id, id_hex)) continue;
+
+    /* Get pubkey */
+    const unsigned char *pk_bin = storage_ndb_note_pubkey(note);
+    if (!pk_bin) continue;
+
+    char pk_hex[65];
+    storage_ndb_hex_encode(pk_bin, pk_hex);
+
+    /* Get content */
+    const char *content = storage_ndb_note_content(note);
+
+    /* Get created_at */
+    uint32_t created_at = storage_ndb_note_created_at(note);
+
+    /* Get NIP-10 thread info */
+    char *root_id = NULL;
+    char *reply_id = NULL;
+    storage_ndb_note_get_nip10_thread(note, &root_id, &reply_id);
+
+    /* Create new item */
+    ThreadEventItem *item = g_new0(ThreadEventItem, 1);
+    item->id_hex = g_strdup(id_hex);
+    item->pubkey_hex = g_strdup(pk_hex);
+    item->content = content ? g_strdup(content) : g_strdup("");
+    item->created_at = (gint64)created_at;
+    item->root_id = root_id;     /* Takes ownership */
+    item->parent_id = reply_id;  /* Takes ownership */
+
+    /* Add to hash table (owns the item) */
+    g_hash_table_insert(self->events_by_id, item->id_hex, item);
+    found_new = TRUE;
+
+    g_debug("[THREAD_VIEW] Added event %.16s... from subscription", id_hex);
+  }
+
+  storage_ndb_end_query(txn);
+
+  if (found_new) {
+    /* Schedule debounced UI rebuild */
+    schedule_thread_rebuild(self);
+  }
+}
+
+/* Setup nostrdb subscription for thread events */
+static void setup_thread_subscription(GnostrThreadView *self) {
+  if (!self) return;
+
+  /* Teardown any existing subscription */
+  teardown_thread_subscription(self);
+
+  const char *root_id = self->thread_root_id ? self->thread_root_id : self->focus_event_id;
+  if (!root_id || strlen(root_id) != 64) return;
+
+  /* Build filter for events referencing the thread root.
+   * Subscribe to kind 1 (notes) and kind 1111 (NIP-22 comments) with #e tag = root.
+   * Note: nostrdb filter format uses JSON. */
+  char filter_json[256];
+  snprintf(filter_json, sizeof(filter_json),
+           "{\"kinds\":[1,1111],\"#e\":[\"%s\"],\"limit\":%d}",
+           root_id, MAX_THREAD_EVENTS);
+
+  self->ndb_sub_thread = gn_ndb_subscribe(filter_json, on_ndb_thread_batch, self, NULL);
+
+  if (self->ndb_sub_thread > 0) {
+    g_debug("[THREAD_VIEW] Created nostrdb subscription %" G_GUINT64_FORMAT " for root %s",
+            (guint64)self->ndb_sub_thread, root_id);
+  } else {
+    g_warning("[THREAD_VIEW] Failed to create nostrdb subscription for root %s", root_id);
+  }
+}
+
+/* Teardown nostrdb subscription */
+static void teardown_thread_subscription(GnostrThreadView *self) {
+  if (!self) return;
+
+  if (self->ndb_sub_thread > 0) {
+    g_debug("[THREAD_VIEW] Unsubscribing from nostrdb subscription %" G_GUINT64_FORMAT,
+            (guint64)self->ndb_sub_thread);
+    gn_ndb_unsubscribe(self->ndb_sub_thread);
+    self->ndb_sub_thread = 0;
   }
 }
