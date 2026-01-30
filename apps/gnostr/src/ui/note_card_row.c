@@ -4335,6 +4335,9 @@ static GtkWidget *create_hashtag_chip(const char *hashtag) {
   gtk_button_set_label(GTK_BUTTON(btn), label_text);
   g_free(label_text);
 
+  /* GTK4: Ensure widget is visible */
+  gtk_widget_set_visible(btn, TRUE);
+
   return btn;
 }
 

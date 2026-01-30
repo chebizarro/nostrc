@@ -1661,6 +1661,14 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     } else {
       gnostr_note_card_row_set_content(GNOSTR_NOTE_CARD_ROW(row), content);
     }
+
+    /* Set hashtags from GnNostrEventItem if available (works even when tags_json is disabled) */
+    if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
+      const char * const *item_hashtags = gn_nostr_event_item_get_hashtags(GN_NOSTR_EVENT_ITEM(obj));
+      if (item_hashtags && item_hashtags[0]) {
+        gnostr_note_card_row_set_hashtags(GNOSTR_NOTE_CARD_ROW(row), item_hashtags);
+      }
+    }
     gnostr_note_card_row_set_depth(GNOSTR_NOTE_CARD_ROW(row), depth);
     gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row), id_hex, root_id, pubkey);
 

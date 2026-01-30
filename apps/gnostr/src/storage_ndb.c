@@ -944,3 +944,44 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
   if (reply_id_out) *reply_id_out = found_reply;
   else g_free(found_reply);
 }
+
+/* ============== Hashtag Extraction API ============== */
+
+/* Extract hashtags ("t" tags) from note.
+ * Returns NULL-terminated array of hashtag strings, or NULL if none.
+ * Caller must g_strfreev() the result. */
+char **storage_ndb_note_get_hashtags(storage_ndb_note *note)
+{
+  if (!note) return NULL;
+
+  struct ndb_tags *tags = ndb_note_tags(note);
+  if (!tags || ndb_tags_count(tags) == 0) return NULL;
+
+  GPtrArray *hashtags = g_ptr_array_new();
+
+  struct ndb_iterator iter;
+  ndb_tags_iterate_start(note, &iter);
+
+  while (ndb_tags_iterate_next(&iter)) {
+    struct ndb_tag *tag = iter.tag;
+    int nelem = ndb_tag_count(tag);
+    if (nelem < 2) continue;
+
+    /* Check if this is a "t" tag */
+    struct ndb_str key = ndb_tag_str(note, tag, 0);
+    if (!key.str || strcmp(key.str, "t") != 0) continue;
+
+    /* Get the hashtag value */
+    struct ndb_str val = ndb_tag_str(note, tag, 1);
+    if (val.str && *val.str) {
+      g_ptr_array_add(hashtags, g_strdup(val.str));
+    }
+  }
+
+  if (hashtags->len == 0) {
+    g_ptr_array_free(hashtags, TRUE);
+    return NULL;
+  }
+  g_ptr_array_add(hashtags, NULL); /* NULL-terminate */
+  return (char **)g_ptr_array_free(hashtags, FALSE);
+}

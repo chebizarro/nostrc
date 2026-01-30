@@ -18,6 +18,7 @@ struct _GnNostrEventItem {
   char *cached_pubkey;
   char *cached_content;
   char *cached_tags_json;  /* NIP-92 imeta support */
+  char **cached_hashtags;  /* "t" tags extracted directly */
 
   /* Profile object */
   GnNostrProfile *profile;
@@ -122,6 +123,9 @@ static gboolean ensure_note_loaded(GnNostrEventItem *self)
     /* DISABLED: Tag JSON generation causes heap corruption with malformed events */
     self->cached_tags_json = NULL; // storage_ndb_note_tags_json(note);
 
+    /* Extract hashtags directly (avoids the corruption from full tags_json) */
+    self->cached_hashtags = storage_ndb_note_get_hashtags(note);
+
     /* NIP-40: Cache expiration timestamp */
     self->expiration = storage_ndb_note_get_expiration(note);
     self->expiration_loaded = TRUE;
@@ -153,6 +157,7 @@ static void gn_nostr_event_item_finalize(GObject *object) {
   g_free(self->cached_pubkey);
   g_free(self->cached_content);
   g_free(self->cached_tags_json);
+  g_strfreev(self->cached_hashtags);
   g_free(self->thread_root_id);
   g_free(self->parent_id);
 
@@ -387,6 +392,12 @@ const char *gn_nostr_event_item_get_tags_json(GnNostrEventItem *self) {
   g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
   ensure_note_loaded(self);
   return self->cached_tags_json;
+}
+
+const char * const *gn_nostr_event_item_get_hashtags(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
+  ensure_note_loaded(self);
+  return (const char * const *)self->cached_hashtags;
 }
 
 gint gn_nostr_event_item_get_kind(GnNostrEventItem *self) {

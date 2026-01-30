@@ -109,6 +109,11 @@ void storage_ndb_hex_encode(const unsigned char *bin32, char *hex65);
  * Caller must g_free() the result. */
 char *storage_ndb_note_tags_json(storage_ndb_note *note);
 
+/* Extract hashtags ("t" tags) from note.
+ * Returns NULL-terminated array of hashtag strings, or NULL if none.
+ * Caller must g_strfreev() the result. */
+char **storage_ndb_note_get_hashtags(storage_ndb_note *note);
+
 /* ============== NIP-25 Reaction Count API ============== */
 
 /* Count reactions (kind 7) for a given event.

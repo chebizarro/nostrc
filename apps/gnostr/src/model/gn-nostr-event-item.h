@@ -24,6 +24,7 @@ const char *gn_nostr_event_item_get_pubkey(GnNostrEventItem *self);
 gint64 gn_nostr_event_item_get_created_at(GnNostrEventItem *self);
 const char *gn_nostr_event_item_get_content(GnNostrEventItem *self);
 const char *gn_nostr_event_item_get_tags_json(GnNostrEventItem *self);
+const char * const *gn_nostr_event_item_get_hashtags(GnNostrEventItem *self);
 gint gn_nostr_event_item_get_kind(GnNostrEventItem *self);
 GnNostrProfile *gn_nostr_event_item_get_profile(GnNostrEventItem *self);
 const char *gn_nostr_event_item_get_thread_root_id(GnNostrEventItem *self);
