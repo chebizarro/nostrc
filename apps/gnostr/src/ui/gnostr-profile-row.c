@@ -85,8 +85,22 @@ on_row_clicked(GtkGestureClick *gesture, int n_press, double x, double y, Gnostr
 {
     (void)gesture;
     (void)n_press;
-    (void)x;
-    (void)y;
+
+    /* Check if click was on the actions menu button - if so, don't open profile */
+    if (self->btn_actions && GTK_IS_WIDGET(self->btn_actions)) {
+        graphene_point_t point = GRAPHENE_POINT_INIT((float)x, (float)y);
+        graphene_point_t btn_point;
+        if (gtk_widget_compute_point(GTK_WIDGET(self), GTK_WIDGET(self->btn_actions),
+                                      &point, &btn_point)) {
+            /* Check if point is within button bounds */
+            int btn_width = gtk_widget_get_width(GTK_WIDGET(self->btn_actions));
+            int btn_height = gtk_widget_get_height(GTK_WIDGET(self->btn_actions));
+            if (btn_point.x >= 0 && btn_point.x < btn_width &&
+                btn_point.y >= 0 && btn_point.y < btn_height) {
+                return;  /* Click was on menu button, let it handle the event */
+            }
+        }
+    }
 
     if (self->pubkey) {
         g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, self->pubkey);
