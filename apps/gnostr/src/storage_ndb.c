@@ -897,13 +897,23 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
    * - Last e-tag = reply target (event being replied to)
    * When there's only one e-tag (first == last), the event is a direct reply
    * to that event, so both root and reply should point to it.
-   * nostrc-5b8: Fix single e-tag case where reply_id was incorrectly left NULL */
+   * nostrc-5b8: Fix single e-tag case where reply_id was incorrectly left NULL
+   *
+   * nostrc-mef: NIP-10 "root-only" marker case:
+   * When an event has ONLY a "root" marker (no "reply" marker), it means
+   * the event is a direct reply to the root. In this case, reply_id = root_id.
+   * Example: ["e", "<id>", "<relay>", "root"] with no reply marker = reply to root */
   if (!found_root && first_e_id) {
     found_root = g_strdup(first_e_id);
   }
   if (!found_reply && last_e_id) {
     /* Any e-tag (even if same as root) indicates this is a reply */
     found_reply = g_strdup(last_e_id);
+  }
+  /* nostrc-mef: If we have a root marker but no reply marker, this is a
+   * direct reply to the root event. Set reply_id = root_id. */
+  if (!found_reply && found_root) {
+    found_reply = g_strdup(found_root);
   }
 
   if (root_id_out) *root_id_out = found_root;
