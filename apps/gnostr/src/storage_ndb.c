@@ -916,6 +916,13 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
     found_reply = g_strdup(found_root);
   }
 
+  /* NIP-10: When only "root" marker exists (no "reply" marker), this is a
+   * direct reply to the root event. Set reply_id = root_id.
+   * nostrc-mef: Fix root-only marker case */
+  if (!found_reply && found_root) {
+    found_reply = g_strdup(found_root);
+  }
+
   if (root_id_out) *root_id_out = found_root;
   else g_free(found_root);
 
