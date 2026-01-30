@@ -1644,6 +1644,21 @@ button.liked image {
 	opacity: 1;
 }
 
+/* ===== NIP-57 Zap/Lightning Styles ===== */
+
+/* Zap button in zapped state (when event has received zaps) */
+#btn_zap.zapped image,
+button.zapped image {
+	color: #f7931a; /* Lightning orange color */
+	opacity: 1;
+}
+
+/* Zapped state styling - applied to note card */
+.note-zapped #btn_zap image {
+	color: #f7931a;
+	opacity: 1;
+}
+
 /* ===== Default Avatar/Banner Fallback Styles (nostrc-uzi) ===== */
 
 /* Default avatar icon (person silhouette) - alternative to initials */

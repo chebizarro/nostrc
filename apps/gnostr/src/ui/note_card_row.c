@@ -3905,6 +3905,32 @@ void gnostr_note_card_row_set_zap_stats(GnostrNoteCardRow *self, guint zap_count
       gtk_widget_set_visible(self->lbl_zap_count, FALSE);
     }
   }
+
+  /* Update zap button visual state and tooltip */
+  if (GTK_IS_BUTTON(self->btn_zap)) {
+    if (zap_count > 0) {
+      /* Add "zapped" CSS class for visual indicator */
+      gtk_widget_add_css_class(GTK_WIDGET(self->btn_zap), "zapped");
+
+      /* Set tooltip showing total sats received */
+      gchar *formatted = gnostr_zap_format_amount(total_msat);
+      gchar *tooltip = g_strdup_printf("%u zap%s: %s received",
+                                       zap_count, zap_count == 1 ? "" : "s", formatted);
+      gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_zap), tooltip);
+      g_free(tooltip);
+      g_free(formatted);
+    } else {
+      /* Remove "zapped" CSS class */
+      gtk_widget_remove_css_class(GTK_WIDGET(self->btn_zap), "zapped");
+
+      /* Reset tooltip based on author lud16 availability */
+      if (self->author_lud16 && *self->author_lud16 != '\0') {
+        gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_zap), "Zap");
+      } else {
+        gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_zap), "User has no lightning address");
+      }
+    }
+  }
 }
 
 /* Set the reply count for thread root indicator */
