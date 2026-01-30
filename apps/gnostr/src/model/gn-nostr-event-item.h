@@ -38,6 +38,10 @@ gboolean gn_nostr_event_item_get_is_muted(GnNostrEventItem *self);
 gboolean gn_nostr_event_item_get_skip_animation(GnNostrEventItem *self);
 void gn_nostr_event_item_set_skip_animation(GnNostrEventItem *self, gboolean skip);
 
+/* nostrc-0hp Phase 3: Reveal animation state for "New Notes" button */
+gboolean gn_nostr_event_item_get_revealing(GnNostrEventItem *self);
+void gn_nostr_event_item_set_revealing(GnNostrEventItem *self, gboolean revealing);
+
 void gn_nostr_event_item_set_profile(GnNostrEventItem *self, GnNostrProfile *profile);
 void gn_nostr_event_item_set_thread_info(GnNostrEventItem *self,
 					 const char *root_id,

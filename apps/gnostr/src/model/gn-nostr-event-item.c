@@ -35,6 +35,9 @@ struct _GnNostrEventItem {
   /* nostrc-7o7: Skip animation for notes added outside visible viewport */
   gboolean skip_animation;
 
+  /* nostrc-0hp Phase 3: Reveal animation state for "New Notes" button */
+  gboolean revealing;
+
   /* NIP-25: Reaction count (likes) */
   guint like_count;
   gboolean is_liked;  /* Whether current user has liked this event */
@@ -66,6 +69,7 @@ enum {
   PROP_IS_REPOST,
   PROP_IS_MUTED,
   PROP_SKIP_ANIMATION,
+  PROP_REVEALING,
   PROP_LIKE_COUNT,
   PROP_IS_LIKED,
   PROP_ZAP_COUNT,
@@ -209,6 +213,9 @@ static void gn_nostr_event_item_get_property(GObject *object, guint prop_id, GVa
     case PROP_SKIP_ANIMATION:
       g_value_set_boolean(value, self->skip_animation);
       break;
+    case PROP_REVEALING:
+      g_value_set_boolean(value, self->revealing);
+      break;
     case PROP_LIKE_COUNT:
       g_value_set_uint(value, self->like_count);
       break;
@@ -249,6 +256,9 @@ static void gn_nostr_event_item_set_property(GObject *object, guint prop_id, con
       break;
     case PROP_SKIP_ANIMATION:
       self->skip_animation = g_value_get_boolean(value);
+      break;
+    case PROP_REVEALING:
+      self->revealing = g_value_get_boolean(value);
       break;
     case PROP_LIKE_COUNT:
       self->like_count = g_value_get_uint(value);
@@ -303,6 +313,9 @@ static void gn_nostr_event_item_class_init(GnNostrEventItemClass *klass) {
   properties[PROP_SKIP_ANIMATION] = g_param_spec_boolean("skip-animation", "Skip Animation",
                                                           "Skip fade-in animation (nostrc-7o7)", FALSE,
                                                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+  properties[PROP_REVEALING] = g_param_spec_boolean("revealing", "Revealing",
+                                                     "Item is being revealed with animation (nostrc-0hp)", FALSE,
+                                                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
   properties[PROP_LIKE_COUNT] = g_param_spec_uint("like-count", "Like Count",
                                                    "NIP-25 reaction count", 0, G_MAXUINT, 0,
                                                    G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
@@ -537,6 +550,20 @@ void gn_nostr_event_item_set_skip_animation(GnNostrEventItem *self, gboolean ski
   if (self->skip_animation != skip) {
     self->skip_animation = skip;
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_SKIP_ANIMATION]);
+  }
+}
+
+/* nostrc-0hp Phase 3: Reveal animation state for "New Notes" button */
+gboolean gn_nostr_event_item_get_revealing(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), FALSE);
+  return self->revealing;
+}
+
+void gn_nostr_event_item_set_revealing(GnNostrEventItem *self, gboolean revealing) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
+  if (self->revealing != revealing) {
+    self->revealing = revealing;
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_REVEALING]);
   }
 }
 

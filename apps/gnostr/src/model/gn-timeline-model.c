@@ -132,6 +132,7 @@ struct _GnTimelineModel {
   guint reveal_timer_id;         /* Timer for staggered reveal (g_timeout) */
   GFunc reveal_complete_cb;      /* Callback when reveal finishes */
   gpointer reveal_complete_data; /* User data for completion callback */
+  GHashTable *revealing_keys;    /* note_key -> TRUE for items currently being revealed */
 };
 
 /* Forward declarations */
@@ -168,6 +169,9 @@ static gint staged_entry_compare_newest_first(gconstpointer a, gconstpointer b);
 static gboolean on_reveal_timer_tick(gpointer user_data);
 static void process_reveal_batch(GnTimelineModel *self);
 static void cancel_reveal_animation(GnTimelineModel *self);
+static void mark_key_revealing(GnTimelineModel *self, uint64_t key);
+static gboolean is_key_revealing(GnTimelineModel *self, uint64_t key);
+static gboolean on_clear_revealing_key(gpointer user_data);
 
 #define INITIAL_LOAD_TIMEOUT_MS 500  /* Time to wait for initial subscription data */
 
@@ -952,6 +956,76 @@ static void cancel_reveal_animation(GnTimelineModel *self) {
   if (self->reveal_queue) {
     g_array_set_size(self->reveal_queue, 0);
   }
+
+  /* Clear all revealing keys */
+  if (self->revealing_keys) {
+    g_hash_table_remove_all(self->revealing_keys);
+  }
+}
+
+/**
+ * Data structure for the timeout callback that clears revealing state.
+ */
+typedef struct {
+  GnTimelineModel *model;
+  uint64_t note_key;
+} RevealingKeyData;
+
+/**
+ * on_clear_revealing_key:
+ * @user_data: RevealingKeyData pointer
+ *
+ * Timer callback to clear the revealing flag for a specific note key
+ * after the CSS animation duration has elapsed.
+ */
+static gboolean on_clear_revealing_key(gpointer user_data) {
+  RevealingKeyData *data = (RevealingKeyData *)user_data;
+  if (!data) return G_SOURCE_REMOVE;
+
+  GnTimelineModel *self = data->model;
+  if (GN_IS_TIMELINE_MODEL(self) && self->revealing_keys) {
+    g_hash_table_remove(self->revealing_keys, &data->note_key);
+    g_debug("[REVEAL] Cleared revealing state for key %lu", (unsigned long)data->note_key);
+  }
+
+  g_free(data);
+  return G_SOURCE_REMOVE;
+}
+
+/**
+ * mark_key_revealing:
+ * @self: The model
+ * @key: Note key to mark
+ *
+ * Mark a note key as currently being revealed. Schedules automatic
+ * clearing after REVEAL_ANIMATION_MS.
+ */
+static void mark_key_revealing(GnTimelineModel *self, uint64_t key) {
+  if (!self->revealing_keys) return;
+
+  uint64_t *key_copy = g_new(uint64_t, 1);
+  *key_copy = key;
+  g_hash_table_add(self->revealing_keys, key_copy);
+
+  /* Schedule clearing of the revealing flag after animation completes */
+  RevealingKeyData *data = g_new(RevealingKeyData, 1);
+  data->model = self;
+  data->note_key = key;
+  g_timeout_add(REVEAL_ANIMATION_MS, on_clear_revealing_key, data);
+}
+
+/**
+ * is_key_revealing:
+ * @self: The model
+ * @key: Note key to check
+ *
+ * Check if a note key is currently being revealed with animation.
+ *
+ * Returns: TRUE if the key is in the revealing state
+ */
+static gboolean is_key_revealing(GnTimelineModel *self, uint64_t key) {
+  if (!self->revealing_keys) return FALSE;
+  return g_hash_table_contains(self->revealing_keys, &key);
 }
 
 /**
@@ -990,6 +1064,9 @@ static void process_reveal_batch(GnTimelineModel *self) {
 
     /* Add to main key set */
     add_note_key_to_set(self, staged->note_key);
+
+    /* Mark this key as revealing for CSS animation */
+    mark_key_revealing(self, staged->note_key);
 
     /* Update timestamps */
     if (staged->created_at > self->newest_timestamp || self->newest_timestamp == 0) {
@@ -1091,6 +1168,8 @@ static gpointer gn_timeline_model_get_item(GListModel *list, guint position) {
   /* Check cache first */
   GnNostrEventItem *item = cache_get(self, key);
   if (item) {
+    /* Update revealing state in case it changed */
+    gn_nostr_event_item_set_revealing(item, is_key_revealing(self, key));
     return item;  /* Already ref'd by cache_get */
   }
 
@@ -1111,6 +1190,11 @@ static gpointer gn_timeline_model_get_item(GListModel *list, guint position) {
       /* Request profile fetch */
       g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey);
     }
+  }
+
+  /* nostrc-0hp Phase 3: Mark item as revealing if it's part of the current reveal */
+  if (is_key_revealing(self, key)) {
+    gn_nostr_event_item_set_revealing(item, TRUE);
   }
 
   /* Add to cache */
@@ -1955,6 +2039,7 @@ static void gn_timeline_model_dispose(GObject *object) {
   /* Phase 3: Cancel reveal animation and clean up (nostrc-0hp) */
   cancel_reveal_animation(self);
   g_clear_pointer(&self->reveal_queue, g_array_unref);
+  g_clear_pointer(&self->revealing_keys, g_hash_table_unref);
 
   /* Unsubscribe */
   if (self->sub_timeline > 0) {
@@ -2063,6 +2148,7 @@ static void gn_timeline_model_init(GnTimelineModel *self) {
   self->reveal_timer_id = 0;
   self->reveal_complete_cb = NULL;
   self->reveal_complete_data = NULL;
+  self->revealing_keys = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
 
   /* Start in batch mode to prevent widget recycling storms during initial load */
   self->in_batch_mode = TRUE;

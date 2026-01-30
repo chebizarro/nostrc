@@ -164,6 +164,19 @@ static void factory_bind_cb(GtkListItemFactory *factory, GtkListItem *list_item,
     g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey);
   }
 
+  /*
+   * nostrc-0hp Phase 3: Apply reveal animation CSS class.
+   * If the item is marked as "revealing", add the note-revealing CSS class
+   * to trigger the fade/slide animation defined in gnostr.css.
+   */
+  if (gn_nostr_event_item_get_revealing(item)) {
+    gtk_widget_add_css_class(child, "note-revealing");
+    g_debug("[TIMELINE-VIEW] Applied note-revealing CSS class to item");
+  } else {
+    /* Ensure class is removed if item is rebound without revealing state */
+    gtk_widget_remove_css_class(child, "note-revealing");
+  }
+
   /* Cleanup */
   g_free(id_hex);
   g_free(pubkey);
@@ -185,6 +198,9 @@ static void factory_unbind_cb(GtkListItemFactory *factory, GtkListItem *list_ite
   if (!GNOSTR_IS_NOTE_CARD_ROW(child)) return;
 
   GnostrNoteCardRow *row = GNOSTR_NOTE_CARD_ROW(child);
+
+  /* nostrc-0hp Phase 3: Remove reveal animation CSS class on unbind */
+  gtk_widget_remove_css_class(child, "note-revealing");
 
   /* Prepare for unbind - cancels async ops and clears resources */
   gnostr_note_card_row_prepare_for_unbind(row);
