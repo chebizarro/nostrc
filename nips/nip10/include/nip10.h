@@ -1,10 +1,12 @@
 #ifndef NOSTR_NIP10_H
 #define NOSTR_NIP10_H
 
-#include "nostr-tag.h"
+/*
+ * This header provides backward compatibility.
+ * The full NIP-10 API is defined in <nostr/nip10/nip10.h>.
+ * Include that header for NostrNip10ThreadInfo and related functions.
+ */
 
-// Function prototypes for NIP-10
-NostrTag* get_thread_root(NostrTags* tags);
-NostrTag* get_immediate_reply(NostrTags* tags);
+#include "nostr/nip10/nip10.h"
 
 #endif // NOSTR_NIP10_H

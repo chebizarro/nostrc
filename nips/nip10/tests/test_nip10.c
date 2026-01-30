@@ -291,16 +291,85 @@ static void test_deserialize_preserves_tag_markers(void) {
     printf("test_deserialize_preserves_tag_markers: ok\n");
 }
 
+// --- NostrNip10ThreadInfo tests ---
+
+static void test_thread_info_parse_with_markers(void) {
+    NostrEvent *ev = nostr_event_new();
+    assert(ev);
+
+    // Create event with explicit root and reply markers
+    NostrTag *root = nostr_tag_new("e", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", "root", NULL);
+    NostrTag *reply = nostr_tag_new("e", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "", "reply", NULL);
+    NostrTags *tags = nostr_tags_new(2, root, reply);
+    nostr_event_set_tags(ev, tags);
+
+    NostrNip10ThreadInfo info;
+    memset(&info, 0, sizeof(info));
+
+    int rc = nostr_nip10_parse_thread_from_event(ev, &info);
+    assert(rc == 0);
+    assert(info.root_id != NULL);
+    assert(info.reply_id != NULL);
+    assert(strcmp(info.root_id, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0);
+    assert(strcmp(info.reply_id, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") == 0);
+
+    nostr_nip10_thread_info_clear(&info);
+    assert(info.root_id == NULL);
+    assert(info.reply_id == NULL);
+
+    nostr_event_free(ev);
+}
+
+static void test_thread_info_parse_positional_fallback(void) {
+    NostrEvent *ev = nostr_event_new();
+    assert(ev);
+
+    // Create event with no markers (legacy positional style)
+    NostrTag *e1 = nostr_tag_new("e", "1111111111111111111111111111111111111111111111111111111111111111", NULL);
+    NostrTag *e2 = nostr_tag_new("e", "2222222222222222222222222222222222222222222222222222222222222222", NULL);
+    NostrTags *tags = nostr_tags_new(2, e1, e2);
+    nostr_event_set_tags(ev, tags);
+
+    NostrNip10ThreadInfo info;
+    memset(&info, 0, sizeof(info));
+
+    int rc = nostr_nip10_parse_thread_from_event(ev, &info);
+    assert(rc == 0);
+    // First e-tag should be root
+    assert(info.root_id != NULL);
+    assert(strcmp(info.root_id, "1111111111111111111111111111111111111111111111111111111111111111") == 0);
+    // Last e-tag should be reply
+    assert(info.reply_id != NULL);
+    assert(strcmp(info.reply_id, "2222222222222222222222222222222222222222222222222222222222222222") == 0);
+
+    nostr_nip10_thread_info_clear(&info);
+    nostr_event_free(ev);
+}
+
+static void test_thread_info_clear_null_safe(void) {
+    // Should not crash on NULL
+    nostr_nip10_thread_info_clear(NULL);
+
+    // Should handle info with NULL members
+    NostrNip10ThreadInfo info;
+    info.root_id = NULL;
+    info.reply_id = NULL;
+    nostr_nip10_thread_info_clear(&info);
+    assert(info.root_id == NULL);
+    assert(info.reply_id == NULL);
+}
+
 // Extend main to run edge cases
 int main_edge(void) {
     test_mixed_markers_ordering();
     test_unmarked_only_prefers_first_e();
     test_uniqueness_with_many_tags();
-
     // nostrc-sx2: Damus Notedeck marker-at-index-3 format tests
     test_damus_notedeck_format();
     test_deserialize_preserves_tag_markers();
-
+    test_thread_info_parse_with_markers();
+    test_thread_info_parse_positional_fallback();
+    test_thread_info_clear_null_safe();
     printf("edge ok\n");
     return 0;
 }

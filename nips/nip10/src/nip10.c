@@ -1,6 +1,8 @@
 #include "nostr/nip10/nip10.h"
+#include "nostr-event.h"
 #include "nostr-tag.h"
 #include "nostr-utils.h"
+#include <stdlib.h>
 #include <string.h>
 
 /* local helper: binary(32) -> hex(64) */
@@ -206,4 +208,136 @@ int nostr_nip10_get_thread(const NostrEvent *ev, NostrThreadContext *out) {
     }
 
     return 0;
+}
+
+/* ============================================================================
+ * Canonical NIP-10 string-based parsing (nostrc-e0g consolidation)
+ * ============================================================================ */
+
+void nostr_nip10_thread_info_clear(NostrNip10ThreadInfo *info) {
+    if (!info) return;
+    free(info->root_id);
+    free(info->reply_id);
+    info->root_id = NULL;
+    info->reply_id = NULL;
+}
+
+/* Helper to duplicate a hex ID string */
+static char *dup_hex_id(const char *hex) {
+    if (!hex || strlen(hex) != 64) return NULL;
+    char *copy = malloc(65);
+    if (!copy) return NULL;
+    memcpy(copy, hex, 64);
+    copy[64] = '\0';
+    return copy;
+}
+
+int nostr_nip10_parse_thread_from_tags(const NostrTags *tags, NostrNip10ThreadInfo *info) {
+    if (!info) return -1;
+    info->root_id = NULL;
+    info->reply_id = NULL;
+    if (!tags) return 0;
+
+    const char *first_e_id = NULL;
+    const char *last_e_id = NULL;
+    const char *explicit_root = NULL;
+    const char *explicit_reply = NULL;
+
+    for (size_t i = 0; i < tags->count; i++) {
+        NostrTag *tag = tags->data[i];
+        if (!tag || nostr_tag_size(tag) < 2) continue;
+
+        const char *key = nostr_tag_get(tag, 0);
+        if (!key) continue;
+
+        /* Check for NIP-22 uppercase E tag (root event reference) */
+        if (strcmp(key, "E") == 0) {
+            const char *event_id = nostr_tag_get(tag, 1);
+            if (event_id && strlen(event_id) == 64) {
+                explicit_root = event_id;
+                continue;
+            }
+        }
+
+        if (strcmp(key, "e") != 0) continue;
+
+        const char *event_id = nostr_tag_get(tag, 1);
+        if (!event_id || strlen(event_id) != 64) continue;
+
+        /* Check for NIP-10 marker at position 3 */
+        if (nostr_tag_size(tag) >= 4) {
+            const char *marker = nostr_tag_get(tag, 3);
+            if (marker) {
+                if (strcmp(marker, "root") == 0) {
+                    explicit_root = event_id;
+                    continue;
+                }
+                if (strcmp(marker, "reply") == 0) {
+                    explicit_reply = event_id;
+                    continue;
+                }
+                if (strcmp(marker, "mention") == 0) {
+                    continue; /* Skip mentions */
+                }
+            }
+        }
+
+        /* Track first and last unmarked e-tags for positional fallback */
+        if (!first_e_id) {
+            first_e_id = event_id;
+        }
+        last_e_id = event_id;
+    }
+
+    /* Determine root_id: explicit marker takes precedence, then first e-tag */
+    if (explicit_root) {
+        info->root_id = dup_hex_id(explicit_root);
+    } else if (first_e_id) {
+        info->root_id = dup_hex_id(first_e_id);
+    }
+
+    /* Determine reply_id: explicit marker takes precedence */
+    if (explicit_reply) {
+        info->reply_id = dup_hex_id(explicit_reply);
+    } else if (last_e_id && last_e_id != first_e_id) {
+        /* Positional fallback: last e-tag is reply if different from first */
+        info->reply_id = dup_hex_id(last_e_id);
+    } else if (explicit_root && !explicit_reply && first_e_id == last_e_id) {
+        /* Root-only event: if only root marker and no reply, use root as reply target
+         * This handles events that are direct replies using only the root marker */
+        info->reply_id = dup_hex_id(explicit_root);
+    }
+
+    return 0;
+}
+
+int nostr_nip10_parse_thread_from_event(const NostrEvent *ev, NostrNip10ThreadInfo *info) {
+    if (!info) return -1;
+    info->root_id = NULL;
+    info->reply_id = NULL;
+    if (!ev) return 0;
+
+    NostrTags *tags = (NostrTags *)nostr_event_get_tags(ev);
+    return nostr_nip10_parse_thread_from_tags(tags, info);
+}
+
+int nostr_nip10_parse_thread_from_json(const char *json_str, NostrNip10ThreadInfo *info) {
+    if (!info) return -1;
+    info->root_id = NULL;
+    info->reply_id = NULL;
+    if (!json_str) return 0;
+
+    NostrEvent *ev = nostr_event_new();
+    if (!ev) return -1;
+
+    /* Use compact deserialize which is available in core nostr lib */
+    int rc = nostr_event_deserialize_compact(ev, json_str);
+    if (rc != 1) {  /* compact deserialize returns 1 on success, 0 on failure */
+        nostr_event_free(ev);
+        return -1;
+    }
+
+    rc = nostr_nip10_parse_thread_from_event(ev, info);
+    nostr_event_free(ev);
+    return rc;
 }

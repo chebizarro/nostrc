@@ -82,6 +82,71 @@ int  nostr_nip10_get_thread(const NostrEvent *ev, NostrThreadContext *out);
  */
 int  nostr_nip10_ensure_p_participants(NostrEvent *reply_ev, const NostrEvent *parent_ev);
 
+/**
+ * NostrNip10ThreadInfo:
+ * @root_id: (nullable): hex string of root event ID, or NULL if not found. Caller must free.
+ * @reply_id: (nullable): hex string of immediate reply parent ID, or NULL if not found. Caller must free.
+ *
+ * Thread info parsed from NIP-10 e-tags. Contains heap-allocated hex strings.
+ * Use nostr_nip10_thread_info_clear() to free the strings.
+ */
+typedef struct {
+  char *root_id;    /* hex string, caller-owned, may be NULL */
+  char *reply_id;   /* hex string, caller-owned, may be NULL */
+} NostrNip10ThreadInfo;
+
+/**
+ * nostr_nip10_thread_info_clear:
+ * @info: (inout) (not nullable): thread info to clear
+ *
+ * Frees the strings within a NostrNip10ThreadInfo and sets them to NULL.
+ */
+void nostr_nip10_thread_info_clear(NostrNip10ThreadInfo *info);
+
+/**
+ * nostr_nip10_parse_thread_from_event:
+ * @ev: (in) (transfer none) (not nullable): event to parse
+ * @info: (out caller-allocates) (not nullable): thread info to populate
+ *
+ * Parses NIP-10 e-tags from an event to extract root and reply IDs.
+ * Uses explicit markers (root/reply) when present, falls back to positional
+ * interpretation for legacy events.
+ *
+ * IMPORTANT: This is the canonical NIP-10 parsing function. All code should
+ * use this instead of implementing custom parsing logic.
+ *
+ * Returns: 0 on success, negative errno-style value on failure.
+ */
+int nostr_nip10_parse_thread_from_event(const NostrEvent *ev, NostrNip10ThreadInfo *info);
+
+/**
+ * nostr_nip10_parse_thread_from_json:
+ * @json_str: (in) (not nullable): JSON string of an event
+ * @info: (out caller-allocates) (not nullable): thread info to populate
+ *
+ * Parses NIP-10 e-tags from a JSON event string to extract root and reply IDs.
+ * This is a convenience wrapper that deserializes the JSON and calls
+ * nostr_nip10_parse_thread_from_event().
+ *
+ * IMPORTANT: This is the canonical NIP-10 JSON parsing function. All code should
+ * use this instead of implementing custom parsing logic.
+ *
+ * Returns: 0 on success, negative errno-style value on failure.
+ */
+int nostr_nip10_parse_thread_from_json(const char *json_str, NostrNip10ThreadInfo *info);
+
+/**
+ * nostr_nip10_parse_thread_from_tags:
+ * @tags: (in) (transfer none) (not nullable): NostrTags to parse
+ * @info: (out caller-allocates) (not nullable): thread info to populate
+ *
+ * Parses NIP-10 e-tags directly from a tags collection.
+ * This is the lowest-level parsing function used by the other variants.
+ *
+ * Returns: 0 on success, negative errno-style value on failure.
+ */
+int nostr_nip10_parse_thread_from_tags(const NostrTags *tags, NostrNip10ThreadInfo *info);
+
 #ifdef __cplusplus
 }
 #endif
