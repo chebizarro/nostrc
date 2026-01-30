@@ -1236,12 +1236,12 @@ void gnostr_nip66_discover_relays_async(GnostrNip66DiscoveryCallback callback,
   ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
   ctx->relays_found = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_nip66_relay_meta_free);
   ctx->monitors_found = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_nip66_relay_monitor_free);
-  ctx->phase2_started = FALSE;
+  ctx->phase2_started = TRUE;  /* Skip phase 1 - direct query */
 
-  /* Get relay URLs to query for monitors (phase 1) */
+  /* Get relay URLs to query */
   GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
 
-  /* Add known monitor relays - these are relays likely to have kind 10166 events */
+  /* Add known monitor relays - these are relays likely to have kind 30166 events */
   for (const gchar **p = s_known_monitor_relays; *p; p++) {
     g_ptr_array_add(relay_urls, g_strdup(*p));
   }
@@ -1267,14 +1267,15 @@ void gnostr_nip66_discover_relays_async(GnostrNip66DiscoveryCallback callback,
     urls[i] = g_ptr_array_index(relay_urls, i);
   }
 
-  g_debug("nip66 phase1: querying %u relays for kind 10166 monitors", relay_urls->len);
+  g_debug("nip66: querying %u relays for kind 30166 relay metadata (direct)", relay_urls->len);
 
-  /* Phase 1: Query for monitor announcements (kind 10166) only
-   * These events tell us which monitors exist and where their data lives */
-  NostrFilter *monitor_filter = nostr_filter_new();
-  int monitor_kinds[1] = { GNOSTR_NIP66_KIND_RELAY_MONITOR };
-  nostr_filter_set_kinds(monitor_filter, monitor_kinds, 1);
-  nostr_filter_set_limit(monitor_filter, 100);
+  /* nostrc-q42: Simplified discovery - query kind 30166 directly WITHOUT author filter.
+   * Relay metadata events are addressable (d-tag = relay URL) and don't need
+   * the complex two-phase monitor discovery. */
+  NostrFilter *filter = nostr_filter_new();
+  int kinds[1] = { GNOSTR_NIP66_KIND_RELAY_META };
+  nostr_filter_set_kinds(filter, kinds, 1);
+  nostr_filter_set_limit(filter, 500);
 
   ctx->pending_queries = 1;
 
@@ -1282,15 +1283,15 @@ void gnostr_nip66_discover_relays_async(GnostrNip66DiscoveryCallback callback,
     get_nip66_pool(),
     urls,
     relay_urls->len,
-    monitor_filter,
+    filter,
     ctx->cancellable,
-    on_phase1_monitors_done,
+    on_phase2_relay_meta_done,
     ctx
   );
 
   g_free(urls);
   g_ptr_array_unref(relay_urls);
-  nostr_filter_free(monitor_filter);
+  nostr_filter_free(filter);
 }
 
 void gnostr_nip66_discover_from_monitors_async(const gchar **monitor_pubkeys,
