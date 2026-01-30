@@ -9,7 +9,9 @@
 #define G_LOG_DOMAIN "nip-c7-chats"
 
 #include "nip_c7_chats.h"
-#include <jansson.h>
+#include "json.h"
+#include "nostr-event.h"
+#include "nostr-tag.h"
 #include <string.h>
 
 /* ============== Chat Room Implementation ============== */
@@ -86,50 +88,45 @@ gnostr_chat_room_parse(const gchar *event_json)
 {
   if (!event_json || !*event_json) return NULL;
 
-  json_error_t error;
-  json_t *root = json_loads(event_json, 0, &error);
-  if (!root) {
-    g_warning("chat_room: failed to parse JSON: %s", error.text);
+  /* Parse with NostrEvent API */
+  NostrEvent event = {0};
+  if (!nostr_event_deserialize_compact(&event, event_json)) {
+    g_warning("chat_room: failed to parse JSON");
     return NULL;
   }
 
   /* Verify kind */
-  json_t *kind_val = json_object_get(root, "kind");
-  if (!kind_val || json_integer_value(kind_val) != NIPC7_KIND_CHAT_ROOM) {
-    json_decref(root);
+  if (nostr_event_get_kind(&event) != NIPC7_KIND_CHAT_ROOM) {
     return NULL;
   }
 
   GnostrChatRoom *room = gnostr_chat_room_new();
 
   /* Extract event ID */
-  json_t *id_val = json_object_get(root, "id");
-  if (id_val && json_is_string(id_val)) {
-    room->event_id = g_strdup(json_string_value(id_val));
+  char *id_str = nostr_event_get_id(&event);
+  if (id_str) {
+    room->event_id = id_str;  /* takes ownership */
   }
 
   /* Extract pubkey (creator) */
-  json_t *pubkey_val = json_object_get(root, "pubkey");
-  if (pubkey_val && json_is_string(pubkey_val)) {
-    room->creator_pubkey = g_strdup(json_string_value(pubkey_val));
+  const char *pubkey_str = nostr_event_get_pubkey(&event);
+  if (pubkey_str) {
+    room->creator_pubkey = g_strdup(pubkey_str);
   }
 
   /* Extract created_at */
-  json_t *created_val = json_object_get(root, "created_at");
-  if (created_val && json_is_integer(created_val)) {
-    room->created_at = json_integer_value(created_val);
-  }
+  room->created_at = nostr_event_get_created_at(&event);
 
-  /* Parse tags for room metadata */
-  json_t *tags = json_object_get(root, "tags");
-  if (tags && json_is_array(tags)) {
+  /* Parse tags for room metadata using NostrTags API */
+  NostrTags *tags = nostr_event_get_tags(&event);
+  if (tags) {
     /* First pass: count moderators */
     guint mod_count = 0;
-    size_t i;
-    json_t *tag;
-    json_array_foreach(tags, i, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
+    size_t tag_count = nostr_tags_size(tags);
+    for (size_t i = 0; i < tag_count; i++) {
+      NostrTag *tag = nostr_tags_get(tags, i);
+      if (!tag || nostr_tag_size(tag) < 2) continue;
+      const char *tag_name = nostr_tag_get(tag, 0);
       if (g_strcmp0(tag_name, "moderator") == 0) {
         mod_count++;
       }
@@ -142,11 +139,12 @@ gnostr_chat_room_parse(const gchar *event_json)
 
     /* Second pass: extract values */
     guint mod_idx = 0;
-    json_array_foreach(tags, i, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+    for (size_t i = 0; i < tag_count; i++) {
+      NostrTag *tag = nostr_tags_get(tags, i);
+      if (!tag || nostr_tag_size(tag) < 2) continue;
 
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
-      const char *tag_value = json_string_value(json_array_get(tag, 1));
+      const char *tag_name = nostr_tag_get(tag, 0);
+      const char *tag_value = nostr_tag_get(tag, 1);
       if (!tag_name || !tag_value) continue;
 
       if (g_strcmp0(tag_name, "d") == 0) {
@@ -170,8 +168,6 @@ gnostr_chat_room_parse(const gchar *event_json)
     room->mod_count = mod_idx;
   }
 
-  json_decref(root);
-
   /* Validate: must have room_id (d tag) */
   if (!room->room_id) {
     g_debug("chat_room: missing 'd' tag room identifier");
@@ -187,29 +183,97 @@ gnostr_chat_room_parse(const gchar *event_json)
   return room;
 }
 
+/* Context for counting moderators in first pass */
+typedef struct {
+  guint mod_count;
+} ChatRoomCountCtx;
+
+static bool count_moderators_cb(size_t idx, const char *element_json, void *user_data) {
+  (void)idx;
+  ChatRoomCountCtx *ctx = (ChatRoomCountCtx *)user_data;
+
+  if (!nostr_json_is_array_str(element_json)) return true;
+
+  char *tag_name = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) == 0) {
+    if (g_strcmp0(tag_name, "moderator") == 0) {
+      ctx->mod_count++;
+    }
+    g_free(tag_name);
+  }
+  return true;
+}
+
+/* Context for parsing chat room tags */
+typedef struct {
+  GnostrChatRoom *room;
+  guint mod_count;
+  guint mod_idx;
+} ChatRoomParseCtx;
+
+static bool parse_chat_room_tag_cb(size_t idx, const char *element_json, void *user_data) {
+  (void)idx;
+  ChatRoomParseCtx *ctx = (ChatRoomParseCtx *)user_data;
+
+  if (!nostr_json_is_array_str(element_json)) return true;
+
+  char *tag_name = NULL;
+  char *tag_value = NULL;
+
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 ||
+      nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0) {
+    g_free(tag_name);
+    g_free(tag_value);
+    return true;
+  }
+
+  if (!tag_name || !tag_value) {
+    g_free(tag_name);
+    g_free(tag_value);
+    return true;
+  }
+
+  if (g_strcmp0(tag_name, "d") == 0) {
+    g_free(ctx->room->room_id);
+    ctx->room->room_id = tag_value;
+    tag_value = NULL;
+  } else if (g_strcmp0(tag_name, "name") == 0) {
+    g_free(ctx->room->name);
+    ctx->room->name = tag_value;
+    tag_value = NULL;
+  } else if (g_strcmp0(tag_name, "about") == 0) {
+    g_free(ctx->room->about);
+    ctx->room->about = tag_value;
+    tag_value = NULL;
+  } else if (g_strcmp0(tag_name, "picture") == 0) {
+    g_free(ctx->room->picture);
+    ctx->room->picture = tag_value;
+    tag_value = NULL;
+  } else if (g_strcmp0(tag_name, "moderator") == 0 && ctx->mod_idx < ctx->mod_count) {
+    ctx->room->moderators[ctx->mod_idx++] = tag_value;
+    tag_value = NULL;
+  } else if (g_strcmp0(tag_name, "t") == 0) {
+    g_ptr_array_add(ctx->room->topics, tag_value);
+    tag_value = NULL;
+  }
+
+  g_free(tag_name);
+  g_free(tag_value);
+  return true;
+}
+
 gboolean
 gnostr_chat_room_parse_from_tags(const gchar *tags_json, GnostrChatRoom *room)
 {
   if (!tags_json || !room) return FALSE;
 
-  json_error_t error;
-  json_t *tags = json_loads(tags_json, 0, &error);
-  if (!tags || !json_is_array(tags)) {
-    if (tags) json_decref(tags);
+  if (!nostr_json_is_array_str(tags_json)) {
     return FALSE;
   }
 
   /* First pass: count moderators */
-  guint mod_count = 0;
-  size_t i;
-  json_t *tag;
-  json_array_foreach(tags, i, tag) {
-    if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-    const char *tag_name = json_string_value(json_array_get(tag, 0));
-    if (g_strcmp0(tag_name, "moderator") == 0) {
-      mod_count++;
-    }
-  }
+  ChatRoomCountCtx count_ctx = {0};
+  nostr_json_array_foreach_root(tags_json, count_moderators_cb, &count_ctx);
 
   /* Free existing moderators if any */
   if (room->moderators) {
@@ -222,8 +286,8 @@ gnostr_chat_room_parse_from_tags(const gchar *tags_json, GnostrChatRoom *room)
   }
 
   /* Allocate moderators array if needed */
-  if (mod_count > 0) {
-    room->moderators = g_new0(gchar *, mod_count);
+  if (count_ctx.mod_count > 0) {
+    room->moderators = g_new0(gchar *, count_ctx.mod_count);
   }
 
   /* Clear topics */
@@ -234,35 +298,10 @@ gnostr_chat_room_parse_from_tags(const gchar *tags_json, GnostrChatRoom *room)
   }
 
   /* Parse tags */
-  guint mod_idx = 0;
-  json_array_foreach(tags, i, tag) {
-    if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+  ChatRoomParseCtx parse_ctx = { .room = room, .mod_count = count_ctx.mod_count, .mod_idx = 0 };
+  nostr_json_array_foreach_root(tags_json, parse_chat_room_tag_cb, &parse_ctx);
+  room->mod_count = parse_ctx.mod_idx;
 
-    const char *tag_name = json_string_value(json_array_get(tag, 0));
-    const char *tag_value = json_string_value(json_array_get(tag, 1));
-    if (!tag_name || !tag_value) continue;
-
-    if (g_strcmp0(tag_name, "d") == 0) {
-      g_free(room->room_id);
-      room->room_id = g_strdup(tag_value);
-    } else if (g_strcmp0(tag_name, "name") == 0) {
-      g_free(room->name);
-      room->name = g_strdup(tag_value);
-    } else if (g_strcmp0(tag_name, "about") == 0) {
-      g_free(room->about);
-      room->about = g_strdup(tag_value);
-    } else if (g_strcmp0(tag_name, "picture") == 0) {
-      g_free(room->picture);
-      room->picture = g_strdup(tag_value);
-    } else if (g_strcmp0(tag_name, "moderator") == 0 && mod_idx < mod_count) {
-      room->moderators[mod_idx++] = g_strdup(tag_value);
-    } else if (g_strcmp0(tag_name, "t") == 0) {
-      g_ptr_array_add(room->topics, g_strdup(tag_value));
-    }
-  }
-  room->mod_count = mod_idx;
-
-  json_decref(tags);
   return TRUE;
 }
 
@@ -271,46 +310,47 @@ gnostr_chat_room_create_tags(const GnostrChatRoom *room)
 {
   if (!room || !room->room_id) return NULL;
 
-  json_t *tags = json_array();
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_array(builder);
 
   /* d tag - room identifier (required) */
-  json_t *d_tag = json_array();
-  json_array_append_new(d_tag, json_string("d"));
-  json_array_append_new(d_tag, json_string(room->room_id));
-  json_array_append_new(tags, d_tag);
+  nostr_json_builder_begin_array(builder);
+  nostr_json_builder_add_string(builder, "d");
+  nostr_json_builder_add_string(builder, room->room_id);
+  nostr_json_builder_end_array(builder);
 
   /* name tag */
   if (room->name && *room->name) {
-    json_t *name_tag = json_array();
-    json_array_append_new(name_tag, json_string("name"));
-    json_array_append_new(name_tag, json_string(room->name));
-    json_array_append_new(tags, name_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "name");
+    nostr_json_builder_add_string(builder, room->name);
+    nostr_json_builder_end_array(builder);
   }
 
   /* about tag */
   if (room->about && *room->about) {
-    json_t *about_tag = json_array();
-    json_array_append_new(about_tag, json_string("about"));
-    json_array_append_new(about_tag, json_string(room->about));
-    json_array_append_new(tags, about_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "about");
+    nostr_json_builder_add_string(builder, room->about);
+    nostr_json_builder_end_array(builder);
   }
 
   /* picture tag */
   if (room->picture && *room->picture) {
-    json_t *pic_tag = json_array();
-    json_array_append_new(pic_tag, json_string("picture"));
-    json_array_append_new(pic_tag, json_string(room->picture));
-    json_array_append_new(tags, pic_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "picture");
+    nostr_json_builder_add_string(builder, room->picture);
+    nostr_json_builder_end_array(builder);
   }
 
   /* moderator tags */
   if (room->moderators) {
     for (guint i = 0; i < room->mod_count; i++) {
       if (room->moderators[i] && *room->moderators[i]) {
-        json_t *mod_tag = json_array();
-        json_array_append_new(mod_tag, json_string("moderator"));
-        json_array_append_new(mod_tag, json_string(room->moderators[i]));
-        json_array_append_new(tags, mod_tag);
+        nostr_json_builder_begin_array(builder);
+        nostr_json_builder_add_string(builder, "moderator");
+        nostr_json_builder_add_string(builder, room->moderators[i]);
+        nostr_json_builder_end_array(builder);
       }
     }
   }
@@ -320,16 +360,17 @@ gnostr_chat_room_create_tags(const GnostrChatRoom *room)
     for (guint i = 0; i < room->topics->len; i++) {
       const gchar *topic = g_ptr_array_index(room->topics, i);
       if (topic && *topic) {
-        json_t *t_tag = json_array();
-        json_array_append_new(t_tag, json_string("t"));
-        json_array_append_new(t_tag, json_string(topic));
-        json_array_append_new(tags, t_tag);
+        nostr_json_builder_begin_array(builder);
+        nostr_json_builder_add_string(builder, "t");
+        nostr_json_builder_add_string(builder, topic);
+        nostr_json_builder_end_array(builder);
       }
     }
   }
 
-  char *result = json_dumps(tags, JSON_COMPACT);
-  json_decref(tags);
+  nostr_json_builder_end_array(builder);
+  char *result = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
 
   return result;
 }
@@ -436,56 +477,51 @@ gnostr_c7_chat_message_parse(const gchar *event_json)
 {
   if (!event_json || !*event_json) return NULL;
 
-  json_error_t error;
-  json_t *root = json_loads(event_json, 0, &error);
-  if (!root) {
-    g_warning("chat_message: failed to parse JSON: %s", error.text);
+  /* Parse with NostrEvent API */
+  NostrEvent event = {0};
+  if (!nostr_event_deserialize_compact(&event, event_json)) {
+    g_warning("chat_message: failed to parse JSON");
     return NULL;
   }
 
   /* Verify kind */
-  json_t *kind_val = json_object_get(root, "kind");
-  if (!kind_val || json_integer_value(kind_val) != NIPC7_KIND_CHAT_MESSAGE) {
-    json_decref(root);
+  if (nostr_event_get_kind(&event) != NIPC7_KIND_CHAT_MESSAGE) {
     return NULL;
   }
 
   GnostrChatMessage *msg = gnostr_c7_chat_message_new();
 
   /* Extract event ID */
-  json_t *id_val = json_object_get(root, "id");
-  if (id_val && json_is_string(id_val)) {
-    msg->event_id = g_strdup(json_string_value(id_val));
+  char *id_str = nostr_event_get_id(&event);
+  if (id_str) {
+    msg->event_id = id_str;  /* takes ownership */
   }
 
   /* Extract pubkey (author) */
-  json_t *pubkey_val = json_object_get(root, "pubkey");
-  if (pubkey_val && json_is_string(pubkey_val)) {
-    msg->author_pubkey = g_strdup(json_string_value(pubkey_val));
+  const char *pubkey_str = nostr_event_get_pubkey(&event);
+  if (pubkey_str) {
+    msg->author_pubkey = g_strdup(pubkey_str);
   }
 
   /* Extract content */
-  json_t *content_val = json_object_get(root, "content");
-  if (content_val && json_is_string(content_val)) {
-    msg->content = g_strdup(json_string_value(content_val));
+  const char *content_str = nostr_event_get_content(&event);
+  if (content_str) {
+    msg->content = g_strdup(content_str);
   }
 
   /* Extract created_at */
-  json_t *created_val = json_object_get(root, "created_at");
-  if (created_val && json_is_integer(created_val)) {
-    msg->created_at = json_integer_value(created_val);
-  }
+  msg->created_at = nostr_event_get_created_at(&event);
 
-  /* Parse tags for message metadata */
-  json_t *tags = json_object_get(root, "tags");
-  if (tags && json_is_array(tags)) {
+  /* Parse tags for message metadata using NostrTags API */
+  NostrTags *tags = nostr_event_get_tags(&event);
+  if (tags) {
     /* First pass: count mentions (p tags) */
     guint mention_count = 0;
-    size_t i;
-    json_t *tag;
-    json_array_foreach(tags, i, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
+    size_t tag_count = nostr_tags_size(tags);
+    for (size_t i = 0; i < tag_count; i++) {
+      NostrTag *tag = nostr_tags_get(tags, i);
+      if (!tag || nostr_tag_size(tag) < 2) continue;
+      const char *tag_name = nostr_tag_get(tag, 0);
       if (g_strcmp0(tag_name, "p") == 0) {
         mention_count++;
       }
@@ -498,11 +534,12 @@ gnostr_c7_chat_message_parse(const gchar *event_json)
 
     /* Second pass: extract values */
     guint mention_idx = 0;
-    json_array_foreach(tags, i, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+    for (size_t i = 0; i < tag_count; i++) {
+      NostrTag *tag = nostr_tags_get(tags, i);
+      if (!tag || nostr_tag_size(tag) < 2) continue;
 
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
-      const char *tag_value = json_string_value(json_array_get(tag, 1));
+      const char *tag_name = nostr_tag_get(tag, 0);
+      const char *tag_value = nostr_tag_get(tag, 1);
       if (!tag_name || !tag_value) continue;
 
       if (g_strcmp0(tag_name, "d") == 0) {
@@ -513,8 +550,8 @@ gnostr_c7_chat_message_parse(const gchar *event_json)
         if (!msg->reply_to) {
           msg->reply_to = g_strdup(tag_value);
           /* Check for relay hint */
-          if (json_array_size(tag) >= 3) {
-            const char *relay = json_string_value(json_array_get(tag, 2));
+          if (nostr_tag_size(tag) >= 3) {
+            const char *relay = nostr_tag_get(tag, 2);
             if (relay && *relay) {
               msg->reply_relay = g_strdup(relay);
             }
@@ -529,8 +566,6 @@ gnostr_c7_chat_message_parse(const gchar *event_json)
     msg->mention_count = mention_idx;
   }
 
-  json_decref(root);
-
   /* Validate: must have room_id (d tag) */
   if (!msg->room_id) {
     g_debug("chat_message: missing 'd' tag room identifier");
@@ -544,29 +579,97 @@ gnostr_c7_chat_message_parse(const gchar *event_json)
   return msg;
 }
 
+/* Context for counting mentions in first pass */
+typedef struct {
+  guint mention_count;
+} ChatMsgCountCtx;
+
+static bool count_mentions_cb(size_t idx, const char *element_json, void *user_data) {
+  (void)idx;
+  ChatMsgCountCtx *ctx = (ChatMsgCountCtx *)user_data;
+
+  if (!nostr_json_is_array_str(element_json)) return true;
+
+  char *tag_name = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) == 0) {
+    if (g_strcmp0(tag_name, "p") == 0) {
+      ctx->mention_count++;
+    }
+    g_free(tag_name);
+  }
+  return true;
+}
+
+/* Context for parsing chat message tags */
+typedef struct {
+  GnostrChatMessage *msg;
+  guint mention_count;
+  guint mention_idx;
+} ChatMsgParseCtx;
+
+static bool parse_chat_msg_tag_cb(size_t idx, const char *element_json, void *user_data) {
+  (void)idx;
+  ChatMsgParseCtx *ctx = (ChatMsgParseCtx *)user_data;
+
+  if (!nostr_json_is_array_str(element_json)) return true;
+
+  char *tag_name = NULL;
+  char *tag_value = NULL;
+
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 ||
+      nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0) {
+    g_free(tag_name);
+    g_free(tag_value);
+    return true;
+  }
+
+  if (!tag_name || !tag_value) {
+    g_free(tag_name);
+    g_free(tag_value);
+    return true;
+  }
+
+  if (g_strcmp0(tag_name, "d") == 0) {
+    g_free(ctx->msg->room_id);
+    ctx->msg->room_id = tag_value;
+    tag_value = NULL;
+  } else if (g_strcmp0(tag_name, "e") == 0) {
+    if (!ctx->msg->reply_to) {
+      ctx->msg->reply_to = tag_value;
+      tag_value = NULL;
+      /* Check for relay hint */
+      char *relay = NULL;
+      if (nostr_json_get_array_string(element_json, NULL, 2, &relay) == 0 && relay && *relay) {
+        ctx->msg->reply_relay = relay;
+      } else {
+        g_free(relay);
+      }
+    }
+  } else if (g_strcmp0(tag_name, "p") == 0 && ctx->mention_idx < ctx->mention_count) {
+    ctx->msg->mentions[ctx->mention_idx++] = tag_value;
+    tag_value = NULL;
+  } else if (g_strcmp0(tag_name, "t") == 0) {
+    g_ptr_array_add(ctx->msg->topics, tag_value);
+    tag_value = NULL;
+  }
+
+  g_free(tag_name);
+  g_free(tag_value);
+  return true;
+}
+
 gboolean
 gnostr_c7_chat_message_parse_from_tags(const gchar *tags_json, GnostrChatMessage *msg)
 {
   if (!tags_json || !msg) return FALSE;
 
-  json_error_t error;
-  json_t *tags = json_loads(tags_json, 0, &error);
-  if (!tags || !json_is_array(tags)) {
-    if (tags) json_decref(tags);
+  if (!nostr_json_is_array_str(tags_json)) {
     return FALSE;
   }
 
   /* First pass: count mentions */
-  guint mention_count = 0;
-  size_t i;
-  json_t *tag;
-  json_array_foreach(tags, i, tag) {
-    if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-    const char *tag_name = json_string_value(json_array_get(tag, 0));
-    if (g_strcmp0(tag_name, "p") == 0) {
-      mention_count++;
-    }
-  }
+  ChatMsgCountCtx count_ctx = {0};
+  nostr_json_array_foreach_root(tags_json, count_mentions_cb, &count_ctx);
 
   /* Free existing mentions if any */
   if (msg->mentions) {
@@ -579,8 +682,8 @@ gnostr_c7_chat_message_parse_from_tags(const gchar *tags_json, GnostrChatMessage
   }
 
   /* Allocate mentions array if needed */
-  if (mention_count > 0) {
-    msg->mentions = g_new0(gchar *, mention_count);
+  if (count_ctx.mention_count > 0) {
+    msg->mentions = g_new0(gchar *, count_ctx.mention_count);
   }
 
   /* Clear topics */
@@ -595,36 +698,10 @@ gnostr_c7_chat_message_parse_from_tags(const gchar *tags_json, GnostrChatMessage
   g_clear_pointer(&msg->reply_relay, g_free);
 
   /* Parse tags */
-  guint mention_idx = 0;
-  json_array_foreach(tags, i, tag) {
-    if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+  ChatMsgParseCtx parse_ctx = { .msg = msg, .mention_count = count_ctx.mention_count, .mention_idx = 0 };
+  nostr_json_array_foreach_root(tags_json, parse_chat_msg_tag_cb, &parse_ctx);
+  msg->mention_count = parse_ctx.mention_idx;
 
-    const char *tag_name = json_string_value(json_array_get(tag, 0));
-    const char *tag_value = json_string_value(json_array_get(tag, 1));
-    if (!tag_name || !tag_value) continue;
-
-    if (g_strcmp0(tag_name, "d") == 0) {
-      g_free(msg->room_id);
-      msg->room_id = g_strdup(tag_value);
-    } else if (g_strcmp0(tag_name, "e") == 0) {
-      if (!msg->reply_to) {
-        msg->reply_to = g_strdup(tag_value);
-        if (json_array_size(tag) >= 3) {
-          const char *relay = json_string_value(json_array_get(tag, 2));
-          if (relay && *relay) {
-            msg->reply_relay = g_strdup(relay);
-          }
-        }
-      }
-    } else if (g_strcmp0(tag_name, "p") == 0 && mention_idx < mention_count) {
-      msg->mentions[mention_idx++] = g_strdup(tag_value);
-    } else if (g_strcmp0(tag_name, "t") == 0) {
-      g_ptr_array_add(msg->topics, g_strdup(tag_value));
-    }
-  }
-  msg->mention_count = mention_idx;
-
-  json_decref(tags);
   return TRUE;
 }
 
@@ -633,33 +710,34 @@ gnostr_c7_chat_message_create_tags(const GnostrChatMessage *msg)
 {
   if (!msg || !msg->room_id) return NULL;
 
-  json_t *tags = json_array();
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_array(builder);
 
   /* d tag - room identifier (required) */
-  json_t *d_tag = json_array();
-  json_array_append_new(d_tag, json_string("d"));
-  json_array_append_new(d_tag, json_string(msg->room_id));
-  json_array_append_new(tags, d_tag);
+  nostr_json_builder_begin_array(builder);
+  nostr_json_builder_add_string(builder, "d");
+  nostr_json_builder_add_string(builder, msg->room_id);
+  nostr_json_builder_end_array(builder);
 
   /* e tag - reply reference */
   if (msg->reply_to && *msg->reply_to) {
-    json_t *e_tag = json_array();
-    json_array_append_new(e_tag, json_string("e"));
-    json_array_append_new(e_tag, json_string(msg->reply_to));
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "e");
+    nostr_json_builder_add_string(builder, msg->reply_to);
     if (msg->reply_relay && *msg->reply_relay) {
-      json_array_append_new(e_tag, json_string(msg->reply_relay));
+      nostr_json_builder_add_string(builder, msg->reply_relay);
     }
-    json_array_append_new(tags, e_tag);
+    nostr_json_builder_end_array(builder);
   }
 
   /* p tags - mentions */
   if (msg->mentions) {
     for (guint i = 0; i < msg->mention_count; i++) {
       if (msg->mentions[i] && *msg->mentions[i]) {
-        json_t *p_tag = json_array();
-        json_array_append_new(p_tag, json_string("p"));
-        json_array_append_new(p_tag, json_string(msg->mentions[i]));
-        json_array_append_new(tags, p_tag);
+        nostr_json_builder_begin_array(builder);
+        nostr_json_builder_add_string(builder, "p");
+        nostr_json_builder_add_string(builder, msg->mentions[i]);
+        nostr_json_builder_end_array(builder);
       }
     }
   }
@@ -669,16 +747,17 @@ gnostr_c7_chat_message_create_tags(const GnostrChatMessage *msg)
     for (guint i = 0; i < msg->topics->len; i++) {
       const gchar *topic = g_ptr_array_index(msg->topics, i);
       if (topic && *topic) {
-        json_t *t_tag = json_array();
-        json_array_append_new(t_tag, json_string("t"));
-        json_array_append_new(t_tag, json_string(topic));
-        json_array_append_new(tags, t_tag);
+        nostr_json_builder_begin_array(builder);
+        nostr_json_builder_add_string(builder, "t");
+        nostr_json_builder_add_string(builder, topic);
+        nostr_json_builder_end_array(builder);
       }
     }
   }
 
-  char *result = json_dumps(tags, JSON_COMPACT);
-  json_decref(tags);
+  nostr_json_builder_end_array(builder);
+  char *result = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
 
   return result;
 }
@@ -722,35 +801,47 @@ gnostr_c7_chat_message_add_topic(GnostrChatMessage *msg, const gchar *topic)
   g_ptr_array_add(msg->topics, g_strdup(topic));
 }
 
+/* Context for extracting room ID */
+typedef struct {
+  gchar *room_id;
+} ExtractRoomIdCtx;
+
+static bool extract_room_id_cb(size_t idx, const char *element_json, void *user_data) {
+  (void)idx;
+  ExtractRoomIdCtx *ctx = (ExtractRoomIdCtx *)user_data;
+
+  /* Stop if we already found it */
+  if (ctx->room_id) return false;
+
+  if (!nostr_json_is_array_str(element_json)) return true;
+
+  char *tag_name = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) == 0) {
+    if (g_strcmp0(tag_name, "d") == 0) {
+      char *tag_value = NULL;
+      if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) == 0 && tag_value) {
+        ctx->room_id = tag_value;
+        g_free(tag_name);
+        return false;  /* Stop iteration */
+      }
+      g_free(tag_value);
+    }
+    g_free(tag_name);
+  }
+  return true;
+}
+
 gchar *
 gnostr_c7_chat_message_extract_room_id(const gchar *tags_json)
 {
   if (!tags_json) return NULL;
 
-  json_error_t error;
-  json_t *tags = json_loads(tags_json, 0, &error);
-  if (!tags || !json_is_array(tags)) {
-    if (tags) json_decref(tags);
+  if (!nostr_json_is_array_str(tags_json)) {
     return NULL;
   }
 
-  gchar *room_id = NULL;
-  size_t i;
-  json_t *tag;
+  ExtractRoomIdCtx ctx = {0};
+  nostr_json_array_foreach_root(tags_json, extract_room_id_cb, &ctx);
 
-  json_array_foreach(tags, i, tag) {
-    if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-
-    const char *tag_name = json_string_value(json_array_get(tag, 0));
-    if (g_strcmp0(tag_name, "d") == 0) {
-      const char *tag_value = json_string_value(json_array_get(tag, 1));
-      if (tag_value) {
-        room_id = g_strdup(tag_value);
-        break;
-      }
-    }
-  }
-
-  json_decref(tags);
-  return room_id;
+  return ctx.room_id;
 }
