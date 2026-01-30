@@ -4,6 +4,7 @@
 #include "gnostr-session-view.h"
 #include "gnostr-composer.h"
 #include "gnostr-timeline-view.h"
+#include "gn-timeline-tabs.h"
 #include "gnostr-profile-pane.h"
 #include "gnostr-thread-view.h"
 #include "gnostr-profile-provider.h"
@@ -19,6 +20,7 @@
 #include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
 #include "../model/gn-nostr-event-model.h"
+#include "../model/gn-timeline-query.h"
 #include "../model/gn-nostr-event-item.h"
 #include "../model/gn-nostr-profile.h"
 #include <gio/gio.h>
@@ -218,6 +220,7 @@ static char *get_current_user_pubkey_hex(void);
 static void on_event_model_need_profile(GnNostrEventModel *model, const char *pubkey_hex, gpointer user_data);
 static void on_timeline_scroll_value_changed(GtkAdjustment *adj, gpointer user_data);
 static void on_event_model_new_items_pending(GnNostrEventModel *model, guint count, gpointer user_data);
+static void on_timeline_tab_filter_changed(GnostrTimelineView *view, guint type, const char *filter_value, gpointer user_data);
 static void on_new_notes_clicked(GtkButton *btn, gpointer user_data);
 typedef struct UiEventRow UiEventRow;
 static void ui_event_row_free(gpointer p);
@@ -4335,6 +4338,9 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
       }
     }
 
+    /* nostrc-7vm: Connect tab filter changed signal for hashtag/author feeds */
+    g_signal_connect(timeline, "tab-filter-changed", G_CALLBACK(on_timeline_tab_filter_changed), self);
+
     /* Do NOT call refresh here; we refresh once in initial_refresh_timeout_cb to avoid duplicate rebuilds. */
   }
   
@@ -4596,6 +4602,63 @@ static void on_event_model_new_items_pending(GnNostrEventModel *model, guint cou
   /* Forward to session view to update the new notes indicator */
   if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
     gnostr_session_view_set_new_notes_count(self->session_view, count);
+  }
+}
+
+/* nostrc-7vm: Handle timeline tab filter changes (hashtag/author tabs) */
+static void on_timeline_tab_filter_changed(GnostrTimelineView *view, guint type, const char *filter_value, gpointer user_data) {
+  (void)view;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  if (!self->event_model) return;
+
+  g_debug("[TAB_FILTER] type=%u filter='%s'", type, filter_value ? filter_value : "(null)");
+
+  GnTimelineQuery *query = NULL;
+
+  switch ((GnTimelineTabType)type) {
+    case GN_TIMELINE_TAB_GLOBAL:
+      /* Global timeline - kinds 1 and 6, no filter */
+      query = gn_timeline_query_new_global();
+      break;
+
+    case GN_TIMELINE_TAB_FOLLOWING:
+      /* Following tab - TODO: implement once we have follow list */
+      query = gn_timeline_query_new_global();
+      g_debug("[TAB_FILTER] Following tab not yet implemented, showing global");
+      break;
+
+    case GN_TIMELINE_TAB_HASHTAG:
+      /* Hashtag filter */
+      if (filter_value && *filter_value) {
+        query = gn_timeline_query_new_for_hashtag(filter_value);
+        g_debug("[TAB_FILTER] Created hashtag query for #%s", filter_value);
+      } else {
+        query = gn_timeline_query_new_global();
+      }
+      break;
+
+    case GN_TIMELINE_TAB_AUTHOR:
+      /* Author filter */
+      if (filter_value && *filter_value) {
+        query = gn_timeline_query_new_for_author(filter_value);
+        g_debug("[TAB_FILTER] Created author query for %s", filter_value);
+      } else {
+        query = gn_timeline_query_new_global();
+      }
+      break;
+
+    case GN_TIMELINE_TAB_CUSTOM:
+      /* Custom filter - fallback to global for now */
+      query = gn_timeline_query_new_global();
+      break;
+  }
+
+  if (query) {
+    /* Apply the new query to the model */
+    gn_nostr_event_model_set_timeline_query(self->event_model, query);
+    gn_nostr_event_model_refresh(self->event_model);
+    gn_timeline_query_free(query);
   }
 }
 
