@@ -272,7 +272,7 @@ jobs:
 
   create-release:
     name: Create GitHub Release and upload artifacts
-    needs: [build-deb, build-deb-tcp, build-rpm, build-rpm-tcp, build-tarball-daemon, build-tarball-daemon-tcp, build-appimage, build-appimage-gnostr, build-appimage-daemon-tcp, build-snap-gnostr, build-snap-signer, build-snap-daemon, build-flatpak, build-flatpak-gnostr]
+    needs: [build-deb, build-deb-tcp, build-rpm, build-rpm-tcp, build-tarball-daemon, build-tarball-daemon-tcp, build-tarball-linux, build-appimage, build-appimage-gnostr, build-appimage-daemon-tcp, build-snap-gnostr, build-snap-signer, build-snap-daemon, build-flatpak, build-flatpak-gnostr, build-macos-signer-dmg, build-macos-tarball]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
@@ -370,6 +370,53 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tarball-daemon
+          path: dist/*.tar.gz
+
+  build-tarball-linux:
+    name: Build Linux tarball (all binaries)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev libsecret-1-dev libssl-dev \
+            libnsync-dev
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j
+      - name: Assemble tarball tree
+        run: |
+          set -e
+          VERSION=${GITHUB_REF_NAME#v}
+          mkdir -p tar/gnostr-${VERSION}/bin
+          mkdir -p tar/gnostr-${VERSION}/share/applications
+          mkdir -p tar/gnostr-${VERSION}/share/icons
+          mkdir -p tar/gnostr-${VERSION}/share/systemd/user
+          # Copy binaries
+          cp build/apps/gnostr/gnostr tar/gnostr-${VERSION}/bin/ || true
+          cp build/apps/gnostr-signer/gnostr-signer tar/gnostr-${VERSION}/bin/ || true
+          cp build/apps/gnostr-signer/gnostr-signer-daemon tar/gnostr-${VERSION}/bin/ || true
+          # Copy desktop files
+          cp apps/gnostr/data/*.desktop tar/gnostr-${VERSION}/share/applications/ 2>/dev/null || true
+          cp apps/gnostr-signer/data/*.desktop tar/gnostr-${VERSION}/share/applications/ 2>/dev/null || true
+          # Copy icons
+          cp -r apps/gnostr/data/icons/* tar/gnostr-${VERSION}/share/icons/ 2>/dev/null || true
+          cp -r apps/gnostr-signer/data/icons/* tar/gnostr-${VERSION}/share/icons/ 2>/dev/null || true
+          # Copy systemd service
+          cp apps/gnostr-signer/daemon/packaging/systemd/user/*.service tar/gnostr-${VERSION}/share/systemd/user/ 2>/dev/null || true
+          # Create tarball
+          tar -C tar -czf gnostr-${VERSION}-linux-x86_64.tar.gz gnostr-${VERSION}
+          mkdir -p dist
+          mv gnostr-*.tar.gz dist/
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarball-linux
           path: dist/*.tar.gz
 
   build-rpm-tcp:
@@ -520,3 +567,74 @@ jobs:
         with:
           name: flatpak-gnostr
           path: dist/*.flatpak
+
+  build-macos-signer-dmg:
+    name: Build macOS DMG (gnostr-signer)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install gtk4 libadwaita glib json-glib cmake ninja pkg-config librsvg \
+            jansson secp256k1 libwebsockets libsodium openssl@3 libsoup@3 nsync || true
+          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/libsoup@3/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_MACOS_BUNDLE=ON \
+            -DGNOSTR_SIGNER_VERSION=${GITHUB_REF_NAME#v}
+      - name: Build
+        run: cmake --build build -j
+      - name: Create DMG
+        run: |
+          cd apps/gnostr-signer/packaging/macos
+          ./create-dmg.sh --build-dir ../../../../build --version ${GITHUB_REF_NAME#v} --output-dir ../../../../dist
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg-signer
+          path: dist/*.dmg
+
+  build-macos-tarball:
+    name: Build macOS tarball (gnostr + gnostr-signer)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install gtk4 libadwaita glib json-glib cmake ninja pkg-config \
+            jansson secp256k1 libwebsockets libsodium openssl@3 libsoup@3 nsync || true
+          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/libsoup@3/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j
+      - name: Create tarball
+        run: |
+          set -e
+          VERSION=${GITHUB_REF_NAME#v}
+          ARCH=$(uname -m)
+          mkdir -p tar/gnostr-${VERSION}/bin
+          # Copy binaries
+          cp build/apps/gnostr/gnostr tar/gnostr-${VERSION}/bin/ || true
+          cp build/apps/gnostr-signer/gnostr-signer tar/gnostr-${VERSION}/bin/ || true
+          cp build/apps/gnostr-signer/gnostr-signer-daemon tar/gnostr-${VERSION}/bin/ || true
+          # Create tarball
+          tar -C tar -czf gnostr-${VERSION}-macos-${ARCH}.tar.gz gnostr-${VERSION}
+          mkdir -p dist
+          mv gnostr-*.tar.gz dist/
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-tarball
+          path: dist/*.tar.gz
