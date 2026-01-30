@@ -7,7 +7,9 @@
 #include "nip89_handlers.h"
 #include "../storage_ndb.h"
 #include <string.h>
-#include <jansson.h>
+#include "json.h"
+#include "nostr-event.h"
+#include "nostr-tag.h"
 
 /* ============== Cache Configuration ============== */
 
@@ -134,77 +136,79 @@ GnostrNip89HandlerInfo *gnostr_nip89_parse_handler_info(const char *event_json)
 {
   if (!event_json || !*event_json) return NULL;
 
-  json_error_t err;
-  json_t *root = json_loads(event_json, 0, &err);
-  if (!root) {
-    g_debug("nip89: failed to parse handler info JSON: %s", err.text);
+  /* Parse with NostrEvent API */
+  NostrEvent event = {0};
+  if (!nostr_event_deserialize_compact(&event, event_json)) {
+    g_debug("nip89: failed to parse handler info JSON");
     return NULL;
   }
 
   /* Validate kind */
-  json_t *kind_j = json_object_get(root, "kind");
-  if (!json_is_integer(kind_j) || json_integer_value(kind_j) != GNOSTR_NIP89_KIND_HANDLER_INFO) {
-    json_decref(root);
+  if (nostr_event_get_kind(&event) != GNOSTR_NIP89_KIND_HANDLER_INFO) {
+    nostr_event_free(&event);
     return NULL;
   }
 
   GnostrNip89HandlerInfo *info = g_new0(GnostrNip89HandlerInfo, 1);
 
   /* Extract basic fields */
-  json_t *id_j = json_object_get(root, "id");
-  json_t *pubkey_j = json_object_get(root, "pubkey");
-  json_t *created_at_j = json_object_get(root, "created_at");
-  json_t *content_j = json_object_get(root, "content");
+  char *id_str = nostr_event_get_id(&event);
+  const char *pubkey_str = nostr_event_get_pubkey(&event);
 
-  if (json_is_string(id_j))
-    info->event_id_hex = g_strdup(json_string_value(id_j));
-  if (json_is_string(pubkey_j))
-    info->pubkey_hex = g_strdup(json_string_value(pubkey_j));
-  if (json_is_integer(created_at_j))
-    info->created_at = json_integer_value(created_at_j);
-
+  if (id_str) {
+    info->event_id_hex = id_str;  /* takes ownership */
+  }
+  if (pubkey_str)
+    info->pubkey_hex = g_strdup(pubkey_str);
+  info->created_at = nostr_event_get_created_at(&event);
   info->cached_at = g_get_real_time() / G_USEC_PER_SEC;
 
   /* Parse content as profile-like JSON */
-  if (json_is_string(content_j)) {
-    const char *content_str = json_string_value(content_j);
-    json_t *content_obj = json_loads(content_str, 0, NULL);
-    if (content_obj) {
-      json_t *v;
-      if ((v = json_object_get(content_obj, "name")) && json_is_string(v))
-        info->name = g_strdup(json_string_value(v));
-      if ((v = json_object_get(content_obj, "display_name")) && json_is_string(v))
-        info->display_name = g_strdup(json_string_value(v));
-      if ((v = json_object_get(content_obj, "picture")) && json_is_string(v))
-        info->picture = g_strdup(json_string_value(v));
-      if ((v = json_object_get(content_obj, "about")) && json_is_string(v))
-        info->about = g_strdup(json_string_value(v));
-      if ((v = json_object_get(content_obj, "banner")) && json_is_string(v))
-        info->banner = g_strdup(json_string_value(v));
-      if ((v = json_object_get(content_obj, "website")) && json_is_string(v))
-        info->website = g_strdup(json_string_value(v));
-      if ((v = json_object_get(content_obj, "nip05")) && json_is_string(v))
-        info->nip05 = g_strdup(json_string_value(v));
-      if ((v = json_object_get(content_obj, "lud16")) && json_is_string(v))
-        info->lud16 = g_strdup(json_string_value(v));
-
-      json_decref(content_obj);
+  const char *content_str = nostr_event_get_content(&event);
+  if (content_str && *content_str) {
+    char *val = NULL;
+    if (nostr_json_get_string(content_str, "name", &val) == 0) {
+      info->name = val;
+    }
+    if (nostr_json_get_string(content_str, "display_name", &val) == 0) {
+      info->display_name = val;
+    }
+    if (nostr_json_get_string(content_str, "picture", &val) == 0) {
+      info->picture = val;
+    }
+    if (nostr_json_get_string(content_str, "about", &val) == 0) {
+      info->about = val;
+    }
+    if (nostr_json_get_string(content_str, "banner", &val) == 0) {
+      info->banner = val;
+    }
+    if (nostr_json_get_string(content_str, "website", &val) == 0) {
+      info->website = val;
+    }
+    if (nostr_json_get_string(content_str, "nip05", &val) == 0) {
+      info->nip05 = val;
+    }
+    if (nostr_json_get_string(content_str, "lud16", &val) == 0) {
+      info->lud16 = val;
     }
   }
 
-  /* Parse tags */
-  json_t *tags_j = json_object_get(root, "tags");
-  if (json_is_array(tags_j)) {
+  /* Parse tags using NostrTags API */
+  NostrTags *tags = nostr_event_get_tags(&event);
+  if (tags) {
     info->platforms = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_nip89_platform_handler_free);
     GArray *kinds_array = g_array_new(FALSE, FALSE, sizeof(guint));
 
-    size_t tag_count = json_array_size(tags_j);
+    size_t tag_count = nostr_tags_size(tags);
     for (size_t i = 0; i < tag_count; i++) {
-      json_t *tag = json_array_get(tags_j, i);
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+      NostrTag *tag = nostr_tags_get(tags, i);
+      if (!tag) continue;
 
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
-      const char *tag_value = json_string_value(json_array_get(tag, 1));
+      size_t tag_len = nostr_tag_size(tag);
+      if (tag_len < 2) continue;
+
+      const char *tag_name = nostr_tag_get(tag, 0);
+      const char *tag_value = nostr_tag_get(tag, 1);
       if (!tag_name || !tag_value) continue;
 
       if (strcmp(tag_name, "d") == 0) {
@@ -229,8 +233,8 @@ GnostrNip89HandlerInfo *gnostr_nip89_parse_handler_info(const char *event_json)
         ph->url_template = g_strdup(tag_value);
 
         /* Third element might be app store identifier */
-        if (json_array_size(tag) >= 3) {
-          const char *third = json_string_value(json_array_get(tag, 2));
+        if (tag_len >= 3) {
+          const char *third = nostr_tag_get(tag, 2);
           if (third) ph->identifier = g_strdup(third);
         }
 
@@ -246,8 +250,6 @@ GnostrNip89HandlerInfo *gnostr_nip89_parse_handler_info(const char *event_json)
       g_array_free(kinds_array, TRUE);
     }
   }
-
-  json_decref(root);
 
   /* Validate: must have d_tag and pubkey */
   if (!info->d_tag || !info->pubkey_hex) {
@@ -269,46 +271,45 @@ GnostrNip89Recommendation *gnostr_nip89_parse_recommendation(const char *event_j
 {
   if (!event_json || !*event_json) return NULL;
 
-  json_error_t err;
-  json_t *root = json_loads(event_json, 0, &err);
-  if (!root) {
-    g_debug("nip89: failed to parse recommendation JSON: %s", err.text);
+  /* Parse with NostrEvent API */
+  NostrEvent event = {0};
+  if (!nostr_event_deserialize_compact(&event, event_json)) {
+    g_debug("nip89: failed to parse recommendation JSON");
     return NULL;
   }
 
   /* Validate kind */
-  json_t *kind_j = json_object_get(root, "kind");
-  if (!json_is_integer(kind_j) || json_integer_value(kind_j) != GNOSTR_NIP89_KIND_HANDLER_RECOMMEND) {
-    json_decref(root);
+  if (nostr_event_get_kind(&event) != GNOSTR_NIP89_KIND_HANDLER_RECOMMEND) {
     return NULL;
   }
 
   GnostrNip89Recommendation *rec = g_new0(GnostrNip89Recommendation, 1);
 
   /* Extract basic fields */
-  json_t *id_j = json_object_get(root, "id");
-  json_t *pubkey_j = json_object_get(root, "pubkey");
-  json_t *created_at_j = json_object_get(root, "created_at");
+  char *id_str = nostr_event_get_id(&event);
+  const char *pubkey_str = nostr_event_get_pubkey(&event);
 
-  if (json_is_string(id_j))
-    rec->event_id_hex = g_strdup(json_string_value(id_j));
-  if (json_is_string(pubkey_j))
-    rec->pubkey_hex = g_strdup(json_string_value(pubkey_j));
-  if (json_is_integer(created_at_j))
-    rec->created_at = json_integer_value(created_at_j);
-
+  if (id_str) {
+    rec->event_id_hex = id_str;  /* takes ownership */
+  }
+  if (pubkey_str)
+    rec->pubkey_hex = g_strdup(pubkey_str);
+  rec->created_at = nostr_event_get_created_at(&event);
   rec->cached_at = g_get_real_time() / G_USEC_PER_SEC;
 
-  /* Parse tags */
-  json_t *tags_j = json_object_get(root, "tags");
-  if (json_is_array(tags_j)) {
-    size_t tag_count = json_array_size(tags_j);
+  /* Parse tags using NostrTags API */
+  NostrTags *tags = nostr_event_get_tags(&event);
+  if (tags) {
+    size_t tag_count = nostr_tags_size(tags);
     for (size_t i = 0; i < tag_count; i++) {
-      json_t *tag = json_array_get(tags_j, i);
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+      NostrTag *tag = nostr_tags_get(tags, i);
+      if (!tag) continue;
 
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
-      const char *tag_value = json_string_value(json_array_get(tag, 1));
+      size_t tag_len = nostr_tag_size(tag);
+      if (tag_len < 2) continue;
+
+      const char *tag_name = nostr_tag_get(tag, 0);
+      const char *tag_value = nostr_tag_get(tag, 1);
       if (!tag_name || !tag_value) continue;
 
       if (strcmp(tag_name, "d") == 0) {
@@ -332,8 +333,8 @@ GnostrNip89Recommendation *gnostr_nip89_parse_recommendation(const char *event_j
         g_strfreev(parts);
 
         /* Optional relay hint in third position */
-        if (json_array_size(tag) >= 3) {
-          const char *relay = json_string_value(json_array_get(tag, 2));
+        if (tag_len >= 3) {
+          const char *relay = nostr_tag_get(tag, 2);
           if (relay && (g_str_has_prefix(relay, "wss://") || g_str_has_prefix(relay, "ws://"))) {
             g_free(rec->relay_hint);
             rec->relay_hint = g_strdup(relay);
@@ -342,8 +343,6 @@ GnostrNip89Recommendation *gnostr_nip89_parse_recommendation(const char *event_j
       }
     }
   }
-
-  json_decref(root);
 
   /* Validate: must have d_tag and pubkey */
   if (!rec->d_tag || !rec->pubkey_hex) {
@@ -677,28 +676,34 @@ void gnostr_nip89_clear_all_preferences(void)
 
 char *gnostr_nip89_build_handler_filter(const guint *kinds, gsize n_kinds)
 {
-  json_t *filter = json_object();
-  json_t *kinds_arr = json_array();
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_object(builder);
 
-  json_array_append_new(kinds_arr, json_integer(GNOSTR_NIP89_KIND_HANDLER_INFO));
-  json_object_set_new(filter, "kinds", kinds_arr);
+  /* kinds: [31989] */
+  nostr_json_builder_set_key(builder, "kinds");
+  nostr_json_builder_begin_array(builder);
+  nostr_json_builder_add_int(builder, GNOSTR_NIP89_KIND_HANDLER_INFO);
+  nostr_json_builder_end_array(builder);
 
-  /* Add limit */
-  json_object_set_new(filter, "limit", json_integer(100));
+  /* limit: 100 */
+  nostr_json_builder_set_key(builder, "limit");
+  nostr_json_builder_add_int(builder, 100);
 
   /* If specific kinds are requested, add them as #k tag filter */
   if (kinds && n_kinds > 0) {
-    json_t *k_arr = json_array();
+    nostr_json_builder_set_key(builder, "#k");
+    nostr_json_builder_begin_array(builder);
     for (gsize i = 0; i < n_kinds; i++) {
       char kind_str[16];
       snprintf(kind_str, sizeof(kind_str), "%u", kinds[i]);
-      json_array_append_new(k_arr, json_string(kind_str));
+      nostr_json_builder_add_string(builder, kind_str);
     }
-    json_object_set_new(filter, "#k", k_arr);
+    nostr_json_builder_end_array(builder);
   }
 
-  char *result = json_dumps(filter, JSON_COMPACT);
-  json_decref(filter);
+  nostr_json_builder_end_object(builder);
+  char *result = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
   return result;
 }
 
@@ -706,32 +711,40 @@ char *gnostr_nip89_build_recommendation_filter(guint event_kind,
                                                 const char **followed_pubkeys,
                                                 gsize n_pubkeys)
 {
-  json_t *filter = json_object();
-  json_t *kinds_arr = json_array();
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_object(builder);
 
-  json_array_append_new(kinds_arr, json_integer(GNOSTR_NIP89_KIND_HANDLER_RECOMMEND));
-  json_object_set_new(filter, "kinds", kinds_arr);
+  /* kinds: [31990] */
+  nostr_json_builder_set_key(builder, "kinds");
+  nostr_json_builder_begin_array(builder);
+  nostr_json_builder_add_int(builder, GNOSTR_NIP89_KIND_HANDLER_RECOMMEND);
+  nostr_json_builder_end_array(builder);
 
   /* Filter by d-tag (the event kind being recommended) */
-  json_t *d_arr = json_array();
+  nostr_json_builder_set_key(builder, "#d");
+  nostr_json_builder_begin_array(builder);
   char kind_str[16];
   snprintf(kind_str, sizeof(kind_str), "%u", event_kind);
-  json_array_append_new(d_arr, json_string(kind_str));
-  json_object_set_new(filter, "#d", d_arr);
+  nostr_json_builder_add_string(builder, kind_str);
+  nostr_json_builder_end_array(builder);
 
   /* Optionally filter by authors (followed users) */
   if (followed_pubkeys && n_pubkeys > 0) {
-    json_t *authors = json_array();
+    nostr_json_builder_set_key(builder, "authors");
+    nostr_json_builder_begin_array(builder);
     for (gsize i = 0; i < n_pubkeys; i++) {
-      json_array_append_new(authors, json_string(followed_pubkeys[i]));
+      nostr_json_builder_add_string(builder, followed_pubkeys[i]);
     }
-    json_object_set_new(filter, "authors", authors);
+    nostr_json_builder_end_array(builder);
   }
 
-  json_object_set_new(filter, "limit", json_integer(50));
+  /* limit: 50 */
+  nostr_json_builder_set_key(builder, "limit");
+  nostr_json_builder_add_int(builder, 50);
 
-  char *result = json_dumps(filter, JSON_COMPACT);
-  json_decref(filter);
+  nostr_json_builder_end_object(builder);
+  char *result = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
   return result;
 }
 

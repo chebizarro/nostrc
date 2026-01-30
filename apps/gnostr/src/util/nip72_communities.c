@@ -3,8 +3,8 @@
  */
 
 #include "nip72_communities.h"
-#include <jansson.h>
 #include <string.h>
+#include "json.h"
 
 /* ===== GnostrCommunityModerator functions ===== */
 
@@ -91,76 +91,93 @@ gnostr_community_copy(const GnostrCommunity *community)
     return copy;
 }
 
+/* Callback context for parsing community tags */
+typedef struct {
+    GnostrCommunity *community;
+} ParseCommunityTagsCtx;
+
+static bool parse_community_tag_cb(size_t idx, const char *element_json, void *user_data) {
+    (void)idx;
+    ParseCommunityTagsCtx *ctx = (ParseCommunityTagsCtx *)user_data;
+    GnostrCommunity *community = ctx->community;
+
+    if (!nostr_json_is_array_str(element_json)) return true;
+
+    size_t tag_len = 0;
+    if (nostr_json_get_array_length(element_json, NULL, &tag_len) != 0 || tag_len < 2) {
+        return true;
+    }
+
+    char *tag_name = NULL;
+    char *tag_value = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+        return true;
+    }
+    if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0 || !tag_value) {
+        free(tag_name);
+        return true;
+    }
+
+    if (strcmp(tag_name, "d") == 0) {
+        g_free(community->d_tag);
+        community->d_tag = g_strdup(tag_value);
+        if (!community->name) {
+            community->name = g_strdup(tag_value);
+        }
+    } else if (strcmp(tag_name, "name") == 0) {
+        g_free(community->name);
+        community->name = g_strdup(tag_value);
+    } else if (strcmp(tag_name, "description") == 0) {
+        g_free(community->description);
+        community->description = g_strdup(tag_value);
+    } else if (strcmp(tag_name, "image") == 0) {
+        g_free(community->image);
+        community->image = g_strdup(tag_value);
+    } else if (strcmp(tag_name, "rules") == 0) {
+        g_free(community->rules);
+        community->rules = g_strdup(tag_value);
+    } else if (strcmp(tag_name, "p") == 0) {
+        char *relay_hint = NULL;
+        char *role = NULL;
+        char *petname = NULL;
+
+        if (tag_len >= 3)
+            nostr_json_get_array_string(element_json, NULL, 2, &relay_hint);
+        if (tag_len >= 4)
+            nostr_json_get_array_string(element_json, NULL, 3, &role);
+        if (tag_len >= 5)
+            nostr_json_get_array_string(element_json, NULL, 4, &petname);
+
+        if (role && strcmp(role, "moderator") == 0) {
+            GnostrCommunityModerator *mod = gnostr_community_moderator_new();
+            mod->pubkey = g_strdup(tag_value);
+            mod->relay_hint = relay_hint ? g_strdup(relay_hint) : NULL;
+            mod->petname = petname ? g_strdup(petname) : NULL;
+            g_ptr_array_add(community->moderators, mod);
+        }
+
+        free(relay_hint);
+        free(role);
+        free(petname);
+    }
+
+    free(tag_name);
+    free(tag_value);
+    return true;
+}
+
 gboolean
 gnostr_community_parse_tags(const char *tags_json, GnostrCommunity *community)
 {
     if (!tags_json || !community) return FALSE;
 
-    json_error_t error;
-    json_t *tags = json_loads(tags_json, 0, &error);
-    if (!tags || !json_is_array(tags)) {
-        if (tags) json_decref(tags);
+    if (!nostr_json_is_array_str(tags_json)) {
         return FALSE;
     }
 
-    size_t index;
-    json_t *tag;
+    ParseCommunityTagsCtx ctx = { .community = community };
+    nostr_json_array_foreach_root(tags_json, parse_community_tag_cb, &ctx);
 
-    json_array_foreach(tags, index, tag) {
-        if (!json_is_array(tag) || json_array_size(tag) < 2)
-            continue;
-
-        const char *tag_name = json_string_value(json_array_get(tag, 0));
-        const char *tag_value = json_string_value(json_array_get(tag, 1));
-
-        if (!tag_name || !tag_value)
-            continue;
-
-        if (strcmp(tag_name, "d") == 0) {
-            /* Community identifier - also used as name if no explicit name */
-            g_free(community->d_tag);
-            community->d_tag = g_strdup(tag_value);
-            if (!community->name) {
-                community->name = g_strdup(tag_value);
-            }
-        } else if (strcmp(tag_name, "name") == 0) {
-            /* Explicit community name */
-            g_free(community->name);
-            community->name = g_strdup(tag_value);
-        } else if (strcmp(tag_name, "description") == 0) {
-            g_free(community->description);
-            community->description = g_strdup(tag_value);
-        } else if (strcmp(tag_name, "image") == 0) {
-            g_free(community->image);
-            community->image = g_strdup(tag_value);
-        } else if (strcmp(tag_name, "rules") == 0) {
-            g_free(community->rules);
-            community->rules = g_strdup(tag_value);
-        } else if (strcmp(tag_name, "p") == 0) {
-            /* Check for moderator role */
-            const char *relay_hint = NULL;
-            const char *role = NULL;
-            const char *petname = NULL;
-
-            if (json_array_size(tag) >= 3)
-                relay_hint = json_string_value(json_array_get(tag, 2));
-            if (json_array_size(tag) >= 4)
-                role = json_string_value(json_array_get(tag, 3));
-            if (json_array_size(tag) >= 5)
-                petname = json_string_value(json_array_get(tag, 4));
-
-            /* Per NIP-72: p tag with "moderator" role indicates a moderator */
-            if (role && strcmp(role, "moderator") == 0) {
-                GnostrCommunityModerator *mod = gnostr_community_moderator_new();
-                mod->pubkey = g_strdup(tag_value);
-                mod->relay_hint = g_strdup(relay_hint);
-                mod->petname = g_strdup(petname);
-                g_ptr_array_add(community->moderators, mod);
-            }
-        }
-    }
-
-    json_decref(tags);
     return (community->d_tag != NULL);
 }
 
@@ -169,44 +186,45 @@ gnostr_community_create_tags(const GnostrCommunity *community)
 {
     if (!community || !community->d_tag) return NULL;
 
-    json_t *tags = json_array();
+    NostrJsonBuilder *builder = nostr_json_builder_new();
+    nostr_json_builder_begin_array(builder);
 
     /* d tag (required) */
-    json_t *d_tag = json_array();
-    json_array_append_new(d_tag, json_string("d"));
-    json_array_append_new(d_tag, json_string(community->d_tag));
-    json_array_append_new(tags, d_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "d");
+    nostr_json_builder_add_string(builder, community->d_tag);
+    nostr_json_builder_end_array(builder);
 
     /* name tag (if different from d tag) */
     if (community->name && strcmp(community->name, community->d_tag) != 0) {
-        json_t *name_tag = json_array();
-        json_array_append_new(name_tag, json_string("name"));
-        json_array_append_new(name_tag, json_string(community->name));
-        json_array_append_new(tags, name_tag);
+        nostr_json_builder_begin_array(builder);
+        nostr_json_builder_add_string(builder, "name");
+        nostr_json_builder_add_string(builder, community->name);
+        nostr_json_builder_end_array(builder);
     }
 
     /* description tag */
     if (community->description) {
-        json_t *desc_tag = json_array();
-        json_array_append_new(desc_tag, json_string("description"));
-        json_array_append_new(desc_tag, json_string(community->description));
-        json_array_append_new(tags, desc_tag);
+        nostr_json_builder_begin_array(builder);
+        nostr_json_builder_add_string(builder, "description");
+        nostr_json_builder_add_string(builder, community->description);
+        nostr_json_builder_end_array(builder);
     }
 
     /* image tag */
     if (community->image) {
-        json_t *img_tag = json_array();
-        json_array_append_new(img_tag, json_string("image"));
-        json_array_append_new(img_tag, json_string(community->image));
-        json_array_append_new(tags, img_tag);
+        nostr_json_builder_begin_array(builder);
+        nostr_json_builder_add_string(builder, "image");
+        nostr_json_builder_add_string(builder, community->image);
+        nostr_json_builder_end_array(builder);
     }
 
     /* rules tag */
     if (community->rules) {
-        json_t *rules_tag = json_array();
-        json_array_append_new(rules_tag, json_string("rules"));
-        json_array_append_new(rules_tag, json_string(community->rules));
-        json_array_append_new(tags, rules_tag);
+        nostr_json_builder_begin_array(builder);
+        nostr_json_builder_add_string(builder, "rules");
+        nostr_json_builder_add_string(builder, community->rules);
+        nostr_json_builder_end_array(builder);
     }
 
     /* moderator p tags */
@@ -214,19 +232,20 @@ gnostr_community_create_tags(const GnostrCommunity *community)
         GnostrCommunityModerator *mod = g_ptr_array_index(community->moderators, i);
         if (!mod->pubkey) continue;
 
-        json_t *p_tag = json_array();
-        json_array_append_new(p_tag, json_string("p"));
-        json_array_append_new(p_tag, json_string(mod->pubkey));
-        json_array_append_new(p_tag, json_string(mod->relay_hint ? mod->relay_hint : ""));
-        json_array_append_new(p_tag, json_string("moderator"));
+        nostr_json_builder_begin_array(builder);
+        nostr_json_builder_add_string(builder, "p");
+        nostr_json_builder_add_string(builder, mod->pubkey);
+        nostr_json_builder_add_string(builder, mod->relay_hint ? mod->relay_hint : "");
+        nostr_json_builder_add_string(builder, "moderator");
         if (mod->petname) {
-            json_array_append_new(p_tag, json_string(mod->petname));
+            nostr_json_builder_add_string(builder, mod->petname);
         }
-        json_array_append_new(tags, p_tag);
+        nostr_json_builder_end_array(builder);
     }
 
-    char *result = json_dumps(tags, JSON_COMPACT);
-    json_decref(tags);
+    nostr_json_builder_end_array(builder);
+    char *result = nostr_json_builder_finish(builder);
+    nostr_json_builder_free(builder);
 
     return result;
 }
@@ -303,47 +322,61 @@ gnostr_approved_post_copy(const GnostrApprovedPost *post)
     return copy;
 }
 
+/* Callback context for parsing approved post tags */
+typedef struct {
+    GnostrApprovedPost *approval;
+} ParseApprovedPostTagsCtx;
+
+static bool parse_approved_post_tag_cb(size_t idx, const char *element_json, void *user_data) {
+    (void)idx;
+    ParseApprovedPostTagsCtx *ctx = (ParseApprovedPostTagsCtx *)user_data;
+    GnostrApprovedPost *approval = ctx->approval;
+
+    if (!nostr_json_is_array_str(element_json)) return true;
+
+    size_t tag_len = 0;
+    if (nostr_json_get_array_length(element_json, NULL, &tag_len) != 0 || tag_len < 2) {
+        return true;
+    }
+
+    char *tag_name = NULL;
+    char *tag_value = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+        return true;
+    }
+    if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0 || !tag_value) {
+        free(tag_name);
+        return true;
+    }
+
+    if (strcmp(tag_name, "a") == 0) {
+        g_free(approval->community_a_tag);
+        approval->community_a_tag = g_strdup(tag_value);
+    } else if (strcmp(tag_name, "e") == 0) {
+        g_free(approval->post_event_id);
+        approval->post_event_id = g_strdup(tag_value);
+    } else if (strcmp(tag_name, "p") == 0) {
+        g_free(approval->post_author);
+        approval->post_author = g_strdup(tag_value);
+    }
+
+    free(tag_name);
+    free(tag_value);
+    return true;
+}
+
 gboolean
 gnostr_approved_post_parse_tags(const char *tags_json, GnostrApprovedPost *approval)
 {
     if (!tags_json || !approval) return FALSE;
 
-    json_error_t error;
-    json_t *tags = json_loads(tags_json, 0, &error);
-    if (!tags || !json_is_array(tags)) {
-        if (tags) json_decref(tags);
+    if (!nostr_json_is_array_str(tags_json)) {
         return FALSE;
     }
 
-    size_t index;
-    json_t *tag;
+    ParseApprovedPostTagsCtx ctx = { .approval = approval };
+    nostr_json_array_foreach_root(tags_json, parse_approved_post_tag_cb, &ctx);
 
-    json_array_foreach(tags, index, tag) {
-        if (!json_is_array(tag) || json_array_size(tag) < 2)
-            continue;
-
-        const char *tag_name = json_string_value(json_array_get(tag, 0));
-        const char *tag_value = json_string_value(json_array_get(tag, 1));
-
-        if (!tag_name || !tag_value)
-            continue;
-
-        if (strcmp(tag_name, "a") == 0) {
-            /* Community reference */
-            g_free(approval->community_a_tag);
-            approval->community_a_tag = g_strdup(tag_value);
-        } else if (strcmp(tag_name, "e") == 0) {
-            /* Approved post reference */
-            g_free(approval->post_event_id);
-            approval->post_event_id = g_strdup(tag_value);
-        } else if (strcmp(tag_name, "p") == 0) {
-            /* Post author */
-            g_free(approval->post_author);
-            approval->post_author = g_strdup(tag_value);
-        }
-    }
-
-    json_decref(tags);
     return (approval->post_event_id != NULL && approval->community_a_tag != NULL);
 }
 
@@ -355,40 +388,42 @@ gnostr_approved_post_create_tags(const char *community_a_tag,
 {
     if (!community_a_tag || !post_event_id || !post_author) return NULL;
 
-    json_t *tags = json_array();
+    NostrJsonBuilder *builder = nostr_json_builder_new();
+    nostr_json_builder_begin_array(builder);
 
     /* "a" tag for community reference */
-    json_t *a_tag = json_array();
-    json_array_append_new(a_tag, json_string("a"));
-    json_array_append_new(a_tag, json_string(community_a_tag));
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "a");
+    nostr_json_builder_add_string(builder, community_a_tag);
     if (recommended_relay)
-        json_array_append_new(a_tag, json_string(recommended_relay));
-    json_array_append_new(tags, a_tag);
+        nostr_json_builder_add_string(builder, recommended_relay);
+    nostr_json_builder_end_array(builder);
 
     /* "e" tag for approved post */
-    json_t *e_tag = json_array();
-    json_array_append_new(e_tag, json_string("e"));
-    json_array_append_new(e_tag, json_string(post_event_id));
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "e");
+    nostr_json_builder_add_string(builder, post_event_id);
     if (recommended_relay)
-        json_array_append_new(e_tag, json_string(recommended_relay));
-    json_array_append_new(tags, e_tag);
+        nostr_json_builder_add_string(builder, recommended_relay);
+    nostr_json_builder_end_array(builder);
 
     /* "p" tag for post author */
-    json_t *p_tag = json_array();
-    json_array_append_new(p_tag, json_string("p"));
-    json_array_append_new(p_tag, json_string(post_author));
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "p");
+    nostr_json_builder_add_string(builder, post_author);
     if (recommended_relay)
-        json_array_append_new(p_tag, json_string(recommended_relay));
-    json_array_append_new(tags, p_tag);
+        nostr_json_builder_add_string(builder, recommended_relay);
+    nostr_json_builder_end_array(builder);
 
     /* "k" tag for the kind of the approved post (kind 1 for notes) */
-    json_t *k_tag = json_array();
-    json_array_append_new(k_tag, json_string("k"));
-    json_array_append_new(k_tag, json_string("1"));
-    json_array_append_new(tags, k_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "k");
+    nostr_json_builder_add_string(builder, "1");
+    nostr_json_builder_end_array(builder);
 
-    char *result = json_dumps(tags, JSON_COMPACT);
-    json_decref(tags);
+    nostr_json_builder_end_array(builder);
+    char *result = nostr_json_builder_finish(builder);
+    nostr_json_builder_free(builder);
 
     return result;
 }
@@ -431,43 +466,62 @@ gnostr_community_post_copy(const GnostrCommunityPost *post)
     return copy;
 }
 
+/* Callback context for extracting a tag */
+typedef struct {
+    char *a_tag_value;
+} ExtractATagCtx;
+
+static bool extract_a_tag_cb(size_t idx, const char *element_json, void *user_data) {
+    (void)idx;
+    ExtractATagCtx *ctx = (ExtractATagCtx *)user_data;
+
+    if (ctx->a_tag_value) return false;  /* Already found */
+
+    if (!nostr_json_is_array_str(element_json)) return true;
+
+    size_t tag_len = 0;
+    if (nostr_json_get_array_length(element_json, NULL, &tag_len) != 0 || tag_len < 2) {
+        return true;
+    }
+
+    char *tag_name = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+        return true;
+    }
+
+    if (strcmp(tag_name, "a") != 0) {
+        free(tag_name);
+        return true;
+    }
+    free(tag_name);
+
+    char *tag_value = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0 || !tag_value) {
+        return true;
+    }
+
+    /* Check if this is a community reference (kind 34550) */
+    if (strncmp(tag_value, "34550:", 6) == 0) {
+        ctx->a_tag_value = g_strdup(tag_value);
+    }
+
+    free(tag_value);
+    return (ctx->a_tag_value == NULL);  /* Continue if not found */
+}
+
 char *
 gnostr_community_post_extract_a_tag(const char *tags_json)
 {
     if (!tags_json) return NULL;
 
-    json_error_t error;
-    json_t *tags = json_loads(tags_json, 0, &error);
-    if (!tags || !json_is_array(tags)) {
-        if (tags) json_decref(tags);
+    if (!nostr_json_is_array_str(tags_json)) {
         return NULL;
     }
 
-    char *a_tag_value = NULL;
-    size_t index;
-    json_t *tag;
+    ExtractATagCtx ctx = { .a_tag_value = NULL };
+    nostr_json_array_foreach_root(tags_json, extract_a_tag_cb, &ctx);
 
-    json_array_foreach(tags, index, tag) {
-        if (!json_is_array(tag) || json_array_size(tag) < 2)
-            continue;
-
-        const char *tag_name = json_string_value(json_array_get(tag, 0));
-        if (!tag_name || strcmp(tag_name, "a") != 0)
-            continue;
-
-        const char *tag_value = json_string_value(json_array_get(tag, 1));
-        if (!tag_value)
-            continue;
-
-        /* Check if this is a community reference (kind 34550) */
-        if (strncmp(tag_value, "34550:", 6) == 0) {
-            a_tag_value = g_strdup(tag_value);
-            break;
-        }
-    }
-
-    json_decref(tags);
-    return a_tag_value;
+    return ctx.a_tag_value;
 }
 
 char *
@@ -476,18 +530,20 @@ gnostr_community_post_create_tags(const char *community_a_tag,
 {
     if (!community_a_tag) return NULL;
 
-    json_t *tags = json_array();
+    NostrJsonBuilder *builder = nostr_json_builder_new();
+    nostr_json_builder_begin_array(builder);
 
     /* "a" tag for community reference */
-    json_t *a_tag = json_array();
-    json_array_append_new(a_tag, json_string("a"));
-    json_array_append_new(a_tag, json_string(community_a_tag));
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "a");
+    nostr_json_builder_add_string(builder, community_a_tag);
     if (recommended_relay)
-        json_array_append_new(a_tag, json_string(recommended_relay));
-    json_array_append_new(tags, a_tag);
+        nostr_json_builder_add_string(builder, recommended_relay);
+    nostr_json_builder_end_array(builder);
 
-    char *result = json_dumps(tags, JSON_COMPACT);
-    json_decref(tags);
+    nostr_json_builder_end_array(builder);
+    char *result = nostr_json_builder_finish(builder);
+    nostr_json_builder_free(builder);
 
     return result;
 }
