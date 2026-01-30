@@ -1,0 +1,123 @@
+using Gtk 4.0;
+
+template $GnostrPluginRow: Widget {
+  Box root {
+    orientation: horizontal;
+    spacing: 12;
+    margin-start: 12;
+    margin-end: 12;
+    margin-top: 10;
+    margin-bottom: 10;
+
+    styles [ "plugin-row" ]
+
+    /* Enable/Disable toggle */
+    CheckButton chk_enabled {
+      valign: center;
+      tooltip-text: "Enable or disable this plugin";
+    }
+
+    /* Plugin icon */
+    Box icon_box {
+      width-request: 48;
+      height-request: 48;
+      valign: center;
+
+      styles [ "plugin-icon" ]
+
+      Image plugin_icon {
+        icon-name: "application-x-addon-symbolic";
+        pixel-size: 24;
+        halign: center;
+        valign: center;
+      }
+    }
+
+    /* Plugin info */
+    Box info_box {
+      orientation: vertical;
+      hexpand: true;
+      valign: center;
+      spacing: 2;
+
+      /* Top row: name + version */
+      Box name_row {
+        orientation: horizontal;
+        spacing: 8;
+
+        Label lbl_name {
+          label: "Plugin Name";
+          xalign: 0;
+          hexpand: true;
+          ellipsize: end;
+
+          styles [ "plugin-name" ]
+        }
+
+        Label lbl_version {
+          label: "v1.0.0";
+          xalign: 1;
+
+          styles [ "plugin-version", "dim-label" ]
+        }
+      }
+
+      /* Description */
+      Label lbl_description {
+        label: "Plugin description goes here";
+        xalign: 0;
+        ellipsize: end;
+        max-width-chars: 50;
+
+        styles [ "plugin-description", "dim-label", "caption" ]
+      }
+
+      /* Status row (shown when there's an issue) */
+      Box status_row {
+        orientation: horizontal;
+        spacing: 6;
+        visible: false;
+
+        Image status_icon {
+          icon-name: "dialog-warning-symbolic";
+          pixel-size: 12;
+
+          styles [ "warning" ]
+        }
+
+        Label lbl_status {
+          label: "Requires restart";
+          xalign: 0;
+
+          styles [ "plugin-status", "caption" ]
+        }
+      }
+    }
+
+    /* Action buttons */
+    Box action_box {
+      orientation: horizontal;
+      spacing: 4;
+      valign: center;
+
+      /* Settings button */
+      Button btn_settings {
+        icon-name: "emblem-system-symbolic";
+        tooltip-text: "Plugin settings";
+        valign: center;
+        sensitive: false;
+
+        styles [ "flat", "circular" ]
+      }
+
+      /* Info/details button */
+      Button btn_info {
+        icon-name: "help-about-symbolic";
+        tooltip-text: "Plugin information";
+        valign: center;
+
+        styles [ "flat", "circular" ]
+      }
+    }
+  }
+}

@@ -3200,3 +3200,153 @@ profile-row.muted .profile-row-avatar {
 	font-size: 11px;
 	font-weight: 500;
 }
+
+/* ============================================================================
+ * PLUGIN MANAGER
+ * ============================================================================ */
+
+.plugin-manager-panel {
+	background: @theme_bg_color;
+}
+
+/* Plugin List */
+.plugin-list {
+	background: transparent;
+}
+
+.plugin-list > row {
+	padding: 0;
+	border-radius: 0;
+}
+
+.plugin-list > row:hover {
+	background: alpha(@theme_fg_color, 0.04);
+}
+
+/* Plugin Row */
+.plugin-row {
+	padding: 10px 12px;
+	transition: background 150ms ease;
+}
+
+.plugin-row:hover {
+	background: alpha(@theme_fg_color, 0.03);
+}
+
+/* Plugin Icon */
+.plugin-icon {
+	min-width: 48px;
+	min-height: 48px;
+	border-radius: 12px;
+	background: alpha(@accent_bg_color, 0.1);
+}
+
+.plugin-icon image {
+	color: @accent_color;
+}
+
+/* Disabled plugin icon */
+.plugin-row.disabled .plugin-icon {
+	background: alpha(@theme_fg_color, 0.06);
+}
+
+.plugin-row.disabled .plugin-icon image {
+	color: alpha(@theme_fg_color, 0.4);
+}
+
+/* Plugin Name */
+.plugin-name {
+	font-weight: 600;
+	font-size: 14px;
+}
+
+.plugin-row.disabled .plugin-name {
+	opacity: 0.6;
+}
+
+/* Plugin Version */
+.plugin-version {
+	font-size: 12px;
+	font-weight: 500;
+	font-feature-settings: "tnum";
+}
+
+/* Plugin Description */
+.plugin-description {
+	font-size: 12px;
+	line-height: 1.3;
+}
+
+.plugin-row.disabled .plugin-description {
+	opacity: 0.5;
+}
+
+/* Plugin Status */
+.plugin-status {
+	font-size: 11px;
+}
+
+.plugin-status.warning {
+	color: @warning_color;
+}
+
+.plugin-status.error {
+	color: @error_color;
+}
+
+/* Plugin State Indicators */
+.plugin-row.error .plugin-icon {
+	background: alpha(@error_color, 0.12);
+}
+
+.plugin-row.error .plugin-icon image {
+	color: @error_color;
+}
+
+.plugin-row.needs-restart .plugin-icon {
+	background: alpha(@warning_color, 0.12);
+}
+
+.plugin-row.needs-restart .plugin-icon image {
+	color: @warning_color;
+}
+
+/* Plugin Info Dialog */
+.plugin-info-dialog .plugin-icon-large {
+	min-width: 64px;
+	min-height: 64px;
+	border-radius: 16px;
+	background: alpha(@accent_bg_color, 0.15);
+}
+
+.plugin-info-dialog .plugin-icon-large image {
+	color: @accent_color;
+}
+
+.plugin-info-dialog .plugin-authors {
+	font-size: 13px;
+}
+
+.plugin-info-dialog .plugin-website {
+	font-size: 13px;
+}
+
+/* Plugin Settings Button */
+.plugin-row button.circular {
+	min-width: 32px;
+	min-height: 32px;
+	padding: 6px;
+}
+
+.plugin-row button.circular:not(:hover) {
+	background: transparent;
+}
+
+/* Empty State */
+.plugin-manager-panel .empty-state {
+	padding: 48px 24px;
+}
+
+.plugin-manager-panel .empty-state image {
+	margin-bottom: 8px;
+}

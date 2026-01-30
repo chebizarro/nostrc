@@ -1,0 +1,266 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GnostrPluginManagerPanel: Widget {
+  Box root {
+    orientation: vertical;
+    spacing: 0;
+    hexpand: true;
+    vexpand: true;
+
+    styles [ "plugin-manager-panel" ]
+
+    /* Header with title and actions */
+    Box header {
+      orientation: horizontal;
+      spacing: 12;
+      margin-start: 16;
+      margin-end: 16;
+      margin-top: 16;
+      margin-bottom: 12;
+
+      Label lbl_title {
+        label: "Plugins";
+        hexpand: true;
+        xalign: 0;
+
+        styles [ "title-2" ]
+      }
+
+      /* Header actions */
+      Button btn_refresh {
+        icon-name: "view-refresh-symbolic";
+        tooltip-text: "Refresh plugin list";
+
+        styles [ "flat", "circular" ]
+      }
+
+      MenuButton btn_menu {
+        icon-name: "view-more-symbolic";
+        tooltip-text: "Plugin options";
+
+        styles [ "flat", "circular" ]
+
+        popover: Popover menu_popover {
+          Box {
+            orientation: vertical;
+            spacing: 0;
+
+            styles [ "menu" ]
+
+            Button btn_install_local {
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+                margin-start: 8;
+                margin-end: 8;
+                margin-top: 4;
+                margin-bottom: 4;
+
+                Image { icon-name: "folder-open-symbolic"; }
+                Label { label: "Install from file..."; }
+              }
+
+              styles [ "flat" ]
+            }
+
+            Button btn_open_folder {
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+                margin-start: 8;
+                margin-end: 8;
+                margin-top: 4;
+                margin-bottom: 4;
+
+                Image { icon-name: "folder-symbolic"; }
+                Label { label: "Open plugins folder"; }
+              }
+
+              styles [ "flat" ]
+            }
+
+            Separator {}
+
+            Button btn_check_updates {
+              Box {
+                orientation: horizontal;
+                spacing: 8;
+                margin-start: 8;
+                margin-end: 8;
+                margin-top: 4;
+                margin-bottom: 4;
+
+                Image { icon-name: "software-update-available-symbolic"; }
+                Label { label: "Check for updates"; }
+              }
+
+              styles [ "flat" ]
+            }
+          }
+        };
+      }
+    }
+
+    /* Search bar */
+    Box search_box {
+      orientation: horizontal;
+      margin-start: 16;
+      margin-end: 16;
+      margin-bottom: 12;
+
+      SearchEntry search_entry {
+        hexpand: true;
+        placeholder-text: "Search plugins...";
+      }
+    }
+
+    /* Main content stack */
+    Stack content_stack {
+      hexpand: true;
+      vexpand: true;
+      transition-type: crossfade;
+      transition-duration: 200;
+
+      /* Loading state */
+      StackPage {
+        name: "loading";
+
+        child: Box {
+          orientation: vertical;
+          valign: center;
+          halign: center;
+          spacing: 12;
+
+          Spinner spinner {
+            spinning: true;
+            width-request: 32;
+            height-request: 32;
+          }
+
+          Label {
+            label: "Loading plugins...";
+
+            styles [ "dim-label" ]
+          }
+        };
+      }
+
+      /* Empty state */
+      StackPage {
+        name: "empty";
+
+        child: Box {
+          orientation: vertical;
+          valign: center;
+          halign: center;
+          spacing: 16;
+          margin-start: 32;
+          margin-end: 32;
+
+          Image {
+            icon-name: "application-x-addon-symbolic";
+            pixel-size: 64;
+            opacity: 0.5;
+          }
+
+          Label {
+            label: "No Plugins Installed";
+
+            styles [ "title-2" ]
+          }
+
+          Label {
+            label: "Plugins extend Gnostr with additional features and NIP support.\nInstall plugins to enhance your experience.";
+            justify: center;
+            wrap: true;
+            max-width-chars: 45;
+
+            styles [ "dim-label" ]
+          }
+
+          Button btn_install_first {
+            label: "Install Plugin...";
+            halign: center;
+
+            styles [ "suggested-action", "pill" ]
+          }
+        };
+      }
+
+      /* No search results */
+      StackPage {
+        name: "no-results";
+
+        child: Box {
+          orientation: vertical;
+          valign: center;
+          halign: center;
+          spacing: 12;
+
+          Image {
+            icon-name: "edit-find-symbolic";
+            pixel-size: 48;
+            opacity: 0.5;
+          }
+
+          Label {
+            label: "No matching plugins";
+
+            styles [ "title-3" ]
+          }
+
+          Label lbl_no_results {
+            label: "Try a different search term";
+
+            styles [ "dim-label" ]
+          }
+        };
+      }
+
+      /* Plugin list */
+      StackPage {
+        name: "list";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+
+          ListBox plugin_list {
+            hexpand: true;
+            vexpand: true;
+            selection-mode: none;
+            show-separators: true;
+
+            styles [ "boxed-list", "plugin-list" ]
+          }
+        };
+      }
+    }
+
+    /* Footer with stats */
+    Box footer {
+      orientation: horizontal;
+      spacing: 8;
+      margin-start: 16;
+      margin-end: 16;
+      margin-top: 8;
+      margin-bottom: 12;
+
+      Label lbl_stats {
+        label: "0 plugins installed";
+        xalign: 0;
+        hexpand: true;
+
+        styles [ "dim-label", "caption" ]
+      }
+
+      /* Quick actions */
+      LinkButton btn_browse_plugins {
+        label: "Browse plugins";
+        uri: "https://github.com/topics/gnostr-plugin";
+
+        styles [ "caption" ]
+      }
+    }
+  }
+}
