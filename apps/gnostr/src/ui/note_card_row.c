@@ -1783,8 +1783,16 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
 }
 
 static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
+  /* Explicitly initialize embedded widget pointers to NULL before template init.
+   * These may be accessed in prepare_for_unbind during GTK widget recycling.
+   * GObject should zero-initialize, but be explicit to prevent garbage pointer
+   * crashes in GNOSTR_IS_NOTE_EMBED / OG_IS_PREVIEW_WIDGET type checks.
+   * nostrc-csj: Fix ASAN heap-buffer-overflow in prepare_for_unbind. */
+  self->note_embed = NULL;
+  self->og_preview = NULL;
+
   gtk_widget_init_template(GTK_WIDGET(self));
-  
+
   /* Create shared cancellable for all async operations */
   self->async_cancellable = g_cancellable_new();
   
@@ -5510,15 +5518,22 @@ void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
 
   /* OG Preview: Cancel async operations and mark as disposed to prevent
    * callbacks from accessing widget memory during disposal. Same pattern as
-   * video player fix. nostrc-ofq: Fix crash during scroll. */
-  if (self->og_preview && OG_IS_PREVIEW_WIDGET(self->og_preview)) {
+   * video player fix. nostrc-ofq: Fix crash during scroll.
+   * NOTE: Do NOT use type-checking macros (OG_IS_PREVIEW_WIDGET) here - they
+   * dereference the pointer which crashes if it contains garbage. The pointer
+   * may be stale if the widget was destroyed or the row is being recycled.
+   * Just check for NULL and trust initialization/cleanup sets it properly. */
+  if (self->og_preview != NULL) {
     og_preview_widget_prepare_for_unbind(self->og_preview);
+    self->og_preview = NULL;  /* Clear to prevent double-call */
   }
 
   /* Note Embed: Same pattern - cancel async operations and mark as disposed.
-   * nostrc-ofq: Prevent crashes during scroll with embedded notes. */
-  if (self->note_embed && GNOSTR_IS_NOTE_EMBED(self->note_embed)) {
+   * nostrc-ofq: Prevent crashes during scroll with embedded notes.
+   * Same safety note: no type-checking macros on potentially stale pointers. */
+  if (self->note_embed != NULL) {
     gnostr_note_embed_prepare_for_unbind(self->note_embed);
+    self->note_embed = NULL;  /* Clear to prevent double-call */
   }
 
   /* Cancel all async operations immediately */
