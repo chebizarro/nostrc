@@ -391,15 +391,25 @@ static void *write_operations(void *arg) {
     if (!r || !r->priv) return NULL;
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] write_operations: start\n");
 
+    // Hold a reference to the connection context to prevent use-after-free
+    // if the relay is freed while we're in go_select (nostrc-0q4)
+    GoContext *ctx = r->priv->connection_context;
+    if (!ctx) {
+        if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] write_operations: no context, exiting\n");
+        go_wait_group_done(&r->priv->workers);
+        return NULL;
+    }
+    go_context_ref(ctx);
+
     for (;;) {
         // Fast-path: if connection context is canceled, exit promptly
-        if (r->priv->connection_context && go_context_is_canceled(r->priv->connection_context)) {
+        if (go_context_is_canceled(ctx)) {
             break;
         }
         NostrRelayWriteRequest *req = NULL;
         GoSelectCase cases[] = {
             (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = r->priv->write_queue, .value = NULL, .recv_buf = (void **)&req },
-            (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = r->priv->connection_context->done, .value = NULL, .recv_buf = NULL },
+            (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ctx->done, .value = NULL, .recv_buf = NULL },
         };
         int idx = go_select(cases, 2);
         if (idx == 1) {
@@ -446,6 +456,7 @@ static void *write_operations(void *arg) {
     }
 
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] write_operations: exit\n");
+    go_context_unref(ctx);  // Release context reference (nostrc-0q4)
     go_wait_group_done(&((NostrRelay *)arg)->priv->workers);
     return NULL;
 }
@@ -576,6 +587,16 @@ static void *message_loop(void *arg) {
     if (!r || !r->priv) return NULL;
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: start\n");
 
+    // Hold a reference to the connection context to prevent use-after-free
+    // if the relay is freed while we're in go_select (nostrc-0q4)
+    GoContext *ctx = r->priv->connection_context;
+    if (!ctx) {
+        if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: no context, exiting\n");
+        go_wait_group_done(&r->priv->workers);
+        return NULL;
+    }
+    go_context_ref(ctx);
+
     init_cached_env();
 
     char buf[4096];
@@ -600,8 +621,7 @@ static void *message_loop(void *arg) {
                 has_priority = 0;
             } else {
                 // Validate context before use - exit if context is invalid/freed
-                GoContext *ctx = r->priv->connection_context;
-                if (!ctx || !ctx->done || ctx->done->magic != GO_CHANNEL_MAGIC) {
+                if (!ctx->done || ctx->done->magic != GO_CHANNEL_MAGIC) {
                     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: context invalid, exiting\n");
                     context_canceled = true;
                     break;
@@ -823,10 +843,9 @@ static void *message_loop(void *arg) {
         /* Check if auto-reconnect is enabled */
         nsync_mu_lock(&r->priv->mutex);
         bool should_reconnect = r->priv->auto_reconnect;
-        GoContext *ctx = r->priv->connection_context;
         nsync_mu_unlock(&r->priv->mutex);
 
-        if (!should_reconnect || !ctx) {
+        if (!should_reconnect) {
             relay_set_state(r, NOSTR_RELAY_STATE_DISCONNECTED);
             break;  /* exit outer loop */
         }
@@ -867,11 +886,10 @@ static void *message_loop(void *arg) {
             nsync_mu_lock(&r->priv->mutex);
             bool reconnect_now = r->priv->reconnect_requested;
             r->priv->reconnect_requested = false;
-            ctx = r->priv->connection_context;
             nsync_mu_unlock(&r->priv->mutex);
 
             if (reconnect_now) break;  /* Skip remaining backoff */
-            if (!ctx || go_context_is_canceled(ctx)) {
+            if (go_context_is_canceled(ctx)) {
                 context_canceled = true;
                 break;  /* Cancel reconnection */
             }
@@ -896,6 +914,7 @@ static void *message_loop(void *arg) {
     }  /* end outer reconnection loop */
 
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: exit\n");
+    go_context_unref(ctx);  // Release context reference (nostrc-0q4)
     go_wait_group_done(&((NostrRelay *)arg)->priv->workers);
     return NULL;
 }
