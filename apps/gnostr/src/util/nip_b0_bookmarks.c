@@ -5,7 +5,9 @@
  */
 
 #include "nip_b0_bookmarks.h"
-#include <jansson.h>
+#include "json.h"
+#include "nostr-event.h"
+#include "nostr-tag.h"
 #include <string.h>
 #include <time.h>
 
@@ -63,59 +65,51 @@ gboolean gnostr_web_bookmark_validate_url(const char *url) {
 GnostrWebBookmark *gnostr_web_bookmark_parse_json(const char *event_json) {
   if (!event_json || !*event_json) return NULL;
 
-  json_error_t error;
-  json_t *root = json_loads(event_json, 0, &error);
-  if (!root) {
-    g_warning("NIP-B0: Failed to parse event JSON: %s", error.text);
+  /* Parse with NostrEvent API */
+  NostrEvent event = {0};
+  if (!nostr_event_deserialize_compact(&event, event_json)) {
+    g_warning("NIP-B0: Failed to parse event JSON");
     return NULL;
   }
 
   /* Verify kind */
-  json_t *kind_val = json_object_get(root, "kind");
-  if (!kind_val || json_integer_value(kind_val) != NIPB0_KIND_BOOKMARK) {
-    g_debug("NIP-B0: Not a web bookmark event (kind=%lld)",
-            kind_val ? (long long)json_integer_value(kind_val) : -1);
-    json_decref(root);
+  if (nostr_event_get_kind(&event) != NIPB0_KIND_BOOKMARK) {
+    g_debug("NIP-B0: Not a web bookmark event (kind=%d)",
+            nostr_event_get_kind(&event));
     return NULL;
   }
 
   GnostrWebBookmark *b = gnostr_web_bookmark_new();
 
   /* Extract event metadata */
-  json_t *id_val = json_object_get(root, "id");
-  if (json_is_string(id_val)) {
-    b->event_id = g_strdup(json_string_value(id_val));
+  char *id_str = nostr_event_get_id(&event);
+  if (id_str) {
+    b->event_id = id_str;  /* takes ownership */
   }
 
-  json_t *pubkey_val = json_object_get(root, "pubkey");
-  if (json_is_string(pubkey_val)) {
-    b->pubkey = g_strdup(json_string_value(pubkey_val));
+  const char *pubkey_str = nostr_event_get_pubkey(&event);
+  if (pubkey_str) {
+    b->pubkey = g_strdup(pubkey_str);
   }
 
-  json_t *created_at = json_object_get(root, "created_at");
-  if (json_is_integer(created_at)) {
-    b->created_at = json_integer_value(created_at);
-  }
+  b->created_at = nostr_event_get_created_at(&event);
 
   /* Extract content (notes) */
-  json_t *content_val = json_object_get(root, "content");
-  if (json_is_string(content_val)) {
-    const char *content = json_string_value(content_val);
-    if (content && *content) {
-      b->notes = g_strdup(content);
-    }
+  const char *content = nostr_event_get_content(&event);
+  if (content && *content) {
+    b->notes = g_strdup(content);
   }
 
-  /* Parse tags */
-  json_t *tags = json_object_get(root, "tags");
-  if (json_is_array(tags)) {
+  /* Parse tags using NostrTags API */
+  NostrTags *tags = nostr_event_get_tags(&event);
+  if (tags) {
     /* First pass: count "t" tags */
     gsize t_count = 0;
-    size_t idx;
-    json_t *tag;
-    json_array_foreach(tags, idx, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
+    size_t tag_count = nostr_tags_size(tags);
+    for (size_t i = 0; i < tag_count; i++) {
+      NostrTag *tag = nostr_tags_get(tags, i);
+      if (!tag || nostr_tag_size(tag) < 2) continue;
+      const char *tag_name = nostr_tag_get(tag, 0);
       if (tag_name && strcmp(tag_name, "t") == 0) {
         t_count++;
       }
@@ -128,11 +122,12 @@ GnostrWebBookmark *gnostr_web_bookmark_parse_json(const char *event_json) {
     }
 
     /* Second pass: parse all tags */
-    json_array_foreach(tags, idx, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+    for (size_t i = 0; i < tag_count; i++) {
+      NostrTag *tag = nostr_tags_get(tags, i);
+      if (!tag || nostr_tag_size(tag) < 2) continue;
 
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
-      const char *tag_value = json_string_value(json_array_get(tag, 1));
+      const char *tag_name = nostr_tag_get(tag, 0);
+      const char *tag_value = nostr_tag_get(tag, 1);
       if (!tag_name || !tag_value) continue;
 
       if (strcmp(tag_name, "r") == 0) {
@@ -168,8 +163,6 @@ GnostrWebBookmark *gnostr_web_bookmark_parse_json(const char *event_json) {
     }
   }
 
-  json_decref(root);
-
   /* URL is required */
   if (!b->url || !*b->url) {
     g_warning("NIP-B0: Web bookmark missing required URL");
@@ -180,79 +173,119 @@ GnostrWebBookmark *gnostr_web_bookmark_parse_json(const char *event_json) {
   return b;
 }
 
+/* Context for counting t tags in first pass */
+typedef struct {
+  gsize t_count;
+} BookmarkTagCountCtx;
+
+static bool count_t_tags_cb(size_t idx, const char *element_json, void *user_data) {
+  (void)idx;
+  BookmarkTagCountCtx *ctx = (BookmarkTagCountCtx *)user_data;
+
+  if (!nostr_json_is_array_str(element_json)) return true;
+
+  char *tag_name = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) == 0) {
+    if (tag_name && strcmp(tag_name, "t") == 0) {
+      ctx->t_count++;
+    }
+    g_free(tag_name);
+  }
+  return true;
+}
+
+/* Context for parsing tags in second pass */
+typedef struct {
+  GnostrWebBookmark *b;
+  gsize t_count;
+} BookmarkTagParseCtx;
+
+static bool parse_bookmark_tag_cb(size_t idx, const char *element_json, void *user_data) {
+  (void)idx;
+  BookmarkTagParseCtx *ctx = (BookmarkTagParseCtx *)user_data;
+
+  if (!nostr_json_is_array_str(element_json)) return true;
+
+  char *tag_name = NULL;
+  char *tag_value = NULL;
+
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 ||
+      nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0) {
+    g_free(tag_name);
+    g_free(tag_value);
+    return true;
+  }
+
+  if (!tag_name || !tag_value) {
+    g_free(tag_name);
+    g_free(tag_value);
+    return true;
+  }
+
+  if (strcmp(tag_name, "r") == 0) {
+    g_free(ctx->b->url);
+    ctx->b->url = tag_value;
+    tag_value = NULL;
+  }
+  else if (strcmp(tag_name, "title") == 0) {
+    g_free(ctx->b->title);
+    ctx->b->title = tag_value;
+    tag_value = NULL;
+  }
+  else if (strcmp(tag_name, "description") == 0) {
+    g_free(ctx->b->description);
+    ctx->b->description = tag_value;
+    tag_value = NULL;
+  }
+  else if (strcmp(tag_name, "image") == 0) {
+    g_free(ctx->b->image);
+    ctx->b->image = tag_value;
+    tag_value = NULL;
+  }
+  else if (strcmp(tag_name, "t") == 0) {
+    if (ctx->b->tags && ctx->b->tag_count < ctx->t_count) {
+      ctx->b->tags[ctx->b->tag_count++] = tag_value;
+      tag_value = NULL;
+    }
+  }
+  else if (strcmp(tag_name, "published_at") == 0) {
+    gint64 ts = g_ascii_strtoll(tag_value, NULL, 10);
+    if (ts > 0) {
+      ctx->b->published_at = ts;
+    }
+  }
+
+  g_free(tag_name);
+  g_free(tag_value);
+  return true;
+}
+
 GnostrWebBookmark *gnostr_web_bookmark_parse_tags(const char *tags_json,
                                                    const char *content) {
   if (!tags_json || !*tags_json) return NULL;
+
+  if (!nostr_json_is_array_str(tags_json)) {
+    return NULL;
+  }
 
   GnostrWebBookmark *b = gnostr_web_bookmark_new();
   if (content && *content) {
     b->notes = g_strdup(content);
   }
 
-  json_error_t error;
-  json_t *tags = json_loads(tags_json, 0, &error);
-  if (!tags || !json_is_array(tags)) {
-    if (tags) json_decref(tags);
-    gnostr_web_bookmark_free(b);
-    return NULL;
-  }
-
   /* First pass: count "t" tags */
-  gsize t_count = 0;
-  size_t idx;
-  json_t *tag;
-  json_array_foreach(tags, idx, tag) {
-    if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-    const char *tag_name = json_string_value(json_array_get(tag, 0));
-    if (tag_name && strcmp(tag_name, "t") == 0) {
-      t_count++;
-    }
-  }
+  BookmarkTagCountCtx count_ctx = {0};
+  nostr_json_array_foreach_root(tags_json, count_t_tags_cb, &count_ctx);
 
   /* Allocate tags array if needed */
-  if (t_count > 0) {
-    b->tags = g_new0(gchar *, t_count + 1);
+  if (count_ctx.t_count > 0) {
+    b->tags = g_new0(gchar *, count_ctx.t_count + 1);
     b->tag_count = 0;
   }
 
   /* Second pass: parse all tags */
-  json_array_foreach(tags, idx, tag) {
-    if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-
-    const char *tag_name = json_string_value(json_array_get(tag, 0));
-    const char *tag_value = json_string_value(json_array_get(tag, 1));
-    if (!tag_name || !tag_value) continue;
-
-    if (strcmp(tag_name, "r") == 0) {
-      g_free(b->url);
-      b->url = g_strdup(tag_value);
-    }
-    else if (strcmp(tag_name, "title") == 0) {
-      g_free(b->title);
-      b->title = g_strdup(tag_value);
-    }
-    else if (strcmp(tag_name, "description") == 0) {
-      g_free(b->description);
-      b->description = g_strdup(tag_value);
-    }
-    else if (strcmp(tag_name, "image") == 0) {
-      g_free(b->image);
-      b->image = g_strdup(tag_value);
-    }
-    else if (strcmp(tag_name, "t") == 0) {
-      if (b->tags && b->tag_count < t_count) {
-        b->tags[b->tag_count++] = g_strdup(tag_value);
-      }
-    }
-    else if (strcmp(tag_name, "published_at") == 0) {
-      gint64 ts = g_ascii_strtoll(tag_value, NULL, 10);
-      if (ts > 0) {
-        b->published_at = ts;
-      }
-    }
-  }
-
-  json_decref(tags);
+  BookmarkTagParseCtx parse_ctx = { .b = b, .t_count = count_ctx.t_count };
+  nostr_json_array_foreach_root(tags_json, parse_bookmark_tag_cb, &parse_ctx);
 
   /* URL is required */
   if (!b->url || !*b->url) {
@@ -275,51 +308,47 @@ gchar *gnostr_web_bookmark_build_tags(const GnostrWebBookmark *bookmark) {
     return NULL;
   }
 
-  json_t *tags = json_array();
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_array(builder);
 
   /* Add URL tag (required) */
-  json_t *r_tag = json_array();
-  json_array_append_new(r_tag, json_string("r"));
-  json_array_append_new(r_tag, json_string(bookmark->url));
-  json_array_append(tags, r_tag);
-  json_decref(r_tag);
+  nostr_json_builder_begin_array(builder);
+  nostr_json_builder_add_string(builder, "r");
+  nostr_json_builder_add_string(builder, bookmark->url);
+  nostr_json_builder_end_array(builder);
 
   /* Add title tag if provided */
   if (bookmark->title && *bookmark->title) {
-    json_t *title_tag = json_array();
-    json_array_append_new(title_tag, json_string("title"));
-    json_array_append_new(title_tag, json_string(bookmark->title));
-    json_array_append(tags, title_tag);
-    json_decref(title_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "title");
+    nostr_json_builder_add_string(builder, bookmark->title);
+    nostr_json_builder_end_array(builder);
   }
 
   /* Add description tag if provided */
   if (bookmark->description && *bookmark->description) {
-    json_t *desc_tag = json_array();
-    json_array_append_new(desc_tag, json_string("description"));
-    json_array_append_new(desc_tag, json_string(bookmark->description));
-    json_array_append(tags, desc_tag);
-    json_decref(desc_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "description");
+    nostr_json_builder_add_string(builder, bookmark->description);
+    nostr_json_builder_end_array(builder);
   }
 
   /* Add image tag if provided */
   if (bookmark->image && *bookmark->image) {
-    json_t *img_tag = json_array();
-    json_array_append_new(img_tag, json_string("image"));
-    json_array_append_new(img_tag, json_string(bookmark->image));
-    json_array_append(tags, img_tag);
-    json_decref(img_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "image");
+    nostr_json_builder_add_string(builder, bookmark->image);
+    nostr_json_builder_end_array(builder);
   }
 
   /* Add t tags for categories */
   if (bookmark->tags && bookmark->tag_count > 0) {
     for (gsize i = 0; i < bookmark->tag_count; i++) {
       if (bookmark->tags[i] && *bookmark->tags[i]) {
-        json_t *t_tag = json_array();
-        json_array_append_new(t_tag, json_string("t"));
-        json_array_append_new(t_tag, json_string(bookmark->tags[i]));
-        json_array_append(tags, t_tag);
-        json_decref(t_tag);
+        nostr_json_builder_begin_array(builder);
+        nostr_json_builder_add_string(builder, "t");
+        nostr_json_builder_add_string(builder, bookmark->tags[i]);
+        nostr_json_builder_end_array(builder);
       }
     }
   }
@@ -327,16 +356,16 @@ gchar *gnostr_web_bookmark_build_tags(const GnostrWebBookmark *bookmark) {
   /* Add published_at tag if provided */
   if (bookmark->published_at > 0) {
     gchar *ts_str = g_strdup_printf("%" G_GINT64_FORMAT, bookmark->published_at);
-    json_t *pub_tag = json_array();
-    json_array_append_new(pub_tag, json_string("published_at"));
-    json_array_append_new(pub_tag, json_string(ts_str));
-    json_array_append(tags, pub_tag);
-    json_decref(pub_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "published_at");
+    nostr_json_builder_add_string(builder, ts_str);
+    nostr_json_builder_end_array(builder);
     g_free(ts_str);
   }
 
-  char *tags_json = json_dumps(tags, JSON_COMPACT);
-  json_decref(tags);
+  nostr_json_builder_end_array(builder);
+  char *tags_json = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
 
   return tags_json;
 }
@@ -353,74 +382,36 @@ gchar *gnostr_web_bookmark_build_event_json(const GnostrWebBookmark *bookmark) {
     return NULL;
   }
 
-  json_t *tags = json_array();
-
-  /* Add URL tag (required) */
-  json_t *r_tag = json_array();
-  json_array_append_new(r_tag, json_string("r"));
-  json_array_append_new(r_tag, json_string(bookmark->url));
-  json_array_append(tags, r_tag);
-  json_decref(r_tag);
-
-  /* Add title tag if provided */
-  if (bookmark->title && *bookmark->title) {
-    json_t *title_tag = json_array();
-    json_array_append_new(title_tag, json_string("title"));
-    json_array_append_new(title_tag, json_string(bookmark->title));
-    json_array_append(tags, title_tag);
-    json_decref(title_tag);
+  /* Build tags first using the helper */
+  gchar *tags_json = gnostr_web_bookmark_build_tags(bookmark);
+  if (!tags_json) {
+    return NULL;
   }
 
-  /* Add description tag if provided */
-  if (bookmark->description && *bookmark->description) {
-    json_t *desc_tag = json_array();
-    json_array_append_new(desc_tag, json_string("description"));
-    json_array_append_new(desc_tag, json_string(bookmark->description));
-    json_array_append(tags, desc_tag);
-    json_decref(desc_tag);
-  }
+  /* Build the unsigned event using NostrJsonBuilder */
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_object(builder);
 
-  /* Add image tag if provided */
-  if (bookmark->image && *bookmark->image) {
-    json_t *img_tag = json_array();
-    json_array_append_new(img_tag, json_string("image"));
-    json_array_append_new(img_tag, json_string(bookmark->image));
-    json_array_append(tags, img_tag);
-    json_decref(img_tag);
-  }
+  /* kind */
+  nostr_json_builder_set_key(builder, "kind");
+  nostr_json_builder_add_int(builder, NIPB0_KIND_BOOKMARK);
 
-  /* Add t tags for categories */
-  if (bookmark->tags && bookmark->tag_count > 0) {
-    for (gsize i = 0; i < bookmark->tag_count; i++) {
-      if (bookmark->tags[i] && *bookmark->tags[i]) {
-        json_t *t_tag = json_array();
-        json_array_append_new(t_tag, json_string("t"));
-        json_array_append_new(t_tag, json_string(bookmark->tags[i]));
-        json_array_append(tags, t_tag);
-        json_decref(t_tag);
-      }
-    }
-  }
+  /* created_at */
+  nostr_json_builder_set_key(builder, "created_at");
+  nostr_json_builder_add_int64(builder, (int64_t)time(NULL));
 
-  /* Add published_at tag */
-  gint64 pub_time = bookmark->published_at > 0 ? bookmark->published_at : (gint64)time(NULL);
-  gchar *ts_str = g_strdup_printf("%" G_GINT64_FORMAT, pub_time);
-  json_t *pub_tag = json_array();
-  json_array_append_new(pub_tag, json_string("published_at"));
-  json_array_append_new(pub_tag, json_string(ts_str));
-  json_array_append(tags, pub_tag);
-  json_decref(pub_tag);
-  g_free(ts_str);
+  /* content */
+  nostr_json_builder_set_key(builder, "content");
+  nostr_json_builder_add_string(builder, bookmark->notes ? bookmark->notes : "");
 
-  /* Build the unsigned event */
-  json_t *event_obj = json_object();
-  json_object_set_new(event_obj, "kind", json_integer(NIPB0_KIND_BOOKMARK));
-  json_object_set_new(event_obj, "created_at", json_integer((json_int_t)time(NULL)));
-  json_object_set_new(event_obj, "content", json_string(bookmark->notes ? bookmark->notes : ""));
-  json_object_set_new(event_obj, "tags", tags);
+  /* tags (inject as raw JSON) */
+  nostr_json_builder_set_key(builder, "tags");
+  nostr_json_builder_add_raw(builder, tags_json);
+  g_free(tags_json);
 
-  char *event_json = json_dumps(event_obj, JSON_COMPACT);
-  json_decref(event_obj);
+  nostr_json_builder_end_object(builder);
+  char *event_json = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
 
   return event_json;
 }
