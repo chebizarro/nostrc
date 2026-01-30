@@ -722,14 +722,33 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
         return;
     }
 
+    // Validate recv_channel before use to prevent use-after-free during shutdown/reconnect
+    GoChannel *recv_chan = conn->recv_channel;
+    if (!recv_chan || recv_chan->magic != GO_CHANNEL_MAGIC) {
+        if (err) *err = new_error(1, "recv channel invalid or closed");
+        return;
+    }
+
+    // Also validate ctx->done channel if context is provided
+    GoChannel *done_chan = ctx ? ctx->done : NULL;
+    if (ctx && (!done_chan || done_chan->magic != GO_CHANNEL_MAGIC)) {
+        if (err) *err = new_error(1, "context done channel invalid");
+        return;
+    }
+
     // Wait on either an incoming message or context cancellation
     WebSocketMessage *msg = NULL;
     if (ctx) {
         GoSelectCase cases[] = {
-            (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = conn->recv_channel, .value = NULL, .recv_buf = (void **)&msg },
-            (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ctx->done, .value = NULL, .recv_buf = NULL },
+            (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = recv_chan, .value = NULL, .recv_buf = (void **)&msg },
+            (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = done_chan, .value = NULL, .recv_buf = NULL },
         };
         int idx = go_select(cases, 2);
+        if (idx == -1) {
+            // All channels invalid (freed during shutdown)
+            if (err) *err = new_error(1, "Channels invalid or freed");
+            return;
+        }
         if (idx == 1) {
             if (err) *err = new_error(1, "Context canceled");
             return;
@@ -740,7 +759,7 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
             return;
         }
     } else {
-        if (go_channel_receive(conn->recv_channel, (void **)&msg) != 0 || !msg) {
+        if (go_channel_receive(recv_chan, (void **)&msg) != 0 || !msg) {
             if (err) *err = new_error(1, "Failed to receive message or channel closed");
             return;
         }

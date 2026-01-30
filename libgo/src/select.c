@@ -11,6 +11,7 @@ int go_select(GoSelectCase *cases, size_t num_cases) {
     // Simple fair-ish polling select using non-blocking ops
     for (;;) {
         size_t start = (size_t)(rand() % (int)num_cases);
+        size_t valid_cases = 0;  // Track how many cases have valid channels
 
         // Try each case once in randomized order
         for (size_t i = 0; i < num_cases; i++) {
@@ -20,6 +21,9 @@ int go_select(GoSelectCase *cases, size_t num_cases) {
             if (c->chan == NULL) continue;
             // Validate magic number to detect garbage/freed channel pointers
             if (c->chan->magic != GO_CHANNEL_MAGIC) continue;
+            // Additional check: ensure buffer is valid (channel not being freed)
+            if (c->chan->buffer == NULL) continue;
+            valid_cases++;
             if (c->op == GO_SELECT_SEND) {
                 if (go_channel_try_send(c->chan, c->value) == 0) return (int)idx;
             } else { // GO_SELECT_RECEIVE
@@ -35,6 +39,11 @@ int go_select(GoSelectCase *cases, size_t num_cases) {
             }
         }
 
+        // If all channels are invalid/freed, return -1 to prevent infinite loop
+        if (valid_cases == 0) {
+            return -1;
+        }
+
         // Nothing available; small sleep to avoid busy spin
         struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 1000 * 1000; // 1ms
         nanosleep(&ts, NULL);
@@ -43,16 +52,17 @@ int go_select(GoSelectCase *cases, size_t num_cases) {
 
 GoSelectResult go_select_timeout(GoSelectCase *cases, size_t num_cases, uint64_t timeout_ms) {
     GoSelectResult result = { .selected_case = -1, .ok = false };
-    
+
     // Get start time
     struct timeval start_tv, now_tv;
     gettimeofday(&start_tv, NULL);
     uint64_t start_us = (uint64_t)start_tv.tv_sec * 1000000 + (uint64_t)start_tv.tv_usec;
     uint64_t timeout_us = timeout_ms * 1000;
-    
+
     // Poll with timeout
     for (;;) {
         size_t start_idx = (size_t)(rand() % (int)num_cases);
+        size_t valid_cases = 0;  // Track how many cases have valid channels
 
         // Try each case once in randomized order
         for (size_t i = 0; i < num_cases; i++) {
@@ -62,6 +72,9 @@ GoSelectResult go_select_timeout(GoSelectCase *cases, size_t num_cases, uint64_t
             if (c->chan == NULL) continue;
             // Validate magic number to detect garbage/freed channel pointers
             if (c->chan->magic != GO_CHANNEL_MAGIC) continue;
+            // Additional check: ensure buffer is valid (channel not being freed)
+            if (c->chan->buffer == NULL) continue;
+            valid_cases++;
             if (c->op == GO_SELECT_SEND) {
                 if (go_channel_try_send(c->chan, c->value) == 0) {
                     result.selected_case = (int)idx;
@@ -88,11 +101,18 @@ GoSelectResult go_select_timeout(GoSelectCase *cases, size_t num_cases, uint64_t
             }
         }
 
+        // If all channels are invalid/freed, return error to prevent infinite loop
+        if (valid_cases == 0) {
+            result.selected_case = -1;
+            result.ok = false;
+            return result;
+        }
+
         // Check timeout
         gettimeofday(&now_tv, NULL);
         uint64_t now_us = (uint64_t)now_tv.tv_sec * 1000000 + (uint64_t)now_tv.tv_usec;
         uint64_t elapsed_us = now_us - start_us;
-        
+
         if (elapsed_us >= timeout_us) {
             // Timeout occurred
             result.selected_case = -1;

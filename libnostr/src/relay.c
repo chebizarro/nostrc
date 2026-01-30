@@ -666,6 +666,14 @@ static void *message_loop(void *arg) {
             nsync_mu_unlock(&r->priv->mutex);
             if (!conn) break;
 
+            // Validate connection's recv_channel before use to prevent use-after-free
+            // during shutdown or reconnection. The channel may be freed by another thread.
+            GoChannel *recv_ch = conn->recv_channel;
+            if (!recv_ch || recv_ch->magic != GO_CHANNEL_MAGIC) {
+                if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: recv_channel invalid, breaking\n");
+                break;
+            }
+
             // Check for priority message first if we have one pending
             if (has_priority) {
                 strcpy(buf, priority_buf);

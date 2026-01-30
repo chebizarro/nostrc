@@ -429,6 +429,11 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         nostr_metric_counter_add("go_chan_invalid_magic_recv", 1);
         return -1;
     }
+    // Early buffer NULL check to catch channels being freed concurrently
+    if (NOSTR_UNLIKELY(chan->buffer == NULL)) {
+        nostr_metric_counter_add("go_chan_try_recv_failures", 1);
+        return -1;
+    }
     if (atomic_load_explicit(&chan->freed, memory_order_acquire)) {
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
