@@ -31,6 +31,12 @@ static void hex_to_bytes(const char *hex, uint8_t *out, size_t outlen) {
 }
 
 #ifdef VECTORS_PATH
+/*
+ * NOTE (nostrc-3nj): jansson is retained here for loading external JSON test
+ * vector files from disk. The NostrJsonInterface is specifically for Nostr
+ * protocol JSON (events, envelopes, filters), not arbitrary JSON file loading.
+ * The test still works without VECTORS_PATH via the single-case fallback below.
+ */
 #include <jansson.h>
 
 static int run_get_message_keys_vectors(json_t *v2_valid) {

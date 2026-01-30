@@ -1,11 +1,19 @@
+/**
+ * NIP-52: Calendar Events
+ *
+ * Migrated from jansson to NostrJsonInterface (nostrc-3nj)
+ */
 #include "nip52.h"
+#include "nostr-event.h"
+#include "nostr-tag.h"
+#include "json.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <jansson.h>
 #include <time.h>
 
 static int is_valid_hex(const char *str) {
+    if (!str || !*str) return 0;
     while (*str) {
         if (!((*str >= '0' && *str <= '9') || (*str >= 'a' && *str <= 'f') || (*str >= 'A' && *str <= 'F'))) {
             return 0;
@@ -16,26 +24,87 @@ static int is_valid_hex(const char *str) {
 }
 
 CalendarEvent *parse_calendar_event(const char *event_json) {
+    if (!event_json) return NULL;
+
     CalendarEvent *event = malloc(sizeof(CalendarEvent));
+    if (!event) return NULL;
     memset(event, 0, sizeof(CalendarEvent));
 
-    json_t *root;
-    json_error_t error;
-    root = json_loads(event_json, 0, &error);
-    if (!root) {
-        fprintf(stderr, "Error parsing JSON: %s\n", error.text);
+    /* Parse event using NostrEvent API */
+    NostrEvent *ev = nostr_event_new();
+    if (!ev) {
+        free(event);
         return NULL;
     }
 
-    json_t *kind = json_object_get(root, "kind");
-    event->kind = (CalendarEventKind)json_integer_value(kind);
+    if (nostr_event_deserialize(ev, event_json) != 0) {
+        nostr_event_free(ev);
+        free(event);
+        return NULL;
+    }
 
-    json_t *tags = json_object_get(root, "tags");
-    size_t index;
-    json_t *tag;
-    json_array_foreach(tags, index, tag) {
-        const char *key = json_string_value(json_array_get(tag, 0));
-        const char *value = json_string_value(json_array_get(tag, 1));
+    /* Get kind to determine date vs time based */
+    event->kind = (CalendarEventKind)nostr_event_get_kind(ev);
+
+    /* Get tags and iterate */
+    NostrTags *tags = nostr_event_get_tags(ev);
+    if (!tags) {
+        nostr_event_free(ev);
+        return event; /* Valid event, just no tags */
+    }
+
+    /* Pre-count for proper allocation */
+    size_t location_count = 0;
+    size_t geohash_count = 0;
+    size_t participant_count = 0;
+    size_t reference_count = 0;
+    size_t hashtag_count = 0;
+
+    size_t n = nostr_tags_size(tags);
+    for (size_t i = 0; i < n; i++) {
+        NostrTag *tag = nostr_tags_get(tags, i);
+        if (!tag || nostr_tag_size(tag) < 2) continue;
+        const char *key = nostr_tag_get(tag, 0);
+        if (!key) continue;
+
+        if (strcmp(key, "location") == 0) location_count++;
+        else if (strcmp(key, "g") == 0) geohash_count++;
+        else if (strcmp(key, "p") == 0) participant_count++;
+        else if (strcmp(key, "r") == 0) reference_count++;
+        else if (strcmp(key, "t") == 0) hashtag_count++;
+    }
+
+    /* Allocate arrays with null terminator space */
+    if (location_count > 0) {
+        event->locations = calloc(location_count + 1, sizeof(char *));
+    }
+    if (geohash_count > 0) {
+        event->geohashes = calloc(geohash_count + 1, sizeof(char *));
+    }
+    if (participant_count > 0) {
+        event->participants = calloc(participant_count + 1, sizeof(Participant));
+    }
+    if (reference_count > 0) {
+        event->references = calloc(reference_count + 1, sizeof(char *));
+    }
+    if (hashtag_count > 0) {
+        event->hashtags = calloc(hashtag_count + 1, sizeof(char *));
+    }
+
+    /* Reset indices for actual parsing */
+    size_t location_idx = 0;
+    size_t geohash_idx = 0;
+    size_t participant_idx = 0;
+    size_t reference_idx = 0;
+    size_t hashtag_idx = 0;
+
+    for (size_t i = 0; i < n; i++) {
+        NostrTag *tag = nostr_tags_get(tags, i);
+        if (!tag || nostr_tag_size(tag) < 2) continue;
+
+        const char *key = nostr_tag_get(tag, 0);
+        const char *value = nostr_tag_get(tag, 1);
+        if (!key || !value) continue;
 
         if (strcmp(key, "d") == 0) {
             event->identifier = strdup(value);
@@ -45,43 +114,45 @@ CalendarEvent *parse_calendar_event(const char *event_json) {
             event->image = strdup(value);
         } else if (strcmp(key, "start") == 0 || strcmp(key, "end") == 0) {
             struct tm tm = {0};
+            time_t timestamp;
+
             if (event->kind == TIME_BASED) {
-                time_t timestamp = (time_t)atoll(value);
-                if (strcmp(key, "start") == 0) {
-                    event->start = timestamp;
-                } else {
-                    event->end = timestamp;
-                }
+                timestamp = (time_t)atoll(value);
             } else if (event->kind == DATE_BASED) {
                 strptime(value, DATE_FORMAT, &tm);
-                time_t date = mktime(&tm);
-                if (strcmp(key, "start") == 0) {
-                    event->start = date;
-                } else {
-                    event->end = date;
+                timestamp = mktime(&tm);
+            } else {
+                timestamp = 0;
+            }
+
+            if (strcmp(key, "start") == 0) {
+                event->start = timestamp;
+            } else {
+                event->end = timestamp;
+            }
+        } else if (strcmp(key, "location") == 0 && event->locations) {
+            event->locations[location_idx++] = strdup(value);
+        } else if (strcmp(key, "g") == 0 && event->geohashes) {
+            event->geohashes[geohash_idx++] = strdup(value);
+        } else if (strcmp(key, "p") == 0 && is_valid_hex(value) && event->participants) {
+            event->participants[participant_idx].pub_key = strdup(value);
+            if (nostr_tag_size(tag) > 2) {
+                const char *relay = nostr_tag_get(tag, 2);
+                if (relay) {
+                    event->participants[participant_idx].relay = strdup(relay);
+                }
+                if (nostr_tag_size(tag) > 3) {
+                    const char *role = nostr_tag_get(tag, 3);
+                    if (role) {
+                        event->participants[participant_idx].role = strdup(role);
+                    }
                 }
             }
-        } else if (strcmp(key, "location") == 0) {
-            event->locations = realloc(event->locations, sizeof(char *) * (index + 1));
-            event->locations[index] = strdup(value);
-        } else if (strcmp(key, "g") == 0) {
-            event->geohashes = realloc(event->geohashes, sizeof(char *) * (index + 1));
-            event->geohashes[index] = strdup(value);
-        } else if (strcmp(key, "p") == 0 && is_valid_hex(value)) {
-            event->participants = realloc(event->participants, sizeof(Participant) * (index + 1));
-            event->participants[index].pub_key = strdup(value);
-            if (json_array_size(tag) > 2) {
-                event->participants[index].relay = strdup(json_string_value(json_array_get(tag, 2)));
-                if (json_array_size(tag) > 3) {
-                    event->participants[index].role = strdup(json_string_value(json_array_get(tag, 3)));
-                }
-            }
-        } else if (strcmp(key, "r") == 0) {
-            event->references = realloc(event->references, sizeof(char *) * (index + 1));
-            event->references[index] = strdup(value);
-        } else if (strcmp(key, "t") == 0) {
-            event->hashtags = realloc(event->hashtags, sizeof(char *) * (index + 1));
-            event->hashtags[index] = strdup(value);
+            participant_idx++;
+        } else if (strcmp(key, "r") == 0 && event->references) {
+            event->references[reference_idx++] = strdup(value);
+        } else if (strcmp(key, "t") == 0 && event->hashtags) {
+            event->hashtags[hashtag_idx++] = strdup(value);
         } else if (strcmp(key, "start_tzid") == 0) {
             event->start_tzid = strdup(value);
         } else if (strcmp(key, "end_tzid") == 0) {
@@ -89,63 +160,127 @@ CalendarEvent *parse_calendar_event(const char *event_json) {
         }
     }
 
-    json_decref(root);
+    nostr_event_free(ev);
     return event;
 }
 
 char *calendar_event_to_json(CalendarEvent *event) {
-    json_t *root = json_object();
-    json_t *tags = json_array();
+    if (!event) return NULL;
 
-    json_object_set_new(root, "kind", json_integer(event->kind));
-    json_object_set_new(root, "tags", tags);
+    /* Build NostrEvent with tags */
+    NostrEvent *ev = nostr_event_new();
+    if (!ev) return NULL;
 
-    json_array_append_new(tags, json_pack("[s, s]", "d", event->identifier));
-    json_array_append_new(tags, json_pack("[s, s]", "title", event->title));
+    /* Set kind based on event type */
+    nostr_event_set_kind(ev, (int)event->kind);
+
+    /* Build tags array */
+    NostrTags *tags = nostr_tags_new(0);
+    if (!tags) {
+        nostr_event_free(ev);
+        return NULL;
+    }
+
+    /* d tag (identifier) */
+    if (event->identifier) {
+        NostrTag *t = nostr_tag_new("d", event->identifier, NULL);
+        if (t) nostr_tags_append(tags, t);
+    }
+
+    /* title tag */
+    if (event->title) {
+        NostrTag *t = nostr_tag_new("title", event->title, NULL);
+        if (t) nostr_tags_append(tags, t);
+    }
+
+    /* image tag */
     if (event->image) {
-        json_array_append_new(tags, json_pack("[s, s]", "image", event->image));
+        NostrTag *t = nostr_tag_new("image", event->image, NULL);
+        if (t) nostr_tags_append(tags, t);
     }
-    if (event->kind == TIME_BASED) {
-        json_array_append_new(tags, json_pack("[s, s]", "start", time(NULL), event->start));
-        if (event->end != 0) {
-            json_array_append_new(tags, json_pack("[s, s]", "end", time(NULL), event->end));
+
+    /* start tag */
+    if (event->start != 0) {
+        char buf[32];
+        if (event->kind == TIME_BASED) {
+            snprintf(buf, sizeof(buf), "%lld", (long long)event->start);
+        } else {
+            strftime(buf, sizeof(buf), DATE_FORMAT, localtime(&event->start));
         }
-    } else if (event->kind == DATE_BASED) {
-        char start_str[11];
-        strftime(start_str, sizeof(start_str), DATE_FORMAT, localtime(&event->start));
-        json_array_append_new(tags, json_pack("[s, s]", "start", start_str));
-        if (event->end != 0) {
-            char end_str[11];
-            strftime(end_str, sizeof(end_str), DATE_FORMAT, localtime(&event->end));
-            json_array_append_new(tags, json_pack("[s, s]", "end", end_str));
+        NostrTag *t = nostr_tag_new("start", buf, NULL);
+        if (t) nostr_tags_append(tags, t);
+    }
+
+    /* end tag */
+    if (event->end != 0) {
+        char buf[32];
+        if (event->kind == TIME_BASED) {
+            snprintf(buf, sizeof(buf), "%lld", (long long)event->end);
+        } else {
+            strftime(buf, sizeof(buf), DATE_FORMAT, localtime(&event->end));
+        }
+        NostrTag *t = nostr_tag_new("end", buf, NULL);
+        if (t) nostr_tags_append(tags, t);
+    }
+
+    /* location tags */
+    for (size_t i = 0; event->locations && event->locations[i]; i++) {
+        NostrTag *t = nostr_tag_new("location", event->locations[i], NULL);
+        if (t) nostr_tags_append(tags, t);
+    }
+
+    /* geohash (g) tags */
+    for (size_t i = 0; event->geohashes && event->geohashes[i]; i++) {
+        NostrTag *t = nostr_tag_new("g", event->geohashes[i], NULL);
+        if (t) nostr_tags_append(tags, t);
+    }
+
+    /* participant (p) tags */
+    for (size_t i = 0; event->participants && event->participants[i].pub_key; i++) {
+        Participant *p = &event->participants[i];
+        NostrTag *t = nostr_tag_new("p", p->pub_key, NULL);
+        if (t) {
+            if (p->relay) {
+                nostr_tag_append(t, p->relay);
+            }
+            if (p->role) {
+                if (!p->relay) nostr_tag_append(t, ""); /* placeholder for relay */
+                nostr_tag_append(t, p->role);
+            }
+            nostr_tags_append(tags, t);
         }
     }
 
-    for (int i = 0; event->locations && event->locations[i]; i++) {
-        json_array_append_new(tags, json_pack("[s, s]", "location", event->locations[i]));
-    }
-    for (int i = 0; event->geohashes && event->geohashes[i]; i++) {
-        json_array_append_new(tags, json_pack("[s, s]", "g", event->geohashes[i]));
-    }
-    for (int i = 0; event->participants && event->participants[i].pub_key; i++) {
-        json_t *p = json_pack("[s, s]", "p", event->participants[i].pub_key);
-        if (event->participants[i].relay) {
-            json_array_append_new(p, json_string(event->participants[i].relay));
-        }
-        if (event->participants[i].role) {
-            json_array_append_new(p, json_string(event->participants[i].role));
-        }
-        json_array_append(tags, p);
-    }
-    for (int i = 0; event->references && event->references[i]; i++) {
-        json_array_append_new(tags, json_pack("[s, s]", "r", event->references[i]));
-    }
-    for (int i = 0; event->hashtags && event->hashtags[i]; i++) {
-        json_array_append_new(tags, json_pack("[s, s]", "t", event->hashtags[i]));
+    /* reference (r) tags */
+    for (size_t i = 0; event->references && event->references[i]; i++) {
+        NostrTag *t = nostr_tag_new("r", event->references[i], NULL);
+        if (t) nostr_tags_append(tags, t);
     }
 
-    char *json_str = json_dumps(root, 0);
-    json_decref(root);
+    /* hashtag (t) tags */
+    for (size_t i = 0; event->hashtags && event->hashtags[i]; i++) {
+        NostrTag *t = nostr_tag_new("t", event->hashtags[i], NULL);
+        if (t) nostr_tags_append(tags, t);
+    }
+
+    /* start_tzid tag */
+    if (event->start_tzid) {
+        NostrTag *t = nostr_tag_new("start_tzid", event->start_tzid, NULL);
+        if (t) nostr_tags_append(tags, t);
+    }
+
+    /* end_tzid tag */
+    if (event->end_tzid) {
+        NostrTag *t = nostr_tag_new("end_tzid", event->end_tzid, NULL);
+        if (t) nostr_tags_append(tags, t);
+    }
+
+    nostr_event_set_tags(ev, tags);
+
+    /* Serialize event to JSON */
+    char *json_str = nostr_event_serialize(ev);
+    nostr_event_free(ev);
+
     return json_str;
 }
 
@@ -154,25 +289,25 @@ void free_calendar_event(CalendarEvent *event) {
         free(event->identifier);
         free(event->title);
         free(event->image);
-        for (int i = 0; event->locations && event->locations[i]; i++) {
+        for (size_t i = 0; event->locations && event->locations[i]; i++) {
             free(event->locations[i]);
         }
         free(event->locations);
-        for (int i = 0; event->geohashes && event->geohashes[i]; i++) {
+        for (size_t i = 0; event->geohashes && event->geohashes[i]; i++) {
             free(event->geohashes[i]);
         }
         free(event->geohashes);
-        for (int i = 0; event->participants && event->participants[i].pub_key; i++) {
+        for (size_t i = 0; event->participants && event->participants[i].pub_key; i++) {
             free(event->participants[i].pub_key);
             free(event->participants[i].relay);
             free(event->participants[i].role);
         }
         free(event->participants);
-        for (int i = 0; event->references && event->references[i]; i++) {
+        for (size_t i = 0; event->references && event->references[i]; i++) {
             free(event->references[i]);
         }
         free(event->references);
-        for (int i = 0; event->hashtags && event->hashtags[i]; i++) {
+        for (size_t i = 0; event->hashtags && event->hashtags[i]; i++) {
             free(event->hashtags[i]);
         }
         free(event->hashtags);

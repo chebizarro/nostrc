@@ -1,73 +1,18 @@
+/**
+ * NIP-5F Socket Connection Handler
+ *
+ * Migrated from jansson to NostrJsonInterface (nostrc-3nj)
+ */
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
 #include "sock_internal.h"
-#include <jansson.h>
 #include <glib.h>
 #include <glib/gstdio.h>
 #include "nostr/nip5f/nip5f.h"
 #include "sock_conn.h"
 #include "json.h"
-
-/* Minimal raw extractor for nested value: returns newly-allocated raw JSON value for
- * object_key.entry_key. Handles string, object, array, numbers, true/false/null. */
-static char *json_get_raw_at(const char *json, const char *object_key, const char *entry_key) {
-  if (!json || !object_key || !entry_key) return NULL;
-  // Find object_key occurrence
-  char keybuf[128]; snprintf(keybuf, sizeof(keybuf), "\"%s\"", object_key);
-  const char *p = strstr(json, keybuf);
-  if (!p) return NULL;
-  p = strchr(p, ':'); if (!p) return NULL; p++;
-  while (*p==' '||*p=='\n'||*p=='\t'||*p=='\r') p++;
-  if (*p!='{') return NULL;
-  // Now in object; find entry_key at this level only (simple scan)
-  const char *obj_start = p; int depth=0; int in_str=0; int esc=0;
-  const char *found = NULL;
-  char entbuf[128]; snprintf(entbuf, sizeof(entbuf), "\"%s\"", entry_key);
-  while (*p) {
-    char c = *p;
-    if (in_str) {
-      if (!esc && c=='\\') { esc=1; p++; continue; }
-      if (!esc && c=='\"') { in_str=0; }
-      esc=0; p++; continue;
-    }
-    if (c=='\"') { in_str=1; p++; continue; }
-    if (c=='{') { depth++; p++; continue; }
-    if (c=='}') { depth--; if (depth==0) break; p++; continue; }
-    if (depth==1) {
-      // Potential key start
-      if (*p=='\"') {
-        if (strncmp(p, entbuf, strlen(entbuf))==0) { found = p; break; }
-      }
-    }
-    p++;
-  }
-  if (!found) return NULL;
-  // Move to ':' then value start
-  const char *q = strchr(found, ':'); if (!q) return NULL; q++;
-  while (*q==' '||*q=='\n'||*q=='\t'||*q=='\r') q++;
-  if (!*q) return NULL;
-  const char *start = q;
-  if (*q=='\"') {
-    // string
-    q++; int esc2=0; while (*q) { if (!esc2 && *q=='\"') { q++; break; } if (!esc2 && *q=='\\') { esc2=1; q++; continue; } esc2=0; q++; }
-  } else if (*q=='{' || *q=='[') {
-    char open=*q, close=(open=='{'?'}':']'); int d=0; int ins=0; int es=0; while (*q) {
-      char ch=*q++;
-      if (ins) { if (!es && ch=='\\') { es=1; continue; } if (!es && ch=='\"') { ins=0; } es=0; continue; }
-      if (ch=='\"') { ins=1; continue; }
-      if (ch==open) d++; else if (ch==close) { d--; if (d==0) break; }
-    }
-  } else {
-    // literal until ',' or '}' at depth of params object
-    while (*q && *q!=',' && *q!='}') q++;
-  }
-  size_t len = (size_t)(q - start);
-  char *out = (char*)malloc(len+1); if (!out) return NULL;
-  memcpy(out, start, len); out[len]='\0';
-  return out;
-}
 
 /* Optional logging: enable by setting NOSTR_SIGNER_LOG=1 */
 static int signer_log_enabled(void) {
@@ -181,7 +126,8 @@ void *nip5f_conn_thread(void *arg) {
         if (err) { if (signer_log_enabled()) fprintf(stderr, "[nip5f] -> %s\n", err); nip5f_write_frame(fd, err, strlen(err)); free(err); }
       }
     } else if (strcmp(method, "sign_event") == 0) {
-      char *ev = NULL; char *pub = NULL; char *appid = NULL; int ok1=-1, ok2=-1;
+      char *ev = NULL; char *pub = NULL; char *appid = NULL; int ok1=-1;
+      /* Try nested accessor: params.event */
       ok1 = nostr_json_get_string_at(req, "params", "event", &ev);
       if (signer_log_enabled()) {
         int elen = ev ? (int) (strlen(ev) > 80 ? 80 : strlen(ev)) : 0;
@@ -189,21 +135,16 @@ void *nip5f_conn_thread(void *arg) {
         if (ev) fprintf(stderr, "[nip5f] sign_event params: ev_first_char=%c\n", ev[0]);
       }
       if (ok1 != 0 || !ev) {
-        // Fallback A: extract raw via simple scanner
-        char *raw = json_get_raw_at(req, "params", "event");
-        if (raw) { ev = raw; ok1 = 0; if (signer_log_enabled()) fprintf(stderr, "[nip5f] sign_event params: recovered raw event (scan, first=%c)\n", ev[0]); }
-      }
-      if (ok1 != 0 || !ev) {
-        // Fallback B: robust Jansson parse to get params.event and dump raw
-        json_error_t jerr; json_t *root = json_loads(req, 0, &jerr);
-        if (root) {
-          json_t *params = json_object_get(root, "params");
-          json_t *evnode = params ? json_object_get(params, "event") : NULL;
-          if (evnode) {
-            char *dump = json_dumps(evnode, JSON_COMPACT);
-            if (dump) { ev = strdup(dump); free(dump); ok1 = 0; if (signer_log_enabled()) fprintf(stderr, "[nip5f] sign_event params: recovered raw event (jansson)\n"); }
+        /* Fallback: extract raw JSON for params.event using nostr_json_get_raw on params first */
+        char *params_raw = NULL;
+        if (nostr_json_get_raw(req, "params", &params_raw) == 0 && params_raw) {
+          char *event_raw = NULL;
+          if (nostr_json_get_raw(params_raw, "event", &event_raw) == 0 && event_raw) {
+            ev = event_raw;
+            ok1 = 0;
+            if (signer_log_enabled()) fprintf(stderr, "[nip5f] sign_event params: recovered raw event (nostr_json_get_raw, first=%c)\n", ev[0]);
           }
-          json_decref(root);
+          free(params_raw);
         }
       }
       (void)nostr_json_get_string_at(req, "params", "pubkey", &pub); // optional
@@ -224,12 +165,14 @@ void *nip5f_conn_thread(void *arg) {
             char *err = build_error_json(id, 11, "approval required");
             if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
             if (ev) free(ev); if (pub) free(pub); if (appid) free(appid);
+            free(id); free(method); free(req);
             continue;
           }
           if (!acl_decision) {
             char *err = build_error_json(id, 13, "ACL deny");
             if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
             if (ev) free(ev); if (pub) free(pub); if (appid) free(appid);
+            free(id); free(method); free(req);
             continue;
           }
         }
@@ -253,7 +196,7 @@ void *nip5f_conn_thread(void *arg) {
           if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
         }
       }
-      if (ev) free(ev); if (pub) free(pub); if (appid) free(appid); (void)ok2;
+      if (ev) free(ev); if (pub) free(pub); if (appid) free(appid);
     } else if (strcmp(method, "nip44_encrypt") == 0) {
       char *peer = NULL; char *pt = NULL;
       int okp = nostr_json_get_string_at(req, "params", "peer_pub", &peer);

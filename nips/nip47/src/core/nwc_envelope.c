@@ -1,4 +1,8 @@
-/* NIP-47 envelope build/parse helpers */
+/**
+ * NIP-47 envelope build/parse helpers
+ *
+ * Migrated from jansson to NostrJsonInterface (nostrc-3nj)
+ */
 #include "nostr/nip47/nwc_envelope.h"
 #include "nostr/nip47/nwc.h"
 #include "nostr-event.h"
@@ -9,7 +13,6 @@
 #include <string.h>
 #include <time.h>
 #include <stdint.h>
-#include <jansson.h>
 
 static const char *enc_label(NostrNwcEncryption enc) {
   switch (enc) {
@@ -172,22 +175,10 @@ int nostr_nwc_request_parse(const char *event_json,
 
   if (nostr_json_get_string(event_json, "content", &content) != 0 || !content) { nostr_event_free(ev); goto out; }
   if (nostr_json_get_string(content, "method", &method) != 0 || !method) { nostr_event_free(ev); goto out; }
-  /* params may be missing; default to {}. If present and not a string, dump JSON compact */
-  {
-    json_error_t jerr; json_t *root = json_loads(content, 0, &jerr);
-    if (root && json_is_object(root)) {
-      json_t *pv = json_object_get(root, "params");
-      if (pv) {
-        if (json_is_string(pv)) {
-          const char *s = json_string_value(pv);
-          if (s) params_json = strdup(s);
-        } else {
-          params_json = json_dumps(pv, JSON_COMPACT);
-        }
-      }
-      json_decref(root);
-    }
-    if (!params_json) params_json = strdup("{}");
+
+  /* Extract params using nostr_json_get_raw - returns raw JSON for any type */
+  if (nostr_json_get_raw(content, "params", &params_json) != 0 || !params_json) {
+    params_json = strdup("{}");
   }
 
   /* parse tags for p and encryption */
@@ -243,23 +234,19 @@ int nostr_nwc_response_parse(const char *event_json,
   if (nostr_event_get_kind(ev) != NOSTR_EVENT_KIND_NWC_RESPONSE) { nostr_event_free(ev); goto out; }
 
   if (nostr_json_get_string(event_json, "content", &content) != 0 || !content) { nostr_event_free(ev); goto out; }
-  /* Either error object or result pair. Use JSON parsing to extract. */
-  {
-    json_error_t jerr; json_t *root = json_loads(content, 0, &jerr);
-    if (!root) { nostr_event_free(ev); goto out; }
-    json_t *err = json_object_get(root, "error");
-    if (err && json_is_object(err)) {
-      json_t *code = json_object_get(err, "code");
-      json_t *msg = json_object_get(err, "message");
-      if (json_is_string(code)) { const char *s = json_string_value(code); if (s) ecode = strdup(s); }
-      if (json_is_string(msg)) { const char *s = json_string_value(msg); if (s) emsg = strdup(s); }
-    } else {
-      json_t *rt = json_object_get(root, "result_type");
-      if (json_is_string(rt)) { const char *s = json_string_value(rt); if (s) rtype = strdup(s); }
-      json_t *rv = json_object_get(root, "result");
-      if (rv) rjson = json_dumps(rv, JSON_COMPACT);
-    }
-    json_decref(root);
+
+  /* Check for error object first using nested accessor */
+  char *error_raw = NULL;
+  if (nostr_json_get_raw(content, "error", &error_raw) == 0 && error_raw) {
+    /* Parse error object fields */
+    nostr_json_get_string(error_raw, "code", &ecode);
+    nostr_json_get_string(error_raw, "message", &emsg);
+    free(error_raw);
+  } else {
+    /* No error - extract result fields */
+    nostr_json_get_string(content, "result_type", &rtype);
+    /* Get raw result value (could be object, array, string, number, null) */
+    nostr_json_get_raw(content, "result", &rjson);
   }
 
   /* parse tags: e (request id), p (client pub), encryption */
