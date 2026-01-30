@@ -359,6 +359,38 @@ static void test_thread_info_clear_null_safe(void) {
     assert(info.reply_id == NULL);
 }
 
+/* Test NIP-10: When only root marker exists (no reply marker), this is a
+ * direct reply to the root event. Reply_id should equal root_id.
+ * This matches the exact format from the bug report. */
+static void test_root_only_marker_direct_reply(void) {
+    NostrEvent *ev = nostr_event_new();
+    assert(ev);
+
+    /* Create event with ONLY "root" marker e-tag and a "mention" p-tag
+     * This is a direct reply to the root event per NIP-10 */
+    NostrTag *root = nostr_tag_new("e", "fb7f47f41033757003c892045e58bd2cf3bcb0ec7a171ae3867203d41f4a0ed0", "wss://nostr.mom", "root", NULL);
+    NostrTag *mention_p = nostr_tag_new("p", "1bc70a0148b3f316da33fe3c89f23e3e71ac4ff998027ec712b905cd24f6a411", "", "mention", NULL);
+    NostrTags *tags = nostr_tags_new(2, root, mention_p);
+    nostr_event_set_tags(ev, tags);
+
+    NostrNip10ThreadInfo info;
+    memset(&info, 0, sizeof(info));
+
+    int rc = nostr_nip10_parse_thread_from_event(ev, &info);
+    assert(rc == 0);
+
+    /* Both root_id and reply_id should be set to the root event */
+    assert(info.root_id != NULL);
+    assert(info.reply_id != NULL);
+    assert(strcmp(info.root_id, "fb7f47f41033757003c892045e58bd2cf3bcb0ec7a171ae3867203d41f4a0ed0") == 0);
+    /* Per NIP-10: when there's only root and no reply marker, reply_id = root_id */
+    assert(strcmp(info.reply_id, "fb7f47f41033757003c892045e58bd2cf3bcb0ec7a171ae3867203d41f4a0ed0") == 0);
+
+    nostr_nip10_thread_info_clear(&info);
+    nostr_event_free(ev);
+    printf("test_root_only_marker_direct_reply: ok\n");
+}
+
 // Extend main to run edge cases
 int main_edge(void) {
     test_mixed_markers_ordering();
@@ -370,6 +402,8 @@ int main_edge(void) {
     test_thread_info_parse_with_markers();
     test_thread_info_parse_positional_fallback();
     test_thread_info_clear_null_safe();
+    // nostrc-mef: Root-only marker with no reply marker should set reply_id = root_id
+    test_root_only_marker_direct_reply();
     printf("edge ok\n");
     return 0;
 }
