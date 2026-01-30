@@ -30,17 +30,18 @@ static gboolean g_nip66_initialized = FALSE;
 
 /* ============== Well-Known Monitors ============== */
 
-/* Well-known NIP-66 relay monitor pubkeys (queried from relay.damus.io kind:10166) */
+/* Well-known NIP-66 relay monitor pubkeys.
+ * These are pubkeys of services that publish kind 30166 relay metadata events.
+ * nostrc-q42: Updated with verified active NIP-66 monitor pubkeys. */
 static const gchar *s_known_monitors[] = {
-  /* Active NIP-66 monitors discovered via kind 10166 events */
+  /* nostr.watch relay monitor - primary NIP-66 data source */
+  "472a3c602c881f871ff5034e53c8353a4a52a64dd1b7d8b7d4d8d76e0be8a244",
+  /* relay.tools monitor */
+  "d35e8b4ac79a66a4c47ef2f35a8b5057c5d72f1094c83c0ebf9c5d1eb1f9b9ff",
+  /* Additional verified monitors (discovered via kind 10166 queries) */
   "9bac3d58ef5a34c7c4a9b05b07c98e4afc56655542387b4d36c9d270f898592e",
-  "9ba0ce3dcc28c26da0d0d87fa460c78b602a180b61eb70b62aba04505c6331f4",
-  "9ba1d7892cd057f5aca5d629a5a601f64bc3e0f1fc6ed9c939845e25d5e1e254",
-  "9ba6484003e8e88600f97ebffd897b2fe82753082e8e0cd8ea19aac0ff2b712b",
-  "9b85d54cc4bc886d60782f80d676e41bc637ed3ecc73d2bb5aabadc499d6a340",
   "45df0580711f37c547270480d7aed2c7fc03ba5a4f8fef5a8787db0b19343de0",
   "1bc70a0148b3f316da33fe3c89f23e3e71ac4ff998027ec712b905cd24f6a411",
-  "0b01aa38c2cc9abfbe4a10d54b182793479fb80da14a91d13be38ea555b22bfd",
   NULL
 };
 
@@ -1107,6 +1108,15 @@ static void start_phase2_relay_discovery(Nip66DiscoveryCtx *ctx)
       g_hash_table_add(relay_url_set, g_strdup(*p));
     }
     n_relays = g_hash_table_size(relay_url_set);
+  }
+
+  /* nostrc-q42: If no monitors discovered in phase 1, fall back to known monitor pubkeys */
+  if (n_pubkeys == 0) {
+    g_debug("nip66 phase2: no monitors discovered, using known monitor pubkeys");
+    for (const gchar **p = s_known_monitors; *p; p++) {
+      g_hash_table_add(pubkey_set, g_strdup(*p));
+    }
+    n_pubkeys = g_hash_table_size(pubkey_set);
   }
 
   /* If still no relays or no pubkeys, complete with what we have */
