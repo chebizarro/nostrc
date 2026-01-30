@@ -391,6 +391,48 @@ static void test_root_only_marker_direct_reply(void) {
     printf("test_root_only_marker_direct_reply: ok\n");
 }
 
+/* Test 5-element e-tag with pubkey at index 4 (NIP-10 extension).
+ * Format: ["e", event_id, relay, marker, pubkey]
+ * The pubkey at index 4 should be ignored, marker at index 3 should be parsed. */
+static void test_five_element_tag_with_pubkey(void) {
+    NostrEvent *ev = nostr_event_new();
+    assert(ev);
+
+    /* Create 5-element tag with pubkey at index 4 (like Primal creates) */
+    NostrTag *root = nostr_tag_new("e",
+        "7e65ff6b9fd4e777ebcfcf1ad9f8ce6480889cf29234dc6e86bb06c169b18238",
+        "wss://relay.primal.net/",
+        "root",
+        "fd0266485777bd73e97c7c37f520c83c82e362fe4c25a6be93f3380083d4646b",
+        NULL);
+    NostrTags *tags = nostr_tags_new(1, root);
+    nostr_event_set_tags(ev, tags);
+
+    /* Verify tag has 5 elements */
+    NostrTag *t = nostr_tags_get(tags, 0);
+    assert(nostr_tag_size(t) == 5);
+    assert(strcmp(nostr_tag_get(t, 3), "root") == 0);
+    assert(strcmp(nostr_tag_get(t, 4), "fd0266485777bd73e97c7c37f520c83c82e362fe4c25a6be93f3380083d4646b") == 0);
+
+    /* Parse thread info - should correctly extract root marker */
+    NostrNip10ThreadInfo info;
+    memset(&info, 0, sizeof(info));
+
+    int rc = nostr_nip10_parse_thread_from_event(ev, &info);
+    assert(rc == 0);
+
+    /* Both root_id and reply_id should be set to the event ID */
+    assert(info.root_id != NULL);
+    assert(info.reply_id != NULL);
+    assert(strcmp(info.root_id, "7e65ff6b9fd4e777ebcfcf1ad9f8ce6480889cf29234dc6e86bb06c169b18238") == 0);
+    /* Per NIP-10: when there's only root and no reply marker, reply_id = root_id */
+    assert(strcmp(info.reply_id, "7e65ff6b9fd4e777ebcfcf1ad9f8ce6480889cf29234dc6e86bb06c169b18238") == 0);
+
+    nostr_nip10_thread_info_clear(&info);
+    nostr_event_free(ev);
+    printf("test_five_element_tag_with_pubkey: ok\n");
+}
+
 // Extend main to run edge cases
 int main_edge(void) {
     test_mixed_markers_ordering();
@@ -404,6 +446,8 @@ int main_edge(void) {
     test_thread_info_clear_null_safe();
     // nostrc-mef: Root-only marker with no reply marker should set reply_id = root_id
     test_root_only_marker_direct_reply();
+    // NIP-10 5-element tag with pubkey at index 4
+    test_five_element_tag_with_pubkey();
     printf("edge ok\n");
     return 0;
 }
