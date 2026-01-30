@@ -551,6 +551,11 @@ static void parse_nip10_tags(NostrEvent *evt, char **root_id, char **reply_id) {
   if (!*reply_id && *root_id) {
     *reply_id = g_strdup(*root_id);
   }
+
+  /* Debug logging to trace threading issues */
+  g_debug("[NIP10-MODEL] Final result - root: %s, reply: %s",
+          *root_id ? *root_id : "(null)",
+          *reply_id ? *reply_id : "(null)");
 }
 
 /* nostrc-yi2: Get current time in milliseconds */
