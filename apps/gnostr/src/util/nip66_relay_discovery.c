@@ -982,6 +982,7 @@ const gchar *gnostr_nip66_get_region_for_country(const gchar *country_code)
 
 #ifndef GNOSTR_NIP66_TEST_ONLY
 
+/* Two-phase discovery context */
 typedef struct {
   GnostrNip66DiscoveryCallback callback;
   gpointer user_data;
@@ -989,7 +990,16 @@ typedef struct {
   GPtrArray *relays_found;
   GPtrArray *monitors_found;
   gint pending_queries;
+  gboolean phase2_started;
 } Nip66DiscoveryCtx;
+
+static GnostrSimplePool *g_nip66_pool = NULL;
+
+static GnostrSimplePool *get_nip66_pool(void)
+{
+  if (!g_nip66_pool) g_nip66_pool = gnostr_simple_pool_new();
+  return g_nip66_pool;
+}
 
 static void nip66_discovery_ctx_free(Nip66DiscoveryCtx *ctx)
 {
@@ -1000,7 +1010,11 @@ static void nip66_discovery_ctx_free(Nip66DiscoveryCtx *ctx)
   g_free(ctx);
 }
 
-static void on_nip66_query_done(GObject *source, GAsyncResult *res, gpointer user_data)
+static void on_phase2_relay_meta_done(GObject *source, GAsyncResult *res, gpointer user_data);
+static void start_phase2_relay_discovery(Nip66DiscoveryCtx *ctx);
+
+/* Phase 1 callback: collect monitors, then start phase 2 */
+static void on_phase1_monitors_done(GObject *source, GAsyncResult *res, gpointer user_data)
 {
   Nip66DiscoveryCtx *ctx = (Nip66DiscoveryCtx*)user_data;
   if (!ctx) return;
@@ -1012,27 +1026,22 @@ static void on_nip66_query_done(GObject *source, GAsyncResult *res, gpointer use
 
   if (err) {
     if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_debug("nip66: query failed: %s", err->message);
+      g_debug("nip66 phase1: query failed: %s", err->message);
     }
     g_error_free(err);
   } else if (results && results->len > 0) {
+    g_debug("nip66 phase1: received %u events", results->len);
     for (guint i = 0; i < results->len; i++) {
       const gchar *json = g_ptr_array_index(results, i);
 
-      /* Try parsing as relay metadata first */
-      GnostrNip66RelayMeta *meta = gnostr_nip66_parse_relay_meta(json);
-      if (meta) {
-        g_ptr_array_add(ctx->relays_found, meta);
-        /* Also add to cache (cache takes ownership of a copy) */
-        GnostrNip66RelayMeta *meta_copy = gnostr_nip66_parse_relay_meta(json);
-        if (meta_copy) gnostr_nip66_cache_add_relay(meta_copy);
-        continue;
-      }
-
-      /* Try parsing as monitor */
+      /* Parse as monitor (kind 10166) */
       GnostrNip66RelayMonitor *monitor = gnostr_nip66_parse_relay_monitor(json);
       if (monitor) {
+        g_debug("nip66 phase1: found monitor %s with %zu relay hints",
+                monitor->pubkey_hex ? monitor->pubkey_hex : "(null)",
+                monitor->relay_hints_count);
         g_ptr_array_add(ctx->monitors_found, monitor);
+        /* Cache it */
         GnostrNip66RelayMonitor *monitor_copy = gnostr_nip66_parse_relay_monitor(json);
         if (monitor_copy) gnostr_nip66_cache_add_monitor(monitor_copy);
       }
@@ -1041,14 +1050,166 @@ static void on_nip66_query_done(GObject *source, GAsyncResult *res, gpointer use
 
   if (results) g_ptr_array_unref(results);
 
-  /* Check if all queries are done */
-  if (ctx->pending_queries <= 0) {
+  /* Phase 1 complete - start phase 2 */
+  if (ctx->pending_queries <= 0 && !ctx->phase2_started) {
+    ctx->phase2_started = TRUE;
+    start_phase2_relay_discovery(ctx);
+  }
+}
+
+/* Phase 2: Query relay metadata from each monitor's relay hints */
+static void start_phase2_relay_discovery(Nip66DiscoveryCtx *ctx)
+{
+  if (!ctx) return;
+
+  /* Check if cancelled */
+  if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) {
     if (ctx->callback) {
       ctx->callback(ctx->relays_found, ctx->monitors_found, NULL, ctx->user_data);
+      ctx->relays_found = NULL;
+      ctx->monitors_found = NULL;
     }
-    /* Don't free arrays - callback takes ownership */
-    ctx->relays_found = NULL;
-    ctx->monitors_found = NULL;
+    nip66_discovery_ctx_free(ctx);
+    return;
+  }
+
+  /* Collect unique relay URLs and monitor pubkeys from discovered monitors */
+  GHashTable *relay_url_set = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  GHashTable *pubkey_set = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+  for (guint i = 0; i < ctx->monitors_found->len; i++) {
+    GnostrNip66RelayMonitor *monitor = g_ptr_array_index(ctx->monitors_found, i);
+    if (!monitor) continue;
+
+    /* Add monitor pubkey */
+    if (monitor->pubkey_hex && *monitor->pubkey_hex) {
+      g_hash_table_add(pubkey_set, g_strdup(monitor->pubkey_hex));
+    }
+
+    /* Add relay hints */
+    for (gsize j = 0; j < monitor->relay_hints_count; j++) {
+      if (monitor->relay_hints[j] && *monitor->relay_hints[j]) {
+        g_hash_table_add(relay_url_set, g_strdup(monitor->relay_hints[j]));
+      }
+    }
+  }
+
+  guint n_relays = g_hash_table_size(relay_url_set);
+  guint n_pubkeys = g_hash_table_size(pubkey_set);
+
+  g_debug("nip66 phase2: %u monitors, %u relay hints, %u unique pubkeys",
+          ctx->monitors_found->len, n_relays, n_pubkeys);
+
+  /* If no relay hints found, fall back to known relay URLs */
+  if (n_relays == 0) {
+    g_debug("nip66 phase2: no relay hints, using known monitor relays");
+    for (const gchar **p = s_known_monitor_relays; *p; p++) {
+      g_hash_table_add(relay_url_set, g_strdup(*p));
+    }
+    n_relays = g_hash_table_size(relay_url_set);
+  }
+
+  /* If still no relays or no pubkeys, complete with what we have */
+  if (n_relays == 0 || n_pubkeys == 0) {
+    g_debug("nip66 phase2: no relays or pubkeys, completing");
+    g_hash_table_destroy(relay_url_set);
+    g_hash_table_destroy(pubkey_set);
+    if (ctx->callback) {
+      ctx->callback(ctx->relays_found, ctx->monitors_found, NULL, ctx->user_data);
+      ctx->relays_found = NULL;
+      ctx->monitors_found = NULL;
+    }
+    nip66_discovery_ctx_free(ctx);
+    return;
+  }
+
+  /* Build URL array */
+  const gchar **urls = g_new0(const gchar*, n_relays + 1);
+  GHashTableIter iter;
+  gpointer key;
+  guint idx = 0;
+  g_hash_table_iter_init(&iter, relay_url_set);
+  while (g_hash_table_iter_next(&iter, &key, NULL)) {
+    urls[idx++] = (const gchar*)key;
+  }
+
+  /* Build pubkey array */
+  const gchar **pubkeys = g_new0(const gchar*, n_pubkeys + 1);
+  idx = 0;
+  g_hash_table_iter_init(&iter, pubkey_set);
+  while (g_hash_table_iter_next(&iter, &key, NULL)) {
+    pubkeys[idx++] = (const gchar*)key;
+  }
+
+  /* Build filter for relay metadata from discovered monitors */
+  NostrFilter *filter = nostr_filter_new();
+  int kinds[1] = { GNOSTR_NIP66_KIND_RELAY_META };
+  nostr_filter_set_kinds(filter, kinds, 1);
+  nostr_filter_set_authors(filter, pubkeys, n_pubkeys);
+  nostr_filter_set_limit(filter, 500);
+
+  ctx->pending_queries = 1;
+
+  gnostr_simple_pool_query_single_async(
+    get_nip66_pool(),
+    urls,
+    n_relays,
+    filter,
+    ctx->cancellable,
+    on_phase2_relay_meta_done,
+    ctx
+  );
+
+  g_free(urls);
+  g_free(pubkeys);
+  g_hash_table_destroy(relay_url_set);
+  g_hash_table_destroy(pubkey_set);
+  nostr_filter_free(filter);
+}
+
+/* Phase 2 callback: collect relay metadata */
+static void on_phase2_relay_meta_done(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  Nip66DiscoveryCtx *ctx = (Nip66DiscoveryCtx*)user_data;
+  if (!ctx) return;
+
+  ctx->pending_queries--;
+
+  GError *err = NULL;
+  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &err);
+
+  if (err) {
+    if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_debug("nip66 phase2: query failed: %s", err->message);
+    }
+    g_error_free(err);
+  } else if (results && results->len > 0) {
+    g_debug("nip66 phase2: received %u relay metadata events", results->len);
+    for (guint i = 0; i < results->len; i++) {
+      const gchar *json = g_ptr_array_index(results, i);
+
+      /* Parse as relay metadata (kind 30166) */
+      GnostrNip66RelayMeta *meta = gnostr_nip66_parse_relay_meta(json);
+      if (meta) {
+        g_ptr_array_add(ctx->relays_found, meta);
+        /* Cache it */
+        GnostrNip66RelayMeta *meta_copy = gnostr_nip66_parse_relay_meta(json);
+        if (meta_copy) gnostr_nip66_cache_add_relay(meta_copy);
+      }
+    }
+  }
+
+  if (results) g_ptr_array_unref(results);
+
+  /* All done - invoke callback */
+  if (ctx->pending_queries <= 0) {
+    g_debug("nip66: discovery complete - %u relays, %u monitors",
+            ctx->relays_found->len, ctx->monitors_found->len);
+    if (ctx->callback) {
+      ctx->callback(ctx->relays_found, ctx->monitors_found, NULL, ctx->user_data);
+      ctx->relays_found = NULL;
+      ctx->monitors_found = NULL;
+    }
     nip66_discovery_ctx_free(ctx);
   }
 }
@@ -1065,16 +1226,17 @@ void gnostr_nip66_discover_relays_async(GnostrNip66DiscoveryCallback callback,
   ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
   ctx->relays_found = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_nip66_relay_meta_free);
   ctx->monitors_found = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_nip66_relay_monitor_free);
+  ctx->phase2_started = FALSE;
 
-  /* Get relay URLs to query */
+  /* Get relay URLs to query for monitors (phase 1) */
   GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
 
-  /* Add known monitor relays */
+  /* Add known monitor relays - these are relays likely to have kind 10166 events */
   for (const gchar **p = s_known_monitor_relays; *p; p++) {
     g_ptr_array_add(relay_urls, g_strdup(*p));
   }
 
-  /* Also add configured relays */
+  /* Also add user's configured relays */
   gnostr_load_relays_into(relay_urls);
 
   if (relay_urls->len == 0) {
@@ -1090,52 +1252,34 @@ void gnostr_nip66_discover_relays_async(GnostrNip66DiscoveryCallback callback,
   }
 
   /* Build URL array for pool */
-  const gchar **urls = g_new0(const gchar*, relay_urls->len);
+  const gchar **urls = g_new0(const gchar*, relay_urls->len + 1);
   for (guint i = 0; i < relay_urls->len; i++) {
     urls[i] = g_ptr_array_index(relay_urls, i);
   }
 
-  /* Build filters */
-  NostrFilter *meta_filter = nostr_filter_new();
-  int meta_kinds[1] = { GNOSTR_NIP66_KIND_RELAY_META };
-  nostr_filter_set_kinds(meta_filter, meta_kinds, 1);
-  nostr_filter_set_limit(meta_filter, 500);
+  g_debug("nip66 phase1: querying %u relays for kind 10166 monitors", relay_urls->len);
 
+  /* Phase 1: Query for monitor announcements (kind 10166) only
+   * These events tell us which monitors exist and where their data lives */
   NostrFilter *monitor_filter = nostr_filter_new();
   int monitor_kinds[1] = { GNOSTR_NIP66_KIND_RELAY_MONITOR };
   nostr_filter_set_kinds(monitor_filter, monitor_kinds, 1);
-  nostr_filter_set_limit(monitor_filter, 50);
+  nostr_filter_set_limit(monitor_filter, 100);
 
-  /* Use static pool */
-  static GnostrSimplePool *nip66_pool = NULL;
-  if (!nip66_pool) nip66_pool = gnostr_simple_pool_new();
-
-  /* Start queries */
-  ctx->pending_queries = 2;
+  ctx->pending_queries = 1;
 
   gnostr_simple_pool_query_single_async(
-    nip66_pool,
-    urls,
-    relay_urls->len,
-    meta_filter,
-    ctx->cancellable,
-    on_nip66_query_done,
-    ctx
-  );
-
-  gnostr_simple_pool_query_single_async(
-    nip66_pool,
+    get_nip66_pool(),
     urls,
     relay_urls->len,
     monitor_filter,
     ctx->cancellable,
-    on_nip66_query_done,
+    on_phase1_monitors_done,
     ctx
   );
 
   g_free(urls);
   g_ptr_array_unref(relay_urls);
-  nostr_filter_free(meta_filter);
   nostr_filter_free(monitor_filter);
 }
 
@@ -1147,7 +1291,7 @@ void gnostr_nip66_discover_from_monitors_async(const gchar **monitor_pubkeys,
 {
   ensure_cache_init();
 
-  /* If no specific monitors, use known ones */
+  /* If no specific monitors, use full two-phase discovery */
   if (!monitor_pubkeys || n_pubkeys == 0) {
     gnostr_nip66_discover_relays_async(callback, user_data, cancellable);
     return;
@@ -1159,6 +1303,7 @@ void gnostr_nip66_discover_from_monitors_async(const gchar **monitor_pubkeys,
   ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
   ctx->relays_found = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_nip66_relay_meta_free);
   ctx->monitors_found = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_nip66_relay_monitor_free);
+  ctx->phase2_started = TRUE;  /* Skip phase 1 since we already have monitor pubkeys */
 
   /* Get relay URLs */
   GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
@@ -1178,7 +1323,7 @@ void gnostr_nip66_discover_from_monitors_async(const gchar **monitor_pubkeys,
     return;
   }
 
-  const gchar **urls = g_new0(const gchar*, relay_urls->len);
+  const gchar **urls = g_new0(const gchar*, relay_urls->len + 1);
   for (guint i = 0; i < relay_urls->len; i++) {
     urls[i] = g_ptr_array_index(relay_urls, i);
   }
@@ -1190,18 +1335,15 @@ void gnostr_nip66_discover_from_monitors_async(const gchar **monitor_pubkeys,
   nostr_filter_set_authors(filter, monitor_pubkeys, n_pubkeys);
   nostr_filter_set_limit(filter, 500);
 
-  static GnostrSimplePool *nip66_pool = NULL;
-  if (!nip66_pool) nip66_pool = gnostr_simple_pool_new();
-
   ctx->pending_queries = 1;
 
   gnostr_simple_pool_query_single_async(
-    nip66_pool,
+    get_nip66_pool(),
     urls,
     relay_urls->len,
     filter,
     ctx->cancellable,
-    on_nip66_query_done,
+    on_phase2_relay_meta_done,
     ctx
   );
 
