@@ -607,11 +607,23 @@ static void gn_timeline_view_init(GnTimelineView *self) {
   gtk_widget_set_halign(self->new_notes_revealer, GTK_ALIGN_CENTER);
   gtk_widget_set_valign(self->new_notes_revealer, GTK_ALIGN_START);
   gtk_widget_set_margin_top(self->new_notes_revealer, 12);
+  /*
+   * nostrc-7tx: Allow scroll events to pass through the revealer.
+   * By setting can-target to FALSE on the revealer, scroll gestures
+   * will propagate to the underlying scrolled window. The button
+   * inside remains targetable for clicks.
+   */
+  gtk_widget_set_can_target(self->new_notes_revealer, FALSE);
   gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->new_notes_revealer);
 
   self->new_notes_button = gtk_button_new();
   gtk_widget_add_css_class(self->new_notes_button, "pill");
   gtk_widget_add_css_class(self->new_notes_button, "suggested-action");
+  /*
+   * nostrc-7tx: Ensure the button itself remains clickable even though
+   * its parent revealer has can-target=FALSE.
+   */
+  gtk_widget_set_can_target(self->new_notes_button, TRUE);
   g_signal_connect(self->new_notes_button, "clicked", G_CALLBACK(on_new_notes_clicked), self);
   gtk_revealer_set_child(GTK_REVEALER(self->new_notes_revealer), self->new_notes_button);
 
