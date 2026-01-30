@@ -1488,10 +1488,11 @@ int nostr_json_get_raw_path(const char *json, const char *path, char **out_raw) 
 
 int nostr_json_get_array_length(const char *json, const char *key, size_t *out_len) {
     if (out_len) *out_len = 0;
-    if (!json || !key || !out_len) return -1;
+    if (!json || !out_len) return -1;
     json_error_t err; json_t *root = json_loads(json, 0, &err);
     if (!root) return -1;
-    json_t *arr = json_object_get(root, key);
+    /* If key is NULL, treat the root as the array itself (for root-level arrays) */
+    json_t *arr = key ? json_object_get(root, key) : root;
     if (!arr || !json_is_array(arr)) { json_decref(root); return -1; }
     *out_len = json_array_size(arr);
     json_decref(root);
@@ -1500,10 +1501,11 @@ int nostr_json_get_array_length(const char *json, const char *key, size_t *out_l
 
 int nostr_json_get_array_string(const char *json, const char *key, size_t index, char **out_str) {
     if (out_str) *out_str = NULL;
-    if (!json || !key || !out_str) return -1;
+    if (!json || !out_str) return -1;
     json_error_t err; json_t *root = json_loads(json, 0, &err);
     if (!root) return -1;
-    json_t *arr = json_object_get(root, key);
+    /* If key is NULL, treat the root as the array itself (for root-level arrays) */
+    json_t *arr = key ? json_object_get(root, key) : root;
     if (!arr || !json_is_array(arr) || index >= json_array_size(arr)) { json_decref(root); return -1; }
     json_t *v = json_array_get(arr, index);
     int rc = -1;
@@ -1517,10 +1519,11 @@ int nostr_json_get_array_string(const char *json, const char *key, size_t index,
 
 int nostr_json_get_array_int(const char *json, const char *key, size_t index, int *out_val) {
     if (out_val) *out_val = 0;
-    if (!json || !key || !out_val) return -1;
+    if (!json || !out_val) return -1;
     json_error_t err; json_t *root = json_loads(json, 0, &err);
     if (!root) return -1;
-    json_t *arr = json_object_get(root, key);
+    /* If key is NULL, treat the root as the array itself (for root-level arrays) */
+    json_t *arr = key ? json_object_get(root, key) : root;
     if (!arr || !json_is_array(arr) || index >= json_array_size(arr)) { json_decref(root); return -1; }
     json_t *v = json_array_get(arr, index);
     int rc = -1;
@@ -1532,10 +1535,11 @@ int nostr_json_get_array_int(const char *json, const char *key, size_t index, in
 
 int nostr_json_get_array_int64(const char *json, const char *key, size_t index, int64_t *out_val) {
     if (out_val) *out_val = 0;
-    if (!json || !key || !out_val) return -1;
+    if (!json || !out_val) return -1;
     json_error_t err; json_t *root = json_loads(json, 0, &err);
     if (!root) return -1;
-    json_t *arr = json_object_get(root, key);
+    /* If key is NULL, treat the root as the array itself (for root-level arrays) */
+    json_t *arr = key ? json_object_get(root, key) : root;
     if (!arr || !json_is_array(arr) || index >= json_array_size(arr)) { json_decref(root); return -1; }
     json_t *v = json_array_get(arr, index);
     int rc = -1;
