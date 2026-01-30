@@ -249,10 +249,10 @@ static void on_blossom_upload_complete(GnostrBlossomBlob *blob, GError *error, g
 
 /* File chooser response callback */
 static void on_file_chooser_response(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrComposer *self = GNOSTR_COMPOSER(user_data);
   GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
   GError *error = NULL;
 
+  /* Check result BEFORE accessing user_data - if cancelled, composer may be disposed */
   GFile *file = gtk_file_dialog_open_finish(dialog, res, &error);
 
   if (error) {
@@ -266,17 +266,23 @@ static void on_file_chooser_response(GObject *source, GAsyncResult *res, gpointe
 
   if (!file) return;
 
+  /* Now safe to access user_data since dialog wasn't cancelled/dismissed */
+  if (user_data == NULL) {
+    g_object_unref(file);
+    return;
+  }
+  GnostrComposer *self = (GnostrComposer*)user_data;
+  if (!GNOSTR_IS_COMPOSER(self)) {
+    g_object_unref(file);
+    return;
+  }
+
   char *path = g_file_get_path(file);
   g_object_unref(file);
 
   if (!path) {
     g_warning("Could not get file path");
     composer_show_toast(self, "Could not read selected file");
-    return;
-  }
-
-  if (!GNOSTR_IS_COMPOSER(self)) {
-    g_free(path);
     return;
   }
 
