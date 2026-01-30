@@ -199,6 +199,13 @@ static void parse_nip10_from_json(const char *json_str, char **root_id, char **r
     *reply_id = g_strdup(last_e_id);
   }
 
+  /* NIP-10: When only "root" marker exists (no "reply" marker), this is a
+   * direct reply to the root event. Set reply_id = root_id.
+   * nostrc-mef: Fix root-only marker case */
+  if (!*reply_id && *root_id) {
+    *reply_id = g_strdup(*root_id);
+  }
+
   json_decref(root);
 }
 
