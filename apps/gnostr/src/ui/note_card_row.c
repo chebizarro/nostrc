@@ -30,6 +30,21 @@
 
 /* No longer using mutex - proper fix is at backend level */
 
+/* Context for async media image loading.
+ * CRITICAL: Use GWeakRef to prevent use-after-free crash when
+ * GtkListView recycles rows during scrolling. */
+#ifdef HAVE_SOUP3
+typedef struct {
+  GWeakRef picture_ref;  /* weak ref to GtkPicture */
+} MediaLoadCtx;
+
+static void media_load_ctx_free(MediaLoadCtx *ctx) {
+  if (!ctx) return;
+  g_weak_ref_clear(&ctx->picture_ref);
+  g_free(ctx);
+}
+#endif
+
 /* Media image cache to reduce memory usage - LRU with bounded size */
 #define MEDIA_IMAGE_CACHE_MAX 50  /* Max cached media images */
 static GHashTable *s_media_image_cache = NULL;  /* URL -> GdkTexture */
@@ -1995,36 +2010,26 @@ static void show_loaded_image(GtkWidget *container) {
   }
 }
 
-/* Callback for media image loading */
+/* Callback for media image loading.
+ * CRITICAL: Uses GWeakRef to prevent use-after-free crash when
+ * GtkListView recycles rows during scrolling. */
 static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GtkPicture *picture = GTK_PICTURE(user_data);
+  MediaLoadCtx *ctx = (MediaLoadCtx*)user_data;
   GError *error = NULL;
-
-  /* Get the parent container (GtkOverlay) for spinner/error handling */
-  GtkWidget *container = GTK_IS_WIDGET(picture) ? gtk_widget_get_parent(GTK_WIDGET(picture)) : NULL;
-  
-  /* Get URL for caching */
-  const char *url = g_object_get_data(G_OBJECT(picture), "image-url");
 
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_debug("Media: Failed to load image: %s", error->message);
-      /* Show broken image fallback */
-      if (container) show_broken_image_fallback(container);
     }
     g_error_free(error);
-    /* Release the reference we took in load_media_image */
-    g_object_unref(picture);
+    media_load_ctx_free(ctx);
     return;
   }
 
   if (!bytes || g_bytes_get_size(bytes) == 0) {
     if (bytes) g_bytes_unref(bytes);
-    /* Show broken image fallback for empty response */
-    if (container) show_broken_image_fallback(container);
-    /* Release the reference we took in load_media_image */
-    g_object_unref(picture);
+    media_load_ctx_free(ctx);
     return;
   }
 
@@ -2035,31 +2040,38 @@ static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer u
   if (error) {
     g_debug("Media: Failed to create texture: %s", error->message);
     g_error_free(error);
-    /* Show broken image fallback for decode error */
-    if (container) show_broken_image_fallback(container);
-    /* Release the reference we took in load_media_image */
-    g_object_unref(picture);
+    media_load_ctx_free(ctx);
     return;
   }
 
-  /* Cache the texture for reuse */
-  if (url) {
-    media_image_cache_put(url, texture);
-  }
-
-  /* Update picture widget - check if still valid */
-  if (GTK_IS_PICTURE(picture)) {
-    gtk_picture_set_paintable(picture, GDK_PAINTABLE(texture));
-    /* Show the loaded image and hide spinner */
-    if (container) show_loaded_image(container);
+  /* CRITICAL: Use g_weak_ref_get to safely check if widget still exists.
+   * If widget was recycled/disposed during HTTP fetch, weak ref returns NULL
+   * and we skip the update, preventing use-after-free crash. */
+  GtkWidget *picture = g_weak_ref_get(&ctx->picture_ref);
+  if (picture) {
+    if (GTK_IS_PICTURE(picture)) {
+      /* Get URL for caching from widget data */
+      const char *url = g_object_get_data(G_OBJECT(picture), "image-url");
+      if (url) {
+        media_image_cache_put(url, texture);
+      }
+      gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(texture));
+      /* Show the loaded image and hide spinner */
+      GtkWidget *container = gtk_widget_get_parent(picture);
+      if (container) show_loaded_image(container);
+    }
+    g_object_unref(picture); /* g_weak_ref_get returns a ref */
+  } else {
+    g_debug("Media: picture widget was recycled, skipping UI update");
   }
 
   g_object_unref(texture);
-  /* Release the reference we took in load_media_image */
-  g_object_unref(picture);
+  media_load_ctx_free(ctx);
 }
 
-/* Load media image asynchronously - internal function that starts the actual fetch */
+/* Load media image asynchronously - internal function that starts the actual fetch.
+ * CRITICAL: Uses GWeakRef for the picture widget to prevent use-after-free
+ * crash when GtkListView recycles rows during scrolling. */
 static void load_media_image_internal(GnostrNoteCardRow *self, const char *url, GtkPicture *picture) {
   if (!url || !*url || !GTK_IS_PICTURE(picture)) return;
 
@@ -2084,17 +2096,19 @@ static void load_media_image_internal(GnostrNoteCardRow *self, const char *url, 
     return;
   }
 
-  /* Take a reference to the picture to keep it alive during async operation */
-  g_object_ref(picture);
+  /* CRITICAL: Use weak ref instead of strong ref to prevent crash
+   * when widget is recycled before HTTP completes. */
+  MediaLoadCtx *ctx = g_new0(MediaLoadCtx, 1);
+  g_weak_ref_init(&ctx->picture_ref, picture);
 
-  /* Start async fetch - use shared session */
+  /* Start async fetch */
   soup_session_send_and_read_async(
     gnostr_get_shared_soup_session(),
     msg,
     G_PRIORITY_LOW,
     cancellable,
     on_media_image_loaded,
-    picture
+    ctx
   );
 
   g_object_unref(msg);

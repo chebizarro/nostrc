@@ -10,11 +10,15 @@
 #endif
 #include "../util/utils.h"
 
-/* Avatar context for async HTTP downloads */
+/* Avatar context for async HTTP downloads.
+ * CRITICAL: Use GWeakRef instead of g_object_ref to prevent use-after-free
+ * when GtkListView recycles rows. When a widget is disposed, the weak ref
+ * becomes NULL, preventing updates to zombie widgets that would corrupt
+ * GTK's internal GtkImageDefinition and cause crashes. */
 typedef struct _AvatarCtx {
-  GtkWidget *image;     /* weak (we ref for async) */
-  GtkWidget *initials;  /* weak (we ref for async) */
-  char *url;            /* owned */
+  GWeakRef image_ref;     /* weak ref to image widget */
+  GWeakRef initials_ref;  /* weak ref to initials widget */
+  char *url;              /* owned */
 } AvatarCtx;
 
 /* Simple shared cache for downloaded avatar textures by URL */
@@ -26,12 +30,6 @@ static guint s_avatar_cap = 0;                    /* max resident textures (0 = 
 static guint s_avatar_size = 0;                   /* target decode size in pixels (0 = not initialized) */
 static gboolean s_avatar_log_started = FALSE;     /* periodic logging started */
 static gboolean s_config_initialized = FALSE;     /* env vars read */
-
-/* Failed URL tracking to avoid log spam */
-static GHashTable *s_failed_urls = NULL;          /* key=url -> gint64 timestamp */
-static GMutex s_failed_urls_mutex;
-#define FAILED_URL_RETRY_SECONDS 300              /* Don't retry failed URLs for 5 minutes */
-#define FAILED_URL_MAX_ENTRIES 1000               /* Max entries before cleanup */
 
 /* Metrics */
 static GnostrAvatarMetrics s_avatar_metrics = {0};
@@ -81,8 +79,6 @@ static GdkTexture *try_load_avatar_from_disk(const char *url);
 static gboolean avatar_cache_log_cb(gpointer data);
 #ifdef HAVE_SOUP3
 static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer user_data);
-static void on_image_weak_notify(gpointer data, GObject *where_the_object_was);
-static void on_initials_weak_notify(gpointer data, GObject *where_the_object_was);
 #endif
 
 /* Periodic logger for avatar cache */
@@ -356,15 +352,8 @@ static GdkTexture *try_load_avatar_from_disk(const char *url) {
 
 static void avatar_ctx_free(AvatarCtx *c) {
   if (!c) return;
-  /* Remove weak references if widgets still exist and are valid GObjects.
-   * During shutdown, objects may be partially finalized, so we must validate
-   * before calling g_object_weak_unref to avoid assertion failures. */
-  if (c->image && G_IS_OBJECT(c->image)) {
-    g_object_weak_unref(G_OBJECT(c->image), on_image_weak_notify, c);
-  }
-  if (c->initials && G_IS_OBJECT(c->initials)) {
-    g_object_weak_unref(G_OBJECT(c->initials), on_initials_weak_notify, c);
-  }
+  g_weak_ref_clear(&c->image_ref);
+  g_weak_ref_clear(&c->initials_ref);
   g_free(c->url);
   g_free(c);
 }  
@@ -393,16 +382,18 @@ void gnostr_avatar_prefetch(const char *url) {
       return;
     }
   #ifdef HAVE_SOUP3
-    /* Fetch asynchronously and store in cache - use shared session */
+    /* Fetch asynchronously and store in cache */
+    SoupSession *sess = soup_session_new();
     SoupMessage *msg = soup_message_new("GET", url);
     AvatarCtx *ctx = g_new0(AvatarCtx, 1);
-    ctx->image = NULL;    /* no UI to update */
-    ctx->initials = NULL; /* no UI to update */
+    g_weak_ref_init(&ctx->image_ref, NULL);    /* no UI to update */
+    g_weak_ref_init(&ctx->initials_ref, NULL); /* no UI to update */
     ctx->url = g_strdup(url);
-    g_debug("avatar prefetch: fetching via HTTP url=%s", url);
+    g_message("avatar prefetch: fetching via HTTP url=%s", url);
     s_avatar_metrics.http_start++;
-    soup_session_send_and_read_async(gnostr_get_shared_soup_session(), msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
+    soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
     g_object_unref(msg);
+    g_object_unref(sess);
   #else
     (void)url; /* libsoup not available; skip */
   #endif
@@ -436,107 +427,29 @@ GdkTexture *gnostr_avatar_try_load_cached(const char *url) {
     return NULL;
 }
 
-/* Weak notify callback to clear widget pointer when widget is destroyed */
-static void on_image_weak_notify(gpointer data, GObject *where_the_object_was) {
-  AvatarCtx *ctx = (AvatarCtx *)data;
-  if (ctx) ctx->image = NULL;
-  (void)where_the_object_was;
-}
-
-static void on_initials_weak_notify(gpointer data, GObject *where_the_object_was) {
-  AvatarCtx *ctx = (AvatarCtx *)data;
-  if (ctx) ctx->initials = NULL;
-  (void)where_the_object_was;
-}
-
-/* Check if URL recently failed (rate limiting) */
-static gboolean avatar_url_recently_failed(const char *url) {
-  if (!url) return FALSE;
-  g_mutex_lock(&s_failed_urls_mutex);
-  if (!s_failed_urls) {
-    s_failed_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  }
-  gpointer val = g_hash_table_lookup(s_failed_urls, url);
-  g_mutex_unlock(&s_failed_urls_mutex);
-  if (!val) return FALSE;
-  gint64 failed_at = GPOINTER_TO_SIZE(val);
-  gint64 now = g_get_monotonic_time() / G_USEC_PER_SEC;
-  return (now - failed_at) < FAILED_URL_RETRY_SECONDS;
-}
-
-/* Evict expired entries from failed URL cache (call with mutex held) */
-static void avatar_failed_urls_evict_expired_unlocked(gint64 now) {
-  if (!s_failed_urls) return;
-  
-  GHashTableIter iter;
-  gpointer key, value;
-  GPtrArray *to_remove = g_ptr_array_new();
-  
-  g_hash_table_iter_init(&iter, s_failed_urls);
-  while (g_hash_table_iter_next(&iter, &key, &value)) {
-    gint64 failed_at = GPOINTER_TO_SIZE(value);
-    if ((now - failed_at) >= FAILED_URL_RETRY_SECONDS) {
-      g_ptr_array_add(to_remove, key);
-    }
-  }
-  
-  for (guint i = 0; i < to_remove->len; i++) {
-    g_hash_table_remove(s_failed_urls, to_remove->pdata[i]);
-  }
-  g_ptr_array_free(to_remove, TRUE);
-}
-
-/* Record URL as failed */
-static void avatar_url_mark_failed(const char *url) {
-  if (!url) return;
-  g_mutex_lock(&s_failed_urls_mutex);
-  if (!s_failed_urls) {
-    s_failed_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  }
-  gint64 now = g_get_monotonic_time() / G_USEC_PER_SEC;
-  
-  /* Evict expired entries if we're at capacity */
-  if (g_hash_table_size(s_failed_urls) >= FAILED_URL_MAX_ENTRIES) {
-    avatar_failed_urls_evict_expired_unlocked(now);
-  }
-  
-  /* If still at capacity after eviction, just skip adding (bounded growth) */
-  if (g_hash_table_size(s_failed_urls) < FAILED_URL_MAX_ENTRIES) {
-    g_hash_table_replace(s_failed_urls, g_strdup(url), GSIZE_TO_POINTER((gsize)now));
-  }
-  g_mutex_unlock(&s_failed_urls_mutex);
-}
-
-/* Public: Download avatar asynchronously and update widgets when done. */
+/* Public: Download avatar asynchronously and update widgets when done.
+ * CRITICAL: Uses GWeakRef for widgets to prevent use-after-free crashes
+ * when GtkListView recycles rows during scrolling. */
 void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *initials) {
     #ifdef HAVE_SOUP3
       if (!url || !*url || !str_has_prefix_http(url)) return;
-      
-      /* Skip URLs that recently failed to avoid log spam and wasted requests */
-      if (avatar_url_recently_failed(url)) {
-        /* Silently show initials fallback */
-        if (GTK_IS_WIDGET(initials)) gtk_widget_set_visible(initials, TRUE);
-        if (GTK_IS_PICTURE(image)) gtk_widget_set_visible(image, FALSE);
-        return;
-      }
-      
+
       s_avatar_metrics.requests_total++;
       s_avatar_metrics.http_start++;
-      
-      /* Use shared session to avoid TLS cleanup issues on macOS */
+
+      SoupSession *sess = soup_session_new();
       SoupMessage *msg = soup_message_new("GET", url);
       AvatarCtx *ctx = g_new0(AvatarCtx, 1);
-      /* Use weak references - if widget is destroyed, pointer becomes NULL */
-      ctx->image = image;
-      ctx->initials = initials;
+      /* CRITICAL: Use weak refs instead of strong refs to prevent crash
+       * when widget is recycled before HTTP completes. When widget is
+       * disposed, weak ref becomes NULL and we skip the update. */
+      g_weak_ref_init(&ctx->image_ref, image);
+      g_weak_ref_init(&ctx->initials_ref, initials);
       ctx->url = g_strdup(url);
-      
-      /* Add weak references so we know if widgets are destroyed */
-      if (image) g_object_weak_ref(G_OBJECT(image), on_image_weak_notify, ctx);
-      if (initials) g_object_weak_ref(G_OBJECT(initials), on_initials_weak_notify, ctx);
-      
-      soup_session_send_and_read_async(gnostr_get_shared_soup_session(), msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
+
+      soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
       g_object_unref(msg);
+      g_object_unref(sess);
     #else
       (void)url; (void)image; (void)initials;
     #endif
@@ -550,56 +463,33 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
   if (!bytes) {
     s_avatar_metrics.http_error++;
-    s_avatar_metrics.initials_shown++;
     g_debug("avatar http: error fetching url=%s: %s", ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
-    /* Mark as failed to avoid retrying for a while */
-    avatar_url_mark_failed(ctx->url);
-    /* Ensure initials fallback is visible - validate widgets are still valid */
-    if (ctx->initials && G_IS_OBJECT(ctx->initials) && GTK_IS_WIDGET(ctx->initials) &&
-        gtk_widget_get_parent(ctx->initials) != NULL) {
-      gtk_widget_set_visible(ctx->initials, TRUE);
-    }
-    if (ctx->image && G_IS_OBJECT(ctx->image) && GTK_IS_PICTURE(ctx->image) &&
-        gtk_widget_get_parent(ctx->image) != NULL) {
-      gtk_widget_set_visible(ctx->image, FALSE);
-    }
+    g_message("avatar http: fetch failed; profile metadata/UI remain applied (url=%s)", ctx && ctx->url ? ctx->url : "(null)");
     g_clear_error(&error);
     avatar_ctx_free(ctx);
     return;
   }
   gsize blen = 0; (void)g_bytes_get_data(bytes, &blen);
   s_avatar_metrics.http_ok++;
-  g_debug("avatar http: fetched url=%s bytes=%zu", ctx && ctx->url ? ctx->url : "(null)", (size_t)blen);
-  
+  g_message("avatar http: fetched url=%s bytes=%zu", ctx && ctx->url ? ctx->url : "(null)", (size_t)blen);
+
   /* CRITICAL: Validate it's actually an image BEFORE caching, and decode at bounded size */
   GdkTexture *tex = avatar_texture_from_bytes_scaled(bytes, &error);
   if (!tex) {
-    s_avatar_metrics.initials_shown++;
-    g_debug("avatar http: invalid image data for url=%s: %s",
-             ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
-    /* Mark as failed to avoid retrying for a while */
-    avatar_url_mark_failed(ctx->url);
-    /* Ensure initials fallback is visible for invalid images - validate widgets */
-    if (ctx->initials && G_IS_OBJECT(ctx->initials) && GTK_IS_WIDGET(ctx->initials) &&
-        gtk_widget_get_parent(ctx->initials) != NULL) {
-      gtk_widget_set_visible(ctx->initials, TRUE);
-    }
-    if (ctx->image && G_IS_OBJECT(ctx->image) && GTK_IS_PICTURE(ctx->image) &&
-        gtk_widget_get_parent(ctx->image) != NULL) {
-      gtk_widget_set_visible(ctx->image, FALSE);
-    }
+    g_warning("avatar http: INVALID IMAGE DATA for url=%s: %s (likely HTML error page)",
+              ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
     g_clear_error(&error);
     g_bytes_unref(bytes);
     avatar_ctx_free(ctx);
     return;
   }
   g_debug("avatar http: decoded and scaled to %upx for url=%s", s_avatar_size, ctx->url);
-  
+
   /* Only persist to disk cache if it's a valid image */
   g_autofree char *path = avatar_path_for_url(ctx->url);
   if (path) {
     gsize len = 0; const guint8 *data = g_bytes_get_data(bytes, &len);
-    GError *werr = NULL; 
+    GError *werr = NULL;
     if (g_file_set_contents(path, (const char*)data, (gssize)len, &werr)) {
       g_debug("avatar http: wrote cache file %s len=%zu", path, (size_t)len);
     } else {
@@ -608,7 +498,7 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
       g_clear_error(&werr);
     }
   }
-  
+
   g_bytes_unref(bytes);
   ensure_avatar_cache();
   g_hash_table_replace(avatar_texture_cache, g_strdup(ctx->url), g_object_ref(tex));
@@ -616,18 +506,31 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
   avatar_lru_insert(ctx->url);
   avatar_lru_evict_if_needed();
   g_debug("avatar http: cached texture for url=%s", ctx && ctx->url ? ctx->url : "(null)");
-  /* Only update widgets if they are still valid and not being disposed.
-   * GTK_IS_PICTURE can return true during disposal, so also check the widget
-   * has a parent (disposed widgets lose their parent) and is a valid GObject. */
-  if (ctx->image && G_IS_OBJECT(ctx->image) && GTK_IS_PICTURE(ctx->image) && 
-      gtk_widget_get_parent(ctx->image) != NULL) {
-    gtk_picture_set_paintable(GTK_PICTURE(ctx->image), GDK_PAINTABLE(tex));
-    gtk_widget_set_visible(ctx->image, TRUE);
+
+  /* CRITICAL: Use g_weak_ref_get to safely check if widgets still exist.
+   * If widget was recycled/disposed during HTTP fetch, weak ref returns NULL
+   * and we skip the update, preventing use-after-free crash in GTK's
+   * GtkImageDefinition that causes "code should not be reached" error. */
+  GtkWidget *image = g_weak_ref_get(&ctx->image_ref);
+  GtkWidget *initials = g_weak_ref_get(&ctx->initials_ref);
+
+  if (image) {
+    if (GTK_IS_PICTURE(image)) {
+      gtk_picture_set_paintable(GTK_PICTURE(image), GDK_PAINTABLE(tex));
+      gtk_widget_set_visible(image, TRUE);
+    }
+    g_object_unref(image); /* g_weak_ref_get returns a ref */
+  } else {
+    g_debug("avatar http: image widget was recycled, skipping UI update (url=%s)", ctx->url);
   }
-  if (ctx->initials && G_IS_OBJECT(ctx->initials) && GTK_IS_WIDGET(ctx->initials) &&
-      gtk_widget_get_parent(ctx->initials) != NULL) {
-    gtk_widget_set_visible(ctx->initials, FALSE);
+
+  if (initials) {
+    if (GTK_IS_WIDGET(initials)) {
+      gtk_widget_set_visible(initials, FALSE);
+    }
+    g_object_unref(initials); /* g_weak_ref_get returns a ref */
   }
+
   g_object_unref(tex);
   avatar_ctx_free(ctx);
 }
