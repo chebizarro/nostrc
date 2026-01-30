@@ -36,7 +36,9 @@ int main() {
     time_t timeout = 10;
     int result = nip13_generate(&event, difficulty, timeout);
     if (result == 0) {
-        printf("Proof of work successful! Event ID: %s\n", nostr_event_get_id((NostrEvent*)&event));
+        char *id = nostr_event_get_id((NostrEvent*)&event);
+        printf("Proof of work successful! Event ID: %s\n", id);
+        free(id);
     } else if (result == NIP13_ERR_GENERATE_TIMEOUT) {
         printf("Failed to generate proof of work: timeout\n");
     } else {

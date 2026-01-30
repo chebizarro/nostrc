@@ -60,7 +60,10 @@ int nip13_generate(Event *event, int target_difficulty, time_t timeout) {
         snprintf(tag[1], 21, "%llu", (unsigned long long)nonce);
         event->created_at = time(NULL);
 
-        if (nip13_difficulty(nostr_event_get_id((NostrEvent*)event)) >= target_difficulty) {
+        char *id = nostr_event_get_id((NostrEvent*)event);
+        int difficulty = nip13_difficulty(id);
+        free(id);
+        if (difficulty >= target_difficulty) {
             free(tag[1]);
             return 0;
         }

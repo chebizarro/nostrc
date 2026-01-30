@@ -645,8 +645,10 @@ void *simple_pool_thread_func(void *arg) {
                 while (go_channel_try_receive(ch, &msg) == 0 && spins++ < 32) {
                     if (!msg) break;
                     NostrEvent *ev = (NostrEvent *)msg;
-                    const char *eid = nostr_event_get_id(ev);
-                    if (pool_seen(pool, eid)) {
+                    char *eid = nostr_event_get_id(ev);
+                    int seen = pool_seen(pool, eid);
+                    free(eid);
+                    if (seen) {
                         nostr_event_free(ev);
                     } else {
                         // Add to batch (or free if no middleware)
@@ -896,7 +898,10 @@ void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, si
             void *msg = NULL;
             if (ch_ev && go_channel_try_receive(ch_ev, &msg) == 0 && msg) {
                 NostrEvent *ev = (NostrEvent *)msg;
-                if (!pool_seen(pool, nostr_event_get_id(ev))) {
+                char *eid = nostr_event_get_id(ev);
+                int seen = pool_seen(pool, eid);
+                free(eid);
+                if (!seen) {
                     if (pool->event_middleware) {
                         NostrIncomingEvent incoming = { .event = ev, .relay = relay };
                         pool->event_middleware(&incoming);

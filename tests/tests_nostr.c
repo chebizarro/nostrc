@@ -22,8 +22,9 @@ int main(void) {
     event->kind = 1;
     event->content = strdup("Hello, Nostr!");
 
-    const char *id = nostr_event_get_id(event);
+    char *id = nostr_event_get_id(event);
     assert(id != NULL);
+    free(id);
 
     int res = nostr_event_sign(event, privateKey);
     assert(res == 0);

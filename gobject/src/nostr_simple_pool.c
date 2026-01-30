@@ -268,7 +268,7 @@ static gpointer paginate_with_interval_thread(gpointer user_data) {
                     any = TRUE;
                     if (msg) {
                         NostrEvent *ev = (NostrEvent*)msg;
-                        const char *eid = nostr_event_get_id(ev);
+                        char *eid = nostr_event_get_id(ev);
                         if (eid && *eid && dedup_set_seen(seen, eid)) {
                             nostr_event_free(ev);
                         } else {
@@ -279,6 +279,7 @@ static gpointer paginate_with_interval_thread(gpointer user_data) {
                             }
                             g_ptr_array_add(batch, ev);
                         }
+                        free(eid);  /* nostr_event_get_id returns newly allocated string */
                     }
                     msg = NULL;
                 }
@@ -477,7 +478,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
                 any = TRUE;
                 if (msg) {
                     NostrEvent *ev = (NostrEvent*)msg;
-                    const char *eid = nostr_event_get_id(ev);
+                    char *eid = nostr_event_get_id(ev);
                     if (eid && *eid && dedup_set_seen(dedup, eid)) {
                         /* duplicate: drop */
                         nostr_event_free(ev);
@@ -485,6 +486,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
                         g_ptr_array_add(batch, ev);
                         it->emitted++;
                     }
+                    free(eid);  /* nostr_event_get_id returns newly allocated string */
                 }
                 msg = NULL;
             }
@@ -1277,15 +1279,15 @@ static void *fetch_profiles_goroutine(void *arg) {
             
             while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
                 any_activity = TRUE;
-                
+
                 if (msg) {
                     NostrEvent *ev = (NostrEvent*)msg;
-                    const char *eid = nostr_event_get_id(ev);
+                    char *eid = nostr_event_get_id(ev);
                     const char *pk = nostr_event_get_pubkey(ev);
-                    
-                    g_debug("[GOROUTINE] Received event id=%.16s... pubkey=%.16s...", 
+
+                    g_debug("[GOROUTINE] Received event id=%.16s... pubkey=%.16s...",
                               eid ? eid : "(null)", pk ? pk : "(null)");
-                    
+
                     if (eid && *eid && !dedup_set_seen((DedupSet*)ctx->dedup, eid)) {
                         char *json = nostr_event_serialize(ev);
                         if (json) {
@@ -1293,10 +1295,11 @@ static void *fetch_profiles_goroutine(void *arg) {
                             g_ptr_array_add(ctx->results, json);
                             guint total = ctx->results->len;
                             g_mutex_unlock((GMutex*)ctx->results_mutex);
-                            
+
                             g_debug("[GOROUTINE] Added profile (total=%u)", total);
                         }
                     }
+                    free(eid);  /* nostr_event_get_id returns newly allocated string */
                     nostr_event_free(ev);
                     any_activity = TRUE;
                 }

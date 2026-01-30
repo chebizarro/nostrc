@@ -499,7 +499,16 @@ char *nostr_event_get_id(NostrEvent *event) {
     if (!event)
         return NULL;
 
-    // Serialize the canonical NIP-01 array preimage
+    // OPTIMIZATION (nostrc-o56): Return cached ID if available.
+    // Events received from relays already have their ID set during deserialization.
+    // Returning the cached value avoids expensive serialization+hashing on every call,
+    // and more importantly, prevents use-after-free races where another thread frees
+    // the event while we're serializing it.
+    if (event->id && *event->id) {
+        return strdup(event->id);  // Return copy for transfer-full semantics
+    }
+
+    // ID not cached - compute it from the canonical NIP-01 array preimage
     char *serialized = nostr_event_serialize_nip01_array(event);
     if (!serialized)
         return NULL;
@@ -511,6 +520,12 @@ char *nostr_event_get_id(NostrEvent *event) {
 
     // Convert the binary hash to a hex string
     char *id = nostr_bin2hex(hash, SHA256_DIGEST_LENGTH);
+
+    // Cache the computed ID for future calls
+    if (id && !event->id) {
+        event->id = strdup(id);
+    }
+
     return id;
 }
 
