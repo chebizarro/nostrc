@@ -372,9 +372,42 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
     relay_set_state(relay, NOSTR_RELAY_STATE_CONNECTED);
 
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] relay_connect: starting workers\n");
+
+    /* nostrc-o56: Pass pre-ref'd context to workers to eliminate startup race.
+     * We ref the context TWICE here (once per worker) BEFORE spawning threads.
+     * This ensures each worker owns a valid reference from the moment it starts,
+     * eliminating the race where the worker reads connection_context and then
+     * the context gets freed before the worker can ref it. */
+    GoContext *ctx = relay->priv->connection_context;
+    if (!ctx) {
+        relay_set_state(relay, NOSTR_RELAY_STATE_DISCONNECTED);
+        if (err) *err = new_error(1, "no connection context");
+        return false;
+    }
+
+    /* Pre-ref for each worker (they will unref when done) */
+    go_context_ref(ctx);
+    go_context_ref(ctx);
+
+    /* Allocate worker args - workers free these when done */
+    NostrRelayWorkerArg *write_arg = malloc(sizeof(NostrRelayWorkerArg));
+    NostrRelayWorkerArg *loop_arg = malloc(sizeof(NostrRelayWorkerArg));
+    if (!write_arg || !loop_arg) {
+        if (write_arg) { go_context_unref(ctx); free(write_arg); }
+        if (loop_arg) { go_context_unref(ctx); free(loop_arg); }
+        relay_set_state(relay, NOSTR_RELAY_STATE_DISCONNECTED);
+        if (err) *err = new_error(1, "failed to allocate worker args");
+        return false;
+    }
+
+    write_arg->relay = relay;
+    write_arg->ctx = ctx;
+    loop_arg->relay = relay;
+    loop_arg->ctx = ctx;
+
     go_wait_group_add(&relay->priv->workers, 2);
-    go(write_operations, relay);
-    go(message_loop, relay);
+    go(write_operations, write_arg);
+    go(message_loop, loop_arg);
 
     return true;
 }
@@ -387,19 +420,28 @@ static void *write_error(void *arg) {
 
 // Worker: processes relay->priv->write_queue and writes frames to the connection.
 static void *write_operations(void *arg) {
-    NostrRelay *r = (NostrRelay *)arg;
-    if (!r || !r->priv) return NULL;
+    /* nostrc-o56: Receive pre-ref'd context via arg struct to eliminate race.
+     * The context was ref'd BEFORE this thread was spawned, so we own a valid
+     * reference from the very first instruction. No more race window! */
+    NostrRelayWorkerArg *warg = (NostrRelayWorkerArg *)arg;
+    if (!warg) return NULL;
+
+    NostrRelay *r = warg->relay;
+    GoContext *ctx = warg->ctx;  /* Already ref'd - we own this reference */
+    free(warg);  /* Free the arg struct now that we've extracted values */
+
+    if (!r || !r->priv) {
+        if (ctx) go_context_unref(ctx);
+        return NULL;
+    }
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] write_operations: start\n");
 
-    // Hold a reference to the connection context to prevent use-after-free
-    // if the relay is freed while we're in go_select (nostrc-0q4)
-    GoContext *ctx = r->priv->connection_context;
     if (!ctx) {
         if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] write_operations: no context, exiting\n");
         go_wait_group_done(&r->priv->workers);
         return NULL;
     }
-    go_context_ref(ctx);
+    /* Note: ctx is already ref'd by caller - no need to ref here */
 
     for (;;) {
         // Fast-path: if connection context is canceled, exit promptly
@@ -583,19 +625,28 @@ static void init_cached_env(void) {
 // and emits concise debug summaries on the optional debug_raw channel.
 // Handles automatic reconnection with exponential backoff (nostrc-4du).
 static void *message_loop(void *arg) {
-    NostrRelay *r = (NostrRelay *)arg;
-    if (!r || !r->priv) return NULL;
+    /* nostrc-o56: Receive pre-ref'd context via arg struct to eliminate race.
+     * The context was ref'd BEFORE this thread was spawned, so we own a valid
+     * reference from the very first instruction. No more race window! */
+    NostrRelayWorkerArg *warg = (NostrRelayWorkerArg *)arg;
+    if (!warg) return NULL;
+
+    NostrRelay *r = warg->relay;
+    GoContext *ctx = warg->ctx;  /* Already ref'd - we own this reference */
+    free(warg);  /* Free the arg struct now that we've extracted values */
+
+    if (!r || !r->priv) {
+        if (ctx) go_context_unref(ctx);
+        return NULL;
+    }
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: start\n");
 
-    // Hold a reference to the connection context to prevent use-after-free
-    // if the relay is freed while we're in go_select (nostrc-0q4)
-    GoContext *ctx = r->priv->connection_context;
     if (!ctx) {
         if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: no context, exiting\n");
         go_wait_group_done(&r->priv->workers);
         return NULL;
     }
-    go_context_ref(ctx);
+    /* Note: ctx is already ref'd by caller - no need to ref here */
 
     init_cached_env();
 

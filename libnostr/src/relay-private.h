@@ -64,4 +64,13 @@ typedef struct _NostrRelayWriteRequest {
 
 typedef void (*NostrRelayOkCallback)(bool, char *);
 
+/* Worker thread argument struct (nostrc-o56)
+ * Used to pass a pre-ref'd context to worker threads to eliminate the race
+ * between thread startup and context freeing. The context is ref'd BEFORE
+ * spawning the thread, so the worker owns a valid reference from the start. */
+typedef struct _NostrRelayWorkerArg {
+    struct NostrRelay *relay;
+    GoContext *ctx;  /* Pre-ref'd context - worker MUST unref when done */
+} NostrRelayWorkerArg;
+
 #endif // NOSTR_RELAY_PRIVATE_H
