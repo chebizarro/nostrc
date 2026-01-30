@@ -13,6 +13,9 @@
 /* Controls auto-hide timeout in seconds */
 #define CONTROLS_HIDE_TIMEOUT_SEC 3
 
+/* Loading timeout in seconds - show error if video doesn't prepare in this time */
+#define LOADING_TIMEOUT_SEC 15
+
 struct _GnostrVideoPlayer {
   GtkWidget parent_instance;
 
@@ -54,6 +57,7 @@ struct _GnostrVideoPlayer {
   /* Timers */
   guint controls_hide_timer_id;
   guint position_update_timer_id;
+  guint loading_timeout_id;        /* Timeout for loading state (shows error if exceeded) */
 
   /* Settings */
   GSettings *settings;
@@ -93,6 +97,8 @@ static void schedule_hide_controls(GnostrVideoPlayer *self);
 static gboolean position_update_tick(gpointer user_data);
 static void show_error_state(GnostrVideoPlayer *self, const char *message);
 static void show_loading_state(GnostrVideoPlayer *self, gboolean loading);
+static gboolean loading_timeout_cb(gpointer user_data);
+static void cancel_loading_timeout(GnostrVideoPlayer *self);
 
 /* Media stream error callback - called when video fails to load or play */
 static void on_media_error(GtkMediaStream *stream, GParamSpec *pspec, gpointer user_data) {
@@ -100,6 +106,9 @@ static void on_media_error(GtkMediaStream *stream, GParamSpec *pspec, gpointer u
   (void)pspec;
 
   if (!GNOSTR_IS_VIDEO_PLAYER(self) || self->disposed) return;
+
+  /* Cancel loading timeout since we got an error */
+  cancel_loading_timeout(self);
 
   const GError *error = gtk_media_stream_get_error(stream);
   if (error) {
@@ -117,6 +126,9 @@ static void on_media_prepared(GtkMediaStream *stream, GParamSpec *pspec, gpointe
 
   gboolean prepared = gtk_media_stream_is_prepared(stream);
   if (prepared) {
+    /* Cancel loading timeout since video is ready */
+    cancel_loading_timeout(self);
+
     g_debug("Video prepared: %s", self->uri ? self->uri : "(null)");
     show_loading_state(self, FALSE);
     /* If autoplay is enabled and no error, start playing */
@@ -192,6 +204,34 @@ static void show_loading_state(GnostrVideoPlayer *self, gboolean loading) {
       gtk_widget_set_visible(self->loading_spinner, FALSE);
     }
   }
+}
+
+/* Cancel the loading timeout timer */
+static void cancel_loading_timeout(GnostrVideoPlayer *self) {
+  if (self->loading_timeout_id > 0) {
+    g_source_remove(self->loading_timeout_id);
+    self->loading_timeout_id = 0;
+  }
+}
+
+/* Loading timeout callback - show error if video didn't prepare in time */
+static gboolean loading_timeout_cb(gpointer user_data) {
+  GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(user_data);
+
+  if (!GNOSTR_IS_VIDEO_PLAYER(self) || self->disposed) {
+    return G_SOURCE_REMOVE;
+  }
+
+  self->loading_timeout_id = 0;
+
+  /* Check if still loading (not prepared and no error) */
+  GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
+  if (stream && !gtk_media_stream_is_prepared(stream) && !self->has_error) {
+    g_warning("Video loading timeout: %s", self->uri ? self->uri : "(null)");
+    show_error_state(self, _("Video took too long to load"));
+  }
+
+  return G_SOURCE_REMOVE;
 }
 
 /* Format time in MM:SS or HH:MM:SS format */
@@ -721,6 +761,7 @@ static void gnostr_video_player_dispose(GObject *obj) {
     g_source_remove(self->position_update_timer_id);
     self->position_update_timer_id = 0;
   }
+  cancel_loading_timeout(self);
 
   /* Close fullscreen window if open */
   if (self->fullscreen_window) {
@@ -897,6 +938,9 @@ void gnostr_video_player_set_uri(GnostrVideoPlayer *self, const char *uri) {
   g_free(self->uri);
   self->uri = g_strdup(uri);
 
+  /* Cancel any existing loading timeout */
+  cancel_loading_timeout(self);
+
   /* Reset error state when loading new video */
   self->has_error = FALSE;
   if (GTK_IS_WIDGET(self->error_box)) {
@@ -913,6 +957,10 @@ void gnostr_video_player_set_uri(GnostrVideoPlayer *self, const char *uri) {
     if (uri && *uri) {
       /* Show loading spinner while video prepares */
       show_loading_state(self, TRUE);
+
+      /* Start loading timeout - show error if video doesn't prepare in time */
+      self->loading_timeout_id = g_timeout_add_seconds(LOADING_TIMEOUT_SEC,
+                                                        loading_timeout_cb, self);
 
       GFile *file = g_file_new_for_uri(uri);
       gtk_media_file_set_file(self->media_file, file);
