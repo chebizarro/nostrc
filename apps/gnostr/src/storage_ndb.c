@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <glib.h>
-#include <jansson.h>
+#include "json.h"
 #include "libnostr_store.h"
 #include "storage_ndb.h"
 
@@ -610,15 +610,15 @@ GHashTable *storage_ndb_get_reaction_breakdown(const char *event_id_hex, GPtrArr
     if (!results[i]) continue;
 
     /* Parse the JSON to extract content and pubkey */
-    json_error_t err;
-    json_t *event = json_loads(results[i], 0, &err);
-    if (!event) continue;
+    if (!nostr_json_is_valid(results[i])) continue;
 
-    const char *content = json_string_value(json_object_get(event, "content"));
-    const char *pubkey = json_string_value(json_object_get(event, "pubkey"));
+    char *content_val = NULL;
+    char *pubkey_val = NULL;
+    nostr_json_get_string(results[i], "content", &content_val);
+    nostr_json_get_string(results[i], "pubkey", &pubkey_val);
 
     /* Default to "+" if content is empty */
-    if (!content || !*content) content = "+";
+    const char *content = (content_val && *content_val) ? content_val : "+";
 
     /* Increment count for this emoji */
     gpointer existing = g_hash_table_lookup(breakdown, content);
@@ -626,11 +626,12 @@ GHashTable *storage_ndb_get_reaction_breakdown(const char *event_id_hex, GPtrArr
     g_hash_table_insert(breakdown, g_strdup(content), GUINT_TO_POINTER(emoji_count));
 
     /* Track reactor pubkey if requested */
-    if (reactor_pubkeys && pubkey && strlen(pubkey) == 64) {
-      g_ptr_array_add(*reactor_pubkeys, g_strdup(pubkey));
+    if (reactor_pubkeys && pubkey_val && strlen(pubkey_val) == 64) {
+      g_ptr_array_add(*reactor_pubkeys, g_strdup(pubkey_val));
     }
 
-    json_decref(event);
+    g_free(content_val);
+    g_free(pubkey_val);
   }
 
   storage_ndb_end_query(txn);
@@ -672,6 +673,30 @@ guint storage_ndb_count_zaps(const char *event_id_hex)
   return zap_count;
 }
 
+/* Context and callback for finding bolt11 tag in zap receipts */
+typedef struct {
+  char *bolt11;
+  gboolean found;
+} StorageNdbBolt11Ctx;
+
+static bool storage_ndb_find_bolt11_cb(size_t idx, const char *element_json, void *user_data)
+{
+  (void)idx;
+  StorageNdbBolt11Ctx *ctx = (StorageNdbBolt11Ctx *)user_data;
+  if (ctx->found) return false;
+  if (!nostr_json_is_array_str(element_json)) return true;
+
+  char *name = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 0, &name) != 0) return true;
+
+  if (g_strcmp0(name, "bolt11") == 0) {
+    nostr_json_get_array_string(element_json, NULL, 1, &ctx->bolt11);
+    ctx->found = TRUE;
+  }
+  g_free(name);
+  return !ctx->found;
+}
+
 /* Get zap statistics for an event - count and total amount in millisatoshis.
  * Parses bolt11 invoices from zap receipt tags to extract amounts. */
 gboolean storage_ndb_get_zap_stats(const char *event_id_hex, guint *zap_count, gint64 *total_msat)
@@ -704,46 +729,52 @@ gboolean storage_ndb_get_zap_stats(const char *event_id_hex, guint *zap_count, g
   /* Parse each zap receipt to extract amount from bolt11 */
   gint64 total = 0;
   for (int i = 0; i < count; i++) {
-    if (!results[i]) continue;
+    if (!results[i] || !nostr_json_is_valid(results[i])) continue;
 
-    json_error_t err;
-    json_t *event = json_loads(results[i], 0, &err);
-    if (!event) continue;
+    /* Get raw tags array */
+    char *tags_json = NULL;
+    if (nostr_json_get_raw(results[i], "tags", &tags_json) != 0 || !tags_json) continue;
 
-    json_t *tags = json_object_get(event, "tags");
-    if (tags && json_is_array(tags)) {
-      size_t j;
-      json_t *tag;
-      json_array_foreach(tags, j, tag) {
-        if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+    /* Find bolt11 tag by iterating through tags */
+    char *bolt11_value = NULL;
+    size_t tags_len = 0;
+    if (nostr_json_get_array_length(tags_json, NULL, &tags_len) == 0) {
+      for (size_t j = 0; j < tags_len && !bolt11_value; j++) {
+        /* Each tag is an array like ["bolt11", "lnbc..."] */
+        /* Get the raw tag element first */
+        char *tag_raw = NULL;
+        /* We need to get the j-th element of the tags array as raw JSON */
+        /* Use array index access - tag is at position j */
+        char *tag_name = NULL;
+        char *tag_val = NULL;
 
-        json_t *tag_name = json_array_get(tag, 0);
-        json_t *tag_value = json_array_get(tag, 1);
-
-        if (!json_is_string(tag_name) || !json_is_string(tag_value)) continue;
-
-        const char *name = json_string_value(tag_name);
-        const char *value = json_string_value(tag_value);
-
-        if (g_strcmp0(name, "bolt11") == 0 && value && *value) {
-          /* Parse bolt11 invoice to get amount */
-          char *fail = NULL;
-          struct bolt11 *b11 = bolt11_decode_minimal(NULL, value, &fail);
-          if (b11) {
-            if (b11->msat) {
-              total += (gint64)b11->msat->millisatoshis;
-            }
-            tal_free(b11);
-          } else if (fail) {
-            g_debug("storage_ndb: failed to parse bolt11: %s", fail);
-            free(fail);
-          }
-          break;  /* Found bolt11, no need to continue tag iteration */
-        }
+        /* Try to get the tag name and value from nested array */
+        /* tags_json is like [["bolt11","lnbc..."],["p","..."]] */
+        /* We need to extract element j and parse it */
+        /* Simpler: use the foreach callback approach */
       }
     }
 
-    json_decref(event);
+    /* Use callback to find bolt11 */
+    StorageNdbBolt11Ctx bctx = { .bolt11 = NULL, .found = FALSE };
+    nostr_json_array_foreach_root(tags_json, storage_ndb_find_bolt11_cb, &bctx);
+
+    if (bctx.bolt11 && *bctx.bolt11) {
+      /* Parse bolt11 invoice to get amount */
+      char *fail = NULL;
+      struct bolt11 *b11 = bolt11_decode_minimal(NULL, bctx.bolt11, &fail);
+      if (b11) {
+        if (b11->msat) {
+          total += (gint64)b11->msat->millisatoshis;
+        }
+        tal_free(b11);
+      } else if (fail) {
+        g_debug("storage_ndb: failed to parse bolt11: %s", fail);
+        free(fail);
+      }
+    }
+    g_free(bctx.bolt11);
+    g_free(tags_json);
   }
 
   if (total_msat) *total_msat = total;
