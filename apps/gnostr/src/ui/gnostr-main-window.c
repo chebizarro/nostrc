@@ -4290,6 +4290,13 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     if (thread_view && GNOSTR_IS_THREAD_VIEW(thread_view)) {
       g_signal_connect(thread_view, "close-requested",
                        G_CALLBACK(on_thread_view_close_requested), self);
+      /* nostrc-oz5: Connect need-profile and open-profile signals to enable
+       * profile display in thread panel. Without these connections, profiles
+       * requested by thread view were never fetched from relays. */
+      g_signal_connect(thread_view, "need-profile",
+                       G_CALLBACK(on_thread_view_need_profile), self);
+      g_signal_connect(thread_view, "open-profile",
+                       G_CALLBACK(on_thread_view_open_profile), self);
     }
   }
 
