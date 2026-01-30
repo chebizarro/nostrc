@@ -271,7 +271,7 @@ NostrSimplePool *nostr_simple_pool_new(void) {
     /* Phase 2: Initialize subscription registry and cleanup worker */
     pool->sub_registry = subscription_registry_new();
     pool->cleanup_worker_running = false;
-    
+
     if (pool->sub_registry) {
         // Start cleanup worker thread
         if (pthread_create(&pool->cleanup_worker_thread, NULL, cleanup_worker_thread, pool) == 0) {
@@ -281,6 +281,17 @@ NostrSimplePool *nostr_simple_pool_new(void) {
         } else {
             fprintf(stderr, "[pool] WARNING: failed to start cleanup worker thread\n");
         }
+    }
+
+    /* nostrc-py1: Initialize brown list for persistently failing relays */
+    pool->brown_list = nostr_brown_list_new();
+    pool->brown_list_enabled = true;  /* Enabled by default */
+
+    /* Allow environment override */
+    const char *brown_env = getenv("NOSTR_BROWN_LIST_ENABLED");
+    if (brown_env && strcmp(brown_env, "0") == 0) {
+        pool->brown_list_enabled = false;
+        fprintf(stderr, "[pool] brown list disabled via environment\n");
     }
 
     return pool;
@@ -390,6 +401,13 @@ void nostr_simple_pool_free(NostrSimplePool *pool) {
             nostr_relay_free(pool->relays[i]);
         }
         free(pool->relays);
+
+        /* nostrc-py1: Free brown list */
+        if (pool->brown_list) {
+            nostr_brown_list_free(pool->brown_list);
+            pool->brown_list = NULL;
+        }
+
         pthread_mutex_destroy(&pool->pool_mutex);
         free(pool);
     }
@@ -397,6 +415,16 @@ void nostr_simple_pool_free(NostrSimplePool *pool) {
 
 // Function to ensure a relay connection
 void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url) {
+    /* nostrc-py1: Check brown list before connecting */
+    if (pool->brown_list_enabled && pool->brown_list) {
+        if (nostr_brown_list_should_skip(pool->brown_list, url)) {
+            int remaining = nostr_brown_list_get_time_remaining(pool->brown_list, url);
+            fprintf(stderr, "[pool] Skipping browned relay: %s (retry in %ds)\n", url, remaining);
+            nostr_metric_counter_add("pool_relay_browned_skip", 1);
+            return;
+        }
+    }
+
     pthread_mutex_lock(&pool->pool_mutex);
 
     for (size_t i = 0; i < pool->relay_count; i++) {
@@ -408,10 +436,20 @@ void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url) {
                 // reconnect if not connected
                 NostrRelay *relay = pool->relays[i];
                 pthread_mutex_unlock(&pool->pool_mutex);  // CRITICAL: Unlock BEFORE blocking operation
-                
+
                 nostr_relay_disconnect(relay);
                 Error *err = NULL;
-                (void)nostr_relay_connect(relay, &err);
+                bool connected = nostr_relay_connect(relay, &err);
+
+                /* nostrc-py1: Record success/failure in brown list */
+                if (pool->brown_list_enabled && pool->brown_list) {
+                    if (connected && !err) {
+                        nostr_brown_list_record_success(pool->brown_list, url);
+                    } else {
+                        nostr_brown_list_record_failure(pool->brown_list, url);
+                    }
+                }
+
                 if (err) free_error(err);
                 return;
             }
@@ -421,20 +459,34 @@ void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url) {
     // If relay not found, create and connect a new one
     // CRITICAL: Unlock mutex before blocking operations (relay_new, relay_connect)
     pthread_mutex_unlock(&pool->pool_mutex);
-    
+
     GoContext *ctx = go_context_background();
     Error *err = NULL;
     NostrRelay *relay = nostr_relay_new(ctx, url, &err);
     if (!relay) {
+        /* nostrc-py1: Record failure even if relay creation fails */
+        if (pool->brown_list_enabled && pool->brown_list) {
+            nostr_brown_list_record_failure(pool->brown_list, url);
+        }
         if (err) free_error(err);
         return;
     }
-    
+
     /* Skip signature verification - nostrdb handles this during ingestion.
      * This avoids duplicate verification and "Signature verification failed" warnings. */
     relay->assume_valid = true;
-    
-    (void)nostr_relay_connect(relay, &err);
+
+    bool connected = nostr_relay_connect(relay, &err);
+
+    /* nostrc-py1: Record success/failure in brown list */
+    if (pool->brown_list_enabled && pool->brown_list) {
+        if (connected && !err) {
+            nostr_brown_list_record_success(pool->brown_list, url);
+        } else {
+            nostr_brown_list_record_failure(pool->brown_list, url);
+        }
+    }
+
     if (err) free_error(err);
 
     // Re-lock to add relay to pool
@@ -870,4 +922,53 @@ void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, si
         nostr_subscription_free(sub);
         // fs freed by sub free via nostr_subscription_set_filters ownership
     }
+}
+
+/* ========================================================================
+ * nostrc-py1: Relay Brown List API
+ * ======================================================================== */
+
+void nostr_simple_pool_set_brown_list_enabled(NostrSimplePool *pool, bool enabled) {
+    if (!pool) return;
+    pthread_mutex_lock(&pool->pool_mutex);
+    pool->brown_list_enabled = enabled;
+    pthread_mutex_unlock(&pool->pool_mutex);
+
+    fprintf(stderr, "[pool] brown list %s\n", enabled ? "enabled" : "disabled");
+}
+
+bool nostr_simple_pool_get_brown_list_enabled(NostrSimplePool *pool) {
+    if (!pool) return false;
+    pthread_mutex_lock(&pool->pool_mutex);
+    bool result = pool->brown_list_enabled;
+    pthread_mutex_unlock(&pool->pool_mutex);
+    return result;
+}
+
+NostrBrownList *nostr_simple_pool_get_brown_list(NostrSimplePool *pool) {
+    if (!pool) return NULL;
+    return pool->brown_list;
+}
+
+bool nostr_simple_pool_is_relay_browned(NostrSimplePool *pool, const char *url) {
+    if (!pool || !pool->brown_list || !url) return false;
+    return nostr_brown_list_is_browned(pool->brown_list, url);
+}
+
+void nostr_simple_pool_clear_brown_list(NostrSimplePool *pool) {
+    if (!pool || !pool->brown_list) return;
+    nostr_brown_list_clear_all(pool->brown_list);
+    fprintf(stderr, "[pool] brown list cleared\n");
+}
+
+bool nostr_simple_pool_clear_relay_brown(NostrSimplePool *pool, const char *url) {
+    if (!pool || !pool->brown_list || !url) return false;
+    return nostr_brown_list_clear_relay(pool->brown_list, url);
+}
+
+void nostr_simple_pool_get_brown_list_stats(NostrSimplePool *pool, NostrBrownListStats *stats) {
+    if (!stats) return;
+    memset(stats, 0, sizeof(NostrBrownListStats));
+    if (!pool || !pool->brown_list) return;
+    nostr_brown_list_get_stats(pool->brown_list, stats);
 }

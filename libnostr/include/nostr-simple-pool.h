@@ -8,6 +8,7 @@
 #include "nostr-relay.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
+#include "nostr-brown-list.h"
 #include <pthread.h>
 #include <stdlib.h>
 
@@ -61,6 +62,10 @@ typedef struct _NostrSimplePool {
     SubscriptionRegistry *sub_registry;
     pthread_t cleanup_worker_thread;
     bool cleanup_worker_running;
+
+    /* nostrc-py1: Relay brown list for persistently failing relays */
+    NostrBrownList *brown_list;
+    bool brown_list_enabled;        /* Whether to use brown list (default: true) */
 } NostrSimplePool;
 
 typedef struct _NostrDirectedFilters {
@@ -155,6 +160,80 @@ void nostr_simple_pool_set_event_middleware(NostrSimplePool *pool,
 void nostr_simple_pool_set_batch_middleware(NostrSimplePool *pool,
                                             void (*cb)(NostrIncomingEvent *items, size_t count));
 void nostr_simple_pool_set_auto_unsub_on_eose(NostrSimplePool *pool, bool enable);
+
+/* ========================================================================
+ * Brown List API (nostrc-py1)
+ * ======================================================================== */
+
+/**
+ * nostr_simple_pool_set_brown_list_enabled:
+ * @pool: (transfer none): pool
+ * @enabled: whether to enable brown list filtering
+ *
+ * Enable or disable the relay brown list. When enabled, relays that
+ * persistently fail to connect will be temporarily excluded from
+ * connection attempts.
+ *
+ * Default: enabled (true)
+ */
+void nostr_simple_pool_set_brown_list_enabled(NostrSimplePool *pool, bool enabled);
+
+/**
+ * nostr_simple_pool_get_brown_list_enabled:
+ * @pool: (transfer none): pool
+ *
+ * Returns: whether brown list is enabled
+ */
+bool nostr_simple_pool_get_brown_list_enabled(NostrSimplePool *pool);
+
+/**
+ * nostr_simple_pool_get_brown_list:
+ * @pool: (transfer none): pool
+ *
+ * Get direct access to the brown list for advanced configuration.
+ *
+ * Returns: (transfer none): the pool's brown list, or NULL if not initialized
+ */
+NostrBrownList *nostr_simple_pool_get_brown_list(NostrSimplePool *pool);
+
+/**
+ * nostr_simple_pool_is_relay_browned:
+ * @pool: (transfer none): pool
+ * @url: (transfer none): relay URL to check
+ *
+ * Check if a relay is currently brown-listed.
+ *
+ * Returns: true if relay is brown-listed
+ */
+bool nostr_simple_pool_is_relay_browned(NostrSimplePool *pool, const char *url);
+
+/**
+ * nostr_simple_pool_clear_brown_list:
+ * @pool: (transfer none): pool
+ *
+ * Clear all brown-listed relays, allowing them to be retried immediately.
+ */
+void nostr_simple_pool_clear_brown_list(NostrSimplePool *pool);
+
+/**
+ * nostr_simple_pool_clear_relay_brown:
+ * @pool: (transfer none): pool
+ * @url: (transfer none): relay URL to clear
+ *
+ * Clear a specific relay from the brown list.
+ *
+ * Returns: true if relay was found and cleared
+ */
+bool nostr_simple_pool_clear_relay_brown(NostrSimplePool *pool, const char *url);
+
+/**
+ * nostr_simple_pool_get_brown_list_stats:
+ * @pool: (transfer none): pool
+ * @stats: (out): statistics output
+ *
+ * Get statistics about the brown list.
+ */
+void nostr_simple_pool_get_brown_list_stats(NostrSimplePool *pool, NostrBrownListStats *stats);
 
 #ifdef __cplusplus
 }

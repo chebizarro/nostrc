@@ -44,6 +44,7 @@ set(LIBNOSTR_SOURCES
   src/relay_store.c
   src/utils.c
   src/simplepool.c
+  src/brown_list.c
   src/secure_buf.c
   src/rate_limiter.c
   src/nostr_log.c

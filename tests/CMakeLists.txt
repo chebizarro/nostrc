@@ -66,6 +66,7 @@ add_executable(test_nostr tests_nostr.c)
 
 add_executable(test_relay test_relay.c)
 add_executable(test_relay_shutdown test_relay_shutdown.c)
+add_executable(test_brown_list test_brown_list.c)
 add_executable(test_subscription_lifecycle test_subscription_lifecycle.c)
 add_executable(test_subscription_backpressure test_subscription_backpressure.c)
 add_executable(test_subscription_backpressure_long test_subscription_backpressure_long.c)
@@ -101,6 +102,7 @@ target_link_libraries(test_nostr PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSS
 
 target_link_libraries(test_relay PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_link_libraries(test_relay_shutdown PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+target_link_libraries(test_brown_list PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_link_libraries(test_subscription_lifecycle PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_link_libraries(test_subscription_backpressure PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_link_libraries(test_subscription_backpressure_long PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
