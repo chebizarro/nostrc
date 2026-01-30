@@ -17,6 +17,76 @@
 
 static _Atomic long long g_sub_counter = 1;
 
+/* ========================================================================
+ * Adaptive Queue Capacity (nostrc-3g8)
+ * ======================================================================== */
+
+static AdaptiveCapacityState g_adaptive_state = {
+    .suggested_capacity = NOSTR_QUEUE_CAPACITY_DEFAULT,
+    .max_observed_peak = 0,
+    .last_capacity_adjust_us = 0
+};
+
+AdaptiveCapacityState *nostr_subscription_get_adaptive_state(void) {
+    return &g_adaptive_state;
+}
+
+uint32_t nostr_subscription_suggest_capacity(void) {
+    uint32_t suggested = atomic_load(&g_adaptive_state.suggested_capacity);
+
+    /* Check environment override */
+    const char *env = getenv("NOSTR_SUB_EVENTS_CAP");
+    if (env && *env) {
+        int v = atoi(env);
+        if (v > 0) {
+            /* Clamp to allowed range */
+            if (v < NOSTR_QUEUE_CAPACITY_MIN) v = NOSTR_QUEUE_CAPACITY_MIN;
+            if (v > NOSTR_QUEUE_CAPACITY_MAX) v = NOSTR_QUEUE_CAPACITY_MAX;
+            return (uint32_t)v;
+        }
+    }
+
+    /* Ensure suggested is within bounds */
+    if (suggested < NOSTR_QUEUE_CAPACITY_MIN) suggested = NOSTR_QUEUE_CAPACITY_MIN;
+    if (suggested > NOSTR_QUEUE_CAPACITY_MAX) suggested = NOSTR_QUEUE_CAPACITY_MAX;
+
+    return suggested;
+}
+
+void nostr_subscription_report_peak_usage(uint32_t peak_depth, uint32_t capacity) {
+    if (capacity == 0) return;
+
+    /* Update max observed peak */
+    uint32_t old_max = atomic_load(&g_adaptive_state.max_observed_peak);
+    while (peak_depth > old_max) {
+        if (atomic_compare_exchange_weak(&g_adaptive_state.max_observed_peak, &old_max, peak_depth)) {
+            break;
+        }
+    }
+
+    /* Calculate utilization percentage */
+    uint32_t utilization = (peak_depth * 100) / capacity;
+
+    /* If utilization exceeded grow threshold, suggest larger capacity for future subs */
+    if (utilization >= NOSTR_QUEUE_GROW_THRESHOLD) {
+        uint32_t new_suggested = capacity * 2;
+        if (new_suggested > NOSTR_QUEUE_CAPACITY_MAX) {
+            new_suggested = NOSTR_QUEUE_CAPACITY_MAX;
+        }
+
+        uint32_t old_suggested = atomic_load(&g_adaptive_state.suggested_capacity);
+        if (new_suggested > old_suggested) {
+            if (atomic_compare_exchange_strong(&g_adaptive_state.suggested_capacity,
+                                               &old_suggested, new_suggested)) {
+                nostr_rl_log(NLOG_INFO, "queue",
+                    "Adaptive capacity increased: %u -> %u (peak=%u, cap=%u, util=%u%%)",
+                    old_suggested, new_suggested, peak_depth, capacity, utilization);
+                nostr_metric_counter_add("queue_capacity_increase", 1);
+            }
+        }
+    }
+}
+
 /* Get current time in microseconds */
 static inline int64_t get_time_us(void) {
     struct timeval tv;
@@ -38,14 +108,14 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     }
 
     sub->priv->count_result = NULL;
-    // Allow tuning channel capacities via environment for stress/backpressure analysis
-    // Defaults chosen to tolerate relay backfill bursts without loss.
-    int ev_cap = 4096, eose_cap = 8, closed_cap = 8;
-    const char *ev_cap_s = getenv("NOSTR_SUB_EVENTS_CAP");
-    if (ev_cap_s && *ev_cap_s) {
-        int v = atoi(ev_cap_s);
-        if (v > 0) ev_cap = v;
-    }
+
+    /* Use adaptive capacity for events channel (nostrc-3g8)
+     * The suggested capacity is based on historical peak usage across subscriptions.
+     * Environment variable NOSTR_SUB_EVENTS_CAP can override. */
+    uint32_t ev_cap = nostr_subscription_suggest_capacity();
+    int eose_cap = 8, closed_cap = 8;
+
+    /* Allow environment overrides for EOSE and CLOSED channels */
     const char *eose_cap_s = getenv("NOSTR_SUB_EOSE_CAP");
     if (eose_cap_s && *eose_cap_s) {
         int v = atoi(eose_cap_s);
@@ -56,7 +126,7 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
         int v = atoi(closed_cap_s);
         if (v > 0) closed_cap = v;
     }
-    sub->events = go_channel_create(ev_cap);
+    sub->events = go_channel_create((size_t)ev_cap);
     sub->end_of_stored_events = go_channel_create(eose_cap);
     sub->closed_reason = go_channel_create(closed_cap);
     sub->priv->live = false;
@@ -235,6 +305,26 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
             while (new_depth > old_peak) {
                 if (atomic_compare_exchange_weak(&m->peak_depth, &old_peak, new_depth)) {
                     break;
+                }
+            }
+
+            /* Check utilization and report to adaptive capacity system (nostrc-3g8)
+             * Only check periodically to avoid overhead on every enqueue */
+            uint32_t capacity = m->queue_capacity;
+            if (capacity > 0) {
+                uint32_t utilization = (new_depth * 100) / capacity;
+
+                /* Log warning if approaching capacity */
+                if (utilization >= 90) {
+                    nostr_rl_log(NLOG_WARN, "queue",
+                        "Queue near capacity: sid=%s depth=%u/%u util=%u%%",
+                        sub->priv->id, new_depth, capacity, utilization);
+                    nostr_metric_counter_add("queue_near_capacity", 1);
+                }
+
+                /* Report to adaptive system if we hit the grow threshold */
+                if (utilization >= NOSTR_QUEUE_GROW_THRESHOLD) {
+                    nostr_subscription_report_peak_usage(new_depth, capacity);
                 }
             }
 

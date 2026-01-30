@@ -8,6 +8,33 @@
 #include <stdatomic.h>
 #include <stdint.h>
 
+/* ========================================================================
+ * Queue Capacity Configuration (nostrc-3g8)
+ * ======================================================================== */
+
+#define NOSTR_QUEUE_CAPACITY_DEFAULT 4096   /* Default queue size */
+#define NOSTR_QUEUE_CAPACITY_MIN     256    /* Minimum queue size */
+#define NOSTR_QUEUE_CAPACITY_MAX     16384  /* Maximum queue size */
+#define NOSTR_QUEUE_GROW_THRESHOLD   80     /* Grow when utilization exceeds 80% */
+#define NOSTR_QUEUE_SHRINK_THRESHOLD 25     /* Shrink when utilization below 25% */
+#define NOSTR_QUEUE_SHRINK_DELAY_SEC 30     /* Wait 30s before shrinking */
+
+/* Global adaptive capacity state - tracks historical usage for new subscriptions */
+typedef struct {
+    _Atomic uint32_t suggested_capacity;     /* Capacity to use for new subscriptions */
+    _Atomic uint32_t max_observed_peak;      /* Highest peak depth seen across all subs */
+    _Atomic int64_t last_capacity_adjust_us; /* When capacity was last adjusted */
+} AdaptiveCapacityState;
+
+/* Get the global adaptive capacity state */
+AdaptiveCapacityState *nostr_subscription_get_adaptive_state(void);
+
+/* Suggest capacity for a new subscription based on historical usage */
+uint32_t nostr_subscription_suggest_capacity(void);
+
+/* Report peak usage to adaptive state (called periodically or on high utilization) */
+void nostr_subscription_report_peak_usage(uint32_t peak_depth, uint32_t capacity);
+
 /**
  * QueueMetrics - Per-subscription queue health instrumentation
  *
