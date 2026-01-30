@@ -1,0 +1,146 @@
+# Maintainer: Your Name <your@email.com>
+# Contributor: nostrc developers
+
+pkgbase=gnostr
+pkgname=('gnostr' 'gnostr-signer')
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="GTK4 Nostr client and NIP-46 remote signer for Linux"
+arch=('x86_64' 'aarch64')
+url="https://github.com/chebizarro/nostrc"
+license=('GPL3')
+makedepends=(
+  'cmake'
+  'ninja'
+  'pkgconf'
+  'gtk4'
+  'libadwaita'
+  'glib2'
+  'json-glib'
+  'jansson'
+  'libsecp256k1'
+  'libsodium'
+  'libsoup3'
+  'openssl'
+  'nsync'
+  'libsecret'
+)
+source=("${pkgbase}-${pkgver}.tar.gz::https://github.com/chebizarro/nostrc/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP')  # Update with actual checksum for releases
+
+build() {
+  cd "nostrc-${pkgver}"
+  cmake -S . -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DWITH_NOSTRDB=ON \
+    -DLIBNOSTR_WITH_NOSTRDB=ON
+  cmake --build build
+}
+
+package_gnostr() {
+  pkgdesc="GTK4 Nostr client for the GNOME desktop"
+  depends=(
+    'gtk4'
+    'libadwaita'
+    'glib2'
+    'json-glib'
+    'jansson'
+    'libsecp256k1'
+    'libsodium'
+    'libsoup3'
+    'openssl'
+    'nsync'
+  )
+  optdepends=(
+    'gstreamer: video playback support'
+    'gst-plugins-base: video playback support'
+    'gst-plugins-good: additional video codecs'
+  )
+
+  cd "nostrc-${pkgver}"
+
+  # Install gnostr binary
+  install -Dm755 build/apps/gnostr/gnostr "${pkgdir}/usr/bin/gnostr"
+
+  # Install desktop file
+  install -Dm644 apps/gnostr/data/org.gnostr.Client.desktop \
+    "${pkgdir}/usr/share/applications/org.gnostr.Client.desktop"
+
+  # Install icons
+  for size in 16 32 48 64 128 256; do
+    if [[ -f "apps/gnostr/data/icons/hicolor/${size}x${size}/apps/org.gnostr.Client.png" ]]; then
+      install -Dm644 "apps/gnostr/data/icons/hicolor/${size}x${size}/apps/org.gnostr.Client.png" \
+        "${pkgdir}/usr/share/icons/hicolor/${size}x${size}/apps/org.gnostr.Client.png"
+    fi
+  done
+  if [[ -f "apps/gnostr/data/icons/hicolor/scalable/apps/org.gnostr.Client.svg" ]]; then
+    install -Dm644 "apps/gnostr/data/icons/hicolor/scalable/apps/org.gnostr.Client.svg" \
+      "${pkgdir}/usr/share/icons/hicolor/scalable/apps/org.gnostr.Client.svg"
+  fi
+
+  # Install GSettings schemas
+  for schema in apps/gnostr/data/schemas/*.xml; do
+    if [[ -f "$schema" ]]; then
+      install -Dm644 "$schema" "${pkgdir}/usr/share/glib-2.0/schemas/$(basename $schema)"
+    fi
+  done
+}
+
+package_gnostr-signer() {
+  pkgdesc="NIP-46 Remote Signer for Nostr - GTK4 app with background daemon"
+  depends=(
+    'gtk4'
+    'libadwaita'
+    'glib2'
+    'json-glib'
+    'jansson'
+    'libsecp256k1'
+    'libsodium'
+    'libsoup3'
+    'openssl'
+    'libsecret'
+  )
+  optdepends=(
+    'p11-kit: PKCS#11 HSM support'
+  )
+
+  cd "nostrc-${pkgver}"
+
+  # Install binaries
+  install -Dm755 build/apps/gnostr-signer/gnostr-signer "${pkgdir}/usr/bin/gnostr-signer"
+  install -Dm755 build/apps/gnostr-signer/gnostr-signer-daemon "${pkgdir}/usr/bin/gnostr-signer-daemon"
+
+  # Install desktop file
+  install -Dm644 apps/gnostr-signer/data/org.gnostr.Signer.desktop \
+    "${pkgdir}/usr/share/applications/org.gnostr.Signer.desktop"
+
+  # Install icons
+  for size in 16 32 48 64 128 256; do
+    if [[ -f "apps/gnostr-signer/data/icons/hicolor/${size}x${size}/apps/org.gnostr.Signer.png" ]]; then
+      install -Dm644 "apps/gnostr-signer/data/icons/hicolor/${size}x${size}/apps/org.gnostr.Signer.png" \
+        "${pkgdir}/usr/share/icons/hicolor/${size}x${size}/apps/org.gnostr.Signer.png"
+    fi
+  done
+  if [[ -f "apps/gnostr-signer/data/icons/hicolor/scalable/apps/org.gnostr.Signer.svg" ]]; then
+    install -Dm644 "apps/gnostr-signer/data/icons/hicolor/scalable/apps/org.gnostr.Signer.svg" \
+      "${pkgdir}/usr/share/icons/hicolor/scalable/apps/org.gnostr.Signer.svg"
+  fi
+
+  # Install GSettings schemas
+  for schema in apps/gnostr-signer/data/schemas/*.xml; do
+    if [[ -f "$schema" ]]; then
+      install -Dm644 "$schema" "${pkgdir}/usr/share/glib-2.0/schemas/$(basename $schema)"
+    fi
+  done
+
+  # Install systemd user service
+  install -Dm644 apps/gnostr-signer/daemon/packaging/systemd/user/gnostr-signer-daemon.service \
+    "${pkgdir}/usr/lib/systemd/user/gnostr-signer-daemon.service"
+
+  # Install D-Bus service file
+  if [[ -f "apps/gnostr-signer/data/org.gnostr.Signer.service" ]]; then
+    install -Dm644 apps/gnostr-signer/data/org.gnostr.Signer.service \
+      "${pkgdir}/usr/share/dbus-1/services/org.gnostr.Signer.service"
+  fi
+}
