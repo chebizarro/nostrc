@@ -19,7 +19,7 @@
 #include "nostr-filter.h"
 #include "nostr_simple_pool.h"
 #include <glib/gi18n.h>
-#include <json-glib/json-glib.h>
+#include <json.h>
 #include <string.h>
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-articles-view.ui"
@@ -202,40 +202,46 @@ static void populate_author_info(GnostrArticleItem *item, void *txn) {
 
   const char *content = nostr_event_get_content(evt);
   if (content && *content) {
-    /* Parse profile JSON content */
-    JsonParser *parser = json_parser_new();
-    if (json_parser_load_from_data(parser, content, -1, NULL)) {
-      JsonNode *root = json_parser_get_root(parser);
-      if (JSON_NODE_HOLDS_OBJECT(root)) {
-        JsonObject *obj = json_node_get_object(root);
-
-        if (json_object_has_member(obj, "display_name")) {
-          const char *dn = json_object_get_string_member(obj, "display_name");
-          if (dn && *dn) item->author_name = g_strdup(dn);
-        }
-        if (!item->author_name && json_object_has_member(obj, "name")) {
-          const char *n = json_object_get_string_member(obj, "name");
-          if (n && *n) item->author_name = g_strdup(n);
-        }
-        if (json_object_has_member(obj, "name")) {
-          const char *n = json_object_get_string_member(obj, "name");
-          if (n && *n) item->author_handle = g_strdup_printf("@%s", n);
-        }
-        if (json_object_has_member(obj, "picture")) {
-          const char *pic = json_object_get_string_member(obj, "picture");
-          if (pic && *pic) item->author_avatar = g_strdup(pic);
-        }
-        if (json_object_has_member(obj, "nip05")) {
-          const char *nip05 = json_object_get_string_member(obj, "nip05");
-          if (nip05 && *nip05) item->author_nip05 = g_strdup(nip05);
-        }
-        if (json_object_has_member(obj, "lud16")) {
-          const char *lud16 = json_object_get_string_member(obj, "lud16");
-          if (lud16 && *lud16) item->author_lud16 = g_strdup(lud16);
-        }
+    /* Parse profile JSON content using nostr_json helpers */
+    char *dn = NULL;
+    if (nostr_json_get_string(content, "display_name", &dn) == 0 && dn && *dn) {
+      item->author_name = dn;
+    } else {
+      free(dn);
+    }
+    if (!item->author_name) {
+      char *n = NULL;
+      if (nostr_json_get_string(content, "name", &n) == 0 && n && *n) {
+        item->author_name = n;
+      } else {
+        free(n);
       }
     }
-    g_object_unref(parser);
+    char *name = NULL;
+    if (nostr_json_get_string(content, "name", &name) == 0 && name && *name) {
+      item->author_handle = g_strdup_printf("@%s", name);
+      free(name);
+    } else {
+      free(name);
+    }
+    char *pic = NULL;
+    if (nostr_json_get_string(content, "picture", &pic) == 0 && pic && *pic) {
+      item->author_avatar = pic;
+    } else {
+      free(pic);
+    }
+    char *nip05 = NULL;
+    if (nostr_json_get_string(content, "nip05", &nip05) == 0 && nip05 && *nip05) {
+      item->author_nip05 = nip05;
+    } else {
+      free(nip05);
+    }
+    char *lud16 = NULL;
+    if (nostr_json_get_string(content, "lud16", &lud16) == 0 && lud16 && *lud16) {
+      item->author_lud16 = lud16;
+    } else {
+      free(lud16);
+    }
   }
 
   nostr_event_free(evt);
@@ -310,48 +316,30 @@ static GnostrArticleItem *create_article_item_from_json(const char *event_json, 
     }
   } else {
     /* KIND_LONG_FORM - parse via NIP-23 */
-    /* We need to extract the tags JSON and parse it */
-    JsonParser *parser = json_parser_new();
-    if (json_parser_load_from_data(parser, event_json, -1, NULL)) {
-      JsonNode *root = json_parser_get_root(parser);
-      if (JSON_NODE_HOLDS_OBJECT(root)) {
-        JsonObject *obj = json_node_get_object(root);
-        if (json_object_has_member(obj, "tags")) {
-          JsonArray *tags_arr = json_object_get_array_member(obj, "tags");
-          JsonGenerator *gen = json_generator_new();
-          JsonNode *tags_node = json_node_new(JSON_NODE_ARRAY);
-          json_node_set_array(tags_node, json_array_ref(tags_arr));
-          json_generator_set_root(gen, tags_node);
-          char *tags_json = json_generator_to_data(gen, NULL);
-          json_node_unref(tags_node);
-          g_object_unref(gen);
+    /* Extract raw tags JSON using nostr_json_get_raw helper */
+    char *tags_json = NULL;
+    if (nostr_json_get_raw(event_json, "tags", &tags_json) == 0 && tags_json) {
+      GnostrArticleMeta *meta = gnostr_article_parse_tags(tags_json);
+      if (meta) {
+        item->d_tag = g_strdup(meta->d_tag);
+        item->title = g_strdup(meta->title);
+        item->summary = g_strdup(meta->summary);
+        item->image_url = g_strdup(meta->image);
+        item->published_at = meta->published_at > 0 ? meta->published_at : item->created_at;
 
-          if (tags_json) {
-            GnostrArticleMeta *meta = gnostr_article_parse_tags(tags_json);
-            if (meta) {
-              item->d_tag = g_strdup(meta->d_tag);
-              item->title = g_strdup(meta->title);
-              item->summary = g_strdup(meta->summary);
-              item->image_url = g_strdup(meta->image);
-              item->published_at = meta->published_at > 0 ? meta->published_at : item->created_at;
-
-              /* Copy hashtags as topics */
-              if (meta->hashtags && meta->hashtags_count > 0) {
-                item->topics_count = meta->hashtags_count;
-                item->topics = g_new0(gchar*, meta->hashtags_count + 1);
-                for (gsize i = 0; i < meta->hashtags_count; i++) {
-                  item->topics[i] = g_strdup(meta->hashtags[i]);
-                }
-              }
-
-              gnostr_article_meta_free(meta);
-            }
-            g_free(tags_json);
+        /* Copy hashtags as topics */
+        if (meta->hashtags && meta->hashtags_count > 0) {
+          item->topics_count = meta->hashtags_count;
+          item->topics = g_new0(gchar*, meta->hashtags_count + 1);
+          for (gsize i = 0; i < meta->hashtags_count; i++) {
+            item->topics[i] = g_strdup(meta->hashtags[i]);
           }
         }
+
+        gnostr_article_meta_free(meta);
       }
+      free(tags_json);
     }
-    g_object_unref(parser);
   }
 
   /* Fallbacks */

@@ -17,7 +17,6 @@
 #include "nostr-kinds.h"
 #include "nostr-json.h"
 #include "nostr-tag.h"
-#include <jansson.h>
 #include <string.h>
 #include <time.h>
 

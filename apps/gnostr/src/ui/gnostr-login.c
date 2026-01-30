@@ -18,7 +18,7 @@
 #include "nostr-filter.h"
 #include "nostr-kinds.h"
 #include <glib/gi18n.h>
-#include <jansson.h>
+#include <json.h>
 #include <secp256k1.h>
 #include <secp256k1_extrakeys.h>
 
@@ -846,51 +846,52 @@ static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer u
      * {"id":"...","result":"<signer_pubkey>","error":null}
      * For connect request, result contains the signer's pubkey
      */
-    json_error_t jerr;
-    json_t *root = json_loads(plaintext, 0, &jerr);
-    g_free(plaintext);
-
-    if (!root) {
-      g_warning("[NIP46_LOGIN] Failed to parse NIP-46 JSON: %s", jerr.text);
+    if (!nostr_json_is_valid(plaintext)) {
+      g_warning("[NIP46_LOGIN] Failed to parse NIP-46 JSON");
+      g_free(plaintext);
       continue;
     }
 
-    /* Check for error */
-    json_t *error_obj = json_object_get(root, "error");
-    if (error_obj && !json_is_null(error_obj)) {
-      const char *err_msg = json_string_value(error_obj);
-      g_warning("[NIP46_LOGIN] Signer error: %s", err_msg ? err_msg : "unknown");
-      gtk_label_set_text(GTK_LABEL(self->lbl_bunker_status),
-                         err_msg ? err_msg : "Signer rejected request");
+    /* Check for error - if key exists and is a non-null string */
+    char *err_msg = NULL;
+    if (nostr_json_has_key(plaintext, "error") &&
+        nostr_json_get_type(plaintext, "error") == NOSTR_JSON_STRING &&
+        nostr_json_get_string(plaintext, "error", &err_msg) == 0 && err_msg && *err_msg) {
+      g_warning("[NIP46_LOGIN] Signer error: %s", err_msg);
+      gtk_label_set_text(GTK_LABEL(self->lbl_bunker_status), err_msg);
       gtk_widget_set_visible(self->spinner_bunker, FALSE);
-      json_decref(root);
+      free(err_msg);
+      g_free(plaintext);
       continue;
     }
+    free(err_msg);
 
     /* Get the result (signer's pubkey for connect, or "ack" for simple response) */
-    json_t *result_obj = json_object_get(root, "result");
-    const char *result = json_string_value(result_obj);
-
-    if (!result) {
+    char *result = NULL;
+    if (nostr_json_get_string(plaintext, "result", &result) != 0 || !result) {
       g_warning("[NIP46_LOGIN] No result in NIP-46 response");
-      json_decref(root);
+      free(result);
+      g_free(plaintext);
       continue;
     }
 
     g_message("[NIP46_LOGIN] Authorization received, signer pubkey: %s", result);
 
     /* For nostrconnect, the result is "ack" and we use the sender's pubkey as the signer */
-    const char *signer_pubkey_hex = NULL;
+    char *signer_pubkey_hex = NULL;
     if (strcmp(result, "ack") == 0) {
-      signer_pubkey_hex = sender_pubkey;
+      signer_pubkey_hex = g_strdup(sender_pubkey);
     } else if (strlen(result) == 64) {
       /* Result is the signer's pubkey */
-      signer_pubkey_hex = result;
+      signer_pubkey_hex = g_strdup(result);
     } else {
       g_warning("[NIP46_LOGIN] Unexpected result format: %s", result);
-      json_decref(root);
+      free(result);
+      g_free(plaintext);
       continue;
     }
+    free(result);
+    g_free(plaintext);
 
     /* Convert hex pubkey to npub */
     uint8_t pubkey_bytes[32];
@@ -898,7 +899,7 @@ static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer u
       unsigned int byte;
       if (sscanf(signer_pubkey_hex + j * 2, "%2x", &byte) != 1) {
         g_warning("[NIP46_LOGIN] Invalid signer pubkey");
-        json_decref(root);
+        g_free(signer_pubkey_hex);
         continue;
       }
       pubkey_bytes[j] = (uint8_t)byte;
@@ -907,11 +908,11 @@ static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer u
     char *npub = NULL;
     if (nostr_nip19_encode_npub(pubkey_bytes, &npub) != 0 || !npub) {
       g_warning("[NIP46_LOGIN] Failed to encode npub");
-      json_decref(root);
+      g_free(signer_pubkey_hex);
       continue;
     }
 
-    json_decref(root);
+    g_free(signer_pubkey_hex);
 
     /* Stop listening */
     stop_nip46_listener(self);

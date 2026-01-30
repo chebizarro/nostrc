@@ -119,8 +119,9 @@ struct _GnostrMainWindow {
   GnNostrEventModel *event_model; /* owned; reactive model over nostrdb */
   guint model_refresh_pending;    /* debounced refresh source id, 0 if none */
 
-  /* In-memory avatar texture cache: key=url (string), value=GdkTexture* */
-  GHashTable *avatar_tex_cache;
+  /* REMOVED: avatar_tex_cache was dead code - never populated.
+   * Avatar textures are now managed by the centralized gnostr-avatar-cache module.
+   * Use gnostr_avatar_cache_size() for texture cache stats. */
 
   /* Profile subscription */
   gulong profile_sub_id;        /* signal handler ID for profile events */
@@ -403,18 +404,17 @@ static gboolean profile_apply_on_main(gpointer data) {
 
 /* ---- Memory stats logging and cache pruning ---- */
 
-/* Cache size limits to prevent unbounded memory growth */
-#define AVATAR_CACHE_MAX 1000
+/* Cache size limits to prevent unbounded memory growth.
+ * Note: Avatar texture cache has its own LRU limit in gnostr-avatar-cache module. */
 #define SEEN_TEXTS_MAX 10000
 #define LIKED_EVENTS_MAX 5000
 
 static gboolean memory_stats_cb(gpointer data) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(data);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return G_SOURCE_CONTINUE;
-  
+
   guint seen_texts_size = self->seen_texts ? g_hash_table_size(self->seen_texts) : 0;
   guint profile_queue = self->profile_fetch_queue ? self->profile_fetch_queue->len : 0;
-  guint avatar_size = self->avatar_tex_cache ? g_hash_table_size(self->avatar_tex_cache) : 0;
   guint model_items = self->event_model ? g_list_model_get_n_items(G_LIST_MODEL(self->event_model)) : 0;
   guint liked_events_size = self->liked_events ? g_hash_table_size(self->liked_events) : 0;
   guint profile_batches = self->profile_batches ? self->profile_batches->len : 0;
@@ -423,28 +423,23 @@ static gboolean memory_stats_cb(gpointer data) {
   /* Get external cache stats */
   extern guint gnostr_avatar_cache_size(void);
   extern guint gnostr_media_image_cache_size(void);
-  guint avatar_cache = gnostr_avatar_cache_size();
+  guint avatar_tex = gnostr_avatar_cache_size(); /* in-memory GdkTexture cache */
   guint media_cache = gnostr_media_image_cache_size();
-  
+
   /* Get profile provider stats */
   GnostrProfileProviderStats pstats = {0};
   gnostr_profile_provider_get_stats(&pstats);
 
-  g_message("[MEMORY] model=%u seen=%u avatar_tex=%u avatar_cache=%u media_cache=%u profile_q=%u liked=%u batches=%u giftwrap=%u profile_cache=%u/%u",
-          model_items, seen_texts_size, avatar_size, avatar_cache, media_cache,
+  g_message("[MEMORY] model=%u seen=%u avatar_tex=%u media_cache=%u profile_q=%u liked=%u batches=%u giftwrap=%u profile_cache=%u/%u",
+          model_items, seen_texts_size, avatar_tex, media_cache,
           profile_queue, liked_events_size, profile_batches, gift_wrap_queue,
           pstats.cache_size, pstats.cache_cap);
-  
+
   /* Prune caches if they exceed limits to prevent unbounded memory growth */
   gboolean pruned = FALSE;
-  
-  /* Prune avatar_tex_cache - clear entirely if too large */
-  if (avatar_size > AVATAR_CACHE_MAX) {
-    g_debug("[MEMORY] Pruning avatar_tex_cache: %u -> 0", avatar_size);
-    g_hash_table_remove_all(self->avatar_tex_cache);
-    pruned = TRUE;
-  }
-  
+
+  /* Avatar texture cache is managed by gnostr-avatar-cache module with its own LRU eviction */
+
   /* Prune seen_texts - clear if too large */
   if (seen_texts_size > SEEN_TEXTS_MAX) {
     g_debug("[MEMORY] Pruning seen_texts: %u -> 0", seen_texts_size);
@@ -4351,8 +4346,7 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
   g_timeout_add_seconds(60, (GSourceFunc)gnostr_profile_provider_log_stats, NULL);
   /* Memory stats logging */
   g_timeout_add_seconds(60, memory_stats_cb, self);
-  /* Initialize avatar texture cache */
-  self->avatar_tex_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_object_unref);
+  /* Avatar texture cache is managed by gnostr-avatar-cache module (initialized on first use) */
   /* Initialize liked events cache (NIP-25 reactions) */
   self->liked_events = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   /* Initialize reconnection flag */
@@ -4768,7 +4762,7 @@ static void gnostr_main_window_dispose(GObject *object) {
   if (self->pool) { g_object_unref(self->pool); self->pool = NULL; }
   if (self->seen_texts) { g_hash_table_unref(self->seen_texts); self->seen_texts = NULL; }
   if (self->event_model) { g_object_unref(self->event_model); self->event_model = NULL; }
-  if (self->avatar_tex_cache) { g_hash_table_unref(self->avatar_tex_cache); self->avatar_tex_cache = NULL; }
+  /* Avatar texture cache cleanup is handled by gnostr-avatar-cache module */
   if (self->liked_events) { g_hash_table_unref(self->liked_events); self->liked_events = NULL; }
 
   /* Stop gift wrap subscription */

@@ -12,7 +12,6 @@
 #include <nostr-event.h>
 #include <nostr-filter.h>
 #include <json.h>
-#include <jansson.h>
 #include <nostr_simple_pool.h>
 #include "../util/relays.h"
 #include <string.h>
@@ -775,32 +774,31 @@ static void fetch_event_from_local(GnostrNoteEmbed *self, const unsigned char id
           if (profile_evt && nostr_event_deserialize(profile_evt, profile_event_json) == 0) {
             const char *profile_content = nostr_event_get_content(profile_evt);
             if (profile_content && *profile_content) {
-              /* Parse the profile content JSON using jansson */
-              json_error_t jerr;
-              json_t *profile_root = json_loads(profile_content, 0, &jerr);
-              if (profile_root) {
-                json_t *val;
-                /* Try display_name first, then name */
-                if ((val = json_object_get(profile_root, "display_name")) && json_is_string(val)) {
-                  const char *dn = json_string_value(val);
-                  if (dn && *dn) author_display = g_strdup(dn);
-                }
-                if (!author_display && (val = json_object_get(profile_root, "name")) && json_is_string(val)) {
-                  const char *nm = json_string_value(val);
-                  if (nm && *nm) author_display = g_strdup(nm);
-                }
-                /* Get handle/name */
-                if ((val = json_object_get(profile_root, "name")) && json_is_string(val)) {
-                  const char *nm = json_string_value(val);
-                  if (nm && *nm) author_handle = g_strdup(nm);
-                }
-                /* Get picture URL */
-                if ((val = json_object_get(profile_root, "picture")) && json_is_string(val)) {
-                  const char *pic = json_string_value(val);
-                  if (pic && *pic) avatar_url = g_strdup(pic);
-                }
-                json_decref(profile_root);
+              /* Parse the profile content JSON using nostr_json helpers */
+              char *dn = NULL;
+              if (nostr_json_get_string(profile_content, "display_name", &dn) == 0 && dn && *dn) {
+                author_display = g_strdup(dn);
               }
+              free(dn);
+              if (!author_display) {
+                char *nm = NULL;
+                if (nostr_json_get_string(profile_content, "name", &nm) == 0 && nm && *nm) {
+                  author_display = g_strdup(nm);
+                }
+                free(nm);
+              }
+              /* Get handle/name */
+              char *name = NULL;
+              if (nostr_json_get_string(profile_content, "name", &name) == 0 && name && *name) {
+                author_handle = g_strdup(name);
+              }
+              free(name);
+              /* Get picture URL */
+              char *pic = NULL;
+              if (nostr_json_get_string(profile_content, "picture", &pic) == 0 && pic && *pic) {
+                avatar_url = g_strdup(pic);
+              }
+              free(pic);
             }
           }
           if (profile_evt) nostr_event_free(profile_evt);
@@ -1113,32 +1111,34 @@ static void on_profile_relay_query_done(GObject *source, GAsyncResult *res, gpoi
   if (evt && nostr_event_deserialize(evt, json) == 0) {
     const char *content = nostr_event_get_content(evt);
     if (content && *content) {
-      json_error_t jerr;
-      json_t *root = json_loads(content, 0, &jerr);
-      if (root) {
-        json_t *val;
-        if ((val = json_object_get(root, "display_name")) && json_is_string(val)) {
-          const char *dn = json_string_value(val);
-          if (dn && *dn) display_name = g_strdup(dn);
-        }
-        if (!display_name && (val = json_object_get(root, "name")) && json_is_string(val)) {
-          const char *nm = json_string_value(val);
-          if (nm && *nm) display_name = g_strdup(nm);
-        }
-        if ((val = json_object_get(root, "name")) && json_is_string(val)) {
-          const char *nm = json_string_value(val);
-          if (nm && *nm) handle = g_strdup(nm);
-        }
-        if ((val = json_object_get(root, "about")) && json_is_string(val)) {
-          const char *ab = json_string_value(val);
-          if (ab && *ab) about = g_strdup(ab);
-        }
-        if ((val = json_object_get(root, "picture")) && json_is_string(val)) {
-          const char *pic = json_string_value(val);
-          if (pic && *pic) picture = g_strdup(pic);
-        }
-        json_decref(root);
+      /* Parse profile content JSON using nostr_json helpers */
+      char *dn = NULL;
+      if (nostr_json_get_string(content, "display_name", &dn) == 0 && dn && *dn) {
+        display_name = g_strdup(dn);
       }
+      free(dn);
+      if (!display_name) {
+        char *nm = NULL;
+        if (nostr_json_get_string(content, "name", &nm) == 0 && nm && *nm) {
+          display_name = g_strdup(nm);
+        }
+        free(nm);
+      }
+      char *name = NULL;
+      if (nostr_json_get_string(content, "name", &name) == 0 && name && *name) {
+        handle = g_strdup(name);
+      }
+      free(name);
+      char *ab = NULL;
+      if (nostr_json_get_string(content, "about", &ab) == 0 && ab && *ab) {
+        about = g_strdup(ab);
+      }
+      free(ab);
+      char *pic = NULL;
+      if (nostr_json_get_string(content, "picture", &pic) == 0 && pic && *pic) {
+        picture = g_strdup(pic);
+      }
+      free(pic);
     }
   }
   if (evt) nostr_event_free(evt);
@@ -1230,37 +1230,37 @@ static void fetch_profile_from_local(GnostrNoteEmbed *self, const unsigned char 
     if (evt && nostr_event_deserialize(evt, event_json) == 0) {
       const char *content = nostr_event_get_content(evt);
       if (content && *content) {
-        /* Parse the profile content JSON */
-        json_error_t jerr;
-        json_t *root = json_loads(content, 0, &jerr);
-        if (root) {
-          json_t *val;
-          /* Try display_name first, then name */
-          if ((val = json_object_get(root, "display_name")) && json_is_string(val)) {
-            const char *dn = json_string_value(val);
-            if (dn && *dn) display_name = g_strdup(dn);
-          }
-          if (!display_name && (val = json_object_get(root, "name")) && json_is_string(val)) {
-            const char *nm = json_string_value(val);
-            if (nm && *nm) display_name = g_strdup(nm);
-          }
-          /* Get handle/name */
-          if ((val = json_object_get(root, "name")) && json_is_string(val)) {
-            const char *nm = json_string_value(val);
-            if (nm && *nm) handle = g_strdup(nm);
-          }
-          /* Get about text */
-          if ((val = json_object_get(root, "about")) && json_is_string(val)) {
-            const char *ab = json_string_value(val);
-            if (ab && *ab) about = g_strdup(ab);
-          }
-          /* Get picture URL */
-          if ((val = json_object_get(root, "picture")) && json_is_string(val)) {
-            const char *pic = json_string_value(val);
-            if (pic && *pic) picture = g_strdup(pic);
-          }
-          json_decref(root);
+        /* Parse the profile content JSON using nostr_json helpers */
+        char *dn = NULL;
+        if (nostr_json_get_string(content, "display_name", &dn) == 0 && dn && *dn) {
+          display_name = g_strdup(dn);
         }
+        free(dn);
+        if (!display_name) {
+          char *nm = NULL;
+          if (nostr_json_get_string(content, "name", &nm) == 0 && nm && *nm) {
+            display_name = g_strdup(nm);
+          }
+          free(nm);
+        }
+        /* Get handle/name */
+        char *name = NULL;
+        if (nostr_json_get_string(content, "name", &name) == 0 && name && *name) {
+          handle = g_strdup(name);
+        }
+        free(name);
+        /* Get about text */
+        char *ab = NULL;
+        if (nostr_json_get_string(content, "about", &ab) == 0 && ab && *ab) {
+          about = g_strdup(ab);
+        }
+        free(ab);
+        /* Get picture URL */
+        char *pic = NULL;
+        if (nostr_json_get_string(content, "picture", &pic) == 0 && pic && *pic) {
+          picture = g_strdup(pic);
+        }
+        free(pic);
       }
     }
     if (evt) nostr_event_free(evt);

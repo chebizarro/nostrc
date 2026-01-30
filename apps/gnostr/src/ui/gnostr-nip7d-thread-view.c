@@ -15,7 +15,6 @@
 #include "nostr-filter.h"
 #include "nostr_simple_pool.h"
 #include <glib/gi18n.h>
-#include <jansson.h>
 #include <string.h>
 #include <time.h>
 
