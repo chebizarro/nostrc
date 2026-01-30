@@ -7,7 +7,7 @@
 #define G_LOG_DOMAIN "gnostr-drafts"
 
 #include "gnostr-drafts.h"
-#include <jansson.h>
+#include "json.h"
 #include <glib/gstdio.h>
 #include <time.h>
 #include <string.h>
@@ -134,183 +134,228 @@ char *gnostr_draft_generate_d_tag(void) {
 char *gnostr_draft_to_json(const GnostrDraft *draft) {
   if (!draft) return NULL;
 
-  json_t *obj = json_object();
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_object(builder);
 
   /* Required fields */
-  json_object_set_new(obj, "kind", json_integer(draft->target_kind));
-  json_object_set_new(obj, "content", json_string(draft->content ? draft->content : ""));
-  json_object_set_new(obj, "created_at", json_integer(draft->created_at));
+  nostr_json_builder_set_key(builder, "kind");
+  nostr_json_builder_add_int(builder, draft->target_kind);
+
+  nostr_json_builder_set_key(builder, "content");
+  nostr_json_builder_add_string(builder, draft->content ? draft->content : "");
+
+  nostr_json_builder_set_key(builder, "created_at");
+  nostr_json_builder_add_int64(builder, draft->created_at);
 
   /* Build tags array */
-  json_t *tags = json_array();
+  nostr_json_builder_set_key(builder, "tags");
+  nostr_json_builder_begin_array(builder);
 
   /* NIP-14: Subject tag */
   if (draft->subject && *draft->subject) {
-    json_t *subject_tag = json_array();
-    json_array_append_new(subject_tag, json_string("subject"));
-    json_array_append_new(subject_tag, json_string(draft->subject));
-    json_array_append_new(tags, subject_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "subject");
+    nostr_json_builder_add_string(builder, draft->subject);
+    nostr_json_builder_end_array(builder);
   }
 
   /* NIP-10: Reply context */
   if (draft->root_id && strlen(draft->root_id) == 64) {
-    json_t *root_tag = json_array();
-    json_array_append_new(root_tag, json_string("e"));
-    json_array_append_new(root_tag, json_string(draft->root_id));
-    json_array_append_new(root_tag, json_string("")); /* relay hint */
-    json_array_append_new(root_tag, json_string("root"));
-    json_array_append_new(tags, root_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "e");
+    nostr_json_builder_add_string(builder, draft->root_id);
+    nostr_json_builder_add_string(builder, ""); /* relay hint */
+    nostr_json_builder_add_string(builder, "root");
+    nostr_json_builder_end_array(builder);
   }
 
   if (draft->reply_to_id && strlen(draft->reply_to_id) == 64 &&
       (!draft->root_id || strcmp(draft->reply_to_id, draft->root_id) != 0)) {
-    json_t *reply_tag = json_array();
-    json_array_append_new(reply_tag, json_string("e"));
-    json_array_append_new(reply_tag, json_string(draft->reply_to_id));
-    json_array_append_new(reply_tag, json_string("")); /* relay hint */
-    json_array_append_new(reply_tag, json_string("reply"));
-    json_array_append_new(tags, reply_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "e");
+    nostr_json_builder_add_string(builder, draft->reply_to_id);
+    nostr_json_builder_add_string(builder, ""); /* relay hint */
+    nostr_json_builder_add_string(builder, "reply");
+    nostr_json_builder_end_array(builder);
   }
 
   if (draft->reply_to_pubkey && strlen(draft->reply_to_pubkey) == 64) {
-    json_t *p_tag = json_array();
-    json_array_append_new(p_tag, json_string("p"));
-    json_array_append_new(p_tag, json_string(draft->reply_to_pubkey));
-    json_array_append_new(tags, p_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "p");
+    nostr_json_builder_add_string(builder, draft->reply_to_pubkey);
+    nostr_json_builder_end_array(builder);
   }
 
   /* NIP-18: Quote context */
   if (draft->quote_id && strlen(draft->quote_id) == 64) {
-    json_t *q_tag = json_array();
-    json_array_append_new(q_tag, json_string("q"));
-    json_array_append_new(q_tag, json_string(draft->quote_id));
-    json_array_append_new(q_tag, json_string("")); /* relay hint */
-    json_array_append_new(tags, q_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "q");
+    nostr_json_builder_add_string(builder, draft->quote_id);
+    nostr_json_builder_add_string(builder, ""); /* relay hint */
+    nostr_json_builder_end_array(builder);
   }
 
   if (draft->quote_pubkey && strlen(draft->quote_pubkey) == 64) {
-    json_t *p_tag = json_array();
-    json_array_append_new(p_tag, json_string("p"));
-    json_array_append_new(p_tag, json_string(draft->quote_pubkey));
-    json_array_append_new(tags, p_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "p");
+    nostr_json_builder_add_string(builder, draft->quote_pubkey);
+    nostr_json_builder_end_array(builder);
   }
 
   /* NIP-36: Content warning */
   if (draft->is_sensitive) {
-    json_t *cw_tag = json_array();
-    json_array_append_new(cw_tag, json_string("content-warning"));
-    json_array_append_new(cw_tag, json_string(""));
-    json_array_append_new(tags, cw_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "content-warning");
+    nostr_json_builder_add_string(builder, "");
+    nostr_json_builder_end_array(builder);
   }
 
-  json_object_set_new(obj, "tags", tags);
+  nostr_json_builder_end_array(builder);  /* end tags */
 
   /* Draft metadata (not part of the actual event, but useful for drafts) */
-  json_t *meta = json_object();
-  if (draft->d_tag) {
-    json_object_set_new(meta, "d_tag", json_string(draft->d_tag));
-  }
-  json_object_set_new(meta, "updated_at", json_integer(draft->updated_at));
-  if (draft->quote_nostr_uri) {
-    json_object_set_new(meta, "quote_nostr_uri", json_string(draft->quote_nostr_uri));
-  }
-  json_object_set_new(obj, "_draft_meta", meta);
+  nostr_json_builder_set_key(builder, "_draft_meta");
+  nostr_json_builder_begin_object(builder);
 
-  char *result = json_dumps(obj, JSON_COMPACT);
-  json_decref(obj);
+  if (draft->d_tag) {
+    nostr_json_builder_set_key(builder, "d_tag");
+    nostr_json_builder_add_string(builder, draft->d_tag);
+  }
+  nostr_json_builder_set_key(builder, "updated_at");
+  nostr_json_builder_add_int64(builder, draft->updated_at);
+
+  if (draft->quote_nostr_uri) {
+    nostr_json_builder_set_key(builder, "quote_nostr_uri");
+    nostr_json_builder_add_string(builder, draft->quote_nostr_uri);
+  }
+
+  nostr_json_builder_end_object(builder);  /* end _draft_meta */
+
+  nostr_json_builder_end_object(builder);  /* end root */
+
+  char *result = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
   return result;
+}
+
+/* Context for parsing draft tags */
+typedef struct {
+  GnostrDraft *draft;
+} DraftTagParseCtx;
+
+static bool parse_draft_tag_cb(size_t idx, const char *element_json, void *user_data) {
+  (void)idx;
+  DraftTagParseCtx *ctx = (DraftTagParseCtx *)user_data;
+
+  if (!nostr_json_is_array_str(element_json)) return true;
+
+  char *tag_name = NULL;
+  char *tag_val = NULL;
+
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 ||
+      nostr_json_get_array_string(element_json, NULL, 1, &tag_val) != 0) {
+    g_free(tag_name);
+    g_free(tag_val);
+    return true;
+  }
+
+  if (!tag_name || !tag_val) {
+    g_free(tag_name);
+    g_free(tag_val);
+    return true;
+  }
+
+  if (strcmp(tag_name, "subject") == 0) {
+    ctx->draft->subject = tag_val;
+    tag_val = NULL;
+  } else if (strcmp(tag_name, "e") == 0) {
+    /* Check marker (element 3) */
+    char *marker = NULL;
+    nostr_json_get_array_string(element_json, NULL, 3, &marker);
+
+    if (marker && strcmp(marker, "root") == 0) {
+      ctx->draft->root_id = tag_val;
+      tag_val = NULL;
+    } else if (marker && strcmp(marker, "reply") == 0) {
+      ctx->draft->reply_to_id = tag_val;
+      tag_val = NULL;
+    } else if (!ctx->draft->reply_to_id) {
+      /* Legacy: no marker, treat as reply */
+      ctx->draft->reply_to_id = tag_val;
+      tag_val = NULL;
+    }
+    g_free(marker);
+  } else if (strcmp(tag_name, "p") == 0) {
+    if (!ctx->draft->reply_to_pubkey) {
+      ctx->draft->reply_to_pubkey = tag_val;
+      tag_val = NULL;
+    } else if (!ctx->draft->quote_pubkey) {
+      ctx->draft->quote_pubkey = tag_val;
+      tag_val = NULL;
+    }
+  } else if (strcmp(tag_name, "q") == 0) {
+    ctx->draft->quote_id = tag_val;
+    tag_val = NULL;
+  } else if (strcmp(tag_name, "content-warning") == 0) {
+    ctx->draft->is_sensitive = TRUE;
+  }
+
+  g_free(tag_name);
+  g_free(tag_val);
+  return true;
 }
 
 GnostrDraft *gnostr_draft_from_json(const char *json_str) {
   if (!json_str) return NULL;
 
-  json_error_t error;
-  json_t *obj = json_loads(json_str, 0, &error);
-  if (!obj) {
-    g_warning("drafts: failed to parse draft JSON: %s", error.text);
+  if (!nostr_json_is_valid(json_str)) {
+    g_warning("drafts: failed to parse draft JSON");
     return NULL;
   }
 
   GnostrDraft *draft = gnostr_draft_new();
 
   /* Kind */
-  json_t *kind_val = json_object_get(obj, "kind");
-  if (json_is_integer(kind_val)) {
-    draft->target_kind = (int)json_integer_value(kind_val);
+  int kind_val = 0;
+  if (nostr_json_get_int(json_str, "kind", &kind_val) == 0) {
+    draft->target_kind = kind_val;
   }
 
   /* Content */
-  json_t *content_val = json_object_get(obj, "content");
-  if (json_is_string(content_val)) {
-    draft->content = g_strdup(json_string_value(content_val));
+  char *content_val = NULL;
+  if (nostr_json_get_string(json_str, "content", &content_val) == 0) {
+    draft->content = content_val;
   }
 
   /* Created at */
-  json_t *created_val = json_object_get(obj, "created_at");
-  if (json_is_integer(created_val)) {
-    draft->created_at = json_integer_value(created_val);
+  int64_t created_val = 0;
+  if (nostr_json_get_int64(json_str, "created_at", &created_val) == 0) {
+    draft->created_at = created_val;
   }
 
-  /* Parse tags */
-  json_t *tags = json_object_get(obj, "tags");
-  if (json_is_array(tags)) {
-    size_t i;
-    json_t *tag;
-    json_array_foreach(tags, i, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
-      const char *tag_val = json_string_value(json_array_get(tag, 1));
-      if (!tag_name || !tag_val) continue;
-
-      if (strcmp(tag_name, "subject") == 0) {
-        draft->subject = g_strdup(tag_val);
-      } else if (strcmp(tag_name, "e") == 0) {
-        /* Check marker */
-        const char *marker = NULL;
-        if (json_array_size(tag) >= 4) {
-          marker = json_string_value(json_array_get(tag, 3));
-        }
-        if (marker && strcmp(marker, "root") == 0) {
-          draft->root_id = g_strdup(tag_val);
-        } else if (marker && strcmp(marker, "reply") == 0) {
-          draft->reply_to_id = g_strdup(tag_val);
-        } else if (!draft->reply_to_id) {
-          /* Legacy: no marker, treat as reply */
-          draft->reply_to_id = g_strdup(tag_val);
-        }
-      } else if (strcmp(tag_name, "p") == 0) {
-        if (!draft->reply_to_pubkey) {
-          draft->reply_to_pubkey = g_strdup(tag_val);
-        } else if (!draft->quote_pubkey) {
-          draft->quote_pubkey = g_strdup(tag_val);
-        }
-      } else if (strcmp(tag_name, "q") == 0) {
-        draft->quote_id = g_strdup(tag_val);
-      } else if (strcmp(tag_name, "content-warning") == 0) {
-        draft->is_sensitive = TRUE;
-      }
-    }
+  /* Parse tags using callback */
+  char *tags_json = NULL;
+  if (nostr_json_get_raw(json_str, "tags", &tags_json) == 0 && tags_json) {
+    DraftTagParseCtx ctx = { .draft = draft };
+    nostr_json_array_foreach_root(tags_json, parse_draft_tag_cb, &ctx);
+    g_free(tags_json);
   }
 
-  /* Draft metadata */
-  json_t *meta = json_object_get(obj, "_draft_meta");
-  if (json_is_object(meta)) {
-    json_t *d_tag_val = json_object_get(meta, "d_tag");
-    if (json_is_string(d_tag_val)) {
-      draft->d_tag = g_strdup(json_string_value(d_tag_val));
-    }
-    json_t *updated_val = json_object_get(meta, "updated_at");
-    if (json_is_integer(updated_val)) {
-      draft->updated_at = json_integer_value(updated_val);
-    }
-    json_t *quote_uri_val = json_object_get(meta, "quote_nostr_uri");
-    if (json_is_string(quote_uri_val)) {
-      draft->quote_nostr_uri = g_strdup(json_string_value(quote_uri_val));
-    }
+  /* Draft metadata from _draft_meta object */
+  char *d_tag_val = NULL;
+  if (nostr_json_get_string_at(json_str, "_draft_meta", "d_tag", &d_tag_val) == 0) {
+    draft->d_tag = d_tag_val;
   }
 
-  json_decref(obj);
+  int64_t updated_val = 0;
+  if (nostr_json_get_int64_at(json_str, "_draft_meta", "updated_at", &updated_val) == 0) {
+    draft->updated_at = updated_val;
+  }
+
+  char *quote_uri_val = NULL;
+  if (nostr_json_get_string_at(json_str, "_draft_meta", "quote_nostr_uri", &quote_uri_val) == 0) {
+    draft->quote_nostr_uri = quote_uri_val;
+  }
+
   return draft;
 }
 
