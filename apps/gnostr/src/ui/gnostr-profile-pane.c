@@ -1787,7 +1787,7 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
   /* Store profile info for posts */
   g_free(self->current_display_name);
   self->current_display_name = g_strdup(final_display);
-  g_free(shortened_key); /* Free after storing copy */
+  /* Note: shortened_key freed below after all uses of final_display */
 
   /* Update handle - show nip-05 if available, otherwise @name or truncated npub */
   char *handle_text = NULL;
@@ -1828,7 +1828,10 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
       gtk_label_set_text(GTK_LABEL(self->avatar_initials), initials);
     }
   }
-  
+
+  /* Free shortened_key now that final_display is no longer needed */
+  g_free(shortened_key);
+
   /* Load images */
 #ifdef HAVE_SOUP3
   if (picture && *picture) {
@@ -2595,10 +2598,7 @@ static gboolean hex_to_bytes32(const char *hex, uint8_t *out32) {
 
 /* Callback when network profile fetch completes */
 static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
-
-  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
-
+  /* Check result BEFORE accessing user_data - if cancelled, the pane may be destroyed */
   GError *error = NULL;
   GPtrArray *results = gnostr_simple_pool_fetch_profiles_by_authors_finish(
     GNOSTR_SIMPLE_POOL(source), res, &error);
@@ -2610,6 +2610,11 @@ static void on_profile_fetch_done(GObject *source, GAsyncResult *res, gpointer u
     g_error_free(error);
     return;
   }
+
+  /* Now safe to access user_data since operation wasn't cancelled */
+  if (user_data == NULL) return;
+  GnostrProfilePane *self = (GnostrProfilePane*)user_data;
+  if (!GNOSTR_IS_PROFILE_PANE(self)) return;
 
   if (!results || results->len == 0) {
     g_debug("profile_pane: no profile found on network for %.8s",
