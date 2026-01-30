@@ -523,3 +523,75 @@ int nostr_json_get_int_array_at(const char *json,
     *out_items = vec; if (out_count) *out_count = n;
     return 0;
 }
+
+/* =========================================================================
+ * In-memory JSON object manipulation helpers (jansson backend)
+ * ========================================================================= */
+
+NostrJsonValue nostr_json_object_new(void) {
+    return (NostrJsonValue)json_object();
+}
+
+void nostr_json_value_free(NostrJsonValue val) {
+    if (val) json_decref((json_t *)val);
+}
+
+NostrJsonValue nostr_json_value_incref(NostrJsonValue val) {
+    if (val) json_incref((json_t *)val);
+    return val;
+}
+
+int nostr_json_object_set(NostrJsonValue obj, const char *key, NostrJsonValue val) {
+    if (!obj || !key) return -1;
+    /* json_object_set_new takes ownership of val */
+    return json_object_set_new((json_t *)obj, key, (json_t *)val);
+}
+
+NostrJsonValue nostr_json_object_get(NostrJsonValue obj, const char *key) {
+    if (!obj || !key) return NULL;
+    /* Returns a borrowed reference */
+    return (NostrJsonValue)json_object_get((json_t *)obj, key);
+}
+
+int nostr_json_object_del(NostrJsonValue obj, const char *key) {
+    if (!obj || !key) return -1;
+    return json_object_del((json_t *)obj, key);
+}
+
+bool nostr_json_value_is_string(NostrJsonValue val) {
+    return val && json_is_string((json_t *)val);
+}
+
+bool nostr_json_value_is_number(NostrJsonValue val) {
+    return val && json_is_number((json_t *)val);
+}
+
+bool nostr_json_value_is_integer(NostrJsonValue val) {
+    return val && json_is_integer((json_t *)val);
+}
+
+bool nostr_json_value_is_boolean(NostrJsonValue val) {
+    return val && json_is_boolean((json_t *)val);
+}
+
+const char *nostr_json_value_string(NostrJsonValue val) {
+    if (!val || !json_is_string((json_t *)val)) return NULL;
+    return json_string_value((json_t *)val);
+}
+
+double nostr_json_value_number(NostrJsonValue val) {
+    if (!val) return 0.0;
+    if (json_is_number((json_t *)val)) return json_number_value((json_t *)val);
+    if (json_is_integer((json_t *)val)) return (double)json_integer_value((json_t *)val);
+    return 0.0;
+}
+
+int64_t nostr_json_value_integer(NostrJsonValue val) {
+    if (!val || !json_is_integer((json_t *)val)) return 0;
+    return json_integer_value((json_t *)val);
+}
+
+bool nostr_json_value_boolean(NostrJsonValue val) {
+    if (!val || !json_is_boolean((json_t *)val)) return false;
+    return json_boolean_value((json_t *)val);
+}
