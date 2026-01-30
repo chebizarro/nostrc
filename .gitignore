@@ -86,3 +86,9 @@ package-lock.json
 # Ignore bd (beads) local cache files
 .beads/beads.db
 .beads/last-touched
+
+# Gas Town (added by gt)
+.runtime/
+.claude/
+.logs/
+state.json
