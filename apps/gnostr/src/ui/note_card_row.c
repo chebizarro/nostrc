@@ -2263,13 +2263,18 @@ static gboolean update_timestamp_tick(gpointer user_data) {
   GnostrNoteCardRow *self = (GnostrNoteCardRow *)user_data;
 
   /* Check disposed flag - if set, the widget is being torn down.
-   * Also verify the timer ID is still valid (non-zero means we're still active) */
+   * Also verify the timer ID is still valid (non-zero means we're still active).
+   * IMPORTANT: Clear timer_id when returning G_SOURCE_REMOVE to prevent
+   * "Source ID was not found" errors when dispose/prepare_for_unbind tries
+   * to remove an already-auto-removed source. */
   if (self->disposed || self->timestamp_timer_id == 0) {
+    self->timestamp_timer_id = 0;  /* Clear so later cleanup doesn't try to remove */
     return G_SOURCE_REMOVE;
   }
 
   /* Now safe to use type-check since disposed==FALSE means widget is valid */
   if (!GTK_IS_LABEL(self->lbl_timestamp)) {
+    self->timestamp_timer_id = 0;  /* Clear so later cleanup doesn't try to remove */
     return G_SOURCE_REMOVE;
   }
 
@@ -5625,25 +5630,18 @@ void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
     }
   }
 
-  /* OG Preview: Cancel async operations and mark as disposed to prevent
-   * callbacks from accessing widget memory during disposal. Same pattern as
-   * video player fix. nostrc-ofq: Fix crash during scroll.
-   * NOTE: Do NOT use type-checking macros (OG_IS_PREVIEW_WIDGET) here - they
-   * dereference the pointer which crashes if it contains garbage. The pointer
-   * may be stale if the widget was destroyed or the row is being recycled.
-   * Just check for NULL and trust initialization/cleanup sets it properly. */
-  if (self->og_preview != NULL) {
-    og_preview_widget_prepare_for_unbind(self->og_preview);
-    self->og_preview = NULL;  /* Clear to prevent double-call */
-  }
-
-  /* Note Embed: Same pattern - cancel async operations and mark as disposed.
-   * nostrc-ofq: Prevent crashes during scroll with embedded notes.
-   * Same safety note: no type-checking macros on potentially stale pointers. */
-  if (self->note_embed != NULL) {
-    gnostr_note_embed_prepare_for_unbind(self->note_embed);
-    self->note_embed = NULL;  /* Clear to prevent double-call */
-  }
+  /* OG Preview and Note Embed: These child widgets manage their own disposal.
+   * nostrc-csj2: CRITICAL FIX - Do NOT call prepare_for_unbind on cached widget pointers.
+   * The cached pointers (self->og_preview, self->note_embed) can become stale when:
+   * 1. The widget was destroyed during a prior set_content() call
+   * 2. Memory was reused for other allocations (e.g., signal handler data)
+   * 3. We then try to write to freed memory -> heap-buffer-overflow
+   *
+   * Since these widgets use the parent's async_cancellable (which we cancel below),
+   * their async operations will be cancelled automatically. Their own dispose()
+   * methods will handle final cleanup. Just clear the cached pointers. */
+  self->og_preview = NULL;
+  self->note_embed = NULL;
 
   /* Cancel all async operations immediately */
   if (self->async_cancellable) {
