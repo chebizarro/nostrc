@@ -873,9 +873,11 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
     if (marker && strcmp(marker, "root") == 0) {
       g_free(found_root);
       found_root = g_strdup(id_hex);
+      g_debug("[NIP10] Found root marker: %.16s...", id_hex);
     } else if (marker && strcmp(marker, "reply") == 0) {
       g_free(found_reply);
       found_reply = g_strdup(id_hex);
+      g_debug("[NIP10] Found reply marker: %.16s...", id_hex);
     } else if (marker && strcmp(marker, "mention") == 0) {
       /* Skip mentions - not part of reply chain */
       continue;
@@ -912,6 +914,10 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
   if (!found_reply && found_root) {
     found_reply = g_strdup(found_root);
   }
+
+  g_debug("[NIP10] Final result - root: %s, reply: %s",
+          found_root ? found_root : "(null)",
+          found_reply ? found_reply : "(null)");
 
   if (root_id_out) *root_id_out = found_root;
   else g_free(found_root);
