@@ -15,7 +15,7 @@
 #include <gio/gio.h>
 #include <string.h>
 #include <time.h>
-#include <jansson.h>
+#include <json.h>
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/widgets/gnostr-thread-view.ui"
 
@@ -139,56 +139,91 @@ static void bytes_to_hex(const unsigned char *bin, char *hex) {
   hex[64] = '\0';
 }
 
+/* Context for NIP-10 tag parsing callback */
+typedef struct {
+  char **root_id;
+  char **reply_id;
+  char *first_e_id;
+  char *last_e_id;
+} Nip10ParseContext;
+
+/* Callback for processing each tag in the tags array */
+static bool parse_nip10_tag_callback(size_t index, const char *tag_json, void *user_data) {
+  (void)index;
+  Nip10ParseContext *ctx = (Nip10ParseContext *)user_data;
+  if (!tag_json || !ctx) return true;
+
+  /* Validate tag is an array */
+  if (!nostr_json_is_array_str(tag_json)) return true;
+
+  /* Get tag type (first element) */
+  char *tag_type = NULL;
+  if (nostr_json_get_array_string(tag_json, NULL, 0, &tag_type) != 0 || !tag_type) {
+    return true;
+  }
+
+  /* Only process "e" tags */
+  if (strcmp(tag_type, "e") != 0) {
+    free(tag_type);
+    return true;
+  }
+  free(tag_type);
+
+  /* Get event ID (second element) */
+  char *event_id = NULL;
+  if (nostr_json_get_array_string(tag_json, NULL, 1, &event_id) != 0 || !event_id) {
+    return true;
+  }
+
+  if (strlen(event_id) != 64) {
+    free(event_id);
+    return true;
+  }
+
+  /* Check for marker (NIP-10 preferred markers) - fourth element */
+  char *marker = NULL;
+  if (nostr_json_get_array_string(tag_json, NULL, 3, &marker) == 0 && marker && *marker) {
+    if (strcmp(marker, "root") == 0) {
+      g_free(*ctx->root_id);
+      *ctx->root_id = g_strdup(event_id);
+    } else if (strcmp(marker, "reply") == 0) {
+      g_free(*ctx->reply_id);
+      *ctx->reply_id = g_strdup(event_id);
+    }
+    free(marker);
+    free(event_id);
+    return true;
+  }
+  free(marker);
+
+  /* Fall back to positional interpretation */
+  if (!ctx->first_e_id) {
+    ctx->first_e_id = g_strdup(event_id);
+  }
+  g_free(ctx->last_e_id);
+  ctx->last_e_id = g_strdup(event_id);
+
+  free(event_id);
+  return true;
+}
+
 /* Parse NIP-10 tags from a nostr event to get root and reply IDs */
 static void parse_nip10_from_json(const char *json_str, char **root_id, char **reply_id) {
   *root_id = NULL;
   *reply_id = NULL;
   if (!json_str) return;
 
-  json_error_t err;
-  json_t *root = json_loads(json_str, 0, &err);
-  if (!root) return;
+  if (!nostr_json_is_valid(json_str)) return;
 
-  json_t *tags = json_object_get(root, "tags");
-  if (!tags || !json_is_array(tags)) {
-    json_decref(root);
-    return;
-  }
+  Nip10ParseContext ctx = {
+    .root_id = root_id,
+    .reply_id = reply_id,
+    .first_e_id = NULL,
+    .last_e_id = NULL
+  };
 
-  /* Iterate through tags looking for 'e' tags with markers */
-  size_t num_tags = json_array_size(tags);
-  const char *first_e_id = NULL;
-  const char *last_e_id = NULL;
-
-  for (size_t i = 0; i < num_tags; i++) {
-    json_t *tag = json_array_get(tags, i);
-    if (!tag || !json_is_array(tag) || json_array_size(tag) < 2) continue;
-
-    const char *tag_type = json_string_value(json_array_get(tag, 0));
-    if (!tag_type || strcmp(tag_type, "e") != 0) continue;
-
-    const char *event_id = json_string_value(json_array_get(tag, 1));
-    if (!event_id || strlen(event_id) != 64) continue;
-
-    /* Check for marker (NIP-10 preferred markers) */
-    if (json_array_size(tag) >= 4) {
-      const char *marker = json_string_value(json_array_get(tag, 3));
-      if (marker) {
-        if (strcmp(marker, "root") == 0) {
-          *root_id = g_strdup(event_id);
-        } else if (strcmp(marker, "reply") == 0) {
-          *reply_id = g_strdup(event_id);
-        }
-        continue;
-      }
-    }
-
-    /* Fall back to positional interpretation */
-    if (!first_e_id) {
-      first_e_id = event_id;
-    }
-    last_e_id = event_id;
-  }
+  /* Iterate through tags array */
+  nostr_json_array_foreach(json_str, "tags", parse_nip10_tag_callback, &ctx);
 
   /* If no markers found, use positional (NIP-10 fallback):
    * - First e-tag = root
@@ -196,12 +231,12 @@ static void parse_nip10_from_json(const char *json_str, char **root_id, char **r
    * When there's only one e-tag (first == last), the event is a direct reply
    * to that event, so both root and reply should point to it.
    * nostrc-5b8: Fix single e-tag case where reply_id was incorrectly left NULL */
-  if (!*root_id && first_e_id) {
-    *root_id = g_strdup(first_e_id);
+  if (!*root_id && ctx.first_e_id) {
+    *root_id = g_strdup(ctx.first_e_id);
   }
-  if (!*reply_id && last_e_id) {
+  if (!*reply_id && ctx.last_e_id) {
     /* Any e-tag (even if same as root) indicates this is a reply */
-    *reply_id = g_strdup(last_e_id);
+    *reply_id = g_strdup(ctx.last_e_id);
   }
   /* nostrc-mef: NIP-10 "root-only" marker case.
    * When an event has a "root" marker but NO "reply" marker, it means
@@ -210,7 +245,8 @@ static void parse_nip10_from_json(const char *json_str, char **root_id, char **r
     *reply_id = g_strdup(*root_id);
   }
 
-  json_decref(root);
+  g_free(ctx.first_e_id);
+  g_free(ctx.last_e_id);
 }
 
 /* Dispose */

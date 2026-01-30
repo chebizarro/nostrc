@@ -6,7 +6,7 @@
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
-#include <json-glib/json-glib.h>
+#include <json.h>
 #include "gnostr-avatar-cache.h"
 #include "../util/utils.h"
 #include "../util/nip05.h"
@@ -583,34 +583,16 @@ static void ensure_ndb_initialized(void) {
 static char *pretty_print_json(const char *json_str) {
   if (!json_str) return NULL;
 
-  JsonParser *parser = json_parser_new();
-  GError *error = NULL;
-
-  if (!json_parser_load_from_data(parser, json_str, -1, &error)) {
-    g_warning("Failed to parse JSON for pretty printing: %s",
-              error ? error->message : "unknown error");
-    if (error) g_error_free(error);
-    g_object_unref(parser);
-    return g_strdup(json_str); /* Return original if parsing fails */
-  }
-
-  JsonNode *root = json_parser_get_root(parser);
-  if (!root) {
-    g_object_unref(parser);
+  char *pretty = nostr_json_prettify(json_str);
+  if (!pretty) {
+    /* Return original if prettify fails */
     return g_strdup(json_str);
   }
 
-  JsonGenerator *generator = json_generator_new();
-  json_generator_set_pretty(generator, TRUE);
-  json_generator_set_indent(generator, 2);
-  json_generator_set_root(generator, root);
-
-  char *pretty_json = json_generator_to_data(generator, NULL);
-
-  g_object_unref(generator);
-  g_object_unref(parser);
-
-  return pretty_json;
+  /* Convert to g_strdup for GLib memory management */
+  char *result = g_strdup(pretty);
+  free(pretty);
+  return result;
 }
 
 static void show_json_viewer(GnostrNoteCardRow *self) {
@@ -2639,59 +2621,62 @@ static gboolean token_is_nostr_event(const char *t) {
          g_str_has_prefix(entity, "naddr1");
 }
 
+/* Context for NIP-14 subject tag extraction callback */
+typedef struct {
+  gchar *subject;
+} SubjectExtractContext;
+
+/* Callback for extracting subject tag */
+static bool extract_subject_callback(size_t index, const char *tag_json, void *user_data) {
+  (void)index;
+  SubjectExtractContext *ctx = (SubjectExtractContext *)user_data;
+  if (!tag_json || !ctx || ctx->subject) return true; /* Stop if already found */
+
+  if (!nostr_json_is_array_str(tag_json)) return true;
+
+  char *tag_name = NULL;
+  if (nostr_json_get_array_string(tag_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    return true;
+  }
+
+  if (g_strcmp0(tag_name, "subject") != 0) {
+    free(tag_name);
+    return true;
+  }
+  free(tag_name);
+
+  char *subject_value = NULL;
+  if (nostr_json_get_array_string(tag_json, NULL, 1, &subject_value) != 0 || !subject_value || !*subject_value) {
+    free(subject_value);
+    return true;
+  }
+
+  /* Truncate to 80 chars per NIP-14 recommendation */
+  if (strlen(subject_value) > 80) {
+    ctx->subject = g_strndup(subject_value, 77);
+    gchar *truncated = g_strdup_printf("%s...", ctx->subject);
+    g_free(ctx->subject);
+    ctx->subject = truncated;
+  } else {
+    ctx->subject = g_strdup(subject_value);
+  }
+
+  free(subject_value);
+  return false; /* Stop iteration - found subject */
+}
+
 /* NIP-14: Extract subject tag from tags JSON array
  * Returns newly allocated string or NULL if no subject found.
  * Caller must free the returned string.
  */
 static gchar *extract_subject_from_tags_json(const char *tags_json) {
   if (!tags_json || !*tags_json) return NULL;
+  if (!nostr_json_is_array_str(tags_json)) return NULL;
 
-  JsonParser *parser = json_parser_new();
-  GError *error = NULL;
+  SubjectExtractContext ctx = { .subject = NULL };
+  nostr_json_array_foreach_root(tags_json, extract_subject_callback, &ctx);
 
-  if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
-    g_debug("NIP-14: Failed to parse tags JSON: %s", error ? error->message : "unknown");
-    if (error) g_error_free(error);
-    g_object_unref(parser);
-    return NULL;
-  }
-
-  JsonNode *root = json_parser_get_root(parser);
-  if (!root || !JSON_NODE_HOLDS_ARRAY(root)) {
-    g_object_unref(parser);
-    return NULL;
-  }
-
-  JsonArray *tags = json_node_get_array(root);
-  guint n_tags = json_array_get_length(tags);
-  gchar *subject = NULL;
-
-  for (guint i = 0; i < n_tags && !subject; i++) {
-    JsonNode *tag_node = json_array_get_element(tags, i);
-    if (!tag_node || !JSON_NODE_HOLDS_ARRAY(tag_node)) continue;
-
-    JsonArray *tag = json_node_get_array(tag_node);
-    if (json_array_get_length(tag) < 2) continue;
-
-    const char *tag_name = json_array_get_string_element(tag, 0);
-    if (tag_name && g_strcmp0(tag_name, "subject") == 0) {
-      const char *subject_value = json_array_get_string_element(tag, 1);
-      if (subject_value && *subject_value) {
-        /* Truncate to 80 chars per NIP-14 recommendation */
-        if (strlen(subject_value) > 80) {
-          subject = g_strndup(subject_value, 77);
-          gchar *truncated = g_strdup_printf("%s...", subject);
-          g_free(subject);
-          subject = truncated;
-        } else {
-          subject = g_strdup(subject_value);
-        }
-      }
-    }
-  }
-
-  g_object_unref(parser);
-  return subject;
+  return ctx.subject;
 }
 
 /* NIP-27: Format nostr mention for display (truncated bech32 with prefix)

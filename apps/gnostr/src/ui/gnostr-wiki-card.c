@@ -11,7 +11,6 @@
 #include "../util/nip05.h"
 #include "../util/utils.h"
 #include <glib/gi18n.h>
-#include <json-glib/json-glib.h>
 #include <nostr/nip19/nip19.h>
 
 #ifdef HAVE_SOUP3

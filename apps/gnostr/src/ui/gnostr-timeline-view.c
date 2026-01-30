@@ -23,7 +23,7 @@
 #include <sys/stat.h>
 #include <gio/gio.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
-#include <json-glib/json-glib.h>
+#include <json.h>
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -1389,6 +1389,39 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
   }
 }
 
+/* Context for hashtag extraction callback */
+typedef struct {
+  GPtrArray *hashtags;
+} HashtagExtractContext;
+
+/* Callback for extracting hashtags */
+static bool extract_hashtag_callback(size_t index, const char *tag_json, void *user_data) {
+  (void)index;
+  HashtagExtractContext *ctx = (HashtagExtractContext *)user_data;
+  if (!tag_json || !ctx) return true;
+
+  if (!nostr_json_is_array_str(tag_json)) return true;
+
+  char *tag_name = NULL;
+  if (nostr_json_get_array_string(tag_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    return true;
+  }
+
+  if (g_strcmp0(tag_name, "t") != 0) {
+    free(tag_name);
+    return true;
+  }
+  free(tag_name);
+
+  char *hashtag = NULL;
+  if (nostr_json_get_array_string(tag_json, NULL, 1, &hashtag) == 0 && hashtag && *hashtag) {
+    g_ptr_array_add(ctx->hashtags, g_strdup(hashtag));
+  }
+  free(hashtag);
+
+  return true;
+}
+
 /**
  * parse_hashtags_from_tags_json:
  * @tags_json: JSON array string of event tags
@@ -1401,53 +1434,55 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
  */
 static gchar **parse_hashtags_from_tags_json(const char *tags_json) {
   if (!tags_json || !*tags_json) return NULL;
+  if (!nostr_json_is_array_str(tags_json)) return NULL;
 
-  JsonParser *parser = json_parser_new();
-  GError *error = NULL;
+  HashtagExtractContext ctx = { .hashtags = g_ptr_array_new() };
+  nostr_json_array_foreach_root(tags_json, extract_hashtag_callback, &ctx);
 
-  if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
-    if (error) g_error_free(error);
-    g_object_unref(parser);
+  if (ctx.hashtags->len == 0) {
+    g_ptr_array_free(ctx.hashtags, TRUE);
     return NULL;
   }
 
-  JsonNode *root = json_parser_get_root(parser);
-  if (!root || !JSON_NODE_HOLDS_ARRAY(root)) {
-    g_object_unref(parser);
-    return NULL;
+  g_ptr_array_add(ctx.hashtags, NULL);  /* NULL-terminate */
+  return (gchar **)g_ptr_array_free(ctx.hashtags, FALSE);
+}
+
+/* Context for content-warning extraction callback */
+typedef struct {
+  gchar *reason;
+} ContentWarningContext;
+
+/* Callback for extracting content-warning tag */
+static bool extract_content_warning_callback(size_t index, const char *tag_json, void *user_data) {
+  (void)index;
+  ContentWarningContext *ctx = (ContentWarningContext *)user_data;
+  if (!tag_json || !ctx || ctx->reason) return true; /* Stop if already found */
+
+  if (!nostr_json_is_array_str(tag_json)) return true;
+
+  char *tag_name = NULL;
+  if (nostr_json_get_array_string(tag_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    return true;
   }
 
-  JsonArray *tags = json_node_get_array(root);
-  guint n_tags = json_array_get_length(tags);
+  /* NIP-36: Look for "content-warning" tag */
+  if (g_strcmp0(tag_name, "content-warning") != 0) {
+    free(tag_name);
+    return true;
+  }
+  free(tag_name);
 
-  GPtrArray *hashtags = g_ptr_array_new();
-
-  for (guint i = 0; i < n_tags; i++) {
-    JsonNode *tag_node = json_array_get_element(tags, i);
-    if (!tag_node || !JSON_NODE_HOLDS_ARRAY(tag_node)) continue;
-
-    JsonArray *tag = json_node_get_array(tag_node);
-    guint tag_len = json_array_get_length(tag);
-    if (tag_len < 2) continue;
-
-    const gchar *tag_name = json_array_get_string_element(tag, 0);
-    if (!tag_name || g_strcmp0(tag_name, "t") != 0) continue;
-
-    const gchar *hashtag = json_array_get_string_element(tag, 1);
-    if (hashtag && *hashtag) {
-      g_ptr_array_add(hashtags, g_strdup(hashtag));
-    }
+  /* Get reason if present */
+  char *reason_str = NULL;
+  if (nostr_json_get_array_string(tag_json, NULL, 1, &reason_str) == 0 && reason_str) {
+    ctx->reason = g_strdup(reason_str);
+    free(reason_str);
+  } else {
+    ctx->reason = g_strdup("");  /* Tag exists but no reason provided */
   }
 
-  g_object_unref(parser);
-
-  if (hashtags->len == 0) {
-    g_ptr_array_free(hashtags, TRUE);
-    return NULL;
-  }
-
-  g_ptr_array_add(hashtags, NULL);  /* NULL-terminate */
-  return (gchar **)g_ptr_array_free(hashtags, FALSE);
+  return false; /* Stop iteration - found content-warning */
 }
 
 /**
@@ -1462,54 +1497,12 @@ static gchar **parse_hashtags_from_tags_json(const char *tags_json) {
  */
 static gchar *parse_content_warning_from_tags_json(const char *tags_json) {
   if (!tags_json || !*tags_json) return NULL;
+  if (!nostr_json_is_array_str(tags_json)) return NULL;
 
-  JsonParser *parser = json_parser_new();
-  GError *error = NULL;
+  ContentWarningContext ctx = { .reason = NULL };
+  nostr_json_array_foreach_root(tags_json, extract_content_warning_callback, &ctx);
 
-  if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
-    g_warning("Failed to parse tags JSON for content-warning: %s",
-              error ? error->message : "unknown error");
-    if (error) g_error_free(error);
-    g_object_unref(parser);
-    return NULL;
-  }
-
-  JsonNode *root = json_parser_get_root(parser);
-  if (!root || !JSON_NODE_HOLDS_ARRAY(root)) {
-    g_object_unref(parser);
-    return NULL;
-  }
-
-  JsonArray *tags = json_node_get_array(root);
-  guint n_tags = json_array_get_length(tags);
-
-  for (guint i = 0; i < n_tags; i++) {
-    JsonNode *tag_node = json_array_get_element(tags, i);
-    if (!tag_node || !JSON_NODE_HOLDS_ARRAY(tag_node)) continue;
-
-    JsonArray *tag = json_node_get_array(tag_node);
-    guint tag_len = json_array_get_length(tag);
-    if (tag_len < 1) continue;
-
-    const gchar *tag_name = json_array_get_string_element(tag, 0);
-    if (!tag_name) continue;
-
-    /* NIP-36: Look for "content-warning" tag */
-    if (g_strcmp0(tag_name, "content-warning") == 0) {
-      gchar *reason = NULL;
-      if (tag_len >= 2) {
-        const gchar *reason_str = json_array_get_string_element(tag, 1);
-        reason = g_strdup(reason_str ? reason_str : "");
-      } else {
-        reason = g_strdup("");  /* Tag exists but no reason provided */
-      }
-      g_object_unref(parser);
-      return reason;
-    }
-  }
-
-  g_object_unref(parser);
-  return NULL;
+  return ctx.reason;
 }
 
 static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
@@ -1745,55 +1738,45 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                     int profile_len = 0;
                     if (storage_ndb_get_profile_by_pubkey(txn, pk_bytes, &profile_json, &profile_len) == 0 && profile_json) {
                       /* Parse profile JSON to get display name */
-                      JsonParser *parser = json_parser_new();
-                      if (json_parser_load_from_data(parser, profile_json, profile_len, NULL)) {
-                        JsonNode *root = json_parser_get_root(parser);
-                        if (root && JSON_NODE_HOLDS_OBJECT(root)) {
-                          JsonObject *profile_obj = json_node_get_object(root);
-                          /* Profile is stored as event - need to parse content */
-                          const char *profile_content = json_object_get_string_member(profile_obj, "content");
-                          if (profile_content) {
-                            JsonParser *content_parser = json_parser_new();
-                            if (json_parser_load_from_data(content_parser, profile_content, -1, NULL)) {
-                              JsonNode *content_root = json_parser_get_root(content_parser);
-                              if (content_root && JSON_NODE_HOLDS_OBJECT(content_root)) {
-                                JsonObject *meta = json_node_get_object(content_root);
-                                const char *orig_name = NULL;
-                                const char *orig_display = NULL;
-                                const char *orig_avatar = NULL;
-                                const char *orig_nip05_str = NULL;
+                      if (nostr_json_is_valid(profile_json)) {
+                        /* Profile is stored as event - need to parse content */
+                        char *profile_content = NULL;
+                        if (nostr_json_get_string(profile_json, "content", &profile_content) == 0 && profile_content) {
+                          if (nostr_json_is_valid(profile_content)) {
+                            char *orig_name = NULL;
+                            char *orig_display = NULL;
+                            char *orig_avatar = NULL;
+                            char *orig_nip05_str = NULL;
 
-                                if (json_object_has_member(meta, "display_name"))
-                                  orig_display = json_object_get_string_member(meta, "display_name");
-                                if (json_object_has_member(meta, "name"))
-                                  orig_name = json_object_get_string_member(meta, "name");
-                                if (json_object_has_member(meta, "picture"))
-                                  orig_avatar = json_object_get_string_member(meta, "picture");
-                                if (json_object_has_member(meta, "nip05"))
-                                  orig_nip05_str = json_object_get_string_member(meta, "nip05");
+                            nostr_json_get_string(profile_content, "display_name", &orig_display);
+                            nostr_json_get_string(profile_content, "name", &orig_name);
+                            nostr_json_get_string(profile_content, "picture", &orig_avatar);
+                            nostr_json_get_string(profile_content, "nip05", &orig_nip05_str);
 
-                                /* Update author display with original author */
-                                gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row),
-                                                                 orig_display ? orig_display : orig_name,
-                                                                 orig_name,
-                                                                 orig_avatar);
+                            /* Update author display with original author */
+                            gnostr_note_card_row_set_author(GNOSTR_NOTE_CARD_ROW(row),
+                                                             orig_display && *orig_display ? orig_display : orig_name,
+                                                             orig_name,
+                                                             orig_avatar);
 
-                                /* Update IDs to use original note's pubkey for actions */
-                                gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row),
-                                                              reposted_id, root_id, (char*)orig_pubkey);
+                            /* Update IDs to use original note's pubkey for actions */
+                            gnostr_note_card_row_set_ids(GNOSTR_NOTE_CARD_ROW(row),
+                                                          reposted_id, root_id, (char*)orig_pubkey);
 
-                                /* Update NIP-05 if available */
-                                if (orig_nip05_str && *orig_nip05_str) {
-                                  gnostr_note_card_row_set_nip05(GNOSTR_NOTE_CARD_ROW(row),
-                                                                  orig_nip05_str, orig_pubkey);
-                                }
-                              }
+                            /* Update NIP-05 if available */
+                            if (orig_nip05_str && *orig_nip05_str) {
+                              gnostr_note_card_row_set_nip05(GNOSTR_NOTE_CARD_ROW(row),
+                                                              orig_nip05_str, orig_pubkey);
                             }
-                            g_object_unref(content_parser);
+
+                            free(orig_name);
+                            free(orig_display);
+                            free(orig_avatar);
+                            free(orig_nip05_str);
                           }
+                          free(profile_content);
                         }
                       }
-                      g_object_unref(parser);
                     }
                   }
                   storage_ndb_end_query(txn);

@@ -1,6 +1,6 @@
 #include "gnostr-profile-provider.h"
 #include "../storage_ndb.h"
-#include <json-glib/json-glib.h>
+#include <json.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -88,42 +88,55 @@ static void lru_evict(void) {
 }
 
 /* Parse profile from JSON */
-static GnostrProfileMeta *meta_from_json(const char *pk, const char *json) {
-  if (!pk || !json) return NULL;
-  GError *err = NULL;
-  JsonParser *p = json_parser_new();
-  if (!json_parser_load_from_data(p, json, -1, &err)) {
-    g_clear_error(&err);
-    g_object_unref(p);
-    return NULL;
-  }
-  JsonNode *root = json_parser_get_root(p);
-  if (!root || !JSON_NODE_HOLDS_OBJECT(root)) { g_object_unref(p); return NULL; }
-  JsonObject *obj = json_node_get_object(root);
+static GnostrProfileMeta *meta_from_json(const char *pk, const char *json_str) {
+  if (!pk || !json_str) return NULL;
+  if (!nostr_json_is_valid(json_str)) return NULL;
+  if (!nostr_json_is_object_str(json_str)) return NULL;
+
   GnostrProfileMeta *m = g_new0(GnostrProfileMeta, 1);
   m->pubkey_hex = g_strdup(pk);
-  if (json_object_has_member(obj, "display_name")) {
-    const char *v = json_object_get_string_member(obj, "display_name");
-    if (v && *v) m->display_name = g_strdup(v);
+
+  char *tmp = NULL;
+  if (nostr_json_get_string(json_str, "display_name", &tmp) == 0 && tmp && *tmp) {
+    m->display_name = g_strdup(tmp);
+    free(tmp);
+  } else {
+    free(tmp);
   }
-  if (json_object_has_member(obj, "name")) {
-    const char *v = json_object_get_string_member(obj, "name");
-    if (v && *v) m->name = g_strdup(v);
+
+  tmp = NULL;
+  if (nostr_json_get_string(json_str, "name", &tmp) == 0 && tmp && *tmp) {
+    m->name = g_strdup(tmp);
+    free(tmp);
+  } else {
+    free(tmp);
   }
-  if (json_object_has_member(obj, "picture")) {
-    const char *v = json_object_get_string_member(obj, "picture");
-    if (v && *v) m->picture = g_strdup(v);
+
+  tmp = NULL;
+  if (nostr_json_get_string(json_str, "picture", &tmp) == 0 && tmp && *tmp) {
+    m->picture = g_strdup(tmp);
+    free(tmp);
+  } else {
+    free(tmp);
   }
-  if (json_object_has_member(obj, "nip05")) {
-    const char *v = json_object_get_string_member(obj, "nip05");
-    if (v && *v) m->nip05 = g_strdup(v);
+
+  tmp = NULL;
+  if (nostr_json_get_string(json_str, "nip05", &tmp) == 0 && tmp && *tmp) {
+    m->nip05 = g_strdup(tmp);
+    free(tmp);
+  } else {
+    free(tmp);
   }
-  if (json_object_has_member(obj, "lud16")) {
-    const char *v = json_object_get_string_member(obj, "lud16");
-    if (v && *v) m->lud16 = g_strdup(v);
+
+  tmp = NULL;
+  if (nostr_json_get_string(json_str, "lud16", &tmp) == 0 && tmp && *tmp) {
+    m->lud16 = g_strdup(tmp);
+    free(tmp);
+  } else {
+    free(tmp);
   }
+
   m->created_at = 0;
-  g_object_unref(p);
   return m;
 }
 

@@ -10,7 +10,7 @@
 #include "../ipc/gnostr-signer-service.h"
 #include "../util/relays.h"
 #include <glib/gi18n.h>
-#include <jansson.h>
+#include <json.h>
 #include "nostr_relay.h"
 #include "nostr-event.h"
 
@@ -400,38 +400,47 @@ static void on_submit_clicked(GtkButton *btn, gpointer user_data) {
   }
 
   /* Build unsigned kind 1984 report event JSON per NIP-56 */
-  json_t *event_obj = json_object();
-  json_object_set_new(event_obj, "kind", json_integer(NOSTR_KIND_REPORTING));
-  json_object_set_new(event_obj, "created_at", json_integer((json_int_t)time(NULL)));
-  json_object_set_new(event_obj, "content", json_string(comment));
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_object(builder);
+
+  nostr_json_builder_set_key(builder, "kind");
+  nostr_json_builder_add_int(builder, NOSTR_KIND_REPORTING);
+
+  nostr_json_builder_set_key(builder, "created_at");
+  nostr_json_builder_add_int64(builder, (int64_t)time(NULL));
+
+  nostr_json_builder_set_key(builder, "content");
+  nostr_json_builder_add_string(builder, comment);
 
   /* Build tags array per NIP-56:
    * - ["p", "<pubkey>", "<report-type>"] - report user with reason
    * - ["e", "<event-id>", "<report-type>"] - report event with reason (optional)
    */
-  json_t *tags = json_array();
+  nostr_json_builder_set_key(builder, "tags");
+  nostr_json_builder_begin_array(builder);
 
   /* p-tag: ["p", "<pubkey>", "<report-type>"] */
-  json_t *p_tag = json_array();
-  json_array_append_new(p_tag, json_string("p"));
-  json_array_append_new(p_tag, json_string(self->pubkey_hex));
-  json_array_append_new(p_tag, json_string(report_type));
-  json_array_append_new(tags, p_tag);
+  nostr_json_builder_begin_array(builder);
+  nostr_json_builder_add_string(builder, "p");
+  nostr_json_builder_add_string(builder, self->pubkey_hex);
+  nostr_json_builder_add_string(builder, report_type);
+  nostr_json_builder_end_array(builder);
 
   /* e-tag if event ID provided: ["e", "<event-id>", "<report-type>"] */
   if (self->event_id_hex && strlen(self->event_id_hex) == 64) {
-    json_t *e_tag = json_array();
-    json_array_append_new(e_tag, json_string("e"));
-    json_array_append_new(e_tag, json_string(self->event_id_hex));
-    json_array_append_new(e_tag, json_string(report_type));
-    json_array_append_new(tags, e_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "e");
+    nostr_json_builder_add_string(builder, self->event_id_hex);
+    nostr_json_builder_add_string(builder, report_type);
+    nostr_json_builder_end_array(builder);
   }
 
-  json_object_set_new(event_obj, "tags", tags);
+  nostr_json_builder_end_array(builder); /* end tags */
+  nostr_json_builder_end_object(builder);
 
   /* Serialize */
-  char *event_json = json_dumps(event_obj, JSON_COMPACT);
-  json_decref(event_obj);
+  char *event_json = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
 
   if (!event_json) {
     show_toast(self, "Failed to serialize report event");

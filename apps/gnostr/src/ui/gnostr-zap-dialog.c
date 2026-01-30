@@ -10,7 +10,6 @@
 #include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
 #include <glib/gi18n.h>
-#include <jansson.h>
 #include <nostr/nip19/nip19.h>
 
 #define UI_RESOURCE "/org/gnostr/ui/ui/dialogs/gnostr-zap-dialog.ui"
