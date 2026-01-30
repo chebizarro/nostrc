@@ -738,6 +738,15 @@ static gpointer query_single_thread(gpointer user_data) {
 
         // Fire the subscription
         Error *err = NULL;
+        const char *sid = nostr_subscription_get_id(sub);
+
+        /* hq-3xato: Add debug logging for thread subscription EOSE tracking */
+        gboolean debug_eose = (g_getenv("NOSTR_DEBUG_EOSE") != NULL);
+        if (debug_eose) {
+            g_message("[QUERY_SINGLE] Firing subscription sid=%s to relay %s",
+                      sid ? sid : "null", url);
+        }
+
         if (!nostr_subscription_fire(sub, &err)) {
             g_warning("query_single: Failed to fire subscription to %s: %s", url,
                      err ? err->message : "unknown error");
@@ -747,19 +756,35 @@ static gpointer query_single_thread(gpointer user_data) {
             continue;
         }
 
+        if (debug_eose) {
+            g_message("[QUERY_SINGLE] Subscription sid=%s fired successfully, waiting for events/EOSE",
+                      sid ? sid : "null");
+        }
+
         // Wait for events until EOSE with timeout
         bool got_eose = false;
         guint64 start_time = g_get_monotonic_time();
         const guint64 timeout_us = 10000000;  // 10 seconds timeout
+        guint events_received = 0;
+        guint poll_iterations = 0;
 
         while (!got_eose) {
+            poll_iterations++;
+
             if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) {
+                if (debug_eose) {
+                    g_message("[QUERY_SINGLE] sid=%s cancelled after %u events, %u iterations",
+                              sid ? sid : "null", events_received, poll_iterations);
+                }
                 break;
             }
 
             // Check timeout
-            if ((g_get_monotonic_time() - start_time) > timeout_us) {
-                g_debug("query_single: Timeout waiting for EOSE from %s", url);
+            guint64 elapsed_us = g_get_monotonic_time() - start_time;
+            if (elapsed_us > timeout_us) {
+                /* hq-3xato: Log detailed timeout info for debugging */
+                g_warning("[QUERY_SINGLE] TIMEOUT sid=%s relay=%s after %.1fs - received %u events, %u poll iterations (EOSE never arrived)",
+                          sid ? sid : "null", url, elapsed_us / 1000000.0, events_received, poll_iterations);
                 break;
             }
 
@@ -767,6 +792,7 @@ static gpointer query_single_thread(gpointer user_data) {
             NostrEvent *evt = NULL;
             GoChannel *ch_events = nostr_subscription_get_events_channel(sub);
             if (ch_events && go_channel_try_receive(ch_events, (void**)&evt) == 0) {
+                events_received++;
                 char *json = nostr_event_serialize(evt);
                 if (json) {
                     g_ptr_array_add(ctx->results, json);
@@ -780,6 +806,11 @@ static gpointer query_single_thread(gpointer user_data) {
             GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
             if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
                 got_eose = true;
+                if (debug_eose) {
+                    guint64 elapsed_ms = (g_get_monotonic_time() - start_time) / 1000;
+                    g_message("[QUERY_SINGLE] EOSE received sid=%s relay=%s after %lums with %u events",
+                              sid ? sid : "null", url, (unsigned long)elapsed_ms, events_received);
+                }
                 break;
             }
 

@@ -757,22 +757,37 @@ static void *message_loop(void *arg) {
             NostrEOSEEnvelope *env = (NostrEOSEEnvelope *)envelope;
             if (env->message) {
                 int serial = nostr_sub_id_to_serial(env->message);
-                NostrSubscription *subscription = go_hash_map_get_int(r->subscriptions, serial);
-                if (subscription) {
-                    if (debug_eose_cached) {
-                        fprintf(stderr, "[EOSE_DISPATCH] relay=%s sid=%s serial=%d - dispatching to subscription\n",
-                                r->url ? r->url : "unknown", env->message, serial);
+                if (serial < 0) {
+                    /* hq-3xato: Log when subscription ID fails to parse - this would prevent EOSE dispatch */
+                    if (debug_eose_cached || getenv("NOSTR_DEBUG_LIFECYCLE")) {
+                        fprintf(stderr, "[EOSE_ERROR] relay=%s - failed to parse subscription ID from '%s'\n",
+                                r->url ? r->url : "unknown", env->message);
                     }
-                    nostr_subscription_dispatch_eose(subscription);
+                    nostr_metric_counter_add("eose_parse_error", 1);
                 } else {
-                    /* This is NORMAL when a subscription is closed due to timeout before EOSE arrives.
-                     * The subscription_free removes from the map, then EOSE arrives from the relay.
-                     * Only log in debug mode to avoid noise during normal operation. */
-                    if (getenv("NOSTR_DEBUG_LIFECYCLE")) {
-                        fprintf(stderr, "[SUB_LIFECYCLE] EOSE_LATE relay=%s sid=%s serial=%d (subscription already freed - normal for slow relays)\n",
-                                r->url ? r->url : "unknown", env->message, serial);
+                    NostrSubscription *subscription = go_hash_map_get_int(r->subscriptions, serial);
+                    if (subscription) {
+                        if (debug_eose_cached) {
+                            fprintf(stderr, "[EOSE_DISPATCH] relay=%s sid=%s serial=%d - dispatching to subscription\n",
+                                    r->url ? r->url : "unknown", env->message, serial);
+                        }
+                        nostr_subscription_dispatch_eose(subscription);
+                    } else {
+                        /* This is NORMAL when a subscription is closed due to timeout before EOSE arrives.
+                         * The subscription_free removes from the map, then EOSE arrives from the relay.
+                         * Only log in debug mode to avoid noise during normal operation. */
+                        if (debug_eose_cached || getenv("NOSTR_DEBUG_LIFECYCLE")) {
+                            fprintf(stderr, "[SUB_LIFECYCLE] EOSE_LATE relay=%s sid=%s serial=%d (subscription already freed - normal for slow relays)\n",
+                                    r->url ? r->url : "unknown", env->message, serial);
+                        }
+                        nostr_metric_counter_add("eose_late_arrival", 1);
                     }
-                    nostr_metric_counter_add("eose_late_arrival", 1);
+                }
+            } else {
+                /* hq-3xato: Log when EOSE has no subscription ID */
+                if (debug_eose_cached) {
+                    fprintf(stderr, "[EOSE_ERROR] relay=%s - EOSE with NULL subscription ID\n",
+                            r->url ? r->url : "unknown");
                 }
             }
             char tmp[128]; snprintf(tmp, sizeof(tmp), "EOSE sid=%s", env->message ? env->message : "");
