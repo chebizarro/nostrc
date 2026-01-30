@@ -42,6 +42,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="label">?</property>
                 <property name="xalign">0.5</property>
                 <property name="yalign">0.5</property>
+                <property name="width-request">48</property>
+                <property name="height-request">48</property>
                 <style>
                   <class name="avatar-initials"/>
                 </style>
