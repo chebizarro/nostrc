@@ -370,13 +370,15 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
         int was_empty = (chan->size == 0);
 #endif
         // Prefetch current store and a few producer slots to reduce misses
-        __builtin_prefetch(&chan->buffer[chan->in], 1, 1);
+        // Always mask the index: in MPMC mode in is a monotonic counter
+        size_t in_idx = chan->in & chan->mask;
+        __builtin_prefetch(&chan->buffer[in_idx], 1, 1);
         for (int d = 1; d <= NOSTR_PREFETCH_DISTANCE; ++d) {
             size_t idx = (chan->in + (size_t)d) & chan->mask;
             __builtin_prefetch(&chan->buffer[idx], 1, 1);
         }
         {
-            _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[chan->in];
+            _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[in_idx];
             atomic_store_explicit(p, data, memory_order_release);
         }
         go_channel_inc_in(chan);
@@ -539,12 +541,14 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         int was_full = (chan->size == chan->capacity);
 #endif
         // Prefetch current load and a few consumer slots
-        __builtin_prefetch(&chan->buffer[chan->out], 0, 1);
+        // Always mask the index: in MPMC mode out is a monotonic counter
+        size_t out_idx = chan->out & chan->mask;
+        __builtin_prefetch(&chan->buffer[out_idx], 0, 1);
         for (int d = 1; d <= NOSTR_PREFETCH_DISTANCE; ++d) {
             size_t idx = (chan->out + (size_t)d) & chan->mask;
             __builtin_prefetch(&chan->buffer[idx], 0, 1);
         }
-        void *tmp = chan->buffer[chan->out];
+        void *tmp = chan->buffer[out_idx];
         if (data) *data = tmp;
         go_channel_inc_out(chan);
         // size derived: no counter update
@@ -1142,9 +1146,11 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
 #else
     was_empty2 = (chan->size == 0);
 #endif
-    __builtin_prefetch(&chan->buffer[chan->in], 1, 1);
+    // Always mask the index: in MPMC mode in is a monotonic counter
+    size_t in_idx2 = chan->in & chan->mask;
+    __builtin_prefetch(&chan->buffer[in_idx2], 1, 1);
     {
-        _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[chan->in];
+        _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[in_idx2];
         atomic_store_explicit(p, data, memory_order_release);
     }
     go_channel_inc_in(chan);
