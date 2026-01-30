@@ -499,7 +499,7 @@ static void *write_operations(void *arg) {
 
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] write_operations: exit\n");
     go_context_unref(ctx);  // Release context reference (nostrc-0q4)
-    go_wait_group_done(&((NostrRelay *)arg)->priv->workers);
+    go_wait_group_done(&r->priv->workers);  // Use local 'r', not freed 'arg'
     return NULL;
 }
 
@@ -966,7 +966,7 @@ static void *message_loop(void *arg) {
 
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: exit\n");
     go_context_unref(ctx);  // Release context reference (nostrc-0q4)
-    go_wait_group_done(&((NostrRelay *)arg)->priv->workers);
+    go_wait_group_done(&r->priv->workers);  // Use local 'r', not freed 'arg'
     return NULL;
 }
 
