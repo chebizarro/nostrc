@@ -22,7 +22,6 @@
 #include <channel.h>
 #include <context.h>
 #include <error.h>
-#include <jansson.h>
 #include <string.h>
 #include <time.h>
 
@@ -352,22 +351,20 @@ static NostrEvent *build_signed_nwc_request(GnostrNwcService *self,
   }
 
   /* Build request body JSON */
-  json_t *body = json_object();
-  json_object_set_new(body, "method", json_string(method));
-  if (params_json && *params_json) {
-    json_error_t jerr;
-    json_t *params = json_loads(params_json, 0, &jerr);
-    if (params) {
-      json_object_set_new(body, "params", params);
-    } else {
-      json_object_set_new(body, "params", json_object());
-    }
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_object(builder);
+  nostr_json_builder_set_key(builder, "method");
+  nostr_json_builder_add_string(builder, method);
+  nostr_json_builder_set_key(builder, "params");
+  if (params_json && *params_json && nostr_json_is_valid(params_json)) {
+    nostr_json_builder_add_raw(builder, params_json);
   } else {
-    json_object_set_new(body, "params", json_object());
+    nostr_json_builder_begin_object(builder);
+    nostr_json_builder_end_object(builder);
   }
-
-  gchar *body_str = json_dumps(body, JSON_COMPACT);
-  json_decref(body);
+  nostr_json_builder_end_object(builder);
+  gchar *body_str = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
 
   if (!body_str) {
     g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
@@ -442,11 +439,13 @@ static NostrEvent *build_signed_nwc_request(GnostrNwcService *self,
   return event;
 }
 
-/* Parse and decrypt a NWC response */
+/* Parse and decrypt a NWC response.
+ * out_result_json is set to a newly allocated raw JSON string for the "result" field.
+ * Caller must g_free() out_result_json. */
 static gboolean parse_nwc_response(GnostrNwcService *self,
                                    NostrEvent *event,
                                    const gchar *expected_request_id,
-                                   json_t **out_result,
+                                   char **out_result_json,
                                    GError **error) {
   if (!event || !self->secret_hex || !self->wallet_pubkey_hex) {
     g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
@@ -512,37 +511,40 @@ static gboolean parse_nwc_response(GnostrNwcService *self,
     return FALSE;
   }
 
-  /* Parse decrypted JSON */
-  json_error_t jerr;
-  json_t *response = json_loads(decrypted, 0, &jerr);
-  free(decrypted);
-
-  if (!response) {
+  /* Validate decrypted JSON */
+  if (!nostr_json_is_valid(decrypted)) {
     g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_REQUEST_FAILED,
-                "Failed to parse response JSON: %s", jerr.text);
+                "Failed to parse response JSON");
+    free(decrypted);
     return FALSE;
   }
 
-  /* Check for error in response */
-  json_t *err_obj = json_object_get(response, "error");
-  if (err_obj && json_is_object(err_obj)) {
-    const char *err_code = json_string_value(json_object_get(err_obj, "code"));
-    const char *err_msg = json_string_value(json_object_get(err_obj, "message"));
+  /* Check for error in response - look for error.code or error.message */
+  char *err_code = NULL;
+  char *err_msg = NULL;
+  if (nostr_json_get_string_at(decrypted, "error", "code", &err_code) == 0 ||
+      nostr_json_get_string_at(decrypted, "error", "message", &err_msg) == 0) {
     g_set_error(error, GNOSTR_NWC_ERROR, GNOSTR_NWC_ERROR_WALLET_ERROR,
                 "Wallet error [%s]: %s",
                 err_code ? err_code : "UNKNOWN",
                 err_msg ? err_msg : "Unknown error");
-    json_decref(response);
+    g_free(err_code);
+    g_free(err_msg);
+    free(decrypted);
     return FALSE;
   }
 
-  /* Extract result */
-  json_t *result = json_object_get(response, "result");
-  if (out_result && result) {
-    *out_result = json_incref(result);
+  /* Extract result as raw JSON */
+  if (out_result_json) {
+    char *result_json = NULL;
+    if (nostr_json_get_raw(decrypted, "result", &result_json) == 0 && result_json) {
+      *out_result_json = result_json;
+    } else {
+      *out_result_json = NULL;
+    }
   }
 
-  json_decref(response);
+  free(decrypted);
   return TRUE;
 }
 
@@ -617,12 +619,12 @@ static gpointer nwc_response_poll_thread(gpointer user_data) {
       NostrEvent *event = (NostrEvent *)msg;
 
       /* Check if this is a response to our request */
-      json_t *result = NULL;
+      char *result_json = NULL;
       GError *error = NULL;
 
-      if (parse_nwc_response(self, event, ctx->request_event_id, &result, &error)) {
-        /* Success - return result */
-        g_task_return_pointer(ctx->task, result, (GDestroyNotify)json_decref);
+      if (parse_nwc_response(self, event, ctx->request_event_id, &result_json, &error)) {
+        /* Success - return result as raw JSON string */
+        g_task_return_pointer(ctx->task, result_json, g_free);
         g_object_unref(ctx->task);
         nostr_event_free(event);
         nwc_request_context_free(ctx);
@@ -814,14 +816,14 @@ gboolean gnostr_nwc_service_get_balance_finish(GnostrNwcService *self,
   g_return_val_if_fail(GNOSTR_IS_NWC_SERVICE(self), FALSE);
   g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
 
-  json_t *response = g_task_propagate_pointer(G_TASK(result), error);
-  if (!response) return FALSE;
+  char *response_json = g_task_propagate_pointer(G_TASK(result), error);
+  if (!response_json) return FALSE;
 
   /* Extract balance from response: {"balance": <msats>} */
   if (balance_msat) {
-    json_t *balance_val = json_object_get(response, "balance");
-    if (json_is_integer(balance_val)) {
-      *balance_msat = json_integer_value(balance_val);
+    int64_t bal_val = 0;
+    if (nostr_json_get_int64(response_json, "balance", &bal_val) == 0) {
+      *balance_msat = bal_val;
     } else {
       *balance_msat = 0;
     }
@@ -830,7 +832,7 @@ gboolean gnostr_nwc_service_get_balance_finish(GnostrNwcService *self,
     g_signal_emit(self, signals[SIGNAL_BALANCE_UPDATED], 0, *balance_msat);
   }
 
-  json_decref(response);
+  g_free(response_json);
   return TRUE;
 }
 
@@ -845,13 +847,17 @@ void gnostr_nwc_service_pay_invoice_async(GnostrNwcService *self,
   g_return_if_fail(bolt11 != NULL);
 
   /* Build params JSON */
-  json_t *params = json_object();
-  json_object_set_new(params, "invoice", json_string(bolt11));
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_object(builder);
+  nostr_json_builder_set_key(builder, "invoice");
+  nostr_json_builder_add_string(builder, bolt11);
   if (amount_msat > 0) {
-    json_object_set_new(params, "amount", json_integer(amount_msat));
+    nostr_json_builder_set_key(builder, "amount");
+    nostr_json_builder_add_int(builder, amount_msat);
   }
-  gchar *params_json = json_dumps(params, JSON_COMPACT);
-  json_decref(params);
+  nostr_json_builder_end_object(builder);
+  gchar *params_json = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
 
   g_message("[NWC] Initiating pay_invoice for: %.40s...", bolt11);
 
@@ -866,20 +872,20 @@ gboolean gnostr_nwc_service_pay_invoice_finish(GnostrNwcService *self,
   g_return_val_if_fail(GNOSTR_IS_NWC_SERVICE(self), FALSE);
   g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
 
-  json_t *response = g_task_propagate_pointer(G_TASK(result), error);
-  if (!response) return FALSE;
+  char *response_json = g_task_propagate_pointer(G_TASK(result), error);
+  if (!response_json) return FALSE;
 
   /* Extract preimage from response: {"preimage": "..."} */
   if (preimage) {
-    json_t *preimage_val = json_object_get(response, "preimage");
-    if (json_is_string(preimage_val)) {
-      *preimage = g_strdup(json_string_value(preimage_val));
+    char *preimage_val = NULL;
+    if (nostr_json_get_string(response_json, "preimage", &preimage_val) == 0) {
+      *preimage = preimage_val;
     } else {
       *preimage = NULL;
     }
   }
 
-  json_decref(response);
+  g_free(response_json);
   return TRUE;
 }
 
@@ -894,16 +900,21 @@ void gnostr_nwc_service_make_invoice_async(GnostrNwcService *self,
   g_return_if_fail(GNOSTR_IS_NWC_SERVICE(self));
 
   /* Build params JSON */
-  json_t *params = json_object();
-  json_object_set_new(params, "amount", json_integer(amount_msat));
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_object(builder);
+  nostr_json_builder_set_key(builder, "amount");
+  nostr_json_builder_add_int(builder, amount_msat);
   if (description && *description) {
-    json_object_set_new(params, "description", json_string(description));
+    nostr_json_builder_set_key(builder, "description");
+    nostr_json_builder_add_string(builder, description);
   }
   if (expiry_secs > 0) {
-    json_object_set_new(params, "expiry", json_integer(expiry_secs));
+    nostr_json_builder_set_key(builder, "expiry");
+    nostr_json_builder_add_int(builder, expiry_secs);
   }
-  gchar *params_json = json_dumps(params, JSON_COMPACT);
-  json_decref(params);
+  nostr_json_builder_end_object(builder);
+  gchar *params_json = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
 
   g_message("[NWC] Initiating make_invoice for %ld msat", (long)amount_msat);
 
@@ -919,29 +930,29 @@ gboolean gnostr_nwc_service_make_invoice_finish(GnostrNwcService *self,
   g_return_val_if_fail(GNOSTR_IS_NWC_SERVICE(self), FALSE);
   g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
 
-  json_t *response = g_task_propagate_pointer(G_TASK(result), error);
-  if (!response) return FALSE;
+  char *response_json = g_task_propagate_pointer(G_TASK(result), error);
+  if (!response_json) return FALSE;
 
   /* Extract invoice from response: {"invoice": "...", "payment_hash": "..."} */
   if (bolt11) {
-    json_t *invoice_val = json_object_get(response, "invoice");
-    if (json_is_string(invoice_val)) {
-      *bolt11 = g_strdup(json_string_value(invoice_val));
+    char *invoice_val = NULL;
+    if (nostr_json_get_string(response_json, "invoice", &invoice_val) == 0) {
+      *bolt11 = invoice_val;
     } else {
       *bolt11 = NULL;
     }
   }
 
   if (payment_hash) {
-    json_t *hash_val = json_object_get(response, "payment_hash");
-    if (json_is_string(hash_val)) {
-      *payment_hash = g_strdup(json_string_value(hash_val));
+    char *hash_val = NULL;
+    if (nostr_json_get_string(response_json, "payment_hash", &hash_val) == 0) {
+      *payment_hash = hash_val;
     } else {
       *payment_hash = NULL;
     }
   }
 
-  json_decref(response);
+  g_free(response_json);
   return TRUE;
 }
 
