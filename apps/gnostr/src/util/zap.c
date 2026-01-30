@@ -6,10 +6,12 @@
 
 #include "zap.h"
 #include "relays.h"
+#include "json.h"
+#include "nostr-event.h"
+#include "nostr-tag.h"
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
-#include <jansson.h>
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -127,80 +129,72 @@ static void on_lnurl_info_http_done(GObject *source, GAsyncResult *res, gpointer
     return;
   }
 
-  /* Parse JSON response */
+  /* Convert to null-terminated string for JSON parsing */
   gsize len = 0;
   const char *data = g_bytes_get_data(bytes, &len);
-
-  json_error_t json_err;
-  json_t *root = json_loadb(data, len, 0, &json_err);
+  gchar *json_str = g_strndup(data, len);
   g_bytes_unref(bytes);
 
-  if (!root) {
+  if (!nostr_json_is_valid(json_str)) {
     if (ctx->callback) {
       GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_PARSE_FAILED,
-                                "Failed to parse LNURL response: %s", json_err.text);
+                                "Failed to parse LNURL response");
       ctx->callback(NULL, err, ctx->user_data);
       g_error_free(err);
     }
+    g_free(json_str);
     lnurl_fetch_ctx_free(ctx);
     return;
   }
 
   /* Check for error response */
-  json_t *status = json_object_get(root, "status");
-  if (status && json_is_string(status) &&
-      g_ascii_strcasecmp(json_string_value(status), "ERROR") == 0) {
-    json_t *reason = json_object_get(root, "reason");
-    if (ctx->callback) {
-      GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_HTTP_FAILED,
-                                "LNURL error: %s",
-                                reason && json_is_string(reason) ?
-                                json_string_value(reason) : "Unknown error");
-      ctx->callback(NULL, err, ctx->user_data);
-      g_error_free(err);
+  char *status = NULL;
+  if (nostr_json_get_string(json_str, "status", &status) == 0 && status) {
+    if (g_ascii_strcasecmp(status, "ERROR") == 0) {
+      char *reason = NULL;
+      nostr_json_get_string(json_str, "reason", &reason);
+      if (ctx->callback) {
+        GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_HTTP_FAILED,
+                                  "LNURL error: %s", reason ? reason : "Unknown error");
+        ctx->callback(NULL, err, ctx->user_data);
+        g_error_free(err);
+      }
+      g_free(reason);
+      g_free(status);
+      g_free(json_str);
+      lnurl_fetch_ctx_free(ctx);
+      return;
     }
-    json_decref(root);
-    lnurl_fetch_ctx_free(ctx);
-    return;
+    g_free(status);
   }
 
   /* Parse LNURL pay info */
   GnostrLnurlPayInfo *info = g_new0(GnostrLnurlPayInfo, 1);
 
-  json_t *callback = json_object_get(root, "callback");
-  if (callback && json_is_string(callback)) {
-    info->callback = g_strdup(json_string_value(callback));
+  nostr_json_get_string(json_str, "callback", &info->callback);
+
+  int64_t min_val = 0, max_val = 0;
+  if (nostr_json_get_int64(json_str, "minSendable", &min_val) == 0) {
+    info->min_sendable = min_val;
+  }
+  if (nostr_json_get_int64(json_str, "maxSendable", &max_val) == 0) {
+    info->max_sendable = max_val;
   }
 
-  json_t *min_sendable = json_object_get(root, "minSendable");
-  if (min_sendable && json_is_integer(min_sendable)) {
-    info->min_sendable = json_integer_value(min_sendable);
+  bool allows_nostr_val = false;
+  if (nostr_json_get_bool(json_str, "allowsNostr", &allows_nostr_val) == 0) {
+    info->allows_nostr = allows_nostr_val;
   }
 
-  json_t *max_sendable = json_object_get(root, "maxSendable");
-  if (max_sendable && json_is_integer(max_sendable)) {
-    info->max_sendable = json_integer_value(max_sendable);
+  nostr_json_get_string(json_str, "nostrPubkey", &info->nostr_pubkey);
+  nostr_json_get_string(json_str, "metadata", &info->metadata);
+
+  int64_t comment_allowed_val = 0;
+  if (nostr_json_get_int64(json_str, "commentAllowed", &comment_allowed_val) == 0) {
+    info->comment_allowed = g_strdup_printf("%lld", (long long)comment_allowed_val);
   }
 
-  json_t *allows_nostr = json_object_get(root, "allowsNostr");
-  info->allows_nostr = allows_nostr && json_is_boolean(allows_nostr) && json_boolean_value(allows_nostr);
-
-  json_t *nostr_pubkey = json_object_get(root, "nostrPubkey");
-  if (nostr_pubkey && json_is_string(nostr_pubkey)) {
-    info->nostr_pubkey = g_strdup(json_string_value(nostr_pubkey));
-  }
-
-  json_t *metadata = json_object_get(root, "metadata");
-  if (metadata && json_is_string(metadata)) {
-    info->metadata = g_strdup(json_string_value(metadata));
-  }
-
-  json_t *comment_allowed = json_object_get(root, "commentAllowed");
-  if (comment_allowed && json_is_integer(comment_allowed)) {
-    info->comment_allowed = g_strdup_printf("%lld", (long long)json_integer_value(comment_allowed));
-  }
-
-  json_decref(root);
+  g_free(json_str);
 
   /* Validate required fields */
   if (!info->callback) {
@@ -326,65 +320,67 @@ static void on_invoice_http_done(GObject *source, GAsyncResult *res, gpointer us
     return;
   }
 
-  /* Parse JSON response */
+  /* Convert to null-terminated string for JSON parsing */
   gsize len = 0;
   const char *data = g_bytes_get_data(bytes, &len);
-
-  json_error_t json_err;
-  json_t *root = json_loadb(data, len, 0, &json_err);
+  gchar *json_str = g_strndup(data, len);
   g_bytes_unref(bytes);
 
-  if (!root) {
+  if (!nostr_json_is_valid(json_str)) {
     if (ctx->callback) {
       GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_PARSE_FAILED,
-                                "Failed to parse invoice response: %s", json_err.text);
+                                "Failed to parse invoice response");
       ctx->callback(NULL, err, ctx->user_data);
       g_error_free(err);
     }
+    g_free(json_str);
     invoice_request_ctx_free(ctx);
     return;
   }
 
   /* Check for error response */
-  json_t *status = json_object_get(root, "status");
-  if (status && json_is_string(status) &&
-      g_ascii_strcasecmp(json_string_value(status), "ERROR") == 0) {
-    json_t *reason = json_object_get(root, "reason");
-    if (ctx->callback) {
-      GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_INVOICE_FAILED,
-                                "Invoice error: %s",
-                                reason && json_is_string(reason) ?
-                                json_string_value(reason) : "Unknown error");
-      ctx->callback(NULL, err, ctx->user_data);
-      g_error_free(err);
+  char *status = NULL;
+  if (nostr_json_get_string(json_str, "status", &status) == 0 && status) {
+    if (g_ascii_strcasecmp(status, "ERROR") == 0) {
+      char *reason = NULL;
+      nostr_json_get_string(json_str, "reason", &reason);
+      if (ctx->callback) {
+        GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_INVOICE_FAILED,
+                                  "Invoice error: %s", reason ? reason : "Unknown error");
+        ctx->callback(NULL, err, ctx->user_data);
+        g_error_free(err);
+      }
+      g_free(reason);
+      g_free(status);
+      g_free(json_str);
+      invoice_request_ctx_free(ctx);
+      return;
     }
-    json_decref(root);
-    invoice_request_ctx_free(ctx);
-    return;
+    g_free(status);
   }
 
   /* Extract the invoice */
-  json_t *pr = json_object_get(root, "pr");
-  if (!pr || !json_is_string(pr)) {
+  char *bolt11 = NULL;
+  if (nostr_json_get_string(json_str, "pr", &bolt11) != 0 || !bolt11) {
     if (ctx->callback) {
       GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_INVOICE_FAILED,
                                 "No invoice in response");
       ctx->callback(NULL, err, ctx->user_data);
       g_error_free(err);
     }
-    json_decref(root);
+    g_free(json_str);
     invoice_request_ctx_free(ctx);
     return;
   }
 
-  const gchar *bolt11 = json_string_value(pr);
   g_debug("zap: received invoice: %.40s...", bolt11);
 
   if (ctx->callback) {
     ctx->callback(bolt11, NULL, ctx->user_data);
   }
 
-  json_decref(root);
+  g_free(bolt11);
+  g_free(json_str);
   invoice_request_ctx_free(ctx);
 }
 
@@ -509,159 +505,221 @@ gchar *gnostr_zap_create_request_event(const GnostrZapRequest *req,
     return NULL;
   }
 
-  json_t *event = json_object();
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_object(builder);
 
   /* Kind 9734 - zap request */
-  json_object_set_new(event, "kind", json_integer(9734));
+  nostr_json_builder_set_key(builder, "kind");
+  nostr_json_builder_add_int(builder, 9734);
 
   /* Content - optional comment */
-  json_object_set_new(event, "content", json_string(req->comment ? req->comment : ""));
+  nostr_json_builder_set_key(builder, "content");
+  nostr_json_builder_add_string(builder, req->comment ? req->comment : "");
 
   /* Pubkey - the sender's pubkey */
-  json_object_set_new(event, "pubkey", json_string(sender_pubkey));
+  nostr_json_builder_set_key(builder, "pubkey");
+  nostr_json_builder_add_string(builder, sender_pubkey);
 
   /* Created at */
-  json_object_set_new(event, "created_at", json_integer((json_int_t)time(NULL)));
+  nostr_json_builder_set_key(builder, "created_at");
+  nostr_json_builder_add_int(builder, (int64_t)time(NULL));
 
   /* Tags */
-  json_t *tags = json_array();
+  nostr_json_builder_set_key(builder, "tags");
+  nostr_json_builder_begin_array(builder);
 
   /* relays tag - required */
-  json_t *relays_tag = json_array();
-  json_array_append_new(relays_tag, json_string("relays"));
+  nostr_json_builder_begin_array(builder);
+  nostr_json_builder_add_string(builder, "relays");
   if (req->relays) {
     for (int i = 0; req->relays[i]; i++) {
-      json_array_append_new(relays_tag, json_string(req->relays[i]));
+      nostr_json_builder_add_string(builder, req->relays[i]);
     }
   } else {
     /* Get relays from config (GSettings defaults if none configured) */
     GPtrArray *cfg_relays = gnostr_get_write_relay_urls();
     for (guint i = 0; i < cfg_relays->len; i++) {
-      json_array_append_new(relays_tag, json_string(g_ptr_array_index(cfg_relays, i)));
+      nostr_json_builder_add_string(builder, g_ptr_array_index(cfg_relays, i));
     }
     g_ptr_array_unref(cfg_relays);
   }
-  json_array_append_new(tags, relays_tag);
+  nostr_json_builder_end_array(builder);
 
   /* amount tag - recommended */
   if (req->amount_msat > 0) {
-    json_t *amount_tag = json_array();
-    json_array_append_new(amount_tag, json_string("amount"));
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "amount");
     gchar *amount_str = g_strdup_printf("%lld", (long long)req->amount_msat);
-    json_array_append_new(amount_tag, json_string(amount_str));
+    nostr_json_builder_add_string(builder, amount_str);
     g_free(amount_str);
-    json_array_append_new(tags, amount_tag);
+    nostr_json_builder_end_array(builder);
   }
 
   /* lnurl tag - recommended (bech32 encoded) */
   if (req->lnurl) {
-    json_t *lnurl_tag = json_array();
-    json_array_append_new(lnurl_tag, json_string("lnurl"));
-    json_array_append_new(lnurl_tag, json_string(req->lnurl));
-    json_array_append_new(tags, lnurl_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "lnurl");
+    nostr_json_builder_add_string(builder, req->lnurl);
+    nostr_json_builder_end_array(builder);
   }
 
   /* p tag - required (recipient pubkey) */
-  json_t *p_tag = json_array();
-  json_array_append_new(p_tag, json_string("p"));
-  json_array_append_new(p_tag, json_string(req->recipient_pubkey));
-  json_array_append_new(tags, p_tag);
+  nostr_json_builder_begin_array(builder);
+  nostr_json_builder_add_string(builder, "p");
+  nostr_json_builder_add_string(builder, req->recipient_pubkey);
+  nostr_json_builder_end_array(builder);
 
   /* e tag - required if zapping an event */
   if (req->event_id) {
-    json_t *e_tag = json_array();
-    json_array_append_new(e_tag, json_string("e"));
-    json_array_append_new(e_tag, json_string(req->event_id));
-    json_array_append_new(tags, e_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "e");
+    nostr_json_builder_add_string(builder, req->event_id);
+    nostr_json_builder_end_array(builder);
   }
 
   /* k tag - optional, kind of target event */
   if (req->event_id && req->event_kind > 0) {
-    json_t *k_tag = json_array();
-    json_array_append_new(k_tag, json_string("k"));
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "k");
     gchar *kind_str = g_strdup_printf("%d", req->event_kind);
-    json_array_append_new(k_tag, json_string(kind_str));
+    nostr_json_builder_add_string(builder, kind_str);
     g_free(kind_str);
-    json_array_append_new(tags, k_tag);
+    nostr_json_builder_end_array(builder);
   }
 
-  json_object_set_new(event, "tags", tags);
+  nostr_json_builder_end_array(builder);  /* end tags */
+  nostr_json_builder_end_object(builder); /* end event */
 
-  gchar *result = json_dumps(event, JSON_COMPACT);
-  json_decref(event);
+  gchar *result = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
 
   return result;
 }
 
 /* ============== Zap Receipt Parsing ============== */
 
+/* Context for parsing receipt tags */
+typedef struct {
+  GnostrZapReceipt *receipt;
+} ZapReceiptTagCtx;
+
+/* Callback for parsing receipt tags */
+static bool parse_receipt_tag_cb(size_t idx, const char *element_json, void *user_data) {
+  (void)idx;
+  ZapReceiptTagCtx *ctx = (ZapReceiptTagCtx *)user_data;
+
+  if (!nostr_json_is_array_str(element_json)) return true;
+
+  char *tag_name = NULL;
+  char *tag_value = NULL;
+
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 ||
+      nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0) {
+    g_free(tag_name);
+    g_free(tag_value);
+    return true;
+  }
+
+  if (g_strcmp0(tag_name, "bolt11") == 0) {
+    ctx->receipt->bolt11 = tag_value;
+    tag_value = NULL;
+  } else if (g_strcmp0(tag_name, "preimage") == 0) {
+    ctx->receipt->preimage = tag_value;
+    tag_value = NULL;
+  } else if (g_strcmp0(tag_name, "description") == 0) {
+    ctx->receipt->description = tag_value;
+    tag_value = NULL;
+  } else if (g_strcmp0(tag_name, "p") == 0) {
+    ctx->receipt->recipient_pubkey = tag_value;
+    tag_value = NULL;
+  } else if (g_strcmp0(tag_name, "P") == 0) {
+    ctx->receipt->sender_pubkey = tag_value;
+    tag_value = NULL;
+  } else if (g_strcmp0(tag_name, "e") == 0) {
+    ctx->receipt->event_id = tag_value;
+    tag_value = NULL;
+  }
+
+  g_free(tag_name);
+  g_free(tag_value);
+  return true;
+}
+
+/* Context for parsing zap request tags (from description) */
+typedef struct {
+  gint64 *amount_msat;
+  gboolean found;
+} ZapReqAmountCtx;
+
+/* Callback for parsing zap request amount tag */
+static bool parse_zap_req_amount_cb(size_t idx, const char *element_json, void *user_data) {
+  (void)idx;
+  ZapReqAmountCtx *ctx = (ZapReqAmountCtx *)user_data;
+
+  if (ctx->found) return false;  /* Stop if already found */
+  if (!nostr_json_is_array_str(element_json)) return true;
+
+  char *tag_name = NULL;
+  char *tag_value = NULL;
+
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 ||
+      nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0) {
+    g_free(tag_name);
+    g_free(tag_value);
+    return true;
+  }
+
+  if (g_strcmp0(tag_name, "amount") == 0) {
+    *ctx->amount_msat = g_ascii_strtoll(tag_value, NULL, 10);
+    ctx->found = TRUE;
+    g_debug("zap: parsed zap request amount: %lld msat", (long long)*ctx->amount_msat);
+  }
+
+  g_free(tag_name);
+  g_free(tag_value);
+  return !ctx->found;
+}
+
 GnostrZapReceipt *gnostr_zap_parse_receipt(const gchar *event_json) {
   if (!event_json || !*event_json) {
     return NULL;
   }
 
-  json_error_t err;
-  json_t *root = json_loads(event_json, 0, &err);
-  if (!root) {
-    g_debug("zap: failed to parse receipt JSON: %s", err.text);
+  if (!nostr_json_is_valid(event_json)) {
+    g_debug("zap: failed to parse receipt JSON");
     return NULL;
   }
 
   /* Verify kind 9735 */
-  json_t *kind = json_object_get(root, "kind");
-  if (!kind || !json_is_integer(kind) || json_integer_value(kind) != 9735) {
-    json_decref(root);
+  int64_t kind_val = 0;
+  if (nostr_json_get_int64(event_json, "kind", &kind_val) != 0 || kind_val != 9735) {
     return NULL;
   }
 
   GnostrZapReceipt *receipt = g_new0(GnostrZapReceipt, 1);
 
-  json_t *id = json_object_get(root, "id");
-  if (id && json_is_string(id)) {
-    receipt->id = g_strdup(json_string_value(id));
+  char *id_val = NULL;
+  if (nostr_json_get_string(event_json, "id", &id_val) == 0 && id_val) {
+    receipt->id = id_val;
   }
 
   /* Extract event pubkey for validation against expected_nostr_pubkey */
-  json_t *pubkey = json_object_get(root, "pubkey");
-  if (pubkey && json_is_string(pubkey)) {
-    receipt->event_pubkey = g_strdup(json_string_value(pubkey));
+  char *pubkey_val = NULL;
+  if (nostr_json_get_string(event_json, "pubkey", &pubkey_val) == 0 && pubkey_val) {
+    receipt->event_pubkey = pubkey_val;
   }
 
-  json_t *created_at = json_object_get(root, "created_at");
-  if (created_at && json_is_integer(created_at)) {
-    receipt->created_at = json_integer_value(created_at);
+  int64_t created_val = 0;
+  if (nostr_json_get_int64(event_json, "created_at", &created_val) == 0) {
+    receipt->created_at = created_val;
   }
 
   /* Parse tags */
-  json_t *tags = json_object_get(root, "tags");
-  if (tags && json_is_array(tags)) {
-    size_t i;
-    json_t *tag;
-    json_array_foreach(tags, i, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-
-      json_t *tag_name = json_array_get(tag, 0);
-      json_t *tag_value = json_array_get(tag, 1);
-
-      if (!json_is_string(tag_name) || !json_is_string(tag_value)) continue;
-
-      const char *name = json_string_value(tag_name);
-      const char *value = json_string_value(tag_value);
-
-      if (g_strcmp0(name, "bolt11") == 0) {
-        receipt->bolt11 = g_strdup(value);
-      } else if (g_strcmp0(name, "preimage") == 0) {
-        receipt->preimage = g_strdup(value);
-      } else if (g_strcmp0(name, "description") == 0) {
-        receipt->description = g_strdup(value);
-      } else if (g_strcmp0(name, "p") == 0) {
-        receipt->recipient_pubkey = g_strdup(value);
-      } else if (g_strcmp0(name, "P") == 0) {
-        receipt->sender_pubkey = g_strdup(value);
-      } else if (g_strcmp0(name, "e") == 0) {
-        receipt->event_id = g_strdup(value);
-      }
-    }
+  char *tags_json = NULL;
+  if (nostr_json_get_raw(event_json, "tags", &tags_json) == 0 && tags_json) {
+    ZapReceiptTagCtx ctx = { .receipt = receipt };
+    nostr_json_array_foreach_root(tags_json, parse_receipt_tag_cb, &ctx);
+    g_free(tags_json);
   }
 
   /* Parse amount from bolt11 invoice using nostrdb's bolt11 decoder */
@@ -685,33 +743,15 @@ GnostrZapReceipt *gnostr_zap_parse_receipt(const gchar *event_json) {
   }
 
   /* Parse zap request amount from description for validation */
-  if (receipt->description) {
-    json_error_t desc_err;
-    json_t *zap_req = json_loads(receipt->description, 0, &desc_err);
-    if (zap_req) {
-      json_t *zap_tags = json_object_get(zap_req, "tags");
-      if (zap_tags && json_is_array(zap_tags)) {
-        size_t j;
-        json_t *ztag;
-        json_array_foreach(zap_tags, j, ztag) {
-          if (json_is_array(ztag) && json_array_size(ztag) >= 2) {
-            json_t *ztag_name = json_array_get(ztag, 0);
-            json_t *ztag_value = json_array_get(ztag, 1);
-            if (json_is_string(ztag_name) && json_is_string(ztag_value)) {
-              if (g_strcmp0(json_string_value(ztag_name), "amount") == 0) {
-                receipt->zap_request_amount_msat = g_ascii_strtoll(json_string_value(ztag_value), NULL, 10);
-                g_debug("zap: parsed zap request amount: %lld msat", (long long)receipt->zap_request_amount_msat);
-                break;
-              }
-            }
-          }
-        }
-      }
-      json_decref(zap_req);
+  if (receipt->description && nostr_json_is_valid(receipt->description)) {
+    char *zap_tags_json = NULL;
+    if (nostr_json_get_raw(receipt->description, "tags", &zap_tags_json) == 0 && zap_tags_json) {
+      ZapReqAmountCtx ctx = { .amount_msat = &receipt->zap_request_amount_msat, .found = FALSE };
+      nostr_json_array_foreach_root(zap_tags_json, parse_zap_req_amount_cb, &ctx);
+      g_free(zap_tags_json);
     }
   }
 
-  json_decref(root);
   return receipt;
 }
 
