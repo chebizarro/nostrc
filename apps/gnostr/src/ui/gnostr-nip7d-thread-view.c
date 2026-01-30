@@ -121,6 +121,11 @@ struct _GnostrNip7dThreadView {
     /* Profile tracking */
     GHashTable *profiles_requested;  /* pubkey_hex -> gboolean */
 
+    /* nostrc-46g: Track ancestor event IDs we've already attempted to fetch
+     * to prevent duplicate requests and enable proper chain traversal */
+    GHashTable *ancestors_fetched;   /* event_id_hex -> gboolean */
+    guint ancestor_fetch_depth;      /* Current chain traversal depth */
+
 #ifdef HAVE_SOUP3
     SoupSession *session;
 #endif
@@ -143,6 +148,7 @@ static void setup_view_ui(GnostrNip7dThreadView *self);
 static void rebuild_replies_ui(GnostrNip7dThreadView *self);
 static void set_loading_state(GnostrNip7dThreadView *self, gboolean loading);
 static void fetch_thread_from_relays(GnostrNip7dThreadView *self);
+static void fetch_missing_ancestors(GnostrNip7dThreadView *self);
 static GtkWidget *create_reply_row(GnostrNip7dThreadView *self, GnostrThreadReply *reply);
 static void apply_profile_to_thread_author(GnostrNip7dThreadView *self, GnostrProfileMeta *meta);
 static void apply_profile_to_reply_row(GnostrNip7dThreadView *self, GtkWidget *row, GnostrProfileMeta *meta);
@@ -170,6 +176,7 @@ gnostr_nip7d_thread_view_dispose(GObject *obj)
     g_clear_pointer(&self->reply_widgets, g_hash_table_unref);
     g_clear_pointer(&self->collapsed_replies, g_hash_table_unref);
     g_clear_pointer(&self->profiles_requested, g_hash_table_unref);
+    g_clear_pointer(&self->ancestors_fetched, g_hash_table_unref);
 
     if (self->header_box) {
         gtk_widget_unparent(self->header_box);
@@ -889,6 +896,8 @@ on_replies_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data)
         return;
     }
 
+    gboolean found_new = FALSE;
+
     if (results && results->len > 0) {
         g_debug("[NIP7D] Received %u reply events", results->len);
 
@@ -902,7 +911,21 @@ on_replies_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data)
             /* Parse reply */
             GnostrThreadReply *reply = gnostr_thread_reply_parse_from_json(json);
             if (reply) {
-                g_ptr_array_add(self->replies, reply);
+                /* Check if we already have this reply */
+                gboolean exists = FALSE;
+                for (guint j = 0; j < self->replies->len; j++) {
+                    GnostrThreadReply *existing = g_ptr_array_index(self->replies, j);
+                    if (existing && g_strcmp0(existing->event_id, reply->event_id) == 0) {
+                        exists = TRUE;
+                        break;
+                    }
+                }
+                if (!exists) {
+                    g_ptr_array_add(self->replies, reply);
+                    found_new = TRUE;
+                } else {
+                    gnostr_thread_reply_free(reply);
+                }
             }
         }
 
@@ -910,6 +933,12 @@ on_replies_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data)
     }
 
     if (results) g_ptr_array_unref(results);
+
+    /* nostrc-46g: After fetching replies, check if any reference missing parent events
+     * and fetch them to complete the thread chain */
+    if (found_new) {
+        fetch_missing_ancestors(self);
+    }
 }
 
 static void
@@ -1014,6 +1043,202 @@ fetch_thread_from_relays(GnostrNip7dThreadView *self)
     g_ptr_array_unref(relay_arr);
 }
 
+/* nostrc-46g: Maximum depth for ancestor chain traversal to prevent infinite loops */
+#define MAX_ANCESTOR_FETCH_DEPTH 50
+
+/* nostrc-46g: Callback for missing ancestor fetch completion */
+static void
+on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+    GnostrNip7dThreadView *self = GNOSTR_NIP7D_THREAD_VIEW(user_data);
+
+    if (!GNOSTR_IS_NIP7D_THREAD_VIEW(self)) return;
+
+    GError *error = NULL;
+    GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+
+    if (error) {
+        if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+            g_debug("[NIP7D] Missing ancestors fetch failed: %s", error->message);
+        }
+        g_error_free(error);
+        /* Try to continue chain traversal with what we have */
+        fetch_missing_ancestors(self);
+        return;
+    }
+
+    gboolean found_new_events = FALSE;
+
+    if (results && results->len > 0) {
+        g_debug("[NIP7D] Fetched %u missing ancestor events", results->len);
+
+        for (guint i = 0; i < results->len; i++) {
+            const char *json = g_ptr_array_index(results, i);
+            if (!json) continue;
+
+            /* Ingest into nostrdb */
+            storage_ndb_ingest_event_json(json, NULL);
+
+            /* Parse reply and add to collection */
+            GnostrThreadReply *reply = gnostr_thread_reply_parse_from_json(json);
+            if (reply) {
+                /* Check if we already have this reply */
+                gboolean exists = FALSE;
+                for (guint j = 0; j < self->replies->len; j++) {
+                    GnostrThreadReply *existing = g_ptr_array_index(self->replies, j);
+                    if (existing && g_strcmp0(existing->event_id, reply->event_id) == 0) {
+                        exists = TRUE;
+                        break;
+                    }
+                }
+                if (!exists) {
+                    g_ptr_array_add(self->replies, reply);
+                    found_new_events = TRUE;
+                } else {
+                    gnostr_thread_reply_free(reply);
+                }
+            }
+        }
+
+        /* Rebuild UI with new events */
+        rebuild_replies_ui(self);
+    }
+
+    if (results) g_ptr_array_unref(results);
+
+    /* Continue chain traversal if we found new events */
+    if (found_new_events) {
+        fetch_missing_ancestors(self);
+    } else {
+        g_debug("[NIP7D] No new ancestor events found, chain traversal complete");
+    }
+}
+
+/* nostrc-46g: Fetch any missing parent events referenced by loaded replies.
+ * This ensures the full thread chain is loaded from root to current event. */
+static void
+fetch_missing_ancestors(GnostrNip7dThreadView *self)
+{
+    if (!self || !self->replies || self->replies->len == 0) return;
+
+    /* Check depth limit to prevent infinite traversal */
+    if (self->ancestor_fetch_depth >= MAX_ANCESTOR_FETCH_DEPTH) {
+        g_debug("[NIP7D] Reached max ancestor fetch depth (%d), stopping chain traversal",
+                MAX_ANCESTOR_FETCH_DEPTH);
+        return;
+    }
+
+    /* Build a set of known event IDs */
+    GHashTable *known_ids = g_hash_table_new(g_str_hash, g_str_equal);
+
+    /* Add thread root */
+    if (self->thread && self->thread->event_id) {
+        g_hash_table_insert(known_ids, (gpointer)self->thread->event_id, GINT_TO_POINTER(1));
+    }
+
+    /* Add all reply event IDs */
+    for (guint i = 0; i < self->replies->len; i++) {
+        GnostrThreadReply *reply = g_ptr_array_index(self->replies, i);
+        if (reply && reply->event_id) {
+            g_hash_table_insert(known_ids, (gpointer)reply->event_id, GINT_TO_POINTER(1));
+        }
+    }
+
+    /* Collect missing parent IDs */
+    GPtrArray *missing_ids = g_ptr_array_new_with_free_func(g_free);
+
+    for (guint i = 0; i < self->replies->len; i++) {
+        GnostrThreadReply *reply = g_ptr_array_index(self->replies, i);
+        if (!reply) continue;
+
+        /* Check parent_id - need to fetch if not known and not already attempted */
+        if (reply->parent_id && strlen(reply->parent_id) == 64 &&
+            !g_hash_table_contains(known_ids, reply->parent_id) &&
+            !g_hash_table_contains(self->ancestors_fetched, reply->parent_id)) {
+            /* Check if already in missing list */
+            gboolean found = FALSE;
+            for (guint j = 0; j < missing_ids->len; j++) {
+                if (g_strcmp0(g_ptr_array_index(missing_ids, j), reply->parent_id) == 0) {
+                    found = TRUE;
+                    break;
+                }
+            }
+            if (!found) {
+                g_ptr_array_add(missing_ids, g_strdup(reply->parent_id));
+                g_hash_table_insert(self->ancestors_fetched, g_strdup(reply->parent_id), GINT_TO_POINTER(1));
+            }
+        }
+
+        /* Check thread_root_id - need to fetch if not known and not already attempted */
+        if (reply->thread_root_id && strlen(reply->thread_root_id) == 64 &&
+            !g_hash_table_contains(known_ids, reply->thread_root_id) &&
+            !g_hash_table_contains(self->ancestors_fetched, reply->thread_root_id)) {
+            gboolean found = FALSE;
+            for (guint j = 0; j < missing_ids->len; j++) {
+                if (g_strcmp0(g_ptr_array_index(missing_ids, j), reply->thread_root_id) == 0) {
+                    found = TRUE;
+                    break;
+                }
+            }
+            if (!found) {
+                g_ptr_array_add(missing_ids, g_strdup(reply->thread_root_id));
+                g_hash_table_insert(self->ancestors_fetched, g_strdup(reply->thread_root_id), GINT_TO_POINTER(1));
+            }
+        }
+    }
+
+    g_hash_table_unref(known_ids);
+
+    if (missing_ids->len == 0) {
+        g_ptr_array_unref(missing_ids);
+        g_debug("[NIP7D] No more missing ancestors to fetch, chain complete");
+        return;
+    }
+
+    /* Increment depth counter */
+    self->ancestor_fetch_depth++;
+    g_debug("[NIP7D] Fetching %u missing ancestor events (depth %u)",
+            missing_ids->len, self->ancestor_fetch_depth);
+
+    /* Get relay URLs */
+    GPtrArray *relay_arr = gnostr_get_read_relay_urls();
+    const char **urls = g_new0(const char*, relay_arr->len);
+    for (guint i = 0; i < relay_arr->len; i++) {
+        urls[i] = g_ptr_array_index(relay_arr, i);
+    }
+
+    /* Build filter with missing IDs - include both kind 11 (thread root) and 1111 (replies) */
+    NostrFilter *filter = nostr_filter_new();
+    int kinds[2] = { NIP7D_KIND_THREAD_ROOT, NIP7D_KIND_THREAD_REPLY };
+    nostr_filter_set_kinds(filter, kinds, 2);
+
+    for (guint i = 0; i < missing_ids->len; i++) {
+        nostr_filter_add_id(filter, g_ptr_array_index(missing_ids, i));
+    }
+    nostr_filter_set_limit(filter, DEFAULT_REPLY_LIMIT);
+
+    g_ptr_array_unref(missing_ids);
+
+    /* Reuse existing cancellable */
+    if (!self->fetch_cancellable) {
+        self->fetch_cancellable = g_cancellable_new();
+    }
+
+    gnostr_simple_pool_query_single_async(
+        gnostr_get_shared_query_pool(),
+        urls,
+        relay_arr->len,
+        filter,
+        self->fetch_cancellable,
+        on_missing_ancestors_done,
+        self
+    );
+
+    nostr_filter_free(filter);
+    g_free(urls);
+    g_ptr_array_unref(relay_arr);
+}
+
 /* ============================================================================
  * GObject Class Init
  * ============================================================================ */
@@ -1060,6 +1285,9 @@ gnostr_nip7d_thread_view_init(GnostrNip7dThreadView *self)
     self->reply_widgets = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     self->collapsed_replies = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     self->profiles_requested = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    /* nostrc-46g: Track fetched ancestors to prevent duplicate requests and enable chain traversal */
+    self->ancestors_fetched = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    self->ancestor_fetch_depth = 0;
     /* Uses shared query pool from gnostr_get_shared_query_pool() */
 
 #ifdef HAVE_SOUP3
@@ -1179,6 +1407,13 @@ gnostr_nip7d_thread_view_load_thread(GnostrNip7dThreadView *self,
     g_return_if_fail(event_id_hex != NULL && strlen(event_id_hex) == 64);
 
     gnostr_nip7d_thread_view_clear(self);
+
+    /* nostrc-46g: Reset ancestor tracking for new thread load */
+    if (self->ancestors_fetched) {
+        g_hash_table_remove_all(self->ancestors_fetched);
+    }
+    self->ancestor_fetch_depth = 0;
+
     set_loading_state(self, TRUE);
 
     /* Try to load from nostrdb first */
@@ -1295,6 +1530,9 @@ gnostr_nip7d_thread_view_clear(GnostrNip7dThreadView *self)
     g_hash_table_remove_all(self->reply_widgets);
     g_hash_table_remove_all(self->collapsed_replies);
     g_hash_table_remove_all(self->profiles_requested);
+    /* nostrc-46g: Clear ancestor tracking on view clear */
+    g_hash_table_remove_all(self->ancestors_fetched);
+    self->ancestor_fetch_depth = 0;
 
     g_clear_pointer(&self->reply_parent_id, g_free);
 

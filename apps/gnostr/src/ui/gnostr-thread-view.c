@@ -93,6 +93,11 @@ struct _GnostrThreadView {
 
   /* Profile fetch tracking */
   GHashTable *profiles_requested; /* pubkey_hex -> gboolean */
+
+  /* nostrc-46g: Track ancestor event IDs we've already attempted to fetch
+   * to prevent duplicate requests and enable proper chain traversal */
+  GHashTable *ancestors_fetched; /* event_id_hex -> gboolean */
+  guint ancestor_fetch_depth;    /* Current chain traversal depth */
 };
 
 G_DEFINE_TYPE(GnostrThreadView, gnostr_thread_view, GTK_TYPE_WIDGET)
@@ -221,6 +226,7 @@ static void gnostr_thread_view_dispose(GObject *obj) {
   /* Clear hash tables */
   g_clear_pointer(&self->events_by_id, g_hash_table_unref);
   g_clear_pointer(&self->profiles_requested, g_hash_table_unref);
+  g_clear_pointer(&self->ancestors_fetched, g_hash_table_unref);
 
   /* Clear array (items are borrowed, owned by hash table) */
   if (self->sorted_events) {
@@ -339,6 +345,9 @@ static void gnostr_thread_view_init(GnostrThreadView *self) {
                                              (GDestroyNotify)thread_event_item_free);
   self->sorted_events = g_ptr_array_new();
   self->profiles_requested = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  /* nostrc-46g: Track fetched ancestors to prevent duplicate requests and enable chain traversal */
+  self->ancestors_fetched = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->ancestor_fetch_depth = 0;
   /* Uses shared query pool from gnostr_get_shared_query_pool() */
 
   /* Connect close button */
@@ -414,6 +423,11 @@ void gnostr_thread_view_clear(GnostrThreadView *self) {
   if (self->profiles_requested) {
     g_hash_table_remove_all(self->profiles_requested);
   }
+  /* nostrc-46g: Clear ancestor tracking on view clear */
+  if (self->ancestors_fetched) {
+    g_hash_table_remove_all(self->ancestors_fetched);
+  }
+  self->ancestor_fetch_depth = 0;
 
   /* Clear UI */
   if (self->thread_list_box) {
@@ -888,7 +902,8 @@ static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user
   if (results) g_ptr_array_unref(results);
 }
 
-/* Callback for missing ancestor fetch completion */
+/* Callback for missing ancestor fetch completion.
+ * nostrc-46g: Improved to continue chain traversal until root is reached. */
 static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
 
@@ -902,8 +917,12 @@ static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpoint
       g_debug("[THREAD_VIEW] Missing ancestors fetch failed: %s", error->message);
     }
     g_error_free(error);
+    /* nostrc-46g: Even on error, try to continue chain traversal with what we have */
+    fetch_missing_ancestors(self);
     return;
   }
+
+  gboolean found_new_events = FALSE;
 
   if (results && results->len > 0) {
     g_debug("[THREAD_VIEW] Fetched %u missing ancestor events", results->len);
@@ -912,25 +931,46 @@ static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpoint
       const char *json = g_ptr_array_index(results, i);
       if (json) {
         storage_ndb_ingest_event_json(json, NULL);
-        add_event_from_json(self, json);
+        ThreadEventItem *item = add_event_from_json(self, json);
+        if (item) {
+          found_new_events = TRUE;
+        }
       }
     }
 
+    /* Rebuild UI with new events */
     rebuild_thread_ui(self);
-
-    /* Recursively check for more missing ancestors (with depth limit handled by MAX_THREAD_DEPTH) */
-    fetch_missing_ancestors(self);
   }
 
   if (results) g_ptr_array_unref(results);
+
+  /* nostrc-46g: Continue chain traversal if we found new events.
+   * New events may reference additional ancestors we need to fetch. */
+  if (found_new_events) {
+    fetch_missing_ancestors(self);
+  } else {
+    g_debug("[THREAD_VIEW] No new ancestor events found, chain traversal complete");
+  }
 }
 
+/* nostrc-46g: Maximum depth for ancestor chain traversal to prevent infinite loops */
+#define MAX_ANCESTOR_FETCH_DEPTH 50
+
 /* Internal: fetch any missing parent/root events referenced by loaded events.
- * This is called after receiving new events to ensure complete thread chains. */
+ * This is called after receiving new events to ensure complete thread chains.
+ * nostrc-46g: Improved to track already-fetched ancestors and properly traverse
+ * the full chain to the root event. */
 static void fetch_missing_ancestors(GnostrThreadView *self) {
   if (!self || g_hash_table_size(self->events_by_id) == 0) return;
 
-  /* Collect missing event IDs */
+  /* nostrc-46g: Check depth limit to prevent infinite traversal */
+  if (self->ancestor_fetch_depth >= MAX_ANCESTOR_FETCH_DEPTH) {
+    g_debug("[THREAD_VIEW] Reached max ancestor fetch depth (%d), stopping chain traversal",
+            MAX_ANCESTOR_FETCH_DEPTH);
+    return;
+  }
+
+  /* Collect missing event IDs that we haven't already tried to fetch */
   GPtrArray *missing_ids = g_ptr_array_new_with_free_func(g_free);
 
   GHashTableIter iter;
@@ -939,8 +979,10 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
   while (g_hash_table_iter_next(&iter, &key, &value)) {
     ThreadEventItem *item = (ThreadEventItem *)value;
 
+    /* Check parent_id - need to fetch if not in events and not already attempted */
     if (item->parent_id && strlen(item->parent_id) == 64 &&
-        !g_hash_table_contains(self->events_by_id, item->parent_id)) {
+        !g_hash_table_contains(self->events_by_id, item->parent_id) &&
+        !g_hash_table_contains(self->ancestors_fetched, item->parent_id)) {
       /* Check if we already have this in our missing list */
       gboolean found = FALSE;
       for (guint i = 0; i < missing_ids->len; i++) {
@@ -951,11 +993,15 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
       }
       if (!found) {
         g_ptr_array_add(missing_ids, g_strdup(item->parent_id));
+        /* nostrc-46g: Mark as attempted to prevent duplicate requests */
+        g_hash_table_insert(self->ancestors_fetched, g_strdup(item->parent_id), GINT_TO_POINTER(1));
       }
     }
 
+    /* Check root_id - need to fetch if not in events and not already attempted */
     if (item->root_id && strlen(item->root_id) == 64 &&
-        !g_hash_table_contains(self->events_by_id, item->root_id)) {
+        !g_hash_table_contains(self->events_by_id, item->root_id) &&
+        !g_hash_table_contains(self->ancestors_fetched, item->root_id)) {
       gboolean found = FALSE;
       for (guint i = 0; i < missing_ids->len; i++) {
         if (g_strcmp0(g_ptr_array_index(missing_ids, i), item->root_id) == 0) {
@@ -965,16 +1011,22 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
       }
       if (!found) {
         g_ptr_array_add(missing_ids, g_strdup(item->root_id));
+        /* nostrc-46g: Mark as attempted to prevent duplicate requests */
+        g_hash_table_insert(self->ancestors_fetched, g_strdup(item->root_id), GINT_TO_POINTER(1));
       }
     }
   }
 
   if (missing_ids->len == 0) {
     g_ptr_array_unref(missing_ids);
+    g_debug("[THREAD_VIEW] No more missing ancestors to fetch, chain complete");
     return;
   }
 
-  g_debug("[THREAD_VIEW] Fetching %u missing ancestor events", missing_ids->len);
+  /* nostrc-46g: Increment depth counter for chain traversal tracking */
+  self->ancestor_fetch_depth++;
+  g_debug("[THREAD_VIEW] Fetching %u missing ancestor events (depth %u)",
+          missing_ids->len, self->ancestor_fetch_depth);
 
   /* Build filter with missing IDs */
   NostrFilter *filter = nostr_filter_new();
@@ -1174,6 +1226,12 @@ static void load_thread(GnostrThreadView *self) {
     show_empty_state(self, "No thread selected");
     return;
   }
+
+  /* nostrc-46g: Reset ancestor tracking for new thread load */
+  if (self->ancestors_fetched) {
+    g_hash_table_remove_all(self->ancestors_fetched);
+  }
+  self->ancestor_fetch_depth = 0;
 
   set_loading_state(self, TRUE);
 
