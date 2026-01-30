@@ -5,6 +5,7 @@
 #include "nostr/nip10/nip10.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
+#include "json.h"  /* for nostr_event_deserialize */
 
 static void test_add_marked_e_tag_basic(void) {
     NostrEvent *ev = nostr_event_new();
@@ -139,12 +140,16 @@ static void test_get_thread(void) {
     nostr_event_free(ev);
 }
 
+int main_edge(void);  /* Forward declaration */
+
 int main(void) {
     test_add_marked_e_tag_basic();
     test_ensure_p_participants();
     test_get_thread();
     printf("ok\n");
-    return 0;
+
+    /* Also run edge cases including marker-at-index-3 tests */
+    return main_edge();
 }
 
 // --- Edge cases ---
@@ -206,11 +211,96 @@ static void test_uniqueness_with_many_tags(void) {
     nostr_event_free(ev);
 }
 
+/* Test for the exact Damus Notedeck format that was failing:
+ * ["e", "id", "", "root"] - marker at index 3 with empty relay URL at index 2
+ * This is the format used in event 2a86231597155dbe4149a503b62f44f5d042c8f39296377979c1acb7fab4b1d4
+ */
+static void test_damus_notedeck_format(void) {
+    /* This is the exact problematic JSON structure from the bug report */
+    const char *json =
+        "{"
+        "\"id\":\"2a86231597155dbe4149a503b62f44f5d042c8f39296377979c1acb7fab4b1d4\","
+        "\"tags\":["
+            "[\"client\",\"Damus Notedeck\"],"
+            "[\"e\",\"816fe9fc80ab2a5a3888220414874cdc76fa430118e4344e93df089f155c6abd\",\"\",\"root\"],"
+            "[\"e\",\"dfc9092b7d3c430430a30772c1bb8cf5a0e84aeb776e223fdbb575c774afe870\",\"\",\"reply\"],"
+            "[\"p\",\"958b754a1d3de5b5eca0fe31d2d555f451325f8498a83da1997b7fcd5c39e88c\"],"
+            "[\"p\",\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\"]"
+        "]"
+        "}";
+
+    NostrEvent *ev = nostr_event_new();
+    assert(ev);
+    int rc = nostr_event_deserialize(ev, json);
+    /* Return value: compact path returns 0 on success, backend returns 1 */
+    assert(rc == 0 || rc == 1);
+
+    /* Now verify that NIP-10 parsing works correctly */
+    NostrTags *tags = (NostrTags *)nostr_event_get_tags(ev);
+    assert(tags);
+
+    /* Tag at index 1 should be the root e-tag with 4 elements */
+    NostrTag *root_tag = nostr_tags_get(tags, 1);
+    assert(nostr_tag_size(root_tag) == 4);
+    assert(strcmp(nostr_tag_get(root_tag, 3), "root") == 0);
+
+    /* Tag at index 2 should be the reply e-tag with 4 elements */
+    NostrTag *reply_tag = nostr_tags_get(tags, 2);
+    assert(nostr_tag_size(reply_tag) == 4);
+    assert(strcmp(nostr_tag_get(reply_tag, 3), "reply") == 0);
+
+    nostr_event_free(ev);
+    printf("test_damus_notedeck_format: ok\n");
+}
+
+/* Test that NostrEvent deserialize properly parses all 4 tag elements including marker */
+static void test_deserialize_preserves_tag_markers(void) {
+    const char *json =
+        "{"
+        "\"tags\":["
+            "[\"e\",\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"wss://relay.example\",\"root\"],"
+            "[\"e\",\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"\",\"reply\"]"
+        "]"
+        "}";
+
+    NostrEvent *ev = nostr_event_new();
+    assert(ev);
+    int rc = nostr_event_deserialize(ev, json);
+    /* Return value: compact path returns 0 on success, backend returns 1 */
+    assert(rc == 0 || rc == 1);
+
+    NostrTags *tags = (NostrTags *)nostr_event_get_tags(ev);
+    assert(tags);
+    assert(nostr_tags_size(tags) == 2);
+
+    /* First tag: ["e", "aaa...", "wss://relay.example", "root"] */
+    NostrTag *t0 = nostr_tags_get(tags, 0);
+    assert(nostr_tag_size(t0) == 4);
+    assert(strcmp(nostr_tag_get(t0, 0), "e") == 0);
+    assert(strcmp(nostr_tag_get(t0, 2), "wss://relay.example") == 0);
+    assert(strcmp(nostr_tag_get(t0, 3), "root") == 0);
+
+    /* Second tag: ["e", "bbb...", "", "reply"] */
+    NostrTag *t1 = nostr_tags_get(tags, 1);
+    assert(nostr_tag_size(t1) == 4);
+    assert(strcmp(nostr_tag_get(t1, 0), "e") == 0);
+    assert(strcmp(nostr_tag_get(t1, 2), "") == 0);
+    assert(strcmp(nostr_tag_get(t1, 3), "reply") == 0);
+
+    nostr_event_free(ev);
+    printf("test_deserialize_preserves_tag_markers: ok\n");
+}
+
 // Extend main to run edge cases
 int main_edge(void) {
     test_mixed_markers_ordering();
     test_unmarked_only_prefers_first_e();
     test_uniqueness_with_many_tags();
+
+    // nostrc-sx2: Damus Notedeck marker-at-index-3 format tests
+    test_damus_notedeck_format();
+    test_deserialize_preserves_tag_markers();
+
     printf("edge ok\n");
     return 0;
 }

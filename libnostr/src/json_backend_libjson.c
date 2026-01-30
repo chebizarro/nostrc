@@ -106,14 +106,19 @@ int default_deserialize_event(NostrEvent *event, const char *json_str) {
         for (size_t i = 0; i < tn; ++i) {
             json_t *tag = json_array_get(val, i);
             if (!tag || !json_is_array(tag)) continue;
-            const char *a = NULL, *b = NULL, *c = NULL;
+            size_t elem_count = json_array_size(tag);
+            if (elem_count == 0) continue;
+            /* First element is tag key */
             json_t *e0 = json_array_get(tag, 0);
-            json_t *e1 = json_array_get(tag, 1);
-            json_t *e2 = json_array_get(tag, 2);
-            if (e0 && json_is_string(e0)) a = json_string_value(e0);
-            if (e1 && json_is_string(e1)) b = json_string_value(e1);
-            if (e2 && json_is_string(e2)) c = json_string_value(e2);
-            NostrTag *nt = nostr_tag_new(a ? a : "", b, c, NULL);
+            const char *key = (e0 && json_is_string(e0)) ? json_string_value(e0) : "";
+            NostrTag *nt = nostr_tag_new(key, NULL);
+            if (!nt) continue;
+            /* Append all remaining elements (NIP-10 markers are at index 3) */
+            for (size_t j = 1; j < elem_count; ++j) {
+                json_t *ej = json_array_get(tag, j);
+                const char *s = (ej && json_is_string(ej)) ? json_string_value(ej) : NULL;
+                nostr_tag_append(nt, s ? s : "");
+            }
             nostr_tags_append(tags, nt);
         }
         event->tags = tags;
