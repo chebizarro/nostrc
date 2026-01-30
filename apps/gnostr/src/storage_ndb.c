@@ -858,7 +858,7 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
     struct ndb_str id_str = ndb_tag_str(note, tag, 1);
     if (id_str.flag == NDB_PACKED_ID && id_str.id) {
       storage_ndb_hex_encode(id_str.id, id_hex);
-    } else if (id_str.flag == NDB_PACKED_STR && id_str.str && strlen(id_str.str) == 64) {
+    } else if (id_str.flag != NDB_PACKED_ID && id_str.str && strlen(id_str.str) == 64) {
       strncpy(id_hex, id_str.str, 64);
       id_hex[64] = '\0';
     } else {
