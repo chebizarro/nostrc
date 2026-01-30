@@ -14,7 +14,7 @@
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr_simple_pool.h"
-#include <jansson.h>
+#include "json.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -134,96 +134,116 @@ gnostr_classified_free(GnostrClassified *classified)
   g_free(classified);
 }
 
+/* Callback context for parsing classified tags */
+typedef struct {
+  GnostrClassified *classified;
+} ClassifiedParseCtx;
+
+static bool
+classified_tag_callback(size_t index, const char *element_json, void *user_data)
+{
+  (void)index;
+  ClassifiedParseCtx *ctx = user_data;
+
+  char *tag_name = NULL;
+  char *tag_value = NULL;
+
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    return true;
+  }
+
+  if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0 || !tag_value) {
+    free(tag_name);
+    return true;
+  }
+
+  if (g_strcmp0(tag_name, "d") == 0) {
+    g_free(ctx->classified->d_tag);
+    ctx->classified->d_tag = g_strdup(tag_value);
+  } else if (g_strcmp0(tag_name, "title") == 0) {
+    g_free(ctx->classified->title);
+    ctx->classified->title = g_strdup(tag_value);
+  } else if (g_strcmp0(tag_name, "summary") == 0) {
+    g_free(ctx->classified->summary);
+    ctx->classified->summary = g_strdup(tag_value);
+  } else if (g_strcmp0(tag_name, "location") == 0) {
+    g_free(ctx->classified->location);
+    ctx->classified->location = g_strdup(tag_value);
+  } else if (g_strcmp0(tag_name, "published_at") == 0) {
+    ctx->classified->published_at = g_ascii_strtoll(tag_value, NULL, 10);
+  } else if (g_strcmp0(tag_name, "price") == 0) {
+    /* Price tag: ["price", "amount", "currency"] */
+    char *currency = NULL;
+    nostr_json_get_array_string(element_json, NULL, 2, &currency);
+    gnostr_classified_price_free(ctx->classified->price);
+    ctx->classified->price = gnostr_classified_price_parse(tag_value, currency);
+    free(currency);
+  } else if (g_strcmp0(tag_name, "t") == 0) {
+    /* Category tag */
+    g_ptr_array_add(ctx->classified->categories, g_strdup(tag_value));
+  } else if (g_strcmp0(tag_name, "image") == 0) {
+    /* Image URL */
+    g_ptr_array_add(ctx->classified->images, g_strdup(tag_value));
+  }
+
+  free(tag_name);
+  free(tag_value);
+  return true;
+}
+
 GnostrClassified *
 gnostr_classified_parse(const gchar *event_json)
 {
   if (!event_json || !*event_json) return NULL;
 
-  json_error_t error;
-  json_t *root = json_loads(event_json, 0, &error);
-  if (!root) {
-    g_warning("classified: failed to parse JSON: %s", error.text);
+  if (!nostr_json_is_valid(event_json)) {
+    g_warning("classified: failed to parse JSON");
     return NULL;
   }
 
   /* Verify kind */
-  json_t *kind_val = json_object_get(root, "kind");
-  if (!kind_val || json_integer_value(kind_val) != NIP99_KIND_CLASSIFIED_LISTING) {
-    json_decref(root);
+  int kind = 0;
+  if (nostr_json_get_int(event_json, "kind", &kind) != 0 ||
+      kind != NIP99_KIND_CLASSIFIED_LISTING) {
     return NULL;
   }
 
   GnostrClassified *classified = gnostr_classified_new();
 
   /* Extract event ID */
-  json_t *id_val = json_object_get(root, "id");
-  if (id_val && json_is_string(id_val)) {
-    classified->event_id = g_strdup(json_string_value(id_val));
+  char *id_val = NULL;
+  if (nostr_json_get_string(event_json, "id", &id_val) == 0 && id_val) {
+    classified->event_id = g_strdup(id_val);
+    free(id_val);
   }
 
   /* Extract pubkey (seller) */
-  json_t *pubkey_val = json_object_get(root, "pubkey");
-  if (pubkey_val && json_is_string(pubkey_val)) {
-    classified->pubkey = g_strdup(json_string_value(pubkey_val));
+  char *pubkey_val = NULL;
+  if (nostr_json_get_string(event_json, "pubkey", &pubkey_val) == 0 && pubkey_val) {
+    classified->pubkey = g_strdup(pubkey_val);
+    free(pubkey_val);
   }
 
   /* Extract created_at */
-  json_t *created_val = json_object_get(root, "created_at");
-  if (created_val && json_is_integer(created_val)) {
-    classified->created_at = json_integer_value(created_val);
+  int64_t created_at = 0;
+  if (nostr_json_get_int64(event_json, "created_at", &created_at) == 0) {
+    classified->created_at = created_at;
   }
 
   /* Extract content (full description) */
-  json_t *content_val = json_object_get(root, "content");
-  if (content_val && json_is_string(content_val)) {
-    classified->description = g_strdup(json_string_value(content_val));
+  char *content_val = NULL;
+  if (nostr_json_get_string(event_json, "content", &content_val) == 0 && content_val) {
+    classified->description = g_strdup(content_val);
+    free(content_val);
   }
 
   /* Parse tags for classified metadata */
-  json_t *tags = json_object_get(root, "tags");
-  if (tags && json_is_array(tags)) {
-    size_t i;
-    json_t *tag;
-    json_array_foreach(tags, i, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
-      const char *tag_value = json_string_value(json_array_get(tag, 1));
-      if (!tag_name || !tag_value) continue;
-
-      if (g_strcmp0(tag_name, "d") == 0) {
-        g_free(classified->d_tag);
-        classified->d_tag = g_strdup(tag_value);
-      } else if (g_strcmp0(tag_name, "title") == 0) {
-        g_free(classified->title);
-        classified->title = g_strdup(tag_value);
-      } else if (g_strcmp0(tag_name, "summary") == 0) {
-        g_free(classified->summary);
-        classified->summary = g_strdup(tag_value);
-      } else if (g_strcmp0(tag_name, "location") == 0) {
-        g_free(classified->location);
-        classified->location = g_strdup(tag_value);
-      } else if (g_strcmp0(tag_name, "published_at") == 0) {
-        classified->published_at = g_ascii_strtoll(tag_value, NULL, 10);
-      } else if (g_strcmp0(tag_name, "price") == 0) {
-        /* Price tag: ["price", "amount", "currency"] */
-        const char *currency = NULL;
-        if (json_array_size(tag) >= 3) {
-          currency = json_string_value(json_array_get(tag, 2));
-        }
-        gnostr_classified_price_free(classified->price);
-        classified->price = gnostr_classified_price_parse(tag_value, currency);
-      } else if (g_strcmp0(tag_name, "t") == 0) {
-        /* Category tag */
-        g_ptr_array_add(classified->categories, g_strdup(tag_value));
-      } else if (g_strcmp0(tag_name, "image") == 0) {
-        /* Image URL */
-        g_ptr_array_add(classified->images, g_strdup(tag_value));
-      }
-    }
+  char *tags_json = NULL;
+  if (nostr_json_get_raw(event_json, "tags", &tags_json) == 0 && tags_json) {
+    ClassifiedParseCtx ctx = { .classified = classified };
+    nostr_json_array_foreach_root(tags_json, classified_tag_callback, &ctx);
+    free(tags_json);
   }
-
-  json_decref(root);
 
   /* Validate: must have d tag */
   if (!classified->d_tag) {
@@ -288,65 +308,69 @@ gnostr_classified_create_event_json(const GnostrClassified *classified)
 {
   if (!classified || !classified->d_tag) return NULL;
 
-  json_t *event = json_object();
-  json_object_set_new(event, "kind", json_integer(NIP99_KIND_CLASSIFIED_LISTING));
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_object(builder);
+
+  nostr_json_builder_set_key(builder, "kind");
+  nostr_json_builder_add_int(builder, NIP99_KIND_CLASSIFIED_LISTING);
 
   /* Content is the full description */
-  json_object_set_new(event, "content",
-    json_string(classified->description ? classified->description : ""));
+  nostr_json_builder_set_key(builder, "content");
+  nostr_json_builder_add_string(builder, classified->description ? classified->description : "");
 
   /* Build tags array */
-  json_t *tags = json_array();
+  nostr_json_builder_set_key(builder, "tags");
+  nostr_json_builder_begin_array(builder);
 
   /* d tag (required) */
-  json_t *d_tag = json_array();
-  json_array_append_new(d_tag, json_string("d"));
-  json_array_append_new(d_tag, json_string(classified->d_tag));
-  json_array_append_new(tags, d_tag);
+  nostr_json_builder_begin_array(builder);
+  nostr_json_builder_add_string(builder, "d");
+  nostr_json_builder_add_string(builder, classified->d_tag);
+  nostr_json_builder_end_array(builder);
 
   /* title tag */
   if (classified->title && *classified->title) {
-    json_t *title_tag = json_array();
-    json_array_append_new(title_tag, json_string("title"));
-    json_array_append_new(title_tag, json_string(classified->title));
-    json_array_append_new(tags, title_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "title");
+    nostr_json_builder_add_string(builder, classified->title);
+    nostr_json_builder_end_array(builder);
   }
 
   /* summary tag */
   if (classified->summary && *classified->summary) {
-    json_t *summary_tag = json_array();
-    json_array_append_new(summary_tag, json_string("summary"));
-    json_array_append_new(summary_tag, json_string(classified->summary));
-    json_array_append_new(tags, summary_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "summary");
+    nostr_json_builder_add_string(builder, classified->summary);
+    nostr_json_builder_end_array(builder);
   }
 
   /* published_at tag */
   if (classified->published_at > 0) {
-    json_t *pub_tag = json_array();
-    json_array_append_new(pub_tag, json_string("published_at"));
     gchar *ts_str = g_strdup_printf("%" G_GINT64_FORMAT, classified->published_at);
-    json_array_append_new(pub_tag, json_string(ts_str));
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "published_at");
+    nostr_json_builder_add_string(builder, ts_str);
+    nostr_json_builder_end_array(builder);
     g_free(ts_str);
-    json_array_append_new(tags, pub_tag);
   }
 
   /* location tag */
   if (classified->location && *classified->location) {
-    json_t *loc_tag = json_array();
-    json_array_append_new(loc_tag, json_string("location"));
-    json_array_append_new(loc_tag, json_string(classified->location));
-    json_array_append_new(tags, loc_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "location");
+    nostr_json_builder_add_string(builder, classified->location);
+    nostr_json_builder_end_array(builder);
   }
 
   /* price tag */
   if (classified->price && classified->price->amount) {
-    json_t *price_tag = json_array();
-    json_array_append_new(price_tag, json_string("price"));
-    json_array_append_new(price_tag, json_string(classified->price->amount));
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "price");
+    nostr_json_builder_add_string(builder, classified->price->amount);
     if (classified->price->currency && *classified->price->currency) {
-      json_array_append_new(price_tag, json_string(classified->price->currency));
+      nostr_json_builder_add_string(builder, classified->price->currency);
     }
-    json_array_append_new(tags, price_tag);
+    nostr_json_builder_end_array(builder);
   }
 
   /* category (t) tags */
@@ -354,10 +378,10 @@ gnostr_classified_create_event_json(const GnostrClassified *classified)
     for (guint i = 0; i < classified->categories->len; i++) {
       const gchar *cat = g_ptr_array_index(classified->categories, i);
       if (cat && *cat) {
-        json_t *t_tag = json_array();
-        json_array_append_new(t_tag, json_string("t"));
-        json_array_append_new(t_tag, json_string(cat));
-        json_array_append_new(tags, t_tag);
+        nostr_json_builder_begin_array(builder);
+        nostr_json_builder_add_string(builder, "t");
+        nostr_json_builder_add_string(builder, cat);
+        nostr_json_builder_end_array(builder);
       }
     }
   }
@@ -367,18 +391,19 @@ gnostr_classified_create_event_json(const GnostrClassified *classified)
     for (guint i = 0; i < classified->images->len; i++) {
       const gchar *img = g_ptr_array_index(classified->images, i);
       if (img && *img) {
-        json_t *img_tag = json_array();
-        json_array_append_new(img_tag, json_string("image"));
-        json_array_append_new(img_tag, json_string(img));
-        json_array_append_new(tags, img_tag);
+        nostr_json_builder_begin_array(builder);
+        nostr_json_builder_add_string(builder, "image");
+        nostr_json_builder_add_string(builder, img);
+        nostr_json_builder_end_array(builder);
       }
     }
   }
 
-  json_object_set_new(event, "tags", tags);
+  nostr_json_builder_end_array(builder);  /* tags */
+  nostr_json_builder_end_object(builder);
 
-  gchar *result = json_dumps(event, JSON_COMPACT);
-  json_decref(event);
+  char *result = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
 
   return result;
 }

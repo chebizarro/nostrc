@@ -5,7 +5,7 @@
  */
 
 #include "nip73_external_ids.h"
-#include <jansson.h>
+#include "json.h"
 #include <string.h>
 
 /* Type string mappings */
@@ -247,54 +247,64 @@ static gboolean is_nip73_tag(const char *tag_value) {
   return type != GNOSTR_NIP73_TYPE_UNKNOWN;
 }
 
+/* Callback context for parsing NIP-73 tags */
+typedef struct {
+  GPtrArray *content_ids;
+} Nip73ParseCtx;
+
+static bool
+nip73_tag_callback(size_t index, const char *element_json, void *user_data)
+{
+  (void)index;
+  Nip73ParseCtx *ctx = user_data;
+
+  char *tag_key = NULL;
+  char *tag_value = NULL;
+
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_key) != 0 || !tag_key) {
+    return true;
+  }
+
+  /* Check if this is an "i" tag */
+  if (strcmp(tag_key, "i") != 0) {
+    free(tag_key);
+    return true;
+  }
+  free(tag_key);
+
+  if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0 || !tag_value) {
+    return true;
+  }
+
+  /* Only parse if this is a NIP-73 tag (not NIP-39) */
+  if (!is_nip73_tag(tag_value)) {
+    free(tag_value);
+    return true;
+  }
+
+  GnostrExternalContentId *content_id = gnostr_nip73_parse_id(tag_value);
+  if (content_id) {
+    g_ptr_array_add(ctx->content_ids, content_id);
+  }
+
+  free(tag_value);
+  return true;
+}
+
 GPtrArray *gnostr_nip73_parse_ids_from_tags_json(const char *tags_json) {
   if (!tags_json || !*tags_json) {
     return NULL;
   }
 
-  json_error_t error;
-  json_t *tags = json_loads(tags_json, 0, &error);
-  if (!tags || !json_is_array(tags)) {
-    if (tags) json_decref(tags);
+  if (!nostr_json_is_valid(tags_json) || !nostr_json_is_array_str(tags_json)) {
     return NULL;
   }
 
   GPtrArray *content_ids = g_ptr_array_new_with_free_func(
       (GDestroyNotify)gnostr_external_content_id_free);
 
-  size_t i;
-  json_t *tag;
-  json_array_foreach(tags, i, tag) {
-    if (!json_is_array(tag) || json_array_size(tag) < 2) {
-      continue;
-    }
-
-    /* Check if this is an "i" tag */
-    json_t *tag_key = json_array_get(tag, 0);
-    if (!json_is_string(tag_key) || strcmp(json_string_value(tag_key), "i") != 0) {
-      continue;
-    }
-
-    /* Get the identifier value */
-    json_t *tag_value = json_array_get(tag, 1);
-    if (!json_is_string(tag_value)) {
-      continue;
-    }
-
-    const char *value = json_string_value(tag_value);
-
-    /* Only parse if this is a NIP-73 tag (not NIP-39) */
-    if (!is_nip73_tag(value)) {
-      continue;
-    }
-
-    GnostrExternalContentId *content_id = gnostr_nip73_parse_id(value);
-    if (content_id) {
-      g_ptr_array_add(content_ids, content_id);
-    }
-  }
-
-  json_decref(tags);
+  Nip73ParseCtx ctx = { .content_ids = content_ids };
+  nostr_json_array_foreach_root(tags_json, nip73_tag_callback, &ctx);
 
   if (content_ids->len == 0) {
     g_ptr_array_unref(content_ids);
@@ -309,29 +319,19 @@ GPtrArray *gnostr_nip73_parse_ids_from_event(const char *event_json_str) {
     return NULL;
   }
 
-  json_error_t error;
-  json_t *root = json_loads(event_json_str, 0, &error);
-  if (!root) {
-    g_warning("nip73: failed to parse event JSON: %s", error.text);
+  if (!nostr_json_is_valid(event_json_str)) {
+    g_warning("nip73: failed to parse event JSON");
     return NULL;
   }
 
   /* Get tags array */
-  json_t *tags = json_object_get(root, "tags");
-  if (!tags || !json_is_array(tags)) {
-    json_decref(root);
-    return NULL;
-  }
-
-  char *tags_json = json_dumps(tags, JSON_COMPACT);
-  json_decref(root);
-
-  if (!tags_json) {
+  char *tags_json = NULL;
+  if (nostr_json_get_raw(event_json_str, "tags", &tags_json) != 0 || !tags_json) {
     return NULL;
   }
 
   GPtrArray *result = gnostr_nip73_parse_ids_from_tags_json(tags_json);
-  g_free(tags_json);
+  free(tags_json);
 
   return result;
 }
@@ -643,12 +643,14 @@ char *gnostr_nip73_build_tag_json(const GnostrExternalContentId *content_id) {
     return NULL;
   }
 
-  json_t *tag = json_array();
-  json_array_append_new(tag, json_string("i"));
-  json_array_append_new(tag, json_string(content_id->raw_value));
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_array(builder);
+  nostr_json_builder_add_string(builder, "i");
+  nostr_json_builder_add_string(builder, content_id->raw_value);
+  nostr_json_builder_end_array(builder);
 
-  char *result = json_dumps(tag, JSON_COMPACT);
-  json_decref(tag);
+  char *result = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
 
   return result;
 }

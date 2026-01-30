@@ -7,7 +7,6 @@
  */
 
 #include "gnostr-video-player.h"
-#include "gnostr-main-window.h"
 #include <adwaita.h>
 #include <glib/gi18n.h>
 
@@ -640,7 +639,7 @@ static void on_scroll_value_changed(GtkAdjustment *adjustment, gpointer user_dat
   GnostrVideoPlayer *self = GNOSTR_VIDEO_PLAYER(user_data);
   (void)adjustment;
 
-  if (!GNOSTR_IS_VIDEO_PLAYER(self)) return;
+  if (!GNOSTR_IS_VIDEO_PLAYER(self) || self->disposed) return;
 
   gboolean is_visible = check_visibility_in_viewport(self);
 
@@ -882,6 +881,19 @@ GnostrVideoPlayer *gnostr_video_player_new(void) {
 void gnostr_video_player_set_uri(GnostrVideoPlayer *self, const char *uri) {
   g_return_if_fail(GNOSTR_IS_VIDEO_PLAYER(self));
 
+  /* Skip if same URI already set */
+  if (g_strcmp0(self->uri, uri) == 0) {
+    return;
+  }
+
+  /* Stop any current playback before loading new video to ensure clean state.
+   * This prevents race conditions where the old video's prepared/error signals
+   * could fire after we've started loading the new video. */
+  if (self->media_file) {
+    GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
+    gtk_media_stream_pause(stream);
+  }
+
   g_free(self->uri);
   self->uri = g_strdup(uri);
 
@@ -897,23 +909,29 @@ void gnostr_video_player_set_uri(GnostrVideoPlayer *self, const char *uri) {
     gtk_widget_set_visible(self->controls_box, TRUE);
   }
 
-  if (self->media_file && uri) {
-    /* Show loading spinner while video prepares */
-    show_loading_state(self, TRUE);
+  if (self->media_file) {
+    if (uri && *uri) {
+      /* Show loading spinner while video prepares */
+      show_loading_state(self, TRUE);
 
-    GFile *file = g_file_new_for_uri(uri);
-    gtk_media_file_set_file(self->media_file, file);
-    g_object_unref(file);
+      GFile *file = g_file_new_for_uri(uri);
+      gtk_media_file_set_file(self->media_file, file);
+      g_object_unref(file);
 
-    /* Apply settings to media stream */
-    GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
-    gtk_media_stream_set_loop(stream, self->loop);
-    gtk_media_stream_set_muted(stream, self->muted);
-    gtk_media_stream_set_volume(stream, self->volume);
+      /* Apply settings to media stream */
+      GtkMediaStream *stream = GTK_MEDIA_STREAM(self->media_file);
+      gtk_media_stream_set_loop(stream, self->loop);
+      gtk_media_stream_set_muted(stream, self->muted);
+      gtk_media_stream_set_volume(stream, self->volume);
 
-    /* Note: Autoplay is handled in on_media_prepared callback to ensure
-     * video is ready before starting playback. This prevents silent failures
-     * when trying to play before the media pipeline is prepared. */
+      /* Note: Autoplay is handled in on_media_prepared callback to ensure
+       * video is ready before starting playback. This prevents silent failures
+       * when trying to play before the media pipeline is prepared. */
+    } else {
+      /* URI is NULL or empty - clear the media file */
+      show_loading_state(self, FALSE);
+      gtk_media_file_set_file(self->media_file, NULL);
+    }
   }
 }
 

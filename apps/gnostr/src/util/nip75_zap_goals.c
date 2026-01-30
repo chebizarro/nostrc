@@ -6,7 +6,7 @@
 
 #include "nip75_zap_goals.h"
 #include "zap.h"
-#include <jansson.h>
+#include "json.h"
 #include <string.h>
 #include <time.h>
 
@@ -14,123 +14,122 @@ gboolean gnostr_nip75_is_zap_goal_kind(gint kind) {
   return kind == NIP75_KIND_ZAP_GOAL;
 }
 
+/* Callback context for parsing zap goal tags */
+typedef struct {
+  GnostrZapGoal *goal;
+  GPtrArray *relays_arr;
+} ZapGoalParseCtx;
+
+static bool
+zap_goal_tag_callback(size_t index, const char *element_json, void *user_data)
+{
+  (void)index;
+  ZapGoalParseCtx *ctx = user_data;
+
+  char *tag_name = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    return true;
+  }
+
+  if (g_strcmp0(tag_name, "amount") == 0) {
+    char *amount_str = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 1, &amount_str) == 0 && amount_str) {
+      ctx->goal->target_msats = g_ascii_strtoll(amount_str, NULL, 10);
+      free(amount_str);
+    }
+  } else if (g_strcmp0(tag_name, "relays") == 0) {
+    /* Get all relay URLs starting from index 1 */
+    size_t arr_len = 0;
+    if (nostr_json_get_array_length(element_json, NULL, &arr_len) == 0) {
+      for (size_t j = 1; j < arr_len; j++) {
+        char *relay = NULL;
+        if (nostr_json_get_array_string(element_json, NULL, j, &relay) == 0 && relay && *relay) {
+          g_ptr_array_add(ctx->relays_arr, g_strdup(relay));
+          free(relay);
+        }
+      }
+    }
+  } else if (g_strcmp0(tag_name, "closed_at") == 0) {
+    char *ts_str = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 1, &ts_str) == 0 && ts_str) {
+      ctx->goal->end_time = g_ascii_strtoll(ts_str, NULL, 10);
+      free(ts_str);
+    }
+  } else if (g_strcmp0(tag_name, "e") == 0 && !ctx->goal->linked_event_id) {
+    char *event_id = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 1, &event_id) == 0 && event_id) {
+      ctx->goal->linked_event_id = g_strdup(event_id);
+      free(event_id);
+    }
+  } else if (g_strcmp0(tag_name, "p") == 0 && !ctx->goal->linked_pubkey) {
+    char *pubkey = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 1, &pubkey) == 0 && pubkey) {
+      ctx->goal->linked_pubkey = g_strdup(pubkey);
+      free(pubkey);
+    }
+  } else if (g_strcmp0(tag_name, "r") == 0 && !ctx->goal->external_url) {
+    char *url = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 1, &url) == 0 && url) {
+      ctx->goal->external_url = g_strdup(url);
+      free(url);
+    }
+  }
+
+  free(tag_name);
+  return true;
+}
+
 GnostrZapGoal *gnostr_zap_goal_parse(const gchar *json_str) {
   if (!json_str || !*json_str) return NULL;
 
-  json_error_t error;
-  json_t *root = json_loads(json_str, 0, &error);
-  if (!root) {
-    g_debug("NIP-75: Failed to parse goal JSON: %s", error.text);
+  if (!nostr_json_is_valid(json_str)) {
+    g_debug("NIP-75: Failed to parse goal JSON");
     return NULL;
   }
 
-  if (!json_is_object(root)) {
-    json_decref(root);
+  if (!nostr_json_is_object_str(json_str)) {
     return NULL;
   }
 
   /* Check kind */
-  json_t *kind_val = json_object_get(root, "kind");
-  if (!kind_val || !json_is_integer(kind_val)) {
-    json_decref(root);
-    return NULL;
-  }
-  json_int_t kind = json_integer_value(kind_val);
-  if (kind != NIP75_KIND_ZAP_GOAL) {
-    json_decref(root);
+  int kind = 0;
+  if (nostr_json_get_int(json_str, "kind", &kind) != 0 || kind != NIP75_KIND_ZAP_GOAL) {
     return NULL;
   }
 
   GnostrZapGoal *goal = g_new0(GnostrZapGoal, 1);
 
   /* Get event ID */
-  json_t *id_val = json_object_get(root, "id");
-  if (id_val && json_is_string(id_val)) {
-    goal->event_id = g_strdup(json_string_value(id_val));
+  char *event_id = NULL;
+  if (nostr_json_get_string(json_str, "id", &event_id) == 0 && event_id) {
+    goal->event_id = g_strdup(event_id);
+    free(event_id);
   }
 
   /* Get pubkey */
-  json_t *pk_val = json_object_get(root, "pubkey");
-  if (pk_val && json_is_string(pk_val)) {
-    goal->pubkey = g_strdup(json_string_value(pk_val));
+  char *pubkey = NULL;
+  if (nostr_json_get_string(json_str, "pubkey", &pubkey) == 0 && pubkey) {
+    goal->pubkey = g_strdup(pubkey);
+    free(pubkey);
   }
 
   /* Get title from content */
-  json_t *content_val = json_object_get(root, "content");
-  if (content_val && json_is_string(content_val)) {
-    goal->title = g_strdup(json_string_value(content_val));
+  char *content = NULL;
+  if (nostr_json_get_string(json_str, "content", &content) == 0 && content) {
+    goal->title = g_strdup(content);
+    free(content);
   }
 
   /* Get created_at */
-  json_t *created_val = json_object_get(root, "created_at");
-  if (created_val && json_is_integer(created_val)) {
-    goal->created_at = json_integer_value(created_val);
+  int64_t created_at = 0;
+  if (nostr_json_get_int64(json_str, "created_at", &created_at) == 0) {
+    goal->created_at = created_at;
   }
 
   /* Parse tags */
   GPtrArray *relays_arr = g_ptr_array_new();
-
-  json_t *tags = json_object_get(root, "tags");
-  if (tags && json_is_array(tags)) {
-    size_t n_tags = json_array_size(tags);
-
-    for (size_t i = 0; i < n_tags; i++) {
-      json_t *tag = json_array_get(tags, i);
-      if (!json_is_array(tag)) continue;
-
-      size_t tag_len = json_array_size(tag);
-      if (tag_len < 2) continue;
-
-      json_t *tag_name_val = json_array_get(tag, 0);
-      if (!tag_name_val || !json_is_string(tag_name_val)) continue;
-      const char *tag_name = json_string_value(tag_name_val);
-
-      if (g_strcmp0(tag_name, "amount") == 0) {
-        /* Target amount: ["amount", "millisats"] */
-        json_t *amount_val = json_array_get(tag, 1);
-        if (amount_val && json_is_string(amount_val)) {
-          const char *amount_str = json_string_value(amount_val);
-          goal->target_msats = g_ascii_strtoll(amount_str, NULL, 10);
-        }
-      } else if (g_strcmp0(tag_name, "relays") == 0) {
-        /* Relays: ["relays", "wss://...", "wss://..."] */
-        for (size_t j = 1; j < tag_len; j++) {
-          json_t *relay_val = json_array_get(tag, j);
-          if (relay_val && json_is_string(relay_val)) {
-            const char *relay = json_string_value(relay_val);
-            if (relay && *relay) {
-              g_ptr_array_add(relays_arr, g_strdup(relay));
-            }
-          }
-        }
-      } else if (g_strcmp0(tag_name, "closed_at") == 0) {
-        /* Deadline: ["closed_at", "timestamp"] */
-        json_t *ts_val = json_array_get(tag, 1);
-        if (ts_val && json_is_string(ts_val)) {
-          const char *ts_str = json_string_value(ts_val);
-          goal->end_time = g_ascii_strtoll(ts_str, NULL, 10);
-        }
-      } else if (g_strcmp0(tag_name, "e") == 0) {
-        /* Linked event: ["e", "event_id"] */
-        json_t *eid_val = json_array_get(tag, 1);
-        if (eid_val && json_is_string(eid_val) && !goal->linked_event_id) {
-          goal->linked_event_id = g_strdup(json_string_value(eid_val));
-        }
-      } else if (g_strcmp0(tag_name, "p") == 0) {
-        /* Linked profile: ["p", "pubkey"] */
-        json_t *lpk_val = json_array_get(tag, 1);
-        if (lpk_val && json_is_string(lpk_val) && !goal->linked_pubkey) {
-          goal->linked_pubkey = g_strdup(json_string_value(lpk_val));
-        }
-      } else if (g_strcmp0(tag_name, "r") == 0) {
-        /* External URL: ["r", "url"] */
-        json_t *url_val = json_array_get(tag, 1);
-        if (url_val && json_is_string(url_val) && !goal->external_url) {
-          goal->external_url = g_strdup(json_string_value(url_val));
-        }
-      }
-    }
-  }
+  ZapGoalParseCtx ctx = { .goal = goal, .relays_arr = relays_arr };
+  nostr_json_array_foreach(json_str, "tags", zap_goal_tag_callback, &ctx);
 
   /* Convert relays array to NULL-terminated string array */
   if (relays_arr->len > 0) {
@@ -139,8 +138,6 @@ GnostrZapGoal *gnostr_zap_goal_parse(const gchar *json_str) {
   } else {
     g_ptr_array_free(relays_arr, TRUE);
   }
-
-  json_decref(root);
 
   /* Validate: must have target amount */
   if (goal->target_msats <= 0) {
@@ -229,77 +226,82 @@ gchar *gnostr_zap_goal_create_event(const gchar *title,
     return NULL;
   }
 
-  json_t *event = json_object();
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_object(builder);
 
   /* Kind 9041 - zap goal */
-  json_object_set_new(event, "kind", json_integer(NIP75_KIND_ZAP_GOAL));
+  nostr_json_builder_set_key(builder, "kind");
+  nostr_json_builder_add_int(builder, NIP75_KIND_ZAP_GOAL);
 
   /* Content - goal title/description */
-  json_object_set_new(event, "content", json_string(title ? title : ""));
+  nostr_json_builder_set_key(builder, "content");
+  nostr_json_builder_add_string(builder, title ? title : "");
 
   /* Created at */
-  json_object_set_new(event, "created_at", json_integer((json_int_t)time(NULL)));
+  nostr_json_builder_set_key(builder, "created_at");
+  nostr_json_builder_add_int64(builder, (int64_t)time(NULL));
 
   /* Tags array */
-  json_t *tags = json_array();
+  nostr_json_builder_set_key(builder, "tags");
+  nostr_json_builder_begin_array(builder);
 
   /* Amount tag - required */
-  json_t *amount_tag = json_array();
-  json_array_append_new(amount_tag, json_string("amount"));
+  nostr_json_builder_begin_array(builder);
+  nostr_json_builder_add_string(builder, "amount");
   gchar *amount_str = g_strdup_printf("%" G_GINT64_FORMAT, target_msats);
-  json_array_append_new(amount_tag, json_string(amount_str));
+  nostr_json_builder_add_string(builder, amount_str);
   g_free(amount_str);
-  json_array_append_new(tags, amount_tag);
+  nostr_json_builder_end_array(builder);
 
   /* Relays tag */
   if (relays && relays[0]) {
-    json_t *relays_tag = json_array();
-    json_array_append_new(relays_tag, json_string("relays"));
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "relays");
     for (gsize i = 0; relays[i]; i++) {
-      json_array_append_new(relays_tag, json_string(relays[i]));
+      nostr_json_builder_add_string(builder, relays[i]);
     }
-    json_array_append_new(tags, relays_tag);
+    nostr_json_builder_end_array(builder);
   }
 
   /* Closed at tag - optional deadline */
   if (closed_at > 0) {
-    json_t *closed_tag = json_array();
-    json_array_append_new(closed_tag, json_string("closed_at"));
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "closed_at");
     gchar *ts_str = g_strdup_printf("%" G_GINT64_FORMAT, closed_at);
-    json_array_append_new(closed_tag, json_string(ts_str));
+    nostr_json_builder_add_string(builder, ts_str);
     g_free(ts_str);
-    json_array_append_new(tags, closed_tag);
+    nostr_json_builder_end_array(builder);
   }
 
   /* Linked event - optional */
   if (linked_event_id && *linked_event_id) {
-    json_t *e_tag = json_array();
-    json_array_append_new(e_tag, json_string("e"));
-    json_array_append_new(e_tag, json_string(linked_event_id));
-    json_array_append_new(tags, e_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "e");
+    nostr_json_builder_add_string(builder, linked_event_id);
+    nostr_json_builder_end_array(builder);
   }
 
   /* Linked profile - optional */
   if (linked_pubkey && *linked_pubkey) {
-    json_t *p_tag = json_array();
-    json_array_append_new(p_tag, json_string("p"));
-    json_array_append_new(p_tag, json_string(linked_pubkey));
-    json_array_append_new(tags, p_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "p");
+    nostr_json_builder_add_string(builder, linked_pubkey);
+    nostr_json_builder_end_array(builder);
   }
 
   /* External URL - optional */
   if (external_url && *external_url) {
-    json_t *r_tag = json_array();
-    json_array_append_new(r_tag, json_string("r"));
-    json_array_append_new(r_tag, json_string(external_url));
-    json_array_append_new(tags, r_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "r");
+    nostr_json_builder_add_string(builder, external_url);
+    nostr_json_builder_end_array(builder);
   }
 
-  json_object_set_new(event, "tags", tags);
+  nostr_json_builder_end_array(builder);  /* tags */
+  nostr_json_builder_end_object(builder);
 
-  /* Serialize to string */
-  gchar *result = json_dumps(event, JSON_COMPACT);
-  json_decref(event);
+  char *result = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
 
   return result;
 }

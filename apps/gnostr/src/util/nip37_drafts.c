@@ -7,7 +7,7 @@
 #define G_LOG_DOMAIN "nip37-drafts"
 
 #include "nip37_drafts.h"
-#include <jansson.h>
+#include "json.h"
 #include <string.h>
 #include <time.h>
 
@@ -43,17 +43,10 @@ extract_kind_from_json(const gchar *json_str)
 {
   if (!json_str || !*json_str) return 0;
 
-  json_error_t error;
-  json_t *root = json_loads(json_str, 0, &error);
-  if (!root) return 0;
-
-  json_t *kind_val = json_object_get(root, "kind");
-  gint kind = 0;
-  if (kind_val && json_is_integer(kind_val)) {
-    kind = (gint)json_integer_value(kind_val);
+  int kind = 0;
+  if (nostr_json_get_int(json_str, "kind", &kind) != 0) {
+    return 0;
   }
-
-  json_decref(root);
   return kind;
 }
 
@@ -62,18 +55,51 @@ gnostr_nip37_is_draft_event(const gchar *event_json)
 {
   if (!event_json || !*event_json) return FALSE;
 
-  json_error_t error;
-  json_t *root = json_loads(event_json, 0, &error);
-  if (!root) return FALSE;
+  int kind = 0;
+  if (nostr_json_get_int(event_json, "kind", &kind) != 0) {
+    return FALSE;
+  }
+  return kind == NIP37_KIND_DRAFT;
+}
 
-  json_t *kind_val = json_object_get(root, "kind");
-  gboolean is_draft = FALSE;
-  if (kind_val && json_is_integer(kind_val)) {
-    is_draft = (json_integer_value(kind_val) == NIP37_KIND_DRAFT);
+/* Callback context for parsing draft tags */
+typedef struct {
+  GnostrNip37Draft *draft;
+} DraftParseCtx;
+
+static bool
+nip37_tag_callback(size_t index, const char *element_json, void *user_data)
+{
+  (void)index;
+  DraftParseCtx *ctx = user_data;
+
+  /* Each element is a tag array like ["d", "value"] */
+  char *tag_name = NULL;
+  char *tag_value = NULL;
+
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    return true; /* Continue iteration */
   }
 
-  json_decref(root);
-  return is_draft;
+  if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0 || !tag_value) {
+    free(tag_name);
+    return true;
+  }
+
+  if (g_strcmp0(tag_name, "d") == 0) {
+    g_free(ctx->draft->draft_id);
+    ctx->draft->draft_id = g_strdup(tag_value);
+  } else if (g_strcmp0(tag_name, "k") == 0) {
+    ctx->draft->target_kind = (gint)g_ascii_strtoll(tag_value, NULL, 10);
+  } else if (g_strcmp0(tag_name, "e") == 0 && !ctx->draft->edit_event_id) {
+    ctx->draft->edit_event_id = g_strdup(tag_value);
+  } else if (g_strcmp0(tag_name, "a") == 0 && !ctx->draft->edit_addr) {
+    ctx->draft->edit_addr = g_strdup(tag_value);
+  }
+
+  free(tag_name);
+  free(tag_value);
+  return true; /* Continue iteration */
 }
 
 GnostrNip37Draft *
@@ -81,65 +107,36 @@ gnostr_nip37_draft_parse(const gchar *event_json)
 {
   if (!event_json || !*event_json) return NULL;
 
-  json_error_t error;
-  json_t *root = json_loads(event_json, 0, &error);
-  if (!root) {
-    g_warning("nip37: failed to parse event JSON: %s", error.text);
+  if (!nostr_json_is_valid(event_json)) {
+    g_warning("nip37: failed to parse event JSON");
     return NULL;
   }
 
   /* Verify kind is 31234 */
-  json_t *kind_val = json_object_get(root, "kind");
-  if (!kind_val || json_integer_value(kind_val) != NIP37_KIND_DRAFT) {
+  int kind = 0;
+  if (nostr_json_get_int(event_json, "kind", &kind) != 0 || kind != NIP37_KIND_DRAFT) {
     g_debug("nip37: event is not a draft (kind != 31234)");
-    json_decref(root);
     return NULL;
   }
 
   GnostrNip37Draft *draft = gnostr_nip37_draft_new();
 
   /* Extract created_at */
-  json_t *created_val = json_object_get(root, "created_at");
-  if (created_val && json_is_integer(created_val)) {
-    draft->created_at = json_integer_value(created_val);
+  int64_t created_at = 0;
+  if (nostr_json_get_int64(event_json, "created_at", &created_at) == 0) {
+    draft->created_at = created_at;
   }
 
   /* Extract content (the inner draft event JSON) */
-  json_t *content_val = json_object_get(root, "content");
-  if (content_val && json_is_string(content_val)) {
-    draft->draft_json = g_strdup(json_string_value(content_val));
+  char *content = NULL;
+  if (nostr_json_get_string(event_json, "content", &content) == 0 && content) {
+    draft->draft_json = g_strdup(content);
+    free(content);
   }
 
   /* Parse tags for draft metadata */
-  json_t *tags = json_object_get(root, "tags");
-  if (tags && json_is_array(tags)) {
-    size_t i;
-    json_t *tag;
-    json_array_foreach(tags, i, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
-      const char *tag_value = json_string_value(json_array_get(tag, 1));
-      if (!tag_name || !tag_value) continue;
-
-      if (g_strcmp0(tag_name, "d") == 0) {
-        /* Draft identifier */
-        g_free(draft->draft_id);
-        draft->draft_id = g_strdup(tag_value);
-      } else if (g_strcmp0(tag_name, "k") == 0) {
-        /* Target kind */
-        draft->target_kind = (gint)g_ascii_strtoll(tag_value, NULL, 10);
-      } else if (g_strcmp0(tag_name, "e") == 0 && !draft->edit_event_id) {
-        /* Event being edited (first "e" tag) */
-        draft->edit_event_id = g_strdup(tag_value);
-      } else if (g_strcmp0(tag_name, "a") == 0 && !draft->edit_addr) {
-        /* Addressable event being edited (first "a" tag) */
-        draft->edit_addr = g_strdup(tag_value);
-      }
-    }
-  }
-
-  json_decref(root);
+  DraftParseCtx ctx = { .draft = draft };
+  nostr_json_array_foreach(event_json, "tags", nip37_tag_callback, &ctx);
 
   /* Validate: must have draft_id (d tag) */
   if (!draft->draft_id || !*draft->draft_id) {
@@ -169,44 +166,47 @@ gnostr_nip37_draft_build_tags(const GnostrNip37Draft *draft)
 {
   if (!draft) return g_strdup("[]");
 
-  json_t *tags = json_array();
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_array(builder);
 
   /* "d" tag - required */
   if (draft->draft_id && *draft->draft_id) {
-    json_t *d_tag = json_array();
-    json_array_append_new(d_tag, json_string("d"));
-    json_array_append_new(d_tag, json_string(draft->draft_id));
-    json_array_append_new(tags, d_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "d");
+    nostr_json_builder_add_string(builder, draft->draft_id);
+    nostr_json_builder_end_array(builder);
   }
 
   /* "k" tag - target kind */
   if (draft->target_kind > 0) {
-    json_t *k_tag = json_array();
-    json_array_append_new(k_tag, json_string("k"));
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "k");
     gchar *kind_str = g_strdup_printf("%d", draft->target_kind);
-    json_array_append_new(k_tag, json_string(kind_str));
+    nostr_json_builder_add_string(builder, kind_str);
     g_free(kind_str);
-    json_array_append_new(tags, k_tag);
+    nostr_json_builder_end_array(builder);
   }
 
   /* "e" tag - event being edited */
   if (draft->edit_event_id && *draft->edit_event_id) {
-    json_t *e_tag = json_array();
-    json_array_append_new(e_tag, json_string("e"));
-    json_array_append_new(e_tag, json_string(draft->edit_event_id));
-    json_array_append_new(tags, e_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "e");
+    nostr_json_builder_add_string(builder, draft->edit_event_id);
+    nostr_json_builder_end_array(builder);
   }
 
   /* "a" tag - addressable event being edited */
   if (draft->edit_addr && *draft->edit_addr) {
-    json_t *a_tag = json_array();
-    json_array_append_new(a_tag, json_string("a"));
-    json_array_append_new(a_tag, json_string(draft->edit_addr));
-    json_array_append_new(tags, a_tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "a");
+    nostr_json_builder_add_string(builder, draft->edit_addr);
+    nostr_json_builder_end_array(builder);
   }
 
-  gchar *result = json_dumps(tags, JSON_COMPACT);
-  json_decref(tags);
+  nostr_json_builder_end_array(builder);
+
+  char *result = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
   return result;
 }
 

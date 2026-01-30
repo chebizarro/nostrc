@@ -2340,34 +2340,46 @@ static gchar *escape_markup(const char *s) {
   return g_markup_escape_text(s, -1);
 }
 
-static gboolean is_image_url(const char *u) {
+/* Helper to check if URL path ends with extension, ignoring query string and fragment.
+ * Handles URLs like: https://example.com/video.mp4?token=abc#section
+ * Returns TRUE if the path component ends with any of the given extensions.
+ */
+static gboolean url_path_has_extension(const char *u, const char *exts[], guint n_exts) {
   if (!u) return FALSE;
-  gchar *lower = g_ascii_strdown(u, -1);
-  const char *exts[] = {".jpg",".jpeg",".png",".gif",".webp",".bmp",".svg",".avif",".ico",".tiff",".tif",".heic",".heif"};
+
+  /* Find end of path component (before ? or #) */
+  const char *query = strchr(u, '?');
+  const char *fragment = strchr(u, '#');
+  size_t path_len = strlen(u);
+
+  if (query && (!fragment || query < fragment)) {
+    path_len = query - u;
+  } else if (fragment) {
+    path_len = fragment - u;
+  }
+
+  /* Extract path portion and convert to lowercase */
+  gchar *path = g_ascii_strdown(u, path_len);
+
   gboolean result = FALSE;
-  for (guint i=0; i<G_N_ELEMENTS(exts); i++) {
-    if (g_str_has_suffix(lower, exts[i])) {
+  for (guint i = 0; i < n_exts; i++) {
+    if (g_str_has_suffix(path, exts[i])) {
       result = TRUE;
       break;
     }
   }
-  g_free(lower);
+  g_free(path);
   return result;
 }
 
+static gboolean is_image_url(const char *u) {
+  static const char *exts[] = {".jpg",".jpeg",".png",".gif",".webp",".bmp",".svg",".avif",".ico",".tiff",".tif",".heic",".heif"};
+  return url_path_has_extension(u, exts, G_N_ELEMENTS(exts));
+}
+
 static gboolean is_video_url(const char *u) {
-  if (!u) return FALSE;
-  gchar *lower = g_ascii_strdown(u, -1);
-  const char *exts[] = {".mp4",".webm",".mov",".avi",".mkv",".m4v"};
-  gboolean result = FALSE;
-  for (guint i=0; i<G_N_ELEMENTS(exts); i++) {
-    if (g_str_has_suffix(lower, exts[i])) {
-      result = TRUE;
-      break;
-    }
-  }
-  g_free(lower);
-  return result;
+  static const char *exts[] = {".mp4",".webm",".mov",".avi",".mkv",".m4v"};
+  return url_path_has_extension(u, exts, G_N_ELEMENTS(exts));
 }
 
 /**

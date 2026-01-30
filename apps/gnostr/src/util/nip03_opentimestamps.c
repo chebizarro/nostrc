@@ -7,7 +7,7 @@
 
 #include "nip03_opentimestamps.h"
 #include "../storage_ndb.h"
-#include <jansson.h>
+#include "json.h"
 #include <string.h>
 #include <time.h>
 
@@ -63,36 +63,59 @@ void gnostr_nip03_shutdown(void) {
   g_debug("[NIP-03] OpenTimestamps subsystem shutdown");
 }
 
+/* Callback context for parsing OTS tags */
+typedef struct {
+  const char *event_id_hex;
+  GnostrOtsProof *result;
+} OtsParseCtx;
+
+static bool
+ots_tag_callback(size_t index, const char *element_json, void *user_data)
+{
+  (void)index;
+  OtsParseCtx *ctx = user_data;
+
+  char *tag_name = NULL;
+  char *tag_value = NULL;
+
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    return true;
+  }
+
+  if (strcmp(tag_name, "ots") != 0) {
+    free(tag_name);
+    return true;
+  }
+
+  free(tag_name);
+
+  if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0 || !tag_value) {
+    return true;
+  }
+
+  if (*tag_value) {
+    ctx->result = gnostr_nip03_parse_ots_proof(tag_value, ctx->event_id_hex);
+  }
+
+  free(tag_value);
+  return ctx->result == NULL; /* Stop if we found a valid OTS proof */
+}
+
 GnostrOtsProof *gnostr_nip03_parse_ots_tag(const char *tags_json,
                                             const char *event_id_hex) {
   if (!tags_json || !*tags_json || !event_id_hex) return NULL;
 
-  json_error_t error;
-  json_t *tags = json_loads(tags_json, 0, &error);
-  if (!tags || !json_is_array(tags)) {
-    if (tags) json_decref(tags);
+  if (!nostr_json_is_array_str(tags_json)) {
     return NULL;
   }
 
-  GnostrOtsProof *result = NULL;
-  size_t tag_count = json_array_size(tags);
+  OtsParseCtx ctx = {
+    .event_id_hex = event_id_hex,
+    .result = NULL
+  };
 
-  for (size_t i = 0; i < tag_count; i++) {
-    json_t *tag = json_array_get(tags, i);
-    if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-
-    const char *tag_name = json_string_value(json_array_get(tag, 0));
-    if (!tag_name || strcmp(tag_name, "ots") != 0) continue;
-
-    const char *ots_base64 = json_string_value(json_array_get(tag, 1));
-    if (!ots_base64 || !*ots_base64) continue;
-
-    result = gnostr_nip03_parse_ots_proof(ots_base64, event_id_hex);
-    break;
-  }
-
-  json_decref(tags);
-  return result;
+  nostr_json_array_foreach_root(tags_json, ots_tag_callback, &ctx);
+  return ctx.result;
 }
 
 GnostrOtsProof *gnostr_nip03_parse_ots_proof(const char *ots_base64,

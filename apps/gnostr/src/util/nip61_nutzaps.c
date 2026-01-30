@@ -8,7 +8,7 @@
 #define G_LOG_DOMAIN "nip61-nutzaps"
 
 #include "nip61_nutzaps.h"
-#include <jansson.h>
+#include "json.h"
 #include <string.h>
 #include <time.h>
 
@@ -74,99 +74,117 @@ gnostr_nutzap_prefs_free(GnostrNutzapPrefs *prefs)
   g_free(prefs);
 }
 
+/* Callback context for parsing nutzap prefs tags */
+typedef struct {
+  GPtrArray *mints_arr;
+  GPtrArray *relays_arr;
+  gboolean require_p2pk;
+} NutzapPrefsParseCtx;
+
+static bool
+nutzap_prefs_tag_callback(size_t index, const char *element_json, void *user_data)
+{
+  (void)index;
+  NutzapPrefsParseCtx *ctx = user_data;
+
+  char *tag_name = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    return true;
+  }
+
+  if (g_strcmp0(tag_name, "mint") == 0) {
+    /* ["mint", "<url>", "<unit>", "<optional-pubkey>"] */
+    char *url = NULL;
+    char *unit = NULL;
+    char *pubkey = NULL;
+
+    if (nostr_json_get_array_string(element_json, NULL, 1, &url) == 0 && url &&
+        nostr_json_get_array_string(element_json, NULL, 2, &unit) == 0 && unit) {
+      nostr_json_get_array_string(element_json, NULL, 3, &pubkey);  /* optional */
+
+      GnostrNutzapMint *mint = gnostr_nutzap_mint_new_full(url, unit, pubkey);
+      g_ptr_array_add(ctx->mints_arr, mint);
+      g_debug("nutzap_prefs: parsed mint url=%s unit=%s", url, unit);
+    }
+
+    free(url);
+    free(unit);
+    free(pubkey);
+  } else if (g_strcmp0(tag_name, "relay") == 0) {
+    /* ["relay", "<url>"] */
+    char *relay_url = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 1, &relay_url) == 0 &&
+        relay_url && *relay_url) {
+      g_ptr_array_add(ctx->relays_arr, g_strdup(relay_url));
+      g_debug("nutzap_prefs: parsed relay=%s", relay_url);
+      free(relay_url);
+    }
+  } else if (g_strcmp0(tag_name, "p2pk") == 0) {
+    /* ["p2pk"] - presence indicates requirement */
+    ctx->require_p2pk = TRUE;
+    g_debug("nutzap_prefs: p2pk required");
+  }
+
+  free(tag_name);
+  return true;
+}
+
 GnostrNutzapPrefs *
 gnostr_nutzap_prefs_parse(const gchar *event_json)
 {
   if (!event_json || !*event_json) return NULL;
 
-  json_error_t error;
-  json_t *root = json_loads(event_json, 0, &error);
-  if (!root) {
-    g_warning("nutzap_prefs: failed to parse JSON: %s", error.text);
+  if (!nostr_json_is_valid(event_json)) {
+    g_warning("nutzap_prefs: failed to parse JSON");
     return NULL;
   }
 
   /* Verify kind 10019 */
-  json_t *kind_val = json_object_get(root, "kind");
-  if (!kind_val || json_integer_value(kind_val) != NIP61_KIND_NUTZAP_PREFS) {
+  int kind = 0;
+  if (nostr_json_get_int(event_json, "kind", &kind) != 0 ||
+      kind != NIP61_KIND_NUTZAP_PREFS) {
     g_debug("nutzap_prefs: wrong kind, expected %d", NIP61_KIND_NUTZAP_PREFS);
-    json_decref(root);
     return NULL;
   }
 
   GnostrNutzapPrefs *prefs = gnostr_nutzap_prefs_new();
 
   /* Temporary arrays for collecting mints and relays */
-  GPtrArray *mints_arr = g_ptr_array_new();
-  GPtrArray *relays_arr = g_ptr_array_new_with_free_func(g_free);
+  NutzapPrefsParseCtx ctx = {
+    .mints_arr = g_ptr_array_new(),
+    .relays_arr = g_ptr_array_new_with_free_func(g_free),
+    .require_p2pk = FALSE
+  };
 
   /* Parse tags */
-  json_t *tags = json_object_get(root, "tags");
-  if (tags && json_is_array(tags)) {
-    size_t i;
-    json_t *tag;
-    json_array_foreach(tags, i, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 1) continue;
-
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
-      if (!tag_name) continue;
-
-      if (g_strcmp0(tag_name, "mint") == 0) {
-        /* ["mint", "<url>", "<unit>", "<optional-pubkey>"] */
-        if (json_array_size(tag) >= 3) {
-          const char *url = json_string_value(json_array_get(tag, 1));
-          const char *unit = json_string_value(json_array_get(tag, 2));
-          const char *pubkey = NULL;
-
-          if (json_array_size(tag) >= 4) {
-            pubkey = json_string_value(json_array_get(tag, 3));
-          }
-
-          if (url && unit) {
-            GnostrNutzapMint *mint = gnostr_nutzap_mint_new_full(url, unit, pubkey);
-            g_ptr_array_add(mints_arr, mint);
-            g_debug("nutzap_prefs: parsed mint url=%s unit=%s", url, unit);
-          }
-        }
-      } else if (g_strcmp0(tag_name, "relay") == 0) {
-        /* ["relay", "<url>"] */
-        if (json_array_size(tag) >= 2) {
-          const char *relay_url = json_string_value(json_array_get(tag, 1));
-          if (relay_url && *relay_url) {
-            g_ptr_array_add(relays_arr, g_strdup(relay_url));
-            g_debug("nutzap_prefs: parsed relay=%s", relay_url);
-          }
-        }
-      } else if (g_strcmp0(tag_name, "p2pk") == 0) {
-        /* ["p2pk"] - presence indicates requirement */
-        prefs->require_p2pk = TRUE;
-        g_debug("nutzap_prefs: p2pk required");
-      }
-    }
+  char *tags_json = NULL;
+  if (nostr_json_get_raw(event_json, "tags", &tags_json) == 0 && tags_json) {
+    nostr_json_array_foreach_root(tags_json, nutzap_prefs_tag_callback, &ctx);
+    free(tags_json);
   }
 
+  prefs->require_p2pk = ctx.require_p2pk;
+
   /* Transfer mints to prefs */
-  prefs->mint_count = mints_arr->len;
+  prefs->mint_count = ctx.mints_arr->len;
   if (prefs->mint_count > 0) {
     prefs->mints = g_new(GnostrNutzapMint *, prefs->mint_count);
     for (gsize i = 0; i < prefs->mint_count; i++) {
-      prefs->mints[i] = g_ptr_array_index(mints_arr, i);
+      prefs->mints[i] = g_ptr_array_index(ctx.mints_arr, i);
     }
   }
-  g_ptr_array_free(mints_arr, TRUE);
+  g_ptr_array_free(ctx.mints_arr, TRUE);
 
   /* Transfer relays to prefs */
-  prefs->relay_count = relays_arr->len;
+  prefs->relay_count = ctx.relays_arr->len;
   if (prefs->relay_count > 0) {
     prefs->relays = g_new(gchar *, prefs->relay_count);
     for (gsize i = 0; i < prefs->relay_count; i++) {
-      prefs->relays[i] = g_ptr_array_index(relays_arr, i);
+      prefs->relays[i] = g_ptr_array_index(ctx.relays_arr, i);
     }
   }
   /* Don't free the strings, just the array */
-  g_ptr_array_free(relays_arr, TRUE);
-
-  json_decref(root);
+  g_ptr_array_free(ctx.relays_arr, TRUE);
 
   g_debug("nutzap_prefs: parsed %zu mints, %zu relays, p2pk=%d",
           prefs->mint_count, prefs->relay_count, prefs->require_p2pk);
@@ -246,58 +264,65 @@ gnostr_nutzap_prefs_build_event_json(const GnostrNutzapPrefs *prefs,
   g_return_val_if_fail(prefs != NULL, NULL);
   g_return_val_if_fail(pubkey != NULL && strlen(pubkey) == 64, NULL);
 
-  json_t *event = json_object();
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_object(builder);
 
   /* Kind 10019 - nutzap preferences */
-  json_object_set_new(event, "kind", json_integer(NIP61_KIND_NUTZAP_PREFS));
+  nostr_json_builder_set_key(builder, "kind");
+  nostr_json_builder_add_int(builder, NIP61_KIND_NUTZAP_PREFS);
 
   /* Content - empty per spec */
-  json_object_set_new(event, "content", json_string(""));
+  nostr_json_builder_set_key(builder, "content");
+  nostr_json_builder_add_string(builder, "");
 
   /* Pubkey */
-  json_object_set_new(event, "pubkey", json_string(pubkey));
+  nostr_json_builder_set_key(builder, "pubkey");
+  nostr_json_builder_add_string(builder, pubkey);
 
   /* Created at */
-  json_object_set_new(event, "created_at", json_integer((json_int_t)time(NULL)));
+  nostr_json_builder_set_key(builder, "created_at");
+  nostr_json_builder_add_int64(builder, (int64_t)time(NULL));
 
   /* Tags */
-  json_t *tags = json_array();
+  nostr_json_builder_set_key(builder, "tags");
+  nostr_json_builder_begin_array(builder);
 
   /* Add mint tags */
   for (gsize i = 0; i < prefs->mint_count; i++) {
     GnostrNutzapMint *mint = prefs->mints[i];
-    json_t *tag = json_array();
 
-    json_array_append_new(tag, json_string("mint"));
-    json_array_append_new(tag, json_string(mint->url ? mint->url : ""));
-    json_array_append_new(tag, json_string(mint->unit ? mint->unit : "sat"));
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "mint");
+    nostr_json_builder_add_string(builder, mint->url ? mint->url : "");
+    nostr_json_builder_add_string(builder, mint->unit ? mint->unit : "sat");
 
     if (mint->pubkey && *mint->pubkey) {
-      json_array_append_new(tag, json_string(mint->pubkey));
+      nostr_json_builder_add_string(builder, mint->pubkey);
     }
 
-    json_array_append_new(tags, tag);
+    nostr_json_builder_end_array(builder);
   }
 
   /* Add relay tags */
   for (gsize i = 0; i < prefs->relay_count; i++) {
-    json_t *tag = json_array();
-    json_array_append_new(tag, json_string("relay"));
-    json_array_append_new(tag, json_string(prefs->relays[i]));
-    json_array_append_new(tags, tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "relay");
+    nostr_json_builder_add_string(builder, prefs->relays[i]);
+    nostr_json_builder_end_array(builder);
   }
 
   /* Add p2pk tag if required */
   if (prefs->require_p2pk) {
-    json_t *tag = json_array();
-    json_array_append_new(tag, json_string("p2pk"));
-    json_array_append_new(tags, tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "p2pk");
+    nostr_json_builder_end_array(builder);
   }
 
-  json_object_set_new(event, "tags", tags);
+  nostr_json_builder_end_array(builder);  /* tags */
+  nostr_json_builder_end_object(builder);
 
-  gchar *result = json_dumps(event, JSON_COMPACT);
-  json_decref(event);
+  char *result = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
 
   return result;
 }
@@ -336,6 +361,54 @@ gnostr_cashu_proof_free(GnostrCashuProof *proof)
   g_free(proof);
 }
 
+/* Callback context for parsing cashu proofs */
+typedef struct {
+  GPtrArray *proofs_arr;
+} CashuProofsParseCtx;
+
+static bool
+cashu_proof_callback(size_t index, const char *element_json, void *user_data)
+{
+  (void)index;
+  CashuProofsParseCtx *ctx = user_data;
+
+  if (!nostr_json_is_object_str(element_json)) {
+    return true;
+  }
+
+  GnostrCashuProof *proof = gnostr_cashu_proof_new();
+
+  /* Parse amount */
+  int64_t amount = 0;
+  if (nostr_json_get_int64(element_json, "amount", &amount) == 0) {
+    proof->amount = amount;
+  }
+
+  /* Parse id (keyset ID) */
+  char *id_val = NULL;
+  if (nostr_json_get_string(element_json, "id", &id_val) == 0 && id_val) {
+    proof->id = g_strdup(id_val);
+    free(id_val);
+  }
+
+  /* Parse secret */
+  char *secret_val = NULL;
+  if (nostr_json_get_string(element_json, "secret", &secret_val) == 0 && secret_val) {
+    proof->secret = g_strdup(secret_val);
+    free(secret_val);
+  }
+
+  /* Parse C (signature point) */
+  char *C_val = NULL;
+  if (nostr_json_get_string(element_json, "C", &C_val) == 0 && C_val) {
+    proof->C = g_strdup(C_val);
+    free(C_val);
+  }
+
+  g_ptr_array_add(ctx->proofs_arr, proof);
+  return true;
+}
+
 GnostrCashuProof **
 gnostr_cashu_proofs_parse(const gchar *proofs_json,
                            gsize *out_count)
@@ -345,70 +418,30 @@ gnostr_cashu_proofs_parse(const gchar *proofs_json,
     return NULL;
   }
 
-  json_error_t error;
-  json_t *root = json_loads(proofs_json, 0, &error);
-  if (!root) {
-    g_warning("cashu_proofs: failed to parse JSON: %s", error.text);
+  if (!nostr_json_is_valid(proofs_json) || !nostr_json_is_array_str(proofs_json)) {
+    g_warning("cashu_proofs: failed to parse JSON or not an array");
     if (out_count) *out_count = 0;
     return NULL;
   }
 
-  if (!json_is_array(root)) {
-    g_debug("cashu_proofs: expected array");
-    json_decref(root);
+  CashuProofsParseCtx ctx = {
+    .proofs_arr = g_ptr_array_new()
+  };
+
+  nostr_json_array_foreach_root(proofs_json, cashu_proof_callback, &ctx);
+
+  gsize valid_count = ctx.proofs_arr->len;
+  if (valid_count == 0) {
+    g_ptr_array_free(ctx.proofs_arr, TRUE);
     if (out_count) *out_count = 0;
     return NULL;
   }
 
-  gsize count = json_array_size(root);
-  if (count == 0) {
-    json_decref(root);
-    if (out_count) *out_count = 0;
-    return NULL;
+  GnostrCashuProof **proofs = g_new0(GnostrCashuProof *, valid_count);
+  for (gsize i = 0; i < valid_count; i++) {
+    proofs[i] = g_ptr_array_index(ctx.proofs_arr, i);
   }
-
-  GnostrCashuProof **proofs = g_new0(GnostrCashuProof *, count);
-  gsize valid_count = 0;
-
-  for (gsize i = 0; i < count; i++) {
-    json_t *proof_obj = json_array_get(root, i);
-    if (!json_is_object(proof_obj)) continue;
-
-    GnostrCashuProof *proof = gnostr_cashu_proof_new();
-
-    /* Parse amount */
-    json_t *amount_val = json_object_get(proof_obj, "amount");
-    if (amount_val && json_is_integer(amount_val)) {
-      proof->amount = json_integer_value(amount_val);
-    }
-
-    /* Parse id (keyset ID) */
-    json_t *id_val = json_object_get(proof_obj, "id");
-    if (id_val && json_is_string(id_val)) {
-      proof->id = g_strdup(json_string_value(id_val));
-    }
-
-    /* Parse secret */
-    json_t *secret_val = json_object_get(proof_obj, "secret");
-    if (secret_val && json_is_string(secret_val)) {
-      proof->secret = g_strdup(json_string_value(secret_val));
-    }
-
-    /* Parse C (signature point) */
-    json_t *C_val = json_object_get(proof_obj, "C");
-    if (C_val && json_is_string(C_val)) {
-      proof->C = g_strdup(json_string_value(C_val));
-    }
-
-    proofs[valid_count++] = proof;
-  }
-
-  json_decref(root);
-
-  /* Resize if needed */
-  if (valid_count < count) {
-    proofs = g_renew(GnostrCashuProof *, proofs, valid_count);
-  }
+  g_ptr_array_free(ctx.proofs_arr, TRUE);
 
   if (out_count) *out_count = valid_count;
 
@@ -470,98 +503,117 @@ gnostr_nutzap_free(GnostrNutzap *nutzap)
   g_free(nutzap);
 }
 
+/* Callback context for parsing nutzap tags */
+typedef struct {
+  GnostrNutzap *nutzap;
+} NutzapParseCtx;
+
+static bool
+nutzap_tag_callback(size_t index, const char *element_json, void *user_data)
+{
+  (void)index;
+  NutzapParseCtx *ctx = user_data;
+
+  char *tag_name = NULL;
+  char *tag_value = NULL;
+
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    return true;
+  }
+
+  if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) != 0 || !tag_value) {
+    free(tag_name);
+    return true;
+  }
+
+  if (g_strcmp0(tag_name, "proofs") == 0) {
+    /* ["proofs", "<json-array>"] */
+    ctx->nutzap->proofs_json = g_strdup(tag_value);
+
+    /* Parse proofs for easy access */
+    ctx->nutzap->proofs = gnostr_cashu_proofs_parse(tag_value, &ctx->nutzap->proof_count);
+
+    /* Calculate total amount */
+    ctx->nutzap->amount_sat = gnostr_cashu_proofs_total_amount(
+        (GnostrCashuProof * const *)ctx->nutzap->proofs, ctx->nutzap->proof_count);
+
+    g_debug("nutzap: parsed %zu proofs, total %lld sat",
+            ctx->nutzap->proof_count, (long long)ctx->nutzap->amount_sat);
+
+  } else if (g_strcmp0(tag_name, "u") == 0) {
+    /* ["u", "<mint-url>"] */
+    ctx->nutzap->mint_url = g_strdup(tag_value);
+
+  } else if (g_strcmp0(tag_name, "e") == 0) {
+    /* ["e", "<event-id>", "<relay>"] */
+    ctx->nutzap->zapped_event_id = g_strdup(tag_value);
+    char *relay = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 2, &relay) == 0 && relay && *relay) {
+      ctx->nutzap->zapped_event_relay = g_strdup(relay);
+      free(relay);
+    }
+
+  } else if (g_strcmp0(tag_name, "p") == 0) {
+    /* ["p", "<pubkey>"] */
+    ctx->nutzap->recipient_pubkey = g_strdup(tag_value);
+
+  } else if (g_strcmp0(tag_name, "a") == 0) {
+    /* ["a", "<kind:pubkey:d-tag>"] */
+    ctx->nutzap->addressable_ref = g_strdup(tag_value);
+  }
+
+  free(tag_name);
+  free(tag_value);
+  return true;
+}
+
 GnostrNutzap *
 gnostr_nutzap_parse(const gchar *event_json)
 {
   if (!event_json || !*event_json) return NULL;
 
-  json_error_t error;
-  json_t *root = json_loads(event_json, 0, &error);
-  if (!root) {
-    g_warning("nutzap: failed to parse JSON: %s", error.text);
+  if (!nostr_json_is_valid(event_json)) {
+    g_warning("nutzap: failed to parse JSON");
     return NULL;
   }
 
   /* Verify kind 9321 */
-  json_t *kind_val = json_object_get(root, "kind");
-  if (!kind_val || json_integer_value(kind_val) != NIP61_KIND_NUTZAP) {
+  int kind = 0;
+  if (nostr_json_get_int(event_json, "kind", &kind) != 0 ||
+      kind != NIP61_KIND_NUTZAP) {
     g_debug("nutzap: wrong kind, expected %d", NIP61_KIND_NUTZAP);
-    json_decref(root);
     return NULL;
   }
 
   GnostrNutzap *nutzap = gnostr_nutzap_new();
 
   /* Extract event ID */
-  json_t *id_val = json_object_get(root, "id");
-  if (id_val && json_is_string(id_val)) {
-    nutzap->event_id = g_strdup(json_string_value(id_val));
+  char *id_val = NULL;
+  if (nostr_json_get_string(event_json, "id", &id_val) == 0 && id_val) {
+    nutzap->event_id = g_strdup(id_val);
+    free(id_val);
   }
 
   /* Extract sender pubkey */
-  json_t *pubkey_val = json_object_get(root, "pubkey");
-  if (pubkey_val && json_is_string(pubkey_val)) {
-    nutzap->sender_pubkey = g_strdup(json_string_value(pubkey_val));
+  char *pubkey_val = NULL;
+  if (nostr_json_get_string(event_json, "pubkey", &pubkey_val) == 0 && pubkey_val) {
+    nutzap->sender_pubkey = g_strdup(pubkey_val);
+    free(pubkey_val);
   }
 
   /* Extract created_at */
-  json_t *created_val = json_object_get(root, "created_at");
-  if (created_val && json_is_integer(created_val)) {
-    nutzap->created_at = json_integer_value(created_val);
+  int64_t created_at = 0;
+  if (nostr_json_get_int64(event_json, "created_at", &created_at) == 0) {
+    nutzap->created_at = created_at;
   }
 
   /* Parse tags */
-  json_t *tags = json_object_get(root, "tags");
-  if (tags && json_is_array(tags)) {
-    size_t i;
-    json_t *tag;
-    json_array_foreach(tags, i, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
-      const char *tag_value = json_string_value(json_array_get(tag, 1));
-      if (!tag_name || !tag_value) continue;
-
-      if (g_strcmp0(tag_name, "proofs") == 0) {
-        /* ["proofs", "<json-array>"] */
-        nutzap->proofs_json = g_strdup(tag_value);
-
-        /* Parse proofs for easy access */
-        nutzap->proofs = gnostr_cashu_proofs_parse(tag_value, &nutzap->proof_count);
-
-        /* Calculate total amount */
-        nutzap->amount_sat = gnostr_cashu_proofs_total_amount(
-            (GnostrCashuProof * const *)nutzap->proofs, nutzap->proof_count);
-
-        g_debug("nutzap: parsed %zu proofs, total %lld sat",
-                nutzap->proof_count, (long long)nutzap->amount_sat);
-
-      } else if (g_strcmp0(tag_name, "u") == 0) {
-        /* ["u", "<mint-url>"] */
-        nutzap->mint_url = g_strdup(tag_value);
-
-      } else if (g_strcmp0(tag_name, "e") == 0) {
-        /* ["e", "<event-id>", "<relay>"] */
-        nutzap->zapped_event_id = g_strdup(tag_value);
-        if (json_array_size(tag) >= 3) {
-          const char *relay = json_string_value(json_array_get(tag, 2));
-          if (relay && *relay) {
-            nutzap->zapped_event_relay = g_strdup(relay);
-          }
-        }
-
-      } else if (g_strcmp0(tag_name, "p") == 0) {
-        /* ["p", "<pubkey>"] */
-        nutzap->recipient_pubkey = g_strdup(tag_value);
-
-      } else if (g_strcmp0(tag_name, "a") == 0) {
-        /* ["a", "<kind:pubkey:d-tag>"] */
-        nutzap->addressable_ref = g_strdup(tag_value);
-      }
-    }
+  char *tags_json = NULL;
+  if (nostr_json_get_raw(event_json, "tags", &tags_json) == 0 && tags_json) {
+    NutzapParseCtx ctx = { .nutzap = nutzap };
+    nostr_json_array_foreach_root(tags_json, nutzap_tag_callback, &ctx);
+    free(tags_json);
   }
-
-  json_decref(root);
 
   /* Validate required fields */
   if (!nutzap->proofs_json || !nutzap->mint_url || !nutzap->recipient_pubkey) {
@@ -655,70 +707,71 @@ gnostr_nutzap_build_event_json(const gchar *proofs_json,
   g_return_val_if_fail(recipient_pubkey != NULL, NULL);
   g_return_val_if_fail(sender_pubkey != NULL && strlen(sender_pubkey) == 64, NULL);
 
-  json_t *event = json_object();
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  nostr_json_builder_begin_object(builder);
 
   /* Kind 9321 - nutzap */
-  json_object_set_new(event, "kind", json_integer(NIP61_KIND_NUTZAP));
+  nostr_json_builder_set_key(builder, "kind");
+  nostr_json_builder_add_int(builder, NIP61_KIND_NUTZAP);
 
   /* Content - empty per spec */
-  json_object_set_new(event, "content", json_string(""));
+  nostr_json_builder_set_key(builder, "content");
+  nostr_json_builder_add_string(builder, "");
 
   /* Pubkey - sender */
-  json_object_set_new(event, "pubkey", json_string(sender_pubkey));
+  nostr_json_builder_set_key(builder, "pubkey");
+  nostr_json_builder_add_string(builder, sender_pubkey);
 
   /* Created at */
-  json_object_set_new(event, "created_at", json_integer((json_int_t)time(NULL)));
+  nostr_json_builder_set_key(builder, "created_at");
+  nostr_json_builder_add_int64(builder, (int64_t)time(NULL));
 
   /* Tags */
-  json_t *tags = json_array();
+  nostr_json_builder_set_key(builder, "tags");
+  nostr_json_builder_begin_array(builder);
 
   /* proofs tag - required */
-  {
-    json_t *tag = json_array();
-    json_array_append_new(tag, json_string("proofs"));
-    json_array_append_new(tag, json_string(proofs_json));
-    json_array_append_new(tags, tag);
-  }
+  nostr_json_builder_begin_array(builder);
+  nostr_json_builder_add_string(builder, "proofs");
+  nostr_json_builder_add_string(builder, proofs_json);
+  nostr_json_builder_end_array(builder);
 
   /* u tag (mint URL) - required */
-  {
-    json_t *tag = json_array();
-    json_array_append_new(tag, json_string("u"));
-    json_array_append_new(tag, json_string(mint_url));
-    json_array_append_new(tags, tag);
-  }
+  nostr_json_builder_begin_array(builder);
+  nostr_json_builder_add_string(builder, "u");
+  nostr_json_builder_add_string(builder, mint_url);
+  nostr_json_builder_end_array(builder);
 
   /* p tag (recipient) - required */
-  {
-    json_t *tag = json_array();
-    json_array_append_new(tag, json_string("p"));
-    json_array_append_new(tag, json_string(recipient_pubkey));
-    json_array_append_new(tags, tag);
-  }
+  nostr_json_builder_begin_array(builder);
+  nostr_json_builder_add_string(builder, "p");
+  nostr_json_builder_add_string(builder, recipient_pubkey);
+  nostr_json_builder_end_array(builder);
 
   /* e tag (event being zapped) - optional */
   if (event_id && *event_id) {
-    json_t *tag = json_array();
-    json_array_append_new(tag, json_string("e"));
-    json_array_append_new(tag, json_string(event_id));
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "e");
+    nostr_json_builder_add_string(builder, event_id);
     if (event_relay && *event_relay) {
-      json_array_append_new(tag, json_string(event_relay));
+      nostr_json_builder_add_string(builder, event_relay);
     }
-    json_array_append_new(tags, tag);
+    nostr_json_builder_end_array(builder);
   }
 
   /* a tag (addressable event reference) - optional */
   if (addressable_ref && *addressable_ref) {
-    json_t *tag = json_array();
-    json_array_append_new(tag, json_string("a"));
-    json_array_append_new(tag, json_string(addressable_ref));
-    json_array_append_new(tags, tag);
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "a");
+    nostr_json_builder_add_string(builder, addressable_ref);
+    nostr_json_builder_end_array(builder);
   }
 
-  json_object_set_new(event, "tags", tags);
+  nostr_json_builder_end_array(builder);  /* tags */
+  nostr_json_builder_end_object(builder);
 
-  gchar *result = json_dumps(event, JSON_COMPACT);
-  json_decref(event);
+  char *result = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
 
   return result;
 }

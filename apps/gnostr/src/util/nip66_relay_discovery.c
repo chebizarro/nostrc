@@ -30,12 +30,17 @@ static gboolean g_nip66_initialized = FALSE;
 
 /* ============== Well-Known Monitors ============== */
 
-/* Well-known relay monitor pubkeys (these are example/placeholder values) */
+/* Well-known NIP-66 relay monitor pubkeys (queried from relay.damus.io kind:10166) */
 static const gchar *s_known_monitors[] = {
-  /* relay.tools monitor */
-  "52b4a076bcbbbdc3a1aefa3735816f4f5a6cfb91e4f2f1af8e5c2e7e9c0e4c5a",
-  /* nostr.watch monitor */
-  "e1055729d0cf1f1c4bdf8e8b2a44a8b6f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9",
+  /* Active NIP-66 monitors discovered via kind 10166 events */
+  "9bac3d58ef5a34c7c4a9b05b07c98e4afc56655542387b4d36c9d270f898592e",
+  "9ba0ce3dcc28c26da0d0d87fa460c78b602a180b61eb70b62aba04505c6331f4",
+  "9ba1d7892cd057f5aca5d629a5a601f64bc3e0f1fc6ed9c939845e25d5e1e254",
+  "9ba6484003e8e88600f97ebffd897b2fe82753082e8e0cd8ea19aac0ff2b712b",
+  "9b85d54cc4bc886d60782f80d676e41bc637ed3ecc73d2bb5aabadc499d6a340",
+  "45df0580711f37c547270480d7aed2c7fc03ba5a4f8fef5a8787db0b19343de0",
+  "1bc70a0148b3f316da33fe3c89f23e3e71ac4ff998027ec712b905cd24f6a411",
+  "0b01aa38c2cc9abfbe4a10d54b182793479fb80da14a91d13be38ea555b22bfd",
   NULL
 };
 
