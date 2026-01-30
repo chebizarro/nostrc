@@ -782,6 +782,27 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
     return;  /* Already in model */
   }
 
+  /* Store thread info FIRST (before potential deferral) so it's available
+   * when the note is eventually flushed into the model. Without this,
+   * deferred notes would lose their threading context. */
+  if (root_id || parent_id) {
+    /* Check if we already have thread info for this key */
+    if (!g_hash_table_contains(self->thread_info, &note_key)) {
+      ThreadInfo *tinfo = g_new0(ThreadInfo, 1);
+      tinfo->root_id = g_strdup(root_id);
+      tinfo->parent_id = g_strdup(parent_id);
+      tinfo->depth = depth;
+
+      uint64_t *key_copy = g_new(uint64_t, 1);
+      *key_copy = note_key;
+      g_hash_table_insert(self->thread_info, key_copy, tinfo);
+      g_debug("[NIP10-MODEL] Stored thread info for key %lu: root=%.16s... parent=%.16s...",
+              (unsigned long)note_key,
+              root_id ? root_id : "(null)",
+              parent_id ? parent_id : "(null)");
+    }
+  }
+
   /* nostrc-yi2: Calm timeline - defer insertion if user is scrolled down reading
    * This prevents jarring auto-scroll and visual churn while the user is reading.
    * Notes are queued and a "N new notes" indicator is shown instead.
@@ -789,25 +810,6 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
   if (!self->is_thread_view && !self->user_at_top) {
     defer_note_insertion(self, note_key, created_at);
     return;
-  }
-
-  /* Store thread info (optional) */
-  if (root_id || parent_id) {
-    ThreadInfo *tinfo = g_new0(ThreadInfo, 1);
-    tinfo->root_id = g_strdup(root_id);
-    tinfo->parent_id = g_strdup(parent_id);
-    tinfo->depth = depth;
-
-    uint64_t *key_copy = g_new(uint64_t, 1);
-    *key_copy = note_key;
-    g_hash_table_insert(self->thread_info, key_copy, tinfo);
-    g_debug("[NIP10-MODEL] Stored thread info for key %lu: root=%.16s... parent=%.16s...",
-            (unsigned long)note_key,
-            root_id ? root_id : "(null)",
-            parent_id ? parent_id : "(null)");
-  } else {
-    g_debug("[NIP10-MODEL] No thread info for key %lu (root=%p, parent=%p)",
-            (unsigned long)note_key, (void*)root_id, (void*)parent_id);
   }
 
   /* Find insertion position */
