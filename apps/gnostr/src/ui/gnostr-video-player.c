@@ -8,6 +8,7 @@
 
 #include "gnostr-video-player.h"
 #include "gnostr-main-window.h"
+#include <adwaita.h>
 #include <glib/gi18n.h>
 
 /* Controls auto-hide timeout in seconds */
@@ -47,6 +48,7 @@ struct _GnostrVideoPlayer {
 
   /* Fullscreen window */
   GtkWidget *fullscreen_window;
+  GtkWidget *fullscreen_toast_overlay;  /* AdwToastOverlay for fullscreen toast */
   GtkWidget *fullscreen_overlay;
   GtkWidget *fullscreen_controls_box;
 
@@ -985,18 +987,16 @@ void gnostr_video_player_set_fullscreen(GnostrVideoPlayer *self, gboolean fullsc
   self->is_fullscreen = fullscreen;
 
   if (fullscreen) {
-    /* Get parent window */
-    GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
-    GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
-
     /* Create fullscreen window - don't set transient_for as it can constrain
      * the fullscreen window to the parent's monitor/size on some WMs */
     self->fullscreen_window = gtk_window_new();
     gtk_window_set_title(GTK_WINDOW(self->fullscreen_window), _("Video"));
     gtk_window_set_decorated(GTK_WINDOW(self->fullscreen_window), FALSE);
-    (void)parent;  /* Intentionally not setting transient_for */
 
-    /* Create overlay for fullscreen */
+    /* Create toast overlay for fullscreen (shows escape hint toast) */
+    self->fullscreen_toast_overlay = adw_toast_overlay_new();
+
+    /* Create overlay for fullscreen video and controls */
     self->fullscreen_overlay = gtk_overlay_new();
 
     /* Create a new picture widget for fullscreen that shares the media file (no controls) */
@@ -1021,7 +1021,9 @@ void gnostr_video_player_set_fullscreen(GnostrVideoPlayer *self, gboolean fullsc
     g_signal_connect(fs_key, "key-pressed", G_CALLBACK(on_key_pressed), self);
     gtk_widget_add_controller(GTK_WIDGET(self->fullscreen_window), fs_key);
 
-    gtk_window_set_child(GTK_WINDOW(self->fullscreen_window), self->fullscreen_overlay);
+    /* Set up widget hierarchy: window -> toast_overlay -> video_overlay */
+    adw_toast_overlay_set_child(ADW_TOAST_OVERLAY(self->fullscreen_toast_overlay), self->fullscreen_overlay);
+    gtk_window_set_child(GTK_WINDOW(self->fullscreen_window), self->fullscreen_toast_overlay);
 
     /* Connect close handler */
     g_signal_connect(self->fullscreen_window, "close-request",
@@ -1036,15 +1038,16 @@ void gnostr_video_player_set_fullscreen(GnostrVideoPlayer *self, gboolean fullsc
       gtk_button_set_icon_name(GTK_BUTTON(self->btn_fullscreen), "view-restore-symbolic");
     }
 
-    /* Show toast with Escape key hint (reuse root from above) */
-    if (root && GTK_IS_WINDOW(root)) {
-      gnostr_main_window_show_toast(GTK_WIDGET(root), _("Press Esc to exit fullscreen"));
-    }
+    /* Show toast with Escape key hint directly in fullscreen window */
+    AdwToast *toast = adw_toast_new(_("Press Esc to exit fullscreen"));
+    adw_toast_set_timeout(toast, 3);  /* Auto-dismiss after 3 seconds */
+    adw_toast_overlay_add_toast(ADW_TOAST_OVERLAY(self->fullscreen_toast_overlay), toast);
   } else {
     /* Exit fullscreen */
     if (self->fullscreen_window) {
       gtk_window_destroy(GTK_WINDOW(self->fullscreen_window));
       self->fullscreen_window = NULL;
+      self->fullscreen_toast_overlay = NULL;
       self->fullscreen_overlay = NULL;
       self->fullscreen_controls_box = NULL;
     }

@@ -2231,13 +2231,31 @@ void gnostr_note_card_row_set_author(GnostrNoteCardRow *self, const char *displa
 
 /* Timer callback to update timestamp display */
 static gboolean update_timestamp_tick(gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
-  
-  /* Check disposed flag first - widget may be in disposal state */
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || self->disposed || !GTK_IS_LABEL(self->lbl_timestamp)) {
+  /* CRITICAL: Don't use type-check macros on user_data - they dereference
+   * the pointer and can crash if it's stale/freed. Check NULL first. */
+  if (user_data == NULL) {
     return G_SOURCE_REMOVE;
   }
-  
+
+  GnostrNoteCardRow *self = (GnostrNoteCardRow *)user_data;
+
+  /* Check disposed flag - if set, the widget is being torn down.
+   * Also verify the timer ID is still valid (non-zero means we're still active) */
+  if (self->disposed || self->timestamp_timer_id == 0) {
+    return G_SOURCE_REMOVE;
+  }
+
+  /* Now safe to use type-check since disposed==FALSE means widget is valid */
+  if (!GTK_IS_LABEL(self->lbl_timestamp)) {
+    return G_SOURCE_REMOVE;
+  }
+
+  /* Additional safety: check widget is still in widget tree (has parent) */
+  if (gtk_widget_get_parent(GTK_WIDGET(self)) == NULL) {
+    self->timestamp_timer_id = 0;  /* Clear so we don't try to remove again */
+    return G_SOURCE_REMOVE;
+  }
+
   if (self->created_at > 0) {
     time_t now = time(NULL);
     long diff = (long)(now - (time_t)self->created_at);
@@ -2249,7 +2267,7 @@ static gboolean update_timestamp_tick(gpointer user_data) {
     else g_snprintf(buf, sizeof(buf), "%ldd", diff/86400);
     gtk_label_set_text(GTK_LABEL(self->lbl_timestamp), buf);
   }
-  
+
   return G_SOURCE_CONTINUE;
 }
 
