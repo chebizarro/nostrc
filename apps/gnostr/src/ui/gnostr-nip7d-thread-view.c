@@ -144,7 +144,8 @@ static void rebuild_replies_ui(GnostrNip7dThreadView *self);
 static void set_loading_state(GnostrNip7dThreadView *self, gboolean loading);
 static void fetch_thread_from_relays(GnostrNip7dThreadView *self);
 static GtkWidget *create_reply_row(GnostrNip7dThreadView *self, GnostrThreadReply *reply);
-static void fetch_profile_for_pubkey(GnostrNip7dThreadView *self, const char *pubkey);
+static void apply_profile_to_thread_author(GnostrNip7dThreadView *self, GnostrProfileMeta *meta);
+static void apply_profile_to_reply_row(GnostrNip7dThreadView *self, GtkWidget *row, GnostrProfileMeta *meta);
 
 /* ============================================================================
  * GObject Lifecycle
@@ -697,35 +698,92 @@ create_reply_row(GnostrNip7dThreadView *self, GnostrThreadReply *reply)
     gtk_widget_set_halign(content_label, GTK_ALIGN_START);
     gtk_box_append(GTK_BOX(row), content_label);
 
-    /* Request profile fetch */
-    fetch_profile_for_pubkey(self, reply->pubkey);
+    /* Load and apply profile immediately if available */
+    if (reply->pubkey && *reply->pubkey) {
+        if (!g_hash_table_contains(self->profiles_requested, reply->pubkey)) {
+            g_hash_table_insert(self->profiles_requested, g_strdup(reply->pubkey), GINT_TO_POINTER(1));
+        }
+        GnostrProfileMeta *meta = gnostr_profile_provider_get(reply->pubkey);
+        if (meta) {
+            apply_profile_to_reply_row(self, row, meta);
+            gnostr_profile_meta_free(meta);
+        } else {
+            /* Request fetch from relays for missing profiles */
+            g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, reply->pubkey);
+        }
+    }
 
     return row;
 }
 
 /* ============================================================================
- * Profile Fetching
+ * Profile Display Helpers
  * ============================================================================ */
 
 static void
-fetch_profile_for_pubkey(GnostrNip7dThreadView *self, const char *pubkey)
+apply_profile_to_thread_author(GnostrNip7dThreadView *self, GnostrProfileMeta *meta)
 {
-    if (!pubkey || !*pubkey) return;
+    if (!meta) return;
 
-    /* Check if already requested */
-    if (g_hash_table_contains(self->profiles_requested, pubkey)) {
-        return;
+    if (GTK_IS_LABEL(self->thread_author_name)) {
+        const char *name = (meta->display_name && *meta->display_name) ?
+            meta->display_name : (meta->name ? meta->name : _("Anonymous"));
+        gtk_label_set_text(GTK_LABEL(self->thread_author_name), name);
     }
-    g_hash_table_insert(self->profiles_requested, g_strdup(pubkey), GINT_TO_POINTER(1));
 
-    /* Try to get from provider */
-    GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey);
-    if (!meta) {
-        /* Request fetch from relays */
-        g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey);
-    } else {
-        gnostr_profile_meta_free(meta);
+    set_avatar_initials(self->thread_author_initials,
+        meta->display_name, meta->name);
+
+#ifdef HAVE_SOUP3
+    if (meta->picture && *meta->picture && GTK_IS_PICTURE(self->thread_author_avatar)) {
+        GdkTexture *cached = gnostr_avatar_try_load_cached(meta->picture);
+        if (cached) {
+            gtk_picture_set_paintable(GTK_PICTURE(self->thread_author_avatar),
+                GDK_PAINTABLE(cached));
+            gtk_widget_set_visible(self->thread_author_avatar, TRUE);
+            gtk_widget_set_visible(self->thread_author_initials, FALSE);
+            g_object_unref(cached);
+        } else {
+            gnostr_avatar_download_async(meta->picture,
+                self->thread_author_avatar, self->thread_author_initials);
+        }
     }
+#endif
+}
+
+static void
+apply_profile_to_reply_row(GnostrNip7dThreadView *self, GtkWidget *row, GnostrProfileMeta *meta)
+{
+    (void)self; /* unused but kept for API consistency */
+    if (!row || !meta) return;
+
+    GtkWidget *name_label = g_object_get_data(G_OBJECT(row), "name-label");
+    if (GTK_IS_LABEL(name_label)) {
+        const char *name = (meta->display_name && *meta->display_name) ?
+            meta->display_name : (meta->name ? meta->name : _("Anonymous"));
+        gtk_label_set_text(GTK_LABEL(name_label), name);
+    }
+
+    GtkWidget *avatar_initials = g_object_get_data(G_OBJECT(row), "avatar-initials");
+    set_avatar_initials(avatar_initials, meta->display_name, meta->name);
+
+#ifdef HAVE_SOUP3
+    GtkWidget *avatar_image = g_object_get_data(G_OBJECT(row), "avatar-image");
+    if (meta->picture && *meta->picture && GTK_IS_PICTURE(avatar_image)) {
+        GdkTexture *cached = gnostr_avatar_try_load_cached(meta->picture);
+        if (cached) {
+            gtk_picture_set_paintable(GTK_PICTURE(avatar_image),
+                GDK_PAINTABLE(cached));
+            gtk_widget_set_visible(avatar_image, TRUE);
+            if (GTK_IS_WIDGET(avatar_initials)) {
+                gtk_widget_set_visible(avatar_initials, FALSE);
+            }
+            g_object_unref(cached);
+        } else {
+            gnostr_avatar_download_async(meta->picture, avatar_image, avatar_initials);
+        }
+    }
+#endif
 }
 
 /* ============================================================================
@@ -1071,8 +1129,20 @@ gnostr_nip7d_thread_view_set_thread(GnostrNip7dThreadView *self,
             g_strdup(thread->pubkey), g_free);
     }
 
-    /* Update author info */
-    fetch_profile_for_pubkey(self, thread->pubkey);
+    /* Load and apply author profile immediately if available */
+    if (thread->pubkey && *thread->pubkey) {
+        if (!g_hash_table_contains(self->profiles_requested, thread->pubkey)) {
+            g_hash_table_insert(self->profiles_requested, g_strdup(thread->pubkey), GINT_TO_POINTER(1));
+        }
+        GnostrProfileMeta *meta = gnostr_profile_provider_get(thread->pubkey);
+        if (meta) {
+            apply_profile_to_thread_author(self, meta);
+            gnostr_profile_meta_free(meta);
+        } else {
+            /* Request fetch from relays for missing profiles */
+            g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, thread->pubkey);
+        }
+    }
 
     /* Update hashtags */
     /* Clear existing hashtags */
@@ -1326,30 +1396,7 @@ gnostr_nip7d_thread_view_update_profiles(GnostrNip7dThreadView *self)
     if (self->thread && self->thread->pubkey) {
         GnostrProfileMeta *meta = gnostr_profile_provider_get(self->thread->pubkey);
         if (meta) {
-            if (GTK_IS_LABEL(self->thread_author_name)) {
-                const char *name = (meta->display_name && *meta->display_name) ?
-                    meta->display_name : (meta->name ? meta->name : _("Anonymous"));
-                gtk_label_set_text(GTK_LABEL(self->thread_author_name), name);
-            }
-
-            set_avatar_initials(self->thread_author_initials,
-                meta->display_name, meta->name);
-
-#ifdef HAVE_SOUP3
-            if (meta->picture && *meta->picture && GTK_IS_PICTURE(self->thread_author_avatar)) {
-                GdkTexture *cached = gnostr_avatar_try_load_cached(meta->picture);
-                if (cached) {
-                    gtk_picture_set_paintable(GTK_PICTURE(self->thread_author_avatar),
-                        GDK_PAINTABLE(cached));
-                    gtk_widget_set_visible(self->thread_author_avatar, TRUE);
-                    gtk_widget_set_visible(self->thread_author_initials, FALSE);
-                    g_object_unref(cached);
-                } else {
-                    gnostr_avatar_download_async(meta->picture,
-                        self->thread_author_avatar, self->thread_author_initials);
-                }
-            }
-#endif
+            apply_profile_to_thread_author(self, meta);
             gnostr_profile_meta_free(meta);
         }
     }
@@ -1365,33 +1412,7 @@ gnostr_nip7d_thread_view_update_profiles(GnostrNip7dThreadView *self)
 
         GnostrProfileMeta *meta = gnostr_profile_provider_get(data->pubkey_hex);
         if (meta) {
-            GtkWidget *name_label = g_object_get_data(G_OBJECT(row), "name-label");
-            if (GTK_IS_LABEL(name_label)) {
-                const char *name = (meta->display_name && *meta->display_name) ?
-                    meta->display_name : (meta->name ? meta->name : _("Anonymous"));
-                gtk_label_set_text(GTK_LABEL(name_label), name);
-            }
-
-            GtkWidget *avatar_initials = g_object_get_data(G_OBJECT(row), "avatar-initials");
-            set_avatar_initials(avatar_initials, meta->display_name, meta->name);
-
-#ifdef HAVE_SOUP3
-            GtkWidget *avatar_image = g_object_get_data(G_OBJECT(row), "avatar-image");
-            if (meta->picture && *meta->picture && GTK_IS_PICTURE(avatar_image)) {
-                GdkTexture *cached = gnostr_avatar_try_load_cached(meta->picture);
-                if (cached) {
-                    gtk_picture_set_paintable(GTK_PICTURE(avatar_image),
-                        GDK_PAINTABLE(cached));
-                    gtk_widget_set_visible(avatar_image, TRUE);
-                    if (GTK_IS_WIDGET(avatar_initials)) {
-                        gtk_widget_set_visible(avatar_initials, FALSE);
-                    }
-                    g_object_unref(cached);
-                } else {
-                    gnostr_avatar_download_async(meta->picture, avatar_image, avatar_initials);
-                }
-            }
-#endif
+            apply_profile_to_reply_row(self, row, meta);
             gnostr_profile_meta_free(meta);
         }
     }
