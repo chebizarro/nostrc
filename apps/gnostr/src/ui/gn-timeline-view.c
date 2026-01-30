@@ -263,17 +263,48 @@ static void on_model_pending(GnTimelineModel *model, guint count, gpointer user_
   }
 }
 
+/**
+ * on_reveal_complete_scroll_to_top:
+ * @model: The timeline model (unused)
+ * @user_data: The GnTimelineView
+ *
+ * Phase 3 (nostrc-0hp): Completion callback for animated reveal.
+ * Scrolls to top only AFTER all items have been revealed.
+ */
+static void on_reveal_complete_scroll_to_top(gpointer model, gpointer user_data) {
+  (void)model;
+  GnTimelineView *self = GN_TIMELINE_VIEW(user_data);
+  if (!GN_IS_TIMELINE_VIEW(self)) return;
+
+  g_debug("[TIMELINE-VIEW] Reveal complete, scrolling to top");
+  gn_timeline_view_scroll_to_top(self);
+}
+
 static void on_new_notes_clicked(GtkButton *button, gpointer user_data) {
   (void)button;
   GnTimelineView *self = GN_TIMELINE_VIEW(user_data);
   if (!GN_IS_TIMELINE_VIEW(self)) return;
 
-  /* Flush pending notes and scroll to top */
+  /*
+   * Phase 3 (nostrc-0hp): Use animated flush for smooth UX.
+   *
+   * Instead of calling flush_pending() which just clears the unseen count,
+   * we call flush_pending_animated() which:
+   * 1. Moves all pending items to a reveal queue
+   * 2. Animates them in with 50ms stagger between batches
+   * 3. Calls our completion callback to scroll to top AFTER reveal finishes
+   *
+   * This prevents the jarring "dump all items at once" behavior.
+   */
   if (self->model) {
-    gn_timeline_model_flush_pending(self->model);
+    gn_timeline_model_flush_pending_animated(
+      self->model,
+      on_reveal_complete_scroll_to_top,
+      self
+    );
   }
 
-  gn_timeline_view_scroll_to_top(self);
+  /* Hide the indicator immediately - animation is starting */
   gn_timeline_view_hide_new_notes_indicator(self);
 }
 

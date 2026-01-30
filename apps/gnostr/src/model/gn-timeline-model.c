@@ -46,6 +46,11 @@
 #define RATE_WINDOW_MS 1000         /* Window for rate calculation */
 #define RATE_ITEMS_PER_SECOND_MAX 60 /* Target max insertion rate */
 
+/* Phase 3: Smooth "New Notes" Reveal Animation (nostrc-0hp) */
+#define REVEAL_ITEMS_PER_BATCH 3    /* Items revealed per animation tick */
+#define REVEAL_STAGGER_MS 50        /* Delay between reveal batches */
+#define REVEAL_ANIMATION_MS 200     /* CSS fade-in duration per item */
+
 /* Note entry for internal tracking */
 typedef struct {
   uint64_t note_key;
@@ -119,6 +124,14 @@ struct _GnTimelineModel {
   gint64 rate_window_start_us;   /* Start of current rate measurement window */
   guint peak_queue_depth;        /* High-water mark for monitoring */
   gboolean backpressure_active;  /* TRUE when backpressure is being applied */
+
+  /* Phase 3: Smooth "New Notes" Reveal Animation (nostrc-0hp) */
+  GArray *reveal_queue;          /* Items being revealed with animation */
+  guint reveal_position;         /* Current position in reveal sequence */
+  gboolean reveal_in_progress;   /* TRUE while reveal animation is active */
+  guint reveal_timer_id;         /* Timer for staggered reveal (g_timeout) */
+  GFunc reveal_complete_cb;      /* Callback when reveal finishes */
+  gpointer reveal_complete_data; /* User data for completion callback */
 };
 
 /* Forward declarations */
@@ -151,6 +164,11 @@ static void check_queue_depth_warning(GnTimelineModel *self);
 static gdouble calculate_insertion_rate(GnTimelineModel *self);
 static gint staged_entry_compare_newest_first(gconstpointer a, gconstpointer b);
 
+/* Phase 3: Smooth "New Notes" Reveal Animation forward declarations (nostrc-0hp) */
+static gboolean on_reveal_timer_tick(gpointer user_data);
+static void process_reveal_batch(GnTimelineModel *self);
+static void cancel_reveal_animation(GnTimelineModel *self);
+
 #define INITIAL_LOAD_TIMEOUT_MS 500  /* Time to wait for initial subscription data */
 
 G_DEFINE_TYPE_WITH_CODE(GnTimelineModel, gn_timeline_model, G_TYPE_OBJECT,
@@ -161,6 +179,7 @@ enum {
   SIGNAL_NEED_PROFILE,
   SIGNAL_BACKPRESSURE_APPLIED,
   SIGNAL_QUEUE_DEPTH_WARNING,
+  SIGNAL_REVEAL_PROGRESS,     /* Phase 3: emitted during animated reveal */
   N_SIGNALS
 };
 
@@ -910,6 +929,144 @@ static void schedule_throttled_transfer(GnTimelineModel *self) {
           delay_ms, self->incoming_queue->len);
 }
 
+/* ============== Phase 3: Smooth "New Notes" Reveal Animation (nostrc-0hp) ============== */
+
+/**
+ * cancel_reveal_animation:
+ * @self: The model
+ *
+ * Cancel any in-progress reveal animation. Called during dispose or
+ * when starting a new reveal.
+ */
+static void cancel_reveal_animation(GnTimelineModel *self) {
+  if (self->reveal_timer_id > 0) {
+    g_source_remove(self->reveal_timer_id);
+    self->reveal_timer_id = 0;
+  }
+
+  self->reveal_in_progress = FALSE;
+  self->reveal_position = 0;
+  self->reveal_complete_cb = NULL;
+  self->reveal_complete_data = NULL;
+
+  if (self->reveal_queue) {
+    g_array_set_size(self->reveal_queue, 0);
+  }
+}
+
+/**
+ * process_reveal_batch:
+ * @self: The model
+ *
+ * Process one batch of items from the reveal queue, inserting them
+ * into the main notes array with animation CSS class applied.
+ */
+static void process_reveal_batch(GnTimelineModel *self) {
+  if (!self->reveal_queue || self->reveal_queue->len == 0)
+    return;
+
+  guint remaining = self->reveal_queue->len - self->reveal_position;
+  if (remaining == 0) return;
+
+  guint batch_size = MIN(remaining, REVEAL_ITEMS_PER_BATCH);
+  guint batch_start = self->reveal_position;
+  guint batch_end = batch_start + batch_size;
+
+  g_debug("[REVEAL] Processing batch %u-%u of %u items",
+          batch_start, batch_end - 1, self->reveal_queue->len);
+
+  /* Move items from reveal queue to main notes array */
+  for (guint i = batch_start; i < batch_end; i++) {
+    StagedEntry *staged = &g_array_index(self->reveal_queue, StagedEntry, i);
+
+    /* Create note entry for main array */
+    NoteEntry entry = {
+      .note_key = staged->note_key,
+      .created_at = staged->created_at
+    };
+
+    /* Insert at position 0 (newest first) */
+    g_array_prepend_val(self->notes, entry);
+
+    /* Add to main key set */
+    add_note_key_to_set(self, staged->note_key);
+
+    /* Update timestamps */
+    if (staged->created_at > self->newest_timestamp || self->newest_timestamp == 0) {
+      self->newest_timestamp = staged->created_at;
+    }
+  }
+
+  /* Emit items_changed for this batch */
+  g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, batch_size);
+
+  /* Emit reveal progress signal (position, total) */
+  guint revealed = batch_end;
+  guint total = self->reveal_queue->len;
+  g_signal_emit(self, signals[SIGNAL_REVEAL_PROGRESS], 0, revealed, total);
+
+  /* Enforce window size after insert */
+  enforce_window_size(self, TRUE);
+
+  /* Update position for next batch */
+  self->reveal_position = batch_end;
+}
+
+/**
+ * on_reveal_timer_tick:
+ * @user_data: The GnTimelineModel
+ *
+ * Timer callback for staggered reveal animation.
+ * Processes one batch of items and schedules the next batch if more remain.
+ */
+static gboolean on_reveal_timer_tick(gpointer user_data) {
+  GnTimelineModel *self = GN_TIMELINE_MODEL(user_data);
+  if (!GN_IS_TIMELINE_MODEL(self)) {
+    return G_SOURCE_REMOVE;
+  }
+
+  self->reveal_timer_id = 0;  /* Timer has fired */
+
+  if (!self->reveal_in_progress) {
+    return G_SOURCE_REMOVE;
+  }
+
+  /* Process next batch */
+  process_reveal_batch(self);
+
+  /* Check if we're done */
+  if (self->reveal_position >= self->reveal_queue->len) {
+    g_debug("[REVEAL] Animation complete, %u items revealed", self->reveal_queue->len);
+
+    /* Clear reveal state */
+    g_array_set_size(self->reveal_queue, 0);
+    self->reveal_in_progress = FALSE;
+    self->reveal_position = 0;
+
+    /* Clear unseen count since all items are now revealed */
+    self->unseen_count = 0;
+    g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
+
+    /* Invoke completion callback */
+    if (self->reveal_complete_cb) {
+      GFunc cb = self->reveal_complete_cb;
+      gpointer data = self->reveal_complete_data;
+      self->reveal_complete_cb = NULL;
+      self->reveal_complete_data = NULL;
+      cb(self, data);
+    }
+
+    return G_SOURCE_REMOVE;
+  }
+
+  /* Schedule next batch */
+  self->reveal_timer_id = g_timeout_add(REVEAL_STAGGER_MS,
+                                         on_reveal_timer_tick,
+                                         self);
+
+  return G_SOURCE_REMOVE;  /* One-shot, we reschedule manually */
+}
+
 /* ============== GListModel Interface ============== */
 
 static GType gn_timeline_model_get_item_type(GListModel *list) {
@@ -1434,6 +1591,142 @@ void gn_timeline_model_flush_pending(GnTimelineModel *self) {
   g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
 }
 
+/**
+ * gn_timeline_model_flush_pending_animated:
+ * @self: The model
+ * @complete_cb: (nullable): Callback when reveal finishes (signature: void (*)(gpointer model, gpointer user_data))
+ * @complete_data: (nullable): User data for completion callback
+ *
+ * Phase 3 (nostrc-0hp): Flush pending items with a smooth staggered reveal animation.
+ *
+ * Instead of inserting all pending items at once (which causes jarring UX),
+ * this function moves pending items to a reveal queue and animates them in
+ * one-by-one with a 50ms stagger between each batch.
+ *
+ * The completion callback is invoked AFTER all items are revealed, allowing
+ * the caller to perform scroll-to-top after the animation completes.
+ *
+ * If there are no pending items, the completion callback is invoked immediately.
+ * If a reveal is already in progress, it is cancelled and restarted.
+ */
+void gn_timeline_model_flush_pending_animated(GnTimelineModel *self,
+                                               GFunc            complete_cb,
+                                               gpointer         complete_data) {
+  g_return_if_fail(GN_IS_TIMELINE_MODEL(self));
+
+  /* Cancel any existing reveal animation */
+  cancel_reveal_animation(self);
+
+  /*
+   * Collect items to reveal from both the incoming queue and staging buffer.
+   * These are items that have arrived but haven't been displayed yet.
+   */
+  guint total_to_reveal = 0;
+
+  /* Transfer incoming queue items to reveal queue */
+  if (self->incoming_queue && self->incoming_queue->len > 0) {
+    for (guint i = 0; i < self->incoming_queue->len; i++) {
+      StagedEntry *entry = &g_array_index(self->incoming_queue, StagedEntry, i);
+
+      /* Skip if already in main notes array */
+      if (has_note_key(self, entry->note_key))
+        continue;
+
+      g_array_append_val(self->reveal_queue, *entry);
+      total_to_reveal++;
+    }
+
+    /* Clear the incoming queue and its key set */
+    for (guint i = 0; i < self->incoming_queue->len; i++) {
+      StagedEntry *entry = &g_array_index(self->incoming_queue, StagedEntry, i);
+      remove_note_key_from_incoming_set(self, entry->note_key);
+    }
+    g_array_set_size(self->incoming_queue, 0);
+  }
+
+  /* Transfer staging buffer items to reveal queue */
+  if (self->staging_buffer && self->staging_buffer->len > 0) {
+    for (guint i = 0; i < self->staging_buffer->len; i++) {
+      StagedEntry *entry = &g_array_index(self->staging_buffer, StagedEntry, i);
+
+      /* Skip if already in main notes array */
+      if (has_note_key(self, entry->note_key))
+        continue;
+
+      g_array_append_val(self->reveal_queue, *entry);
+      total_to_reveal++;
+    }
+
+    /* Clear the staging buffer and its key set */
+    for (guint i = 0; i < self->staging_buffer->len; i++) {
+      StagedEntry *entry = &g_array_index(self->staging_buffer, StagedEntry, i);
+      remove_note_key_from_staged_set(self, entry->note_key);
+    }
+    g_array_set_size(self->staging_buffer, 0);
+  }
+
+  /* Cancel the throttle timer since we're taking over */
+  if (self->throttle_source_id > 0) {
+    g_source_remove(self->throttle_source_id);
+    self->throttle_source_id = 0;
+  }
+
+  /* Remove tick callback since we're doing animated reveal instead */
+  remove_tick_callback(self);
+
+  if (total_to_reveal == 0) {
+    g_debug("[REVEAL] No items to reveal, calling completion immediately");
+
+    /* No items to reveal - just clear unseen count and call completion */
+    self->unseen_count = 0;
+    g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
+
+    if (complete_cb) {
+      complete_cb(self, complete_data);
+    }
+    return;
+  }
+
+  g_debug("[REVEAL] Starting animated reveal of %u items", total_to_reveal);
+
+  /* Sort reveal queue by created_at descending (newest first) */
+  g_array_sort(self->reveal_queue, staged_entry_compare_newest_first);
+
+  /* Set up reveal state */
+  self->reveal_in_progress = TRUE;
+  self->reveal_position = 0;
+  self->reveal_complete_cb = complete_cb;
+  self->reveal_complete_data = complete_data;
+
+  /* Start the reveal animation immediately (first batch processes now) */
+  self->reveal_timer_id = g_timeout_add(0, on_reveal_timer_tick, self);
+}
+
+/**
+ * gn_timeline_model_is_reveal_in_progress:
+ * @self: The model
+ *
+ * Check if an animated reveal is currently in progress.
+ *
+ * Returns: TRUE if reveal animation is active
+ */
+gboolean gn_timeline_model_is_reveal_in_progress(GnTimelineModel *self) {
+  g_return_val_if_fail(GN_IS_TIMELINE_MODEL(self), FALSE);
+  return self->reveal_in_progress;
+}
+
+/**
+ * gn_timeline_model_cancel_reveal:
+ * @self: The model
+ *
+ * Cancel any in-progress reveal animation.
+ * Items already revealed will remain, but remaining items are discarded.
+ */
+void gn_timeline_model_cancel_reveal(GnTimelineModel *self) {
+  g_return_if_fail(GN_IS_TIMELINE_MODEL(self));
+  cancel_reveal_animation(self);
+}
+
 void gn_timeline_model_set_visible_range(GnTimelineModel *self, guint start, guint end) {
   g_return_if_fail(GN_IS_TIMELINE_MODEL(self));
   self->visible_start = start;
@@ -1659,6 +1952,10 @@ static void gn_timeline_model_dispose(GObject *object) {
   g_clear_pointer(&self->incoming_queue, g_array_unref);
   g_clear_pointer(&self->incoming_key_set, g_hash_table_unref);
 
+  /* Phase 3: Cancel reveal animation and clean up (nostrc-0hp) */
+  cancel_reveal_animation(self);
+  g_clear_pointer(&self->reveal_queue, g_array_unref);
+
   /* Unsubscribe */
   if (self->sub_timeline > 0) {
     gn_ndb_unsubscribe(self->sub_timeline);
@@ -1719,6 +2016,14 @@ static void gn_timeline_model_class_init(GnTimelineModelClass *klass) {
                  G_SIGNAL_RUN_LAST,
                  0, NULL, NULL, NULL,
                  G_TYPE_NONE, 1, G_TYPE_UINT);
+
+  /* Phase 3 signals (nostrc-0hp) */
+  signals[SIGNAL_REVEAL_PROGRESS] =
+    g_signal_new("reveal-progress",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 0, NULL, NULL, NULL,
+                 G_TYPE_NONE, 2, G_TYPE_UINT, G_TYPE_UINT);  /* (revealed, total) */
 }
 
 static void gn_timeline_model_init(GnTimelineModel *self) {
@@ -1750,6 +2055,14 @@ static void gn_timeline_model_init(GnTimelineModel *self) {
   self->rate_window_start_us = g_get_monotonic_time();
   self->peak_queue_depth = 0;
   self->backpressure_active = FALSE;
+
+  /* Phase 3: Smooth reveal animation initialization (nostrc-0hp) */
+  self->reveal_queue = g_array_new(FALSE, FALSE, sizeof(StagedEntry));
+  self->reveal_position = 0;
+  self->reveal_in_progress = FALSE;
+  self->reveal_timer_id = 0;
+  self->reveal_complete_cb = NULL;
+  self->reveal_complete_data = NULL;
 
   /* Start in batch mode to prevent widget recycling storms during initial load */
   self->in_batch_mode = TRUE;

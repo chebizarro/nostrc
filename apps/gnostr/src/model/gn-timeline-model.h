@@ -141,6 +141,48 @@ guint gn_timeline_model_get_pending_count(GnTimelineModel *self);
  */
 void gn_timeline_model_flush_pending(GnTimelineModel *self);
 
+/* ============== Phase 3: Animated Reveal (nostrc-0hp) ============== */
+
+/**
+ * gn_timeline_model_flush_pending_animated:
+ * @self: The model
+ * @complete_cb: (nullable): Callback when reveal finishes
+ * @complete_data: (nullable): User data for completion callback
+ *
+ * Flush pending items with a smooth staggered reveal animation.
+ *
+ * Instead of inserting all pending items at once, this function animates
+ * items in one-by-one with a 50ms stagger between each batch. This provides
+ * a graceful UX when clicking the "New Notes" button.
+ *
+ * The completion callback is invoked AFTER all items are revealed, allowing
+ * the caller to scroll to top after the animation completes.
+ *
+ * Callback signature: void (*)(gpointer model, gpointer user_data)
+ */
+void gn_timeline_model_flush_pending_animated(GnTimelineModel *self,
+                                               GFunc            complete_cb,
+                                               gpointer         complete_data);
+
+/**
+ * gn_timeline_model_is_reveal_in_progress:
+ * @self: The model
+ *
+ * Check if an animated reveal is currently in progress.
+ *
+ * Returns: TRUE if reveal animation is active
+ */
+gboolean gn_timeline_model_is_reveal_in_progress(GnTimelineModel *self);
+
+/**
+ * gn_timeline_model_cancel_reveal:
+ * @self: The model
+ *
+ * Cancel any in-progress reveal animation.
+ * Items already revealed will remain, but remaining items are discarded.
+ */
+void gn_timeline_model_cancel_reveal(GnTimelineModel *self);
+
 /* ============== Visible Range ============== */
 
 /**

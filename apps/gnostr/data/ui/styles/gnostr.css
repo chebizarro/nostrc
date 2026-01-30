@@ -226,6 +226,23 @@ headerbar button:hover image {
 	animation: none;
 }
 
+/* nostrc-0hp Phase 3: Smooth reveal animation for "New Notes" button */
+.note-card.note-revealing {
+	animation: note-reveal 200ms ease-out forwards;
+}
+
+@keyframes note-reveal {
+	from {
+		opacity: 0;
+		transform: translateY(-8px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+/* Standard fade-in for normal note insertion */
 @keyframes note-fade-in {
 	from {
 		opacity: 0;
