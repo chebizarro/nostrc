@@ -3,8 +3,9 @@
  */
 
 #include "nip28_chat.h"
-#include <jansson.h>
+#include "json.h"
 #include <string.h>
+#include <stdlib.h>
 
 GnostrChannel *
 gnostr_channel_new(void)
@@ -87,30 +88,30 @@ gnostr_channel_parse_metadata(const char *content, GnostrChannel *channel)
 {
     if (!content || !channel) return FALSE;
 
-    json_error_t error;
-    json_t *root = json_loads(content, 0, &error);
-    if (!root) return FALSE;
+    if (!nostr_json_is_valid(content)) return FALSE;
 
-    json_t *name = json_object_get(root, "name");
-    json_t *about = json_object_get(root, "about");
-    json_t *picture = json_object_get(root, "picture");
+    char *name = NULL;
+    char *about = NULL;
+    char *picture = NULL;
 
-    if (json_is_string(name)) {
+    if (nostr_json_get_string(content, "name", &name) == 0 && name) {
         g_free(channel->name);
-        channel->name = g_strdup(json_string_value(name));
+        channel->name = g_strdup(name);
+        free(name);
     }
 
-    if (json_is_string(about)) {
+    if (nostr_json_get_string(content, "about", &about) == 0 && about) {
         g_free(channel->about);
-        channel->about = g_strdup(json_string_value(about));
+        channel->about = g_strdup(about);
+        free(about);
     }
 
-    if (json_is_string(picture)) {
+    if (nostr_json_get_string(content, "picture", &picture) == 0 && picture) {
         g_free(channel->picture);
-        channel->picture = g_strdup(json_string_value(picture));
+        channel->picture = g_strdup(picture);
+        free(picture);
     }
 
-    json_decref(root);
     return TRUE;
 }
 
@@ -119,19 +120,88 @@ gnostr_channel_create_metadata_json(const GnostrChannel *channel)
 {
     if (!channel) return NULL;
 
-    json_t *obj = json_object();
+    NostrJsonBuilder *builder = nostr_json_builder_new();
+    if (!builder) return NULL;
 
-    if (channel->name)
-        json_object_set_new(obj, "name", json_string(channel->name));
-    if (channel->about)
-        json_object_set_new(obj, "about", json_string(channel->about));
-    if (channel->picture)
-        json_object_set_new(obj, "picture", json_string(channel->picture));
+    nostr_json_builder_begin_object(builder);
 
-    char *result = json_dumps(obj, JSON_COMPACT);
-    json_decref(obj);
+    if (channel->name) {
+        nostr_json_builder_set_key(builder, "name");
+        nostr_json_builder_add_string(builder, channel->name);
+    }
+    if (channel->about) {
+        nostr_json_builder_set_key(builder, "about");
+        nostr_json_builder_add_string(builder, channel->about);
+    }
+    if (channel->picture) {
+        nostr_json_builder_set_key(builder, "picture");
+        nostr_json_builder_add_string(builder, channel->picture);
+    }
+
+    nostr_json_builder_end_object(builder);
+
+    char *result = nostr_json_builder_finish(builder);
+    nostr_json_builder_free(builder);
 
     return result;
+}
+
+/* Callback context for extracting channel ID */
+typedef struct {
+    char *channel_id;
+    char *fallback_id;
+} ExtractChannelCtx;
+
+/* Callback to find channel ID in tags */
+static bool extract_channel_id_cb(size_t index, const char *element_json, void *user_data) {
+    (void)index;
+    ExtractChannelCtx *ctx = user_data;
+
+    /* Get tag array length */
+    size_t arr_len = 0;
+    if (nostr_json_get_array_length(element_json, NULL, &arr_len) != 0 || arr_len < 2) {
+        return true; /* continue */
+    }
+
+    /* Get tag name (first element) */
+    char *tag_name = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+        return true;
+    }
+
+    if (strcmp(tag_name, "e") != 0) {
+        free(tag_name);
+        return true;
+    }
+    free(tag_name);
+
+    /* Get event ID (second element) */
+    char *event_id = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 1, &event_id) != 0 || !event_id) {
+        return true;
+    }
+
+    /* Per NIP-28: the "e" tag with "root" marker identifies the channel */
+    if (arr_len >= 4) {
+        char *marker = NULL;
+        if (nostr_json_get_array_string(element_json, NULL, 3, &marker) == 0 && marker) {
+            if (strcmp(marker, "root") == 0) {
+                ctx->channel_id = g_strdup(event_id);
+                free(marker);
+                free(event_id);
+                return false; /* stop - found root */
+            }
+            free(marker);
+        }
+    }
+
+    /* Fallback: first "e" tag without a reply marker is the channel */
+    if (!ctx->fallback_id) {
+        ctx->fallback_id = g_strdup(event_id);
+    }
+
+    free(event_id);
+    return true; /* continue iteration */
 }
 
 char *
@@ -139,47 +209,19 @@ gnostr_chat_message_extract_channel_id(const char *tags_json)
 {
     if (!tags_json) return NULL;
 
-    json_error_t error;
-    json_t *tags = json_loads(tags_json, 0, &error);
-    if (!tags || !json_is_array(tags)) {
-        if (tags) json_decref(tags);
+    if (!nostr_json_is_valid(tags_json) || !nostr_json_is_array_str(tags_json)) {
         return NULL;
     }
 
-    char *channel_id = NULL;
-    size_t index;
-    json_t *tag;
+    ExtractChannelCtx ctx = { .channel_id = NULL, .fallback_id = NULL };
+    nostr_json_array_foreach_root(tags_json, extract_channel_id_cb, &ctx);
 
-    /* Look for ["e", "<channel_id>", "<relay>", "root"] pattern */
-    json_array_foreach(tags, index, tag) {
-        if (!json_is_array(tag) || json_array_size(tag) < 2)
-            continue;
-
-        const char *tag_name = json_string_value(json_array_get(tag, 0));
-        if (!tag_name || strcmp(tag_name, "e") != 0)
-            continue;
-
-        const char *event_id = json_string_value(json_array_get(tag, 1));
-        if (!event_id)
-            continue;
-
-        /* Per NIP-28: the "e" tag with "root" marker identifies the channel */
-        if (json_array_size(tag) >= 4) {
-            const char *marker = json_string_value(json_array_get(tag, 3));
-            if (marker && strcmp(marker, "root") == 0) {
-                channel_id = g_strdup(event_id);
-                break;
-            }
-        }
-
-        /* Fallback: first "e" tag without a reply marker is the channel */
-        if (!channel_id) {
-            channel_id = g_strdup(event_id);
-        }
+    /* Return root-marked channel or fallback to first e-tag */
+    if (ctx.channel_id) {
+        g_free(ctx.fallback_id);
+        return ctx.channel_id;
     }
-
-    json_decref(tags);
-    return channel_id;
+    return ctx.fallback_id;
 }
 
 char *
@@ -189,28 +231,33 @@ gnostr_chat_message_create_tags(const char *channel_id,
 {
     if (!channel_id) return NULL;
 
-    json_t *tags = json_array();
+    NostrJsonBuilder *builder = nostr_json_builder_new();
+    if (!builder) return NULL;
 
-    /* Channel reference - always the root */
-    json_t *e_tag = json_array();
-    json_array_append_new(e_tag, json_string("e"));
-    json_array_append_new(e_tag, json_string(channel_id));
-    json_array_append_new(e_tag, json_string(recommended_relay ? recommended_relay : ""));
-    json_array_append_new(e_tag, json_string("root"));
-    json_array_append_new(tags, e_tag);
+    nostr_json_builder_begin_array(builder);
 
-    /* Reply reference if this is a reply */
+    /* Channel reference - always the root: ["e", channel_id, relay, "root"] */
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "e");
+    nostr_json_builder_add_string(builder, channel_id);
+    nostr_json_builder_add_string(builder, recommended_relay ? recommended_relay : "");
+    nostr_json_builder_add_string(builder, "root");
+    nostr_json_builder_end_array(builder);
+
+    /* Reply reference if this is a reply: ["e", reply_to, relay, "reply"] */
     if (reply_to) {
-        json_t *reply_tag = json_array();
-        json_array_append_new(reply_tag, json_string("e"));
-        json_array_append_new(reply_tag, json_string(reply_to));
-        json_array_append_new(reply_tag, json_string(recommended_relay ? recommended_relay : ""));
-        json_array_append_new(reply_tag, json_string("reply"));
-        json_array_append_new(tags, reply_tag);
+        nostr_json_builder_begin_array(builder);
+        nostr_json_builder_add_string(builder, "e");
+        nostr_json_builder_add_string(builder, reply_to);
+        nostr_json_builder_add_string(builder, recommended_relay ? recommended_relay : "");
+        nostr_json_builder_add_string(builder, "reply");
+        nostr_json_builder_end_array(builder);
     }
 
-    char *result = json_dumps(tags, JSON_COMPACT);
-    json_decref(tags);
+    nostr_json_builder_end_array(builder);
+
+    char *result = nostr_json_builder_finish(builder);
+    nostr_json_builder_free(builder);
 
     return result;
 }
@@ -228,18 +275,24 @@ gnostr_channel_metadata_create_tags(const char *channel_id,
 {
     if (!channel_id) return NULL;
 
-    json_t *tags = json_array();
+    NostrJsonBuilder *builder = nostr_json_builder_new();
+    if (!builder) return NULL;
 
-    /* Reference to the channel being updated */
-    json_t *e_tag = json_array();
-    json_array_append_new(e_tag, json_string("e"));
-    json_array_append_new(e_tag, json_string(channel_id));
-    if (recommended_relay)
-        json_array_append_new(e_tag, json_string(recommended_relay));
-    json_array_append_new(tags, e_tag);
+    nostr_json_builder_begin_array(builder);
 
-    char *result = json_dumps(tags, JSON_COMPACT);
-    json_decref(tags);
+    /* Reference to the channel being updated: ["e", channel_id, relay?] */
+    nostr_json_builder_begin_array(builder);
+    nostr_json_builder_add_string(builder, "e");
+    nostr_json_builder_add_string(builder, channel_id);
+    if (recommended_relay) {
+        nostr_json_builder_add_string(builder, recommended_relay);
+    }
+    nostr_json_builder_end_array(builder);
+
+    nostr_json_builder_end_array(builder);
+
+    char *result = nostr_json_builder_finish(builder);
+    nostr_json_builder_free(builder);
 
     return result;
 }

@@ -7,8 +7,9 @@
  */
 
 #include "nip70_protected.h"
-#include <jansson.h>
+#include "json.h"
 #include <string.h>
+#include <stdlib.h>
 
 /* CSS class for protected badge styling */
 #define NIP70_BADGE_CSS_CLASS "nip70-protected-badge"
@@ -45,33 +46,48 @@ void gnostr_nip70_result_free(GnostrProtectedResult *result) {
   g_free(result);
 }
 
+/* Callback context for checking protection tag */
+typedef struct {
+  gboolean found;
+} CheckProtectionCtx;
+
 /**
- * Internal helper to check if a tags array contains the "-" protection tag.
- * @param tags JSON array of tags
+ * Callback to check if a tag is the "-" protection tag.
+ */
+static bool check_protection_tag_cb(size_t index, const char *element_json, void *user_data) {
+  (void)index;
+  CheckProtectionCtx *ctx = user_data;
+
+  /* Get first element of tag array (tag name) */
+  char *tag_name = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) == 0 && tag_name) {
+    if (g_strcmp0(tag_name, NIP70_PROTECTION_TAG) == 0) {
+      ctx->found = TRUE;
+      free(tag_name);
+      return false; /* stop iteration */
+    }
+    free(tag_name);
+  }
+  return true; /* continue iteration */
+}
+
+/**
+ * Internal helper to check if a tags JSON array contains the "-" protection tag.
+ * @param tags_json JSON array string of tags
  * @return TRUE if protected
  */
-static gboolean check_tags_for_protection(json_t *tags) {
-  if (!tags || !json_is_array(tags)) {
+static gboolean check_tags_json_for_protection(const char *tags_json) {
+  if (!tags_json || !*tags_json) {
     return FALSE;
   }
 
-  size_t tag_count = json_array_size(tags);
-  for (size_t i = 0; i < tag_count; i++) {
-    json_t *tag = json_array_get(tags, i);
-    if (!tag || !json_is_array(tag) || json_array_size(tag) < 1) {
-      continue;
-    }
-
-    json_t *tag_name = json_array_get(tag, 0);
-    if (tag_name && json_is_string(tag_name)) {
-      const char *name = json_string_value(tag_name);
-      if (name && g_strcmp0(name, NIP70_PROTECTION_TAG) == 0) {
-        return TRUE;
-      }
-    }
+  if (!nostr_json_is_array_str(tags_json)) {
+    return FALSE;
   }
 
-  return FALSE;
+  CheckProtectionCtx ctx = { .found = FALSE };
+  nostr_json_array_foreach_root(tags_json, check_protection_tag_cb, &ctx);
+  return ctx.found;
 }
 
 gboolean gnostr_nip70_check_event(const char *event_json) {
@@ -79,17 +95,19 @@ gboolean gnostr_nip70_check_event(const char *event_json) {
     return FALSE;
   }
 
-  json_error_t error;
-  json_t *root = json_loads(event_json, 0, &error);
-  if (!root) {
-    g_debug("nip70: failed to parse event JSON: %s", error.text);
+  if (!nostr_json_is_valid(event_json)) {
+    g_debug("nip70: failed to parse event JSON");
     return FALSE;
   }
 
-  json_t *tags = json_object_get(root, "tags");
-  gboolean is_protected = check_tags_for_protection(tags);
+  /* Get the raw tags array as JSON string */
+  char *tags_json = NULL;
+  if (nostr_json_get_raw(event_json, "tags", &tags_json) != 0 || !tags_json) {
+    return FALSE;
+  }
 
-  json_decref(root);
+  gboolean is_protected = check_tags_json_for_protection(tags_json);
+  free(tags_json);
   return is_protected;
 }
 
@@ -98,57 +116,94 @@ gboolean gnostr_nip70_check_tags_json(const char *tags_json) {
     return FALSE;
   }
 
-  json_error_t error;
-  json_t *tags = json_loads(tags_json, 0, &error);
-  if (!tags) {
-    g_debug("nip70: failed to parse tags JSON: %s", error.text);
+  if (!nostr_json_is_valid(tags_json)) {
+    g_debug("nip70: failed to parse tags JSON");
     return FALSE;
   }
 
-  gboolean is_protected = check_tags_for_protection(tags);
+  return check_tags_json_for_protection(tags_json);
+}
 
-  json_decref(tags);
-  return is_protected;
+/* Callback context for copying tags */
+typedef struct {
+  NostrJsonBuilder *builder;
+} CopyTagsCtx;
+
+/**
+ * Callback to copy a tag element as-is.
+ */
+static bool copy_tag_cb(size_t index, const char *element_json, void *user_data) {
+  (void)index;
+  CopyTagsCtx *ctx = user_data;
+  nostr_json_builder_add_raw(ctx->builder, element_json);
+  return true; /* continue iteration */
 }
 
 char *gnostr_nip70_add_protection_tag(const char *tags_json) {
-  json_t *tags = NULL;
-
-  if (tags_json && *tags_json) {
-    json_error_t error;
-    tags = json_loads(tags_json, 0, &error);
-    if (!tags) {
-      g_debug("nip70: failed to parse tags JSON for add: %s", error.text);
-      /* Create new empty array */
-      tags = json_array();
+  /* Check if already protected */
+  if (tags_json && *tags_json && nostr_json_is_array_str(tags_json)) {
+    if (check_tags_json_for_protection(tags_json)) {
+      /* Already protected, return as-is */
+      return nostr_json_compact(tags_json);
     }
-  } else {
-    tags = json_array();
   }
 
-  if (!json_is_array(tags)) {
-    json_decref(tags);
-    tags = json_array();
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  if (!builder) {
+    return g_strdup("[]");
   }
 
-  /* Check if protection tag already exists */
-  if (check_tags_for_protection(tags)) {
-    /* Already protected, return as-is */
-    char *result = json_dumps(tags, JSON_COMPACT);
-    json_decref(tags);
-    return result;
+  nostr_json_builder_begin_array(builder);
+
+  /* Copy existing tags if present */
+  if (tags_json && *tags_json && nostr_json_is_array_str(tags_json)) {
+    CopyTagsCtx ctx = { .builder = builder };
+    nostr_json_array_foreach_root(tags_json, copy_tag_cb, &ctx);
   }
 
-  /* Add protection tag */
-  json_t *protection_tag = json_array();
-  json_array_append_new(protection_tag, json_string(NIP70_PROTECTION_TAG));
-  json_array_append_new(tags, protection_tag);
+  /* Add protection tag: ["-"] */
+  nostr_json_builder_begin_array(builder);
+  nostr_json_builder_add_string(builder, NIP70_PROTECTION_TAG);
+  nostr_json_builder_end_array(builder);
 
-  char *result = json_dumps(tags, JSON_COMPACT);
-  json_decref(tags);
+  nostr_json_builder_end_array(builder);
+
+  char *result = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
 
   g_debug("nip70: added protection tag to event");
   return result;
+}
+
+/* Callback context for filtering tags */
+typedef struct {
+  NostrJsonBuilder *builder;
+  gboolean removed;
+} FilterTagsCtx;
+
+/**
+ * Callback to copy tags except protection tags.
+ */
+static bool filter_protection_tag_cb(size_t index, const char *element_json, void *user_data) {
+  (void)index;
+  FilterTagsCtx *ctx = user_data;
+
+  /* Get first element of tag array (tag name) */
+  char *tag_name = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) == 0 && tag_name) {
+    if (g_strcmp0(tag_name, NIP70_PROTECTION_TAG) == 0) {
+      /* Skip protection tag */
+      ctx->removed = TRUE;
+      g_debug("nip70: removed protection tag from event");
+      free(tag_name);
+      return true; /* continue to next tag */
+    }
+    free(tag_name);
+  }
+
+  /* Copy this tag */
+  nostr_json_builder_add_raw(ctx->builder, element_json);
+  return true; /* continue iteration */
 }
 
 char *gnostr_nip70_remove_protection_tag(const char *tags_json) {
@@ -156,57 +211,32 @@ char *gnostr_nip70_remove_protection_tag(const char *tags_json) {
     return g_strdup("[]");
   }
 
-  json_error_t error;
-  json_t *tags = json_loads(tags_json, 0, &error);
-  if (!tags) {
-    g_debug("nip70: failed to parse tags JSON for remove: %s", error.text);
+  if (!nostr_json_is_valid(tags_json) || !nostr_json_is_array_str(tags_json)) {
+    g_debug("nip70: failed to parse tags JSON for remove");
     return g_strdup(tags_json);
   }
 
-  if (!json_is_array(tags)) {
-    json_decref(tags);
+  NostrJsonBuilder *builder = nostr_json_builder_new();
+  if (!builder) {
     return g_strdup(tags_json);
   }
 
-  /* Create new array without protection tag */
-  json_t *new_tags = json_array();
-  size_t tag_count = json_array_size(tags);
+  nostr_json_builder_begin_array(builder);
 
-  for (size_t i = 0; i < tag_count; i++) {
-    json_t *tag = json_array_get(tags, i);
-    if (!tag || !json_is_array(tag) || json_array_size(tag) < 1) {
-      json_array_append(new_tags, tag);
-      continue;
-    }
+  FilterTagsCtx ctx = { .builder = builder, .removed = FALSE };
+  nostr_json_array_foreach_root(tags_json, filter_protection_tag_cb, &ctx);
 
-    json_t *tag_name = json_array_get(tag, 0);
-    if (tag_name && json_is_string(tag_name)) {
-      const char *name = json_string_value(tag_name);
-      if (name && g_strcmp0(name, NIP70_PROTECTION_TAG) == 0) {
-        /* Skip protection tag */
-        g_debug("nip70: removed protection tag from event");
-        continue;
-      }
-    }
+  nostr_json_builder_end_array(builder);
 
-    json_array_append(new_tags, tag);
-  }
-
-  char *result = json_dumps(new_tags, JSON_COMPACT);
-  json_decref(tags);
-  json_decref(new_tags);
+  char *result = nostr_json_builder_finish(builder);
+  nostr_json_builder_free(builder);
 
   return result;
 }
 
 char *gnostr_nip70_build_protection_tag(void) {
-  json_t *tag = json_array();
-  json_array_append_new(tag, json_string(NIP70_PROTECTION_TAG));
-
-  char *result = json_dumps(tag, JSON_COMPACT);
-  json_decref(tag);
-
-  return result;
+  /* Build ["-"] */
+  return nostr_json_build_string_array(NIP70_PROTECTION_TAG, NULL);
 }
 
 gboolean gnostr_nip70_can_rebroadcast(const char *event_json) {
