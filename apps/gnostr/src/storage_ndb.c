@@ -471,9 +471,18 @@ char *storage_ndb_note_tags_json(storage_ndb_note *note)
     for (int i = 0; i < nelem; i++) {
       if (i > 0) g_string_append_c(json, ',');
       struct ndb_str str = ndb_tag_str(note, tag, i);
-      
-      if (str.flag == NDB_PACKED_STR && str.str) {
-        /* Validate string pointer before use */
+
+      /* BUG FIX (nostrc-nip10-threading):
+       * ndb_note_str sets str.str for BOTH packed inline strings (flag=NDB_PACKED_STR)
+       * AND offset-based strings (flag=0 or other). The flag indicates storage type,
+       * not string validity. Check str.str directly for string values. */
+      if (str.flag == NDB_PACKED_ID && str.id) {
+        /* Handle ID type - convert to hex */
+        char hex[65];
+        storage_ndb_hex_encode(str.id, hex);
+        g_string_append_printf(json, "\"%s\"", hex);
+      } else if (str.str) {
+        /* String value (either packed inline or offset-based) */
         if (!g_utf8_validate(str.str, -1, NULL)) {
           /* Invalid UTF-8, escape as hex */
           g_string_append(json, "\"[invalid]\"");
@@ -486,11 +495,6 @@ char *storage_ndb_note_tags_json(storage_ndb_note *note)
         } else {
           g_string_append(json, "\"\"");
         }
-      } else if (str.flag == NDB_PACKED_ID && str.id) {
-        /* Handle ID type - convert to hex */
-        char hex[65];
-        storage_ndb_hex_encode(str.id, hex);
-        g_string_append_printf(json, "\"%s\"", hex);
       } else {
         g_string_append(json, "\"\"");
       }
@@ -865,8 +869,14 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
     const char *marker = NULL;
     if (nelem >= 4) {
       struct ndb_str marker_str = ndb_tag_str(note, tag, 3);
-      if (marker_str.flag == NDB_PACKED_STR && marker_str.str) {
+      /* BUG FIX (nostrc-nip10-threading):
+       * ndb_note_str sets str.str for BOTH packed inline strings (flag=NDB_PACKED_STR)
+       * AND offset-based strings (flag=0). The string "root"/"reply"/"mention" are
+       * 4-7 chars and stored as offsets (flag=0), not inline. We must check str.str
+       * regardless of flag value, not only when flag==NDB_PACKED_STR. */
+      if (marker_str.str && *marker_str.str) {
         marker = marker_str.str;
+        g_debug("[NIP10] e-tag index 3 marker: %s (flag=%d)", marker, marker_str.flag);
       }
     }
 
