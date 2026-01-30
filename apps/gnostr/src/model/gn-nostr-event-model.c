@@ -811,6 +811,13 @@ static void add_note_internal(GnNostrEventModel *self, uint64_t note_key, gint64
     uint64_t *key_copy = g_new(uint64_t, 1);
     *key_copy = note_key;
     g_hash_table_insert(self->thread_info, key_copy, tinfo);
+    g_debug("[NIP10-MODEL] Stored thread info for key %lu: root=%.16s... parent=%.16s...",
+            (unsigned long)note_key,
+            root_id ? root_id : "(null)",
+            parent_id ? parent_id : "(null)");
+  } else {
+    g_debug("[NIP10-MODEL] No thread info for key %lu (root=%p, parent=%p)",
+            (unsigned long)note_key, (void*)root_id, (void*)parent_id);
   }
 
   /* Find insertion position */
@@ -1137,6 +1144,12 @@ static gpointer gn_nostr_event_model_get_item(GListModel *list, guint position) 
   ThreadInfo *tinfo = g_hash_table_lookup(self->thread_info, &key);
   if (tinfo) {
     gn_nostr_event_item_set_thread_info(item, tinfo->root_id, tinfo->parent_id, tinfo->depth);
+    g_debug("[NIP10-MODEL] Applied thread info to item key %lu: root=%.16s... parent=%.16s...",
+            (unsigned long)key,
+            tinfo->root_id ? tinfo->root_id : "(null)",
+            tinfo->parent_id ? tinfo->parent_id : "(null)");
+  } else {
+    g_debug("[NIP10-MODEL] No thread info found for item key %lu", (unsigned long)key);
   }
 
   /* Apply profile if available (gated notes should always have profiles, but be defensive) */
