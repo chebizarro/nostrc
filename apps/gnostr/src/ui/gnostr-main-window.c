@@ -4644,13 +4644,13 @@ static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
     gn_nostr_event_model_flush_pending(self->event_model);
   }
 
-  /* nostrc-9f4: Defer scroll using timeout to avoid GTK4 ListView crash.
-   * When flush_pending is called, GTK's internal ListView processing
-   * (tile management, widget recycling) continues asynchronously.
-   * Using a longer timeout (150ms) ensures GTK has multiple main loop
-   * iterations to complete its internal updates before we scroll.
-   * We ref the window to ensure it stays valid until the timeout fires. */
-  g_timeout_add(150, scroll_to_top_idle, g_object_ref(self));
+  /* Defer scroll to next main loop iteration to let GTK finish processing
+   * the model changes from flush_pending. Using g_idle_add_full with HIGH
+   * priority runs before most other idle handlers but after GTK's internal
+   * processing completes. This is much faster than the previous 150ms timeout
+   * while still avoiding ListView crashes during widget recycling.
+   * We ref the window to ensure it stays valid until the idle fires. */
+  g_idle_add_full(G_PRIORITY_HIGH, scroll_to_top_idle, g_object_ref(self), NULL);
 }
 
 gboolean gnostr_main_window_get_compact(GnostrMainWindow *self) {
