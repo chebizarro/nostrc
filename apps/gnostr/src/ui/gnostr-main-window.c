@@ -2143,6 +2143,12 @@ static void on_relays_clicked(GtkButton *btn, gpointer user_data) {
   relay_manager_update_status(ctx);
   g_signal_connect(win, "destroy", G_CALLBACK(relay_manager_on_destroy), ctx);
 
+  /* nostrc-50v: Select first relay and populate info pane on open */
+  guint n_items = g_list_model_get_n_items(G_LIST_MODEL(ctx->relay_model));
+  if (n_items > 0) {
+    gtk_single_selection_set_selected(ctx->selection, 0);
+  }
+
   gtk_window_present(win);
 }
 
