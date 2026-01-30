@@ -1,7 +1,7 @@
 #include "gn-nostr-event-item.h"
 #include "../storage_ndb.h"
 #include <string.h>
-#include <json-glib/json-glib.h>
+#include <json.h>
 
 struct _GnNostrEventItem {
   GObject parent_instance;
@@ -636,9 +636,50 @@ gboolean gn_nostr_event_item_get_is_expired(GnNostrEventItem *self) {
   return (self->expiration < now);
 }
 
+/* nostrc-3nj: Callback for iterating tags array to find "e" tag */
+typedef struct {
+  char *result;
+} RepostTagIterData;
+
+static bool repost_tag_iter_cb(size_t index, const char *element_json, void *user_data) {
+  RepostTagIterData *data = (RepostTagIterData *)user_data;
+  if (data->result) return false;  /* Already found, stop */
+
+  /* Each tag is an array like ["e", "<event_id>", ...] */
+  size_t arr_len = 0;
+  if (nostr_json_get_array_length(element_json, NULL, &arr_len) != 0 || arr_len < 2) {
+    return true;  /* Continue to next tag */
+  }
+
+  /* Get tag type (first element) */
+  char *tag_type = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_type) != 0 || !tag_type) {
+    return true;
+  }
+
+  if (strcmp(tag_type, "e") != 0) {
+    free(tag_type);
+    return true;
+  }
+  free(tag_type);
+
+  /* Get event ID (second element) */
+  char *event_id = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 1, &event_id) == 0 && event_id) {
+    if (strlen(event_id) == 64) {
+      data->result = event_id;  /* Transfer ownership */
+      return false;  /* Stop iteration */
+    }
+    free(event_id);
+  }
+
+  return true;  /* Continue */
+}
+
 /* NIP-18: Extract referenced event ID from kind 6 repost tags.
  * Parses the cached tags JSON to find the first "e" tag and returns its value.
- * Returns newly allocated hex string or NULL if not found. */
+ * Returns newly allocated hex string or NULL if not found.
+ * nostrc-3nj: Migrated from json-glib to NostrJsonInterface */
 char *gn_nostr_event_item_get_reposted_event_id(GnNostrEventItem *self) {
   g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
 
@@ -650,38 +691,15 @@ char *gn_nostr_event_item_get_reposted_event_id(GnNostrEventItem *self) {
   /* Need tags_json to parse */
   if (!self->cached_tags_json || !*self->cached_tags_json) return NULL;
 
-  /* Parse tags JSON array */
-  JsonParser *parser = json_parser_new();
-  if (!json_parser_load_from_data(parser, self->cached_tags_json, -1, NULL)) {
-    g_object_unref(parser);
-    return NULL;
+  /* Use NostrJsonInterface to iterate over tags array */
+  RepostTagIterData data = { .result = NULL };
+  nostr_json_array_foreach_root(self->cached_tags_json, repost_tag_iter_cb, &data);
+
+  /* data.result is already allocated by nostr_json_get_array_string; convert to glib-allocated */
+  if (data.result) {
+    char *glib_result = g_strdup(data.result);
+    free(data.result);
+    return glib_result;
   }
-
-  JsonNode *root = json_parser_get_root(parser);
-  if (!root || !JSON_NODE_HOLDS_ARRAY(root)) {
-    g_object_unref(parser);
-    return NULL;
-  }
-
-  JsonArray *tags = json_node_get_array(root);
-  guint n_tags = json_array_get_length(tags);
-
-  char *result = NULL;
-
-  /* Find first "e" tag - per NIP-18 this references the reposted event */
-  for (guint i = 0; i < n_tags && !result; i++) {
-    JsonArray *tag = json_array_get_array_element(tags, i);
-    if (!tag || json_array_get_length(tag) < 2) continue;
-
-    const char *tag_type = json_array_get_string_element(tag, 0);
-    if (!tag_type || strcmp(tag_type, "e") != 0) continue;
-
-    const char *event_id = json_array_get_string_element(tag, 1);
-    if (event_id && strlen(event_id) == 64) {
-      result = g_strdup(event_id);
-    }
-  }
-
-  g_object_unref(parser);
-  return result;
+  return NULL;
 }

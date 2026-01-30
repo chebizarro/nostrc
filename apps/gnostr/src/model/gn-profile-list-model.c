@@ -8,7 +8,7 @@
 #include "gn-profile-list-model.h"
 #include "../storage_ndb.h"
 #include "gn-nostr-profile.h"
-#include <json-glib/json-glib.h>
+#include <json.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -343,51 +343,30 @@ gn_profile_list_model_new(void)
     return g_object_new(GN_TYPE_PROFILE_LIST_MODEL, NULL);
 }
 
-/* Parse profile from kind:0 event JSON */
+/* nostrc-3nj: Parse profile from kind:0 event JSON using NostrJsonInterface */
 static ProfileEntry *
-parse_profile_from_event_json(const char *json, int json_len)
+parse_profile_from_event_json(const char *json_str, int json_len)
 {
-    if (!json || json_len <= 0) return NULL;
+    if (!json_str || json_len <= 0) return NULL;
 
-    GError *error = NULL;
-    JsonParser *parser = json_parser_new();
-
-    if (!json_parser_load_from_data(parser, json, json_len, &error)) {
-        g_warning("Failed to parse profile event JSON: %s", error->message);
-        g_error_free(error);
-        g_object_unref(parser);
-        return NULL;
-    }
-
-    JsonNode *root = json_parser_get_root(parser);
-    if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-        g_object_unref(parser);
-        return NULL;
-    }
-
-    JsonObject *event = json_node_get_object(root);
+    /* Ensure NUL-terminated string for the interface */
+    char *json_copy = g_strndup(json_str, json_len);
+    if (!json_copy) return NULL;
 
     /* Get pubkey */
-    const char *pubkey = NULL;
-    if (json_object_has_member(event, "pubkey")) {
-        pubkey = json_object_get_string_member(event, "pubkey");
-    }
-    if (!pubkey) {
-        g_object_unref(parser);
+    char *pubkey = NULL;
+    if (nostr_json_get_string(json_copy, "pubkey", &pubkey) != 0 || !pubkey) {
+        g_free(json_copy);
         return NULL;
     }
 
     /* Get created_at */
-    gint64 created_at = 0;
-    if (json_object_has_member(event, "created_at")) {
-        created_at = json_object_get_int_member(event, "created_at");
-    }
+    int64_t created_at = 0;
+    nostr_json_get_int64(json_copy, "created_at", &created_at);
 
     /* Get content (profile metadata JSON) */
-    const char *content = NULL;
-    if (json_object_has_member(event, "content")) {
-        content = json_object_get_string_member(event, "content");
-    }
+    char *content = NULL;
+    nostr_json_get_string(json_copy, "content", &content);
 
     /* Create profile */
     GnNostrProfile *profile = gn_nostr_profile_new(pubkey);
@@ -397,10 +376,12 @@ parse_profile_from_event_json(const char *json, int json_len)
 
     ProfileEntry *entry = g_new0(ProfileEntry, 1);
     entry->profile = profile;
-    entry->created_at = created_at;
+    entry->created_at = (gint64)created_at;
     entry->is_following = FALSE;
 
-    g_object_unref(parser);
+    free(pubkey);
+    free(content);
+    g_free(json_copy);
     return entry;
 }
 

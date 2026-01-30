@@ -24,7 +24,7 @@
 #include "../util/mute_list.h"
 #include <string.h>
 #include <stdio.h>
-#include <jansson.h>
+#include <json.h>
 #include <gtk/gtk.h>
 
 /* Configuration */
@@ -1525,22 +1525,22 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
     for (int i = 0; i < n_results; i++) {
       if (!results[i]) continue;
 
-      /* Parse JSON to extract event ID and created_at */
-      json_error_t err;
-      json_t *event = json_loads(results[i], 0, &err);
-      if (!event) {
-        g_debug("[TIMELINE] Failed to parse JSON result %d: %s", i, err.text);
+      /* nostrc-3nj: Parse JSON using NostrJsonInterface */
+      char *id_hex = NULL;
+      int64_t created_at = 0;
+      char *pubkey_hex = NULL;
+
+      if (nostr_json_get_string(results[i], "id", &id_hex) != 0 || !id_hex) {
+        g_debug("[TIMELINE] Failed to get id from JSON result %d", i);
         continue;
       }
 
-      const char *id_hex = json_string_value(json_object_get(event, "id"));
-      json_t *created_at_json = json_object_get(event, "created_at");
-      gint64 created_at = created_at_json ? json_integer_value(created_at_json) : 0;
-
-      if (!id_hex || strlen(id_hex) != 64) {
-        json_decref(event);
+      if (strlen(id_hex) != 64) {
+        free(id_hex);
         continue;
       }
+
+      nostr_json_get_int64(results[i], "created_at", &created_at);
 
       /* Convert hex ID to binary - must convert all 32 bytes */
       unsigned char id32[32];
@@ -1555,35 +1555,34 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
       }
       if (bytes_converted != 32) {
         g_debug("[TIMELINE] Incomplete hex conversion: only %d/32 bytes", bytes_converted);
-        json_decref(event);
+        free(id_hex);
         continue;
       }
+      free(id_hex);
 
       /* Get note_key from ID */
       uint64_t note_key = storage_ndb_get_note_key_by_id(txn, id32, NULL);
       if (note_key == 0) {
-        json_decref(event);
         continue;
       }
 
       /* Skip if already have this note */
       if (has_note_key(self, note_key)) {
-        json_decref(event);
         continue;
       }
 
       /* Check mute list */
-      const char *pubkey_hex = json_string_value(json_object_get(event, "pubkey"));
-      if (pubkey_hex) {
+      if (nostr_json_get_string(results[i], "pubkey", &pubkey_hex) == 0 && pubkey_hex) {
         GnostrMuteList *mute_list = gnostr_mute_list_get_default();
         if (mute_list && gnostr_mute_list_is_pubkey_muted(mute_list, pubkey_hex)) {
-          json_decref(event);
+          free(pubkey_hex);
           continue;
         }
+        free(pubkey_hex);
       }
 
       /* Add to notes array at the end (older items) */
-      NoteEntry entry = { .note_key = note_key, .created_at = created_at };
+      NoteEntry entry = { .note_key = note_key, .created_at = (gint64)created_at };
       g_array_append_val(self->notes, entry);
       add_note_key_to_set(self, note_key);
       added++;
@@ -1592,8 +1591,6 @@ guint gn_timeline_model_load_older(GnTimelineModel *self, guint count) {
       if (created_at < self->oldest_timestamp || self->oldest_timestamp == 0) {
         self->oldest_timestamp = created_at;
       }
-
-      json_decref(event);
     }
 
     storage_ndb_free_results(results, n_results);

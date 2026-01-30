@@ -7,7 +7,7 @@
 #include "../util/mute_list.h"
 #include <nostr.h>
 #include <string.h>
-#include <jansson.h>
+#include <json.h>
 
 /* Window sizing and cache sizes */
 #define MODEL_MAX_ITEMS 100
@@ -489,6 +489,69 @@ static gboolean has_note_key(GnNostrEventModel *self, uint64_t key) {
     if (entry->note_key == key) return TRUE;
   }
   return FALSE;
+}
+
+/* nostrc-3nj: Helper for iterating tags to find e-tag (replaces jansson iteration) */
+typedef struct {
+  char *target_event_id;
+  char *bolt11;
+  gboolean found_e;
+} TagIterCtx;
+
+static bool find_etag_iter_cb(size_t index, const char *element_json, void *user_data) {
+  TagIterCtx *ctx = (TagIterCtx *)user_data;
+  (void)index;
+
+  /* Each tag is an array like ["e", "<event_id>", ...] */
+  size_t arr_len = 0;
+  if (nostr_json_get_array_length(element_json, NULL, &arr_len) != 0 || arr_len < 2) {
+    return true;  /* Continue */
+  }
+
+  char *tag_name = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    return true;
+  }
+
+  if (g_strcmp0(tag_name, "e") == 0 && !ctx->target_event_id) {
+    char *tag_value = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) == 0 && tag_value) {
+      if (strlen(tag_value) == 64) {
+        ctx->target_event_id = tag_value;  /* Transfer ownership */
+        ctx->found_e = TRUE;
+      } else {
+        free(tag_value);
+      }
+    }
+  } else if (g_strcmp0(tag_name, "bolt11") == 0 && !ctx->bolt11) {
+    char *tag_value = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 1, &tag_value) == 0 && tag_value && *tag_value) {
+      ctx->bolt11 = tag_value;  /* Transfer ownership */
+    } else {
+      free(tag_value);
+    }
+  }
+
+  free(tag_name);
+  return true;  /* Continue to find both e and bolt11 */
+}
+
+/* nostrc-3nj: Extract first e-tag from event JSON using NostrJsonInterface */
+static char *extract_first_etag_from_event_json(const char *event_json) {
+  if (!event_json) return NULL;
+
+  char *tags_raw = NULL;
+  if (nostr_json_get_raw(event_json, "tags", &tags_raw) != 0 || !tags_raw) {
+    return NULL;
+  }
+
+  TagIterCtx ctx = { .target_event_id = NULL, .bolt11 = NULL, .found_e = FALSE };
+  nostr_json_array_foreach_root(tags_raw, find_etag_iter_cb, &ctx);
+
+  free(tags_raw);
+  free(ctx.bolt11);  /* Not needed for this function */
+
+  return ctx.target_event_id;
 }
 
 /* Parse NIP-10 tags for threading (best-effort; used on refresh paths that have full event JSON).
@@ -1337,25 +1400,11 @@ static void on_sub_reactions_batch(uint64_t subid, const uint64_t *note_keys, gu
       g_free(filter);
 
       if (qrc == 0 && arr && n > 0 && arr[0]) {
-        /* Parse JSON to find e-tag */
-        json_error_t err;
-        json_t *event = json_loads(arr[0], 0, &err);
-        if (event) {
-          json_t *tags = json_object_get(event, "tags");
-          if (tags && json_is_array(tags)) {
-            size_t j;
-            json_t *tag;
-            json_array_foreach(tags, j, tag) {
-              if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-              const char *tag_name = json_string_value(json_array_get(tag, 0));
-              const char *tag_value = json_string_value(json_array_get(tag, 1));
-              if (g_strcmp0(tag_name, "e") == 0 && tag_value && strlen(tag_value) == 64) {
-                target_event_id = g_strdup(tag_value);
-                break;
-              }
-            }
-          }
-          json_decref(event);
+        /* nostrc-3nj: Use NostrJsonInterface to find e-tag */
+        char *etag = extract_first_etag_from_event_json(arr[0]);
+        if (etag) {
+          target_event_id = g_strdup(etag);
+          free(etag);
         }
       }
       storage_ndb_free_results(arr, n);
@@ -1425,41 +1474,13 @@ static void on_sub_zaps_batch(uint64_t subid, const uint64_t *note_keys, guint n
       continue;
     }
 
-    /* Parse JSON to find e-tag (target event) and bolt11 (amount) */
-    json_error_t err;
-    json_t *event = json_loads(arr[0], 0, &err);
-    if (!event) {
-      storage_ndb_free_results(arr, n);
-      continue;
-    }
-
+    /* nostrc-3nj: Use NostrJsonInterface to find e-tag (target event) */
     char *target_event_id = NULL;
-    gint64 amount_msat = 0;
-
-    json_t *tags = json_object_get(event, "tags");
-    if (tags && json_is_array(tags)) {
-      size_t j;
-      json_t *tag;
-      json_array_foreach(tags, j, tag) {
-        if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-        const char *tag_name = json_string_value(json_array_get(tag, 0));
-        const char *tag_value = json_string_value(json_array_get(tag, 1));
-
-        if (g_strcmp0(tag_name, "e") == 0 && tag_value && strlen(tag_value) == 64 && !target_event_id) {
-          target_event_id = g_strdup(tag_value);
-        } else if (g_strcmp0(tag_name, "bolt11") == 0 && tag_value && *tag_value) {
-          /* Parse bolt11 to get amount - using storage_ndb_get_zap_stats for this event
-           * would be cleaner but we already have the bolt11 here */
-          guint zap_count = 0;
-          gint64 total = 0;
-          if (target_event_id && storage_ndb_get_zap_stats(target_event_id, &zap_count, &total)) {
-            amount_msat = total;  /* Use the aggregated total from storage */
-          }
-        }
-      }
+    char *etag = extract_first_etag_from_event_json(arr[0]);
+    if (etag) {
+      target_event_id = g_strdup(etag);
+      free(etag);
     }
-
-    json_decref(event);
     storage_ndb_free_results(arr, n);
 
     if (target_event_id) {

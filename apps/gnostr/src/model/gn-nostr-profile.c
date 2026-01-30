@@ -1,5 +1,5 @@
 #include "gn-nostr-profile.h"
-#include <json-glib/json-glib.h>
+#include <json.h>
 #include <string.h>
 
 struct _GnNostrProfile {
@@ -154,85 +154,86 @@ const char *gn_nostr_profile_get_lud16(GnNostrProfile *self) {
   return self->lud16;
 }
 
-void gn_nostr_profile_update_from_json(GnNostrProfile *self, const char *json) {
+void gn_nostr_profile_update_from_json(GnNostrProfile *self, const char *json_str) {
   g_return_if_fail(GN_IS_NOSTR_PROFILE(self));
-  g_return_if_fail(json != NULL);
-  
-  GError *error = NULL;
-  JsonParser *parser = json_parser_new();
-  
-  if (!json_parser_load_from_data(parser, json, -1, &error)) {
-    g_warning("Failed to parse profile JSON: %s", error->message);
-    g_error_free(error);
-    g_object_unref(parser);
-    return;
-  }
-  
-  JsonNode *root_node = json_parser_get_root(parser);
-  if (!root_node || !JSON_NODE_HOLDS_OBJECT(root_node)) {
-    g_object_unref(parser);
-    return;
-  }
-  
-  JsonObject *root = json_node_get_object(root_node);
+  g_return_if_fail(json_str != NULL);
+
+  /* nostrc-3nj: Use NostrJsonInterface helpers instead of json-glib */
   gboolean changed = FALSE;
-  
-  if (json_object_has_member(root, "display_name")) {
-    const char *str = json_object_get_string_member(root, "display_name");
-    if (g_strcmp0(self->display_name, str) != 0) {
-      g_free(self->display_name);
-      self->display_name = g_strdup(str);
-      changed = TRUE;
+  char *str = NULL;
+
+  if (nostr_json_has_key(json_str, "display_name")) {
+    if (nostr_json_get_string(json_str, "display_name", &str) == 0 && str) {
+      if (g_strcmp0(self->display_name, str) != 0) {
+        g_free(self->display_name);
+        self->display_name = g_strdup(str);
+        changed = TRUE;
+      }
+      free(str);
+      str = NULL;
     }
   }
-  
-  if (json_object_has_member(root, "name")) {
-    const char *str = json_object_get_string_member(root, "name");
-    if (g_strcmp0(self->name, str) != 0) {
-      g_free(self->name);
-      self->name = g_strdup(str);
-      changed = TRUE;
+
+  if (nostr_json_has_key(json_str, "name")) {
+    if (nostr_json_get_string(json_str, "name", &str) == 0 && str) {
+      if (g_strcmp0(self->name, str) != 0) {
+        g_free(self->name);
+        self->name = g_strdup(str);
+        changed = TRUE;
+      }
+      free(str);
+      str = NULL;
     }
   }
-  
-  if (json_object_has_member(root, "about")) {
-    const char *str = json_object_get_string_member(root, "about");
-    if (g_strcmp0(self->about, str) != 0) {
-      g_free(self->about);
-      self->about = g_strdup(str);
-      changed = TRUE;
+
+  if (nostr_json_has_key(json_str, "about")) {
+    if (nostr_json_get_string(json_str, "about", &str) == 0 && str) {
+      if (g_strcmp0(self->about, str) != 0) {
+        g_free(self->about);
+        self->about = g_strdup(str);
+        changed = TRUE;
+      }
+      free(str);
+      str = NULL;
     }
   }
-  
-  if (json_object_has_member(root, "picture")) {
-    const char *str = json_object_get_string_member(root, "picture");
-    if (g_strcmp0(self->picture_url, str) != 0) {
-      g_free(self->picture_url);
-      self->picture_url = g_strdup(str);
-      changed = TRUE;
+
+  if (nostr_json_has_key(json_str, "picture")) {
+    if (nostr_json_get_string(json_str, "picture", &str) == 0 && str) {
+      if (g_strcmp0(self->picture_url, str) != 0) {
+        g_free(self->picture_url);
+        self->picture_url = g_strdup(str);
+        changed = TRUE;
+      }
+      free(str);
+      str = NULL;
     }
   }
-  
-  if (json_object_has_member(root, "nip05")) {
-    const char *str = json_object_get_string_member(root, "nip05");
-    if (g_strcmp0(self->nip05, str) != 0) {
-      g_free(self->nip05);
-      self->nip05 = g_strdup(str);
-      changed = TRUE;
+
+  if (nostr_json_has_key(json_str, "nip05")) {
+    if (nostr_json_get_string(json_str, "nip05", &str) == 0 && str) {
+      if (g_strcmp0(self->nip05, str) != 0) {
+        g_free(self->nip05);
+        self->nip05 = g_strdup(str);
+        changed = TRUE;
+      }
+      free(str);
+      str = NULL;
     }
   }
-  
-  if (json_object_has_member(root, "lud16")) {
-    const char *str = json_object_get_string_member(root, "lud16");
-    if (g_strcmp0(self->lud16, str) != 0) {
-      g_free(self->lud16);
-      self->lud16 = g_strdup(str);
-      changed = TRUE;
+
+  if (nostr_json_has_key(json_str, "lud16")) {
+    if (nostr_json_get_string(json_str, "lud16", &str) == 0 && str) {
+      if (g_strcmp0(self->lud16, str) != 0) {
+        g_free(self->lud16);
+        self->lud16 = g_strdup(str);
+        changed = TRUE;
+      }
+      free(str);
+      str = NULL;
     }
   }
-  
-  g_object_unref(parser);
-  
+
   if (changed) {
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_DISPLAY_NAME]);
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_NAME]);
