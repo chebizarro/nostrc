@@ -12,6 +12,7 @@
 #define GN_TIMELINE_MODEL_H
 
 #include <gio/gio.h>
+#include <gtk/gtk.h>
 #include "gn-timeline-query.h"
 #include "gn-nostr-event-item.h"
 
@@ -183,6 +184,33 @@ void gn_timeline_model_begin_batch(GnTimelineModel *self);
  * accumulated changes since begin_batch() was called.
  */
 void gn_timeline_model_end_batch(GnTimelineModel *self);
+
+/* ============== Frame-Aware Batching (nostrc-0hp) ============== */
+
+/**
+ * gn_timeline_model_set_view_widget:
+ * @self: The model
+ * @widget: (nullable): The view widget to use for frame clock, or NULL to disable
+ *
+ * Set the widget used for frame-synchronized updates. When set, incoming
+ * items are staged and processed at most N items per frame, preventing
+ * UI freezes during heavy traffic.
+ *
+ * The model holds a weak reference to the widget. Call with NULL or
+ * let the widget be destroyed to disable frame-aware batching.
+ */
+void gn_timeline_model_set_view_widget(GnTimelineModel *self, GtkWidget *widget);
+
+/**
+ * gn_timeline_model_get_staged_count:
+ * @self: The model
+ *
+ * Get the number of items currently in the staging buffer awaiting
+ * frame-synchronized insertion.
+ *
+ * Returns: Number of staged items
+ */
+guint gn_timeline_model_get_staged_count(GnTimelineModel *self);
 
 G_END_DECLS
 

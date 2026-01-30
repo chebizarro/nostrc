@@ -25,6 +25,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <jansson.h>
+#include <gtk/gtk.h>
 
 /* Configuration */
 #define MODEL_PAGE_SIZE 50          /* Items per query page */
@@ -33,11 +34,22 @@
 #define UPDATE_DEBOUNCE_MS 50       /* Debounce UI updates during rapid ingestion */
 #define MODEL_MAX_WINDOW 1000       /* Max items in model - oldest evicted beyond this */
 
+/* Phase 1: Frame-aware batching (nostrc-0hp) */
+#define ITEMS_PER_FRAME_DEFAULT 3   /* Start conservative per design review */
+#define FRAME_BUDGET_US 12000       /* 12ms target, leaving 4ms margin for 16.6ms frame */
+
 /* Note entry for internal tracking */
 typedef struct {
   uint64_t note_key;
   gint64 created_at;
 } NoteEntry;
+
+/* Staged entry for frame-aware batching (nostrc-0hp Phase 1) */
+typedef struct {
+  uint64_t note_key;
+  gint64 created_at;
+  gint64 arrival_time_us;  /* Monotonic time when staged, for backpressure */
+} StagedEntry;
 
 struct _GnTimelineModel {
   GObject parent_instance;
@@ -82,6 +94,13 @@ struct _GnTimelineModel {
 
   /* Subscription */
   uint64_t sub_timeline;
+
+  /* Frame-aware batching (nostrc-0hp Phase 1) */
+  GArray *staging_buffer;        /* StagedEntry items awaiting frame-synced insertion */
+  GHashTable *staged_key_set;    /* note_key -> TRUE for O(1) dedup in staging */
+  guint tick_callback_id;        /* gtk_widget_add_tick_callback ID, 0 if inactive */
+  guint items_per_frame;         /* Max items to insert per frame (adaptive) */
+  GtkWidget *tick_widget;        /* Widget providing frame clock (weak ref) */
 };
 
 /* Forward declarations */
@@ -91,6 +110,16 @@ static void gn_timeline_model_schedule_update(GnTimelineModel *self);
 static gboolean on_update_debounce_timeout(gpointer user_data);
 static gboolean on_initial_load_timeout(gpointer user_data);
 static guint enforce_window_size(GnTimelineModel *self, gboolean emit_signal);
+
+/* Frame-aware batching forward declarations (nostrc-0hp Phase 1) */
+static gboolean on_tick_callback(GtkWidget *widget, GdkFrameClock *clock, gpointer user_data);
+static void on_tick_widget_destroyed(gpointer data, GObject *where_the_object_was);
+static void ensure_tick_callback(GnTimelineModel *self);
+static void remove_tick_callback(GnTimelineModel *self);
+static void process_staged_items(GnTimelineModel *self, guint count);
+static gboolean has_note_key_staged(GnTimelineModel *self, uint64_t key);
+static void add_note_key_to_staged_set(GnTimelineModel *self, uint64_t key);
+static void remove_note_key_from_staged_set(GnTimelineModel *self, uint64_t key);
 
 #define INITIAL_LOAD_TIMEOUT_MS 500  /* Time to wait for initial subscription data */
 
@@ -318,6 +347,236 @@ static guint enforce_window_size(GnTimelineModel *self, gboolean emit_signal) {
   return to_evict;
 }
 
+/* ============== Frame-Aware Batching (nostrc-0hp Phase 1) ============== */
+
+/**
+ * has_note_key_staged:
+ * @self: The model
+ * @key: Note key to check
+ *
+ * Check if a note key is already in the staging buffer.
+ * O(1) lookup via hash set.
+ */
+static gboolean has_note_key_staged(GnTimelineModel *self, uint64_t key) {
+  if (!self->staged_key_set) return FALSE;
+  return g_hash_table_contains(self->staged_key_set, &key);
+}
+
+/**
+ * add_note_key_to_staged_set:
+ * @self: The model
+ * @key: Note key to add
+ *
+ * Add a note key to the staging dedup set.
+ */
+static void add_note_key_to_staged_set(GnTimelineModel *self, uint64_t key) {
+  if (!self->staged_key_set) return;
+  uint64_t *key_copy = g_new(uint64_t, 1);
+  *key_copy = key;
+  g_hash_table_add(self->staged_key_set, key_copy);
+}
+
+/**
+ * remove_note_key_from_staged_set:
+ * @self: The model
+ * @key: Note key to remove
+ *
+ * Remove a note key from the staging dedup set.
+ */
+static void remove_note_key_from_staged_set(GnTimelineModel *self, uint64_t key) {
+  if (!self->staged_key_set) return;
+  g_hash_table_remove(self->staged_key_set, &key);
+}
+
+/**
+ * ensure_tick_callback:
+ * @self: The model
+ *
+ * Ensure a tick callback is registered with the associated view widget.
+ * If no widget is associated or widget is not realized, this is a no-op
+ * and items will be processed via the legacy debounce path.
+ */
+static void ensure_tick_callback(GnTimelineModel *self) {
+  /* Already have an active tick callback */
+  if (self->tick_callback_id != 0)
+    return;
+
+  /* No widget associated - fall back to debounce */
+  if (!self->tick_widget)
+    return;
+
+  /* Widget must be realized to get frame clock */
+  if (!gtk_widget_get_realized(self->tick_widget)) {
+    g_debug("[FRAME] Widget not realized, deferring tick callback");
+    return;
+  }
+
+  /*
+   * gtk_widget_add_tick_callback handles all lifecycle concerns:
+   * - Returns 0 if widget is not realized (we checked above)
+   * - Automatically removed when widget is destroyed
+   * - Paused when widget is unmapped
+   */
+  self->tick_callback_id = gtk_widget_add_tick_callback(
+    self->tick_widget,
+    on_tick_callback,
+    g_object_ref(self),
+    g_object_unref
+  );
+
+  if (self->tick_callback_id != 0) {
+    g_debug("[FRAME] Tick callback registered (id=%u)", self->tick_callback_id);
+  }
+}
+
+/**
+ * remove_tick_callback:
+ * @self: The model
+ *
+ * Remove the tick callback if active and clean up widget reference.
+ */
+static void remove_tick_callback(GnTimelineModel *self) {
+  if (self->tick_callback_id != 0 && self->tick_widget) {
+    gtk_widget_remove_tick_callback(self->tick_widget, self->tick_callback_id);
+  }
+  self->tick_callback_id = 0;
+
+  if (self->tick_widget) {
+    g_object_weak_unref(G_OBJECT(self->tick_widget),
+                        on_tick_widget_destroyed, self);
+    self->tick_widget = NULL;
+  }
+}
+
+/**
+ * process_staged_items:
+ * @self: The model
+ * @count: Maximum number of items to process
+ *
+ * Move items from staging buffer to main notes array.
+ * Items are inserted at position 0 (newest first).
+ */
+static void process_staged_items(GnTimelineModel *self, guint count) {
+  if (!self->staging_buffer || self->staging_buffer->len == 0)
+    return;
+
+  guint to_process = MIN(count, self->staging_buffer->len);
+  guint actually_processed = 0;
+
+  /*
+   * Process items from the front of staging buffer (FIFO order).
+   * Each item becomes a NoteEntry and is prepended to notes array.
+   */
+  for (guint i = 0; i < to_process; i++) {
+    StagedEntry *staged = &g_array_index(self->staging_buffer, StagedEntry, i);
+
+    /* Create note entry for main array */
+    NoteEntry entry = {
+      .note_key = staged->note_key,
+      .created_at = staged->created_at
+    };
+
+    /* Insert at position 0 (newest first) */
+    g_array_prepend_val(self->notes, entry);
+
+    /* Move from staged set to main set */
+    remove_note_key_from_staged_set(self, staged->note_key);
+    add_note_key_to_set(self, staged->note_key);
+
+    /* Update timestamps */
+    if (staged->created_at > self->newest_timestamp || self->newest_timestamp == 0) {
+      self->newest_timestamp = staged->created_at;
+    }
+
+    actually_processed++;
+  }
+
+  /* Remove processed items from staging buffer */
+  if (actually_processed > 0) {
+    g_array_remove_range(self->staging_buffer, 0, actually_processed);
+    g_debug("[FRAME] Processed %u staged items, %u remaining",
+            actually_processed, self->staging_buffer->len);
+  }
+}
+
+/**
+ * on_tick_callback:
+ * @widget: The widget providing the frame clock
+ * @clock: The frame clock (unused but available for timing)
+ * @user_data: The GnTimelineModel
+ *
+ * Called once per frame by GTK. Processes a bounded number of staged items
+ * and emits a single batched items_changed signal.
+ *
+ * Returns: G_SOURCE_CONTINUE if more items pending, G_SOURCE_REMOVE otherwise
+ */
+static gboolean on_tick_callback(GtkWidget     *widget,
+                                  GdkFrameClock *clock,
+                                  gpointer       user_data) {
+  (void)widget;
+  (void)clock;
+
+  GnTimelineModel *self = GN_TIMELINE_MODEL(user_data);
+  if (!GN_IS_TIMELINE_MODEL(self)) {
+    return G_SOURCE_REMOVE;
+  }
+
+  /* Track frame budget */
+  gint64 start_us = g_get_monotonic_time();
+
+  guint to_process = MIN(self->staging_buffer->len, self->items_per_frame);
+
+  if (to_process == 0) {
+    /* Nothing to do, remove callback until more items arrive */
+    g_debug("[FRAME] No staged items, removing tick callback");
+    self->tick_callback_id = 0;
+    return G_SOURCE_REMOVE;
+  }
+
+  /* Process the batch */
+  process_staged_items(self, to_process);
+
+  /* Emit single batched signal for all items processed this frame */
+  g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, to_process);
+
+  /* Track unseen items if user is scrolled down */
+  if (!self->user_at_top) {
+    self->unseen_count += to_process;
+    g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->unseen_count);
+  }
+
+  /* Enforce window size after insert */
+  enforce_window_size(self, TRUE);
+
+  /* Check frame budget */
+  gint64 elapsed_us = g_get_monotonic_time() - start_us;
+
+  if (elapsed_us > FRAME_BUDGET_US) {
+    g_warning("[FRAME] Budget exceeded: %ldus (budget: %dus, items: %u)",
+              (long)elapsed_us, FRAME_BUDGET_US, to_process);
+
+    /* Reduce items_per_frame adaptively */
+    if (self->items_per_frame > 1) {
+      self->items_per_frame--;
+      g_debug("[FRAME] Reduced items_per_frame to %u", self->items_per_frame);
+    }
+  } else if (elapsed_us < FRAME_BUDGET_US / 2 && self->items_per_frame < 5) {
+    /* Well under budget, can potentially increase */
+    self->items_per_frame++;
+    g_debug("[FRAME] Increased items_per_frame to %u (elapsed: %ldus)",
+            self->items_per_frame, (long)elapsed_us);
+  }
+
+  /* Continue callback if more items pending */
+  if (self->staging_buffer->len > 0) {
+    return G_SOURCE_CONTINUE;
+  }
+
+  g_debug("[FRAME] All staged items processed, removing tick callback");
+  self->tick_callback_id = 0;
+  return G_SOURCE_REMOVE;
+}
+
 /* ============== GListModel Interface ============== */
 
 static GType gn_timeline_model_get_item_type(GListModel *list) {
@@ -378,6 +637,19 @@ static void gn_timeline_model_list_model_iface_init(GListModelInterface *iface) 
 
 /* ============== Subscription Callback ============== */
 
+/**
+ * staged_entry_compare_newest_first:
+ *
+ * Comparison function for sorting staged entries by created_at descending.
+ */
+static gint staged_entry_compare_newest_first(gconstpointer a, gconstpointer b) {
+  const StagedEntry *ea = (const StagedEntry *)a;
+  const StagedEntry *eb = (const StagedEntry *)b;
+  if (ea->created_at > eb->created_at) return -1;
+  if (ea->created_at < eb->created_at) return 1;
+  return 0;
+}
+
 static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data) {
   (void)subid;
   GnTimelineModel *self = GN_TIMELINE_MODEL(user_data);
@@ -386,19 +658,37 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
   void *txn = NULL;
   if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
 
-  /* Capture count at start of first batch in debounce window */
-  if (!self->needs_refresh) {
+  /*
+   * nostrc-0hp Phase 1: Frame-aware batching
+   *
+   * If we have a tick widget registered, use the staging buffer and let
+   * the tick callback process items frame-by-frame. Otherwise, fall back
+   * to the legacy debounce path for backward compatibility.
+   */
+  gboolean use_frame_batching = (self->tick_widget != NULL &&
+                                  self->staging_buffer != NULL);
+
+  /* Legacy path: Capture count at start of first batch in debounce window */
+  if (!use_frame_batching && !self->needs_refresh) {
     self->pending_update_old_count = self->notes->len;
   }
 
-  /* Clear batch buffer for this batch */
-  g_array_set_size(self->batch_buffer, 0);
+  /* Legacy path: Clear batch buffer for this batch */
+  if (!use_frame_batching) {
+    g_array_set_size(self->batch_buffer, 0);
+  }
+
+  guint staged_count = 0;
+  gint64 arrival_time_us = g_get_monotonic_time();
 
   for (guint i = 0; i < n_keys; i++) {
     uint64_t note_key = note_keys[i];
 
-    /* Skip if already have this note */
+    /* Skip if already have this note in main array */
     if (has_note_key(self, note_key)) continue;
+
+    /* Skip if already staged (frame-aware path only) */
+    if (use_frame_batching && has_note_key_staged(self, note_key)) continue;
 
     /* Get note from NostrDB */
     storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
@@ -432,46 +722,79 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
     }
 
     gint64 created_at = storage_ndb_note_created_at(note);
-    NoteEntry entry = { .note_key = note_key, .created_at = created_at };
 
-    /* Add to batch buffer - we'll insert at position 0 after sorting */
-    g_array_append_val(self->batch_buffer, entry);
-    add_note_key_to_set(self, note_key);
+    if (use_frame_batching) {
+      /*
+       * Frame-aware path: Stage the item for tick callback processing.
+       * NO items_changed signal is emitted here - that happens in on_tick_callback().
+       */
+      StagedEntry staged = {
+        .note_key = note_key,
+        .created_at = created_at,
+        .arrival_time_us = arrival_time_us
+      };
+      g_array_append_val(self->staging_buffer, staged);
+      add_note_key_to_staged_set(self, note_key);
+      staged_count++;
+    } else {
+      /* Legacy path: Add to batch buffer for debounced insert */
+      NoteEntry entry = { .note_key = note_key, .created_at = created_at };
+      g_array_append_val(self->batch_buffer, entry);
+      add_note_key_to_set(self, note_key);
 
-    /* Update timestamps */
-    if (created_at > self->newest_timestamp || self->newest_timestamp == 0) {
-      self->newest_timestamp = created_at;
-    }
-    if (created_at < self->oldest_timestamp || self->oldest_timestamp == 0) {
-      self->oldest_timestamp = created_at;
+      /* Update timestamps immediately for legacy path */
+      if (created_at > self->newest_timestamp || self->newest_timestamp == 0) {
+        self->newest_timestamp = created_at;
+      }
+      if (created_at < self->oldest_timestamp || self->oldest_timestamp == 0) {
+        self->oldest_timestamp = created_at;
+      }
     }
   }
 
   storage_ndb_end_query(txn);
 
-  guint batch_count = self->batch_buffer->len;
-  if (batch_count > 0) {
-    /* Sort batch by created_at descending (newest first) */
-    g_array_sort(self->batch_buffer, note_entry_compare_newest_first);
+  if (use_frame_batching) {
+    /*
+     * Frame-aware path: Sort staging buffer and schedule tick callback.
+     * The tick callback will emit items_changed signals, not us.
+     */
+    if (staged_count > 0) {
+      /* Sort by created_at descending so newest are processed first */
+      g_array_sort(self->staging_buffer, staged_entry_compare_newest_first);
 
-    /* Insert sorted batch at position 0 */
-    g_array_prepend_vals(self->notes, self->batch_buffer->data, batch_count);
+      g_debug("[FRAME] Staged %u items (total pending: %u)",
+              staged_count, self->staging_buffer->len);
 
-    /* Track batch for debounced signal emission */
-    self->batch_insert_count += batch_count;
-
-    /* If user is not at top, these are "unseen" items */
-    if (!self->user_at_top) {
-      self->unseen_count += batch_count;
+      /* Ensure tick callback is running */
+      ensure_tick_callback(self);
     }
+  } else {
+    /* Legacy debounce path */
+    guint batch_count = self->batch_buffer->len;
+    if (batch_count > 0) {
+      /* Sort batch by created_at descending (newest first) */
+      g_array_sort(self->batch_buffer, note_entry_compare_newest_first);
 
-    /* Schedule debounced UI update */
-    self->needs_refresh = TRUE;
-    gn_timeline_model_schedule_update(self);
+      /* Insert sorted batch at position 0 */
+      g_array_prepend_vals(self->notes, self->batch_buffer->data, batch_count);
 
-    /* Emit pending signal for toast if user is scrolled down */
-    if (!self->user_at_top && self->unseen_count > 0) {
-      g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->unseen_count);
+      /* Track batch for debounced signal emission */
+      self->batch_insert_count += batch_count;
+
+      /* If user is not at top, these are "unseen" items */
+      if (!self->user_at_top) {
+        self->unseen_count += batch_count;
+      }
+
+      /* Schedule debounced UI update */
+      self->needs_refresh = TRUE;
+      gn_timeline_model_schedule_update(self);
+
+      /* Emit pending signal for toast if user is scrolled down */
+      if (!self->user_at_top && self->unseen_count > 0) {
+        g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->unseen_count);
+      }
     }
   }
 }
@@ -515,7 +838,9 @@ void gn_timeline_model_refresh(GnTimelineModel *self) {
   /* Clear everything */
   g_array_set_size(self->notes, 0);
   g_array_set_size(self->batch_buffer, 0);
+  g_array_set_size(self->staging_buffer, 0);
   g_hash_table_remove_all(self->note_key_set);
+  g_hash_table_remove_all(self->staged_key_set);
   cache_clear(self);
   self->newest_timestamp = 0;
   self->oldest_timestamp = 0;
@@ -551,7 +876,9 @@ void gn_timeline_model_clear(GnTimelineModel *self) {
   guint old_count = self->notes->len;
   g_array_set_size(self->notes, 0);
   g_array_set_size(self->batch_buffer, 0);
+  g_array_set_size(self->staging_buffer, 0);
   g_hash_table_remove_all(self->note_key_set);
+  g_hash_table_remove_all(self->staged_key_set);
   cache_clear(self);
   self->newest_timestamp = 0;
   self->oldest_timestamp = 0;
@@ -832,6 +1159,62 @@ void gn_timeline_model_end_batch(GnTimelineModel *self) {
   self->needs_refresh = FALSE;
 }
 
+/* ============== Frame-Aware Batching Public API (nostrc-0hp Phase 1) ============== */
+
+/**
+ * Weak notify callback when the tick widget is destroyed.
+ */
+static void on_tick_widget_destroyed(gpointer data, GObject *where_the_object_was) {
+  (void)where_the_object_was;
+  GnTimelineModel *self = GN_TIMELINE_MODEL(data);
+  if (!GN_IS_TIMELINE_MODEL(self)) return;
+
+  g_debug("[FRAME] Tick widget destroyed, disabling frame-aware batching");
+  self->tick_widget = NULL;
+  self->tick_callback_id = 0;
+}
+
+void gn_timeline_model_set_view_widget(GnTimelineModel *self, GtkWidget *widget) {
+  g_return_if_fail(GN_IS_TIMELINE_MODEL(self));
+
+  /* Same widget, nothing to do */
+  if (self->tick_widget == widget) return;
+
+  /* Clean up old widget reference */
+  if (self->tick_widget) {
+    /* Remove tick callback if active */
+    if (self->tick_callback_id != 0) {
+      gtk_widget_remove_tick_callback(self->tick_widget, self->tick_callback_id);
+      self->tick_callback_id = 0;
+    }
+    /* Remove weak reference */
+    g_object_weak_unref(G_OBJECT(self->tick_widget),
+                        on_tick_widget_destroyed, self);
+    self->tick_widget = NULL;
+  }
+
+  /* Set up new widget reference */
+  if (widget) {
+    self->tick_widget = widget;
+    g_object_weak_ref(G_OBJECT(widget), on_tick_widget_destroyed, self);
+
+    g_debug("[FRAME] View widget set, enabling frame-aware batching");
+
+    /* If there are already staged items, start the tick callback */
+    if (self->staging_buffer && self->staging_buffer->len > 0) {
+      ensure_tick_callback(self);
+    }
+  } else {
+    g_debug("[FRAME] View widget cleared, disabling frame-aware batching");
+  }
+}
+
+guint gn_timeline_model_get_staged_count(GnTimelineModel *self) {
+  g_return_val_if_fail(GN_IS_TIMELINE_MODEL(self), 0);
+  if (!self->staging_buffer) return 0;
+  return self->staging_buffer->len;
+}
+
 /* ============== GObject Lifecycle ============== */
 
 static void gn_timeline_model_dispose(GObject *object) {
@@ -848,6 +1231,19 @@ static void gn_timeline_model_dispose(GObject *object) {
     g_source_remove(self->initial_load_timeout_id);
     self->initial_load_timeout_id = 0;
   }
+
+  /* Frame-aware batching cleanup (nostrc-0hp Phase 1) */
+  if (self->tick_widget) {
+    if (self->tick_callback_id != 0) {
+      gtk_widget_remove_tick_callback(self->tick_widget, self->tick_callback_id);
+      self->tick_callback_id = 0;
+    }
+    g_object_weak_unref(G_OBJECT(self->tick_widget),
+                        on_tick_widget_destroyed, self);
+    self->tick_widget = NULL;
+  }
+  g_clear_pointer(&self->staging_buffer, g_array_unref);
+  g_clear_pointer(&self->staged_key_set, g_hash_table_unref);
 
   /* Unsubscribe */
   if (self->sub_timeline > 0) {
@@ -908,6 +1304,13 @@ static void gn_timeline_model_init(GnTimelineModel *self) {
   self->profile_cache_lru = g_queue_new();
 
   self->user_at_top = TRUE;
+
+  /* Frame-aware batching initialization (nostrc-0hp Phase 1) */
+  self->staging_buffer = g_array_new(FALSE, FALSE, sizeof(StagedEntry));
+  self->staged_key_set = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
+  self->items_per_frame = ITEMS_PER_FRAME_DEFAULT;
+  self->tick_callback_id = 0;
+  self->tick_widget = NULL;
 
   /* Start in batch mode to prevent widget recycling storms during initial load */
   self->in_batch_mode = TRUE;

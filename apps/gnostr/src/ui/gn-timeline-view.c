@@ -296,6 +296,9 @@ void gn_timeline_view_set_model(GnTimelineView *self, GnTimelineModel *model) {
 
   /* Disconnect old model */
   if (self->model) {
+    /* nostrc-0hp: Disconnect view widget for frame-aware batching */
+    gn_timeline_model_set_view_widget(self->model, NULL);
+
     if (self->model_items_changed_id > 0) {
       g_signal_handler_disconnect(self->model, self->model_items_changed_id);
       self->model_items_changed_id = 0;
@@ -328,6 +331,13 @@ void gn_timeline_view_set_model(GnTimelineView *self, GnTimelineModel *model) {
 
     /* Sync initial state */
     gn_timeline_model_set_user_at_top(model, self->user_at_top);
+
+    /*
+     * nostrc-0hp Phase 1: Enable frame-aware batching.
+     * Use the list_view as the tick widget since it's the main
+     * widget that will benefit from frame-synchronized updates.
+     */
+    gn_timeline_model_set_view_widget(model, self->list_view);
 
     /* Update empty state */
     guint n_items = g_list_model_get_n_items(G_LIST_MODEL(model));
@@ -414,6 +424,9 @@ static void gn_timeline_view_dispose(GObject *object) {
 
   /* Disconnect signals */
   if (self->model) {
+    /* nostrc-0hp: Disconnect view widget for frame-aware batching */
+    gn_timeline_model_set_view_widget(self->model, NULL);
+
     if (self->model_items_changed_id > 0) {
       g_signal_handler_disconnect(self->model, self->model_items_changed_id);
       self->model_items_changed_id = 0;
