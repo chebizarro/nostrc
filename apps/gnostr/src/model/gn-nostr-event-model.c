@@ -2506,17 +2506,21 @@ guint gn_nostr_event_model_get_pending_count(GnNostrEventModel *self) {
   return self->pending_new_count;
 }
 
-/* nostrc-yi2: Force flush of deferred notes (e.g., when user clicks indicator) */
+/* nostrc-yi2: Force flush of deferred notes (e.g., when user clicks indicator)
+ * This bypasses the rate limiter since it's a user-initiated action. */
 void gn_nostr_event_model_flush_pending(GnNostrEventModel *self) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
 
   if (self->deferred_notes && self->deferred_notes->len > 0) {
-    g_debug("[CALM] Manually flushing %u deferred notes", self->deferred_notes->len);
+    g_debug("[CALM] Manually flushing %u deferred notes (bypassing rate limit)", self->deferred_notes->len);
     /* Cancel any pending debounce */
     if (self->debounce_source_id > 0) {
       g_source_remove(self->debounce_source_id);
       self->debounce_source_id = 0;
     }
+    /* Reset last_update_time to bypass the rate limiter in flush_deferred_notes_cb.
+     * User-initiated flushes should be instant, not rate-limited. */
+    self->last_update_time_ms = 0;
     flush_deferred_notes_cb(self);
   }
 }

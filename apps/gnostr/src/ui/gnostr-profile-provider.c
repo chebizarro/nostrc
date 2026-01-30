@@ -87,7 +87,11 @@ static void lru_evict(void) {
   }
 }
 
-/* Parse profile from JSON */
+/* Parse profile from JSON.
+ * The json_str may be either:
+ * 1. A kind-0 event (full nostr event with content field containing profile JSON)
+ * 2. A raw profile object (display_name, name, picture, etc. at top level)
+ * We detect which format and extract accordingly. */
 static GnostrProfileMeta *meta_from_json(const char *pk, const char *json_str) {
   if (!pk || !json_str) return NULL;
   if (!nostr_json_is_valid(json_str)) return NULL;
@@ -96,8 +100,19 @@ static GnostrProfileMeta *meta_from_json(const char *pk, const char *json_str) {
   GnostrProfileMeta *m = g_new0(GnostrProfileMeta, 1);
   m->pubkey_hex = g_strdup(pk);
 
+  /* Check if this is a kind-0 event by looking for "content" field.
+   * If found, the profile metadata is inside the content field as nested JSON. */
+  const char *profile_json = json_str;
+  char *content_str = NULL;
+  if (nostr_json_get_string(json_str, "content", &content_str) == 0 && content_str && *content_str) {
+    /* This is a kind-0 event - parse the content field */
+    if (nostr_json_is_valid(content_str) && nostr_json_is_object_str(content_str)) {
+      profile_json = content_str;
+    }
+  }
+
   char *tmp = NULL;
-  if (nostr_json_get_string(json_str, "display_name", &tmp) == 0 && tmp && *tmp) {
+  if (nostr_json_get_string(profile_json, "display_name", &tmp) == 0 && tmp && *tmp) {
     m->display_name = g_strdup(tmp);
     free(tmp);
   } else {
@@ -105,7 +120,7 @@ static GnostrProfileMeta *meta_from_json(const char *pk, const char *json_str) {
   }
 
   tmp = NULL;
-  if (nostr_json_get_string(json_str, "name", &tmp) == 0 && tmp && *tmp) {
+  if (nostr_json_get_string(profile_json, "name", &tmp) == 0 && tmp && *tmp) {
     m->name = g_strdup(tmp);
     free(tmp);
   } else {
@@ -113,7 +128,7 @@ static GnostrProfileMeta *meta_from_json(const char *pk, const char *json_str) {
   }
 
   tmp = NULL;
-  if (nostr_json_get_string(json_str, "picture", &tmp) == 0 && tmp && *tmp) {
+  if (nostr_json_get_string(profile_json, "picture", &tmp) == 0 && tmp && *tmp) {
     m->picture = g_strdup(tmp);
     free(tmp);
   } else {
@@ -121,7 +136,7 @@ static GnostrProfileMeta *meta_from_json(const char *pk, const char *json_str) {
   }
 
   tmp = NULL;
-  if (nostr_json_get_string(json_str, "nip05", &tmp) == 0 && tmp && *tmp) {
+  if (nostr_json_get_string(profile_json, "nip05", &tmp) == 0 && tmp && *tmp) {
     m->nip05 = g_strdup(tmp);
     free(tmp);
   } else {
@@ -129,14 +144,20 @@ static GnostrProfileMeta *meta_from_json(const char *pk, const char *json_str) {
   }
 
   tmp = NULL;
-  if (nostr_json_get_string(json_str, "lud16", &tmp) == 0 && tmp && *tmp) {
+  if (nostr_json_get_string(profile_json, "lud16", &tmp) == 0 && tmp && *tmp) {
     m->lud16 = g_strdup(tmp);
     free(tmp);
   } else {
     free(tmp);
   }
 
-  m->created_at = 0;
+  /* Extract created_at from kind-0 event if available */
+  int64_t created_at = 0;
+  if (nostr_json_get_int64(json_str, "created_at", &created_at) == 0) {
+    m->created_at = created_at;
+  }
+
+  free(content_str);
   return m;
 }
 

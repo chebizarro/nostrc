@@ -140,7 +140,7 @@ static void gn_timeline_model_list_model_iface_init(GListModelInterface *iface);
 static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
 static void gn_timeline_model_schedule_update(GnTimelineModel *self);
 static gboolean on_update_debounce_timeout(gpointer user_data);
-static gboolean on_initial_load_timeout(gpointer user_data);
+static gboolean on_end_batch_mode_idle(gpointer user_data);
 static guint enforce_window_size(GnTimelineModel *self, gboolean emit_signal);
 
 /* Frame-aware batching forward declarations (nostrc-0hp Phase 1) */
@@ -173,7 +173,8 @@ static void mark_key_revealing(GnTimelineModel *self, uint64_t key);
 static gboolean is_key_revealing(GnTimelineModel *self, uint64_t key);
 static gboolean on_clear_revealing_key(gpointer user_data);
 
-#define INITIAL_LOAD_TIMEOUT_MS 500  /* Time to wait for initial subscription data */
+/* REMOVED: INITIAL_LOAD_TIMEOUT_MS - Batch mode is now ended reactively via idle callback
+ * when the first notes arrive, not via a fixed timeout. See on_sub_timeline_batch. */
 
 G_DEFINE_TYPE_WITH_CODE(GnTimelineModel, gn_timeline_model, G_TYPE_OBJECT,
                         G_IMPLEMENT_INTERFACE(G_TYPE_LIST_MODEL, gn_timeline_model_list_model_iface_init))
@@ -311,6 +312,26 @@ static gboolean on_update_debounce_timeout(gpointer user_data) {
   return G_SOURCE_REMOVE;
 }
 
+/**
+ * on_end_batch_mode_idle:
+ * Idle callback that ends batch mode after first notes arrive.
+ * Using an idle callback ensures GTK has processed any pending events
+ * before we emit the items_changed signal.
+ */
+static gboolean on_end_batch_mode_idle(gpointer user_data) {
+  GnTimelineModel *self = GN_TIMELINE_MODEL(user_data);
+  if (!GN_IS_TIMELINE_MODEL(self)) return G_SOURCE_REMOVE;
+
+  if (self->in_batch_mode) {
+    g_debug("[TIMELINE] Ending batch mode via idle callback (reactive, no timeout)");
+    gn_timeline_model_end_batch(self);
+  }
+
+  /* Clear the timeout ID since this was a one-shot callback */
+  self->initial_load_timeout_id = 0;
+  return G_SOURCE_REMOVE;
+}
+
 static void gn_timeline_model_schedule_update(GnTimelineModel *self) {
   g_return_if_fail(GN_IS_TIMELINE_MODEL(self));
 
@@ -329,19 +350,9 @@ static void gn_timeline_model_schedule_update(GnTimelineModel *self) {
   );
 }
 
-static gboolean on_initial_load_timeout(gpointer user_data) {
-  GnTimelineModel *self = GN_TIMELINE_MODEL(user_data);
-  if (!GN_IS_TIMELINE_MODEL(self)) return G_SOURCE_REMOVE;
-
-  self->initial_load_timeout_id = 0;
-
-  if (self->in_batch_mode) {
-    g_debug("[TIMELINE] Initial load complete, ending batch mode");
-    gn_timeline_model_end_batch(self);
-  }
-
-  return G_SOURCE_REMOVE;
-}
+/* REMOVED: on_initial_load_timeout - replaced by on_end_batch_mode_idle.
+ * Batch mode is now ended reactively when first notes arrive via an idle
+ * callback, not via a fixed timeout. This eliminates artificial delays. */
 
 /* ============== Note Helpers ============== */
 
@@ -1382,6 +1393,26 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
       }
     }
   }
+
+  /*
+   * End batch mode reactively when first notes arrive.
+   * We use an idle callback (not a timeout!) to ensure:
+   * 1. All notes from this batch are processed first
+   * 2. GTK's main loop can catch up before we emit items_changed
+   *
+   * This replaces the old INITIAL_LOAD_TIMEOUT_MS approach which was:
+   * - Wasteful (always waited full timeout even if notes arrived immediately)
+   * - Unreliable (timeout could fire before notes arrived on slow networks)
+   */
+  if (self->in_batch_mode && self->notes->len > 0 && self->initial_load_timeout_id == 0) {
+    g_debug("[TIMELINE] First notes received, scheduling batch mode end via idle");
+    self->initial_load_timeout_id = g_idle_add_full(
+      G_PRIORITY_LOW,  /* Lower priority so other pending operations complete first */
+      on_end_batch_mode_idle,
+      self,
+      NULL
+    );
+  }
 }
 
 /* ============== Public API ============== */
@@ -2147,7 +2178,9 @@ static void gn_timeline_model_init(GnTimelineModel *self) {
   self->reveal_complete_data = NULL;
   self->revealing_keys = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
 
-  /* Start in batch mode to prevent widget recycling storms during initial load */
+  /* Start in batch mode to prevent widget recycling storms during initial load.
+   * Batch mode will be ended after the first batch of notes is processed,
+   * using an idle callback (not a fixed timeout). */
   self->in_batch_mode = TRUE;
   self->pending_update_old_count = 0;
 
@@ -2155,10 +2188,6 @@ static void gn_timeline_model_init(GnTimelineModel *self) {
   const char *filter = "{\"kinds\":[1,6]}";
   self->sub_timeline = gn_ndb_subscribe(filter, on_sub_timeline_batch, self, NULL);
 
-  /* Schedule end of batch mode after initial load window */
-  self->initial_load_timeout_id = g_timeout_add(
-    INITIAL_LOAD_TIMEOUT_MS,
-    on_initial_load_timeout,
-    self
-  );
+  /* NOTE: No timeout! Batch mode is ended signal-driven when first notes arrive.
+   * See on_sub_timeline_batch for the idle callback that ends batch mode. */
 }
