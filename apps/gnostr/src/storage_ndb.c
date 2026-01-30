@@ -925,6 +925,15 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
     found_reply = g_strdup(found_root);
   }
 
+  /* NIP-10: When only "reply" marker exists (no "root" marker), use the reply
+   * target as the root. This happens when a client sets "reply" but not "root"
+   * (e.g., replying to what the client considers the root, or incomplete tagging).
+   * The reply target is always a valid ancestor, so use it as a fallback root. */
+  if (!found_root && found_reply) {
+    found_root = g_strdup(found_reply);
+    g_debug("[NIP10] No root marker, using reply target as root: %.16s...", found_root);
+  }
+
   g_debug("[NIP10] Final result - root: %s, reply: %s",
           found_root ? found_root : "(null)",
           found_reply ? found_reply : "(null)");

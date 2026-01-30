@@ -4610,12 +4610,13 @@ static gboolean scroll_to_top_idle(gpointer user_data) {
 
   GtkWidget *timeline = self->session_view ? gnostr_session_view_get_timeline(self->session_view) : NULL;
   if (timeline && GNOSTR_IS_TIMELINE_VIEW(timeline)) {
-    GtkWidget *scroller = gnostr_timeline_view_get_scrolled_window(GNOSTR_TIMELINE_VIEW(timeline));
-    if (scroller && GTK_IS_SCROLLED_WINDOW(scroller)) {
-      GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
-      if (vadj && GTK_IS_ADJUSTMENT(vadj)) {
-        gtk_adjustment_set_value(vadj, gtk_adjustment_get_lower(vadj));
-      }
+    /* Get the internal GtkListView from the timeline and use gtk_list_view_scroll_to
+     * which is the GTK4-recommended way to scroll to a specific item.
+     * Using adjustment directly doesn't work reliably with ListView because
+     * the adjustment bounds may not be updated yet after model changes. */
+    GtkWidget *list_view = gnostr_timeline_view_get_list_view(GNOSTR_TIMELINE_VIEW(timeline));
+    if (list_view && GTK_IS_LIST_VIEW(list_view)) {
+      gtk_list_view_scroll_to(GTK_LIST_VIEW(list_view), 0, GTK_LIST_SCROLL_FOCUS, NULL);
     }
   }
 

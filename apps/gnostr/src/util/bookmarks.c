@@ -11,7 +11,9 @@
 #include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
 #include <glib.h>
-#include <jansson.h>
+#include "json.h"
+#include "nostr-event.h"
+#include "nostr-tag.h"
 #include <string.h>
 #include <time.h>
 
@@ -114,30 +116,29 @@ gboolean gnostr_bookmarks_load_from_json(GnostrBookmarks *self,
 
     g_mutex_lock(&self->lock);
 
-    json_error_t error;
-    json_t *root = json_loads(event_json, 0, &error);
-    if (!root) {
-        g_warning("bookmarks: failed to parse event JSON: %s", error.text);
+    /* Parse event using NostrEvent API */
+    NostrEvent *event = nostr_event_new();
+    if (nostr_event_deserialize(event, event_json) != 0) {
+        g_warning("bookmarks: failed to parse event JSON");
+        nostr_event_free(event);
         g_mutex_unlock(&self->lock);
         return FALSE;
     }
 
     /* Verify kind */
-    json_t *kind_val = json_object_get(root, "kind");
-    if (!kind_val || json_integer_value(kind_val) != BOOKMARK_LIST_KIND) {
+    if (nostr_event_get_kind(event) != BOOKMARK_LIST_KIND) {
         g_warning("bookmarks: not a kind 10003 event");
-        json_decref(root);
+        nostr_event_free(event);
         g_mutex_unlock(&self->lock);
         return FALSE;
     }
 
     /* Check if this is newer than what we have */
-    json_t *created_at = json_object_get(root, "created_at");
-    gint64 event_time = created_at ? json_integer_value(created_at) : 0;
+    gint64 event_time = nostr_event_get_created_at(event);
     if (event_time <= self->last_event_time) {
         g_debug("bookmarks: ignoring older event (have=%lld, got=%lld)",
                 (long long)self->last_event_time, (long long)event_time);
-        json_decref(root);
+        nostr_event_free(event);
         g_mutex_unlock(&self->lock);
         return TRUE; /* Not an error, just older data */
     }
@@ -146,24 +147,24 @@ gboolean gnostr_bookmarks_load_from_json(GnostrBookmarks *self,
     bookmarks_clear(self);
     self->last_event_time = event_time;
 
-    /* Parse tags */
-    json_t *tags = json_object_get(root, "tags");
-    if (json_is_array(tags)) {
-        size_t idx;
-        json_t *tag;
-        json_array_foreach(tags, idx, tag) {
-            if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+    /* Parse tags using NostrTags API */
+    NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
+    if (tags) {
+        size_t tag_count = nostr_tags_size(tags);
+        for (size_t idx = 0; idx < tag_count; idx++) {
+            NostrTag *tag = nostr_tags_get(tags, idx);
+            if (!tag || nostr_tag_size(tag) < 2) continue;
 
-            const char *tag_name = json_string_value(json_array_get(tag, 0));
-            const char *value = json_string_value(json_array_get(tag, 1));
+            const char *tag_name = nostr_tag_get_key(tag);
+            const char *value = nostr_tag_get_value(tag);
             if (!tag_name || !value) continue;
 
             /* NIP-51 bookmark list uses "e" tags for event bookmarks */
             if (strcmp(tag_name, "e") == 0) {
                 /* Optional relay hint in third position */
                 const char *relay_hint = NULL;
-                if (json_array_size(tag) >= 3) {
-                    relay_hint = json_string_value(json_array_get(tag, 2));
+                if (nostr_tag_size(tag) >= 3) {
+                    relay_hint = nostr_tag_get(tag, 2);
                 }
                 BookmarkEntry *entry = bookmark_entry_new(value, relay_hint, FALSE);
                 g_hash_table_insert(self->bookmarks, entry->event_id, entry);
@@ -172,8 +173,8 @@ gboolean gnostr_bookmarks_load_from_json(GnostrBookmarks *self,
             /* Also support "a" tags for addressable events (articles, etc.) */
             else if (strcmp(tag_name, "a") == 0) {
                 const char *relay_hint = NULL;
-                if (json_array_size(tag) >= 3) {
-                    relay_hint = json_string_value(json_array_get(tag, 2));
+                if (nostr_tag_size(tag) >= 3) {
+                    relay_hint = nostr_tag_get(tag, 2);
                 }
                 BookmarkEntry *entry = bookmark_entry_new(value, relay_hint, FALSE);
                 g_hash_table_insert(self->bookmarks, entry->event_id, entry);
@@ -185,7 +186,7 @@ gboolean gnostr_bookmarks_load_from_json(GnostrBookmarks *self,
     /* TODO: Parse encrypted content for private entries (requires NIP-44) */
     /* For now, we only handle public entries in tags */
 
-    json_decref(root);
+    nostr_event_free(event);
     g_mutex_unlock(&self->lock);
 
     g_message("bookmarks: loaded %u bookmarks",
@@ -218,20 +219,21 @@ static void bookmarks_merge_from_json_unlocked(GnostrBookmarks *self,
                                                 gint64 *out_created_at) {
     if (!self || !event_json) return;
 
-    json_error_t error;
-    json_t *root = json_loads(event_json, 0, &error);
-    if (!root) return;
+    /* Parse event using NostrEvent API */
+    NostrEvent *event = nostr_event_new();
+    if (nostr_event_deserialize(event, event_json) != 0) {
+        nostr_event_free(event);
+        return;
+    }
 
     /* Verify kind */
-    json_t *kind_val = json_object_get(root, "kind");
-    if (!kind_val || json_integer_value(kind_val) != BOOKMARK_LIST_KIND) {
-        json_decref(root);
+    if (nostr_event_get_kind(event) != BOOKMARK_LIST_KIND) {
+        nostr_event_free(event);
         return;
     }
 
     /* Extract created_at */
-    json_t *created_at = json_object_get(root, "created_at");
-    gint64 event_time = created_at ? json_integer_value(created_at) : 0;
+    gint64 event_time = nostr_event_get_created_at(event);
     if (out_created_at) *out_created_at = event_time;
 
     /* Parse tags and merge - remote event replaces local if newer */
@@ -240,21 +242,21 @@ static void bookmarks_merge_from_json_unlocked(GnostrBookmarks *self,
         g_hash_table_remove_all(self->bookmarks);
         self->last_event_time = event_time;
 
-        json_t *tags = json_object_get(root, "tags");
-        if (json_is_array(tags)) {
-            size_t idx;
-            json_t *tag;
-            json_array_foreach(tags, idx, tag) {
-                if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+        NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
+        if (tags) {
+            size_t tag_count = nostr_tags_size(tags);
+            for (size_t idx = 0; idx < tag_count; idx++) {
+                NostrTag *tag = nostr_tags_get(tags, idx);
+                if (!tag || nostr_tag_size(tag) < 2) continue;
 
-                const char *tag_name = json_string_value(json_array_get(tag, 0));
-                const char *value = json_string_value(json_array_get(tag, 1));
+                const char *tag_name = nostr_tag_get_key(tag);
+                const char *value = nostr_tag_get_value(tag);
                 if (!tag_name || !value) continue;
 
                 if (strcmp(tag_name, "e") == 0 || strcmp(tag_name, "a") == 0) {
                     const char *relay_hint = NULL;
-                    if (json_array_size(tag) >= 3) {
-                        relay_hint = json_string_value(json_array_get(tag, 2));
+                    if (nostr_tag_size(tag) >= 3) {
+                        relay_hint = nostr_tag_get(tag, 2);
                     }
                     BookmarkEntry *entry = bookmark_entry_new(value, relay_hint, FALSE);
                     g_hash_table_insert(self->bookmarks, entry->event_id, entry);
@@ -269,7 +271,7 @@ static void bookmarks_merge_from_json_unlocked(GnostrBookmarks *self,
         g_debug("bookmarks: local data is newer, keeping local");
     }
 
-    json_decref(root);
+    nostr_event_free(event);
 }
 
 /* Callback when relay query completes */
@@ -673,39 +675,47 @@ void gnostr_bookmarks_save_async(GnostrBookmarks *self,
 
     g_mutex_lock(&self->lock);
 
-    /* Build the tags array */
-    json_t *tags = json_array();
-
-    /* Add bookmarked events as "e" tags */
+    /* Count public bookmarks for tag array */
+    guint public_count = 0;
     GHashTableIter iter;
     gpointer key, value;
     g_hash_table_iter_init(&iter, self->bookmarks);
     while (g_hash_table_iter_next(&iter, &key, &value)) {
         BookmarkEntry *entry = (BookmarkEntry *)value;
+        if (!entry->is_private) public_count++;
+    }
+
+    /* Build the tags array using NostrTags API */
+    NostrTags *tags = nostr_tags_new(public_count);
+    size_t tag_idx = 0;
+
+    /* Add bookmarked events as "e" tags */
+    g_hash_table_iter_init(&iter, self->bookmarks);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        BookmarkEntry *entry = (BookmarkEntry *)value;
         if (!entry->is_private) {
-            json_t *tag = json_array();
-            json_array_append_new(tag, json_string("e"));
-            json_array_append_new(tag, json_string(entry->event_id));
+            NostrTag *tag;
             /* Add relay hint if available */
             if (entry->relay_hint && *entry->relay_hint) {
-                json_array_append_new(tag, json_string(entry->relay_hint));
+                tag = nostr_tag_new("e", entry->event_id, entry->relay_hint, NULL);
+            } else {
+                tag = nostr_tag_new("e", entry->event_id, NULL);
             }
-            json_array_append(tags, tag);
-            json_decref(tag);
+            nostr_tags_set(tags, tag_idx++, tag);
         }
     }
 
     g_mutex_unlock(&self->lock);
 
-    /* Build unsigned event */
-    json_t *event_obj = json_object();
-    json_object_set_new(event_obj, "kind", json_integer(BOOKMARK_LIST_KIND));
-    json_object_set_new(event_obj, "created_at", json_integer((json_int_t)time(NULL)));
-    json_object_set_new(event_obj, "content", json_string("")); /* TODO: Add encrypted private entries */
-    json_object_set_new(event_obj, "tags", tags);
+    /* Build unsigned event using NostrEvent API */
+    NostrEvent *event = nostr_event_new();
+    nostr_event_set_kind(event, BOOKMARK_LIST_KIND);
+    nostr_event_set_created_at(event, (int64_t)time(NULL));
+    nostr_event_set_content(event, ""); /* TODO: Add encrypted private entries */
+    nostr_event_set_tags(event, tags);
 
-    char *event_json = json_dumps(event_obj, JSON_COMPACT);
-    json_decref(event_obj);
+    char *event_json = nostr_event_serialize(event);
+    nostr_event_free(event);
 
     if (!event_json) {
         if (callback) callback(self, FALSE, "Failed to build event JSON", user_data);

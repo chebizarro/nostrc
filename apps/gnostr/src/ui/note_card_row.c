@@ -20,8 +20,10 @@
 #include "../util/nip03_opentimestamps.h"
 #include "../util/nip73_external_ids.h"
 #include "../util/markdown_pango.h"
+#include "../util/nip21_uri.h"
 #include "../storage_ndb.h"
 #include <nostr/nip19/nip19.h>
+#include "gnostr-profile-provider.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -297,6 +299,7 @@ enum {
   SIGNAL_COMMENT_REQUESTED,  /* NIP-22: comment on note */
   SIGNAL_LABEL_NOTE_REQUESTED,  /* NIP-32: add label to note */
   SIGNAL_HIGHLIGHT_REQUESTED,  /* NIP-84: highlight text selection */
+  SIGNAL_DM_REQUESTED,  /* NIP-04/17: open DM conversation with user */
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -542,6 +545,21 @@ static gboolean on_content_activate_link(GtkLabel *label, const char *uri, gpoin
   /* nostr: URIs and bech32 entities */
   if (g_str_has_prefix(uri, "nostr:") || g_str_has_prefix(uri, "note1") || g_str_has_prefix(uri, "npub1") ||
       g_str_has_prefix(uri, "nevent1") || g_str_has_prefix(uri, "nprofile1") || g_str_has_prefix(uri, "naddr1")) {
+    /* Check if this is an npub or nprofile - emit dm-requested signal */
+    gchar *nostr_uri = g_str_has_prefix(uri, "nostr:") ? g_strdup(uri) : g_strdup_printf("nostr:%s", uri);
+    GnostrUri *parsed = gnostr_uri_parse(nostr_uri);
+    g_free(nostr_uri);
+    if (parsed) {
+      if ((parsed->type == GNOSTR_URI_TYPE_NPUB || parsed->type == GNOSTR_URI_TYPE_NPROFILE) &&
+          parsed->pubkey_hex && *parsed->pubkey_hex) {
+        /* Emit dm-requested signal to open DM conversation */
+        g_signal_emit(self, signals[SIGNAL_DM_REQUESTED], 0, parsed->pubkey_hex);
+        gnostr_uri_free(parsed);
+        return TRUE;
+      }
+      gnostr_uri_free(parsed);
+    }
+    /* Fall back to open-nostr-target for other entity types (note, nevent, naddr) */
     g_signal_emit(self, signals[SIGNAL_OPEN_NOSTR_TARGET], 0, uri);
     return TRUE;
   }
@@ -1745,6 +1763,10 @@ static void gnostr_note_card_row_class_init(GnostrNoteCardRowClass *klass) {
   signals[SIGNAL_HIGHLIGHT_REQUESTED] = g_signal_new("highlight-requested",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+  /* NIP-04/17 DM request: open DM conversation with pubkey_hex */
+  signals[SIGNAL_DM_REQUESTED] = g_signal_new("dm-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 1, G_TYPE_STRING);
 }
 
 static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
@@ -2640,7 +2662,7 @@ static gchar *extract_subject_from_tags_json(const char *tags_json) {
 
 /* NIP-27: Format nostr mention for display (truncated bech32 with prefix)
  * Returns a newly allocated string. Caller must free.
- * Profile mentions: @npub1abc...xyz (first 8 + last 4 chars of bech32)
+ * Profile mentions: @{display_name} or @{name} or @{nip05} or truncated bech32
  * Event mentions: 📝note1abc...xyz (first 9 + last 4 chars of bech32)
  */
 static gchar *format_nostr_mention_display(const char *t) {
@@ -2653,7 +2675,54 @@ static gchar *format_nostr_mention_display(const char *t) {
   size_t len = strlen(entity);
 
   if (token_is_nostr_profile(t)) {
-    /* Profile mention: @npub1abc...xyz or @nprofile1abc...xyz */
+    /* Profile mention: try to resolve to display name */
+    char *pubkey_hex = NULL;
+
+    if (g_str_has_prefix(entity, "npub1")) {
+      /* Decode npub to get pubkey bytes */
+      uint8_t pubkey[32];
+      if (nostr_nip19_decode_npub(entity, pubkey) == 0) {
+        /* Convert bytes to hex string */
+        pubkey_hex = g_malloc(65);
+        for (int i = 0; i < 32; i++) {
+          snprintf(pubkey_hex + i*2, 3, "%02x", pubkey[i]);
+        }
+      }
+    } else if (g_str_has_prefix(entity, "nprofile1")) {
+      /* Decode nprofile to get pubkey hex directly */
+      NostrProfilePointer *pp = NULL;
+      if (nostr_nip19_decode_nprofile(entity, &pp) == 0 && pp && pp->public_key) {
+        pubkey_hex = g_strdup(pp->public_key);
+        nostr_profile_pointer_free(pp);
+      }
+    }
+
+    /* Look up profile if we have a pubkey */
+    if (pubkey_hex) {
+      GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey_hex);
+      if (meta) {
+        const char *name = NULL;
+        /* Priority: display_name > name > nip05 */
+        if (meta->display_name && meta->display_name[0]) {
+          name = meta->display_name;
+        } else if (meta->name && meta->name[0]) {
+          name = meta->name;
+        } else if (meta->nip05 && meta->nip05[0]) {
+          name = meta->nip05;
+        }
+
+        if (name) {
+          gchar *result = g_strdup_printf("@%s", name);
+          gnostr_profile_meta_free(meta);
+          g_free(pubkey_hex);
+          return result;
+        }
+        gnostr_profile_meta_free(meta);
+      }
+      g_free(pubkey_hex);
+    }
+
+    /* Fallback: truncated bech32 */
     if (len > 16) {
       /* Truncate: show first 8 chars + ... + last 4 chars */
       return g_strdup_printf("@%.*s…%s", 8, entity, entity + len - 4);

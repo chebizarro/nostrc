@@ -41,6 +41,9 @@ GListModel *gnostr_timeline_item_get_children(TimelineItem *item);
 /* Get the internal scrolled window for scroll position monitoring */
 GtkWidget *gnostr_timeline_view_get_scrolled_window(GnostrTimelineView *self);
 
+/* Get the internal GtkListView for direct scroll operations */
+GtkWidget *gnostr_timeline_view_get_list_view(GnostrTimelineView *self);
+
 /* Timeline tabs support (Phase 3) */
 #include "gn-timeline-tabs.h"
 

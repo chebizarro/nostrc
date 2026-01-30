@@ -6,7 +6,7 @@
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
-#include <jansson.h>
+#include "json.h"
 
 /* Cache configuration */
 #define NIP05_CACHE_TTL_SECONDS (60 * 60)  /* 1 hour cache validity */
@@ -317,39 +317,30 @@ static void on_nip05_http_done(GObject *source, GAsyncResult *res, gpointer user
     goto done;
   }
 
-  /* Parse JSON response */
+  /* Parse JSON response - convert bytes to null-terminated string */
   gsize len = 0;
   const char *data = g_bytes_get_data(bytes, &len);
-
-  json_error_t json_err;
-  json_t *root = json_loadb(data, len, 0, &json_err);
+  char *json_str = g_strndup(data, len);
   g_bytes_unref(bytes);
 
-  if (!root) {
-    g_debug("nip05: JSON parse error for %s: %s", ctx->identifier, json_err.text);
+  if (!nostr_json_is_valid(json_str)) {
+    g_debug("nip05: JSON parse error for %s", ctx->identifier);
+    g_free(json_str);
     goto done;
   }
 
-  /* Check for names object */
-  json_t *names = json_object_get(root, "names");
-  if (!names || !json_is_object(names)) {
-    g_debug("nip05: no 'names' object for %s", ctx->identifier);
-    json_decref(root);
-    goto done;
-  }
-
-  /* Look up the local-part */
-  json_t *pubkey_json = json_object_get(names, ctx->local_part);
-  if (!pubkey_json || !json_is_string(pubkey_json)) {
+  /* Look up the local-part in names object using facade */
+  char *found_pubkey = NULL;
+  if (nostr_json_get_string_at(json_str, "names", ctx->local_part, &found_pubkey) != 0 || !found_pubkey) {
     g_debug("nip05: no entry for '%s' in names for %s", ctx->local_part, ctx->identifier);
-    json_decref(root);
+    g_free(json_str);
     goto done;
   }
 
-  const char *found_pubkey = json_string_value(pubkey_json);
-  if (!found_pubkey || strlen(found_pubkey) != 64) {
+  if (strlen(found_pubkey) != 64) {
     g_debug("nip05: invalid pubkey format for %s", ctx->identifier);
-    json_decref(root);
+    free(found_pubkey);
+    g_free(json_str);
     goto done;
   }
 
@@ -357,7 +348,8 @@ static void on_nip05_http_done(GObject *source, GAsyncResult *res, gpointer user
   if (g_ascii_strcasecmp(found_pubkey, ctx->expected_pubkey) != 0) {
     g_debug("nip05: pubkey mismatch for %s (expected %s, got %s)",
             ctx->identifier, ctx->expected_pubkey, found_pubkey);
-    json_decref(root);
+    free(found_pubkey);
+    g_free(json_str);
     goto done;
   }
 
@@ -366,34 +358,30 @@ static void on_nip05_http_done(GObject *source, GAsyncResult *res, gpointer user
   result->pubkey_hex = g_strdup(found_pubkey);
   g_debug("nip05: verified %s -> %s", ctx->identifier, found_pubkey);
 
-  /* Optionally extract relays */
-  json_t *relays_obj = json_object_get(root, "relays");
-  if (relays_obj && json_is_object(relays_obj)) {
-    json_t *user_relays = json_object_get(relays_obj, found_pubkey);
-    if (user_relays && json_is_array(user_relays)) {
-      size_t relay_count = json_array_size(user_relays);
-      if (relay_count > 0) {
-        result->relays = g_new0(char *, relay_count + 1);
-        size_t valid = 0;
-        for (size_t i = 0; i < relay_count; i++) {
-          json_t *relay = json_array_get(user_relays, i);
-          if (json_is_string(relay)) {
-            const char *relay_url = json_string_value(relay);
-            if (relay_url && (g_str_has_prefix(relay_url, "wss://") ||
-                              g_str_has_prefix(relay_url, "ws://"))) {
-              result->relays[valid++] = g_strdup(relay_url);
-            }
-          }
-        }
-        if (valid == 0) {
-          g_free(result->relays);
-          result->relays = NULL;
-        }
+  /* Optionally extract relays using facade */
+  char **relay_array = NULL;
+  size_t relay_count = 0;
+  if (nostr_json_get_string_array_at(json_str, "relays", found_pubkey, &relay_array, &relay_count) == 0 &&
+      relay_array && relay_count > 0) {
+    result->relays = g_new0(char *, relay_count + 1);
+    size_t valid = 0;
+    for (size_t i = 0; i < relay_count; i++) {
+      const char *relay_url = relay_array[i];
+      if (relay_url && (g_str_has_prefix(relay_url, "wss://") ||
+                        g_str_has_prefix(relay_url, "ws://"))) {
+        result->relays[valid++] = g_strdup(relay_url);
       }
+      free(relay_array[i]);
+    }
+    free(relay_array);
+    if (valid == 0) {
+      g_free(result->relays);
+      result->relays = NULL;
     }
   }
 
-  json_decref(root);
+  free(found_pubkey);
+  g_free(json_str);
 
 done:
   /* Cache the result */

@@ -112,7 +112,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <child>
                           <object class="AdwEntryRow" id="entry_secret">
                             <property name="title" translatable="yes">Private Key</property>
-                            <property name="input-hints">2|2048</property>
+                            <property name="input-hints">no-spellcheck|private</property>
                             <accessibility>
                               <property name="label">Private key</property>
                               <property name="description">Enter your Nostr private key in nsec, hex, or ncrypt format</property>

@@ -2191,6 +2191,11 @@ GtkWidget *gnostr_timeline_view_get_scrolled_window(GnostrTimelineView *self) {
   return self->root_scroller;
 }
 
+GtkWidget *gnostr_timeline_view_get_list_view(GnostrTimelineView *self) {
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_VIEW(self), NULL);
+  return self->list_view;
+}
+
 /* ============== Timeline Tabs Support (Phase 3) ============== */
 
 GnTimelineTabs *gnostr_timeline_view_get_tabs(GnostrTimelineView *self) {
