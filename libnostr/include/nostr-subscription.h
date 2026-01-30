@@ -4,6 +4,7 @@
 /* Canonical Nostr subscription API (GLib-friendly C interface). */
 
 #include <stdbool.h>
+#include <stdint.h>
 #include "nostr-filter.h"
 #include "nostr-relay.h"
 #include "channel.h"  /* GoChannel */
@@ -193,6 +194,54 @@ unsigned long long nostr_subscription_events_enqueued(const NostrSubscription *s
  * Returns total number of events dropped at dispatch due to queue full/closed or not-live.
  */
 unsigned long long nostr_subscription_events_dropped(const NostrSubscription *sub);
+
+/* ========================================================================
+ * Queue Health Metrics API (nostrc-sjv)
+ * ======================================================================== */
+
+/**
+ * NostrQueueMetrics:
+ *
+ * Snapshot of queue health metrics for a subscription.
+ * Use nostr_subscription_get_queue_metrics() to populate.
+ */
+typedef struct {
+    uint64_t events_enqueued;      /**< Total events added to queue */
+    uint64_t events_dequeued;      /**< Total events processed (consumer-reported) */
+    uint64_t events_dropped;       /**< Total events dropped (queue full) */
+    uint32_t current_depth;        /**< Current queue size */
+    uint32_t peak_depth;           /**< High water mark */
+    uint32_t queue_capacity;       /**< Max queue size */
+    int64_t last_enqueue_time_us;  /**< Timestamp of last enqueue (microseconds since epoch) */
+    int64_t last_dequeue_time_us;  /**< Timestamp of last dequeue (microseconds since epoch) */
+    uint64_t total_wait_time_us;   /**< Cumulative time events spent in queue */
+} NostrQueueMetrics;
+
+/**
+ * nostr_subscription_mark_event_consumed:
+ * @sub: subscription
+ * @enqueue_time_us: optional timestamp when event was enqueued (0 to skip latency tracking)
+ *
+ * Called by consumers after processing an event from the subscription channel.
+ * Updates dequeue counters and latency metrics. The enqueue_time_us parameter
+ * allows precise wait-time calculation if the caller tracks when events were queued.
+ */
+void nostr_subscription_mark_event_consumed(NostrSubscription *sub, int64_t enqueue_time_us);
+
+/**
+ * nostr_subscription_get_queue_metrics:
+ * @sub: subscription to query
+ * @out: (out): metrics output structure
+ *
+ * Gets a snapshot of queue health metrics. All fields are atomic-safe reads.
+ * If sub is NULL, out is zeroed.
+ *
+ * Derived metrics (calculate from snapshot):
+ * - Drop rate: events_dropped / events_enqueued (target: < 0.1%)
+ * - Queue utilization: current_depth / queue_capacity (target: < 80%)
+ * - Avg latency: total_wait_time_us / events_dequeued (target: < 100ms)
+ */
+void nostr_subscription_get_queue_metrics(const NostrSubscription *sub, NostrQueueMetrics *out);
 
 #ifdef __cplusplus
 }

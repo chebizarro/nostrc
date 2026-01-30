@@ -11,6 +11,7 @@
 #include "error.h"
 #include "go.h"
 #include "wait_group.h"
+#include "hash_map.h"
 #include <glib.h>
 #include <gio/gio.h>
 #include <string.h>
@@ -1690,4 +1691,104 @@ void gnostr_simple_pool_sync_relays(GnostrSimplePool *self, const char **urls, s
     g_hash_table_destroy(new_urls);
 
     g_debug("[RELAY_SYNC] Sync complete, pool now has %zu relays", self->pool->relay_count);
+}
+
+/* --- Queue Health Metrics API (nostrc-sjv) --- */
+
+/* Context for aggregating metrics via hash map iteration */
+typedef struct {
+    GnostrQueueMetrics *out;
+} MetricsAggCtx;
+
+/* Callback for go_hash_map_for_each to aggregate subscription metrics */
+static bool metrics_agg_callback(HashKey *key, void *value) {
+    (void)key; /* unused */
+    NostrSubscription *sub = (NostrSubscription *)value;
+    if (!sub) return true; /* continue iteration */
+
+    /* Get the aggregation context from thread-local storage (set before iteration) */
+    extern __thread MetricsAggCtx *g_metrics_agg_ctx;
+    if (!g_metrics_agg_ctx || !g_metrics_agg_ctx->out) return true;
+
+    GnostrQueueMetrics *out = g_metrics_agg_ctx->out;
+    NostrQueueMetrics m;
+    nostr_subscription_get_queue_metrics(sub, &m);
+
+    out->events_enqueued += m.events_enqueued;
+    out->events_dequeued += m.events_dequeued;
+    out->events_dropped += m.events_dropped;
+    out->current_depth += m.current_depth;
+    out->total_capacity += m.queue_capacity;
+    out->total_wait_time_us += m.total_wait_time_us;
+    out->subscription_count++;
+
+    /* Track max peak depth */
+    if (m.peak_depth > out->peak_depth) {
+        out->peak_depth = m.peak_depth;
+    }
+
+    /* Track most recent timestamps */
+    if (m.last_enqueue_time_us > out->last_enqueue_time_us) {
+        out->last_enqueue_time_us = m.last_enqueue_time_us;
+    }
+    if (m.last_dequeue_time_us > out->last_dequeue_time_us) {
+        out->last_dequeue_time_us = m.last_dequeue_time_us;
+    }
+
+    return true; /* continue iteration */
+}
+
+/* Thread-local storage for metrics aggregation context */
+__thread MetricsAggCtx *g_metrics_agg_ctx = NULL;
+
+void gnostr_simple_pool_get_queue_metrics(GnostrSimplePool *self, GnostrQueueMetrics *out) {
+    g_return_if_fail(out != NULL);
+    memset(out, 0, sizeof(*out));
+
+    if (!GNOSTR_IS_SIMPLE_POOL(self) || !self->pool) return;
+
+    NostrSimplePool *pool = self->pool;
+    pthread_mutex_lock(&pool->pool_mutex);
+
+    /* Set up thread-local context for callback */
+    MetricsAggCtx ctx = { .out = out };
+    g_metrics_agg_ctx = &ctx;
+
+    /* Aggregate metrics from all relays' subscriptions */
+    for (size_t i = 0; i < pool->relay_count; i++) {
+        NostrRelay *relay = pool->relays[i];
+        if (!relay || !relay->subscriptions) continue;
+
+        go_hash_map_for_each(relay->subscriptions, metrics_agg_callback);
+    }
+
+    g_metrics_agg_ctx = NULL;
+    pthread_mutex_unlock(&pool->pool_mutex);
+
+    /* Log metrics summary at DEBUG level if enabled */
+    static gint64 last_log_time = 0;
+    gint64 now = g_get_monotonic_time();
+    if (last_log_time == 0 || (now - last_log_time) >= 60000000) { /* 60 seconds */
+        last_log_time = now;
+        if (out->subscription_count > 0) {
+            double drop_rate = out->events_enqueued > 0
+                ? (double)out->events_dropped / (double)out->events_enqueued * 100.0
+                : 0.0;
+            double utilization = out->total_capacity > 0
+                ? (double)out->current_depth / (double)out->total_capacity * 100.0
+                : 0.0;
+            double avg_latency_ms = out->events_dequeued > 0
+                ? (double)out->total_wait_time_us / (double)out->events_dequeued / 1000.0
+                : 0.0;
+
+            g_debug("[QUEUE_METRICS] subs=%u enq=%lu deq=%lu drop=%lu "
+                    "depth=%u/%u peak=%u drop_rate=%.2f%% util=%.1f%% latency=%.1fms",
+                    out->subscription_count,
+                    (unsigned long)out->events_enqueued,
+                    (unsigned long)out->events_dequeued,
+                    (unsigned long)out->events_dropped,
+                    out->current_depth, out->total_capacity, out->peak_depth,
+                    drop_rate, utilization, avg_latency_ms);
+        }
+    }
 }

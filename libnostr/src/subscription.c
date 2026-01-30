@@ -17,6 +17,13 @@
 
 static _Atomic long long g_sub_counter = 1;
 
+/* Get current time in microseconds */
+static inline int64_t get_time_us(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (int64_t)tv.tv_sec * 1000000 + (int64_t)tv.tv_usec;
+}
+
 NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filters) {
     NostrSubscription *sub = (NostrSubscription *)malloc(sizeof(NostrSubscription));
     if (!sub)
@@ -56,9 +63,21 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     sub->priv->eosed = false;
     sub->priv->closed = false;
     sub->priv->unsubbed = false;
-    // Instrumentation counters
-    atomic_store(&sub->priv->events_enqueued, 0);
-    atomic_store(&sub->priv->events_dropped, 0);
+
+    // Initialize queue metrics (nostrc-sjv)
+    QueueMetrics *m = &sub->priv->metrics;
+    atomic_store(&m->events_enqueued, 0);
+    atomic_store(&m->events_dequeued, 0);
+    atomic_store(&m->events_dropped, 0);
+    atomic_store(&m->current_depth, 0);
+    atomic_store(&m->peak_depth, 0);
+    m->queue_capacity = (uint32_t)ev_cap;
+    int64_t now_us = get_time_us();
+    atomic_store(&m->last_enqueue_time_us, 0);
+    atomic_store(&m->last_dequeue_time_us, 0);
+    atomic_store(&m->total_wait_time_us, 0);
+    atomic_store(&m->created_time_us, now_us);
+
     nsync_mu_init(&sub->priv->sub_mutex);
     // Initialize wait group for lifecycle thread
     go_wait_group_init(&sub->priv->wg);
@@ -192,18 +211,33 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
     bool is_live = atomic_load(&sub->priv->live);
     nsync_mu_unlock(&sub->priv->sub_mutex);
 
+    QueueMetrics *m = &sub->priv->metrics;
+
     if (is_live) {
         // Non-blocking send; if full or closed or canceled, drop to avoid hang
         if (go_channel_try_send(sub->events, event) != 0) {
             if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
                 fprintf(stderr, "[sub %s] dispatch_event: dropped (queue full/closed)\n", sub->priv->id);
             }
-            atomic_fetch_add(&sub->priv->events_dropped, 1);
+            atomic_fetch_add(&m->events_dropped, 1);
             nostr_metric_counter_add("sub_event_drop", 1);
             nostr_rl_log(NLOG_WARN, "sub", "event drop: queue full sid=%s", sub->priv->id);
             nostr_event_free(event);
         } else {
-            atomic_fetch_add(&sub->priv->events_enqueued, 1);
+            // Update queue metrics on successful enqueue
+            int64_t now_us = get_time_us();
+            atomic_fetch_add(&m->events_enqueued, 1);
+            uint32_t new_depth = atomic_fetch_add(&m->current_depth, 1) + 1;
+            atomic_store(&m->last_enqueue_time_us, now_us);
+
+            // Update peak depth if new high
+            uint32_t old_peak = atomic_load(&m->peak_depth);
+            while (new_depth > old_peak) {
+                if (atomic_compare_exchange_weak(&m->peak_depth, &old_peak, new_depth)) {
+                    break;
+                }
+            }
+
             nostr_metric_counter_add("sub_event_enqueued", 1);
         }
     } else {
@@ -211,7 +245,7 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
         if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
             fprintf(stderr, "[sub %s] dispatch_event: dropped (not live)\n", sub->priv->id);
         }
-        atomic_fetch_add(&sub->priv->events_dropped, 1);
+        atomic_fetch_add(&m->events_dropped, 1);
         nostr_metric_counter_add("sub_event_drop_not_live", 1);
         nostr_rl_log(NLOG_INFO, "sub", "event drop: not live sid=%s", sub->priv->id);
         nostr_event_free(event);
@@ -611,12 +645,50 @@ bool nostr_subscription_is_closed(const NostrSubscription *sub) {
 
 unsigned long long nostr_subscription_events_enqueued(const NostrSubscription *sub) {
     if (!sub || !sub->priv) return 0;
-    return atomic_load(&sub->priv->events_enqueued);
+    return atomic_load(&sub->priv->metrics.events_enqueued);
 }
 
 unsigned long long nostr_subscription_events_dropped(const NostrSubscription *sub) {
     if (!sub || !sub->priv) return 0;
-    return atomic_load(&sub->priv->events_dropped);
+    return atomic_load(&sub->priv->metrics.events_dropped);
+}
+
+/* Queue metrics API (nostrc-sjv) */
+
+void nostr_subscription_mark_event_consumed(NostrSubscription *sub, int64_t enqueue_time_us) {
+    if (!sub || !sub->priv) return;
+
+    QueueMetrics *m = &sub->priv->metrics;
+    int64_t now_us = get_time_us();
+
+    atomic_fetch_add(&m->events_dequeued, 1);
+    atomic_fetch_sub(&m->current_depth, 1);
+    atomic_store(&m->last_dequeue_time_us, now_us);
+
+    // If caller provided enqueue time, calculate wait time
+    if (enqueue_time_us > 0 && now_us > enqueue_time_us) {
+        atomic_fetch_add(&m->total_wait_time_us, (uint64_t)(now_us - enqueue_time_us));
+    }
+
+    nostr_metric_counter_add("sub_event_dequeued", 1);
+}
+
+void nostr_subscription_get_queue_metrics(const NostrSubscription *sub, NostrQueueMetrics *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    if (!sub || !sub->priv) return;
+
+    const QueueMetrics *m = &sub->priv->metrics;
+
+    out->events_enqueued = atomic_load(&m->events_enqueued);
+    out->events_dequeued = atomic_load(&m->events_dequeued);
+    out->events_dropped = atomic_load(&m->events_dropped);
+    out->current_depth = atomic_load(&m->current_depth);
+    out->peak_depth = atomic_load(&m->peak_depth);
+    out->queue_capacity = m->queue_capacity;
+    out->last_enqueue_time_us = atomic_load(&m->last_enqueue_time_us);
+    out->last_dequeue_time_us = atomic_load(&m->last_dequeue_time_us);
+    out->total_wait_time_us = atomic_load(&m->total_wait_time_us);
 }
 
 /* ========================================================================

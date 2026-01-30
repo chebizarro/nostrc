@@ -93,6 +93,42 @@ gboolean gnostr_simple_pool_is_relay_connected(GnostrSimplePool *self, const cha
 /* Get list of relay URLs currently in the pool */
 GPtrArray *gnostr_simple_pool_get_relay_urls(GnostrSimplePool *self);
 
+/* --- Queue Health Metrics API (nostrc-sjv) --- */
+
+/**
+ * GnostrQueueMetrics:
+ *
+ * Aggregated queue health metrics snapshot for a pool.
+ * Combines metrics from all active subscriptions.
+ */
+typedef struct {
+    guint64 events_enqueued;      /**< Total events added to queues */
+    guint64 events_dequeued;      /**< Total events processed */
+    guint64 events_dropped;       /**< Total events dropped */
+    guint32 current_depth;        /**< Sum of current queue depths */
+    guint32 peak_depth;           /**< Max peak depth across subscriptions */
+    guint32 total_capacity;       /**< Sum of queue capacities */
+    gint64 last_enqueue_time_us;  /**< Most recent enqueue timestamp */
+    gint64 last_dequeue_time_us;  /**< Most recent dequeue timestamp */
+    guint64 total_wait_time_us;   /**< Cumulative wait time across all queues */
+    guint subscription_count;     /**< Number of active subscriptions */
+} GnostrQueueMetrics;
+
+/**
+ * gnostr_simple_pool_get_queue_metrics:
+ * @self: The pool
+ * @out: (out): Aggregated metrics output
+ *
+ * Gets aggregated queue health metrics from all active subscriptions in the pool.
+ *
+ * Derived metrics (calculate from snapshot):
+ * - Drop rate: events_dropped / events_enqueued (target: < 0.1%)
+ * - Queue utilization: current_depth / total_capacity (target: < 80%)
+ * - Avg latency: total_wait_time_us / events_dequeued (target: < 100ms)
+ * - Throughput: events_dequeued / time_window (events/sec)
+ */
+void gnostr_simple_pool_get_queue_metrics(GnostrSimplePool *self, GnostrQueueMetrics *out);
+
 /* --- Live Relay Switching (nostrc-36y.4) --- */
 
 /* Remove a relay from the pool by URL. Disconnects and frees the relay.
