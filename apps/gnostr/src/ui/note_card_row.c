@@ -1305,41 +1305,9 @@ static void on_menu_clicked(GtkButton *btn, gpointer user_data) {
   gtk_popover_popup(GTK_POPOVER(self->menu_popover));
 }
 
-/* Helper function to show context menu at a specific position */
-static void show_context_menu_at_point(GnostrNoteCardRow *self, double x, double y) {
-  if (!self) return;
-
-  /* Create popover if needed (reuse the menu popover code) */
-  if (!self->menu_popover) {
-    /* Trigger creation by simulating a button click on the menu button */
-    on_menu_clicked(GTK_BUTTON(self->btn_menu), self);
-    /* Hide it immediately as we want to position it differently */
-    gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
-  }
-
-  /* Position the popover at the click point */
-  GdkRectangle rect = { (int)x, (int)y, 1, 1 };
-  gtk_popover_set_pointing_to(GTK_POPOVER(self->menu_popover), &rect);
-
-  gtk_popover_popup(GTK_POPOVER(self->menu_popover));
-}
-
-/* Right-click gesture handler */
-static void on_right_click_pressed(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
-  (void)gesture;
-  (void)n_press;
-
-  show_context_menu_at_point(self, x, y);
-}
-
-/* Long-press gesture handler (for touch devices) */
-static void on_long_press(GtkGestureLongPress *gesture, gdouble x, gdouble y, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
-  (void)gesture;
-
-  show_context_menu_at_point(self, x, y);
-}
+/* REMOVED: Right-click and long-press context menu handlers.
+ * These were causing the menu to appear off-screen when right-clicking anywhere
+ * on the note card. The 3-dot menu button is the only way to access the menu now. */
 
 static void on_reply_clicked(GtkButton *btn, gpointer user_data) {
   GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
@@ -1882,17 +1850,8 @@ static void gnostr_note_card_row_init(GnostrNoteCardRow *self) {
     gtk_widget_set_cursor_from_name(self->reply_count_box, "pointer");
   }
 
-  /* Add right-click gesture for context menu */
-  GtkGesture *right_click = gtk_gesture_click_new();
-  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(right_click), GDK_BUTTON_SECONDARY);
-  g_signal_connect(right_click, "pressed", G_CALLBACK(on_right_click_pressed), self);
-  gtk_widget_add_controller(GTK_WIDGET(self), GTK_EVENT_CONTROLLER(right_click));
-
-  /* Add long-press gesture for touch devices */
-  GtkGesture *long_press = gtk_gesture_long_press_new();
-  gtk_gesture_single_set_touch_only(GTK_GESTURE_SINGLE(long_press), TRUE);
-  g_signal_connect(long_press, "pressed", G_CALLBACK(on_long_press), self);
-  gtk_widget_add_controller(GTK_WIDGET(self), GTK_EVENT_CONTROLLER(long_press));
+  /* REMOVED: Right-click and long-press gestures that were showing context menu
+   * at incorrect positions. Users access the menu via the 3-dot button only. */
 
   /* NIP-36: Connect sensitive content reveal button */
   if (GTK_IS_BUTTON(self->btn_show_sensitive)) {
