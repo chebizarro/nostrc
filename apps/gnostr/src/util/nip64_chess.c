@@ -7,7 +7,8 @@
 #include "nip64_chess.h"
 #include <string.h>
 #include <ctype.h>
-#include <jansson.h>
+#include <json.h>
+#include <nostr-event.h>
 
 /* Unicode chess pieces (white pieces on top, black pieces below) */
 static const gchar *PIECE_UNICODE[7][3] = {
@@ -482,49 +483,50 @@ GnostrChessGame *gnostr_chess_parse_pgn(const char *pgn_text) {
 GnostrChessGame *gnostr_chess_parse_from_json(const char *event_json) {
   if (!event_json || !*event_json) return NULL;
 
-  json_error_t err;
-  json_t *root = json_loads(event_json, 0, &err);
-  if (!root) {
-    g_debug("nip64: JSON parse error: %s", err.text);
+  /* Deserialize to NostrEvent using the facade */
+  NostrEvent event = {0};
+  if (nostr_event_deserialize(&event, event_json) != 0) {
+    g_debug("nip64: failed to parse event JSON");
     return NULL;
   }
 
-  /* Check kind */
-  json_t *kind_j = json_object_get(root, "kind");
-  if (!kind_j || !json_is_integer(kind_j) || json_integer_value(kind_j) != NOSTR_KIND_CHESS) {
-    json_decref(root);
+  /* Check kind - must be NOSTR_KIND_CHESS */
+  if (event.kind != NOSTR_KIND_CHESS) {
+    g_debug("nip64: event is not kind %d (got %d)", NOSTR_KIND_CHESS, event.kind);
+    free(event.id);
+    free(event.pubkey);
+    free(event.content);
+    free(event.sig);
+    if (event.tags) nostr_tags_free(event.tags);
     return NULL;
   }
 
-  /* Get content (PGN text) */
-  json_t *content_j = json_object_get(root, "content");
-  if (!content_j || !json_is_string(content_j)) {
-    json_decref(root);
+  /* Content is the PGN text */
+  if (!event.content || !*event.content) {
+    free(event.id);
+    free(event.pubkey);
+    free(event.content);
+    free(event.sig);
+    if (event.tags) nostr_tags_free(event.tags);
     return NULL;
   }
 
-  const char *pgn_text = json_string_value(content_j);
-  GnostrChessGame *game = gnostr_chess_parse_pgn(pgn_text);
+  GnostrChessGame *game = gnostr_chess_parse_pgn(event.content);
 
   if (game) {
     /* Extract event metadata */
-    json_t *id_j = json_object_get(root, "id");
-    if (id_j && json_is_string(id_j)) {
-      game->event_id = g_strdup(json_string_value(id_j));
-    }
-
-    json_t *pubkey_j = json_object_get(root, "pubkey");
-    if (pubkey_j && json_is_string(pubkey_j)) {
-      game->pubkey = g_strdup(json_string_value(pubkey_j));
-    }
-
-    json_t *created_at_j = json_object_get(root, "created_at");
-    if (created_at_j && json_is_integer(created_at_j)) {
-      game->created_at = json_integer_value(created_at_j);
-    }
+    game->event_id = g_strdup(event.id);
+    game->pubkey = g_strdup(event.pubkey);
+    game->created_at = event.created_at;
   }
 
-  json_decref(root);
+  /* Free internal event fields */
+  free(event.id);
+  free(event.pubkey);
+  free(event.content);
+  free(event.sig);
+  if (event.tags) nostr_tags_free(event.tags);
+
   return game;
 }
 

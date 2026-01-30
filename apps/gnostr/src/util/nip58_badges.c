@@ -16,7 +16,7 @@
 #include "nostr-filter.h"
 #include "nostr-event.h"
 #include "nostr_simple_pool.h"
-#include <jansson.h>
+#include <json.h>
 #include <string.h>
 
 /* ============== Badge Definition ============== */
@@ -46,50 +46,41 @@ gnostr_badge_definition_parse(const gchar *event_json)
 {
   if (!event_json || !*event_json) return NULL;
 
-  json_error_t error;
-  json_t *root = json_loads(event_json, 0, &error);
-  if (!root) {
-    g_warning("badge_definition: failed to parse JSON: %s", error.text);
+  /* Deserialize to NostrEvent using the facade */
+  NostrEvent event = {0};
+  if (nostr_event_deserialize(&event, event_json) != 0) {
+    g_warning("badge_definition: failed to parse JSON");
     return NULL;
   }
 
   /* Verify kind */
-  json_t *kind_val = json_object_get(root, "kind");
-  if (!kind_val || json_integer_value(kind_val) != NIP58_KIND_BADGE_DEFINITION) {
-    json_decref(root);
+  if (event.kind != NIP58_KIND_BADGE_DEFINITION) {
+    free(event.id);
+    free(event.pubkey);
+    free(event.content);
+    free(event.sig);
+    if (event.tags) nostr_tags_free(event.tags);
     return NULL;
   }
 
   GnostrBadgeDefinition *def = gnostr_badge_definition_new();
 
-  /* Extract event ID */
-  json_t *id_val = json_object_get(root, "id");
-  if (id_val && json_is_string(id_val)) {
-    def->event_id = g_strdup(json_string_value(id_val));
-  }
+  /* Extract event metadata */
+  def->event_id = g_strdup(event.id);
+  def->issuer_pubkey = g_strdup(event.pubkey);
+  def->created_at = event.created_at;
 
-  /* Extract pubkey (issuer) */
-  json_t *pubkey_val = json_object_get(root, "pubkey");
-  if (pubkey_val && json_is_string(pubkey_val)) {
-    def->issuer_pubkey = g_strdup(json_string_value(pubkey_val));
-  }
+  /* Parse tags for badge metadata using NostrTags API */
+  if (event.tags) {
+    size_t n_tags = nostr_tags_size(event.tags);
+    for (size_t i = 0; i < n_tags; i++) {
+      NostrTag *tag = nostr_tags_get(event.tags, i);
+      if (!tag) continue;
+      size_t tag_len = nostr_tag_size(tag);
+      if (tag_len < 2) continue;
 
-  /* Extract created_at */
-  json_t *created_val = json_object_get(root, "created_at");
-  if (created_val && json_is_integer(created_val)) {
-    def->created_at = json_integer_value(created_val);
-  }
-
-  /* Parse tags for badge metadata */
-  json_t *tags = json_object_get(root, "tags");
-  if (tags && json_is_array(tags)) {
-    size_t i;
-    json_t *tag;
-    json_array_foreach(tags, i, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
-      const char *tag_value = json_string_value(json_array_get(tag, 1));
+      const char *tag_name = nostr_tag_get(tag, 0);
+      const char *tag_value = nostr_tag_get(tag, 1);
       if (!tag_name || !tag_value) continue;
 
       if (g_strcmp0(tag_name, "d") == 0) {
@@ -106,7 +97,12 @@ gnostr_badge_definition_parse(const gchar *event_json)
     }
   }
 
-  json_decref(root);
+  /* Free internal event fields */
+  free(event.id);
+  free(event.pubkey);
+  free(event.content);
+  free(event.sig);
+  if (event.tags) nostr_tags_free(event.tags);
 
   /* Validate: must have identifier */
   if (!def->identifier) {
@@ -159,50 +155,41 @@ gnostr_badge_award_parse(const gchar *event_json)
 {
   if (!event_json || !*event_json) return NULL;
 
-  json_error_t error;
-  json_t *root = json_loads(event_json, 0, &error);
-  if (!root) {
-    g_warning("badge_award: failed to parse JSON: %s", error.text);
+  /* Deserialize to NostrEvent using the facade */
+  NostrEvent event = {0};
+  if (nostr_event_deserialize(&event, event_json) != 0) {
+    g_warning("badge_award: failed to parse JSON");
     return NULL;
   }
 
   /* Verify kind */
-  json_t *kind_val = json_object_get(root, "kind");
-  if (!kind_val || json_integer_value(kind_val) != NIP58_KIND_BADGE_AWARD) {
-    json_decref(root);
+  if (event.kind != NIP58_KIND_BADGE_AWARD) {
+    free(event.id);
+    free(event.pubkey);
+    free(event.content);
+    free(event.sig);
+    if (event.tags) nostr_tags_free(event.tags);
     return NULL;
   }
 
   GnostrBadgeAward *award = gnostr_badge_award_new();
 
-  /* Extract event ID */
-  json_t *id_val = json_object_get(root, "id");
-  if (id_val && json_is_string(id_val)) {
-    award->event_id = g_strdup(json_string_value(id_val));
-  }
+  /* Extract event metadata */
+  award->event_id = g_strdup(event.id);
+  award->issuer_pubkey = g_strdup(event.pubkey);
+  award->created_at = event.created_at;
 
-  /* Extract pubkey (issuer) */
-  json_t *pubkey_val = json_object_get(root, "pubkey");
-  if (pubkey_val && json_is_string(pubkey_val)) {
-    award->issuer_pubkey = g_strdup(json_string_value(pubkey_val));
-  }
+  /* Parse tags using NostrTags API */
+  if (event.tags) {
+    size_t n_tags = nostr_tags_size(event.tags);
+    for (size_t i = 0; i < n_tags; i++) {
+      NostrTag *tag = nostr_tags_get(event.tags, i);
+      if (!tag) continue;
+      size_t tag_len = nostr_tag_size(tag);
+      if (tag_len < 2) continue;
 
-  /* Extract created_at */
-  json_t *created_val = json_object_get(root, "created_at");
-  if (created_val && json_is_integer(created_val)) {
-    award->created_at = json_integer_value(created_val);
-  }
-
-  /* Parse tags */
-  json_t *tags = json_object_get(root, "tags");
-  if (tags && json_is_array(tags)) {
-    size_t i;
-    json_t *tag;
-    json_array_foreach(tags, i, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
-      const char *tag_value = json_string_value(json_array_get(tag, 1));
+      const char *tag_name = nostr_tag_get(tag, 0);
+      const char *tag_value = nostr_tag_get(tag, 1);
       if (!tag_name || !tag_value) continue;
 
       if (g_strcmp0(tag_name, "a") == 0 && !award->badge_ref) {
@@ -215,7 +202,12 @@ gnostr_badge_award_parse(const gchar *event_json)
     }
   }
 
-  json_decref(root);
+  /* Free internal event fields */
+  free(event.id);
+  free(event.pubkey);
+  free(event.content);
+  free(event.sig);
+  if (event.tags) nostr_tags_free(event.tags);
 
   /* Validate: must have badge reference and at least one awardee */
   if (!award->badge_ref || award->awardees->len == 0) {
@@ -252,30 +244,34 @@ gnostr_profile_badges_parse(const gchar *event_json)
 {
   if (!event_json || !*event_json) return NULL;
 
-  json_error_t error;
-  json_t *root = json_loads(event_json, 0, &error);
-  if (!root) {
-    g_warning("profile_badges: failed to parse JSON: %s", error.text);
+  /* Deserialize to NostrEvent using the facade */
+  NostrEvent event = {0};
+  if (nostr_event_deserialize(&event, event_json) != 0) {
+    g_warning("profile_badges: failed to parse JSON");
     return NULL;
   }
 
   /* Verify kind */
-  json_t *kind_val = json_object_get(root, "kind");
-  if (!kind_val || json_integer_value(kind_val) != NIP58_KIND_PROFILE_BADGES) {
-    json_decref(root);
+  if (event.kind != NIP58_KIND_PROFILE_BADGES) {
+    free(event.id);
+    free(event.pubkey);
+    free(event.content);
+    free(event.sig);
+    if (event.tags) nostr_tags_free(event.tags);
     return NULL;
   }
 
   /* Verify d tag is "profile_badges" */
-  json_t *tags = json_object_get(root, "tags");
   gboolean has_profile_badges_d = FALSE;
-  if (tags && json_is_array(tags)) {
-    size_t i;
-    json_t *tag;
-    json_array_foreach(tags, i, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
-      const char *tag_value = json_string_value(json_array_get(tag, 1));
+  if (event.tags) {
+    size_t n_tags = nostr_tags_size(event.tags);
+    for (size_t i = 0; i < n_tags; i++) {
+      NostrTag *tag = nostr_tags_get(event.tags, i);
+      if (!tag) continue;
+      size_t tag_len = nostr_tag_size(tag);
+      if (tag_len < 2) continue;
+      const char *tag_name = nostr_tag_get(tag, 0);
+      const char *tag_value = nostr_tag_get(tag, 1);
       if (g_strcmp0(tag_name, "d") == 0 && g_strcmp0(tag_value, "profile_badges") == 0) {
         has_profile_badges_d = TRUE;
         break;
@@ -285,7 +281,11 @@ gnostr_profile_badges_parse(const gchar *event_json)
 
   if (!has_profile_badges_d) {
     g_debug("profile_badges: missing d=profile_badges tag");
-    json_decref(root);
+    free(event.id);
+    free(event.pubkey);
+    free(event.content);
+    free(event.sig);
+    if (event.tags) nostr_tags_free(event.tags);
     return NULL;
   }
 
@@ -294,14 +294,16 @@ gnostr_profile_badges_parse(const gchar *event_json)
   gchar *pending_def_ref = NULL;
   gint64 position = 0;
 
-  if (tags) {
-    size_t i;
-    json_t *tag;
-    json_array_foreach(tags, i, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+  if (event.tags) {
+    size_t n_tags = nostr_tags_size(event.tags);
+    for (size_t i = 0; i < n_tags; i++) {
+      NostrTag *tag = nostr_tags_get(event.tags, i);
+      if (!tag) continue;
+      size_t tag_len = nostr_tag_size(tag);
+      if (tag_len < 2) continue;
 
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
-      const char *tag_value = json_string_value(json_array_get(tag, 1));
+      const char *tag_name = nostr_tag_get(tag, 0);
+      const char *tag_value = nostr_tag_get(tag, 1);
       if (!tag_name || !tag_value) continue;
 
       if (g_strcmp0(tag_name, "a") == 0) {
@@ -331,7 +333,13 @@ gnostr_profile_badges_parse(const gchar *event_json)
   }
 
   g_free(pending_def_ref);
-  json_decref(root);
+
+  /* Free internal event fields */
+  free(event.id);
+  free(event.pubkey);
+  free(event.content);
+  free(event.sig);
+  if (event.tags) nostr_tags_free(event.tags);
 
   g_debug("profile_badges: parsed %u badges from profile", badges->len);
   return badges;
