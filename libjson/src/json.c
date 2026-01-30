@@ -4,10 +4,12 @@
 #include "nostr-filter.h"
 #include "nostr-event-extra.h"
 #include "nostr-tag.h"
+#include "json.h"
 #include <jansson.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 
 char *jansson_event_serialize(const NostrEvent *event);
 int jansson_event_deserialize(NostrEvent *event, const char *json_str);
@@ -1170,4 +1172,915 @@ int nostr_json_get_int_array_at(const char *json,
     json_decref(root);
     *out_items = vec; if (out_count) *out_count = n;
     return 0;
+}
+
+/* ===========================================================================
+ * Extended JSON Interface Implementation (nostrc-3nj)
+ * ===========================================================================
+ */
+
+/* ---- In-memory JSON value manipulation ---- */
+
+NostrJsonValue nostr_json_object_new(void) {
+    return (NostrJsonValue)json_object();
+}
+
+void nostr_json_value_free(NostrJsonValue val) {
+    if (val) json_decref((json_t *)val);
+}
+
+NostrJsonValue nostr_json_value_incref(NostrJsonValue val) {
+    if (val) json_incref((json_t *)val);
+    return val;
+}
+
+int nostr_json_object_set(NostrJsonValue obj, const char *key, NostrJsonValue val) {
+    if (!obj || !key) return -1;
+    return json_object_set_new((json_t *)obj, key, (json_t *)val);
+}
+
+NostrJsonValue nostr_json_object_get(NostrJsonValue obj, const char *key) {
+    if (!obj || !key) return NULL;
+    return (NostrJsonValue)json_object_get((json_t *)obj, key);
+}
+
+int nostr_json_object_del(NostrJsonValue obj, const char *key) {
+    if (!obj || !key) return -1;
+    return json_object_del((json_t *)obj, key);
+}
+
+bool nostr_json_value_is_string(NostrJsonValue val) {
+    return val && json_is_string((json_t *)val);
+}
+
+bool nostr_json_value_is_number(NostrJsonValue val) {
+    return val && json_is_number((json_t *)val);
+}
+
+bool nostr_json_value_is_integer(NostrJsonValue val) {
+    return val && json_is_integer((json_t *)val);
+}
+
+bool nostr_json_value_is_boolean(NostrJsonValue val) {
+    return val && json_is_boolean((json_t *)val);
+}
+
+const char *nostr_json_value_string(NostrJsonValue val) {
+    if (!val || !json_is_string((json_t *)val)) return NULL;
+    return json_string_value((json_t *)val);
+}
+
+double nostr_json_value_number(NostrJsonValue val) {
+    if (!val) return 0.0;
+    if (json_is_number((json_t *)val)) return json_number_value((json_t *)val);
+    if (json_is_integer((json_t *)val)) return (double)json_integer_value((json_t *)val);
+    return 0.0;
+}
+
+int64_t nostr_json_value_integer(NostrJsonValue val) {
+    if (!val || !json_is_integer((json_t *)val)) return 0;
+    return (int64_t)json_integer_value((json_t *)val);
+}
+
+bool nostr_json_value_boolean(NostrJsonValue val) {
+    if (!val || !json_is_boolean((json_t *)val)) return false;
+    return json_boolean_value((json_t *)val);
+}
+
+/* ---- 64-bit Integer and Double Getters ---- */
+
+int nostr_json_get_int64(const char *json,
+                         const char *entry_key,
+                         int64_t *out_val) {
+    if (out_val) *out_val = 0;
+    if (!json || !entry_key || !out_val) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *v = json_object_get(root, entry_key);
+    int rc = -1;
+    if (json_is_integer(v)) { *out_val = (int64_t)json_integer_value(v); rc = 0; }
+    else if (json_is_real(v)) { *out_val = (int64_t)json_real_value(v); rc = 0; }
+    json_decref(root);
+    return rc;
+}
+
+int nostr_json_get_int64_at(const char *json,
+                            const char *object_key,
+                            const char *entry_key,
+                            int64_t *out_val) {
+    if (out_val) *out_val = 0;
+    if (!json || !object_key || !entry_key || !out_val) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *obj = json_object_get(root, object_key);
+    if (!obj || !json_is_object(obj)) { json_decref(root); return -1; }
+    json_t *v = json_object_get(obj, entry_key);
+    int rc = -1;
+    if (json_is_integer(v)) { *out_val = (int64_t)json_integer_value(v); rc = 0; }
+    else if (json_is_real(v)) { *out_val = (int64_t)json_real_value(v); rc = 0; }
+    json_decref(root);
+    return rc;
+}
+
+int nostr_json_get_double(const char *json,
+                          const char *entry_key,
+                          double *out_val) {
+    if (out_val) *out_val = 0.0;
+    if (!json || !entry_key || !out_val) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *v = json_object_get(root, entry_key);
+    int rc = -1;
+    if (json_is_number(v)) { *out_val = json_number_value(v); rc = 0; }
+    json_decref(root);
+    return rc;
+}
+
+int nostr_json_get_double_at(const char *json,
+                             const char *object_key,
+                             const char *entry_key,
+                             double *out_val) {
+    if (out_val) *out_val = 0.0;
+    if (!json || !object_key || !entry_key || !out_val) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *obj = json_object_get(root, object_key);
+    if (!obj || !json_is_object(obj)) { json_decref(root); return -1; }
+    json_t *v = json_object_get(obj, entry_key);
+    int rc = -1;
+    if (json_is_number(v)) { *out_val = json_number_value(v); rc = 0; }
+    json_decref(root);
+    return rc;
+}
+
+/* ---- Key Existence and Type Checking ---- */
+
+static NostrJsonType jansson_type_to_nostr_type(json_t *v) {
+    if (!v) return NOSTR_JSON_INVALID;
+    if (json_is_null(v)) return NOSTR_JSON_NULL;
+    if (json_is_boolean(v)) return NOSTR_JSON_BOOL;
+    if (json_is_integer(v)) return NOSTR_JSON_INTEGER;
+    if (json_is_real(v)) return NOSTR_JSON_REAL;
+    if (json_is_string(v)) return NOSTR_JSON_STRING;
+    if (json_is_array(v)) return NOSTR_JSON_ARRAY;
+    if (json_is_object(v)) return NOSTR_JSON_OBJECT;
+    return NOSTR_JSON_INVALID;
+}
+
+bool nostr_json_has_key(const char *json, const char *key) {
+    if (!json || !key) return false;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return false;
+    json_t *v = json_object_get(root, key);
+    bool exists = (v != NULL);
+    json_decref(root);
+    return exists;
+}
+
+bool nostr_json_has_key_at(const char *json, const char *object_key, const char *key) {
+    if (!json || !object_key || !key) return false;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return false;
+    json_t *obj = json_object_get(root, object_key);
+    if (!obj || !json_is_object(obj)) { json_decref(root); return false; }
+    json_t *v = json_object_get(obj, key);
+    bool exists = (v != NULL);
+    json_decref(root);
+    return exists;
+}
+
+NostrJsonType nostr_json_get_type(const char *json, const char *key) {
+    if (!json || !key) return NOSTR_JSON_INVALID;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return NOSTR_JSON_INVALID;
+    json_t *v = json_object_get(root, key);
+    NostrJsonType t = jansson_type_to_nostr_type(v);
+    json_decref(root);
+    return t;
+}
+
+NostrJsonType nostr_json_get_type_at(const char *json, const char *object_key, const char *key) {
+    if (!json || !object_key || !key) return NOSTR_JSON_INVALID;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return NOSTR_JSON_INVALID;
+    json_t *obj = json_object_get(root, object_key);
+    if (!obj || !json_is_object(obj)) { json_decref(root); return NOSTR_JSON_INVALID; }
+    json_t *v = json_object_get(obj, key);
+    NostrJsonType t = jansson_type_to_nostr_type(v);
+    json_decref(root);
+    return t;
+}
+
+/* ---- Deep Path Access ---- */
+
+/* Helper to navigate to a JSON value via dot-notation path */
+static json_t *navigate_path(json_t *root, const char *path) {
+    if (!root || !path) return NULL;
+
+    json_t *current = root;
+    char *path_copy = strdup(path);
+    if (!path_copy) return NULL;
+
+    char *token = strtok(path_copy, ".");
+    while (token && current) {
+        if (json_is_object(current)) {
+            current = json_object_get(current, token);
+        } else if (json_is_array(current)) {
+            /* Try to parse token as array index */
+            char *endptr;
+            long idx = strtol(token, &endptr, 10);
+            if (*endptr == '\0' && idx >= 0 && (size_t)idx < json_array_size(current)) {
+                current = json_array_get(current, (size_t)idx);
+            } else {
+                current = NULL;
+            }
+        } else {
+            current = NULL;
+        }
+        token = strtok(NULL, ".");
+    }
+
+    free(path_copy);
+    return current;
+}
+
+int nostr_json_get_string_path(const char *json, const char *path, char **out_str) {
+    if (out_str) *out_str = NULL;
+    if (!json || !path || !out_str) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *v = navigate_path(root, path);
+    int rc = -1;
+    if (v && json_is_string(v)) {
+        const char *s = json_string_value(v);
+        if (s) { *out_str = strdup(s); rc = 0; }
+    }
+    json_decref(root);
+    return rc;
+}
+
+int nostr_json_get_int_path(const char *json, const char *path, int *out_val) {
+    if (out_val) *out_val = 0;
+    if (!json || !path || !out_val) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *v = navigate_path(root, path);
+    int rc = -1;
+    if (v && json_is_integer(v)) { *out_val = (int)json_integer_value(v); rc = 0; }
+    else if (v && json_is_real(v)) { *out_val = (int)json_real_value(v); rc = 0; }
+    json_decref(root);
+    return rc;
+}
+
+int nostr_json_get_int64_path(const char *json, const char *path, int64_t *out_val) {
+    if (out_val) *out_val = 0;
+    if (!json || !path || !out_val) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *v = navigate_path(root, path);
+    int rc = -1;
+    if (v && json_is_integer(v)) { *out_val = (int64_t)json_integer_value(v); rc = 0; }
+    else if (v && json_is_real(v)) { *out_val = (int64_t)json_real_value(v); rc = 0; }
+    json_decref(root);
+    return rc;
+}
+
+int nostr_json_get_double_path(const char *json, const char *path, double *out_val) {
+    if (out_val) *out_val = 0.0;
+    if (!json || !path || !out_val) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *v = navigate_path(root, path);
+    int rc = -1;
+    if (v && json_is_number(v)) { *out_val = json_number_value(v); rc = 0; }
+    json_decref(root);
+    return rc;
+}
+
+int nostr_json_get_bool_path(const char *json, const char *path, bool *out_val) {
+    if (out_val) *out_val = false;
+    if (!json || !path || !out_val) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *v = navigate_path(root, path);
+    int rc = -1;
+    if (v && json_is_boolean(v)) { *out_val = json_is_true(v); rc = 0; }
+    json_decref(root);
+    return rc;
+}
+
+int nostr_json_get_raw_path(const char *json, const char *path, char **out_raw) {
+    if (out_raw) *out_raw = NULL;
+    if (!json || !path || !out_raw) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *v = navigate_path(root, path);
+    if (!v) { json_decref(root); return -1; }
+    char *dump = json_dumps(v, JSON_COMPACT | JSON_ENCODE_ANY);
+    if (!dump) { json_decref(root); return -1; }
+    *out_raw = strdup(dump);
+    free(dump);
+    json_decref(root);
+    return *out_raw ? 0 : -1;
+}
+
+/* ---- Array Helpers ---- */
+
+int nostr_json_get_array_length(const char *json, const char *key, size_t *out_len) {
+    if (out_len) *out_len = 0;
+    if (!json || !key || !out_len) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *arr = json_object_get(root, key);
+    if (!arr || !json_is_array(arr)) { json_decref(root); return -1; }
+    *out_len = json_array_size(arr);
+    json_decref(root);
+    return 0;
+}
+
+int nostr_json_get_array_string(const char *json, const char *key, size_t index, char **out_str) {
+    if (out_str) *out_str = NULL;
+    if (!json || !key || !out_str) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *arr = json_object_get(root, key);
+    if (!arr || !json_is_array(arr) || index >= json_array_size(arr)) { json_decref(root); return -1; }
+    json_t *v = json_array_get(arr, index);
+    int rc = -1;
+    if (v && json_is_string(v)) {
+        const char *s = json_string_value(v);
+        if (s) { *out_str = strdup(s); rc = 0; }
+    }
+    json_decref(root);
+    return rc;
+}
+
+int nostr_json_get_array_int(const char *json, const char *key, size_t index, int *out_val) {
+    if (out_val) *out_val = 0;
+    if (!json || !key || !out_val) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *arr = json_object_get(root, key);
+    if (!arr || !json_is_array(arr) || index >= json_array_size(arr)) { json_decref(root); return -1; }
+    json_t *v = json_array_get(arr, index);
+    int rc = -1;
+    if (v && json_is_integer(v)) { *out_val = (int)json_integer_value(v); rc = 0; }
+    else if (v && json_is_real(v)) { *out_val = (int)json_real_value(v); rc = 0; }
+    json_decref(root);
+    return rc;
+}
+
+int nostr_json_get_array_int64(const char *json, const char *key, size_t index, int64_t *out_val) {
+    if (out_val) *out_val = 0;
+    if (!json || !key || !out_val) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *arr = json_object_get(root, key);
+    if (!arr || !json_is_array(arr) || index >= json_array_size(arr)) { json_decref(root); return -1; }
+    json_t *v = json_array_get(arr, index);
+    int rc = -1;
+    if (v && json_is_integer(v)) { *out_val = (int64_t)json_integer_value(v); rc = 0; }
+    else if (v && json_is_real(v)) { *out_val = (int64_t)json_real_value(v); rc = 0; }
+    json_decref(root);
+    return rc;
+}
+
+/* ---- Object Key Enumeration ---- */
+
+int nostr_json_get_object_keys(const char *json,
+                               char ***out_keys,
+                               size_t *out_count) {
+    if (out_keys) *out_keys = NULL;
+    if (out_count) *out_count = 0;
+    if (!json || !out_keys || !out_count) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root || !json_is_object(root)) { if (root) json_decref(root); return -1; }
+
+    size_t n = json_object_size(root);
+    if (n == 0) {
+        *out_keys = NULL;
+        *out_count = 0;
+        json_decref(root);
+        return 0;
+    }
+
+    char **keys = (char **)calloc(n, sizeof(char *));
+    if (!keys) { json_decref(root); return -1; }
+
+    const char *key;
+    json_t *val;
+    size_t i = 0;
+    json_object_foreach(root, key, val) {
+        keys[i++] = strdup(key);
+    }
+
+    *out_keys = keys;
+    *out_count = n;
+    json_decref(root);
+    return 0;
+}
+
+int nostr_json_get_object_keys_at(const char *json,
+                                  const char *object_key,
+                                  char ***out_keys,
+                                  size_t *out_count) {
+    if (out_keys) *out_keys = NULL;
+    if (out_count) *out_count = 0;
+    if (!json || !object_key || !out_keys || !out_count) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *obj = json_object_get(root, object_key);
+    if (!obj || !json_is_object(obj)) { json_decref(root); return -1; }
+
+    size_t n = json_object_size(obj);
+    if (n == 0) {
+        *out_keys = NULL;
+        *out_count = 0;
+        json_decref(root);
+        return 0;
+    }
+
+    char **keys = (char **)calloc(n, sizeof(char *));
+    if (!keys) { json_decref(root); return -1; }
+
+    const char *key;
+    json_t *val;
+    size_t i = 0;
+    json_object_foreach(obj, key, val) {
+        keys[i++] = strdup(key);
+    }
+
+    *out_keys = keys;
+    *out_count = n;
+    json_decref(root);
+    return 0;
+}
+
+/* ---- Object Iteration (Callback-based) ---- */
+
+int nostr_json_object_foreach(const char *json,
+                              NostrJsonObjectIterCb callback,
+                              void *user_data) {
+    if (!json || !callback) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root || !json_is_object(root)) { if (root) json_decref(root); return -1; }
+
+    const char *key;
+    json_t *val;
+    json_object_foreach(root, key, val) {
+        char *val_json = json_dumps(val, JSON_COMPACT | JSON_ENCODE_ANY);
+        if (val_json) {
+            bool cont = callback(key, val_json, user_data);
+            free(val_json);
+            if (!cont) break;
+        }
+    }
+
+    json_decref(root);
+    return 0;
+}
+
+int nostr_json_object_foreach_at(const char *json,
+                                 const char *object_key,
+                                 NostrJsonObjectIterCb callback,
+                                 void *user_data) {
+    if (!json || !object_key || !callback) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *obj = json_object_get(root, object_key);
+    if (!obj || !json_is_object(obj)) { json_decref(root); return -1; }
+
+    const char *key;
+    json_t *val;
+    json_object_foreach(obj, key, val) {
+        char *val_json = json_dumps(val, JSON_COMPACT | JSON_ENCODE_ANY);
+        if (val_json) {
+            bool cont = callback(key, val_json, user_data);
+            free(val_json);
+            if (!cont) break;
+        }
+    }
+
+    json_decref(root);
+    return 0;
+}
+
+/* ---- Array Iteration (Callback-based) ---- */
+
+int nostr_json_array_foreach(const char *json,
+                             const char *key,
+                             NostrJsonArrayIterCb callback,
+                             void *user_data) {
+    if (!json || !key || !callback) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root) return -1;
+    json_t *arr = json_object_get(root, key);
+    if (!arr || !json_is_array(arr)) { json_decref(root); return -1; }
+
+    size_t index;
+    json_t *val;
+    json_array_foreach(arr, index, val) {
+        char *val_json = json_dumps(val, JSON_COMPACT | JSON_ENCODE_ANY);
+        if (val_json) {
+            bool cont = callback(index, val_json, user_data);
+            free(val_json);
+            if (!cont) break;
+        }
+    }
+
+    json_decref(root);
+    return 0;
+}
+
+int nostr_json_array_foreach_root(const char *json,
+                                  NostrJsonArrayIterCb callback,
+                                  void *user_data) {
+    if (!json || !callback) return -1;
+    json_error_t err; json_t *root = json_loads(json, 0, &err);
+    if (!root || !json_is_array(root)) { if (root) json_decref(root); return -1; }
+
+    size_t index;
+    json_t *val;
+    json_array_foreach(root, index, val) {
+        char *val_json = json_dumps(val, JSON_COMPACT | JSON_ENCODE_ANY);
+        if (val_json) {
+            bool cont = callback(index, val_json, user_data);
+            free(val_json);
+            if (!cont) break;
+        }
+    }
+
+    json_decref(root);
+    return 0;
+}
+
+/* ---- JSON Building ---- */
+
+/* Builder state enum */
+typedef enum {
+    BUILDER_STATE_EMPTY,
+    BUILDER_STATE_OBJECT,
+    BUILDER_STATE_ARRAY
+} BuilderState;
+
+/* Builder stack entry */
+typedef struct BuilderStackEntry {
+    json_t *container;
+    BuilderState state;
+    char *pending_key;    /* For objects: key waiting for value */
+    struct BuilderStackEntry *prev;
+} BuilderStackEntry;
+
+struct NostrJsonBuilder {
+    BuilderStackEntry *stack;
+    json_t *result;
+};
+
+NostrJsonBuilder *nostr_json_builder_new(void) {
+    NostrJsonBuilder *b = (NostrJsonBuilder *)calloc(1, sizeof(NostrJsonBuilder));
+    return b;
+}
+
+void nostr_json_builder_free(NostrJsonBuilder *builder) {
+    if (!builder) return;
+    /* Free stack */
+    while (builder->stack) {
+        BuilderStackEntry *e = builder->stack;
+        builder->stack = e->prev;
+        if (e->pending_key) free(e->pending_key);
+        if (e->container) json_decref(e->container);
+        free(e);
+    }
+    if (builder->result) json_decref(builder->result);
+    free(builder);
+}
+
+static void builder_push(NostrJsonBuilder *b, json_t *container, BuilderState state) {
+    BuilderStackEntry *e = (BuilderStackEntry *)calloc(1, sizeof(BuilderStackEntry));
+    e->container = container;
+    e->state = state;
+    e->prev = b->stack;
+    b->stack = e;
+}
+
+static BuilderStackEntry *builder_pop(NostrJsonBuilder *b) {
+    if (!b->stack) return NULL;
+    BuilderStackEntry *e = b->stack;
+    b->stack = e->prev;
+    return e;
+}
+
+static int builder_add_value(NostrJsonBuilder *b, json_t *val) {
+    if (!b || !val) return -1;
+
+    if (!b->stack) {
+        /* Top-level value */
+        if (b->result) json_decref(b->result);
+        b->result = val;
+        return 0;
+    }
+
+    BuilderStackEntry *top = b->stack;
+    if (top->state == BUILDER_STATE_OBJECT) {
+        if (!top->pending_key) {
+            json_decref(val);
+            return -1;  /* Need key before value in object */
+        }
+        json_object_set_new(top->container, top->pending_key, val);
+        free(top->pending_key);
+        top->pending_key = NULL;
+    } else if (top->state == BUILDER_STATE_ARRAY) {
+        json_array_append_new(top->container, val);
+    } else {
+        json_decref(val);
+        return -1;
+    }
+
+    return 0;
+}
+
+int nostr_json_builder_begin_object(NostrJsonBuilder *builder) {
+    if (!builder) return -1;
+    json_t *obj = json_object();
+    if (!obj) return -1;
+
+    if (builder->stack) {
+        /* Nested: add to parent first, then push */
+        BuilderStackEntry *top = builder->stack;
+        if (top->state == BUILDER_STATE_OBJECT) {
+            if (!top->pending_key) {
+                json_decref(obj);
+                return -1;
+            }
+            json_object_set_new(top->container, top->pending_key, obj);
+            free(top->pending_key);
+            top->pending_key = NULL;
+            /* Borrow reference for stack - incref */
+            json_incref(obj);
+        } else if (top->state == BUILDER_STATE_ARRAY) {
+            json_array_append_new(top->container, obj);
+            json_incref(obj);
+        }
+    }
+
+    builder_push(builder, obj, BUILDER_STATE_OBJECT);
+    return 0;
+}
+
+int nostr_json_builder_end_object(NostrJsonBuilder *builder) {
+    if (!builder || !builder->stack || builder->stack->state != BUILDER_STATE_OBJECT) return -1;
+    BuilderStackEntry *e = builder_pop(builder);
+    if (!builder->stack) {
+        /* This was the root */
+        if (builder->result) json_decref(builder->result);
+        builder->result = e->container;
+    } else {
+        json_decref(e->container);
+    }
+    if (e->pending_key) free(e->pending_key);
+    free(e);
+    return 0;
+}
+
+int nostr_json_builder_begin_array(NostrJsonBuilder *builder) {
+    if (!builder) return -1;
+    json_t *arr = json_array();
+    if (!arr) return -1;
+
+    if (builder->stack) {
+        BuilderStackEntry *top = builder->stack;
+        if (top->state == BUILDER_STATE_OBJECT) {
+            if (!top->pending_key) {
+                json_decref(arr);
+                return -1;
+            }
+            json_object_set_new(top->container, top->pending_key, arr);
+            free(top->pending_key);
+            top->pending_key = NULL;
+            json_incref(arr);
+        } else if (top->state == BUILDER_STATE_ARRAY) {
+            json_array_append_new(top->container, arr);
+            json_incref(arr);
+        }
+    }
+
+    builder_push(builder, arr, BUILDER_STATE_ARRAY);
+    return 0;
+}
+
+int nostr_json_builder_end_array(NostrJsonBuilder *builder) {
+    if (!builder || !builder->stack || builder->stack->state != BUILDER_STATE_ARRAY) return -1;
+    BuilderStackEntry *e = builder_pop(builder);
+    if (!builder->stack) {
+        if (builder->result) json_decref(builder->result);
+        builder->result = e->container;
+    } else {
+        json_decref(e->container);
+    }
+    free(e);
+    return 0;
+}
+
+int nostr_json_builder_set_key(NostrJsonBuilder *builder, const char *key) {
+    if (!builder || !key || !builder->stack || builder->stack->state != BUILDER_STATE_OBJECT) return -1;
+    if (builder->stack->pending_key) free(builder->stack->pending_key);
+    builder->stack->pending_key = strdup(key);
+    return builder->stack->pending_key ? 0 : -1;
+}
+
+int nostr_json_builder_add_string(NostrJsonBuilder *builder, const char *value) {
+    if (!builder) return -1;
+    return builder_add_value(builder, json_string(value ? value : ""));
+}
+
+int nostr_json_builder_add_int(NostrJsonBuilder *builder, int value) {
+    if (!builder) return -1;
+    return builder_add_value(builder, json_integer(value));
+}
+
+int nostr_json_builder_add_int64(NostrJsonBuilder *builder, int64_t value) {
+    if (!builder) return -1;
+    return builder_add_value(builder, json_integer((json_int_t)value));
+}
+
+int nostr_json_builder_add_double(NostrJsonBuilder *builder, double value) {
+    if (!builder) return -1;
+    return builder_add_value(builder, json_real(value));
+}
+
+int nostr_json_builder_add_bool(NostrJsonBuilder *builder, bool value) {
+    if (!builder) return -1;
+    return builder_add_value(builder, value ? json_true() : json_false());
+}
+
+int nostr_json_builder_add_null(NostrJsonBuilder *builder) {
+    if (!builder) return -1;
+    return builder_add_value(builder, json_null());
+}
+
+int nostr_json_builder_add_raw(NostrJsonBuilder *builder, const char *raw_json) {
+    if (!builder || !raw_json) return -1;
+    json_error_t err;
+    json_t *val = json_loads(raw_json, 0, &err);
+    if (!val) return -1;
+    return builder_add_value(builder, val);
+}
+
+char *nostr_json_builder_finish(NostrJsonBuilder *builder) {
+    if (!builder) return NULL;
+
+    /* Close any open containers */
+    while (builder->stack) {
+        if (builder->stack->state == BUILDER_STATE_OBJECT) {
+            nostr_json_builder_end_object(builder);
+        } else {
+            nostr_json_builder_end_array(builder);
+        }
+    }
+
+    if (!builder->result) return NULL;
+
+    char *s = json_dumps(builder->result, JSON_COMPACT);
+    json_decref(builder->result);
+    builder->result = NULL;
+    return s;
+}
+
+/* ---- Convenience Builders ---- */
+
+char *nostr_json_build_object(const char *key, ...) {
+    if (!key) return NULL;
+
+    json_t *obj = json_object();
+    if (!obj) return NULL;
+
+    va_list args;
+    va_start(args, key);
+
+    const char *k = key;
+    while (k) {
+        const char *v = va_arg(args, const char *);
+        if (v) {
+            json_object_set_new(obj, k, json_string(v));
+        }
+        k = va_arg(args, const char *);
+    }
+
+    va_end(args);
+
+    char *s = json_dumps(obj, JSON_COMPACT);
+    json_decref(obj);
+    return s;
+}
+
+char *nostr_json_build_string_array(const char *first, ...) {
+    json_t *arr = json_array();
+    if (!arr) return NULL;
+
+    if (first) {
+        json_array_append_new(arr, json_string(first));
+
+        va_list args;
+        va_start(args, first);
+        const char *s;
+        while ((s = va_arg(args, const char *)) != NULL) {
+            json_array_append_new(arr, json_string(s));
+        }
+        va_end(args);
+    }
+
+    char *result = json_dumps(arr, JSON_COMPACT);
+    json_decref(arr);
+    return result;
+}
+
+char *nostr_json_build_int_array(const int *values, size_t count) {
+    json_t *arr = json_array();
+    if (!arr) return NULL;
+
+    for (size_t i = 0; i < count; i++) {
+        json_array_append_new(arr, json_integer(values[i]));
+    }
+
+    char *result = json_dumps(arr, JSON_COMPACT);
+    json_decref(arr);
+    return result;
+}
+
+/* ---- Validation ---- */
+
+bool nostr_json_is_valid(const char *json) {
+    if (!json) return false;
+    json_error_t err;
+    json_t *root = json_loads(json, 0, &err);
+    if (!root) return false;
+    json_decref(root);
+    return true;
+}
+
+bool nostr_json_is_object_str(const char *json) {
+    if (!json) return false;
+    json_error_t err;
+    json_t *root = json_loads(json, 0, &err);
+    if (!root) return false;
+    bool is_obj = json_is_object(root);
+    json_decref(root);
+    return is_obj;
+}
+
+bool nostr_json_is_array_str(const char *json) {
+    if (!json) return false;
+    json_error_t err;
+    json_t *root = json_loads(json, 0, &err);
+    if (!root) return false;
+    bool is_arr = json_is_array(root);
+    json_decref(root);
+    return is_arr;
+}
+
+/* ---- Transformation ---- */
+
+char *nostr_json_prettify(const char *json) {
+    if (!json) return NULL;
+    json_error_t err;
+    json_t *root = json_loads(json, 0, &err);
+    if (!root) return NULL;
+    char *result = json_dumps(root, JSON_INDENT(2));
+    json_decref(root);
+    return result;
+}
+
+char *nostr_json_compact(const char *json) {
+    if (!json) return NULL;
+    json_error_t err;
+    json_t *root = json_loads(json, 0, &err);
+    if (!root) return NULL;
+    char *result = json_dumps(root, JSON_COMPACT);
+    json_decref(root);
+    return result;
+}
+
+char *nostr_json_merge_objects(const char *base, const char *overlay) {
+    if (!base || !overlay) return NULL;
+    json_error_t err;
+    json_t *base_obj = json_loads(base, 0, &err);
+    if (!base_obj || !json_is_object(base_obj)) { if (base_obj) json_decref(base_obj); return NULL; }
+    json_t *overlay_obj = json_loads(overlay, 0, &err);
+    if (!overlay_obj || !json_is_object(overlay_obj)) {
+        json_decref(base_obj);
+        if (overlay_obj) json_decref(overlay_obj);
+        return NULL;
+    }
+
+    /* Update base with overlay keys */
+    const char *key;
+    json_t *val;
+    json_object_foreach(overlay_obj, key, val) {
+        json_object_set(base_obj, key, val);
+    }
+
+    char *result = json_dumps(base_obj, JSON_COMPACT);
+    json_decref(base_obj);
+    json_decref(overlay_obj);
+    return result;
 }

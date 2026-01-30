@@ -5,6 +5,8 @@
 #include "nostr-event.h"
 #include "nostr-filter.h"
 #include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
 
 // Structure to hold JSON function pointers
 typedef struct _NostrJsonInterface {
