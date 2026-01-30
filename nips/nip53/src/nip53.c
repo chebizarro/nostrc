@@ -3,7 +3,7 @@
  *
  * Migrated from jansson to NostrJsonInterface (nostrc-3nj)
  */
-#include "nip53.h"
+#include "../include/nip53.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
 #include "json.h"
