@@ -3,6 +3,7 @@
  * @brief NIP-30 Custom Emoji implementation
  *
  * Implements parsing of emoji tags and caching of emoji images.
+ * nostrc-3nj: Migrated from json-glib to NostrJsonInterface
  */
 
 #include "custom_emoji.h"
@@ -13,7 +14,7 @@
 #include <sys/stat.h>
 #include <glib/gstdio.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
-#include <json-glib/json-glib.h>
+#include <json.h>
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -61,63 +62,87 @@ void gnostr_emoji_list_append(GnostrEmojiList *list, GnostrCustomEmoji *emoji) {
   list->items[list->count++] = emoji;
 }
 
+/* nostrc-3nj: Callback context for iterating over tags array */
+typedef struct {
+  GnostrEmojiList *list;
+} EmojiParseContext;
+
+/* nostrc-3nj: Callback for outer tags array iteration */
+static bool parse_emoji_tag_cb(size_t index, const char *element_json, void *user_data) {
+  (void)index;
+  EmojiParseContext *ctx = (EmojiParseContext *)user_data;
+
+  /* Each element should be an array (a tag) */
+  if (!element_json || !nostr_json_is_array_str(element_json)) return true;
+
+  /* Get tag length - NIP-30 emoji tag format: ["emoji", "shortcode", "url"] */
+  size_t tag_len = 0;
+  if (nostr_json_get_array_length(element_json, NULL, &tag_len) != 0 || tag_len < 3) {
+    return true;  /* Skip invalid tags, continue iteration */
+  }
+
+  /* Check if first element is "emoji" */
+  char *tag_name = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    return true;
+  }
+
+  if (strcmp(tag_name, "emoji") != 0) {
+    free(tag_name);
+    return true;  /* Not an emoji tag, continue */
+  }
+  free(tag_name);
+
+  /* Get shortcode (index 1) */
+  char *shortcode = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 1, &shortcode) != 0 || !shortcode || !*shortcode) {
+    free(shortcode);
+    return true;
+  }
+
+  /* Get URL (index 2) */
+  char *url = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 2, &url) != 0 || !url || !*url) {
+    free(shortcode);
+    free(url);
+    return true;
+  }
+
+  /* Validate URL starts with http:// or https:// */
+  if (!g_str_has_prefix(url, "http://") && !g_str_has_prefix(url, "https://")) {
+    g_debug("emoji: Skipping invalid URL for shortcode '%s': %s", shortcode, url);
+    free(shortcode);
+    free(url);
+    return true;
+  }
+
+  /* Create emoji entry */
+  GnostrCustomEmoji *emoji = gnostr_custom_emoji_new(shortcode, url);
+  if (emoji) {
+    gnostr_emoji_list_append(ctx->list, emoji);
+    g_debug("emoji: Parsed custom emoji :%s: -> %s", shortcode, url);
+  }
+
+  free(shortcode);
+  free(url);
+
+  return true;  /* Continue iteration */
+}
+
 GnostrEmojiList *gnostr_emoji_parse_tags_json(const char *tags_json) {
   if (!tags_json || !*tags_json) return NULL;
 
-  GError *error = NULL;
-  JsonParser *parser = json_parser_new();
-
-  if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
-    g_debug("emoji: Failed to parse tags JSON: %s", error ? error->message : "unknown");
-    g_clear_error(&error);
-    g_object_unref(parser);
+  /* Validate it's an array */
+  if (!nostr_json_is_array_str(tags_json)) {
+    g_debug("emoji: Tags JSON is not an array");
     return NULL;
   }
-
-  JsonNode *root = json_parser_get_root(parser);
-  if (!JSON_NODE_HOLDS_ARRAY(root)) {
-    g_object_unref(parser);
-    return NULL;
-  }
-
-  JsonArray *tags_array = json_node_get_array(root);
-  guint n_tags = json_array_get_length(tags_array);
 
   GnostrEmojiList *list = gnostr_emoji_list_new();
 
-  for (guint i = 0; i < n_tags; i++) {
-    JsonNode *tag_node = json_array_get_element(tags_array, i);
-    if (!JSON_NODE_HOLDS_ARRAY(tag_node)) continue;
-
-    JsonArray *tag = json_node_get_array(tag_node);
-    guint tag_len = json_array_get_length(tag);
-
-    /* NIP-30 emoji tag format: ["emoji", "shortcode", "url"] */
-    if (tag_len < 3) continue;
-
-    /* Check if this is an emoji tag */
-    const char *tag_name = json_array_get_string_element(tag, 0);
-    if (!tag_name || strcmp(tag_name, "emoji") != 0) continue;
-
-    const char *shortcode = json_array_get_string_element(tag, 1);
-    const char *url = json_array_get_string_element(tag, 2);
-
-    if (!shortcode || !*shortcode || !url || !*url) continue;
-
-    /* Validate URL starts with http:// or https:// */
-    if (!g_str_has_prefix(url, "http://") && !g_str_has_prefix(url, "https://")) {
-      g_debug("emoji: Skipping invalid URL for shortcode '%s': %s", shortcode, url);
-      continue;
-    }
-
-    GnostrCustomEmoji *emoji = gnostr_custom_emoji_new(shortcode, url);
-    if (emoji) {
-      gnostr_emoji_list_append(list, emoji);
-      g_debug("emoji: Parsed custom emoji :%s: -> %s", shortcode, url);
-    }
-  }
-
-  g_object_unref(parser);
+  /* nostrc-3nj: Use NostrJsonInterface to iterate over tags array */
+  EmojiParseContext ctx = { .list = list };
+  nostr_json_array_foreach_root(tags_json, parse_emoji_tag_cb, &ctx);
 
   if (list->count == 0) {
     gnostr_emoji_list_free(list);

@@ -1,13 +1,14 @@
 /**
  * @file imeta.c
  * @brief NIP-92 imeta tag parser implementation
+ * nostrc-3nj: Migrated from json-glib to NostrJsonInterface
  */
 
 #include "imeta.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <json-glib/json-glib.h>
+#include <json.h>
 
 /* Unused: Helper for strdup with NULL check
  * static char *safe_strdup(const char *s) { return s ? g_strdup(s) : NULL; }
@@ -232,60 +233,128 @@ GnostrImeta *gnostr_imeta_parse_tag(const char **tag_values, size_t n_values) {
   return imeta;
 }
 
+/* nostrc-3nj: Callback context for iterating over tags array */
+typedef struct {
+  GnostrImetaList *list;
+} ImetaParseContext;
+
+/* nostrc-3nj: Callback for inner tag array iteration to collect values */
+typedef struct {
+  const char **values;
+  size_t capacity;
+  size_t count;
+} TagValuesContext;
+
+static bool collect_tag_values_cb(size_t index, const char *element_json, void *user_data) {
+  TagValuesContext *ctx = (TagValuesContext *)user_data;
+  if (index >= ctx->capacity) return false;  /* Stop if exceeded capacity */
+
+  /* Extract string value from the element JSON */
+  char *str_val = NULL;
+  /* Try to parse as a string literal - element_json is the raw JSON for this element */
+  if (element_json && *element_json == '"') {
+    /* It's a string - get its value */
+    /* The element is already a JSON string, parse it directly */
+    size_t len = strlen(element_json);
+    if (len >= 2 && element_json[len-1] == '"') {
+      /* Extract content between quotes, handling escapes */
+      str_val = g_strndup(element_json + 1, len - 2);
+      /* Handle basic JSON escapes */
+      if (str_val) {
+        char *dst = str_val;
+        const char *src = str_val;
+        while (*src) {
+          if (*src == '\\' && src[1]) {
+            src++;
+            switch (*src) {
+              case 'n': *dst++ = '\n'; break;
+              case 't': *dst++ = '\t'; break;
+              case 'r': *dst++ = '\r'; break;
+              case '"': *dst++ = '"'; break;
+              case '\\': *dst++ = '\\'; break;
+              default: *dst++ = *src; break;
+            }
+            src++;
+          } else {
+            *dst++ = *src++;
+          }
+        }
+        *dst = '\0';
+      }
+    }
+  }
+
+  /* Store the value (may be NULL if not a valid string) */
+  ctx->values[ctx->count++] = str_val;
+  return true;  /* Continue iteration */
+}
+
+/* nostrc-3nj: Callback for outer tags array iteration */
+static bool parse_imeta_tag_cb(size_t index, const char *element_json, void *user_data) {
+  (void)index;
+  ImetaParseContext *ctx = (ImetaParseContext *)user_data;
+
+  /* Each element should be an array (a tag) */
+  if (!element_json || !nostr_json_is_array_str(element_json)) return true;
+
+  /* Get tag length */
+  size_t tag_len = 0;
+  if (nostr_json_get_array_length(element_json, NULL, &tag_len) != 0 || tag_len < 2) {
+    return true;  /* Skip invalid tags, continue iteration */
+  }
+
+  /* Check if first element is "imeta" */
+  char *tag_name = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+    return true;
+  }
+
+  if (strcmp(tag_name, "imeta") != 0) {
+    free(tag_name);
+    return true;  /* Not an imeta tag, continue */
+  }
+  free(tag_name);
+
+  /* Collect all tag values */
+  TagValuesContext values_ctx = {
+    .values = g_new0(const char *, tag_len + 1),
+    .capacity = tag_len,
+    .count = 0
+  };
+
+  nostr_json_array_foreach_root(element_json, collect_tag_values_cb, &values_ctx);
+
+  /* Parse the imeta tag */
+  if (values_ctx.count >= 2) {
+    GnostrImeta *imeta = gnostr_imeta_parse_tag(values_ctx.values, values_ctx.count);
+    if (imeta) {
+      gnostr_imeta_list_append(ctx->list, imeta);
+    }
+  }
+
+  /* Free the collected values */
+  for (size_t i = 0; i < values_ctx.count; i++) {
+    g_free((char *)values_ctx.values[i]);
+  }
+  g_free(values_ctx.values);
+
+  return true;  /* Continue iteration */
+}
+
 GnostrImetaList *gnostr_imeta_parse_tags_json(const char *tags_json) {
   if (!tags_json || !*tags_json) return NULL;
 
-  GError *error = NULL;
-  JsonParser *parser = json_parser_new();
-
-  if (!json_parser_load_from_data(parser, tags_json, -1, &error)) {
-    g_debug("imeta: Failed to parse tags JSON: %s", error ? error->message : "unknown");
-    g_clear_error(&error);
-    g_object_unref(parser);
+  /* Validate it's an array */
+  if (!nostr_json_is_array_str(tags_json)) {
+    g_debug("imeta: Tags JSON is not an array");
     return NULL;
   }
-
-  JsonNode *root = json_parser_get_root(parser);
-  if (!JSON_NODE_HOLDS_ARRAY(root)) {
-    g_object_unref(parser);
-    return NULL;
-  }
-
-  JsonArray *tags_array = json_node_get_array(root);
-  guint n_tags = json_array_get_length(tags_array);
 
   GnostrImetaList *list = gnostr_imeta_list_new();
 
-  for (guint i = 0; i < n_tags; i++) {
-    JsonNode *tag_node = json_array_get_element(tags_array, i);
-    if (!JSON_NODE_HOLDS_ARRAY(tag_node)) continue;
-
-    JsonArray *tag = json_node_get_array(tag_node);
-    guint tag_len = json_array_get_length(tag);
-    if (tag_len < 2) continue;
-
-    /* Check if this is an imeta tag */
-    const char *tag_name = json_array_get_string_element(tag, 0);
-    if (!tag_name || strcmp(tag_name, "imeta") != 0) continue;
-
-    /* Extract tag values */
-    const char **values = g_new0(const char *, tag_len + 1);
-    for (guint j = 0; j < tag_len; j++) {
-      JsonNode *elem = json_array_get_element(tag, j);
-      if (JSON_NODE_HOLDS_VALUE(elem)) {
-        values[j] = json_node_get_string(elem);
-      }
-    }
-
-    GnostrImeta *imeta = gnostr_imeta_parse_tag(values, tag_len);
-    if (imeta) {
-      gnostr_imeta_list_append(list, imeta);
-    }
-
-    g_free(values);
-  }
-
-  g_object_unref(parser);
+  /* nostrc-3nj: Use NostrJsonInterface to iterate over tags array */
+  ImetaParseContext ctx = { .list = list };
+  nostr_json_array_foreach_root(tags_json, parse_imeta_tag_cb, &ctx);
 
   if (list->count == 0) {
     gnostr_imeta_list_free(list);
