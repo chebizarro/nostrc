@@ -169,8 +169,8 @@ static void test_event_queue_full_drops(void) {
     int rc2 = poll_receive(sub->events, &got2, 100);
     assert(rc2 == 1);  // Timeout - no more events
 
-    // Verify drop counter was incremented
-    assert(atomic_load(&sub->priv->events_dropped) >= 1);
+    // Verify drop counter was incremented (use public API)
+    assert(nostr_subscription_events_dropped(sub) >= 1);
 
     // Cleanup
     nostr_subscription_unsubscribe(sub);

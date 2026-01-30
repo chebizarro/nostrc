@@ -34,19 +34,19 @@ AdaptiveCapacityState *nostr_subscription_get_adaptive_state(void) {
 uint32_t nostr_subscription_suggest_capacity(void) {
     uint32_t suggested = atomic_load(&g_adaptive_state.suggested_capacity);
 
-    /* Check environment override */
+    /* Check environment override - allows explicit override for testing
+     * Only MAX is enforced to prevent extreme memory usage.
+     * MIN is not enforced to support test scenarios with small capacities. */
     const char *env = getenv("NOSTR_SUB_EVENTS_CAP");
     if (env && *env) {
         int v = atoi(env);
         if (v > 0) {
-            /* Clamp to allowed range */
-            if (v < NOSTR_QUEUE_CAPACITY_MIN) v = NOSTR_QUEUE_CAPACITY_MIN;
             if (v > NOSTR_QUEUE_CAPACITY_MAX) v = NOSTR_QUEUE_CAPACITY_MAX;
             return (uint32_t)v;
         }
     }
 
-    /* Ensure suggested is within bounds */
+    /* Ensure suggested is within bounds for production use */
     if (suggested < NOSTR_QUEUE_CAPACITY_MIN) suggested = NOSTR_QUEUE_CAPACITY_MIN;
     if (suggested > NOSTR_QUEUE_CAPACITY_MAX) suggested = NOSTR_QUEUE_CAPACITY_MAX;
 

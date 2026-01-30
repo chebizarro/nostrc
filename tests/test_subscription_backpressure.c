@@ -86,8 +86,8 @@ int main(void) {
     int rc3 = poll_receive(sub->end_of_stored_events, &sig, 200);
     assert(rc3 == 0);
 
-    // Verify many events were dropped
-    unsigned long long dropped = atomic_load(&sub->priv->events_dropped);
+    // Verify many events were dropped (use public API)
+    unsigned long long dropped = nostr_subscription_events_dropped(sub);
     assert(dropped >= 48);  // At least 48 of 50 should be dropped (capacity=1)
 
     nostr_subscription_unsubscribe(sub);
