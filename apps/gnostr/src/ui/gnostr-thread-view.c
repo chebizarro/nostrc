@@ -198,10 +198,9 @@ static void parse_nip10_from_json(const char *json_str, char **root_id, char **r
     /* Any e-tag (even if same as root) indicates this is a reply */
     *reply_id = g_strdup(last_e_id);
   }
-
-  /* NIP-10: When only "root" marker exists (no "reply" marker), this is a
-   * direct reply to the root event. Set reply_id = root_id.
-   * nostrc-mef: Fix root-only marker case */
+  /* nostrc-mef: NIP-10 "root-only" marker case.
+   * When an event has a "root" marker but NO "reply" marker, it means
+   * the event is a direct reply to the root. Set reply_id = root_id. */
   if (!*reply_id && *root_id) {
     *reply_id = g_strdup(*root_id);
   }
