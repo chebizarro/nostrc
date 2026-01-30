@@ -3,7 +3,8 @@
  */
 
 #include "nip84_highlights.h"
-#include <jansson.h>
+#include <json.h>
+#include <nostr-event.h>
 #include <string.h>
 #include <time.h>
 
@@ -33,56 +34,54 @@ void gnostr_highlight_free(GnostrHighlight *highlight) {
 GnostrHighlight *gnostr_highlight_parse_json(const char *event_json) {
   if (!event_json || !*event_json) return NULL;
 
-  json_error_t error;
-  json_t *root = json_loads(event_json, 0, &error);
-  if (!root) {
-    g_warning("NIP-84: Failed to parse event JSON: %s", error.text);
+  /* Deserialize to NostrEvent using the facade */
+  NostrEvent event = {0};
+  if (nostr_event_deserialize(&event, event_json) != 0) {
+    g_warning("NIP-84: Failed to parse event JSON");
     return NULL;
   }
 
   /* Verify kind */
-  json_t *kind_val = json_object_get(root, "kind");
-  if (!kind_val || json_integer_value(kind_val) != NOSTR_KIND_HIGHLIGHT) {
-    g_debug("NIP-84: Not a highlight event (kind=%lld)",
-            kind_val ? (long long)json_integer_value(kind_val) : -1);
-    json_decref(root);
+  if (event.kind != NOSTR_KIND_HIGHLIGHT) {
+    g_debug("NIP-84: Not a highlight event (kind=%d)", event.kind);
+    /* Free internal event fields (stack-allocated event) */
+  free(event.id);
+  free(event.pubkey);
+  free(event.content);
+  free(event.sig);
+  if (event.tags) nostr_tags_free(event.tags);
     return NULL;
   }
 
   GnostrHighlight *h = gnostr_highlight_new();
 
   /* Extract event metadata */
-  json_t *id_val = json_object_get(root, "id");
-  if (json_is_string(id_val)) {
-    h->event_id = g_strdup(json_string_value(id_val));
+  if (event.id) {
+    h->event_id = g_strdup(event.id);
   }
 
-  json_t *pubkey_val = json_object_get(root, "pubkey");
-  if (json_is_string(pubkey_val)) {
-    h->pubkey = g_strdup(json_string_value(pubkey_val));
+  if (event.pubkey) {
+    h->pubkey = g_strdup(event.pubkey);
   }
 
-  json_t *created_at = json_object_get(root, "created_at");
-  if (json_is_integer(created_at)) {
-    h->created_at = json_integer_value(created_at);
-  }
+  h->created_at = event.created_at;
 
   /* Extract content (highlighted text) */
-  json_t *content_val = json_object_get(root, "content");
-  if (json_is_string(content_val)) {
-    h->highlighted_text = g_strdup(json_string_value(content_val));
+  if (event.content) {
+    h->highlighted_text = g_strdup(event.content);
   }
 
-  /* Parse tags */
-  json_t *tags = json_object_get(root, "tags");
-  if (json_is_array(tags)) {
-    size_t idx;
-    json_t *tag;
-    json_array_foreach(tags, idx, tag) {
-      if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+  /* Parse tags using NostrTags API */
+  if (event.tags) {
+    size_t n_tags = nostr_tags_size(event.tags);
+    for (size_t i = 0; i < n_tags; i++) {
+      NostrTag *tag = nostr_tags_get(event.tags, i);
+      if (!tag) continue;
+      size_t tag_len = nostr_tag_size(tag);
+      if (tag_len < 2) continue;
 
-      const char *tag_name = json_string_value(json_array_get(tag, 0));
-      const char *tag_value = json_string_value(json_array_get(tag, 1));
+      const char *tag_name = nostr_tag_get(tag, 0);
+      const char *tag_value = nostr_tag_get(tag, 1);
       if (!tag_name || !tag_value) continue;
 
       if (strcmp(tag_name, "context") == 0) {
@@ -99,8 +98,8 @@ GnostrHighlight *gnostr_highlight_parse_json(const char *event_json) {
         g_free(h->source_event_id);
         h->source_event_id = g_strdup(tag_value);
         /* Relay hint in third position */
-        if (json_array_size(tag) >= 3) {
-          const char *relay = json_string_value(json_array_get(tag, 2));
+        if (tag_len >= 3) {
+          const char *relay = nostr_tag_get(tag, 2);
           if (relay && *relay) {
             g_free(h->source_relay_hint);
             h->source_relay_hint = g_strdup(relay);
@@ -113,8 +112,8 @@ GnostrHighlight *gnostr_highlight_parse_json(const char *event_json) {
         g_free(h->source_a_tag);
         h->source_a_tag = g_strdup(tag_value);
         /* Relay hint in third position */
-        if (json_array_size(tag) >= 3) {
-          const char *relay = json_string_value(json_array_get(tag, 2));
+        if (tag_len >= 3) {
+          const char *relay = nostr_tag_get(tag, 2);
           if (relay && *relay) {
             g_free(h->source_relay_hint);
             h->source_relay_hint = g_strdup(relay);
@@ -131,8 +130,8 @@ GnostrHighlight *gnostr_highlight_parse_json(const char *event_json) {
         /* Author reference */
         g_free(h->author_pubkey);
         h->author_pubkey = g_strdup(tag_value);
-        if (json_array_size(tag) >= 3) {
-          const char *relay = json_string_value(json_array_get(tag, 2));
+        if (tag_len >= 3) {
+          const char *relay = nostr_tag_get(tag, 2);
           if (relay && *relay) {
             g_free(h->author_relay_hint);
             h->author_relay_hint = g_strdup(relay);
@@ -142,7 +141,12 @@ GnostrHighlight *gnostr_highlight_parse_json(const char *event_json) {
     }
   }
 
-  json_decref(root);
+  /* Free internal event fields (stack-allocated event) */
+  free(event.id);
+  free(event.pubkey);
+  free(event.content);
+  free(event.sig);
+  if (event.tags) nostr_tags_free(event.tags);
   return h;
 }
 
@@ -155,74 +159,85 @@ GnostrHighlight *gnostr_highlight_parse_tags(const char *tags_json,
     h->highlighted_text = g_strdup(content);
   }
 
-  json_error_t error;
-  json_t *tags = json_loads(tags_json, 0, &error);
-  if (!tags || !json_is_array(tags)) {
-    if (tags) json_decref(tags);
+  /* Parse tags by wrapping in a dummy event JSON and deserializing */
+  char *dummy_event = g_strdup_printf("{\"kind\":9802,\"content\":\"\",\"tags\":%s}", tags_json);
+  NostrEvent event = {0};
+  if (nostr_event_deserialize(&event, dummy_event) != 0) {
+    g_free(dummy_event);
     gnostr_highlight_free(h);
     return NULL;
   }
+  g_free(dummy_event);
 
-  size_t idx;
-  json_t *tag;
-  json_array_foreach(tags, idx, tag) {
-    if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+  if (event.tags) {
+    size_t n_tags = nostr_tags_size(event.tags);
+    for (size_t i = 0; i < n_tags; i++) {
+      NostrTag *tag = nostr_tags_get(event.tags, i);
+      if (!tag) continue;
+      size_t tag_len = nostr_tag_size(tag);
+      if (tag_len < 2) continue;
 
-    const char *tag_name = json_string_value(json_array_get(tag, 0));
-    const char *tag_value = json_string_value(json_array_get(tag, 1));
-    if (!tag_name || !tag_value) continue;
+      const char *tag_name = nostr_tag_get(tag, 0);
+      const char *tag_value = nostr_tag_get(tag, 1);
+      if (!tag_name || !tag_value) continue;
 
-    if (strcmp(tag_name, "context") == 0) {
-      g_free(h->context);
-      h->context = g_strdup(tag_value);
-    }
-    else if (strcmp(tag_name, "comment") == 0) {
-      g_free(h->comment);
-      h->comment = g_strdup(tag_value);
-    }
-    else if (strcmp(tag_name, "e") == 0) {
-      h->source_type = GNOSTR_HIGHLIGHT_SOURCE_NOTE;
-      g_free(h->source_event_id);
-      h->source_event_id = g_strdup(tag_value);
-      if (json_array_size(tag) >= 3) {
-        const char *relay = json_string_value(json_array_get(tag, 2));
-        if (relay && *relay) {
-          g_free(h->source_relay_hint);
-          h->source_relay_hint = g_strdup(relay);
+      if (strcmp(tag_name, "context") == 0) {
+        g_free(h->context);
+        h->context = g_strdup(tag_value);
+      }
+      else if (strcmp(tag_name, "comment") == 0) {
+        g_free(h->comment);
+        h->comment = g_strdup(tag_value);
+      }
+      else if (strcmp(tag_name, "e") == 0) {
+        h->source_type = GNOSTR_HIGHLIGHT_SOURCE_NOTE;
+        g_free(h->source_event_id);
+        h->source_event_id = g_strdup(tag_value);
+        if (tag_len >= 3) {
+          const char *relay = nostr_tag_get(tag, 2);
+          if (relay && *relay) {
+            g_free(h->source_relay_hint);
+            h->source_relay_hint = g_strdup(relay);
+          }
         }
       }
-    }
-    else if (strcmp(tag_name, "a") == 0) {
-      h->source_type = GNOSTR_HIGHLIGHT_SOURCE_ARTICLE;
-      g_free(h->source_a_tag);
-      h->source_a_tag = g_strdup(tag_value);
-      if (json_array_size(tag) >= 3) {
-        const char *relay = json_string_value(json_array_get(tag, 2));
-        if (relay && *relay) {
-          g_free(h->source_relay_hint);
-          h->source_relay_hint = g_strdup(relay);
+      else if (strcmp(tag_name, "a") == 0) {
+        h->source_type = GNOSTR_HIGHLIGHT_SOURCE_ARTICLE;
+        g_free(h->source_a_tag);
+        h->source_a_tag = g_strdup(tag_value);
+        if (tag_len >= 3) {
+          const char *relay = nostr_tag_get(tag, 2);
+          if (relay && *relay) {
+            g_free(h->source_relay_hint);
+            h->source_relay_hint = g_strdup(relay);
+          }
         }
       }
-    }
-    else if (strcmp(tag_name, "r") == 0) {
-      h->source_type = GNOSTR_HIGHLIGHT_SOURCE_URL;
-      g_free(h->source_url);
-      h->source_url = g_strdup(tag_value);
-    }
-    else if (strcmp(tag_name, "p") == 0) {
-      g_free(h->author_pubkey);
-      h->author_pubkey = g_strdup(tag_value);
-      if (json_array_size(tag) >= 3) {
-        const char *relay = json_string_value(json_array_get(tag, 2));
-        if (relay && *relay) {
-          g_free(h->author_relay_hint);
-          h->author_relay_hint = g_strdup(relay);
+      else if (strcmp(tag_name, "r") == 0) {
+        h->source_type = GNOSTR_HIGHLIGHT_SOURCE_URL;
+        g_free(h->source_url);
+        h->source_url = g_strdup(tag_value);
+      }
+      else if (strcmp(tag_name, "p") == 0) {
+        g_free(h->author_pubkey);
+        h->author_pubkey = g_strdup(tag_value);
+        if (tag_len >= 3) {
+          const char *relay = nostr_tag_get(tag, 2);
+          if (relay && *relay) {
+            g_free(h->author_relay_hint);
+            h->author_relay_hint = g_strdup(relay);
+          }
         }
       }
     }
   }
 
-  json_decref(tags);
+  /* Free internal event fields (stack-allocated event) */
+  free(event.id);
+  free(event.pubkey);
+  free(event.content);
+  free(event.sig);
+  if (event.tags) nostr_tags_free(event.tags);
   return h;
 }
 
@@ -239,81 +254,74 @@ char *gnostr_highlight_build_event_json(const char *highlighted_text,
     return NULL;
   }
 
-  json_t *tags = json_array();
+  /* Build the unsigned event using NostrEvent API */
+  NostrEvent event = {0};
+  event.kind = NOSTR_KIND_HIGHLIGHT;
+  event.created_at = (int64_t)time(NULL);
+  event.content = (char *)highlighted_text; /* Will be copied by serialize */
+
+  /* Create tags array */
+  NostrTags *tags = nostr_tags_new(0);
 
   /* Add context tag if provided */
   if (context && *context) {
-    json_t *context_tag = json_array();
-    json_array_append_new(context_tag, json_string("context"));
-    json_array_append_new(context_tag, json_string(context));
-    json_array_append(tags, context_tag);
-    json_decref(context_tag);
+    NostrTag *context_tag = nostr_tag_new("context", NULL);
+    nostr_tag_append(context_tag, context);
+    nostr_tags_append(tags, context_tag);
   }
 
   /* Add source reference - only one type allowed */
   if (source_event_id && *source_event_id) {
     /* Note reference (e tag) */
-    json_t *e_tag = json_array();
-    json_array_append_new(e_tag, json_string("e"));
-    json_array_append_new(e_tag, json_string(source_event_id));
+    NostrTag *e_tag = nostr_tag_new("e", NULL);
+    nostr_tag_append(e_tag, source_event_id);
     if (relay_hint && *relay_hint) {
-      json_array_append_new(e_tag, json_string(relay_hint));
-      json_array_append_new(e_tag, json_string("mention"));
+      nostr_tag_append(e_tag, relay_hint);
+      nostr_tag_append(e_tag, "mention");
     }
-    json_array_append(tags, e_tag);
-    json_decref(e_tag);
+    nostr_tags_append(tags, e_tag);
   }
   else if (source_a_tag && *source_a_tag) {
     /* Addressable event reference (a tag) */
-    json_t *a_tag = json_array();
-    json_array_append_new(a_tag, json_string("a"));
-    json_array_append_new(a_tag, json_string(source_a_tag));
+    NostrTag *a_tag = nostr_tag_new("a", NULL);
+    nostr_tag_append(a_tag, source_a_tag);
     if (relay_hint && *relay_hint) {
-      json_array_append_new(a_tag, json_string(relay_hint));
-      json_array_append_new(a_tag, json_string("mention"));
+      nostr_tag_append(a_tag, relay_hint);
+      nostr_tag_append(a_tag, "mention");
     }
-    json_array_append(tags, a_tag);
-    json_decref(a_tag);
+    nostr_tags_append(tags, a_tag);
   }
   else if (source_url && *source_url) {
     /* External URL reference (r tag) */
-    json_t *r_tag = json_array();
-    json_array_append_new(r_tag, json_string("r"));
-    json_array_append_new(r_tag, json_string(source_url));
-    json_array_append(tags, r_tag);
-    json_decref(r_tag);
+    NostrTag *r_tag = nostr_tag_new("r", NULL);
+    nostr_tag_append(r_tag, source_url);
+    nostr_tags_append(tags, r_tag);
   }
 
   /* Add author reference if provided */
   if (author_pubkey && *author_pubkey) {
-    json_t *p_tag = json_array();
-    json_array_append_new(p_tag, json_string("p"));
-    json_array_append_new(p_tag, json_string(author_pubkey));
+    NostrTag *p_tag = nostr_tag_new("p", NULL);
+    nostr_tag_append(p_tag, author_pubkey);
     if (relay_hint && *relay_hint) {
-      json_array_append_new(p_tag, json_string(relay_hint));
+      nostr_tag_append(p_tag, relay_hint);
     }
-    json_array_append(tags, p_tag);
-    json_decref(p_tag);
+    nostr_tags_append(tags, p_tag);
   }
 
   /* Add comment tag if provided */
   if (comment && *comment) {
-    json_t *comment_tag = json_array();
-    json_array_append_new(comment_tag, json_string("comment"));
-    json_array_append_new(comment_tag, json_string(comment));
-    json_array_append(tags, comment_tag);
-    json_decref(comment_tag);
+    NostrTag *comment_tag = nostr_tag_new("comment", NULL);
+    nostr_tag_append(comment_tag, comment);
+    nostr_tags_append(tags, comment_tag);
   }
 
-  /* Build the unsigned event */
-  json_t *event_obj = json_object();
-  json_object_set_new(event_obj, "kind", json_integer(NOSTR_KIND_HIGHLIGHT));
-  json_object_set_new(event_obj, "created_at", json_integer((json_int_t)time(NULL)));
-  json_object_set_new(event_obj, "content", json_string(highlighted_text));
-  json_object_set_new(event_obj, "tags", tags);
+  event.tags = tags;
 
-  char *event_json = json_dumps(event_obj, JSON_COMPACT);
-  json_decref(event_obj);
+  /* Serialize the event */
+  char *event_json = nostr_event_serialize(&event);
+
+  /* Clean up tags (event doesn't own them, we allocated them) */
+  nostr_tags_free(tags);
 
   return event_json;
 }

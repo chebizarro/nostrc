@@ -7,7 +7,7 @@
 
 #include "nip55_android.h"
 #include <string.h>
-#include <jansson.h>
+#include <json.h>
 
 /* Intent URI components */
 #define INTENT_PREFIX "intent://"
@@ -149,13 +149,10 @@ char *gnostr_android_build_sign_intent(const char *unsigned_event_json,
   }
 
   /* Validate JSON before encoding */
-  json_error_t error;
-  json_t *root = json_loads(unsigned_event_json, 0, &error);
-  if (!root) {
-    g_warning("nip55: invalid event JSON for sign intent: %s", error.text);
+  if (!nostr_json_is_valid(unsigned_event_json)) {
+    g_warning("nip55: invalid event JSON for sign intent");
     return NULL;
   }
-  json_decref(root);
 
   /* URL-encode the event JSON */
   char *encoded_event = url_encode(unsigned_event_json);
@@ -391,48 +388,53 @@ GnostrAndroidSignerResponse *gnostr_android_parse_sign_response_json(const char 
   GnostrAndroidSignerResponse *response = g_new0(GnostrAndroidSignerResponse, 1);
   response->success = FALSE;
 
-  json_error_t error;
-  json_t *root = json_loads(json_str, 0, &error);
-  if (!root) {
-    g_warning("nip55: failed to parse sign response JSON: %s", error.text);
-    response->error_message = g_strdup_printf("JSON parse error: %s", error.text);
+  /* Validate JSON first */
+  if (!nostr_json_is_valid(json_str)) {
+    g_warning("nip55: failed to parse sign response JSON");
+    response->error_message = g_strdup("JSON parse error");
     return response;
   }
 
   /* Check if this is a full event or just a signature object */
-  json_t *sig_val = json_object_get(root, "sig");
-  if (sig_val && json_is_string(sig_val)) {
-    const char *sig = json_string_value(sig_val);
-    if (sig && strlen(sig) == 128) {
-      response->signature = g_strdup(sig);
+  char *sig = NULL;
+  if (nostr_json_get_string(json_str, "sig", &sig) == 0 && sig) {
+    if (strlen(sig) == 128) {
+      response->signature = sig;
+      sig = NULL; /* ownership transferred */
       response->success = TRUE;
 
       /* Check if this is a full event (has 'id', 'pubkey', 'kind', etc.) */
-      json_t *id_val = json_object_get(root, "id");
-      json_t *pubkey_val = json_object_get(root, "pubkey");
-      json_t *kind_val = json_object_get(root, "kind");
+      char *id_str = NULL;
+      char *pubkey_str = NULL;
+      int kind = 0;
+      gboolean has_id = (nostr_json_get_string(json_str, "id", &id_str) == 0 && id_str);
+      gboolean has_pubkey = (nostr_json_get_string(json_str, "pubkey", &pubkey_str) == 0 && pubkey_str);
+      gboolean has_kind = (nostr_json_get_int(json_str, "kind", &kind) == 0);
 
-      if (id_val && pubkey_val && kind_val) {
+      if (has_id && has_pubkey && has_kind) {
         /* This is a full signed event, store the JSON */
         response->signed_event_json = g_strdup(json_str);
-        g_debug("nip55: parsed full signed event with id=%s", json_string_value(id_val));
+        g_debug("nip55: parsed full signed event with id=%s", id_str);
       } else {
         g_debug("nip55: parsed signature-only response");
       }
+
+      g_free(id_str);
+      g_free(pubkey_str);
+    } else {
+      g_free(sig);
     }
   }
 
   /* Check for error field */
-  json_t *error_val = json_object_get(root, "error");
-  if (error_val && json_is_string(error_val)) {
-    const char *err = json_string_value(error_val);
-    if (err && *err) {
-      response->error_message = g_strdup(err);
-      response->success = FALSE;
-    }
+  char *err_str = NULL;
+  if (nostr_json_get_string(json_str, "error", &err_str) == 0 && err_str && *err_str) {
+    response->error_message = err_str;
+    err_str = NULL; /* ownership transferred */
+    response->success = FALSE;
   }
+  g_free(err_str);
 
-  json_decref(root);
   return response;
 }
 

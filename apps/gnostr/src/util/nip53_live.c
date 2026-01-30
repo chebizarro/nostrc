@@ -6,7 +6,8 @@
 
 #include "nip53_live.h"
 #include <string.h>
-#include <jansson.h>
+#include <json.h>
+#include <nostr-event.h>
 #include <time.h>
 
 /* Helper to check if string is valid 64-char hex */
@@ -148,39 +149,30 @@ GnostrLiveActivity *gnostr_live_activity_copy(const GnostrLiveActivity *activity
 GnostrLiveActivity *gnostr_live_activity_parse(const char *event_json) {
   if (!event_json) return NULL;
 
-  json_error_t error;
-  json_t *root = json_loads(event_json, 0, &error);
-  if (!root) {
-    g_debug("nip53: failed to parse event JSON: %s", error.text);
+  /* Deserialize to NostrEvent using the facade */
+  NostrEvent event = {0};
+  if (nostr_event_deserialize(&event, event_json) != 0) {
+    g_debug("nip53: failed to parse event JSON");
     return NULL;
   }
 
   /* Check kind - must be 30311 for live activity */
-  json_t *kind_json = json_object_get(root, "kind");
-  if (!kind_json || json_integer_value(kind_json) != 30311) {
-    g_debug("nip53: event is not kind 30311");
-    json_decref(root);
-    return NULL;
-  }
-
-  /* Extract basic event fields */
-  const char *event_id = json_string_value(json_object_get(root, "id"));
-  const char *pubkey = json_string_value(json_object_get(root, "pubkey"));
-  json_t *created_at_json = json_object_get(root, "created_at");
-  gint64 created_at = created_at_json ? json_integer_value(created_at_json) : 0;
-
-  json_t *tags = json_object_get(root, "tags");
-  if (!tags || !json_is_array(tags)) {
-    g_debug("nip53: event has no tags array");
-    json_decref(root);
+  if (event.kind != 30311) {
+    g_debug("nip53: event is not kind 30311 (got %d)", event.kind);
+    /* Free internal event fields (stack-allocated event) */
+    free(event.id);
+    free(event.pubkey);
+    free(event.content);
+    free(event.sig);
+    if (event.tags) nostr_tags_free(event.tags);
     return NULL;
   }
 
   /* Create activity struct */
   GnostrLiveActivity *activity = g_new0(GnostrLiveActivity, 1);
-  activity->event_id = g_strdup(event_id);
-  activity->pubkey = g_strdup(pubkey);
-  activity->created_at = created_at;
+  activity->event_id = g_strdup(event.id);
+  activity->pubkey = g_strdup(event.pubkey);
+  activity->created_at = event.created_at;
 
   /* Dynamic arrays for collecting items */
   GPtrArray *streaming_arr = g_ptr_array_new();
@@ -189,62 +181,66 @@ GnostrLiveActivity *gnostr_live_activity_parse(const char *event_json) {
   GPtrArray *hashtags_arr = g_ptr_array_new();
   GPtrArray *relays_arr = g_ptr_array_new();
 
-  /* Parse tags */
-  size_t idx;
-  json_t *tag;
-  json_array_foreach(tags, idx, tag) {
-    if (!json_is_array(tag) || json_array_size(tag) < 2) continue;
+  /* Parse tags using NostrTags API */
+  if (event.tags) {
+    size_t n_tags = nostr_tags_size(event.tags);
+    for (size_t i = 0; i < n_tags; i++) {
+      NostrTag *tag = nostr_tags_get(event.tags, i);
+      if (!tag) continue;
+      size_t tag_len = nostr_tag_size(tag);
+      if (tag_len < 2) continue;
 
-    const char *tag_name = json_string_value(json_array_get(tag, 0));
-    const char *tag_value = json_string_value(json_array_get(tag, 1));
-    if (!tag_name || !tag_value) continue;
+      const char *tag_name = nostr_tag_get(tag, 0);
+      const char *tag_value = nostr_tag_get(tag, 1);
+      if (!tag_name || !tag_value) continue;
 
-    if (strcmp(tag_name, "d") == 0) {
-      g_free(activity->d_tag);
-      activity->d_tag = g_strdup(tag_value);
-    } else if (strcmp(tag_name, "title") == 0) {
-      g_free(activity->title);
-      activity->title = g_strdup(tag_value);
-    } else if (strcmp(tag_name, "summary") == 0) {
-      g_free(activity->summary);
-      activity->summary = g_strdup(tag_value);
-    } else if (strcmp(tag_name, "image") == 0) {
-      g_free(activity->image);
-      activity->image = g_strdup(tag_value);
-    } else if (strcmp(tag_name, "status") == 0) {
-      activity->status = gnostr_live_status_from_string(tag_value);
-    } else if (strcmp(tag_name, "starts") == 0 || strcmp(tag_name, "start") == 0) {
-      activity->starts_at = g_ascii_strtoll(tag_value, NULL, 10);
-    } else if (strcmp(tag_name, "ends") == 0 || strcmp(tag_name, "end") == 0) {
-      activity->ends_at = g_ascii_strtoll(tag_value, NULL, 10);
-    } else if (strcmp(tag_name, "streaming") == 0) {
-      g_ptr_array_add(streaming_arr, g_strdup(tag_value));
-    } else if (strcmp(tag_name, "recording") == 0) {
-      g_ptr_array_add(recording_arr, g_strdup(tag_value));
-    } else if (strcmp(tag_name, "p") == 0 && is_valid_hex_pubkey(tag_value)) {
-      GnostrLiveParticipant *p = g_new0(GnostrLiveParticipant, 1);
-      p->pubkey_hex = g_strdup(tag_value);
-      if (json_array_size(tag) > 2) {
-        const char *relay = json_string_value(json_array_get(tag, 2));
-        if (relay && *relay) {
-          p->relay_hint = g_strdup(relay);
+      if (strcmp(tag_name, "d") == 0) {
+        g_free(activity->d_tag);
+        activity->d_tag = g_strdup(tag_value);
+      } else if (strcmp(tag_name, "title") == 0) {
+        g_free(activity->title);
+        activity->title = g_strdup(tag_value);
+      } else if (strcmp(tag_name, "summary") == 0) {
+        g_free(activity->summary);
+        activity->summary = g_strdup(tag_value);
+      } else if (strcmp(tag_name, "image") == 0) {
+        g_free(activity->image);
+        activity->image = g_strdup(tag_value);
+      } else if (strcmp(tag_name, "status") == 0) {
+        activity->status = gnostr_live_status_from_string(tag_value);
+      } else if (strcmp(tag_name, "starts") == 0 || strcmp(tag_name, "start") == 0) {
+        activity->starts_at = g_ascii_strtoll(tag_value, NULL, 10);
+      } else if (strcmp(tag_name, "ends") == 0 || strcmp(tag_name, "end") == 0) {
+        activity->ends_at = g_ascii_strtoll(tag_value, NULL, 10);
+      } else if (strcmp(tag_name, "streaming") == 0) {
+        g_ptr_array_add(streaming_arr, g_strdup(tag_value));
+      } else if (strcmp(tag_name, "recording") == 0) {
+        g_ptr_array_add(recording_arr, g_strdup(tag_value));
+      } else if (strcmp(tag_name, "p") == 0 && is_valid_hex_pubkey(tag_value)) {
+        GnostrLiveParticipant *p = g_new0(GnostrLiveParticipant, 1);
+        p->pubkey_hex = g_strdup(tag_value);
+        if (tag_len > 2) {
+          const char *relay = nostr_tag_get(tag, 2);
+          if (relay && *relay) {
+            p->relay_hint = g_strdup(relay);
+          }
         }
-      }
-      if (json_array_size(tag) > 3) {
-        const char *role = json_string_value(json_array_get(tag, 3));
-        if (role && *role) {
-          p->role = g_strdup(role);
+        if (tag_len > 3) {
+          const char *role = nostr_tag_get(tag, 3);
+          if (role && *role) {
+            p->role = g_strdup(role);
+          }
         }
+        g_ptr_array_add(participants_arr, p);
+      } else if (strcmp(tag_name, "t") == 0) {
+        g_ptr_array_add(hashtags_arr, g_strdup(tag_value));
+      } else if (strcmp(tag_name, "relay") == 0 || strcmp(tag_name, "r") == 0) {
+        g_ptr_array_add(relays_arr, g_strdup(tag_value));
+      } else if (strcmp(tag_name, "current_participants") == 0) {
+        activity->current_viewers = (gint)g_ascii_strtoll(tag_value, NULL, 10);
+      } else if (strcmp(tag_name, "total_participants") == 0) {
+        activity->total_viewers = (gint)g_ascii_strtoll(tag_value, NULL, 10);
       }
-      g_ptr_array_add(participants_arr, p);
-    } else if (strcmp(tag_name, "t") == 0) {
-      g_ptr_array_add(hashtags_arr, g_strdup(tag_value));
-    } else if (strcmp(tag_name, "relay") == 0 || strcmp(tag_name, "r") == 0) {
-      g_ptr_array_add(relays_arr, g_strdup(tag_value));
-    } else if (strcmp(tag_name, "current_participants") == 0) {
-      activity->current_viewers = (gint)g_ascii_strtoll(tag_value, NULL, 10);
-    } else if (strcmp(tag_name, "total_participants") == 0) {
-      activity->total_viewers = (gint)g_ascii_strtoll(tag_value, NULL, 10);
     }
   }
 
@@ -285,7 +281,12 @@ GnostrLiveActivity *gnostr_live_activity_parse(const char *event_json) {
     g_ptr_array_free(relays_arr, TRUE);
   }
 
-  json_decref(root);
+  /* Free internal event fields (stack-allocated event) */
+  free(event.id);
+  free(event.pubkey);
+  free(event.content);
+  free(event.sig);
+  if (event.tags) nostr_tags_free(event.tags);
 
   g_debug("nip53: parsed live activity '%s' (status=%s, %zu participants)",
           activity->title ? activity->title : "(untitled)",

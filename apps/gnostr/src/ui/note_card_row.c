@@ -1908,8 +1908,15 @@ static void set_avatar_initials(GnostrNoteCardRow *self, const char *display, co
 
 #ifdef HAVE_SOUP3
 static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrNoteCardRow *self = GNOSTR_NOTE_CARD_ROW(user_data);
-  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || self->disposed) return;
+  /* CRITICAL: Check NULL before type-check macro. Type-check macros dereference
+   * the pointer which crashes if widget was recycled during HTTP fetch.
+   * nostrc-ofq: Fix crash during fast scrolling in timeline. */
+  if (user_data == NULL) return;
+  GnostrNoteCardRow *self = (GnostrNoteCardRow *)user_data;
+  /* Check disposed flag BEFORE type-check macro */
+  if (self->disposed) return;
+  /* Now safe to use type-check since disposed==FALSE means widget is valid */
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
   if (!bytes) { g_clear_error(&error); if (!self->disposed) set_avatar_initials(self, NULL, NULL); return; }
@@ -2104,8 +2111,24 @@ static gboolean on_lazy_load_timeout(gpointer user_data) {
 
   if (!ctx || ctx->loaded) return G_SOURCE_REMOVE;
 
-  /* Check if widgets are still valid */
-  if (!GNOSTR_IS_NOTE_CARD_ROW(ctx->self) || !GTK_IS_PICTURE(ctx->picture)) {
+  /* CRITICAL: Check for stale pointer BEFORE using type-check macros.
+   * Type-check macros (GNOSTR_IS_NOTE_CARD_ROW) dereference the pointer,
+   * which crashes if the widget was recycled and ctx->self points to freed memory.
+   * nostrc-ofq: Fix crash during fast scrolling in timeline. */
+  if (ctx->self == NULL) {
+    ctx->timeout_id = 0;
+    return G_SOURCE_REMOVE;
+  }
+
+  /* Check disposed flag before type-check - if disposed, widget is being torn down */
+  GnostrNoteCardRow *self = ctx->self;
+  if (self->disposed) {
+    ctx->timeout_id = 0;
+    return G_SOURCE_REMOVE;
+  }
+
+  /* Now safe to use type-check since disposed==FALSE means widget is valid */
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_PICTURE(ctx->picture)) {
     ctx->timeout_id = 0;
     return G_SOURCE_REMOVE;
   }
@@ -2118,7 +2141,7 @@ static gboolean on_lazy_load_timeout(gpointer user_data) {
 
   g_debug("Media: Lazy loading image: %s", ctx->url);
   ctx->loaded = TRUE;
-  load_media_image_internal(ctx->self, ctx->url, ctx->picture);
+  load_media_image_internal(self, ctx->url, ctx->picture);
 
   ctx->timeout_id = 0;
   return G_SOURCE_REMOVE;

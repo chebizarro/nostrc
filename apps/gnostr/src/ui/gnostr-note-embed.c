@@ -849,8 +849,23 @@ static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer use
     }
   }
 
-  GnostrNoteEmbed *self = GNOSTR_NOTE_EMBED(user_data);
-  if (!GNOSTR_IS_NOTE_EMBED(self) || self->disposed) {
+  /* CRITICAL: Check NULL before type-check macro. Type-check macros dereference
+   * the pointer which crashes if widget was recycled during async query.
+   * nostrc-ofq: Fix crash during fast scrolling with embedded notes. */
+  if (user_data == NULL) {
+    g_clear_error(&err);
+    if (results) g_ptr_array_unref(results);
+    return;
+  }
+  GnostrNoteEmbed *self = (GnostrNoteEmbed *)user_data;
+  /* Check disposed flag BEFORE type-check macro */
+  if (self->disposed) {
+    g_clear_error(&err);
+    if (results) g_ptr_array_unref(results);
+    return;
+  }
+  /* Now safe to use type-check since disposed==FALSE means widget is valid */
+  if (!GNOSTR_IS_NOTE_EMBED(self)) {
     g_clear_error(&err);
     if (results) g_ptr_array_unref(results);
     return;
@@ -1058,8 +1073,23 @@ static void on_profile_relay_query_done(GObject *source, GAsyncResult *res, gpoi
     }
   }
 
-  GnostrNoteEmbed *self = GNOSTR_NOTE_EMBED(user_data);
-  if (!GNOSTR_IS_NOTE_EMBED(self) || self->disposed) {
+  /* CRITICAL: Check NULL before type-check macro. Type-check macros dereference
+   * the pointer which crashes if widget was recycled during async query.
+   * nostrc-ofq: Fix crash during fast scrolling with embedded profiles. */
+  if (user_data == NULL) {
+    g_clear_error(&err);
+    if (results) g_ptr_array_unref(results);
+    return;
+  }
+  GnostrNoteEmbed *self = (GnostrNoteEmbed *)user_data;
+  /* Check disposed flag BEFORE type-check macro */
+  if (self->disposed) {
+    g_clear_error(&err);
+    if (results) g_ptr_array_unref(results);
+    return;
+  }
+  /* Now safe to use type-check since disposed==FALSE means widget is valid */
+  if (!GNOSTR_IS_NOTE_EMBED(self)) {
     g_clear_error(&err);
     if (results) g_ptr_array_unref(results);
     return;
