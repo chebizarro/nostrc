@@ -38,6 +38,14 @@
 #define ITEMS_PER_FRAME_DEFAULT 3   /* Start conservative per design review */
 #define FRAME_BUDGET_US 12000       /* 12ms target, leaving 4ms margin for 16.6ms frame */
 
+/* Phase 2: Throttled insertion pipeline (nostrc-0hp) */
+#define STAGING_BUFFER_MAX 100      /* Max items in staging before backpressure */
+#define INCOMING_QUEUE_WARNING 200  /* Warn when incoming queue exceeds this */
+#define BACKPRESSURE_AGE_MS 5000    /* Max age before item is considered stale */
+#define THROTTLE_DELAY_MS 50        /* Delay between batch transfers under heavy load */
+#define RATE_WINDOW_MS 1000         /* Window for rate calculation */
+#define RATE_ITEMS_PER_SECOND_MAX 60 /* Target max insertion rate */
+
 /* Note entry for internal tracking */
 typedef struct {
   uint64_t note_key;
@@ -101,6 +109,16 @@ struct _GnTimelineModel {
   guint tick_callback_id;        /* gtk_widget_add_tick_callback ID, 0 if inactive */
   guint items_per_frame;         /* Max items to insert per frame (adaptive) */
   GtkWidget *tick_widget;        /* Widget providing frame clock (weak ref) */
+
+  /* Phase 2: Throttled insertion pipeline (nostrc-0hp) */
+  GArray *incoming_queue;        /* Stage 1: Incoming items (unlimited) */
+  GHashTable *incoming_key_set;  /* note_key -> TRUE for O(1) dedup in incoming */
+  guint throttle_source_id;      /* Timer for throttled queue-to-staging transfer */
+  gint64 last_transfer_time_us;  /* Monotonic time of last queue-to-staging transfer */
+  guint items_transferred_window; /* Items transferred in current rate window */
+  gint64 rate_window_start_us;   /* Start of current rate measurement window */
+  guint peak_queue_depth;        /* High-water mark for monitoring */
+  gboolean backpressure_active;  /* TRUE when backpressure is being applied */
 };
 
 /* Forward declarations */
@@ -121,6 +139,18 @@ static gboolean has_note_key_staged(GnTimelineModel *self, uint64_t key);
 static void add_note_key_to_staged_set(GnTimelineModel *self, uint64_t key);
 static void remove_note_key_from_staged_set(GnTimelineModel *self, uint64_t key);
 
+/* Phase 2: Throttled insertion pipeline forward declarations (nostrc-0hp) */
+static gboolean has_note_key_incoming(GnTimelineModel *self, uint64_t key);
+static void add_note_key_to_incoming_set(GnTimelineModel *self, uint64_t key);
+static void remove_note_key_from_incoming_set(GnTimelineModel *self, uint64_t key);
+static void schedule_throttled_transfer(GnTimelineModel *self);
+static gboolean on_throttle_transfer_timeout(gpointer user_data);
+static void transfer_incoming_to_staging(GnTimelineModel *self);
+static void apply_backpressure(GnTimelineModel *self);
+static void check_queue_depth_warning(GnTimelineModel *self);
+static gdouble calculate_insertion_rate(GnTimelineModel *self);
+static gint staged_entry_compare_newest_first(gconstpointer a, gconstpointer b);
+
 #define INITIAL_LOAD_TIMEOUT_MS 500  /* Time to wait for initial subscription data */
 
 G_DEFINE_TYPE_WITH_CODE(GnTimelineModel, gn_timeline_model, G_TYPE_OBJECT,
@@ -129,6 +159,8 @@ G_DEFINE_TYPE_WITH_CODE(GnTimelineModel, gn_timeline_model, G_TYPE_OBJECT,
 enum {
   SIGNAL_NEW_ITEMS_PENDING,
   SIGNAL_NEED_PROFILE,
+  SIGNAL_BACKPRESSURE_APPLIED,
+  SIGNAL_QUEUE_DEPTH_WARNING,
   N_SIGNALS
 };
 
@@ -577,6 +609,307 @@ static gboolean on_tick_callback(GtkWidget     *widget,
   return G_SOURCE_REMOVE;
 }
 
+/* ============== Phase 2: Throttled Insertion Pipeline (nostrc-0hp) ============== */
+
+/**
+ * has_note_key_incoming:
+ * @self: The model
+ * @key: Note key to check
+ *
+ * Check if a note key is in the incoming queue.
+ * O(1) lookup via hash set.
+ */
+static gboolean has_note_key_incoming(GnTimelineModel *self, uint64_t key) {
+  if (!self->incoming_key_set) return FALSE;
+  return g_hash_table_contains(self->incoming_key_set, &key);
+}
+
+/**
+ * add_note_key_to_incoming_set:
+ * @self: The model
+ * @key: Note key to add
+ *
+ * Add a note key to the incoming dedup set.
+ */
+static void add_note_key_to_incoming_set(GnTimelineModel *self, uint64_t key) {
+  if (!self->incoming_key_set) return;
+  uint64_t *key_copy = g_new(uint64_t, 1);
+  *key_copy = key;
+  g_hash_table_add(self->incoming_key_set, key_copy);
+}
+
+/**
+ * remove_note_key_from_incoming_set:
+ * @self: The model
+ * @key: Note key to remove
+ *
+ * Remove a note key from the incoming dedup set.
+ */
+static void remove_note_key_from_incoming_set(GnTimelineModel *self, uint64_t key) {
+  if (!self->incoming_key_set) return;
+  g_hash_table_remove(self->incoming_key_set, &key);
+}
+
+/**
+ * calculate_insertion_rate:
+ * @self: The model
+ *
+ * Calculate the current insertion rate (items per second) based on
+ * recent transfer activity.
+ *
+ * Returns: Items per second
+ */
+static gdouble calculate_insertion_rate(GnTimelineModel *self) {
+  gint64 now_us = g_get_monotonic_time();
+  gint64 window_elapsed_us = now_us - self->rate_window_start_us;
+
+  /* Reset window if it's been longer than RATE_WINDOW_MS */
+  if (window_elapsed_us > RATE_WINDOW_MS * 1000) {
+    self->rate_window_start_us = now_us;
+    self->items_transferred_window = 0;
+    return 0.0;
+  }
+
+  if (window_elapsed_us <= 0) return 0.0;
+
+  return (self->items_transferred_window * 1000000.0) / window_elapsed_us;
+}
+
+/**
+ * check_queue_depth_warning:
+ * @self: The model
+ *
+ * Check if queue depth exceeds warning threshold and emit signal if so.
+ */
+static void check_queue_depth_warning(GnTimelineModel *self) {
+  if (!self->incoming_queue) return;
+
+  guint depth = self->incoming_queue->len;
+
+  /* Track peak for monitoring */
+  if (depth > self->peak_queue_depth) {
+    self->peak_queue_depth = depth;
+  }
+
+  /* Emit warning if over threshold */
+  if (depth > INCOMING_QUEUE_WARNING) {
+    g_warning("[THROTTLE] Queue depth warning: %u items (threshold: %d)",
+              depth, INCOMING_QUEUE_WARNING);
+    g_signal_emit(self, signals[SIGNAL_QUEUE_DEPTH_WARNING], 0, depth);
+  }
+}
+
+/**
+ * apply_backpressure:
+ * @self: The model
+ *
+ * Apply backpressure when staging buffer is full.
+ * Strategy: Keep newest items, drop oldest from incoming queue.
+ */
+static void apply_backpressure(GnTimelineModel *self) {
+  if (!self->incoming_queue || self->incoming_queue->len == 0)
+    return;
+
+  /* Only apply if staging buffer is at capacity */
+  if (!self->staging_buffer || self->staging_buffer->len < STAGING_BUFFER_MAX)
+    return;
+
+  guint original_len = self->incoming_queue->len;
+
+  /* If incoming queue is also getting large, drop oldest items */
+  if (original_len > INCOMING_QUEUE_WARNING) {
+    guint to_keep = INCOMING_QUEUE_WARNING / 2;  /* Keep 50% of warning threshold */
+    guint to_drop = original_len - to_keep;
+
+    g_warning("[BACKPRESSURE] Dropping %u stale items from incoming queue (%u -> %u)",
+              to_drop, original_len, to_keep);
+
+    /* Remove keys from hash set for dropped items */
+    for (guint i = 0; i < to_drop; i++) {
+      StagedEntry *entry = &g_array_index(self->incoming_queue, StagedEntry, i);
+      remove_note_key_from_incoming_set(self, entry->note_key);
+    }
+
+    /* Remove oldest items (they're at the front after FIFO insertion) */
+    g_array_remove_range(self->incoming_queue, 0, to_drop);
+
+    self->backpressure_active = TRUE;
+
+    /* Emit signal for UI feedback */
+    g_signal_emit(self, signals[SIGNAL_BACKPRESSURE_APPLIED], 0, to_drop);
+  }
+}
+
+/**
+ * transfer_incoming_to_staging:
+ * @self: The model
+ *
+ * Transfer items from incoming queue to staging buffer at a controlled rate.
+ * This is the core of the two-stage pipeline.
+ */
+static void transfer_incoming_to_staging(GnTimelineModel *self) {
+  if (!self->incoming_queue || self->incoming_queue->len == 0)
+    return;
+  if (!self->staging_buffer)
+    return;
+
+  gint64 now_us = g_get_monotonic_time();
+
+  /* Calculate how many items we can transfer based on rate limiting */
+  gdouble current_rate = calculate_insertion_rate(self);
+  guint max_transfer;
+
+  if (current_rate >= RATE_ITEMS_PER_SECOND_MAX) {
+    /* At rate limit, transfer only 1-2 items */
+    max_transfer = 2;
+  } else {
+    /* Under rate limit, can transfer more */
+    max_transfer = MIN(10, self->incoming_queue->len);
+  }
+
+  /* Also limited by staging buffer capacity */
+  guint staging_space = 0;
+  if (self->staging_buffer->len < STAGING_BUFFER_MAX) {
+    staging_space = STAGING_BUFFER_MAX - self->staging_buffer->len;
+  }
+  guint to_transfer = MIN(max_transfer, staging_space);
+  to_transfer = MIN(to_transfer, self->incoming_queue->len);
+
+  if (to_transfer == 0) {
+    /* Staging buffer full, apply backpressure */
+    apply_backpressure(self);
+    return;
+  }
+
+  /* Transfer items from incoming to staging */
+  guint actually_transferred = 0;
+  for (guint i = 0; i < to_transfer; i++) {
+    StagedEntry *entry = &g_array_index(self->incoming_queue, StagedEntry, i);
+
+    /* Check staleness - drop items older than BACKPRESSURE_AGE_MS */
+    gint64 age_us = now_us - entry->arrival_time_us;
+    if (age_us > BACKPRESSURE_AGE_MS * 1000) {
+      g_debug("[THROTTLE] Dropping stale item (age: %ldms)", (long)(age_us / 1000));
+      remove_note_key_from_incoming_set(self, entry->note_key);
+      continue;
+    }
+
+    /* Move to staging buffer */
+    g_array_append_val(self->staging_buffer, *entry);
+
+    /* Update key sets */
+    remove_note_key_from_incoming_set(self, entry->note_key);
+    add_note_key_to_staged_set(self, entry->note_key);
+
+    actually_transferred++;
+  }
+
+  /* Remove transferred items from incoming queue */
+  if (to_transfer > 0) {
+    g_array_remove_range(self->incoming_queue, 0, to_transfer);
+  }
+
+  /* Update rate tracking */
+  self->items_transferred_window += actually_transferred;
+  self->last_transfer_time_us = now_us;
+
+  if (actually_transferred > 0) {
+    g_debug("[THROTTLE] Transferred %u items to staging (queue: %u, staging: %u, rate: %.1f/s)",
+            actually_transferred,
+            self->incoming_queue->len,
+            self->staging_buffer->len,
+            calculate_insertion_rate(self));
+
+    /* Sort staging buffer by created_at descending */
+    g_array_sort(self->staging_buffer, staged_entry_compare_newest_first);
+
+    /* Ensure tick callback is running to process staged items */
+    ensure_tick_callback(self);
+  }
+
+  /* Clear backpressure flag if queue is under control */
+  if (self->incoming_queue->len < INCOMING_QUEUE_WARNING / 2) {
+    self->backpressure_active = FALSE;
+  }
+}
+
+/**
+ * on_throttle_transfer_timeout:
+ * @user_data: The GnTimelineModel
+ *
+ * Timer callback for throttled transfer from incoming queue to staging buffer.
+ */
+static gboolean on_throttle_transfer_timeout(gpointer user_data) {
+  GnTimelineModel *self = GN_TIMELINE_MODEL(user_data);
+  if (!GN_IS_TIMELINE_MODEL(self)) {
+    return G_SOURCE_REMOVE;
+  }
+
+  self->throttle_source_id = 0;
+
+  /* Perform the transfer */
+  transfer_incoming_to_staging(self);
+
+  /* Check queue depth warning */
+  check_queue_depth_warning(self);
+
+  /* Reschedule if more items in incoming queue */
+  if (self->incoming_queue && self->incoming_queue->len > 0) {
+    /* Adjust delay based on queue depth - faster when queue is larger */
+    guint delay_ms = THROTTLE_DELAY_MS;
+    if (self->incoming_queue->len > INCOMING_QUEUE_WARNING) {
+      delay_ms = THROTTLE_DELAY_MS / 2;  /* Speed up under pressure */
+    } else if (self->incoming_queue->len < 10) {
+      delay_ms = THROTTLE_DELAY_MS * 2;  /* Slow down when nearly empty */
+    }
+
+    self->throttle_source_id = g_timeout_add(delay_ms,
+                                              on_throttle_transfer_timeout,
+                                              self);
+    return G_SOURCE_REMOVE;  /* One-shot, we reschedule manually */
+  }
+
+  g_debug("[THROTTLE] Incoming queue empty, stopping throttle timer");
+  return G_SOURCE_REMOVE;
+}
+
+/**
+ * schedule_throttled_transfer:
+ * @self: The model
+ *
+ * Schedule a throttled transfer from incoming queue to staging buffer.
+ * If a transfer is already scheduled, this is a no-op.
+ */
+static void schedule_throttled_transfer(GnTimelineModel *self) {
+  /* Already scheduled */
+  if (self->throttle_source_id != 0)
+    return;
+
+  /* Nothing to transfer */
+  if (!self->incoming_queue || self->incoming_queue->len == 0)
+    return;
+
+  /* Calculate delay based on current state */
+  guint delay_ms;
+
+  if (self->staging_buffer && self->staging_buffer->len >= STAGING_BUFFER_MAX) {
+    /* Staging full, use longer delay to let tick callback drain it */
+    delay_ms = THROTTLE_DELAY_MS * 2;
+  } else if (self->incoming_queue->len > INCOMING_QUEUE_WARNING) {
+    /* Queue large, use shorter delay */
+    delay_ms = THROTTLE_DELAY_MS / 2;
+  } else {
+    delay_ms = THROTTLE_DELAY_MS;
+  }
+
+  self->throttle_source_id = g_timeout_add(delay_ms,
+                                            on_throttle_transfer_timeout,
+                                            self);
+
+  g_debug("[THROTTLE] Scheduled transfer in %ums (queue: %u)",
+          delay_ms, self->incoming_queue->len);
+}
+
 /* ============== GListModel Interface ============== */
 
 static GType gn_timeline_model_get_item_type(GListModel *list) {
@@ -659,26 +992,30 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
   if (storage_ndb_begin_query(&txn) != 0 || !txn) return;
 
   /*
-   * nostrc-0hp Phase 1: Frame-aware batching
+   * nostrc-0hp Phase 2: Two-stage throttled insertion pipeline
    *
-   * If we have a tick widget registered, use the staging buffer and let
-   * the tick callback process items frame-by-frame. Otherwise, fall back
-   * to the legacy debounce path for backward compatibility.
+   * If we have a tick widget registered, use the full two-stage pipeline:
+   *   Stage 1: Items go to incoming_queue (unlimited)
+   *   Stage 2: Throttled transfer to staging_buffer (bounded)
+   *   Stage 3: Frame-synced insertion from staging_buffer (tick callback)
+   *
+   * Otherwise, fall back to the legacy debounce path for backward compatibility.
    */
-  gboolean use_frame_batching = (self->tick_widget != NULL &&
-                                  self->staging_buffer != NULL);
+  gboolean use_throttled_pipeline = (self->tick_widget != NULL &&
+                                      self->incoming_queue != NULL &&
+                                      self->staging_buffer != NULL);
 
   /* Legacy path: Capture count at start of first batch in debounce window */
-  if (!use_frame_batching && !self->needs_refresh) {
+  if (!use_throttled_pipeline && !self->needs_refresh) {
     self->pending_update_old_count = self->notes->len;
   }
 
   /* Legacy path: Clear batch buffer for this batch */
-  if (!use_frame_batching) {
+  if (!use_throttled_pipeline) {
     g_array_set_size(self->batch_buffer, 0);
   }
 
-  guint staged_count = 0;
+  guint incoming_count = 0;
   gint64 arrival_time_us = g_get_monotonic_time();
 
   for (guint i = 0; i < n_keys; i++) {
@@ -687,8 +1024,11 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
     /* Skip if already have this note in main array */
     if (has_note_key(self, note_key)) continue;
 
-    /* Skip if already staged (frame-aware path only) */
-    if (use_frame_batching && has_note_key_staged(self, note_key)) continue;
+    /* Skip if already in pipeline (staging or incoming) */
+    if (use_throttled_pipeline) {
+      if (has_note_key_staged(self, note_key)) continue;
+      if (has_note_key_incoming(self, note_key)) continue;
+    }
 
     /* Get note from NostrDB */
     storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_key);
@@ -723,19 +1063,20 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
 
     gint64 created_at = storage_ndb_note_created_at(note);
 
-    if (use_frame_batching) {
+    if (use_throttled_pipeline) {
       /*
-       * Frame-aware path: Stage the item for tick callback processing.
-       * NO items_changed signal is emitted here - that happens in on_tick_callback().
+       * Phase 2 throttled path: Add to incoming queue (Stage 1).
+       * Items will be transferred to staging buffer at a controlled rate
+       * by the throttle timer, then processed frame-by-frame by tick callback.
        */
-      StagedEntry staged = {
+      StagedEntry incoming = {
         .note_key = note_key,
         .created_at = created_at,
         .arrival_time_us = arrival_time_us
       };
-      g_array_append_val(self->staging_buffer, staged);
-      add_note_key_to_staged_set(self, note_key);
-      staged_count++;
+      g_array_append_val(self->incoming_queue, incoming);
+      add_note_key_to_incoming_set(self, note_key);
+      incoming_count++;
     } else {
       /* Legacy path: Add to batch buffer for debounced insert */
       NoteEntry entry = { .note_key = note_key, .created_at = created_at };
@@ -754,20 +1095,23 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
 
   storage_ndb_end_query(txn);
 
-  if (use_frame_batching) {
+  if (use_throttled_pipeline) {
     /*
-     * Frame-aware path: Sort staging buffer and schedule tick callback.
-     * The tick callback will emit items_changed signals, not us.
+     * Phase 2: Schedule throttled transfer from incoming queue to staging.
+     * The throttle timer will move items at a controlled rate, and the
+     * tick callback will emit items_changed signals.
      */
-    if (staged_count > 0) {
-      /* Sort by created_at descending so newest are processed first */
-      g_array_sort(self->staging_buffer, staged_entry_compare_newest_first);
+    if (incoming_count > 0) {
+      g_debug("[THROTTLE] Queued %u items (total incoming: %u, staging: %u)",
+              incoming_count,
+              self->incoming_queue->len,
+              self->staging_buffer->len);
 
-      g_debug("[FRAME] Staged %u items (total pending: %u)",
-              staged_count, self->staging_buffer->len);
+      /* Check queue depth warning */
+      check_queue_depth_warning(self);
 
-      /* Ensure tick callback is running */
-      ensure_tick_callback(self);
+      /* Schedule throttled transfer */
+      schedule_throttled_transfer(self);
     }
   } else {
     /* Legacy debounce path */
@@ -835,17 +1179,28 @@ void gn_timeline_model_refresh(GnTimelineModel *self) {
 
   guint old_count = self->notes->len;
 
-  /* Clear everything */
+  /* Cancel throttle timer */
+  if (self->throttle_source_id > 0) {
+    g_source_remove(self->throttle_source_id);
+    self->throttle_source_id = 0;
+  }
+
+  /* Clear everything including Phase 2 pipeline */
   g_array_set_size(self->notes, 0);
   g_array_set_size(self->batch_buffer, 0);
   g_array_set_size(self->staging_buffer, 0);
+  if (self->incoming_queue) g_array_set_size(self->incoming_queue, 0);
   g_hash_table_remove_all(self->note_key_set);
   g_hash_table_remove_all(self->staged_key_set);
+  if (self->incoming_key_set) g_hash_table_remove_all(self->incoming_key_set);
   cache_clear(self);
   self->newest_timestamp = 0;
   self->oldest_timestamp = 0;
   self->unseen_count = 0;
   self->batch_insert_count = 0;
+  self->backpressure_active = FALSE;
+  self->items_transferred_window = 0;
+  self->rate_window_start_us = g_get_monotonic_time();
 
   /* Query initial items from NostrDB */
   if (self->query) {
@@ -874,16 +1229,29 @@ void gn_timeline_model_clear(GnTimelineModel *self) {
   g_return_if_fail(GN_IS_TIMELINE_MODEL(self));
 
   guint old_count = self->notes->len;
+
+  /* Cancel throttle timer */
+  if (self->throttle_source_id > 0) {
+    g_source_remove(self->throttle_source_id);
+    self->throttle_source_id = 0;
+  }
+
+  /* Clear all arrays and hash tables including Phase 2 pipeline */
   g_array_set_size(self->notes, 0);
   g_array_set_size(self->batch_buffer, 0);
   g_array_set_size(self->staging_buffer, 0);
+  if (self->incoming_queue) g_array_set_size(self->incoming_queue, 0);
   g_hash_table_remove_all(self->note_key_set);
   g_hash_table_remove_all(self->staged_key_set);
+  if (self->incoming_key_set) g_hash_table_remove_all(self->incoming_key_set);
   cache_clear(self);
   self->newest_timestamp = 0;
   self->oldest_timestamp = 0;
   self->unseen_count = 0;
   self->batch_insert_count = 0;
+  self->backpressure_active = FALSE;
+  self->items_transferred_window = 0;
+  self->rate_window_start_us = g_get_monotonic_time();
 
   if (old_count > 0) {
     g_list_model_items_changed(G_LIST_MODEL(self), 0, old_count, 0);
@@ -1215,6 +1583,42 @@ guint gn_timeline_model_get_staged_count(GnTimelineModel *self) {
   return self->staging_buffer->len;
 }
 
+/* ============== Phase 2: Throttled Insertion Public API (nostrc-0hp) ============== */
+
+guint gn_timeline_model_get_incoming_count(GnTimelineModel *self) {
+  g_return_val_if_fail(GN_IS_TIMELINE_MODEL(self), 0);
+  if (!self->incoming_queue) return 0;
+  return self->incoming_queue->len;
+}
+
+guint gn_timeline_model_get_total_queued_count(GnTimelineModel *self) {
+  g_return_val_if_fail(GN_IS_TIMELINE_MODEL(self), 0);
+  guint total = 0;
+  if (self->incoming_queue) total += self->incoming_queue->len;
+  if (self->staging_buffer) total += self->staging_buffer->len;
+  return total;
+}
+
+guint gn_timeline_model_get_peak_queue_depth(GnTimelineModel *self) {
+  g_return_val_if_fail(GN_IS_TIMELINE_MODEL(self), 0);
+  return self->peak_queue_depth;
+}
+
+gboolean gn_timeline_model_is_backpressure_active(GnTimelineModel *self) {
+  g_return_val_if_fail(GN_IS_TIMELINE_MODEL(self), FALSE);
+  return self->backpressure_active;
+}
+
+gdouble gn_timeline_model_get_insertion_rate(GnTimelineModel *self) {
+  g_return_val_if_fail(GN_IS_TIMELINE_MODEL(self), 0.0);
+  return calculate_insertion_rate(self);
+}
+
+void gn_timeline_model_reset_peak_queue_depth(GnTimelineModel *self) {
+  g_return_if_fail(GN_IS_TIMELINE_MODEL(self));
+  self->peak_queue_depth = 0;
+}
+
 /* ============== GObject Lifecycle ============== */
 
 static void gn_timeline_model_dispose(GObject *object) {
@@ -1232,6 +1636,12 @@ static void gn_timeline_model_dispose(GObject *object) {
     self->initial_load_timeout_id = 0;
   }
 
+  /* Phase 2: Cancel throttle timer (nostrc-0hp) */
+  if (self->throttle_source_id > 0) {
+    g_source_remove(self->throttle_source_id);
+    self->throttle_source_id = 0;
+  }
+
   /* Frame-aware batching cleanup (nostrc-0hp Phase 1) */
   if (self->tick_widget) {
     if (self->tick_callback_id != 0) {
@@ -1244,6 +1654,10 @@ static void gn_timeline_model_dispose(GObject *object) {
   }
   g_clear_pointer(&self->staging_buffer, g_array_unref);
   g_clear_pointer(&self->staged_key_set, g_hash_table_unref);
+
+  /* Phase 2: Clean up incoming queue (nostrc-0hp) */
+  g_clear_pointer(&self->incoming_queue, g_array_unref);
+  g_clear_pointer(&self->incoming_key_set, g_hash_table_unref);
 
   /* Unsubscribe */
   if (self->sub_timeline > 0) {
@@ -1290,6 +1704,21 @@ static void gn_timeline_model_class_init(GnTimelineModelClass *klass) {
                  G_SIGNAL_RUN_LAST,
                  0, NULL, NULL, NULL,
                  G_TYPE_NONE, 1, G_TYPE_STRING);
+
+  /* Phase 2 signals (nostrc-0hp) */
+  signals[SIGNAL_BACKPRESSURE_APPLIED] =
+    g_signal_new("backpressure-applied",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 0, NULL, NULL, NULL,
+                 G_TYPE_NONE, 1, G_TYPE_UINT);
+
+  signals[SIGNAL_QUEUE_DEPTH_WARNING] =
+    g_signal_new("queue-depth-warning",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 0, NULL, NULL, NULL,
+                 G_TYPE_NONE, 1, G_TYPE_UINT);
 }
 
 static void gn_timeline_model_init(GnTimelineModel *self) {
@@ -1311,6 +1740,16 @@ static void gn_timeline_model_init(GnTimelineModel *self) {
   self->items_per_frame = ITEMS_PER_FRAME_DEFAULT;
   self->tick_callback_id = 0;
   self->tick_widget = NULL;
+
+  /* Phase 2: Throttled insertion pipeline initialization (nostrc-0hp) */
+  self->incoming_queue = g_array_new(FALSE, FALSE, sizeof(StagedEntry));
+  self->incoming_key_set = g_hash_table_new_full(uint64_hash, uint64_equal, g_free, NULL);
+  self->throttle_source_id = 0;
+  self->last_transfer_time_us = 0;
+  self->items_transferred_window = 0;
+  self->rate_window_start_us = g_get_monotonic_time();
+  self->peak_queue_depth = 0;
+  self->backpressure_active = FALSE;
 
   /* Start in batch mode to prevent widget recycling storms during initial load */
   self->in_batch_mode = TRUE;
