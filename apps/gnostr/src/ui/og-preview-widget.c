@@ -685,7 +685,12 @@ void og_preview_widget_clear(OgPreviewWidget *self) {
 }
 
 void og_preview_widget_prepare_for_unbind(OgPreviewWidget *self) {
-  g_return_if_fail(OG_IS_PREVIEW_WIDGET(self));
+  /* NOTE: Do NOT use type-checking macros (OG_IS_PREVIEW_WIDGET) here - they
+   * dereference the pointer which crashes if it contains garbage. The pointer
+   * may be stale if the widget was destroyed or the row is being recycled.
+   * Just check for NULL and trust the caller (note_card_row) checked validity.
+   * See nostrc-ofq crash fix for this pattern. */
+  g_return_if_fail(self != NULL);
 
   /* Mark as disposed FIRST to prevent any async callbacks from running.
    * This is the same pattern as note_card_row_prepare_for_unbind. */

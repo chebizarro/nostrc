@@ -1300,7 +1300,12 @@ void gnostr_note_embed_set_cancellable(GnostrNoteEmbed *self, GCancellable *canc
  * accessing widget state during the unbind/dispose process.
  */
 void gnostr_note_embed_prepare_for_unbind(GnostrNoteEmbed *self) {
-  g_return_if_fail(GNOSTR_IS_NOTE_EMBED(self));
+  /* NOTE: Do NOT use type-checking macros (GNOSTR_IS_NOTE_EMBED) here - they
+   * dereference the pointer which crashes if it contains garbage. The pointer
+   * may be stale if the widget was destroyed or the row is being recycled.
+   * Just check for NULL and trust the caller (note_card_row) checked validity.
+   * See nostrc-ofq crash fix for this pattern. */
+  g_return_if_fail(self != NULL);
 
   /* Mark as disposed FIRST to prevent any async callbacks from running.
    * This is the same pattern as note_card_row_prepare_for_unbind. */
