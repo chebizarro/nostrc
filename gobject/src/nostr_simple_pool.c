@@ -1142,9 +1142,18 @@ static void *subscription_goroutine(void *arg) {
     Error *err = NULL;
     bool fire_result = nostr_subscription_fire(item->sub, &err);
     if (!fire_result) {
-        g_critical("[GOROUTINE] subscription_fire FAILED for %s: %s", 
+        g_critical("[GOROUTINE] subscription_fire FAILED for %s: %s",
                   item->relay_url, err ? err->message : "unknown");
         if (err) free_error(err);
+        /* nostrc-d6j: Mark subscription as failed so polling loop doesn't wait for EOSE.
+         * If fire fails, REQ was never sent so EOSE will never arrive. Setting sub=NULL
+         * causes fired_count to exclude this subscription, preventing spurious timeouts.
+         * Follow standard cleanup order: close, unsubscribe, wait, free. */
+        nostr_subscription_close(item->sub, NULL);
+        nostr_subscription_unsubscribe(item->sub);
+        nostr_subscription_wait(item->sub);
+        nostr_subscription_free(item->sub);
+        item->sub = NULL;
     } else {
         g_debug("[GOROUTINE] Subscription fired successfully for %s", item->relay_url);
     }
