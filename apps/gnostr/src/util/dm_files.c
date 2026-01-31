@@ -12,6 +12,7 @@
 #include "dm_files.h"
 #include "blossom.h"
 #include "blossom_settings.h"
+#include "utils.h"
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <gio/gio.h>
@@ -719,13 +720,11 @@ void gnostr_dm_file_download_and_decrypt_async(GnostrDmFileMessage *msg,
   ctx->nonce = nonce;
   ctx->nonce_len = nonce_len;
 
-  /* Download the file */
-  SoupSession *session = soup_session_new();
-  soup_session_set_timeout(session, 60);
+  /* nostrc-201: Use shared SoupSession to avoid TLS cleanup issues with multiple sessions */
+  SoupSession *session = gnostr_get_shared_soup_session();
 
   SoupMessage *soup_msg = soup_message_new("GET", msg->file_url);
   if (!soup_msg) {
-    g_object_unref(session);
     download_ctx_free(ctx);
     GError *err = g_error_new(GNOSTR_DM_FILE_ERROR,
                                GNOSTR_DM_FILE_ERROR_DOWNLOAD_FAILED,
@@ -741,7 +740,7 @@ void gnostr_dm_file_download_and_decrypt_async(GnostrDmFileMessage *msg,
                                     ctx->cancellable, on_download_complete, ctx);
 
   g_object_unref(soup_msg);
-  g_object_unref(session);
+  /* Note: Don't unref shared session - we don't own it */
 }
 
 #else /* !HAVE_SOUP3 */

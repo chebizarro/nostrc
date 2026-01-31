@@ -1,4 +1,5 @@
 #include "relay_info.h"
+#include "utils.h"
 #include <json-glib/json-glib.h>
 #include <string.h>
 
@@ -403,15 +404,14 @@ void gnostr_relay_info_fetch_async(const gchar *relay_url,
 
   gchar *http_url = ws_url_to_http(relay_url);
 
-  SoupSession *session = soup_session_new();
-  soup_session_set_user_agent(session, "gnostr/1.0");
+  /* nostrc-201: Use shared SoupSession to avoid TLS cleanup issues with multiple sessions */
+  SoupSession *session = gnostr_get_shared_soup_session();
 
   SoupMessage *msg = soup_message_new("GET", http_url);
   if (!msg) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
                             "Invalid relay URL: %s", relay_url);
     g_object_unref(task);
-    g_object_unref(session);
     g_free(http_url);
     return;
   }
@@ -428,7 +428,7 @@ void gnostr_relay_info_fetch_async(const gchar *relay_url,
                                     cancellable, on_soup_message_complete, ctx);
 
   g_object_unref(msg);
-  g_object_unref(session);
+  /* Note: Don't unref shared session - we don't own it */
   g_free(http_url);
 }
 

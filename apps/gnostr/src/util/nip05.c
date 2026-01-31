@@ -457,9 +457,8 @@ void gnostr_nip05_verify_async(const char *identifier,
   ctx->user_data = user_data;
   ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
 
-  /* Create HTTP session and message */
-  SoupSession *session = soup_session_new();
-  soup_session_set_timeout(session, 10);  /* 10 second timeout */
+  /* nostrc-201: Use shared SoupSession to avoid TLS cleanup issues with multiple sessions */
+  SoupSession *session = gnostr_get_shared_soup_session();
 
   SoupMessage *msg = soup_message_new("GET", url);
   g_free(url);
@@ -473,7 +472,6 @@ void gnostr_nip05_verify_async(const char *identifier,
       callback(result, user_data);
     }
     nip05_verify_ctx_free(ctx);
-    g_object_unref(session);
     return;
   }
 
@@ -484,7 +482,7 @@ void gnostr_nip05_verify_async(const char *identifier,
   soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT, ctx->cancellable, on_nip05_http_done, ctx);
 
   g_object_unref(msg);
-  g_object_unref(session);
+  /* Note: Don't unref shared session - we don't own it */
 }
 
 #else /* !HAVE_SOUP3 */

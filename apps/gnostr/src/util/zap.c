@@ -7,6 +7,7 @@
 #include "zap.h"
 #include "relays.h"
 #include "json.h"
+#include "utils.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
 #include <string.h>
@@ -253,8 +254,8 @@ void gnostr_zap_fetch_lnurl_info_async(const gchar *lud16,
   ctx->user_data = user_data;
   ctx->lud16 = g_strdup(lud16);
 
-  SoupSession *session = soup_session_new();
-  soup_session_set_timeout(session, 15);  /* 15 second timeout */
+  /* nostrc-201: Use shared SoupSession to avoid TLS cleanup issues with multiple sessions */
+  SoupSession *session = gnostr_get_shared_soup_session();
 
   SoupMessage *msg = soup_message_new("GET", url);
   g_free(url);
@@ -267,7 +268,6 @@ void gnostr_zap_fetch_lnurl_info_async(const gchar *lud16,
       g_error_free(err);
     }
     lnurl_fetch_ctx_free(ctx);
-    g_object_unref(session);
     return;
   }
 
@@ -277,7 +277,7 @@ void gnostr_zap_fetch_lnurl_info_async(const gchar *lud16,
                                    on_lnurl_info_http_done, ctx);
 
   g_object_unref(msg);
-  g_object_unref(session);
+  /* Note: Don't unref shared session - we don't own it */
 }
 
 /* Context for invoice request */
@@ -432,8 +432,8 @@ void gnostr_zap_request_invoice_async(const GnostrLnurlPayInfo *lnurl_info,
   ctx->callback = callback;
   ctx->user_data = user_data;
 
-  SoupSession *session = soup_session_new();
-  soup_session_set_timeout(session, 30);  /* 30 second timeout for invoice */
+  /* nostrc-201: Use shared SoupSession to avoid TLS cleanup issues with multiple sessions */
+  SoupSession *session = gnostr_get_shared_soup_session();
 
   SoupMessage *msg = soup_message_new("GET", url);
   g_free(url);
@@ -446,7 +446,6 @@ void gnostr_zap_request_invoice_async(const GnostrLnurlPayInfo *lnurl_info,
       g_error_free(err);
     }
     invoice_request_ctx_free(ctx);
-    g_object_unref(session);
     return;
   }
 
@@ -456,7 +455,7 @@ void gnostr_zap_request_invoice_async(const GnostrLnurlPayInfo *lnurl_info,
                                    on_invoice_http_done, ctx);
 
   g_object_unref(msg);
-  g_object_unref(session);
+  /* Note: Don't unref shared session - we don't own it */
 }
 
 #else /* !HAVE_SOUP3 */
