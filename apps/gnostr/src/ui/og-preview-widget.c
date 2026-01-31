@@ -485,16 +485,12 @@ static void og_preview_widget_dispose(GObject *object) {
    * when widgets are being disposed. GTK will handle all label and Pango cleanup
    * automatically during finalization. */
   
-  /* Clear widget pointers AFTER unparenting to prevent race conditions.
-   * The unparent will trigger child disposal, so we need the pointers valid
-   * until that completes. */
-  
-  /* For programmatic widgets (not template-based), we must unparent children.
-   * Do this BEFORE calling parent dispose. */
-  GtkWidget *card = self->card_box;
-  GtkWidget *spin = self->spinner;
-  
-  /* Clear pointers first to prevent any callbacks from accessing them */
+  /* Do NOT explicitly unparent children during dispose (nostrc-oa9).
+   * Calling gtk_widget_unparent() during dispose triggers child disposal while
+   * Pango layouts are still active, causing crashes. GTK4 will automatically
+   * unparent and dispose children during widget finalization.
+   *
+   * Just clear the pointers to prevent async callbacks from accessing them. */
   self->card_box = NULL;
   self->spinner = NULL;
   self->title_label = NULL;
@@ -502,16 +498,7 @@ static void og_preview_widget_dispose(GObject *object) {
   self->site_label = NULL;
   self->image_widget = NULL;
   self->text_box = NULL;
-  
-  /* Now unparent - this triggers child disposal */
-  if (card && GTK_IS_WIDGET(card)) {
-    gtk_widget_unparent(card);
-  }
-  
-  if (spin && GTK_IS_WIDGET(spin)) {
-    gtk_widget_unparent(spin);
-  }
-  
+
   G_OBJECT_CLASS(og_preview_widget_parent_class)->dispose(object);
   
   /* Shared session is managed globally - do not clear here */
@@ -545,9 +532,12 @@ static void on_card_clicked(GtkGestureClick *gesture, int n_press, double x, dou
   (void)n_press;
   (void)x;
   (void)y;
-  
+
   OgPreviewWidget *self = user_data;
-  
+
+  /* Check disposed flag before accessing widget state (nostrc-oa9) */
+  if (self->disposed) return;
+
   if (self->current_url && *self->current_url) {
     GtkUriLauncher *launcher = gtk_uri_launcher_new(self->current_url);
     gtk_uri_launcher_launch(launcher, NULL, NULL, NULL, NULL);
