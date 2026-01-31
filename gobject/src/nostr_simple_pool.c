@@ -12,6 +12,7 @@
 #include "go.h"
 #include "wait_group.h"
 #include "hash_map.h"
+#include "nostr/metrics.h"
 #include <glib.h>
 #include <gio/gio.h>
 #include <string.h>
@@ -129,6 +130,72 @@ static gboolean emit_events_on_main(gpointer data) {
     g_object_unref(e->obj);
     g_free(e);
     return G_SOURCE_REMOVE;
+}
+
+/* ========================================================================
+ * Batch Processing Configuration (nostrc-bhm)
+ * ======================================================================== */
+
+#define BATCH_SIZE_DEFAULT 50     /* Default max events per batch */
+#define BATCH_SIZE_MIN     10     /* Minimum batch size */
+#define BATCH_SIZE_MAX     500    /* Maximum batch size */
+
+/* Get configured batch size from environment or use default */
+static guint get_batch_size(void) {
+    static guint cached_size = 0;
+    static gboolean initialized = FALSE;
+
+    if (!initialized) {
+        const char *env = g_getenv("NOSTR_BATCH_SIZE");
+        if (env && *env) {
+            int v = atoi(env);
+            if (v >= BATCH_SIZE_MIN && v <= BATCH_SIZE_MAX) {
+                cached_size = (guint)v;
+            } else {
+                cached_size = BATCH_SIZE_DEFAULT;
+            }
+        } else {
+            cached_size = BATCH_SIZE_DEFAULT;
+        }
+        initialized = TRUE;
+        g_debug("[BATCH] Using batch size: %u", cached_size);
+    }
+    return cached_size;
+}
+
+/* Compare function for sorting events by created_at (ascending - oldest first) */
+static gint compare_events_by_created_at(gconstpointer a, gconstpointer b) {
+    const NostrEvent *ev_a = *(const NostrEvent **)a;
+    const NostrEvent *ev_b = *(const NostrEvent **)b;
+
+    int64_t ca_a = nostr_event_get_created_at(ev_a);
+    int64_t ca_b = nostr_event_get_created_at(ev_b);
+
+    if (ca_a < ca_b) return -1;
+    if (ca_a > ca_b) return 1;
+    return 0;
+}
+
+/* Sort batch by created_at and emit to main thread */
+static void emit_batch_sorted(GObject *self_obj, GPtrArray *batch) {
+    if (!batch || batch->len == 0) {
+        if (batch) g_ptr_array_unref(batch);
+        return;
+    }
+
+    /* Sort events by created_at (oldest first for chronological processing) */
+    g_ptr_array_sort(batch, compare_events_by_created_at);
+
+    /* Emit on main loop */
+    typedef struct { GObject *obj; GPtrArray *arr; } EmitCtx;
+    EmitCtx *e = g_new0(EmitCtx, 1);
+    e->obj = g_object_ref(self_obj);
+    e->arr = batch; /* transfer ownership */
+    g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, emit_events_on_main, e, NULL);
+
+    /* Track batch metrics */
+    nostr_metric_counter_add("batch_emitted", 1);
+    nostr_metric_counter_add("batch_events_total", batch->len);
 }
 
 /* Bounded de-dup set for event ids */
@@ -300,13 +367,9 @@ static gpointer paginate_with_interval_thread(gpointer user_data) {
             if (!any) g_usleep(1000); /* 1ms */
         }
 
-        /* Emit batch if any */
+        /* Emit sorted batch if any (nostrc-bhm) */
         if (batch->len > 0) {
-            typedef struct { GObject *obj; GPtrArray *arr; } EmitCtx;
-            EmitCtx *e = g_new0(EmitCtx, 1);
-            e->obj = g_object_ref(ctx->self_obj);
-            e->arr = batch; /* transfer */
-            g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, emit_events_on_main, e, NULL);
+            emit_batch_sorted(ctx->self_obj, batch);
         } else {
             g_ptr_array_unref(batch);
         }
@@ -461,21 +524,27 @@ static gpointer subscribe_many_thread(gpointer user_data) {
         g_ptr_array_add(subs, g_memdup2(&item, sizeof(SubItem)));
     }
 
-    /* Streaming loop */
+    /* Streaming loop with batch processing (nostrc-bhm) */
     DedupSet *dedup = dedup_set_new(65536);
     gboolean bootstrap_emitted = FALSE;
+    guint max_batch_size = get_batch_size();
+
     while (!(ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable))) {
         /* CRITICAL FIX: Set free_func so NostrEvent objects are freed when batch is unreffed.
          * Without this, every event leaks memory causing unbounded growth. */
         GPtrArray *batch = g_ptr_array_new_with_free_func((GDestroyNotify)nostr_event_free);
         gboolean any = FALSE;
-        /* Collect from all subscriptions non-blocking, drain until empty */
-        for (guint i = 0; i < subs->len; i++) {
+
+        /* Collect from all subscriptions non-blocking, up to max_batch_size events */
+        for (guint i = 0; i < subs->len && batch->len < max_batch_size; i++) {
             SubItem *it = (SubItem *)subs->pdata[i];
             if (!it || !it->sub) continue;
             GoChannel *ch_events = nostr_subscription_get_events_channel(it->sub);
             void *msg = NULL;
-            while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
+
+            /* Drain events up to batch limit */
+            while (batch->len < max_batch_size &&
+                   ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
                 any = TRUE;
                 if (msg) {
                     NostrEvent *ev = (NostrEvent*)msg;
@@ -487,10 +556,11 @@ static gpointer subscribe_many_thread(gpointer user_data) {
                         g_ptr_array_add(batch, ev);
                         it->emitted++;
                     }
-                    free(eid);  /* nostr_event_get_id returns newly allocated string */
+                    free(eid); /* nostr_event_get_id returns newly allocated string */
                 }
                 msg = NULL;
             }
+
             /* Drain EOSE signals */
             GoChannel *ch_eose = nostr_subscription_get_eose_channel(it->sub);
             if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
@@ -501,13 +571,9 @@ static gpointer subscribe_many_thread(gpointer user_data) {
             }
         }
 
+        /* Emit sorted batch to main thread */
         if (batch->len > 0) {
-            /* Emit on main loop */
-            typedef struct { GObject *obj; GPtrArray *arr; } EmitCtx;
-            EmitCtx *e = g_new0(EmitCtx, 1);
-            e->obj = g_object_ref(ctx->self_obj);
-            e->arr = batch; /* transfer */
-            g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, emit_events_on_main, e, NULL);
+            emit_batch_sorted(ctx->self_obj, batch);
         } else {
             g_ptr_array_unref(batch);
         }
