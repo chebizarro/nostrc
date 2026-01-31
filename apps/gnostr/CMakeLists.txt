@@ -16,7 +16,7 @@ pkg_check_modules(JSON_GLIB REQUIRED IMPORTED_TARGET json-glib-1.0)
 pkg_check_modules(SQLITE3 QUIET IMPORTED_TARGET sqlite3)
 pkg_check_modules(SOUP3 QUIET IMPORTED_TARGET libsoup-3.0)
 pkg_check_modules(QRENCODE QUIET IMPORTED_TARGET libqrencode)
-pkg_check_modules(LIBPEAS QUIET IMPORTED_TARGET libpeas-2)
+pkg_check_modules(LIBPEAS REQUIRED IMPORTED_TARGET libpeas-2)
 
 # Find blueprint-compiler for compiling .blp files to .ui files
 find_program(BLUEPRINT_COMPILER blueprint-compiler)
@@ -258,14 +258,9 @@ if (QRENCODE_FOUND)
   target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_QRENCODE=1)
 endif()
 
-# ---- libpeas for plugin system ----
-if (LIBPEAS_FOUND)
-  target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::LIBPEAS)
-  target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_LIBPEAS=1)
-  message(STATUS "libpeas-2 found - plugin system enabled")
-else()
-  message(STATUS "libpeas-2 not found - plugin system disabled")
-endif()
+# ---- libpeas for plugin system (required) ----
+target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::LIBPEAS)
+target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_LIBPEAS=1)
 
 # ---- OpenSSL for DM file encryption (AES-GCM) ----
 # OpenSSL is already found at the top-level CMakeLists.txt

@@ -167,16 +167,18 @@ gnostr_plugin_manager_discover_plugins(GnostrPluginManager *manager)
   /* Rescan for plugins */
   peas_engine_rescan_plugins(manager->engine);
 
-  /* Log discovered plugins */
-  const GList *plugins = peas_engine_get_plugin_list(manager->engine);
-  guint count = g_list_length((GList*)plugins);
+  /* Log discovered plugins - PeasEngine is a GListModel in libpeas 2 */
+  guint count = g_list_model_get_n_items(G_LIST_MODEL(manager->engine));
   g_debug("[PLUGIN] Discovered %u plugins", count);
 
-  for (const GList *l = plugins; l; l = l->next) {
-    PeasPluginInfo *info = l->data;
-    g_debug("[PLUGIN]   - %s: %s",
-            peas_plugin_info_get_module_name(info),
-            peas_plugin_info_get_name(info));
+  for (guint i = 0; i < count; i++) {
+    PeasPluginInfo *info = g_list_model_get_item(G_LIST_MODEL(manager->engine), i);
+    if (info) {
+      g_debug("[PLUGIN]   - %s: %s",
+              peas_plugin_info_get_module_name(info),
+              peas_plugin_info_get_name(info));
+      g_object_unref(info);
+    }
   }
 #else
   g_debug("[PLUGIN] libpeas not available - plugin system disabled");
@@ -367,10 +369,13 @@ gnostr_plugin_manager_get_available_plugins(GnostrPluginManager *manager)
 
 #ifdef HAVE_LIBPEAS
   if (manager->engine) {
-    const GList *plugins = peas_engine_get_plugin_list(manager->engine);
-    for (const GList *l = plugins; l; l = l->next) {
-      PeasPluginInfo *info = l->data;
-      g_ptr_array_add(result, g_strdup(peas_plugin_info_get_module_name(info)));
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(manager->engine));
+    for (guint i = 0; i < n; i++) {
+      PeasPluginInfo *info = g_list_model_get_item(G_LIST_MODEL(manager->engine), i);
+      if (info) {
+        g_ptr_array_add(result, g_strdup(peas_plugin_info_get_module_name(info)));
+        g_object_unref(info);
+      }
     }
   }
 #endif
@@ -419,11 +424,14 @@ gnostr_plugin_manager_shutdown(GnostrPluginManager *manager)
 #ifdef HAVE_LIBPEAS
   /* Unload all plugins */
   if (manager->engine) {
-    const GList *plugins = peas_engine_get_plugin_list(manager->engine);
-    for (const GList *l = plugins; l; l = l->next) {
-      PeasPluginInfo *info = l->data;
-      if (peas_plugin_info_is_loaded(info)) {
-        peas_engine_unload_plugin(manager->engine, info);
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(manager->engine));
+    for (guint i = 0; i < n; i++) {
+      PeasPluginInfo *info = g_list_model_get_item(G_LIST_MODEL(manager->engine), i);
+      if (info) {
+        if (peas_plugin_info_is_loaded(info)) {
+          peas_engine_unload_plugin(manager->engine, info);
+        }
+        g_object_unref(info);
       }
     }
   }
