@@ -1,0 +1,10 @@
+[Plugin]
+Module=nip46-connect
+Name=NIP-46 Nostr Connect
+Description=Remote signing via Nostr Connect bunker protocol
+Authors=Gnostr Contributors
+Version=1.0
+Copyright=Copyright 2026 Gnostr Contributors
+Website=https://github.com/nostr-protocol/nips/blob/master/46.md
+Builtin=true
+Loader=c

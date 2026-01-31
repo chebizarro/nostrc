@@ -265,6 +265,7 @@ target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_LIBPEAS=1)
 # ---- Bundled plugins ----
 add_subdirectory(plugins/nip47-nwc)
 add_subdirectory(plugins/nip98-httpauth)
+add_subdirectory(plugins/nip46-connect)
 
 # ---- OpenSSL for DM file encryption (AES-GCM) ----
 # OpenSSL is already found at the top-level CMakeLists.txt
