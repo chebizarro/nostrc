@@ -186,6 +186,11 @@ static void emit_batch_sorted(GObject *self_obj, GPtrArray *batch) {
     /* Sort events by created_at (oldest first for chronological processing) */
     g_ptr_array_sort(batch, compare_events_by_created_at);
 
+    /* CRITICAL: Save batch length BEFORE transferring ownership to main thread.
+     * nostrc-sln: Fix heap-use-after-free - main thread may free batch before
+     * we read batch->len at the end of this function. */
+    guint batch_len = batch->len;
+
     /* Emit on main loop */
     typedef struct { GObject *obj; GPtrArray *arr; } EmitCtx;
     EmitCtx *e = g_new0(EmitCtx, 1);
@@ -193,9 +198,9 @@ static void emit_batch_sorted(GObject *self_obj, GPtrArray *batch) {
     e->arr = batch; /* transfer ownership */
     g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, emit_events_on_main, e, NULL);
 
-    /* Track batch metrics */
+    /* Track batch metrics - use saved length, not batch->len (batch may be freed) */
     nostr_metric_counter_add("batch_emitted", 1);
-    nostr_metric_counter_add("batch_events_total", batch->len);
+    nostr_metric_counter_add("batch_events_total", batch_len);
 }
 
 /* Bounded de-dup set for event ids */
