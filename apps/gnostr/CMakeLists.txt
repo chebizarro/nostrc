@@ -262,6 +262,9 @@ endif()
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::LIBPEAS)
 target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_LIBPEAS=1)
 
+# ---- Bundled plugins ----
+add_subdirectory(plugins/nip47-nwc)
+
 # ---- OpenSSL for DM file encryption (AES-GCM) ----
 # OpenSSL is already found at the top-level CMakeLists.txt
 if (OPENSSL_FOUND)
