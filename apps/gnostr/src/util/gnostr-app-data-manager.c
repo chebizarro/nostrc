@@ -11,6 +11,8 @@
 #include "mute_list.h"
 #include "bookmarks.h"
 #include "gnostr-drafts.h"
+#include <json.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -239,61 +241,75 @@ char *gnostr_app_data_manager_build_preferences_json(GnostrAppDataManager *self)
 
     ensure_settings(self);
 
-    json_t *root = json_object();
+    NostrJsonBuilder *builder = nostr_json_builder_new();
+    nostr_json_builder_begin_object(builder);
 
     /* Version for migration */
-    json_object_set_new(root, "version", json_integer(PREFERENCES_VERSION));
+    nostr_json_builder_set_key(builder, "version");
+    nostr_json_builder_add_int(builder, PREFERENCES_VERSION);
 
     /* Client settings */
-    json_t *client = json_object();
+    nostr_json_builder_set_key(builder, "client");
+    nostr_json_builder_begin_object(builder);
     if (self->client_settings) {
         g_autofree char *blossom_server = g_settings_get_string(self->client_settings, "blossom-server");
         if (blossom_server) {
-            json_object_set_new(client, "blossom-server", json_string(blossom_server));
+            nostr_json_builder_set_key(builder, "blossom-server");
+            nostr_json_builder_add_string(builder, blossom_server);
         }
 
-        json_object_set_new(client, "video-autoplay",
-                           json_boolean(g_settings_get_boolean(self->client_settings, "video-autoplay")));
-        json_object_set_new(client, "video-loop",
-                           json_boolean(g_settings_get_boolean(self->client_settings, "video-loop")));
+        nostr_json_builder_set_key(builder, "video-autoplay");
+        nostr_json_builder_add_bool(builder, g_settings_get_boolean(self->client_settings, "video-autoplay"));
+
+        nostr_json_builder_set_key(builder, "video-loop");
+        nostr_json_builder_add_bool(builder, g_settings_get_boolean(self->client_settings, "video-loop"));
 
         g_autofree char *image_quality = g_settings_get_string(self->client_settings, "image-quality");
         if (image_quality) {
-            json_object_set_new(client, "image-quality", json_string(image_quality));
+            nostr_json_builder_set_key(builder, "image-quality");
+            nostr_json_builder_add_string(builder, image_quality);
         }
     }
-    json_object_set_new(root, "client", client);
+    nostr_json_builder_end_object(builder);
 
     /* Display settings */
-    json_t *display = json_object();
+    nostr_json_builder_set_key(builder, "display");
+    nostr_json_builder_begin_object(builder);
     if (self->display_settings) {
         g_autofree char *color_scheme = g_settings_get_string(self->display_settings, "color-scheme");
         if (color_scheme) {
-            json_object_set_new(display, "color-scheme", json_string(color_scheme));
+            nostr_json_builder_set_key(builder, "color-scheme");
+            nostr_json_builder_add_string(builder, color_scheme);
         }
 
-        json_object_set_new(display, "font-scale",
-                           json_real(g_settings_get_double(self->display_settings, "font-scale")));
+        nostr_json_builder_set_key(builder, "font-scale");
+        nostr_json_builder_add_double(builder, g_settings_get_double(self->display_settings, "font-scale"));
 
         g_autofree char *density = g_settings_get_string(self->display_settings, "timeline-density");
         if (density) {
-            json_object_set_new(display, "timeline-density", json_string(density));
+            nostr_json_builder_set_key(builder, "timeline-density");
+            nostr_json_builder_add_string(builder, density);
         }
 
-        json_object_set_new(display, "enable-animations",
-                           json_boolean(g_settings_get_boolean(self->display_settings, "enable-animations")));
-        json_object_set_new(display, "show-avatars",
-                           json_boolean(g_settings_get_boolean(self->display_settings, "show-avatars")));
-        json_object_set_new(display, "show-media-previews",
-                           json_boolean(g_settings_get_boolean(self->display_settings, "show-media-previews")));
+        nostr_json_builder_set_key(builder, "enable-animations");
+        nostr_json_builder_add_bool(builder, g_settings_get_boolean(self->display_settings, "enable-animations"));
+
+        nostr_json_builder_set_key(builder, "show-avatars");
+        nostr_json_builder_add_bool(builder, g_settings_get_boolean(self->display_settings, "show-avatars"));
+
+        nostr_json_builder_set_key(builder, "show-media-previews");
+        nostr_json_builder_add_bool(builder, g_settings_get_boolean(self->display_settings, "show-media-previews"));
     }
-    json_object_set_new(root, "display", display);
+    nostr_json_builder_end_object(builder);
 
     /* Timestamp */
-    json_object_set_new(root, "updated_at", json_integer((json_int_t)time(NULL)));
+    nostr_json_builder_set_key(builder, "updated_at");
+    nostr_json_builder_add_int64(builder, (int64_t)time(NULL));
 
-    char *result = json_dumps(root, JSON_COMPACT);
-    json_decref(root);
+    nostr_json_builder_end_object(builder);
+
+    char *result = nostr_json_builder_finish(builder);
+    nostr_json_builder_free(builder);
 
     return result;
 }
@@ -305,76 +321,80 @@ gboolean gnostr_app_data_manager_apply_preferences_json(GnostrAppDataManager *se
 
     ensure_settings(self);
 
-    json_error_t error;
-    json_t *root = json_loads(json_str, 0, &error);
-    if (!root) {
-        g_warning("app-data-manager: failed to parse preferences JSON: %s", error.text);
+    if (!nostr_json_is_valid(json_str)) {
+        g_warning("app-data-manager: failed to parse preferences JSON");
         return FALSE;
     }
 
+    /* Get raw client and display objects for nested lookups */
+    char *client_json = NULL;
+    char *display_json = NULL;
+    nostr_json_get_raw(json_str, "client", &client_json);
+    nostr_json_get_raw(json_str, "display", &display_json);
+
     /* Apply client settings */
-    json_t *client = json_object_get(root, "client");
-    if (client && json_is_object(client) && self->client_settings) {
-        json_t *val;
+    if (client_json && self->client_settings) {
+        char *str_val = NULL;
+        bool bool_val;
 
-        val = json_object_get(client, "blossom-server");
-        if (val && json_is_string(val)) {
-            g_settings_set_string(self->client_settings, "blossom-server", json_string_value(val));
+        if (nostr_json_get_string(client_json, "blossom-server", &str_val) == 0) {
+            g_settings_set_string(self->client_settings, "blossom-server", str_val);
+            free(str_val);
         }
 
-        val = json_object_get(client, "video-autoplay");
-        if (val && json_is_boolean(val)) {
-            g_settings_set_boolean(self->client_settings, "video-autoplay", json_boolean_value(val));
+        if (nostr_json_get_bool(client_json, "video-autoplay", &bool_val) == 0) {
+            g_settings_set_boolean(self->client_settings, "video-autoplay", bool_val);
         }
 
-        val = json_object_get(client, "video-loop");
-        if (val && json_is_boolean(val)) {
-            g_settings_set_boolean(self->client_settings, "video-loop", json_boolean_value(val));
+        if (nostr_json_get_bool(client_json, "video-loop", &bool_val) == 0) {
+            g_settings_set_boolean(self->client_settings, "video-loop", bool_val);
         }
 
-        val = json_object_get(client, "image-quality");
-        if (val && json_is_string(val)) {
-            g_settings_set_string(self->client_settings, "image-quality", json_string_value(val));
+        if (nostr_json_get_string(client_json, "image-quality", &str_val) == 0) {
+            g_settings_set_string(self->client_settings, "image-quality", str_val);
+            free(str_val);
         }
     }
 
     /* Apply display settings */
-    json_t *display = json_object_get(root, "display");
-    if (display && json_is_object(display) && self->display_settings) {
-        json_t *val;
+    if (display_json && self->display_settings) {
+        char *str_val = NULL;
+        bool bool_val;
+        int int_val;
 
-        val = json_object_get(display, "color-scheme");
-        if (val && json_is_string(val)) {
-            g_settings_set_string(self->display_settings, "color-scheme", json_string_value(val));
+        if (nostr_json_get_string(display_json, "color-scheme", &str_val) == 0) {
+            g_settings_set_string(self->display_settings, "color-scheme", str_val);
+            free(str_val);
         }
 
-        val = json_object_get(display, "font-scale");
-        if (val && json_is_real(val)) {
-            g_settings_set_double(self->display_settings, "font-scale", json_real_value(val));
+        /* font-scale is a double - use int getter and convert, or get raw */
+        char *font_scale_raw = NULL;
+        if (nostr_json_get_raw(display_json, "font-scale", &font_scale_raw) == 0) {
+            double font_scale = strtod(font_scale_raw, NULL);
+            g_settings_set_double(self->display_settings, "font-scale", font_scale);
+            free(font_scale_raw);
         }
 
-        val = json_object_get(display, "timeline-density");
-        if (val && json_is_string(val)) {
-            g_settings_set_string(self->display_settings, "timeline-density", json_string_value(val));
+        if (nostr_json_get_string(display_json, "timeline-density", &str_val) == 0) {
+            g_settings_set_string(self->display_settings, "timeline-density", str_val);
+            free(str_val);
         }
 
-        val = json_object_get(display, "enable-animations");
-        if (val && json_is_boolean(val)) {
-            g_settings_set_boolean(self->display_settings, "enable-animations", json_boolean_value(val));
+        if (nostr_json_get_bool(display_json, "enable-animations", &bool_val) == 0) {
+            g_settings_set_boolean(self->display_settings, "enable-animations", bool_val);
         }
 
-        val = json_object_get(display, "show-avatars");
-        if (val && json_is_boolean(val)) {
-            g_settings_set_boolean(self->display_settings, "show-avatars", json_boolean_value(val));
+        if (nostr_json_get_bool(display_json, "show-avatars", &bool_val) == 0) {
+            g_settings_set_boolean(self->display_settings, "show-avatars", bool_val);
         }
 
-        val = json_object_get(display, "show-media-previews");
-        if (val && json_is_boolean(val)) {
-            g_settings_set_boolean(self->display_settings, "show-media-previews", json_boolean_value(val));
+        if (nostr_json_get_bool(display_json, "show-media-previews", &bool_val) == 0) {
+            g_settings_set_boolean(self->display_settings, "show-media-previews", bool_val);
         }
     }
 
-    json_decref(root);
+    free(client_json);
+    free(display_json);
 
     g_message("app-data-manager: applied preferences from JSON");
     g_signal_emit(self, signals[SIGNAL_PREFERENCES_CHANGED], 0);
