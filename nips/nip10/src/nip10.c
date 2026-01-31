@@ -273,7 +273,7 @@ int nostr_nip10_parse_thread_from_tags(const NostrTags *tags, NostrNip10ThreadIn
             const char *event_id = nostr_tag_get(tag, 1);
             if (event_id && strlen(event_id) == 64) {
                 explicit_root = event_id;
-                /* Relay hint at index 2 for uppercase E tags too */
+                /* Relay hint at index 2 for uppercase E tags */
                 if (nostr_tag_size(tag) >= 3) {
                     explicit_root_relay = nostr_tag_get(tag, 2);
                 }
@@ -286,7 +286,7 @@ int nostr_nip10_parse_thread_from_tags(const NostrTags *tags, NostrNip10ThreadIn
         const char *event_id = nostr_tag_get(tag, 1);
         if (!event_id || strlen(event_id) != 64) continue;
 
-        /* Get relay hint at index 2 (may be empty string) */
+        /* Relay hint at index 2 (may be empty string) */
         const char *relay_hint = NULL;
         if (nostr_tag_size(tag) >= 3) {
             relay_hint = nostr_tag_get(tag, 2);

@@ -853,25 +853,49 @@ gboolean storage_ndb_is_event_expired(uint64_t note_key)
 
 /* ============== NIP-10 Thread Info API ============== */
 
-/* Extract NIP-10 thread context (root_id, reply_id) from note tags.
+/* Helper to validate and duplicate a relay URL string.
+ * nostrc-7r5: Returns NULL if invalid, newly allocated string if valid. */
+static char *dup_valid_relay_url_ndb(const char *relay) {
+  if (!relay || !*relay) return NULL;
+  /* Basic validation: must start with wss:// or ws:// */
+  if (strncmp(relay, "wss://", 6) != 0 && strncmp(relay, "ws://", 5) != 0) {
+    return NULL;
+  }
+  return g_strdup(relay);
+}
+
+/* Extract NIP-10 thread context with relay hints from note tags.
+ * nostrc-7r5: Extended version that also extracts relay hints from e-tags.
  * Supports both preferred marker style and positional fallback.
  * Returns allocated strings via out parameters. Caller must g_free().
  * Pass NULL for outputs you don't need. */
-void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_out, char **reply_id_out)
+void storage_ndb_note_get_nip10_thread_full(storage_ndb_note *note,
+                                             char **root_id_out,
+                                             char **reply_id_out,
+                                             char **root_relay_hint_out,
+                                             char **reply_relay_hint_out)
 {
   if (root_id_out) *root_id_out = NULL;
   if (reply_id_out) *reply_id_out = NULL;
+  if (root_relay_hint_out) *root_relay_hint_out = NULL;
+  if (reply_relay_hint_out) *reply_relay_hint_out = NULL;
   if (!note) return;
 
   struct ndb_tags *tags = ndb_note_tags(note);
   if (!tags || ndb_tags_count(tags) == 0) return;
 
   char *found_root = NULL;
+  char *found_root_relay = NULL;
   char *found_reply = NULL;
+  char *found_reply_relay = NULL;
   const char *first_e_id = NULL;
+  const char *first_e_relay = NULL;
   const char *last_e_id = NULL;
+  const char *last_e_relay = NULL;
   char first_e_buf[65] = {0};
+  char first_e_relay_buf[256] = {0};
   char last_e_buf[65] = {0};
+  char last_e_relay_buf[256] = {0};
 
   struct ndb_iterator iter;
   ndb_tags_iterate_start(note, &iter);
@@ -896,6 +920,15 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
       continue; /* Invalid ID format */
     }
 
+    /* nostrc-7r5: Get relay hint at position 2 */
+    const char *relay_hint = NULL;
+    if (nelem >= 3) {
+      struct ndb_str relay_str = ndb_tag_str(note, tag, 2);
+      if (relay_str.str && *relay_str.str) {
+        relay_hint = relay_str.str;
+      }
+    }
+
     /* Check for marker at position 3 */
     const char *marker = NULL;
     if (nelem >= 4) {
@@ -913,12 +946,16 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
 
     if (marker && strcmp(marker, "root") == 0) {
       g_free(found_root);
+      g_free(found_root_relay);
       found_root = g_strdup(id_hex);
-      g_debug("[NIP10] Found root marker: %.16s...", id_hex);
+      found_root_relay = dup_valid_relay_url_ndb(relay_hint);
+      g_debug("[NIP10] Found root marker: %.16s... relay: %s", id_hex, relay_hint ? relay_hint : "(none)");
     } else if (marker && strcmp(marker, "reply") == 0) {
       g_free(found_reply);
+      g_free(found_reply_relay);
       found_reply = g_strdup(id_hex);
-      g_debug("[NIP10] Found reply marker: %.16s...", id_hex);
+      found_reply_relay = dup_valid_relay_url_ndb(relay_hint);
+      g_debug("[NIP10] Found reply marker: %.16s... relay: %s", id_hex, relay_hint ? relay_hint : "(none)");
     } else if (marker && strcmp(marker, "mention") == 0) {
       /* Skip mentions - not part of reply chain */
       continue;
@@ -928,10 +965,22 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
         strncpy(first_e_buf, id_hex, 64);
         first_e_buf[64] = '\0';
         first_e_id = first_e_buf;
+        if (relay_hint && strlen(relay_hint) < sizeof(first_e_relay_buf)) {
+          strncpy(first_e_relay_buf, relay_hint, sizeof(first_e_relay_buf) - 1);
+          first_e_relay_buf[sizeof(first_e_relay_buf) - 1] = '\0';
+          first_e_relay = first_e_relay_buf;
+        }
       }
       strncpy(last_e_buf, id_hex, 64);
       last_e_buf[64] = '\0';
       last_e_id = last_e_buf;
+      if (relay_hint && strlen(relay_hint) < sizeof(last_e_relay_buf)) {
+        strncpy(last_e_relay_buf, relay_hint, sizeof(last_e_relay_buf) - 1);
+        last_e_relay_buf[sizeof(last_e_relay_buf) - 1] = '\0';
+        last_e_relay = last_e_relay_buf;
+      } else {
+        last_e_relay = NULL;
+      }
     }
   }
 
@@ -943,10 +992,16 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
    * nostrc-5b8: Fix single e-tag case where reply_id was incorrectly left NULL */
   if (!found_root && first_e_id) {
     found_root = g_strdup(first_e_id);
+    if (!found_root_relay && first_e_relay) {
+      found_root_relay = dup_valid_relay_url_ndb(first_e_relay);
+    }
   }
   if (!found_reply && last_e_id) {
     /* Any e-tag (even if same as root) indicates this is a reply */
     found_reply = g_strdup(last_e_id);
+    if (!found_reply_relay && last_e_relay) {
+      found_reply_relay = dup_valid_relay_url_ndb(last_e_relay);
+    }
   }
 
   /* NIP-10: When only "root" marker exists (no "reply" marker), this is a
@@ -954,6 +1009,9 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
    * nostrc-mef: Fix root-only marker case */
   if (!found_reply && found_root) {
     found_reply = g_strdup(found_root);
+    if (!found_reply_relay && found_root_relay) {
+      found_reply_relay = g_strdup(found_root_relay);
+    }
   }
 
   /* NIP-10: When only "reply" marker exists (no "root" marker), use the reply
@@ -962,18 +1020,39 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
    * The reply target is always a valid ancestor, so use it as a fallback root. */
   if (!found_root && found_reply) {
     found_root = g_strdup(found_reply);
+    if (!found_root_relay && found_reply_relay) {
+      found_root_relay = g_strdup(found_reply_relay);
+    }
     g_debug("[NIP10] No root marker, using reply target as root: %.16s...", found_root);
   }
 
-  g_debug("[NIP10] Final result - root: %s, reply: %s",
+  g_debug("[NIP10] Final result - root: %s (relay: %s), reply: %s (relay: %s)",
           found_root ? found_root : "(null)",
-          found_reply ? found_reply : "(null)");
+          found_root_relay ? found_root_relay : "(null)",
+          found_reply ? found_reply : "(null)",
+          found_reply_relay ? found_reply_relay : "(null)");
 
   if (root_id_out) *root_id_out = found_root;
   else g_free(found_root);
 
   if (reply_id_out) *reply_id_out = found_reply;
   else g_free(found_reply);
+
+  if (root_relay_hint_out) *root_relay_hint_out = found_root_relay;
+  else g_free(found_root_relay);
+
+  if (reply_relay_hint_out) *reply_relay_hint_out = found_reply_relay;
+  else g_free(found_reply_relay);
+}
+
+/* Extract NIP-10 thread context (root_id, reply_id) from note tags.
+ * Supports both preferred marker style and positional fallback.
+ * Returns allocated strings via out parameters. Caller must g_free().
+ * Pass NULL for outputs you don't need. */
+void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_out, char **reply_id_out)
+{
+  /* Delegate to the full version, ignoring relay hints */
+  storage_ndb_note_get_nip10_thread_full(note, root_id_out, reply_id_out, NULL, NULL);
 }
 
 /* ============== Hashtag Extraction API ============== */

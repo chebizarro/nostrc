@@ -281,14 +281,14 @@ static void parse_nip10_from_json_full(const char *json_str, char **root_id, cha
    * nostrc-5b8: Fix single e-tag case where reply_id was incorrectly left NULL */
   if (!*root_id && ctx.first_e_id) {
     *root_id = g_strdup(ctx.first_e_id);
-    if (root_relay_hint) {
+    if (root_relay_hint && ctx.first_e_relay) {
       *root_relay_hint = g_strdup(ctx.first_e_relay);
     }
   }
   if (!*reply_id && ctx.last_e_id) {
     /* Any e-tag (even if same as root) indicates this is a reply */
     *reply_id = g_strdup(ctx.last_e_id);
-    if (reply_relay_hint) {
+    if (reply_relay_hint && ctx.last_e_relay) {
       *reply_relay_hint = g_strdup(ctx.last_e_relay);
     }
   }
@@ -1628,10 +1628,13 @@ static void on_ndb_thread_batch(uint64_t subid, const uint64_t *note_keys,
     /* Get created_at */
     uint32_t created_at = storage_ndb_note_created_at(note);
 
-    /* Get NIP-10 thread info */
+    /* Get NIP-10 thread info with relay hints (nostrc-7r5) */
     char *root_id = NULL;
     char *reply_id = NULL;
-    storage_ndb_note_get_nip10_thread(note, &root_id, &reply_id);
+    char *root_relay_hint = NULL;
+    char *reply_relay_hint = NULL;
+    storage_ndb_note_get_nip10_thread_full(note, &root_id, &reply_id,
+                                            &root_relay_hint, &reply_relay_hint);
 
     /* Create new item */
     ThreadEventItem *item = g_new0(ThreadEventItem, 1);
@@ -1639,8 +1642,10 @@ static void on_ndb_thread_batch(uint64_t subid, const uint64_t *note_keys,
     item->pubkey_hex = g_strdup(pk_hex);
     item->content = content ? g_strdup(content) : g_strdup("");
     item->created_at = (gint64)created_at;
-    item->root_id = root_id;     /* Takes ownership */
-    item->parent_id = reply_id;  /* Takes ownership */
+    item->root_id = root_id;               /* Takes ownership */
+    item->parent_id = reply_id;            /* Takes ownership */
+    item->root_relay_hint = root_relay_hint;     /* Takes ownership (nostrc-7r5) */
+    item->parent_relay_hint = reply_relay_hint;  /* Takes ownership (nostrc-7r5) */
 
     /* Add to hash table (owns the item) */
     g_hash_table_insert(self->events_by_id, item->id_hex, item);

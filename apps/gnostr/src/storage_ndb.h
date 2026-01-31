@@ -172,6 +172,17 @@ gboolean storage_ndb_is_event_expired(uint64_t note_key);
  * Pass NULL for outputs you don't need. */
 void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_out, char **reply_id_out);
 
+/* Extract NIP-10 thread context with relay hints from note tags.
+ * nostrc-7r5: Extended version that also extracts relay hints from e-tags.
+ * Relay hints indicate which relay to query for the referenced event.
+ * Returns allocated strings via out parameters. Caller must g_free().
+ * Pass NULL for outputs you don't need. */
+void storage_ndb_note_get_nip10_thread_full(storage_ndb_note *note,
+                                             char **root_id_out,
+                                             char **reply_id_out,
+                                             char **root_relay_hint_out,
+                                             char **reply_relay_hint_out);
+
 #ifdef __cplusplus
 }
 #endif
