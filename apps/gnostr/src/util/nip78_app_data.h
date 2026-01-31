@@ -20,7 +20,6 @@
 
 #include <glib-object.h>
 #include <gio/gio.h>
-#include <jansson.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -42,7 +41,6 @@ typedef struct _GnostrAppData {
     char *data_key;       /* Data key within the app namespace */
     char *d_tag;          /* Full d-tag value (app_id/data_key) */
     char *content;        /* Raw content string (often JSON) */
-    json_t *content_json; /* Parsed JSON content (or NULL if not JSON) */
     char *event_id;       /* Event ID (hex, 64 chars) */
     char *pubkey;         /* Author's public key (hex, 64 chars) */
     gint64 created_at;    /* Event creation timestamp */
@@ -108,7 +106,7 @@ GnostrAppData *gnostr_app_data_copy(const GnostrAppData *data);
  *
  * Parses a kind 30078 event JSON into a GnostrAppData structure.
  * Extracts the d-tag and parses it into app_id and data_key.
- * Attempts to parse content as JSON (sets content_json if successful).
+ * The content field is stored as raw JSON for use with helper functions.
  *
  * Returns: (transfer full) (nullable): Parsed app data, or NULL on error
  */
@@ -166,7 +164,7 @@ char *gnostr_app_data_build_event_json(const char *app_id,
  * @app_id: Application identifier
  * @data_key: Data key
  * @content: Content string (often JSON)
- * @extra_tags: (nullable): Additional tags to include (array of arrays)
+ * @extra_tags_json: (nullable): Additional tags JSON array string (e.g., "[["p","..."],["e","..."]]")
  *
  * Builds an unsigned kind 30078 event JSON with extra tags.
  *
@@ -175,7 +173,7 @@ char *gnostr_app_data_build_event_json(const char *app_id,
 char *gnostr_app_data_build_event_json_full(const char *app_id,
                                              const char *data_key,
                                              const char *content,
-                                             json_t *extra_tags);
+                                             const char *extra_tags_json);
 
 /* ---- JSON Content Helpers ---- */
 
@@ -220,28 +218,16 @@ gboolean gnostr_app_data_get_json_bool(const GnostrAppData *data,
                                         gboolean default_val);
 
 /**
- * gnostr_app_data_get_json_array:
+ * gnostr_app_data_get_json_raw:
  * @data: The app data
  * @key: JSON object key
  *
- * Gets a JSON array from the parsed JSON content.
+ * Gets a raw JSON value from the content as a string.
  *
- * Returns: (transfer none) (nullable): JSON array or NULL
+ * Returns: (transfer full) (nullable): Raw JSON value string or NULL
  */
-json_t *gnostr_app_data_get_json_array(const GnostrAppData *data,
-                                        const char *key);
-
-/**
- * gnostr_app_data_get_json_object:
- * @data: The app data
- * @key: JSON object key
- *
- * Gets a JSON object from the parsed JSON content.
- *
- * Returns: (transfer none) (nullable): JSON object or NULL
- */
-json_t *gnostr_app_data_get_json_object(const GnostrAppData *data,
-                                         const char *key);
+char *gnostr_app_data_get_json_raw(const GnostrAppData *data,
+                                    const char *key);
 
 /* ---- Relay Operations ---- */
 
