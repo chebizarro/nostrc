@@ -1411,3 +1411,23 @@ void go_channel_close(GoChannel *chan) {
 
     NUNLOCK(&chan->mutex);
 }
+
+/* Get current channel depth (number of items in buffer) */
+size_t go_channel_get_depth(GoChannel *chan) {
+    if (NOSTR_UNLIKELY(chan == NULL)) {
+        return 0;
+    }
+    if (NOSTR_UNLIKELY(chan->magic != GO_CHANNEL_MAGIC)) {
+        return 0;
+    }
+#if NOSTR_CHANNEL_MPMC_SLOTS
+    // In MPMC mode, in/out are absolute monotonic counters
+    size_t in = atomic_load_explicit(&chan->in, memory_order_acquire);
+    size_t out = atomic_load_explicit(&chan->out, memory_order_acquire);
+    return in - out;
+#elif NOSTR_CHANNEL_DERIVE_SIZE
+    return go_channel_occupancy(chan);
+#else
+    return chan->size;
+#endif
+}

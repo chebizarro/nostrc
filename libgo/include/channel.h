@@ -66,5 +66,7 @@ int go_channel_is_closed(GoChannel *chan);
 int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx);
 int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx);
 void go_channel_close(GoChannel *chan);
+// Get current channel depth (number of items in buffer)
+size_t go_channel_get_depth(GoChannel *chan);
 
 #endif // GO_CHANNEL_H

@@ -297,13 +297,18 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
             // Update queue metrics on successful enqueue
             int64_t now_us = get_time_us();
             atomic_fetch_add(&m->events_enqueued, 1);
-            uint32_t new_depth = atomic_fetch_add(&m->current_depth, 1) + 1;
             atomic_store(&m->last_enqueue_time_us, now_us);
+
+            /* Get actual channel depth for warnings (nostrc-dw3)
+             * Note: m->current_depth was removed because consumers never called
+             * nostr_subscription_mark_event_consumed(), making it grow unbounded.
+             * Using the actual channel depth is more accurate. */
+            uint32_t actual_depth = (uint32_t)go_channel_get_depth(sub->events);
 
             // Update peak depth if new high
             uint32_t old_peak = atomic_load(&m->peak_depth);
-            while (new_depth > old_peak) {
-                if (atomic_compare_exchange_weak(&m->peak_depth, &old_peak, new_depth)) {
+            while (actual_depth > old_peak) {
+                if (atomic_compare_exchange_weak(&m->peak_depth, &old_peak, actual_depth)) {
                     break;
                 }
             }
@@ -312,19 +317,19 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
              * Only check periodically to avoid overhead on every enqueue */
             uint32_t capacity = m->queue_capacity;
             if (capacity > 0) {
-                uint32_t utilization = (new_depth * 100) / capacity;
+                uint32_t utilization = (actual_depth * 100) / capacity;
 
                 /* Log warning if approaching capacity */
                 if (utilization >= 90) {
                     nostr_rl_log(NLOG_WARN, "queue",
                         "Queue near capacity: sid=%s depth=%u/%u util=%u%%",
-                        sub->priv->id, new_depth, capacity, utilization);
+                        sub->priv->id, actual_depth, capacity, utilization);
                     nostr_metric_counter_add("queue_near_capacity", 1);
                 }
 
                 /* Report to adaptive system if we hit the grow threshold */
                 if (utilization >= NOSTR_QUEUE_GROW_THRESHOLD) {
-                    nostr_subscription_report_peak_usage(new_depth, capacity);
+                    nostr_subscription_report_peak_usage(actual_depth, capacity);
                 }
             }
 
@@ -752,7 +757,7 @@ void nostr_subscription_mark_event_consumed(NostrSubscription *sub, int64_t enqu
     int64_t now_us = get_time_us();
 
     atomic_fetch_add(&m->events_dequeued, 1);
-    atomic_fetch_sub(&m->current_depth, 1);
+    /* Note: current_depth no longer tracked here - use go_channel_get_depth() instead (nostrc-dw3) */
     atomic_store(&m->last_dequeue_time_us, now_us);
 
     // If caller provided enqueue time, calculate wait time
@@ -773,7 +778,8 @@ void nostr_subscription_get_queue_metrics(const NostrSubscription *sub, NostrQue
     out->events_enqueued = atomic_load(&m->events_enqueued);
     out->events_dequeued = atomic_load(&m->events_dequeued);
     out->events_dropped = atomic_load(&m->events_dropped);
-    out->current_depth = atomic_load(&m->current_depth);
+    /* Use actual channel depth instead of broken metric (nostrc-dw3) */
+    out->current_depth = (uint32_t)go_channel_get_depth(sub->events);
     out->peak_depth = atomic_load(&m->peak_depth);
     out->queue_capacity = m->queue_capacity;
     out->last_enqueue_time_us = atomic_load(&m->last_enqueue_time_us);
@@ -789,7 +795,8 @@ uint32_t nostr_subscription_get_queue_utilization(const NostrSubscription *sub) 
     if (!sub || !sub->priv) return 0;
 
     const QueueMetrics *m = &sub->priv->metrics;
-    uint32_t depth = atomic_load(&m->current_depth);
+    /* Use actual channel depth instead of broken metric (nostrc-dw3) */
+    uint32_t depth = (uint32_t)go_channel_get_depth(sub->events);
     uint32_t capacity = m->queue_capacity;
 
     if (capacity == 0) return 0;
