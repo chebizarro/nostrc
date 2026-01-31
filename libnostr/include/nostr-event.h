@@ -204,6 +204,37 @@ char *nostr_event_serialize_compact(const NostrEvent *event);
  */
 int nostr_event_deserialize_compact(NostrEvent *event, const char *json);
 
+/* ========================================================================
+ * Event Priority Classification (nostrc-7u2)
+ * ======================================================================== */
+
+/**
+ * NostrEventPriority:
+ * Priority levels for backpressure decisions.
+ */
+typedef enum {
+    NOSTR_EVENT_PRIORITY_CRITICAL = 0,  /**< DMs, zaps, mentions - never dropped */
+    NOSTR_EVENT_PRIORITY_HIGH     = 1,  /**< Replies to own posts */
+    NOSTR_EVENT_PRIORITY_NORMAL   = 2,  /**< Timeline events */
+    NOSTR_EVENT_PRIORITY_LOW      = 3   /**< Reactions, reposts - dropped first */
+} NostrEventPriority;
+
+/**
+ * nostr_event_get_priority:
+ * @event: event to classify
+ * @user_pubkey: (nullable): current user's pubkey for mention detection
+ *
+ * Classifies an event's priority for backpressure decisions.
+ * Classification rules:
+ * - CRITICAL: DMs (kind 4, 1059), zaps (kind 9735), mentions of user
+ * - HIGH: Replies (kind 1 with "e" tag)
+ * - LOW: Reactions (kind 7), reposts (kind 6)
+ * - NORMAL: Everything else
+ *
+ * Returns: priority level
+ */
+NostrEventPriority nostr_event_get_priority(const NostrEvent *event, const char *user_pubkey);
+
 #ifdef __cplusplus
 }
 #endif

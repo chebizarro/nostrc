@@ -243,6 +243,48 @@ void nostr_subscription_mark_event_consumed(NostrSubscription *sub, int64_t enqu
  */
 void nostr_subscription_get_queue_metrics(const NostrSubscription *sub, NostrQueueMetrics *out);
 
+/* ========================================================================
+ * Producer-side Rate Limiting (nostrc-7u2)
+ * ======================================================================== */
+
+/* NostrEventPriority is defined in nostr-event.h */
+
+/**
+ * nostr_subscription_get_queue_utilization:
+ * @sub: subscription to query
+ *
+ * Returns queue utilization as percentage (0-100).
+ * Utilization = current_depth * 100 / queue_capacity.
+ *
+ * Returns: utilization percentage, or 0 if sub is NULL
+ */
+uint32_t nostr_subscription_get_queue_utilization(const NostrSubscription *sub);
+
+/**
+ * nostr_subscription_should_throttle:
+ * @sub: subscription to query
+ *
+ * Checks if producer should throttle due to high queue utilization.
+ * Returns true if utilization > 90%.
+ *
+ * Returns: true if producer should pause/slow down
+ */
+bool nostr_subscription_should_throttle(const NostrSubscription *sub);
+
+/**
+ * nostr_subscription_get_throttle_delay_us:
+ * @sub: subscription to query
+ *
+ * Returns recommended throttle delay in microseconds based on queue pressure.
+ * - < 80% utilization: 0 (no delay)
+ * - 80-90% utilization: 1000 us (1ms)
+ * - 90-95% utilization: 10000 us (10ms)
+ * - > 95% utilization: 50000 us (50ms)
+ *
+ * Returns: delay in microseconds, or 0 if no throttling needed
+ */
+uint64_t nostr_subscription_get_throttle_delay_us(const NostrSubscription *sub);
+
 #ifdef __cplusplus
 }
 #endif

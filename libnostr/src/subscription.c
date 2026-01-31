@@ -782,6 +782,39 @@ void nostr_subscription_get_queue_metrics(const NostrSubscription *sub, NostrQue
 }
 
 /* ========================================================================
+ * Producer-side Rate Limiting (nostrc-7u2)
+ * ======================================================================== */
+
+uint32_t nostr_subscription_get_queue_utilization(const NostrSubscription *sub) {
+    if (!sub || !sub->priv) return 0;
+
+    const QueueMetrics *m = &sub->priv->metrics;
+    uint32_t depth = atomic_load(&m->current_depth);
+    uint32_t capacity = m->queue_capacity;
+
+    if (capacity == 0) return 0;
+    return (depth * 100) / capacity;
+}
+
+bool nostr_subscription_should_throttle(const NostrSubscription *sub) {
+    return nostr_subscription_get_queue_utilization(sub) > 90;
+}
+
+uint64_t nostr_subscription_get_throttle_delay_us(const NostrSubscription *sub) {
+    uint32_t util = nostr_subscription_get_queue_utilization(sub);
+
+    if (util <= 80) {
+        return 0;  // No throttling needed
+    } else if (util <= 90) {
+        return 1000;  // 1ms - light throttle
+    } else if (util <= 95) {
+        return 10000;  // 10ms - moderate throttle
+    } else {
+        return 50000;  // 50ms - heavy throttle
+    }
+}
+
+/* ========================================================================
  * ASYNC CLEANUP API - Non-blocking subscription cleanup with timeout
  * ======================================================================== */
 

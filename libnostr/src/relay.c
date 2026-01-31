@@ -854,19 +854,43 @@ static void *message_loop(void *arg) {
                         relay_debug_emit(r, tmp);
                     }
                 } else {
-                    if (record_metrics) {
-                        nostr_metric_timer t_dispatch = {0};
-                        nostr_metric_timer_start(&t_dispatch);
-                        nostr_subscription_dispatch_event(subscription, env->event);
-                        static nostr_metric_histogram *h_event_dispatch_ns;
-                        if (!h_event_dispatch_ns) h_event_dispatch_ns = nostr_metric_histogram_get("event_dispatch_ns");
-                        nostr_metric_timer_stop(&t_dispatch, h_event_dispatch_ns);
-                        nostr_metric_counter_add("event_dispatch_sampled", metrics_sample_rate);
+                    /* Producer-side rate limiting (nostrc-7u2):
+                     * Check queue pressure before dispatching.
+                     * - Critical events (DMs, zaps, mentions) always dispatched
+                     * - Low priority events (reactions) dropped under extreme pressure
+                     * - Throttle (sleep) when queue is filling up */
+                    uint32_t util = nostr_subscription_get_queue_utilization(subscription);
+                    NostrEventPriority priority = nostr_event_get_priority(env->event, NULL);
+
+                    /* Under extreme pressure (>95%), drop low priority events */
+                    if (util > 95 && priority == NOSTR_EVENT_PRIORITY_LOW) {
+                        nostr_metric_counter_add("event_drop_backpressure", 1);
+                        nostr_rl_log(NLOG_DEBUG, "relay", "drop low-priority event: queue %u%% full", util);
+                        /* Event dropped - will be freed by envelope cleanup */
                     } else {
-                        nostr_subscription_dispatch_event(subscription, env->event);
+                        /* Apply throttle delay for non-critical events under pressure */
+                        if (priority != NOSTR_EVENT_PRIORITY_CRITICAL) {
+                            uint64_t delay_us = nostr_subscription_get_throttle_delay_us(subscription);
+                            if (delay_us > 0) {
+                                nostr_metric_counter_add("relay_throttle_applied", 1);
+                                usleep((useconds_t)delay_us);
+                            }
+                        }
+
+                        if (record_metrics) {
+                            nostr_metric_timer t_dispatch = {0};
+                            nostr_metric_timer_start(&t_dispatch);
+                            nostr_subscription_dispatch_event(subscription, env->event);
+                            static nostr_metric_histogram *h_event_dispatch_ns;
+                            if (!h_event_dispatch_ns) h_event_dispatch_ns = nostr_metric_histogram_get("event_dispatch_ns");
+                            nostr_metric_timer_stop(&t_dispatch, h_event_dispatch_ns);
+                            nostr_metric_counter_add("event_dispatch_sampled", metrics_sample_rate);
+                        } else {
+                            nostr_subscription_dispatch_event(subscription, env->event);
+                        }
+                        // ownership passed to subscription; avoid double free
+                        env->event = NULL;
                     }
-                    // ownership passed to subscription; avoid double free
-                    env->event = NULL;
                 }
             }
             break; }

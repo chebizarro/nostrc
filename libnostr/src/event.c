@@ -861,3 +861,60 @@ char *nostr_event_serialize_compact(const NostrEvent *event) {
     #undef ADD_COMMA
     return out;
 }
+
+/* ========================================================================
+ * Event Priority Classification (nostrc-7u2)
+ * ======================================================================== */
+
+NostrEventPriority nostr_event_get_priority(const NostrEvent *event, const char *user_pubkey) {
+    if (!event) return NOSTR_EVENT_PRIORITY_NORMAL;
+
+    int kind = event->kind;
+
+    /* CRITICAL: DMs (kind 4 legacy, 1059 NIP-17 gift wrap), zaps (kind 9735) */
+    if (kind == 4 || kind == 1059 || kind == 9735) {
+        return NOSTR_EVENT_PRIORITY_CRITICAL;
+    }
+
+    /* LOW: Reactions (kind 7), reposts (kind 6) */
+    if (kind == 7 || kind == 6) {
+        return NOSTR_EVENT_PRIORITY_LOW;
+    }
+
+    /* Check for mentions of current user (CRITICAL if mentioned) */
+    if (user_pubkey && *user_pubkey && event->tags) {
+        size_t tag_count = nostr_tags_size(event->tags);
+        for (size_t i = 0; i < tag_count; i++) {
+            NostrTag *tag = nostr_tags_get(event->tags, i);
+            if (!tag) continue;
+
+            const char *tag_name = nostr_tag_get_key(tag);
+            if (!tag_name) continue;
+
+            /* Check "p" tags for pubkey mentions */
+            if (tag_name[0] == 'p' && tag_name[1] == '\0') {
+                const char *tagged_pubkey = nostr_tag_get_value(tag);
+                if (tagged_pubkey && strcmp(tagged_pubkey, user_pubkey) == 0) {
+                    return NOSTR_EVENT_PRIORITY_CRITICAL;
+                }
+            }
+        }
+    }
+
+    /* HIGH: Text notes with "e" tags (replies) */
+    if (kind == 1 && event->tags) {
+        size_t tag_count = nostr_tags_size(event->tags);
+        for (size_t i = 0; i < tag_count; i++) {
+            NostrTag *tag = nostr_tags_get(event->tags, i);
+            if (!tag) continue;
+
+            const char *tag_name = nostr_tag_get_key(tag);
+            if (tag_name && tag_name[0] == 'e' && tag_name[1] == '\0') {
+                return NOSTR_EVENT_PRIORITY_HIGH;
+            }
+        }
+    }
+
+    /* Everything else is NORMAL */
+    return NOSTR_EVENT_PRIORITY_NORMAL;
+}
