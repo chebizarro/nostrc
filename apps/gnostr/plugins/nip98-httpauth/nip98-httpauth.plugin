@@ -1,0 +1,10 @@
+[Plugin]
+Module=nip98-httpauth
+Name=NIP-98 HTTP Auth
+Description=HTTP authentication using Nostr events for secure API requests
+Authors=Gnostr Contributors
+Version=1.0
+Copyright=Copyright 2026 Gnostr Contributors
+Website=https://github.com/nostr-protocol/nips/blob/master/98.md
+Builtin=true
+Loader=c
