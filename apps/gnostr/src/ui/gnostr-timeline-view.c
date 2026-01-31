@@ -1141,15 +1141,23 @@ static void on_note_card_label_note_requested_relay(GnostrNoteCardRow *row, cons
 static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
   GtkListItem *list_item = GTK_LIST_ITEM(user_data);
-  
+
   /* Get the row widget */
   GtkWidget *row = gtk_list_item_get_child(list_item);
   if (!GTK_IS_WIDGET(row)) return;
-  
+
+  /* CRITICAL: Check if row is being disposed before updating.
+   * Profile updates can be queued via idle callbacks and may arrive while
+   * the row is being disposed, causing Pango layout corruption (nostrc-ipp). */
+  if (GNOSTR_IS_NOTE_CARD_ROW(row)) {
+    GnostrNoteCardRow *card_row = GNOSTR_NOTE_CARD_ROW(row);
+    if (gnostr_note_card_row_is_disposed(card_row)) return;
+  }
+
   /* Check if profile is now available */
   GObject *profile = NULL;
   g_object_get(event_item, "profile", &profile, NULL);
-  
+
   if (profile) {
     /* Profile loaded - show the row and update author info */
     gchar *display = NULL, *handle = NULL, *avatar_url = NULL, *nip05 = NULL;

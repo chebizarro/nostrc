@@ -5678,3 +5678,15 @@ void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self) {
     self->timestamp_timer_id = 0;
   }
 }
+
+/**
+ * gnostr_note_card_row_is_disposed:
+ *
+ * Returns TRUE if the row is being disposed or has been prepared for unbind.
+ * Use this to check before updating the row from async callbacks.
+ * nostrc-ipp: Prevent Pango crash during profile updates.
+ */
+gboolean gnostr_note_card_row_is_disposed(GnostrNoteCardRow *self) {
+  g_return_val_if_fail(GNOSTR_IS_NOTE_CARD_ROW(self), TRUE);
+  return self->disposed;
+}

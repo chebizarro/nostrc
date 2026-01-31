@@ -334,6 +334,14 @@ void gnostr_note_card_row_prepare_for_bind(GnostrNoteCardRow *self);
  */
 void gnostr_note_card_row_prepare_for_unbind(GnostrNoteCardRow *self);
 
+/**
+ * gnostr_note_card_row_is_disposed:
+ *
+ * Returns TRUE if the row is being disposed or has been prepared for unbind.
+ * Use this to check before updating the row from async callbacks.
+ */
+gboolean gnostr_note_card_row_is_disposed(GnostrNoteCardRow *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_NOTE_CARD_ROW_H */
