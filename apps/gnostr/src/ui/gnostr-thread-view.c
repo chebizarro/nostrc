@@ -45,6 +45,8 @@ typedef struct {
   char *content;
   char *root_id;
   char *parent_id;
+  char *root_relay_hint;   /* NIP-10 relay hint for root event */
+  char *parent_relay_hint; /* NIP-10 relay hint for parent event */
   gint64 created_at;
   guint depth;
   /* Profile info (resolved asynchronously) */
@@ -61,6 +63,8 @@ static void thread_event_item_free(ThreadEventItem *item) {
   g_free(item->content);
   g_free(item->root_id);
   g_free(item->parent_id);
+  g_free(item->root_relay_hint);
+  g_free(item->parent_relay_hint);
   g_free(item->display_name);
   g_free(item->handle);
   g_free(item->avatar_url);
@@ -150,9 +154,21 @@ static void bytes_to_hex(const unsigned char *bin, char *hex) {
 typedef struct {
   char **root_id;
   char **reply_id;
+  char **root_relay_hint;
+  char **reply_relay_hint;
   char *first_e_id;
+  char *first_e_relay;
   char *last_e_id;
+  char *last_e_relay;
 } Nip10ParseContext;
+
+/* Helper: validate and duplicate relay URL */
+static char *dup_relay_hint(const char *url) {
+  if (!url || !*url) return NULL;
+  /* Basic validation: must start with ws:// or wss:// */
+  if (strncmp(url, "ws://", 5) != 0 && strncmp(url, "wss://", 6) != 0) return NULL;
+  return g_strdup(url);
+}
 
 /* Callback for processing each tag in the tags array */
 static bool parse_nip10_tag_callback(size_t index, const char *tag_json, void *user_data) {
@@ -187,18 +203,31 @@ static bool parse_nip10_tag_callback(size_t index, const char *tag_json, void *u
     return true;
   }
 
+  /* Get relay hint (third element) - NIP-10 relay hint */
+  char *relay_hint = NULL;
+  nostr_json_get_array_string(tag_json, NULL, 2, &relay_hint);
+
   /* Check for marker (NIP-10 preferred markers) - fourth element */
   char *marker = NULL;
   if (nostr_json_get_array_string(tag_json, NULL, 3, &marker) == 0 && marker && *marker) {
     if (strcmp(marker, "root") == 0) {
       g_free(*ctx->root_id);
       *ctx->root_id = g_strdup(event_id);
+      if (ctx->root_relay_hint) {
+        g_free(*ctx->root_relay_hint);
+        *ctx->root_relay_hint = dup_relay_hint(relay_hint);
+      }
     } else if (strcmp(marker, "reply") == 0) {
       g_free(*ctx->reply_id);
       *ctx->reply_id = g_strdup(event_id);
+      if (ctx->reply_relay_hint) {
+        g_free(*ctx->reply_relay_hint);
+        *ctx->reply_relay_hint = dup_relay_hint(relay_hint);
+      }
     }
     free(marker);
     free(event_id);
+    free(relay_hint);
     return true;
   }
   free(marker);
@@ -206,18 +235,26 @@ static bool parse_nip10_tag_callback(size_t index, const char *tag_json, void *u
   /* Fall back to positional interpretation */
   if (!ctx->first_e_id) {
     ctx->first_e_id = g_strdup(event_id);
+    g_free(ctx->first_e_relay);
+    ctx->first_e_relay = dup_relay_hint(relay_hint);
   }
   g_free(ctx->last_e_id);
   ctx->last_e_id = g_strdup(event_id);
+  g_free(ctx->last_e_relay);
+  ctx->last_e_relay = dup_relay_hint(relay_hint);
 
   free(event_id);
+  free(relay_hint);
   return true;
 }
 
-/* Parse NIP-10 tags from a nostr event to get root and reply IDs */
-static void parse_nip10_from_json(const char *json_str, char **root_id, char **reply_id) {
+/* Parse NIP-10 tags from a nostr event to get root and reply IDs with relay hints */
+static void parse_nip10_from_json_full(const char *json_str, char **root_id, char **reply_id,
+                                        char **root_relay_hint, char **reply_relay_hint) {
   *root_id = NULL;
   *reply_id = NULL;
+  if (root_relay_hint) *root_relay_hint = NULL;
+  if (reply_relay_hint) *reply_relay_hint = NULL;
   if (!json_str) return;
 
   if (!nostr_json_is_valid(json_str)) return;
@@ -225,8 +262,12 @@ static void parse_nip10_from_json(const char *json_str, char **root_id, char **r
   Nip10ParseContext ctx = {
     .root_id = root_id,
     .reply_id = reply_id,
+    .root_relay_hint = root_relay_hint,
+    .reply_relay_hint = reply_relay_hint,
     .first_e_id = NULL,
-    .last_e_id = NULL
+    .first_e_relay = NULL,
+    .last_e_id = NULL,
+    .last_e_relay = NULL
   };
 
   /* Iterate through tags array */
@@ -240,20 +281,36 @@ static void parse_nip10_from_json(const char *json_str, char **root_id, char **r
    * nostrc-5b8: Fix single e-tag case where reply_id was incorrectly left NULL */
   if (!*root_id && ctx.first_e_id) {
     *root_id = g_strdup(ctx.first_e_id);
+    if (root_relay_hint) {
+      *root_relay_hint = g_strdup(ctx.first_e_relay);
+    }
   }
   if (!*reply_id && ctx.last_e_id) {
     /* Any e-tag (even if same as root) indicates this is a reply */
     *reply_id = g_strdup(ctx.last_e_id);
+    if (reply_relay_hint) {
+      *reply_relay_hint = g_strdup(ctx.last_e_relay);
+    }
   }
   /* nostrc-mef: NIP-10 "root-only" marker case.
    * When an event has a "root" marker but NO "reply" marker, it means
    * the event is a direct reply to the root. Set reply_id = root_id. */
   if (!*reply_id && *root_id) {
     *reply_id = g_strdup(*root_id);
+    if (reply_relay_hint && root_relay_hint && *root_relay_hint) {
+      *reply_relay_hint = g_strdup(*root_relay_hint);
+    }
   }
 
   g_free(ctx.first_e_id);
+  g_free(ctx.first_e_relay);
   g_free(ctx.last_e_id);
+  g_free(ctx.last_e_relay);
+}
+
+/* Parse NIP-10 tags from a nostr event to get root and reply IDs (legacy wrapper) */
+static void parse_nip10_from_json(const char *json_str, char **root_id, char **reply_id) {
+  parse_nip10_from_json_full(json_str, root_id, reply_id, NULL, NULL);
 }
 
 /* Dispose */
@@ -591,8 +648,9 @@ static ThreadEventItem *add_event_from_json(GnostrThreadView *self, const char *
   item->content = g_strdup(nostr_event_get_content(evt));
   item->created_at = (gint64)nostr_event_get_created_at(evt);
 
-  /* Parse NIP-10 tags */
-  parse_nip10_from_json(json_str, &item->root_id, &item->parent_id);
+  /* Parse NIP-10 tags with relay hints */
+  parse_nip10_from_json_full(json_str, &item->root_id, &item->parent_id,
+                              &item->root_relay_hint, &item->parent_relay_hint);
 
   nostr_event_free(evt);
 
@@ -1017,10 +1075,24 @@ static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpoint
 /* nostrc-46g: Maximum depth for ancestor chain traversal to prevent infinite loops */
 #define MAX_ANCESTOR_FETCH_DEPTH 50
 
+/* Helper to add relay hint URL to array if valid and not already present */
+static void add_relay_hint_if_unique(GPtrArray *relay_arr, const char *hint) {
+  if (!hint || !*hint) return;
+  /* Basic validation: must start with ws:// or wss:// */
+  if (strncmp(hint, "ws://", 5) != 0 && strncmp(hint, "wss://", 6) != 0) return;
+
+  /* Check for duplicates */
+  for (guint i = 0; i < relay_arr->len; i++) {
+    if (g_strcmp0(g_ptr_array_index(relay_arr, i), hint) == 0) return;
+  }
+  g_ptr_array_add(relay_arr, g_strdup(hint));
+}
+
 /* Internal: fetch any missing parent/root events referenced by loaded events.
  * This is called after receiving new events to ensure complete thread chains.
  * nostrc-46g: Improved to track already-fetched ancestors and properly traverse
- * the full chain to the root event. */
+ * the full chain to the root event.
+ * nostrc-7r5: Now uses NIP-10 relay hints from e-tags to query hinted relays. */
 static void fetch_missing_ancestors(GnostrThreadView *self) {
   if (!self || g_hash_table_size(self->events_by_id) == 0) return;
 
@@ -1031,8 +1103,9 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
     return;
   }
 
-  /* Collect missing event IDs that we haven't already tried to fetch */
+  /* Collect missing event IDs and their relay hints */
   GPtrArray *missing_ids = g_ptr_array_new_with_free_func(g_free);
+  GPtrArray *relay_hints = g_ptr_array_new_with_free_func(g_free);
 
   GHashTableIter iter;
   gpointer key, value;
@@ -1054,6 +1127,8 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
       }
       if (!found) {
         g_ptr_array_add(missing_ids, g_strdup(item->parent_id));
+        /* nostrc-7r5: Collect relay hint for parent */
+        add_relay_hint_if_unique(relay_hints, item->parent_relay_hint);
         /* nostrc-46g: Mark as attempted to prevent duplicate requests */
         g_hash_table_insert(self->ancestors_fetched, g_strdup(item->parent_id), GINT_TO_POINTER(1));
       }
@@ -1072,6 +1147,8 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
       }
       if (!found) {
         g_ptr_array_add(missing_ids, g_strdup(item->root_id));
+        /* nostrc-7r5: Collect relay hint for root */
+        add_relay_hint_if_unique(relay_hints, item->root_relay_hint);
         /* nostrc-46g: Mark as attempted to prevent duplicate requests */
         g_hash_table_insert(self->ancestors_fetched, g_strdup(item->root_id), GINT_TO_POINTER(1));
       }
@@ -1080,14 +1157,22 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
 
   if (missing_ids->len == 0) {
     g_ptr_array_unref(missing_ids);
+    g_ptr_array_unref(relay_hints);
     g_debug("[THREAD_VIEW] No more missing ancestors to fetch, chain complete");
     return;
   }
 
   /* nostrc-46g: Increment depth counter for chain traversal tracking */
   self->ancestor_fetch_depth++;
-  g_debug("[THREAD_VIEW] Fetching %u missing ancestor events (depth %u)",
-          missing_ids->len, self->ancestor_fetch_depth);
+
+  /* nostrc-7r5: Log relay hints being used */
+  if (relay_hints->len > 0) {
+    g_debug("[THREAD_VIEW] Fetching %u missing ancestor events (depth %u) with %u relay hints",
+            missing_ids->len, self->ancestor_fetch_depth, relay_hints->len);
+  } else {
+    g_debug("[THREAD_VIEW] Fetching %u missing ancestor events (depth %u), no relay hints",
+            missing_ids->len, self->ancestor_fetch_depth);
+  }
 
   /* Build filter with missing IDs */
   NostrFilter *filter = nostr_filter_new();
@@ -1101,11 +1186,26 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
 
   g_ptr_array_unref(missing_ids);
 
-  /* Get relay URLs */
-  GPtrArray *relay_arr = gnostr_get_read_relay_urls();
-  const char **urls = g_new0(const char*, relay_arr->len);
-  for (guint i = 0; i < relay_arr->len; i++) {
-    urls[i] = g_ptr_array_index(relay_arr, i);
+  /* nostrc-7r5: Build relay URL list - hinted relays first, then configured relays */
+  GPtrArray *all_relays = g_ptr_array_new_with_free_func(g_free);
+
+  /* Add relay hints first (higher priority) */
+  for (guint i = 0; i < relay_hints->len; i++) {
+    g_ptr_array_add(all_relays, g_strdup(g_ptr_array_index(relay_hints, i)));
+  }
+  g_ptr_array_unref(relay_hints);
+
+  /* Add configured read relays (fallback) */
+  GPtrArray *config_relays = gnostr_get_read_relay_urls();
+  for (guint i = 0; i < config_relays->len; i++) {
+    add_relay_hint_if_unique(all_relays, g_ptr_array_index(config_relays, i));
+  }
+  g_ptr_array_unref(config_relays);
+
+  /* Convert to const char** array */
+  const char **urls = g_new0(const char*, all_relays->len);
+  for (guint i = 0; i < all_relays->len; i++) {
+    urls[i] = g_ptr_array_index(all_relays, i);
   }
 
   /* Query relays (reuse existing cancellable) */
@@ -1116,7 +1216,7 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
   gnostr_simple_pool_query_single_async(
     gnostr_get_shared_query_pool(),
     urls,
-    relay_arr->len,
+    all_relays->len,
     filter,
     self->fetch_cancellable,
     on_missing_ancestors_done,
@@ -1125,7 +1225,7 @@ static void fetch_missing_ancestors(GnostrThreadView *self) {
 
   nostr_filter_free(filter);
   g_free(urls);
-  g_ptr_array_unref(relay_arr);
+  g_ptr_array_unref(all_relays);
 }
 
 /* Internal: fetch thread from relays */

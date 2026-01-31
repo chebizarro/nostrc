@@ -218,8 +218,12 @@ void nostr_nip10_thread_info_clear(NostrNip10ThreadInfo *info) {
     if (!info) return;
     free(info->root_id);
     free(info->reply_id);
+    free(info->root_relay_hint);
+    free(info->reply_relay_hint);
     info->root_id = NULL;
     info->reply_id = NULL;
+    info->root_relay_hint = NULL;
+    info->reply_relay_hint = NULL;
 }
 
 /* Helper to duplicate a hex ID string */
@@ -232,16 +236,30 @@ static char *dup_hex_id(const char *hex) {
     return copy;
 }
 
+/* Helper to duplicate a relay URL string if it looks valid */
+static char *dup_relay_url(const char *url) {
+    if (!url || !*url) return NULL;
+    /* Basic validation: must start with ws:// or wss:// */
+    if (strncmp(url, "ws://", 5) != 0 && strncmp(url, "wss://", 6) != 0) return NULL;
+    return strdup(url);
+}
+
 int nostr_nip10_parse_thread_from_tags(const NostrTags *tags, NostrNip10ThreadInfo *info) {
     if (!info) return -1;
     info->root_id = NULL;
     info->reply_id = NULL;
+    info->root_relay_hint = NULL;
+    info->reply_relay_hint = NULL;
     if (!tags) return 0;
 
     const char *first_e_id = NULL;
+    const char *first_e_relay = NULL;
     const char *last_e_id = NULL;
+    const char *last_e_relay = NULL;
     const char *explicit_root = NULL;
+    const char *explicit_root_relay = NULL;
     const char *explicit_reply = NULL;
+    const char *explicit_reply_relay = NULL;
 
     for (size_t i = 0; i < tags->count; i++) {
         NostrTag *tag = tags->data[i];
@@ -255,6 +273,10 @@ int nostr_nip10_parse_thread_from_tags(const NostrTags *tags, NostrNip10ThreadIn
             const char *event_id = nostr_tag_get(tag, 1);
             if (event_id && strlen(event_id) == 64) {
                 explicit_root = event_id;
+                /* Relay hint at index 2 for uppercase E tags too */
+                if (nostr_tag_size(tag) >= 3) {
+                    explicit_root_relay = nostr_tag_get(tag, 2);
+                }
                 continue;
             }
         }
@@ -264,16 +286,24 @@ int nostr_nip10_parse_thread_from_tags(const NostrTags *tags, NostrNip10ThreadIn
         const char *event_id = nostr_tag_get(tag, 1);
         if (!event_id || strlen(event_id) != 64) continue;
 
+        /* Get relay hint at index 2 (may be empty string) */
+        const char *relay_hint = NULL;
+        if (nostr_tag_size(tag) >= 3) {
+            relay_hint = nostr_tag_get(tag, 2);
+        }
+
         /* Check for NIP-10 marker at position 3 */
         if (nostr_tag_size(tag) >= 4) {
             const char *marker = nostr_tag_get(tag, 3);
             if (marker) {
                 if (strcmp(marker, "root") == 0) {
                     explicit_root = event_id;
+                    explicit_root_relay = relay_hint;
                     continue;
                 }
                 if (strcmp(marker, "reply") == 0) {
                     explicit_reply = event_id;
+                    explicit_reply_relay = relay_hint;
                     continue;
                 }
                 if (strcmp(marker, "mention") == 0) {
@@ -285,27 +315,34 @@ int nostr_nip10_parse_thread_from_tags(const NostrTags *tags, NostrNip10ThreadIn
         /* Track first and last unmarked e-tags for positional fallback */
         if (!first_e_id) {
             first_e_id = event_id;
+            first_e_relay = relay_hint;
         }
         last_e_id = event_id;
+        last_e_relay = relay_hint;
     }
 
-    /* Determine root_id: explicit marker takes precedence, then first e-tag */
+    /* Determine root_id and relay hint: explicit marker takes precedence, then first e-tag */
     if (explicit_root) {
         info->root_id = dup_hex_id(explicit_root);
+        info->root_relay_hint = dup_relay_url(explicit_root_relay);
     } else if (first_e_id) {
         info->root_id = dup_hex_id(first_e_id);
+        info->root_relay_hint = dup_relay_url(first_e_relay);
     }
 
-    /* Determine reply_id: explicit marker takes precedence */
+    /* Determine reply_id and relay hint: explicit marker takes precedence */
     if (explicit_reply) {
         info->reply_id = dup_hex_id(explicit_reply);
+        info->reply_relay_hint = dup_relay_url(explicit_reply_relay);
     } else if (last_e_id && last_e_id != first_e_id) {
         /* Positional fallback: last e-tag is reply if different from first */
         info->reply_id = dup_hex_id(last_e_id);
+        info->reply_relay_hint = dup_relay_url(last_e_relay);
     } else if (explicit_root && !explicit_reply && first_e_id == last_e_id) {
         /* Root-only event: if only root marker and no reply, use root as reply target
          * This handles events that are direct replies using only the root marker */
         info->reply_id = dup_hex_id(explicit_root);
+        info->reply_relay_hint = dup_relay_url(explicit_root_relay);
     }
 
     return 0;

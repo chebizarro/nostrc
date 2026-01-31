@@ -354,9 +354,13 @@ static void test_thread_info_clear_null_safe(void) {
     NostrNip10ThreadInfo info;
     info.root_id = NULL;
     info.reply_id = NULL;
+    info.root_relay_hint = NULL;
+    info.reply_relay_hint = NULL;
     nostr_nip10_thread_info_clear(&info);
     assert(info.root_id == NULL);
     assert(info.reply_id == NULL);
+    assert(info.root_relay_hint == NULL);
+    assert(info.reply_relay_hint == NULL);
 }
 
 /* Test NIP-10: When only root marker exists (no reply marker), this is a
@@ -433,6 +437,68 @@ static void test_five_element_tag_with_pubkey(void) {
     printf("test_five_element_tag_with_pubkey: ok\n");
 }
 
+/* Test that relay hints are extracted from e-tags (nostrc-7r5) */
+static void test_relay_hints_extraction(void) {
+    NostrEvent *ev = nostr_event_new();
+    assert(ev);
+
+    /* Create event with explicit root and reply markers AND relay hints */
+    NostrTag *root = nostr_tag_new("e", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                   "wss://relay.root.example", "root", NULL);
+    NostrTag *reply = nostr_tag_new("e", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                                    "wss://relay.reply.example", "reply", NULL);
+    NostrTags *tags = nostr_tags_new(2, root, reply);
+    nostr_event_set_tags(ev, tags);
+
+    NostrNip10ThreadInfo info;
+    memset(&info, 0, sizeof(info));
+
+    int rc = nostr_nip10_parse_thread_from_event(ev, &info);
+    assert(rc == 0);
+    assert(info.root_id != NULL);
+    assert(info.reply_id != NULL);
+    assert(strcmp(info.root_id, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0);
+    assert(strcmp(info.reply_id, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") == 0);
+
+    /* Verify relay hints are extracted */
+    assert(info.root_relay_hint != NULL);
+    assert(info.reply_relay_hint != NULL);
+    assert(strcmp(info.root_relay_hint, "wss://relay.root.example") == 0);
+    assert(strcmp(info.reply_relay_hint, "wss://relay.reply.example") == 0);
+
+    nostr_nip10_thread_info_clear(&info);
+    assert(info.root_relay_hint == NULL);
+    assert(info.reply_relay_hint == NULL);
+
+    nostr_event_free(ev);
+    printf("test_relay_hints_extraction: ok\n");
+}
+
+/* Test that empty relay hint strings don't result in relay hints */
+static void test_empty_relay_hints(void) {
+    NostrEvent *ev = nostr_event_new();
+    assert(ev);
+
+    /* Create event with empty relay hints (common in some clients) */
+    NostrTag *root = nostr_tag_new("e", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                                   "", "root", NULL);
+    NostrTags *tags = nostr_tags_new(1, root);
+    nostr_event_set_tags(ev, tags);
+
+    NostrNip10ThreadInfo info;
+    memset(&info, 0, sizeof(info));
+
+    int rc = nostr_nip10_parse_thread_from_event(ev, &info);
+    assert(rc == 0);
+    assert(info.root_id != NULL);
+    /* Empty string relay hint should result in NULL */
+    assert(info.root_relay_hint == NULL);
+
+    nostr_nip10_thread_info_clear(&info);
+    nostr_event_free(ev);
+    printf("test_empty_relay_hints: ok\n");
+}
+
 // Extend main to run edge cases
 int main_edge(void) {
     test_mixed_markers_ordering();
@@ -448,6 +514,9 @@ int main_edge(void) {
     test_root_only_marker_direct_reply();
     // NIP-10 5-element tag with pubkey at index 4
     test_five_element_tag_with_pubkey();
+    // nostrc-7r5: Test relay hint extraction from e-tags
+    test_relay_hints_extraction();
+    test_empty_relay_hints();
     printf("edge ok\n");
     return 0;
 }

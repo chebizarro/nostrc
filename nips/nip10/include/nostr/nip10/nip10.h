@@ -86,13 +86,17 @@ int  nostr_nip10_ensure_p_participants(NostrEvent *reply_ev, const NostrEvent *p
  * NostrNip10ThreadInfo:
  * @root_id: (nullable): hex string of root event ID, or NULL if not found. Caller must free.
  * @reply_id: (nullable): hex string of immediate reply parent ID, or NULL if not found. Caller must free.
+ * @root_relay_hint: (nullable): relay URL hint for root event, or NULL if not specified. Caller must free.
+ * @reply_relay_hint: (nullable): relay URL hint for reply parent event, or NULL if not specified. Caller must free.
  *
- * Thread info parsed from NIP-10 e-tags. Contains heap-allocated hex strings.
+ * Thread info parsed from NIP-10 e-tags. Contains heap-allocated strings.
  * Use nostr_nip10_thread_info_clear() to free the strings.
  */
 typedef struct {
-  char *root_id;    /* hex string, caller-owned, may be NULL */
-  char *reply_id;   /* hex string, caller-owned, may be NULL */
+  char *root_id;           /* hex string, caller-owned, may be NULL */
+  char *reply_id;          /* hex string, caller-owned, may be NULL */
+  char *root_relay_hint;   /* relay URL, caller-owned, may be NULL */
+  char *reply_relay_hint;  /* relay URL, caller-owned, may be NULL */
 } NostrNip10ThreadInfo;
 
 /**
