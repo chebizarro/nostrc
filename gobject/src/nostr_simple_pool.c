@@ -195,7 +195,7 @@ static void emit_batch_sorted(GObject *self_obj, GPtrArray *batch) {
     typedef struct { GObject *obj; GPtrArray *arr; } EmitCtx;
     EmitCtx *e = g_new0(EmitCtx, 1);
     e->obj = g_object_ref(self_obj);
-    e->arr = batch; /* transfer ownership */
+    e->arr = batch; /* transfer ownership - main thread will free */
     g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, emit_events_on_main, e, NULL);
 
     /* Track batch metrics - use saved length, not batch->len (batch may be freed) */
