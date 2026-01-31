@@ -21,7 +21,7 @@
 #include "nostr-event.h"
 #include "nostr-json.h"
 #include "nostr_simple_pool.h"
-#include <jansson.h>
+#include "json.h"
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 #endif
@@ -393,7 +393,7 @@ static guint signals[N_SIGNALS];
 static void load_image_async(GnostrProfilePane *self, const char *url, GtkPicture *picture, GCancellable **cancellable_slot);
 static void load_banner_async(GnostrProfilePane *self, const char *url);
 #endif
-static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json);
+static void update_profile_ui(GnostrProfilePane *self, const char *profile_json);
 static void load_posts(GnostrProfilePane *self);
 static void load_posts_with_relays(GnostrProfilePane *self, GPtrArray *relay_urls);
 static void load_media(GnostrProfilePane *self);
@@ -1699,8 +1699,49 @@ static void load_banner_async(GnostrProfilePane *self, const char *url) {
 }
 #endif
 
-static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
-  if (!profile_json || !json_is_object(profile_json)) {
+/* Callback context for iterating extra profile fields */
+typedef struct {
+  GnostrProfilePane *self;
+} ProfileExtraFieldsCtx;
+
+/* Callback for iterating extra profile fields */
+static bool profile_extra_fields_cb(const char *key, const char *value_json, void *user_data) {
+  ProfileExtraFieldsCtx *ctx = (ProfileExtraFieldsCtx *)user_data;
+
+  /* Skip NIP-01/NIP-24 standard fields */
+  if (strcmp(key, "name") == 0 ||
+      strcmp(key, "display_name") == 0 ||
+      strcmp(key, "about") == 0 ||
+      strcmp(key, "picture") == 0 ||
+      strcmp(key, "banner") == 0 ||
+      strcmp(key, "nip05") == 0 ||
+      strcmp(key, "website") == 0 ||
+      strcmp(key, "lud06") == 0 ||
+      strcmp(key, "lud16") == 0 ||
+      strcmp(key, "bot") == 0) {
+    return true; /* continue iteration */
+  }
+
+  /* Check if value is a string (starts and ends with quotes) */
+  if (!value_json || value_json[0] != '"') {
+    return true; /* skip non-string values */
+  }
+
+  /* Parse the string value from JSON */
+  char *str_val = NULL;
+  /* Use nostr_json_get_string on a wrapper object */
+  char *wrapper = g_strdup_printf("{\"v\":%s}", value_json);
+  if (nostr_json_get_string(wrapper, "v", &str_val) == 0 && str_val && *str_val) {
+    add_metadata_row(ctx->self, "text-x-generic-symbolic", key, str_val, FALSE);
+    g_free(str_val);
+  }
+  g_free(wrapper);
+
+  return true; /* continue iteration */
+}
+
+static void update_profile_ui(GnostrProfilePane *self, const char *profile_json) {
+  if (!profile_json || !*profile_json || !nostr_json_is_object_str(profile_json)) {
     gtk_label_set_text(GTK_LABEL(self->lbl_display_name), "Unknown");
     gtk_label_set_text(GTK_LABEL(self->lbl_handle), self->current_pubkey ? self->current_pubkey : "");
     return;
@@ -1719,45 +1760,38 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
   /* Reset NIP-05 state */
   self->nip05_row = NULL;
   self->nip05_badge = NULL;
-  
+
   /* Extract fields - NIP-01 standard plus NIP-24 extra metadata */
-  const char *name = NULL;
-  const char *display_name = NULL;
-  const char *about = NULL;
-  const char *picture = NULL;
-  const char *banner = NULL;
-  const char *nip05 = NULL;
-  const char *website = NULL;
-  const char *lud06 = NULL;
-  const char *lud16 = NULL;
+  char *name = NULL;
+  char *display_name = NULL;
+  char *about = NULL;
+  char *picture = NULL;
+  char *banner = NULL;
+  char *nip05 = NULL;
+  char *website = NULL;
+  char *lud06 = NULL;
+  char *lud16 = NULL;
   gboolean is_bot = FALSE;  /* NIP-24: bot indicator */
 
-  json_t *val;
-  if ((val = json_object_get(profile_json, "name")) && json_is_string(val))
-    name = json_string_value(val);
-  if ((val = json_object_get(profile_json, "display_name")) && json_is_string(val))
-    display_name = json_string_value(val);
-  if ((val = json_object_get(profile_json, "about")) && json_is_string(val))
-    about = json_string_value(val);
-  if ((val = json_object_get(profile_json, "picture")) && json_is_string(val))
-    picture = json_string_value(val);
-  if ((val = json_object_get(profile_json, "banner")) && json_is_string(val))
-    banner = json_string_value(val);
-  if ((val = json_object_get(profile_json, "nip05")) && json_is_string(val))
-    nip05 = json_string_value(val);
-  if ((val = json_object_get(profile_json, "website")) && json_is_string(val))
-    website = json_string_value(val);
-  if ((val = json_object_get(profile_json, "lud06")) && json_is_string(val))
-    lud06 = json_string_value(val);
-  if ((val = json_object_get(profile_json, "lud16")) && json_is_string(val))
-    lud16 = json_string_value(val);
+  nostr_json_get_string(profile_json, "name", &name);
+  nostr_json_get_string(profile_json, "display_name", &display_name);
+  nostr_json_get_string(profile_json, "about", &about);
+  nostr_json_get_string(profile_json, "picture", &picture);
+  nostr_json_get_string(profile_json, "banner", &banner);
+  nostr_json_get_string(profile_json, "nip05", &nip05);
+  nostr_json_get_string(profile_json, "website", &website);
+  nostr_json_get_string(profile_json, "lud06", &lud06);
+  nostr_json_get_string(profile_json, "lud16", &lud16);
+
   /* NIP-24: Parse bot field - can be boolean true or string "true" */
-  if ((val = json_object_get(profile_json, "bot"))) {
-    if (json_is_boolean(val)) {
-      is_bot = json_boolean_value(val);
-    } else if (json_is_string(val)) {
-      const char *bot_str = json_string_value(val);
-      is_bot = (bot_str && g_ascii_strcasecmp(bot_str, "true") == 0);
+  bool bot_val = false;
+  if (nostr_json_get_bool(profile_json, "bot", &bot_val) == 0) {
+    is_bot = bot_val;
+  } else {
+    char *bot_str = NULL;
+    if (nostr_json_get_string(profile_json, "bot", &bot_str) == 0 && bot_str) {
+      is_bot = (g_ascii_strcasecmp(bot_str, "true") == 0);
+      g_free(bot_str);
     }
   }
   
@@ -1858,26 +1892,19 @@ static void update_profile_ui(GnostrProfilePane *self, json_t *profile_json) {
   }
   
   /* Show any additional fields (skip NIP-01/NIP-24 standard fields) */
-  const char *key;
-  json_t *value;
-  json_object_foreach(profile_json, key, value) {
-    if (json_is_string(value) &&
-        strcmp(key, "name") != 0 &&
-        strcmp(key, "display_name") != 0 &&
-        strcmp(key, "about") != 0 &&
-        strcmp(key, "picture") != 0 &&
-        strcmp(key, "banner") != 0 &&
-        strcmp(key, "nip05") != 0 &&
-        strcmp(key, "website") != 0 &&
-        strcmp(key, "lud06") != 0 &&
-        strcmp(key, "lud16") != 0 &&
-        strcmp(key, "bot") != 0) {  /* NIP-24: exclude bot from additional fields */
-      const char *str_val = json_string_value(value);
-      if (str_val && *str_val) {
-        add_metadata_row(self, "text-x-generic-symbolic", key, str_val, FALSE);
-      }
-    }
-  }
+  ProfileExtraFieldsCtx extra_ctx = { .self = self };
+  nostr_json_object_foreach(profile_json, profile_extra_fields_cb, &extra_ctx);
+
+  /* Free allocated strings */
+  g_free(name);
+  g_free(display_name);
+  g_free(about);
+  g_free(picture);
+  g_free(banner);
+  g_free(nip05);
+  g_free(website);
+  g_free(lud06);
+  g_free(lud16);
 }
 
 /* Helper: Check if a post with this ID already exists in the model */
@@ -2863,15 +2890,7 @@ void gnostr_profile_pane_update_from_json(GnostrProfilePane *self, const char *p
   g_free(self->current_profile_json);
   self->current_profile_json = g_strdup(profile_json_str);
 
-  json_error_t error;
-  json_t *root = json_loads(profile_json_str, 0, &error);
-  if (!root) {
-    g_warning("ProfilePane: failed to parse profile JSON: %s", error.text);
-    return;
-  }
-
-  update_profile_ui(self, root);
-  json_decref(root);
+  update_profile_ui(self, profile_json_str);
 
   /* Update button visibility after profile is loaded */
   update_action_buttons_visibility(self);
