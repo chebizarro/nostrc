@@ -114,6 +114,14 @@ char *storage_ndb_note_tags_json(storage_ndb_note *note);
  * Caller must g_strfreev() the result. */
 char **storage_ndb_note_get_hashtags(storage_ndb_note *note);
 
+/* ============== Contact List / Following API ============== */
+
+/* nostrc-f0ll: Get followed pubkeys from a user's contact list (kind 3).
+ * @user_pubkey_hex: 64-char hex pubkey of the user whose contact list to fetch
+ * Returns NULL-terminated array of pubkey hex strings, or NULL if none/error.
+ * Caller must g_strfreev() the result. */
+char **storage_ndb_get_followed_pubkeys(const char *user_pubkey_hex);
+
 /* ============== NIP-25 Reaction Count API ============== */
 
 /* Count reactions (kind 7) for a given event.

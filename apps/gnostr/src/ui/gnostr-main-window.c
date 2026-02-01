@@ -4853,9 +4853,26 @@ static void on_timeline_tab_filter_changed(GnostrTimelineView *view, guint type,
       break;
 
     case GN_TIMELINE_TAB_FOLLOWING:
-      /* See nostrc-f0ll: Implement following tab with follow list */
-      query = gn_timeline_query_new_global();
-      g_debug("[TAB_FILTER] Following tab not yet implemented, showing global");
+      /* nostrc-f0ll: Filter by followed pubkeys from user's contact list (kind 3) */
+      if (self->user_pubkey_hex && *self->user_pubkey_hex) {
+        char **followed = storage_ndb_get_followed_pubkeys(self->user_pubkey_hex);
+        if (followed) {
+          /* Count followed pubkeys */
+          gsize n_followed = 0;
+          for (char **p = followed; *p; p++) n_followed++;
+
+          if (n_followed > 0) {
+            query = gn_timeline_query_new_for_authors((const char **)followed, n_followed);
+            g_debug("[TAB_FILTER] Following tab: %zu followed pubkeys", n_followed);
+          }
+          g_strfreev(followed);
+        }
+      }
+      if (!query) {
+        /* Fallback: not logged in or no follows yet */
+        query = gn_timeline_query_new_global();
+        g_debug("[TAB_FILTER] Following tab: no contact list, showing global");
+      }
       break;
 
     case GN_TIMELINE_TAB_HASHTAG:

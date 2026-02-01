@@ -1139,3 +1139,87 @@ char **storage_ndb_note_get_hashtags(storage_ndb_note *note)
   g_ptr_array_add(hashtags, NULL); /* NULL-terminate */
   return (char **)g_ptr_array_free(hashtags, FALSE);
 }
+
+/* ============== Contact List / Following API ============== */
+
+/* Context and callback for extracting p-tags from contact list */
+typedef struct {
+  GPtrArray *pubkeys;
+} StorageNdbPTagCtx;
+
+static bool storage_ndb_extract_p_tag_cb(size_t idx, const char *element_json, void *user_data)
+{
+  (void)idx;
+  StorageNdbPTagCtx *ctx = (StorageNdbPTagCtx *)user_data;
+  if (!nostr_json_is_array_str(element_json)) return true;
+
+  char *name = NULL;
+  if (nostr_json_get_array_string(element_json, NULL, 0, &name) != 0) return true;
+
+  if (g_strcmp0(name, "p") == 0) {
+    char *pubkey = NULL;
+    if (nostr_json_get_array_string(element_json, NULL, 1, &pubkey) == 0 &&
+        pubkey && strlen(pubkey) == 64) {
+      g_ptr_array_add(ctx->pubkeys, g_strdup(pubkey));
+    }
+    g_free(pubkey);
+  }
+  g_free(name);
+  return true; /* continue iterating */
+}
+
+/* nostrc-f0ll: Get followed pubkeys from a user's contact list (kind 3).
+ * @user_pubkey_hex: 64-char hex pubkey of the user whose contact list to fetch
+ * Returns NULL-terminated array of pubkey hex strings, or NULL if none/error.
+ * Caller must g_strfreev() the result. */
+char **storage_ndb_get_followed_pubkeys(const char *user_pubkey_hex)
+{
+  if (!user_pubkey_hex || strlen(user_pubkey_hex) != 64) return NULL;
+
+  /* Query for kind 3 (contact list) from this author, limit 1 (most recent) */
+  gchar *filter = g_strdup_printf(
+    "[{\"kinds\":[3],\"authors\":[\"%s\"],\"limit\":1}]",
+    user_pubkey_hex);
+
+  void *txn = NULL;
+  int rc = storage_ndb_begin_query_retry(&txn, 3, 10);
+  if (rc != 0 || !txn) {
+    g_free(filter);
+    return NULL;
+  }
+
+  char **results = NULL;
+  int count = 0;
+  rc = storage_ndb_query(txn, filter, &results, &count);
+  g_free(filter);
+
+  if (rc != 0 || count == 0 || !results) {
+    storage_ndb_end_query(txn);
+    if (results) storage_ndb_free_results(results, count);
+    return NULL;
+  }
+
+  /* Parse the contact list JSON to extract p-tags.
+   * Format: {..., "tags": [["p", "pubkey1"], ["p", "pubkey2", "relay"], ...], ...} */
+  StorageNdbPTagCtx ctx = { .pubkeys = g_ptr_array_new() };
+
+  /* Get tags array from the JSON result */
+  char *tags_json = NULL;
+  if (nostr_json_get_raw(results[0], "tags", &tags_json) == 0 && tags_json) {
+    nostr_json_array_foreach_root(tags_json, storage_ndb_extract_p_tag_cb, &ctx);
+    g_free(tags_json);
+  }
+
+  storage_ndb_free_results(results, count);
+  storage_ndb_end_query(txn);
+
+  if (ctx.pubkeys->len == 0) {
+    g_ptr_array_free(ctx.pubkeys, TRUE);
+    return NULL;
+  }
+
+  g_ptr_array_add(ctx.pubkeys, NULL); /* NULL-terminate */
+  g_debug("[STORAGE_NDB] Found %u followed pubkeys for %.16s...",
+          ctx.pubkeys->len - 1, user_pubkey_hex);
+  return (char **)g_ptr_array_free(ctx.pubkeys, FALSE);
+}
