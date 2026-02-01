@@ -53,6 +53,24 @@ void gnostr_session_view_set_relay_status(GnostrSessionView *self,
                                           guint connected_count,
                                           guint total_count);
 
+/* Search bar control */
+void gnostr_session_view_set_search_mode(GnostrSessionView *self, gboolean enabled);
+gboolean gnostr_session_view_get_search_mode(GnostrSessionView *self);
+const char *gnostr_session_view_get_search_text(GnostrSessionView *self);
+
+/**
+ * Signals:
+ * - "page-selected" (const char *page_name): Emitted when sidebar navigation changes
+ * - "settings-requested": Emitted when settings button clicked
+ * - "relays-requested": Emitted when manage relays clicked
+ * - "reconnect-requested": Emitted when reconnect clicked
+ * - "login-requested": Emitted when sign in requested
+ * - "logout-requested": Emitted when sign out clicked
+ * - "new-notes-clicked": Emitted when new notes toast clicked
+ * - "compose-requested": Emitted when compose button clicked
+ * - "search-changed" (const char *text): Emitted when search text changes
+ */
+
 G_END_DECLS
 
 #endif /* GNOSTR_SESSION_VIEW_H */

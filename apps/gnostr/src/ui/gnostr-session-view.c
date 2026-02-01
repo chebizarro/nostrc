@@ -35,6 +35,7 @@ typedef enum {
   SIGNAL_LOGOUT_REQUESTED,
   SIGNAL_NEW_NOTES_CLICKED,
   SIGNAL_COMPOSE_REQUESTED,
+  SIGNAL_SEARCH_CHANGED,
   N_SIGNALS
 } GnostrSessionViewSignal;
 
@@ -75,6 +76,11 @@ struct _GnostrSessionView {
   GtkButton *btn_reconnect;
   GtkMenuButton *btn_avatar;
   GtkButton *btn_compose;
+  GtkButton *btn_search;
+
+  /* Search bar */
+  GtkSearchBar *search_bar;
+  GtkSearchEntry *search_entry;
 
   GtkPopover *avatar_popover;
   GtkLabel *lbl_signin_status;
@@ -213,14 +219,30 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
                                gpointer user_data) {
   (void)controller;
   (void)keycode;
-  (void)state;
 
   GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
   if (!GNOSTR_IS_SESSION_VIEW(self)) return GDK_EVENT_PROPAGATE;
 
   if (keyval == GDK_KEY_Escape) {
+    /* Close search bar first if open */
+    if (self->search_bar && gtk_search_bar_get_search_mode(self->search_bar)) {
+      gtk_search_bar_set_search_mode(self->search_bar, FALSE);
+      return GDK_EVENT_STOP;
+    }
     if (gnostr_session_view_is_side_panel_visible(self)) {
       gnostr_session_view_hide_side_panel(self);
+      return GDK_EVENT_STOP;
+    }
+  }
+
+  /* Ctrl+F to toggle search */
+  if ((state & GDK_CONTROL_MASK) && keyval == GDK_KEY_f) {
+    if (self->search_bar) {
+      gboolean is_revealed = gtk_search_bar_get_search_mode(self->search_bar);
+      gtk_search_bar_set_search_mode(self->search_bar, !is_revealed);
+      if (!is_revealed && self->search_entry) {
+        gtk_widget_grab_focus(GTK_WIDGET(self->search_entry));
+      }
       return GDK_EVENT_STOP;
     }
   }
@@ -299,6 +321,30 @@ static void on_btn_compose_clicked(GtkButton *btn, gpointer user_data) {
   GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
   if (!GNOSTR_IS_SESSION_VIEW(self)) return;
   g_signal_emit(self, signals[SIGNAL_COMPOSE_REQUESTED], 0);
+}
+
+static void on_btn_search_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
+  if (!GNOSTR_IS_SESSION_VIEW(self)) return;
+
+  if (self->search_bar) {
+    gboolean is_revealed = gtk_search_bar_get_search_mode(self->search_bar);
+    gtk_search_bar_set_search_mode(self->search_bar, !is_revealed);
+
+    /* Focus the entry when revealing */
+    if (!is_revealed && self->search_entry) {
+      gtk_widget_grab_focus(GTK_WIDGET(self->search_entry));
+    }
+  }
+}
+
+static void on_search_changed(GtkSearchEntry *entry, gpointer user_data) {
+  GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
+  if (!GNOSTR_IS_SESSION_VIEW(self)) return;
+
+  const char *text = gtk_editable_get_text(GTK_EDITABLE(entry));
+  g_signal_emit(self, signals[SIGNAL_SEARCH_CHANGED], 0, text);
 }
 
 static void gnostr_session_view_dispose(GObject *object) {
@@ -460,6 +506,18 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
       G_TYPE_NONE,
       0);
 
+  signals[SIGNAL_SEARCH_CHANGED] = g_signal_new(
+      "search-changed",
+      G_TYPE_FROM_CLASS(klass),
+      G_SIGNAL_RUN_LAST,
+      0,
+      NULL,
+      NULL,
+      g_cclosure_marshal_VOID__STRING,
+      G_TYPE_NONE,
+      1,
+      G_TYPE_STRING);
+
   /* Ensure custom widget types used in the template are registered */
   g_type_ensure(GNOSTR_TYPE_TIMELINE_VIEW);
   g_type_ensure(GNOSTR_TYPE_NOTIFICATIONS_VIEW);
@@ -500,6 +558,7 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_reconnect);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_avatar);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_compose);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_search);
 
   /* avatar_popover and its children are now created programmatically to avoid
    * GTK4 crash on Linux where GtkPopover in template causes gtk_widget_root assertion */
@@ -581,6 +640,25 @@ static void gnostr_session_view_init(GnostrSessionView *self) {
 
   if (self->btn_compose) {
     g_signal_connect(self->btn_compose, "clicked", G_CALLBACK(on_btn_compose_clicked), self);
+  }
+
+  if (self->btn_search) {
+    g_signal_connect(self->btn_search, "clicked", G_CALLBACK(on_btn_search_clicked), self);
+  }
+
+  /* Create search bar programmatically and add to toolbar_view */
+  if (self->toolbar_view) {
+    self->search_bar = GTK_SEARCH_BAR(gtk_search_bar_new());
+    gtk_search_bar_set_show_close_button(self->search_bar, TRUE);
+
+    self->search_entry = GTK_SEARCH_ENTRY(gtk_search_entry_new());
+    gtk_widget_set_hexpand(GTK_WIDGET(self->search_entry), TRUE);
+    gtk_search_bar_set_child(self->search_bar, GTK_WIDGET(self->search_entry));
+    gtk_search_bar_connect_entry(self->search_bar, GTK_EDITABLE(self->search_entry));
+
+    g_signal_connect(self->search_entry, "search-changed", G_CALLBACK(on_search_changed), self);
+
+    adw_toolbar_view_add_top_bar(self->toolbar_view, GTK_WIDGET(self->search_bar));
   }
 
   /* Start on Timeline by default */
@@ -845,4 +923,33 @@ void gnostr_session_view_set_relay_status(GnostrSessionView *self,
     gboolean show_reconnect = (total_count > 0 && connected_count < total_count);
     gtk_widget_set_visible(GTK_WIDGET(self->btn_reconnect), show_reconnect);
   }
+}
+
+void gnostr_session_view_set_search_mode(GnostrSessionView *self, gboolean enabled) {
+  g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
+
+  if (self->search_bar) {
+    gtk_search_bar_set_search_mode(self->search_bar, enabled);
+    if (enabled && self->search_entry) {
+      gtk_widget_grab_focus(GTK_WIDGET(self->search_entry));
+    }
+  }
+}
+
+gboolean gnostr_session_view_get_search_mode(GnostrSessionView *self) {
+  g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), FALSE);
+
+  if (self->search_bar) {
+    return gtk_search_bar_get_search_mode(self->search_bar);
+  }
+  return FALSE;
+}
+
+const char *gnostr_session_view_get_search_text(GnostrSessionView *self) {
+  g_return_val_if_fail(GNOSTR_IS_SESSION_VIEW(self), NULL);
+
+  if (self->search_entry) {
+    return gtk_editable_get_text(GTK_EDITABLE(self->search_entry));
+  }
+  return NULL;
 }
