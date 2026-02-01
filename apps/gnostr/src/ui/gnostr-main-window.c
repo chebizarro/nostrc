@@ -1328,11 +1328,21 @@ static void relay_discovery_bind_factory_cb(GtkSignalListItemFactory *factory, G
   DiscoveryRowWidgets *widgets = g_object_get_data(G_OBJECT(row), "widgets");
   if (!widgets) return;
 
-  /* Get relay index from list position */
-  guint position = gtk_list_item_get_position(list_item);
-  if (position >= ctx->discovered_relays->len) return;
+  /* nostrc-dth1: Get relay URL from the GtkStringObject in the filtered list,
+   * then look up the meta by URL. Using position was wrong because the list
+   * is filtered - positions don't match the original discovered_relays array. */
+  const gchar *relay_url = gtk_string_object_get_string(GTK_STRING_OBJECT(item));
+  if (!relay_url) return;
 
-  GnostrNip66RelayMeta *meta = g_ptr_array_index(ctx->discovered_relays, position);
+  /* Find the meta for this URL */
+  GnostrNip66RelayMeta *meta = NULL;
+  for (guint i = 0; i < ctx->discovered_relays->len; i++) {
+    GnostrNip66RelayMeta *m = g_ptr_array_index(ctx->discovered_relays, i);
+    if (m && m->relay_url && g_strcmp0(m->relay_url, relay_url) == 0) {
+      meta = m;
+      break;
+    }
+  }
   if (!meta) return;
 
   /* Bind data */
