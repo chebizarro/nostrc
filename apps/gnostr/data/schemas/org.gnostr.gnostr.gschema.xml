@@ -122,6 +122,32 @@
         Maximum time to wait for remote signer pairing response before aborting.
       </description>
     </key>
+    <!-- nostrc-1wfi: NIP-46 session persistence -->
+    <key name="nip46-client-secret" type="s">
+      <default>''</default>
+      <summary>NIP-46 client secret key (hex)</summary>
+      <description>
+        The client's secret key for NIP-46 remote signer communication.
+        This is used for ECDH encryption when talking to the signer.
+        Empty string means no active NIP-46 session.
+      </description>
+    </key>
+    <key name="nip46-signer-pubkey" type="s">
+      <default>''</default>
+      <summary>NIP-46 signer public key (hex)</summary>
+      <description>
+        The remote signer's public key (64-char hex).
+        This is the ECDH peer for encrypting requests to the signer.
+      </description>
+    </key>
+    <key name="nip46-relay" type="s">
+      <default>''</default>
+      <summary>NIP-46 relay URL</summary>
+      <description>
+        The relay URL used for NIP-46 communication with the signer.
+        Empty string means use default relay.
+      </description>
+    </key>
     <key name="nwc-connection-uri" type="s">
       <default>''</default>
       <summary>NWC Connection URI</summary>

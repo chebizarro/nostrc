@@ -4587,6 +4587,24 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
     g_autofree char *npub = client_settings_get_current_npub();
     gboolean signed_in = (npub && *npub);
 
+    /* nostrc-1wfi: Restore NIP-46 session from settings if user was signed in */
+    if (signed_in) {
+      GnostrSignerService *signer = gnostr_signer_service_get_default();
+      if (gnostr_signer_service_restore_from_settings(signer)) {
+        g_message("[MAIN] Restored NIP-46 session from saved credentials");
+        /* Also restore pubkey for the signer service */
+        uint8_t pubkey_bytes[32];
+        if (nostr_nip19_decode_npub(npub, pubkey_bytes) == 0) {
+          g_autofree char *pubkey_hex = hex_encode_lower(pubkey_bytes, 32);
+          if (pubkey_hex) {
+            gnostr_signer_service_set_pubkey(signer, pubkey_hex);
+          }
+        }
+      } else {
+        g_debug("[MAIN] No NIP-46 credentials to restore (may use NIP-55L)");
+      }
+    }
+
     if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
       gnostr_session_view_set_authenticated(self->session_view, signed_in);
     }

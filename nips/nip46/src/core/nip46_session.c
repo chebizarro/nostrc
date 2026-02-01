@@ -257,6 +257,8 @@ int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, 
     }
 
     fprintf(stderr, "[nip46] sign_event: encrypting request to peer %s\n", peer);
+    fprintf(stderr, "[nip46] sign_event: session secret length: %zu\n",
+            s->secret ? strlen(s->secret) : 0);
 
     char *cipher = NULL; char *err = NULL;
     /* secure encrypt using binary secret */

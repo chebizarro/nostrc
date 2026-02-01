@@ -104,6 +104,9 @@ static void on_close_clicked(GtkButton *btn, gpointer user_data);
 static void on_done_clicked(GtkButton *btn, gpointer user_data);
 static void check_local_signer_availability(GnostrLogin *self);
 static void save_npub_to_settings(const char *npub);
+static void save_nip46_credentials_to_settings(const char *client_secret_hex,
+                                                const char *signer_pubkey_hex,
+                                                const char *relay_url);
 static void show_success(GnostrLogin *self, const char *npub);
 static void start_nip46_listener(GnostrLogin *self, const char *relay_url);
 static void stop_nip46_listener(GnostrLogin *self);
@@ -165,12 +168,15 @@ static gboolean nip46_success_on_main(gpointer data) {
 
   /* nostrc-rrfr: Populate session with connection info from the nostrconnect URI */
   if (ctx->nostrconnect_uri) {
+    g_message("[NIP46_LOGIN] Populating session from URI: %.80s...", ctx->nostrconnect_uri);
     int rc = nostr_nip46_client_connect(self->nip46_session, ctx->nostrconnect_uri, NULL);
     if (rc != 0) {
       g_warning("[NIP46_LOGIN] Failed to populate session from URI: %d", rc);
     } else {
       g_message("[NIP46_LOGIN] Session populated with secret and relays from URI");
     }
+  } else {
+    g_warning("[NIP46_LOGIN] nostrconnect_uri is NULL - session won't have secret key!");
   }
 
   /* nostrc-rrfr: Store the signer's pubkey in the session - critical for signing */
@@ -180,6 +186,18 @@ static gboolean nip46_success_on_main(gpointer data) {
     } else {
       g_message("[NIP46_LOGIN] Signer pubkey stored in session: %s", ctx->signer_pubkey_hex);
     }
+  }
+
+  /* nostrc-1wfi: Persist NIP-46 credentials to GSettings for app restart survival */
+  if (self->nostrconnect_secret && ctx->signer_pubkey_hex) {
+    const char *relay_url = "wss://relay.nsec.app"; /* Default NIP-46 relay */
+    save_nip46_credentials_to_settings(self->nostrconnect_secret,
+                                        ctx->signer_pubkey_hex,
+                                        relay_url);
+  } else {
+    g_warning("[NIP46_LOGIN] Cannot persist credentials: secret=%s, pubkey=%s",
+              self->nostrconnect_secret ? "set" : "NULL",
+              ctx->signer_pubkey_hex ? "set" : "NULL");
   }
 
   /* Save to settings and show success */
@@ -792,6 +810,27 @@ static void save_npub_to_settings(const char *npub) {
     g_settings_set_string(settings, SETTINGS_KEY_CURRENT_NPUB, npub ? npub : "");
     g_object_unref(settings);
   }
+}
+
+/* nostrc-1wfi: Save NIP-46 credentials for session persistence across app restarts */
+static void save_nip46_credentials_to_settings(const char *client_secret_hex,
+                                                const char *signer_pubkey_hex,
+                                                const char *relay_url) {
+  GSettings *settings = g_settings_new(SETTINGS_SCHEMA_CLIENT);
+  if (!settings) return;
+
+  g_settings_set_string(settings, "nip46-client-secret",
+                        client_secret_hex ? client_secret_hex : "");
+  g_settings_set_string(settings, "nip46-signer-pubkey",
+                        signer_pubkey_hex ? signer_pubkey_hex : "");
+  g_settings_set_string(settings, "nip46-relay",
+                        relay_url ? relay_url : "");
+
+  g_message("[NIP46_LOGIN] Saved NIP-46 credentials to settings (secret: %zu chars, pubkey: %s)",
+            client_secret_hex ? strlen(client_secret_hex) : 0,
+            signer_pubkey_hex ? signer_pubkey_hex : "(null)");
+
+  g_object_unref(settings);
 }
 
 static void show_success(GnostrLogin *self, const char *npub) {

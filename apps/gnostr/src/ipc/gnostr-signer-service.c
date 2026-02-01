@@ -5,7 +5,11 @@
 #include "gnostr-signer-service.h"
 #include "signer_ipc.h"
 #include "nostr/nip46/nip46_client.h"
+#include "nostr-keys.h"
 #include <string.h>
+
+/* Forward declaration for nostrc-1wfi */
+void gnostr_signer_service_clear_saved_credentials(GnostrSignerService *self);
 
 struct _GnostrSignerService {
   GObject parent_instance;
@@ -164,6 +168,9 @@ gnostr_signer_service_clear(GnostrSignerService *self)
 
   self->nip55l_proxy = NULL;
   self->method = GNOSTR_SIGNER_METHOD_NONE;
+
+  /* nostrc-1wfi: Also clear persisted credentials on logout */
+  gnostr_signer_service_clear_saved_credentials(self);
 
   g_debug("[SIGNER_SERVICE] Cleared all authentication state");
 }
@@ -414,4 +421,115 @@ gnostr_sign_event_finish(GAsyncResult *res,
     return TRUE;
   }
   return FALSE;
+}
+
+/* ---- nostrc-1wfi: NIP-46 Session Persistence ---- */
+
+#define SETTINGS_SCHEMA_CLIENT "org.gnostr.Client"
+
+gboolean
+gnostr_signer_service_restore_from_settings(GnostrSignerService *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_SIGNER_SERVICE(self), FALSE);
+
+  GSettings *settings = g_settings_new(SETTINGS_SCHEMA_CLIENT);
+  if (!settings) {
+    g_warning("[SIGNER_SERVICE] Failed to open GSettings");
+    return FALSE;
+  }
+
+  g_autofree char *client_secret = g_settings_get_string(settings, "nip46-client-secret");
+  g_autofree char *signer_pubkey = g_settings_get_string(settings, "nip46-signer-pubkey");
+  g_autofree char *relay_url = g_settings_get_string(settings, "nip46-relay");
+
+  g_object_unref(settings);
+
+  /* Check if we have valid credentials */
+  if (!client_secret || !*client_secret || !signer_pubkey || !*signer_pubkey) {
+    g_debug("[SIGNER_SERVICE] No saved NIP-46 credentials found");
+    return FALSE;
+  }
+
+  /* Validate secret length (must be 64 hex chars = 32 bytes) */
+  if (strlen(client_secret) != 64) {
+    g_warning("[SIGNER_SERVICE] Invalid saved client secret length: %zu",
+              strlen(client_secret));
+    return FALSE;
+  }
+
+  /* Validate pubkey length */
+  if (strlen(signer_pubkey) != 64) {
+    g_warning("[SIGNER_SERVICE] Invalid saved signer pubkey length: %zu",
+              strlen(signer_pubkey));
+    return FALSE;
+  }
+
+  g_message("[SIGNER_SERVICE] Restoring NIP-46 session from settings...");
+
+  /* Create a new NIP-46 session */
+  NostrNip46Session *session = nostr_nip46_client_new();
+  if (!session) {
+    g_warning("[SIGNER_SERVICE] Failed to create NIP-46 session");
+    return FALSE;
+  }
+
+  /* Build a nostrconnect:// URI to populate the session.
+   * We need to derive the client pubkey from the secret, but for simplicity
+   * we'll just set the fields directly on the session.
+   * First, use the connect function with a synthetic URI. */
+  const char *default_relay = (relay_url && *relay_url) ? relay_url : "wss://relay.nsec.app";
+
+  /* Derive client pubkey from secret for the URI */
+  char *client_pubkey = nostr_key_get_public(client_secret);
+  if (!client_pubkey) {
+    g_warning("[SIGNER_SERVICE] Failed to derive client pubkey from secret");
+    nostr_nip46_session_free(session);
+    return FALSE;
+  }
+
+  /* Build synthetic nostrconnect:// URI */
+  g_autofree char *connect_uri = g_strdup_printf(
+    "nostrconnect://%s?relay=%s&secret=%s",
+    client_pubkey, default_relay, client_secret);
+  free(client_pubkey);
+
+  /* Parse URI to populate session with secret and relays */
+  int rc = nostr_nip46_client_connect(session, connect_uri, NULL);
+  if (rc != 0) {
+    g_warning("[SIGNER_SERVICE] Failed to restore session from URI: %d", rc);
+    nostr_nip46_session_free(session);
+    return FALSE;
+  }
+
+  /* Set the signer pubkey */
+  if (nostr_nip46_client_set_signer_pubkey(session, signer_pubkey) != 0) {
+    g_warning("[SIGNER_SERVICE] Failed to set signer pubkey");
+    nostr_nip46_session_free(session);
+    return FALSE;
+  }
+
+  /* Install the session */
+  gnostr_signer_service_set_nip46_session(self, session);
+
+  g_message("[SIGNER_SERVICE] NIP-46 session restored successfully (signer: %.16s...)",
+            signer_pubkey);
+
+  return TRUE;
+}
+
+void
+gnostr_signer_service_clear_saved_credentials(GnostrSignerService *self)
+{
+  (void)self;  /* Unused but kept for API consistency */
+
+  GSettings *settings = g_settings_new(SETTINGS_SCHEMA_CLIENT);
+  if (!settings) return;
+
+  g_settings_set_string(settings, "nip46-client-secret", "");
+  g_settings_set_string(settings, "nip46-signer-pubkey", "");
+  g_settings_set_string(settings, "nip46-relay", "");
+
+  g_object_unref(settings);
+
+  g_debug("[SIGNER_SERVICE] Cleared saved NIP-46 credentials");
 }

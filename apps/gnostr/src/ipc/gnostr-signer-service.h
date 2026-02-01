@@ -134,6 +134,26 @@ void gnostr_signer_service_set_pubkey(GnostrSignerService *self,
  */
 void gnostr_signer_service_clear(GnostrSignerService *self);
 
+/**
+ * gnostr_signer_service_restore_from_settings:
+ * @self: The signer service
+ *
+ * Restores NIP-46 session from persisted GSettings.
+ * Call this on app startup to recover session across restarts.
+ * (nostrc-1wfi: NIP-46 session persistence)
+ *
+ * Returns: TRUE if session was restored, FALSE if no saved credentials
+ */
+gboolean gnostr_signer_service_restore_from_settings(GnostrSignerService *self);
+
+/**
+ * gnostr_signer_service_clear_saved_credentials:
+ * @self: The signer service
+ *
+ * Clears NIP-46 credentials from GSettings (for logout).
+ */
+void gnostr_signer_service_clear_saved_credentials(GnostrSignerService *self);
+
 /* ---- Convenience wrapper matching D-Bus proxy pattern ---- */
 
 /**
