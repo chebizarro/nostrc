@@ -12,6 +12,25 @@
 /* Global tray icon instance (Linux only) */
 static GnostrTrayIcon *g_tray_icon = NULL;
 
+/* Update tray icon with relay connection status.
+ * Called by main window when relay status changes. */
+void gnostr_app_update_relay_status(int connected_count, int total_count) {
+  if (!g_tray_icon) return;
+
+  GnostrRelayConnectionState state;
+  if (total_count == 0) {
+    state = GNOSTR_RELAY_STATE_DISCONNECTED;
+  } else if (connected_count == 0) {
+    state = GNOSTR_RELAY_STATE_DISCONNECTED;
+  } else if (connected_count < total_count) {
+    state = GNOSTR_RELAY_STATE_CONNECTING;
+  } else {
+    state = GNOSTR_RELAY_STATE_CONNECTED;
+  }
+
+  gnostr_tray_icon_set_relay_status(g_tray_icon, connected_count, total_count, state);
+}
+
 static void on_activate(GApplication *app, gpointer user_data) {
   (void)user_data;
   GnostrMainWindow *win = gnostr_main_window_new(ADW_APPLICATION(app));

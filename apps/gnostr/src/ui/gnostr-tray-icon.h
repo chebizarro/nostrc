@@ -102,6 +102,17 @@ void gnostr_tray_icon_set_relay_status(GnostrTrayIcon *self,
                                         int total_count,
                                         GnostrRelayConnectionState state);
 
+/**
+ * gnostr_app_update_relay_status:
+ * @connected_count: Number of currently connected relays
+ * @total_count: Total number of configured relays
+ *
+ * Updates the global tray icon with relay connection status.
+ * Called by main window when relay status changes.
+ * Safe to call even if tray icon is not available.
+ */
+void gnostr_app_update_relay_status(int connected_count, int total_count);
+
 G_END_DECLS
 
 #endif /* GNOSTR_TRAY_ICON_H */

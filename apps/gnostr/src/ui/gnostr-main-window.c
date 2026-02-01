@@ -1,6 +1,7 @@
 #define G_LOG_DOMAIN "gnostr-main-window"
 
 #include "gnostr-main-window.h"
+#include "gnostr-tray-icon.h"
 #include "gnostr-session-view.h"
 #include "gnostr-composer.h"
 #include "gnostr-timeline-view.h"
@@ -6445,6 +6446,9 @@ static gboolean check_relay_health(gpointer user_data) {
       disconnected_count++;
     }
   }
+
+  /* Update tray icon with current relay status */
+  gnostr_app_update_relay_status((int)connected_count, (int)relay_urls->len);
 
   /* If ALL relays are disconnected, trigger reconnection */
   if (disconnected_count > 0 && connected_count == 0) {
