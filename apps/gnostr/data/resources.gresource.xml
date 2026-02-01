@@ -22,6 +22,7 @@
     <file>ui/widgets/gnostr-live-card.ui</file>
     <file>ui/widgets/gnostr-zap-goal-widget.ui</file>
     <file>ui/widgets/gnostr-channel-list-view.ui</file>
+    <file>ui/widgets/gnostr-community-list-view.ui</file>
     <file>ui/widgets/gnostr-channel-row.ui</file>
     <file>ui/widgets/gnostr-chat-room-view.ui</file>
     <file>ui/widgets/gnostr-chat-message-row.ui</file>
