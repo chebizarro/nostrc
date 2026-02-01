@@ -66,13 +66,43 @@ static void on_app_quit(GSimpleAction *action, GVariant *param, gpointer user_da
 static void on_shutdown(GApplication *app, gpointer user_data) {
   (void)app; (void)user_data;
 
+  g_message("gnostr: shutdown initiated");
+
   /* Clean up tray icon */
   g_clear_object(&g_tray_icon);
 
-  /* Clean up shared SoupSession - cancels pending requests */
+  /*
+   * nostrc-b1vg: Fix TLS cleanup crash by ensuring proper shutdown order.
+   * The crash was caused by cleaning up SoupSession while relay pool connections
+   * still had references to TLS certificates. Order matters:
+   * 1. Clean up relay pool first (closes WebSocket/network connections)
+   * 2. Drain main loop to let pending async callbacks complete
+   * 3. Clean up SoupSession (now safe since no pending TLS operations)
+   */
+
+  /* Step 1: Clean up shared relay query pool - closes connections gracefully */
+  gnostr_cleanup_shared_query_pool();
+
+  /* Step 2: Drain pending main loop events to allow async cleanup callbacks
+   * to complete. This prevents use-after-free when callbacks reference
+   * TLS certificates that would be freed by soup session cleanup. */
+  GMainContext *ctx = g_main_context_default();
+  int drain_iterations = 0;
+  while (g_main_context_pending(ctx) && drain_iterations < 100) {
+    g_main_context_iteration(ctx, FALSE);
+    drain_iterations++;
+  }
+  if (drain_iterations > 0) {
+    g_debug("gnostr: drained %d pending main loop events", drain_iterations);
+  }
+
+  /* Step 3: Clean up shared SoupSession - now safe to destroy TLS state */
   gnostr_cleanup_shared_soup_session();
 
+  /* Step 4: Clean up storage */
   storage_ndb_shutdown();
+
+  g_message("gnostr: shutdown complete");
 }
 
 int main(int argc, char **argv) {
