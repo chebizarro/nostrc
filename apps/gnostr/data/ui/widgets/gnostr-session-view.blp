@@ -379,6 +379,17 @@ template $GnostrSessionView: Adw.Bin {
                         }
                     }
 
+                    [top]
+                    SearchBar search_bar {
+                        search-mode-enabled: false;
+                        key-capture-widget: template;
+
+                        child: SearchEntry search_entry {
+                            placeholder-text: _("Search timeline...");
+                            hexpand: true;
+                        };
+                    }
+
                     content: Adw.OverlaySplitView panel_split {
                         show-sidebar: false;
                         sidebar-position: end;

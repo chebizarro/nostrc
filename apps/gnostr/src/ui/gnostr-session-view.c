@@ -567,6 +567,8 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_avatar);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_compose);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_search);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, search_bar);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, search_entry);
 
   /* avatar_popover and its children are now created programmatically to avoid
    * GTK4 crash on Linux where GtkPopover in template causes gtk_widget_root assertion */
@@ -655,19 +657,10 @@ static void gnostr_session_view_init(GnostrSessionView *self) {
     g_signal_connect(self->btn_search, "clicked", G_CALLBACK(on_btn_search_clicked), self);
   }
 
-  /* Create search bar programmatically and add to toolbar_view */
-  if (self->toolbar_view) {
-    self->search_bar = GTK_SEARCH_BAR(gtk_search_bar_new());
-    gtk_search_bar_set_show_close_button(self->search_bar, TRUE);
-
-    self->search_entry = GTK_SEARCH_ENTRY(gtk_search_entry_new());
-    gtk_widget_set_hexpand(GTK_WIDGET(self->search_entry), TRUE);
-    gtk_search_bar_set_child(self->search_bar, GTK_WIDGET(self->search_entry));
+  /* Connect search entry signal (search bar and entry come from template) */
+  if (self->search_bar && self->search_entry) {
     gtk_search_bar_connect_entry(self->search_bar, GTK_EDITABLE(self->search_entry));
-
     g_signal_connect(self->search_entry, "search-changed", G_CALLBACK(on_search_changed), self);
-
-    adw_toolbar_view_add_top_bar(self->toolbar_view, GTK_WIDGET(self->search_bar));
   }
 
   /* Start on Timeline by default */
