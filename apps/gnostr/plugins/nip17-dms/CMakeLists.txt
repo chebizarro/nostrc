@@ -17,6 +17,11 @@ target_include_directories(${PLUGIN_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/apps/gnostr/src
     ${CMAKE_SOURCE_DIR}/nips/nip17/include
     ${CMAKE_SOURCE_DIR}/nips/nip44/include
+    ${CMAKE_SOURCE_DIR}/nips/nip46/include
+    ${CMAKE_SOURCE_DIR}/gobject/include
+    ${CMAKE_SOURCE_DIR}/libnostr/include
+    ${CMAKE_SOURCE_DIR}/libgo/include
+    ${CMAKE_BINARY_DIR}/apps/gnostr/generated
 )
 
 # Plugin build mode - excludes host-only code from gnostr-plugin-api.c
@@ -27,7 +32,13 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE
     PkgConfig::GTK4
     PkgConfig::GLIB
     PkgConfig::LIBPEAS
+    PkgConfig::JSON_GLIB
 )
+
+# Link libgo for include paths (nsync, etc)
+if (TARGET libgo)
+    target_link_libraries(${PLUGIN_NAME} PRIVATE libgo)
+endif()
 
 # Link NIP-17 library for DM encryption/decryption
 if (TARGET nip17)
