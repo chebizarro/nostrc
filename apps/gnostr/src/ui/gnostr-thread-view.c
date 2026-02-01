@@ -1154,11 +1154,7 @@ static void build_thread_graph(GnostrThreadView *self) {
   while (g_hash_table_iter_next(&iter, &key, &value)) {
     ThreadNode *node = (ThreadNode *)value;
     node->child_count = count_descendants(self, (const char *)key);
-
-    /* Collapse branches not on focus path by default (if they have children) */
-    if (!node->is_focus_path && node->child_ids && node->child_ids->len > 0) {
-      node->is_collapsed = TRUE;
-    }
+    /* All branches expanded by default - user can collapse manually if needed */
   }
 
   /* Step 6: Build render order (DFS from root) */
