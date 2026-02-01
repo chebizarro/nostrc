@@ -312,10 +312,26 @@ static gboolean nip46_success_on_main(gpointer data) {
 
   /* nostrc-1wfi: Persist NIP-46 credentials to GSettings for app restart survival */
   if (ctx->nostrconnect_secret && ctx->signer_pubkey_hex) {
-    const char *relay_url = "wss://relay.nsec.app"; /* Default NIP-46 relay */
+    /* Extract relay URL from session (populated from nostrconnect URI) */
+    char **relays = NULL;
+    size_t n_relays = 0;
+    const char *relay_url = "wss://relay.nsec.app"; /* Fallback if no relay in session */
+
+    if (nostr_nip46_session_get_relays(self->nip46_session, &relays, &n_relays) == 0 &&
+        n_relays > 0 && relays && relays[0]) {
+      relay_url = relays[0];
+      g_message("[NIP46_LOGIN] Using relay from URI: %s", relay_url);
+    }
+
     save_nip46_credentials_to_settings(ctx->nostrconnect_secret,
                                         ctx->signer_pubkey_hex,
                                         relay_url);
+
+    /* Free relay strings */
+    if (relays) {
+      for (size_t i = 0; i < n_relays; i++) free(relays[i]);
+      free(relays);
+    }
   } else {
     g_warning("[NIP46_LOGIN] Cannot persist credentials: secret=%s, pubkey=%s",
               ctx->nostrconnect_secret ? "set" : "NULL",
