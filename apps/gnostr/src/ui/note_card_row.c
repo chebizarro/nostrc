@@ -402,27 +402,32 @@ static void gnostr_note_card_row_dispose(GObject *obj) {
   self->note_embed = NULL;
 
 do_template_dispose:
-  
-  /* Unparent popovers BEFORE template disposal to prevent GTK warnings about
-   * "Finalizing GtkButton but it still has children left". The popovers are
-   * parented to buttons in the template, so they must be unparented first.
-   * Use g_clear_pointer with gtk_widget_unparent to safely handle NULL. */
-  if (self->repost_popover && GTK_IS_WIDGET(self->repost_popover)) {
+
+  /* nostrc-ft4e: Close (popdown) popovers BEFORE unparenting to properly
+   * clean up GTK's active state tracking. When a popover is open, its anchor
+   * button has :active state. Unparenting without closing first causes
+   * "Broken accounting of active state" warnings as GTK can't update the
+   * state chain properly. */
+  if (self->repost_popover && GTK_IS_POPOVER(self->repost_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->repost_popover));
     gtk_widget_unparent(self->repost_popover);
   }
   self->repost_popover = NULL;
-  
-  if (self->menu_popover && GTK_IS_WIDGET(self->menu_popover)) {
+
+  if (self->menu_popover && GTK_IS_POPOVER(self->menu_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->menu_popover));
     gtk_widget_unparent(self->menu_popover);
   }
   self->menu_popover = NULL;
-  
-  if (self->emoji_picker_popover && GTK_IS_WIDGET(self->emoji_picker_popover)) {
+
+  if (self->emoji_picker_popover && GTK_IS_POPOVER(self->emoji_picker_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->emoji_picker_popover));
     gtk_widget_unparent(self->emoji_picker_popover);
   }
   self->emoji_picker_popover = NULL;
-  
-  if (self->reactions_popover && GTK_IS_WIDGET(self->reactions_popover)) {
+
+  if (self->reactions_popover && GTK_IS_POPOVER(self->reactions_popover)) {
+    gtk_popover_popdown(GTK_POPOVER(self->reactions_popover));
     gtk_widget_unparent(self->reactions_popover);
   }
   self->reactions_popover = NULL;
