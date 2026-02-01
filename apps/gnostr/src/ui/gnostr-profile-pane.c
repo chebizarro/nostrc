@@ -2538,6 +2538,54 @@ static void bind_media_item(GtkSignalListItemFactory *factory, GtkListItem *list
   }
 }
 
+/* nostrc-7x61: Handle media grid item activation (click) to open image viewer */
+static void on_media_item_activated(GtkGridView *grid_view, guint position, gpointer user_data) {
+  GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
+  (void)grid_view;
+
+  if (!self || !self->media_model) return;
+
+  /* Get the clicked item */
+  ProfileMediaItem *clicked = g_list_model_get_item(G_LIST_MODEL(self->media_model), position);
+  if (!clicked || !clicked->url) {
+    if (clicked) g_object_unref(clicked);
+    return;
+  }
+
+  /* Build gallery of all media URLs */
+  guint n_items = g_list_model_get_n_items(G_LIST_MODEL(self->media_model));
+  GPtrArray *urls = g_ptr_array_new();
+
+  for (guint i = 0; i < n_items; i++) {
+    ProfileMediaItem *item = g_list_model_get_item(G_LIST_MODEL(self->media_model), i);
+    if (item && item->url) {
+      g_ptr_array_add(urls, (gpointer)item->url);
+    }
+    if (item) g_object_unref(item);
+  }
+  g_ptr_array_add(urls, NULL);  /* NULL-terminate */
+
+  /* Get parent window for the viewer */
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
+
+  /* Create and present image viewer */
+  GnostrImageViewer *viewer = gnostr_image_viewer_new(parent);
+
+  if (urls->len > 1) {
+    /* Multiple images - set as gallery */
+    gnostr_image_viewer_set_gallery(viewer, (const char * const *)urls->pdata, position);
+  } else {
+    /* Single image */
+    gnostr_image_viewer_set_image_url(viewer, clicked->url);
+  }
+
+  gnostr_image_viewer_present(viewer);
+
+  g_ptr_array_free(urls, TRUE);
+  g_object_unref(clicked);
+}
+
 /* Callback for media query completion */
 static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   GnostrProfilePane *self = GNOSTR_PROFILE_PANE(user_data);
@@ -2813,6 +2861,9 @@ static void load_media(GnostrProfilePane *self) {
       gtk_grid_view_set_model(GTK_GRID_VIEW(self->media_grid), self->media_selection);
       gtk_grid_view_set_factory(GTK_GRID_VIEW(self->media_grid), factory);
       g_object_unref(factory);
+
+      /* nostrc-7x61: Connect activate signal to open image viewer on click */
+      g_signal_connect(self->media_grid, "activate", G_CALLBACK(on_media_item_activated), self);
     }
   }
 
