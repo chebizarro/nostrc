@@ -730,14 +730,19 @@ static gboolean query_single_complete_ok(gpointer data) {
     return G_SOURCE_REMOVE;
 }
 
+/* Track active subscription for parallel polling */
+typedef struct {
+    NostrSubscription *sub;
+    NostrRelay *relay;
+    const char *url;
+    gboolean from_pool;
+    gboolean got_eose;
+    guint events_received;
+} ActiveSub;
+
 static gpointer query_single_thread(gpointer user_data) {
     QuerySingleCtx *ctx = (QuerySingleCtx *)user_data;
     GnostrSimplePool *gobj_pool = GNOSTR_SIMPLE_POOL(ctx->self_obj);
-
-    g_message("[QUERY_SINGLE_THREAD] Starting with %zu URLs", ctx->url_count);
-    for (size_t i = 0; i < ctx->url_count; i++) {
-        g_message("[QUERY_SINGLE_THREAD]   URL[%zu]: %s", i, ctx->urls[i] ? ctx->urls[i] : "(null)");
-    }
 
     // Create results array
     ctx->results = g_ptr_array_new_with_free_func(g_free);
@@ -745,21 +750,19 @@ static gpointer query_single_thread(gpointer user_data) {
     // Track relays we created (not from pool) for cleanup
     GPtrArray *created_relays = g_ptr_array_new();
 
-    // Create a temporary subscription for each URL
+    // Track active subscriptions for parallel polling
+    GPtrArray *active_subs = g_ptr_array_new_with_free_func(g_free);
+
+    /* PHASE 1: Fire ALL subscriptions in parallel */
     for (size_t i = 0; i < ctx->url_count; i++) {
         if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) {
-            g_message("[QUERY_SINGLE_THREAD] Cancelled at URL index %zu", i);
             break;
         }
 
         const char *url = ctx->urls[i];
-        if (!url || !*url) {
-            g_message("[QUERY_SINGLE_THREAD] Skipping empty URL at index %zu", i);
-            continue;
-        }
-        g_message("[QUERY_SINGLE_THREAD] Processing URL[%zu]: %s", i, url);
+        if (!url || !*url) continue;
 
-        // REUSE existing relay from pool if available (like subscribe_many_thread)
+        // REUSE existing relay from pool if available
         NostrRelay *relay = NULL;
         gboolean relay_from_pool = FALSE;
 
@@ -771,7 +774,6 @@ static gpointer query_single_thread(gpointer user_data) {
                     strcmp(gobj_pool->pool->relays[j]->url, url) == 0) {
                     relay = gobj_pool->pool->relays[j];
                     relay_from_pool = TRUE;
-                    g_debug("query_single: Reusing existing relay %s from pool", url);
                     break;
                 }
             }
@@ -784,146 +786,101 @@ static gpointer query_single_thread(gpointer user_data) {
             GoContext *gctx = go_context_background();
             relay = nostr_relay_new(gctx, url, &err);
             if (!relay) {
-                g_warning("query_single: Failed to create relay for %s: %s", url,
-                         err ? err->message : "unknown error");
-                if (err) { free_error(err); err = NULL; }
+                if (err) free_error(err);
                 continue;
             }
-            /* Skip signature verification - nostrdb handles this during ingestion */
             relay->assume_valid = true;
 
-            // Connect to the relay
             if (!nostr_relay_connect(relay, &err)) {
-                g_warning("query_single: Failed to connect to %s: %s", url,
-                         err ? err->message : "unknown error");
-                if (err) { free_error(err); err = NULL; }
+                if (err) free_error(err);
                 nostr_relay_free(relay);
                 continue;
             }
-
-            // DO NOT add hint relays to pool - they should be temporary connections
-            // that are cleaned up after the query completes. Adding them to the pool
-            // causes relay connection accumulation as users scroll through notes with
-            // different relay hints. Only configured relays should stay in the pool.
             g_ptr_array_add(created_relays, relay);
-            g_debug("query_single: Created temporary relay %s (will disconnect after query)", url);
         }
 
-        // Check if relay is connected
-        if (!nostr_relay_is_connected(relay)) {
-            g_warning("query_single: Relay %s is not connected, skipping", url);
-            continue;
-        }
+        if (!nostr_relay_is_connected(relay)) continue;
 
-        // Create a subscription with the filter
+        // Create and fire subscription
         GoContext *bg = go_context_background();
         NostrFilters *filters = nostr_filters_new();
         NostrFilter *fcopy = nostr_filter_copy(ctx->filter);
-        nostr_filters_add(filters, fcopy); /* moves fcopy contents */
+        nostr_filters_add(filters, fcopy);
         NostrSubscription *sub = nostr_relay_prepare_subscription(relay, bg, filters);
 
         if (!sub) {
-            g_warning("query_single: Failed to prepare subscription for %s", url);
             nostr_filters_free(filters);
             continue;
         }
 
-        // Fire the subscription
         Error *err = NULL;
-        const char *sid = nostr_subscription_get_id(sub);
-
-        /* hq-3xato: Add debug logging for thread subscription EOSE tracking */
-        gboolean debug_eose = (g_getenv("NOSTR_DEBUG_EOSE") != NULL);
-        if (debug_eose) {
-            g_message("[QUERY_SINGLE] Firing subscription sid=%s to relay %s",
-                      sid ? sid : "null", url);
-        }
-
         if (!nostr_subscription_fire(sub, &err)) {
-            g_warning("query_single: Failed to fire subscription to %s: %s", url,
-                     err ? err->message : "unknown error");
-            if (err) { free_error(err); err = NULL; }
+            if (err) free_error(err);
             nostr_subscription_close(sub, NULL);
             nostr_subscription_free(sub);
             continue;
         }
 
-        if (debug_eose) {
-            g_message("[QUERY_SINGLE] Subscription sid=%s fired successfully, waiting for events/EOSE",
-                      sid ? sid : "null");
-        }
-
-        // Wait for events until EOSE with timeout
-        bool got_eose = false;
-        guint64 start_time = g_get_monotonic_time();
-        const guint64 timeout_us = 10000000;  // 10 seconds timeout
-        guint events_received = 0;
-        guint poll_iterations = 0;
-
-        while (!got_eose) {
-            poll_iterations++;
-
-            if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) {
-                if (debug_eose) {
-                    g_message("[QUERY_SINGLE] sid=%s cancelled after %u events, %u iterations",
-                              sid ? sid : "null", events_received, poll_iterations);
-                }
-                break;
-            }
-
-            // Check timeout
-            guint64 elapsed_us = g_get_monotonic_time() - start_time;
-            if (elapsed_us > timeout_us) {
-                /* hq-3xato: Log detailed timeout info for debugging */
-                g_warning("[QUERY_SINGLE] TIMEOUT sid=%s relay=%s after %.1fs - received %u events, %u poll iterations (EOSE never arrived)",
-                          sid ? sid : "null", url, elapsed_us / 1000000.0, events_received, poll_iterations);
-                break;
-            }
-
-            // Check for events (collect all until EOSE)
-            NostrEvent *evt = NULL;
-            GoChannel *ch_events = nostr_subscription_get_events_channel(sub);
-            if (ch_events && go_channel_try_receive(ch_events, (void**)&evt) == 0) {
-                events_received++;
-                char *json = nostr_event_serialize(evt);
-                if (json) {
-                    g_ptr_array_add(ctx->results, json);
-                }
-                nostr_event_free(evt);
-                // Don't break - keep collecting until EOSE
-                continue;
-            }
-
-            // Check for EOSE
-            GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
-            if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
-                got_eose = true;
-                if (debug_eose) {
-                    guint64 elapsed_ms = (g_get_monotonic_time() - start_time) / 1000;
-                    g_message("[QUERY_SINGLE] EOSE received sid=%s relay=%s after %lums with %u events",
-                              sid ? sid : "null", url, (unsigned long)elapsed_ms, events_received);
-                }
-                break;
-            }
-
-            // Small sleep to prevent busy waiting
-            g_usleep(5000);  // 5ms
-        }
-
-        // Cleanup subscription (but NOT relay if from pool)
-        nostr_subscription_close(sub, NULL);
-        nostr_subscription_free(sub);
-
-        /* NOTE: We intentionally do NOT break early here even if we got results.
-         * For thread fetching, different relays may have different events
-         * (e.g., the root event might only be on one relay, replies on another).
-         * We query ALL relays and deduplicate later. The thread view handles
-         * deduplication via events_by_id hash table. */
-        g_debug("query_single: relay %s returned %s, continuing to next relay",
-                url, got_eose ? "EOSE" : "timeout");
+        // Track this active subscription
+        ActiveSub *as = g_new0(ActiveSub, 1);
+        as->sub = sub;
+        as->relay = relay;
+        as->url = url;
+        as->from_pool = relay_from_pool;
+        as->got_eose = FALSE;
+        as->events_received = 0;
+        g_ptr_array_add(active_subs, as);
     }
 
-    // Cleanup only relays we created that weren't added to pool
+    /* PHASE 2: Poll ALL subscriptions in parallel until all EOSE or timeout */
+    guint64 start_time = g_get_monotonic_time();
+    const guint64 timeout_us = 10000000;  // 10 seconds total timeout
+
+    while (active_subs->len > 0) {
+        if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) break;
+
+        guint64 elapsed_us = g_get_monotonic_time() - start_time;
+        if (elapsed_us > timeout_us) break;
+
+        guint eose_count = 0;
+        for (guint i = 0; i < active_subs->len; i++) {
+            ActiveSub *as = g_ptr_array_index(active_subs, i);
+            if (as->got_eose) { eose_count++; continue; }
+
+            // Drain events
+            NostrEvent *evt = NULL;
+            GoChannel *ch_events = nostr_subscription_get_events_channel(as->sub);
+            while (ch_events && go_channel_try_receive(ch_events, (void**)&evt) == 0) {
+                as->events_received++;
+                char *json = nostr_event_serialize(evt);
+                if (json) g_ptr_array_add(ctx->results, json);
+                nostr_event_free(evt);
+                evt = NULL;
+            }
+
+            // Check EOSE
+            GoChannel *ch_eose = nostr_subscription_get_eose_channel(as->sub);
+            if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+                as->got_eose = TRUE;
+                eose_count++;
+            }
+        }
+
+        // All done?
+        if (eose_count == active_subs->len) break;
+
+        g_usleep(5000);  // 5ms between polls
+    }
+
+    /* PHASE 3: Cleanup all subscriptions */
+    for (guint i = 0; i < active_subs->len; i++) {
+        ActiveSub *as = g_ptr_array_index(active_subs, i);
+        nostr_subscription_close(as->sub, NULL);
+        nostr_subscription_free(as->sub);
+    }
+    g_ptr_array_unref(active_subs);
+
+    // Cleanup only relays we created
     for (guint i = 0; i < created_relays->len; i++) {
         NostrRelay *r = (NostrRelay*)created_relays->pdata[i];
         if (r) {
