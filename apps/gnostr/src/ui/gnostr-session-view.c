@@ -30,6 +30,7 @@ typedef enum {
   SIGNAL_PAGE_SELECTED,
   SIGNAL_SETTINGS_REQUESTED,
   SIGNAL_RELAYS_REQUESTED,
+  SIGNAL_RECONNECT_REQUESTED,
   SIGNAL_LOGIN_REQUESTED,
   SIGNAL_LOGOUT_REQUESTED,
   SIGNAL_NEW_NOTES_CLICKED,
@@ -63,7 +64,14 @@ struct _GnostrSessionView {
   AdwNavigationPage *content_page;
   AdwToolbarView *toolbar_view;
   AdwHeaderBar *header_bar;
-  GtkButton *btn_relays;
+  GtkMenuButton *btn_relays;
+  GtkImage *relay_status_icon;
+  GtkLabel *relay_status_label;
+  GtkPopover *relay_popover;
+  GtkLabel *lbl_connected_count;
+  GtkLabel *lbl_total_count;
+  GtkButton *btn_manage_relays;
+  GtkButton *btn_reconnect;
   GtkMenuButton *btn_avatar;
 
   GtkPopover *avatar_popover;
@@ -246,11 +254,21 @@ static void on_btn_settings_clicked(GtkButton *btn, gpointer user_data) {
   g_signal_emit(self, signals[SIGNAL_SETTINGS_REQUESTED], 0);
 }
 
-static void on_btn_relays_clicked(GtkButton *btn, gpointer user_data) {
+static void on_btn_manage_relays_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
   if (!GNOSTR_IS_SESSION_VIEW(self)) return;
+  /* Close the popover before opening relay manager */
+  if (self->relay_popover)
+    gtk_popover_popdown(self->relay_popover);
   g_signal_emit(self, signals[SIGNAL_RELAYS_REQUESTED], 0);
+}
+
+static void on_btn_reconnect_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
+  if (!GNOSTR_IS_SESSION_VIEW(self)) return;
+  g_signal_emit(self, signals[SIGNAL_RECONNECT_REQUESTED], 0);
 }
 
 static void on_btn_login_clicked(GtkButton *btn, gpointer user_data) {
@@ -378,6 +396,17 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
       G_TYPE_NONE,
       0);
 
+  signals[SIGNAL_RECONNECT_REQUESTED] = g_signal_new(
+      "reconnect-requested",
+      G_TYPE_FROM_CLASS(klass),
+      G_SIGNAL_RUN_LAST,
+      0,
+      NULL,
+      NULL,
+      g_cclosure_marshal_VOID__VOID,
+      G_TYPE_NONE,
+      0);
+
   signals[SIGNAL_LOGIN_REQUESTED] = g_signal_new(
       "login-requested",
       G_TYPE_FROM_CLASS(klass),
@@ -442,6 +471,13 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, toolbar_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, header_bar);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_relays);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, relay_status_icon);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, relay_status_label);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, relay_popover);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, lbl_connected_count);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, lbl_total_count);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_manage_relays);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_reconnect);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_avatar);
 
   /* avatar_popover and its children are now created programmatically to avoid
@@ -501,8 +537,12 @@ static void gnostr_session_view_init(GnostrSessionView *self) {
     g_signal_connect(self->btn_settings, "clicked", G_CALLBACK(on_btn_settings_clicked), self);
   }
 
-  if (self->btn_relays) {
-    g_signal_connect(self->btn_relays, "clicked", G_CALLBACK(on_btn_relays_clicked), self);
+  if (self->btn_manage_relays) {
+    g_signal_connect(self->btn_manage_relays, "clicked", G_CALLBACK(on_btn_manage_relays_clicked), self);
+  }
+
+  if (self->btn_reconnect) {
+    g_signal_connect(self->btn_reconnect, "clicked", G_CALLBACK(on_btn_reconnect_clicked), self);
   }
 
   if (self->btn_login) {
@@ -719,5 +759,64 @@ void gnostr_session_view_set_new_notes_count(GnostrSessionView *self, guint coun
     if (self->new_notes_revealer) {
       gtk_revealer_set_reveal_child(self->new_notes_revealer, FALSE);
     }
+  }
+}
+
+void gnostr_session_view_set_relay_status(GnostrSessionView *self,
+                                          guint connected_count,
+                                          guint total_count) {
+  g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
+
+  /* Update the status label */
+  if (self->relay_status_label) {
+    char *label = g_strdup_printf("%u/%u", connected_count, total_count);
+    gtk_label_set_text(self->relay_status_label, label);
+    g_free(label);
+  }
+
+  /* Update the count labels in popover */
+  if (self->lbl_connected_count) {
+    char *count = g_strdup_printf("%u", connected_count);
+    gtk_label_set_text(self->lbl_connected_count, count);
+    g_free(count);
+  }
+
+  if (self->lbl_total_count) {
+    char *count = g_strdup_printf("%u", total_count);
+    gtk_label_set_text(self->lbl_total_count, count);
+    g_free(count);
+  }
+
+  /* Update status icon based on connection state */
+  if (self->relay_status_icon) {
+    /* Remove existing style classes */
+    gtk_widget_remove_css_class(GTK_WIDGET(self->relay_status_icon), "success");
+    gtk_widget_remove_css_class(GTK_WIDGET(self->relay_status_icon), "warning");
+    gtk_widget_remove_css_class(GTK_WIDGET(self->relay_status_icon), "error");
+    gtk_widget_remove_css_class(GTK_WIDGET(self->relay_status_icon), "dim-label");
+
+    if (total_count == 0) {
+      /* No relays configured */
+      gtk_image_set_from_icon_name(self->relay_status_icon, "network-offline-symbolic");
+      gtk_widget_add_css_class(GTK_WIDGET(self->relay_status_icon), "dim-label");
+    } else if (connected_count == 0) {
+      /* All relays disconnected */
+      gtk_image_set_from_icon_name(self->relay_status_icon, "network-offline-symbolic");
+      gtk_widget_add_css_class(GTK_WIDGET(self->relay_status_icon), "error");
+    } else if (connected_count < total_count) {
+      /* Some relays connected */
+      gtk_image_set_from_icon_name(self->relay_status_icon, "network-wired-symbolic");
+      gtk_widget_add_css_class(GTK_WIDGET(self->relay_status_icon), "warning");
+    } else {
+      /* All relays connected */
+      gtk_image_set_from_icon_name(self->relay_status_icon, "network-wired-symbolic");
+      gtk_widget_add_css_class(GTK_WIDGET(self->relay_status_icon), "success");
+    }
+  }
+
+  /* Show/hide reconnect button based on connection state */
+  if (self->btn_reconnect) {
+    gboolean show_reconnect = (total_count > 0 && connected_count < total_count);
+    gtk_widget_set_visible(GTK_WIDGET(self->btn_reconnect), show_reconnect);
   }
 }

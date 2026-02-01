@@ -101,62 +101,107 @@ static const char *stristr(const char *haystack, const char *needle) {
   return NULL;
 }
 
-/* HTML parsing: Extract content from a meta tag starting at meta_start */
-static char *extract_content_from_meta(const char *meta_start) {
-  if (!meta_start) return NULL;
+/* HTML parsing: Extract content from a meta tag.
+ * tag_start should point to '<meta' and tag_end to the closing '>'.
+ * This properly handles both attribute orders:
+ *   <meta property="og:title" content="...">
+ *   <meta content="..." property="og:title">
+ */
+static char *extract_content_from_meta_range(const char *tag_start, const char *tag_end) {
+  if (!tag_start || !tag_end || tag_end <= tag_start) return NULL;
 
-  /* Find content attribute */
-  const char *content_start = stristr(meta_start, "content=");
-  if (!content_start) return NULL;
+  /* Search for content= within the tag bounds only */
+  const char *pos = tag_start;
+  const char *content_attr = NULL;
 
-  content_start += 8; /* Skip "content=" */
+  while (pos < tag_end) {
+    content_attr = stristr(pos, "content=");
+    if (!content_attr || content_attr >= tag_end) return NULL;
+    break;
+  }
+
+  if (!content_attr) return NULL;
+
+  const char *content_start = content_attr + 8; /* Skip "content=" */
+  if (content_start >= tag_end) return NULL;
 
   /* Determine quote type */
   char quote = *content_start;
   if (quote != '"' && quote != '\'') return NULL;
 
   content_start++; /* Skip opening quote */
+  if (content_start >= tag_end) return NULL;
 
-  /* Find closing quote */
+  /* Find closing quote (must be before tag_end) */
   const char *content_end = strchr(content_start, quote);
-  if (!content_end) return NULL;
+  if (!content_end || content_end >= tag_end) return NULL;
 
   return g_strndup(content_start, content_end - content_start);
 }
 
-/* HTML parsing: Extract meta tag content by property or name attribute */
+/* HTML parsing: Find a meta tag containing the given property and extract content.
+ * Handles both attribute orders: property before content and content before property.
+ * nostrc-24m: Fixed to properly handle <meta content="..." property="og:..."> format.
+ */
 static char *extract_meta_tag(const char *html, const char *property) {
   if (!html || !property) return NULL;
 
-  /* Build search patterns for property="..." (OpenGraph standard) */
-  char *pattern1 = g_strdup_printf("<meta property=\"%s\"", property);
-  char *pattern2 = g_strdup_printf("<meta property='%s'", property);
+  /* Build search patterns for property="..." or property='...' */
+  char *prop_pattern1 = g_strdup_printf("property=\"%s\"", property);
+  char *prop_pattern2 = g_strdup_printf("property='%s'", property);
+  char *name_pattern1 = g_strdup_printf("name=\"%s\"", property);
+  char *name_pattern2 = g_strdup_printf("name='%s'", property);
 
-  const char *meta_start = stristr(html, pattern1);
-  if (!meta_start) meta_start = stristr(html, pattern2);
+  const char *pos = html;
+  char *result = NULL;
 
-  g_free(pattern1);
-  g_free(pattern2);
+  /* Scan through all <meta tags */
+  while ((pos = stristr(pos, "<meta")) != NULL) {
+    const char *tag_start = pos;
 
-  if (meta_start) {
-    return extract_content_from_meta(meta_start);
+    /* Find the end of this tag */
+    const char *tag_end = strchr(tag_start, '>');
+    if (!tag_end) break;
+
+    /* Check if this meta tag contains our target property/name */
+    gboolean found = FALSE;
+
+    /* Check within tag bounds for the property patterns */
+    const char *prop_match = stristr(tag_start, prop_pattern1);
+    if (prop_match && prop_match < tag_end) found = TRUE;
+
+    if (!found) {
+      prop_match = stristr(tag_start, prop_pattern2);
+      if (prop_match && prop_match < tag_end) found = TRUE;
+    }
+
+    /* Try name= patterns (Twitter cards) */
+    if (!found) {
+      prop_match = stristr(tag_start, name_pattern1);
+      if (prop_match && prop_match < tag_end) found = TRUE;
+    }
+
+    if (!found) {
+      prop_match = stristr(tag_start, name_pattern2);
+      if (prop_match && prop_match < tag_end) found = TRUE;
+    }
+
+    if (found) {
+      /* Extract content from this tag (handles both attribute orders) */
+      result = extract_content_from_meta_range(tag_start, tag_end);
+      if (result) break;
+    }
+
+    /* Move past this tag */
+    pos = tag_end + 1;
   }
 
-  /* Fallback: Try name="..." attribute (used by Twitter cards) */
-  pattern1 = g_strdup_printf("<meta name=\"%s\"", property);
-  pattern2 = g_strdup_printf("<meta name='%s'", property);
+  g_free(prop_pattern1);
+  g_free(prop_pattern2);
+  g_free(name_pattern1);
+  g_free(name_pattern2);
 
-  meta_start = stristr(html, pattern1);
-  if (!meta_start) meta_start = stristr(html, pattern2);
-
-  g_free(pattern1);
-  g_free(pattern2);
-
-  if (meta_start) {
-    return extract_content_from_meta(meta_start);
-  }
-
-  return NULL;
+  return result;
 }
 
 /* HTML parsing: Extract <title> tag */
