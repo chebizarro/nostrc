@@ -150,6 +150,18 @@ char *nostr_envelope_serialize_compact(const NostrEnvelope *base) {
         free(msg);
         return out;
     }
+    case NOSTR_ENVELOPE_CLOSE: {
+        const NostrCloseEnvelope *env = (const NostrCloseEnvelope *)base;
+        if (!env->message) return NULL;
+        char *sid = json_escape_string_min(env->message);
+        if (!sid) return NULL;
+        size_t sz = 10 + strlen(sid) + 1;
+        char *out = (char *)malloc(sz);
+        if (!out) { free(sid); return NULL; }
+        snprintf(out, sz, "[\"CLOSE\",%s]", sid);
+        free(sid);
+        return out;
+    }
     case NOSTR_ENVELOPE_CLOSED: {
         const NostrClosedEnvelope *env = (const NostrClosedEnvelope *)base;
         if (!env->subscription_id || !env->reason) return NULL;

@@ -470,27 +470,27 @@ void nostr_subscription_close(NostrSubscription *sub, Error **err) {
     }
 
     if (nostr_relay_is_connected(sub->relay)) {
-        // Create a NostrClosedEnvelope with the subscription ID (allocated with correct size)
-        NostrClosedEnvelope *close_msg = (NostrClosedEnvelope *)malloc(sizeof(NostrClosedEnvelope));
+        // Create a NostrCloseEnvelope with the subscription ID
+        // NIP-01: Client sends ["CLOSE", "<subscription_id>"] to close a subscription
+        NostrCloseEnvelope *close_msg = (NostrCloseEnvelope *)malloc(sizeof(NostrCloseEnvelope));
         if (!close_msg) {
             if (err) *err = new_error(1, "failed to create close envelope");
             return;
         }
-        close_msg->base.type = NOSTR_ENVELOPE_CLOSED;
-        close_msg->subscription_id = strdup(sub->priv->id);
-        close_msg->reason = NULL;
+        close_msg->base.type = NOSTR_ENVELOPE_CLOSE;
+        close_msg->message = strdup(sub->priv->id);
 
         // Serialize the close message and send it to the relay
         char *close_msg_str = nostr_envelope_serialize((NostrEnvelope *)close_msg);
         if (!close_msg_str) {
             if (err) *err = new_error(1, "failed to serialize close envelope");
             // free envelope before returning
-            free(close_msg->subscription_id);
+            free(close_msg->message);
             free(close_msg);
             return;
         }
         // free temporary envelope after serialization to avoid leaks
-        free(close_msg->subscription_id);
+        free(close_msg->message);
         free(close_msg);
 
         // Send the message through the relay
