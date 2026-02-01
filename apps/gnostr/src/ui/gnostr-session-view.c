@@ -344,9 +344,12 @@ static void update_auth_gating(GnostrSessionView *self) {
                        self->authenticated ? _("Signed in") : _("Not signed in"));
   }
 
-  /* Update login button visibility if popover exists */
+  /* Update login/logout button visibility if popover exists */
   if (self->btn_login) {
     gtk_widget_set_visible(GTK_WIDGET(self->btn_login), !self->authenticated);
+  }
+  if (self->btn_logout) {
+    gtk_widget_set_visible(GTK_WIDGET(self->btn_logout), self->authenticated);
   }
 
   /* If we became unauthenticated while on a gated page, go back to timeline */
