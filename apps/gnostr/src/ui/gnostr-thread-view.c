@@ -390,7 +390,8 @@ static void parse_nip10_from_json(const char *json_str, char **root_id, char **r
 }
 
 /* nostrc-hb7c: Callback for extracting p-tags (mentioned pubkeys) */
-static bool parse_ptag_callback(const char *tag_json, void *user_data) {
+static bool parse_ptag_callback(size_t index, const char *tag_json, void *user_data) {
+  (void)index;  /* unused */
   GPtrArray *pubkeys = (GPtrArray *)user_data;
   if (!tag_json || !pubkeys) return true;
 
