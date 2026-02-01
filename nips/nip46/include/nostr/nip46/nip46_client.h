@@ -21,6 +21,11 @@ int nostr_nip46_client_get_public_key(NostrNip46Session *s, char **out_user_pubk
 /* Set the remote signer's pubkey (received after connect handshake) */
 int nostr_nip46_client_set_signer_pubkey(NostrNip46Session *s, const char *signer_pubkey_hex);
 
+/* nostrc-1wfi: Set the client's secret key directly (for ECDH encryption).
+ * This is the client's secp256k1 private key, NOT the URI's secret param.
+ * The secret_hex must be a 64-character hex string (32 bytes). */
+int nostr_nip46_client_set_secret(NostrNip46Session *s, const char *secret_hex);
+
 int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, char **out_signed_event_json);
 int nostr_nip46_client_ping(NostrNip46Session *s);
 

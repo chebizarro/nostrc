@@ -493,10 +493,18 @@ gnostr_signer_service_restore_from_settings(GnostrSignerService *self)
     client_pubkey, default_relay, client_secret);
   free(client_pubkey);
 
-  /* Parse URI to populate session with secret and relays */
+  /* Parse URI to populate session with relays */
   int rc = nostr_nip46_client_connect(session, connect_uri, NULL);
   if (rc != 0) {
     g_warning("[SIGNER_SERVICE] Failed to restore session from URI: %d", rc);
+    nostr_nip46_session_free(session);
+    return FALSE;
+  }
+
+  /* nostrc-1wfi: Set the REAL client secret key for ECDH encryption.
+   * The URI's secret= param is just an auth token, NOT the crypto key. */
+  if (nostr_nip46_client_set_secret(session, client_secret) != 0) {
+    g_warning("[SIGNER_SERVICE] Failed to set client secret for ECDH");
     nostr_nip46_session_free(session);
     return FALSE;
   }

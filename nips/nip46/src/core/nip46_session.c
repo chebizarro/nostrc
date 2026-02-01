@@ -192,6 +192,35 @@ int nostr_nip46_client_set_signer_pubkey(NostrNip46Session *s, const char *signe
     return 0;
 }
 
+/* nostrc-1wfi: Set the client's secret key directly for ECDH encryption.
+ * This bypasses URI parsing and sets the secret that's used for NIP-04/NIP-44. */
+int nostr_nip46_client_set_secret(NostrNip46Session *s, const char *secret_hex) {
+    if (!s || !secret_hex) return -1;
+    if (strlen(secret_hex) != 64) {
+        fprintf(stderr, "[nip46] set_secret: invalid secret length %zu (expected 64)\n",
+                strlen(secret_hex));
+        return -1;
+    }
+    /* Validate it's actually a valid hex string */
+    for (size_t i = 0; i < 64; i++) {
+        char c = secret_hex[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+            fprintf(stderr, "[nip46] set_secret: invalid hex character at position %zu\n", i);
+            return -1;
+        }
+    }
+    /* Clear and free existing secret */
+    if (s->secret) {
+        memset(s->secret, 0, strlen(s->secret));
+        free(s->secret);
+    }
+    s->secret = strdup(secret_hex);
+    if (!s->secret) return -1;
+    fprintf(stderr, "[nip46] set_secret: stored client secret (%.4s...%s)\n",
+            secret_hex, secret_hex + 60);
+    return 0;
+}
+
 int nostr_nip46_client_get_public_key(NostrNip46Session *s, char **out_user_pubkey_hex) {
     if (!s || !out_user_pubkey_hex) return -1;
     /* If a client pubkey was provided (nostrconnect://), prefer it. */

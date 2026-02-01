@@ -281,10 +281,24 @@ static gboolean nip46_success_on_main(gpointer data) {
     if (rc != 0) {
       g_warning("[NIP46_LOGIN] Failed to populate session from URI: %d", rc);
     } else {
-      g_message("[NIP46_LOGIN] Session populated with secret and relays from URI");
+      g_message("[NIP46_LOGIN] Session populated with relays from URI");
     }
   } else {
-    g_warning("[NIP46_LOGIN] nostrconnect_uri is NULL - session won't have secret key!");
+    g_warning("[NIP46_LOGIN] nostrconnect_uri is NULL!");
+  }
+
+  /* nostrc-1wfi: Set the REAL client secret key for ECDH encryption.
+   * The URI's secret= parameter is just an auth token, NOT the crypto key.
+   * ctx->nostrconnect_secret is the actual secp256k1 private key we generated. */
+  if (ctx->nostrconnect_secret) {
+    int rc = nostr_nip46_client_set_secret(self->nip46_session, ctx->nostrconnect_secret);
+    if (rc != 0) {
+      g_warning("[NIP46_LOGIN] Failed to set client secret key for ECDH: %d", rc);
+    } else {
+      g_message("[NIP46_LOGIN] Client secret key set for ECDH encryption");
+    }
+  } else {
+    g_warning("[NIP46_LOGIN] nostrconnect_secret is NULL - ECDH will fail!");
   }
 
   /* nostrc-rrfr: Store the signer's pubkey in the session - critical for signing */
