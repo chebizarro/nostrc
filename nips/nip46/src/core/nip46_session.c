@@ -199,21 +199,64 @@ int nostr_nip46_client_get_public_key(NostrNip46Session *s, char **out_user_pubk
 }
 
 int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, char **out_signed_event_json) {
-    if (!s || !event_json || !out_signed_event_json) return -1;
+    /* nostrc-rrfr: Add detailed logging for debugging sign failures */
+    if (!s) {
+        fprintf(stderr, "[nip46] sign_event: ERROR -1: session is NULL\n");
+        return -1;
+    }
+    if (!event_json) {
+        fprintf(stderr, "[nip46] sign_event: ERROR -1: event_json is NULL\n");
+        return -1;
+    }
+    if (!out_signed_event_json) {
+        fprintf(stderr, "[nip46] sign_event: ERROR -1: out param is NULL\n");
+        return -1;
+    }
     *out_signed_event_json = NULL;
+
+    fprintf(stderr, "[nip46] sign_event: building request for event (%.50s...)\n",
+            event_json);
+
     /* Build a NIP-46 request {id, method:"sign_event", params:[event_json]} */
     const char *params[1] = { event_json };
     char *req = nostr_nip46_request_build("1", "sign_event", params, 1);
-    if (!req) return -1;
+    if (!req) {
+        fprintf(stderr, "[nip46] sign_event: ERROR -1: failed to build request JSON\n");
+        return -1;
+    }
+
     /* Encrypt request using NIP-04. Requires bunker remote pubkey (SEC1) and our secret (sk). */
     const char *peer = s->remote_pubkey_hex;
-    if (!peer || !s->secret) { free(req); return -1; }
+    if (!peer) {
+        fprintf(stderr, "[nip46] sign_event: ERROR -1: remote_pubkey_hex is NULL (session not connected?)\n");
+        free(req);
+        return -1;
+    }
+    if (!s->secret) {
+        fprintf(stderr, "[nip46] sign_event: ERROR -1: session secret is NULL (credentials not persisted?)\n");
+        free(req);
+        return -1;
+    }
+
+    fprintf(stderr, "[nip46] sign_event: encrypting request to peer %s\n", peer);
 
     char *cipher = NULL; char *err = NULL;
     /* secure encrypt using binary secret */
     nostr_secure_buf sb = secure_alloc(32);
-    if (!sb.ptr || parse_sk32(s->secret, (unsigned char*)sb.ptr) != 0) { if(sb.ptr) secure_free(&sb); free(req); return -1; }
+    if (!sb.ptr) {
+        fprintf(stderr, "[nip46] sign_event: ERROR -1: failed to allocate secure buffer\n");
+        free(req);
+        return -1;
+    }
+    if (parse_sk32(s->secret, (unsigned char*)sb.ptr) != 0) {
+        fprintf(stderr, "[nip46] sign_event: ERROR -1: failed to parse secret key\n");
+        secure_free(&sb);
+        free(req);
+        return -1;
+    }
     if (nostr_nip04_encrypt_secure(req, peer, &sb, &cipher, &err) != 0 || !cipher) {
+        fprintf(stderr, "[nip46] sign_event: ERROR -1: NIP-04 encryption failed: %s\n",
+                err ? err : "unknown");
         secure_free(&sb);
         if (err) free(err);
         free(req);
@@ -221,6 +264,8 @@ int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, 
     }
     secure_free(&sb);
     free(req);
+
+    fprintf(stderr, "[nip46] sign_event: request encrypted successfully\n");
     *out_signed_event_json = cipher; /* return ciphertext to be sent over transport */
     return 0;
 }

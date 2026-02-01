@@ -221,10 +221,15 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
   (void)cancellable;
 
   if (!ctx->service->nip46_session) {
+    /* nostrc-rrfr: Log when session is missing */
+    g_warning("[SIGNER_SERVICE] NIP-46 sign failed: session is NULL - "
+              "user may not be logged in or session was not persisted after login");
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
-                            "NIP-46 session not available");
+                            "NIP-46 session not available - please sign in again");
     return;
   }
+
+  g_debug("[SIGNER_SERVICE] NIP-46 signing event: %.80s...", ctx->event_json);
 
   char *signed_event_json = NULL;
   int rc = nostr_nip46_client_sign_event(ctx->service->nip46_session,
@@ -232,10 +237,15 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
                                           &signed_event_json);
 
   if (rc != 0 || !signed_event_json) {
+    /* nostrc-rrfr: Log with more context about the error */
+    g_warning("[SIGNER_SERVICE] NIP-46 sign failed with rc=%d - "
+              "check stderr for [nip46] sign_event details", rc);
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
-                            "NIP-46 signing failed (error %d)", rc);
+                            "NIP-46 signing failed (error %d) - check logs for details", rc);
     return;
   }
+
+  g_debug("[SIGNER_SERVICE] NIP-46 sign succeeded, got encrypted response");
 
   g_task_return_pointer(task, signed_event_json, g_free);
 }
