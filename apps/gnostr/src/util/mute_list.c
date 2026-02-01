@@ -211,8 +211,9 @@ gboolean gnostr_mute_list_load_from_json(GnostrMuteList *self,
         }
     }
 
-    /* TODO: Parse encrypted content for private entries (requires NIP-44) */
-    /* For now, we only handle public entries in tags */
+    /* Private entries are handled via decrypt_private_entries_async() in
+     * on_mute_list_query_done() after loading. This function only parses
+     * public entries from tags. See nostrc-nluo for NIP-44 implementation. */
 
     nostr_event_free(event);
     g_mutex_unlock(&self->lock);

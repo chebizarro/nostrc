@@ -183,8 +183,9 @@ gboolean gnostr_bookmarks_load_from_json(GnostrBookmarks *self,
         }
     }
 
-    /* TODO: Parse encrypted content for private entries (requires NIP-44) */
-    /* For now, we only handle public entries in tags */
+    /* Private entries are handled via decrypt_private_entries_async() in
+     * on_bookmarks_query_done() after loading. This function only parses
+     * public entries from tags. See nostrc-nluo for NIP-44 implementation. */
 
     nostr_event_free(event);
     g_mutex_unlock(&self->lock);
@@ -212,6 +213,154 @@ static void fetch_context_free(FetchContext *ctx) {
 }
 
 #ifndef GNOSTR_BOOKMARKS_TEST_ONLY
+
+/* ---- NIP-44 Private Entry Decryption (nostrc-nluo) ---- */
+
+/* Context for private entry decryption */
+typedef struct {
+    GnostrBookmarks *bookmarks;
+    char *encrypted_content;
+    char *user_pubkey;
+} DecryptPrivateContext;
+
+static void decrypt_private_ctx_free(DecryptPrivateContext *ctx) {
+    if (ctx) {
+        g_free(ctx->encrypted_content);
+        g_free(ctx->user_pubkey);
+        g_free(ctx);
+    }
+}
+
+/* Callback context for parsing private entries */
+typedef struct {
+    GnostrBookmarks *self;
+} PrivateEntriesCtx;
+
+/* Callback for iterating private entry tags */
+static bool parse_private_entry_cb(size_t idx, const char *element_json, void *user_data) {
+    (void)idx;
+    PrivateEntriesCtx *ctx = (PrivateEntriesCtx *)user_data;
+    GnostrBookmarks *self = ctx->self;
+
+    /* Each element is a tag array like ["e", "event_id", "relay_hint"] */
+    if (!nostr_json_is_array_str(element_json)) return true;
+
+    size_t tag_len = 0;
+    if (nostr_json_get_array_length(element_json, NULL, &tag_len) != 0 || tag_len < 2) {
+        return true;
+    }
+
+    char *tag_name = NULL;
+    char *value = NULL;
+    char *relay_hint = NULL;
+
+    /* Get tag name (index 0) and value (index 1) */
+    if (nostr_json_get_array_string(element_json, NULL, 0, &tag_name) != 0 || !tag_name) {
+        return true;
+    }
+    if (nostr_json_get_array_string(element_json, NULL, 1, &value) != 0 || !value) {
+        free(tag_name);
+        return true;
+    }
+    /* Optional relay hint at index 2 */
+    if (tag_len >= 3) {
+        nostr_json_get_array_string(element_json, NULL, 2, &relay_hint);
+    }
+
+    /* Only handle "e" and "a" tags for bookmarks */
+    if (strcmp(tag_name, "e") == 0 || strcmp(tag_name, "a") == 0) {
+        if (!g_hash_table_contains(self->bookmarks, value)) {
+            BookmarkEntry *entry = bookmark_entry_new(value, relay_hint, TRUE);  /* is_private = TRUE */
+            g_hash_table_insert(self->bookmarks, entry->event_id, entry);
+            g_debug("bookmarks: loaded private %s %s", tag_name, value);
+        }
+    }
+
+    free(tag_name);
+    free(value);
+    free(relay_hint);
+    return true;  /* Continue iteration */
+}
+
+/* Parse decrypted private entries (JSON array of tags) */
+static void parse_private_entries(GnostrBookmarks *self, const char *decrypted_json) {
+    if (!self || !decrypted_json || !*decrypted_json) return;
+
+    /* Validate that it's an array */
+    if (!nostr_json_is_array_str(decrypted_json)) {
+        g_warning("bookmarks: decrypted content is not an array");
+        return;
+    }
+
+    g_mutex_lock(&self->lock);
+
+    /* Iterate over root array using callback */
+    PrivateEntriesCtx ctx = { .self = self };
+    nostr_json_array_foreach_root(decrypted_json, parse_private_entry_cb, &ctx);
+
+    g_mutex_unlock(&self->lock);
+
+    g_message("bookmarks: parsed private entries");
+}
+
+/* Callback when private entries are decrypted */
+static void on_private_entries_decrypted(GObject *source, GAsyncResult *res, gpointer user_data) {
+    DecryptPrivateContext *ctx = (DecryptPrivateContext *)user_data;
+    if (!ctx) return;
+
+    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+    GError *error = NULL;
+    char *decrypted_json = NULL;
+
+    gboolean ok = nostr_org_nostr_signer_call_nip44_decrypt_finish(
+        proxy, &decrypted_json, res, &error);
+
+    if (!ok || !decrypted_json || !*decrypted_json) {
+        /* Not an error - just means no private entries or decryption failed */
+        g_debug("bookmarks: no private entries to decrypt or decryption failed: %s",
+                error ? error->message : "empty result");
+        g_clear_error(&error);
+        decrypt_private_ctx_free(ctx);
+        return;
+    }
+
+    g_debug("bookmarks: decrypted private entries: %.100s...", decrypted_json);
+    parse_private_entries(ctx->bookmarks, decrypted_json);
+
+    g_free(decrypted_json);
+    decrypt_private_ctx_free(ctx);
+}
+
+/* Decrypt private bookmark entries from event content */
+static void decrypt_private_entries_async(GnostrBookmarks *self,
+                                           const char *encrypted_content,
+                                           const char *user_pubkey) {
+    if (!self || !encrypted_content || !*encrypted_content || !user_pubkey) return;
+
+    GError *error = NULL;
+    NostrSignerProxy *proxy = gnostr_signer_proxy_get(&error);
+    if (!proxy) {
+        g_debug("bookmarks: cannot decrypt private entries - signer not available: %s",
+                error ? error->message : "unknown");
+        g_clear_error(&error);
+        return;
+    }
+
+    DecryptPrivateContext *ctx = g_new0(DecryptPrivateContext, 1);
+    ctx->bookmarks = self;
+    ctx->encrypted_content = g_strdup(encrypted_content);
+    ctx->user_pubkey = g_strdup(user_pubkey);
+
+    /* NIP-44 decrypt: for bookmark list, we encrypt to ourselves */
+    nostr_org_nostr_signer_call_nip44_decrypt(
+        proxy,
+        encrypted_content,
+        user_pubkey,      /* peer pubkey = self (encrypted to self) */
+        user_pubkey,      /* identity = current user */
+        NULL,             /* GCancellable */
+        on_private_entries_decrypted,
+        ctx);
+}
 
 /* Internal: merge remote bookmarks into local, preferring most recent */
 static void bookmarks_merge_from_json_unlocked(GnostrBookmarks *self,
@@ -294,24 +443,57 @@ static void on_bookmarks_query_done(GObject *source, GAsyncResult *res, gpointer
 
     gboolean success = FALSE;
     gint64 newest_created_at = 0;
+    const char *newest_event_json = NULL;
+    char *encrypted_content = NULL;  /* owned copy */
 
     /* Find and load the newest bookmark list event */
     if (results && results->len > 0) {
-        g_mutex_lock(&ctx->bookmarks->lock);
-
+        /* First pass: find newest event and extract encrypted content */
         for (guint i = 0; i < results->len; i++) {
             const char *json = g_ptr_array_index(results, i);
-            gint64 created_at = 0;
-            bookmarks_merge_from_json_unlocked(ctx->bookmarks, json, &created_at);
-            if (created_at > newest_created_at) {
-                newest_created_at = created_at;
-                success = TRUE;
+
+            NostrEvent *event = nostr_event_new();
+            if (nostr_event_deserialize(event, json) != 0) {
+                nostr_event_free(event);
+                continue;
             }
+
+            /* Verify kind */
+            if (nostr_event_get_kind(event) != BOOKMARK_LIST_KIND) {
+                nostr_event_free(event);
+                continue;
+            }
+
+            /* Check timestamp */
+            gint64 event_time = nostr_event_get_created_at(event);
+            if (event_time > newest_created_at) {
+                newest_created_at = event_time;
+                newest_event_json = json;
+
+                /* Get encrypted content for private entries (nostrc-nluo) */
+                const char *content_str = nostr_event_get_content(event);
+                g_free(encrypted_content);
+                encrypted_content = (content_str && *content_str) ? g_strdup(content_str) : NULL;
+            }
+            nostr_event_free(event);
         }
 
-        g_mutex_unlock(&ctx->bookmarks->lock);
+        /* Load the newest event */
+        if (newest_event_json) {
+            g_mutex_lock(&ctx->bookmarks->lock);
+            gint64 created_at = 0;
+            bookmarks_merge_from_json_unlocked(ctx->bookmarks, newest_event_json, &created_at);
+            g_mutex_unlock(&ctx->bookmarks->lock);
+            success = TRUE;
+
+            /* Decrypt private entries if present (nostrc-nluo) */
+            if (encrypted_content && *encrypted_content) {
+                decrypt_private_entries_async(ctx->bookmarks, encrypted_content, ctx->pubkey_hex);
+            }
+        }
     }
 
+    g_free(encrypted_content);
     if (results) g_ptr_array_unref(results);
 
     g_message("bookmarks: fetch completed, success=%d, count=%zu",
@@ -499,16 +681,165 @@ typedef struct {
     GnostrBookmarksSaveCallback callback;
     gpointer user_data;
     char *event_json;
+    char *user_pubkey;         /* For NIP-44 encryption */
+    char *private_tags_json;   /* JSON array of private tags to encrypt */
 } SaveContext;
 
 static void save_context_free(SaveContext *ctx) {
     if (ctx) {
         g_free(ctx->event_json);
+        g_free(ctx->user_pubkey);
+        g_free(ctx->private_tags_json);
         g_free(ctx);
     }
 }
 
 #ifndef GNOSTR_BOOKMARKS_TEST_ONLY
+
+/* ---- NIP-44 Private Entry Encryption (nostrc-nluo) ---- */
+
+/* Helper to build JSON array of private bookmark tags using NostrJsonBuilder */
+static char *build_private_tags_json(GnostrBookmarks *self) {
+    NostrJsonBuilder *builder = nostr_json_builder_new();
+    GHashTableIter iter;
+    gpointer key, value;
+    int tag_count = 0;
+
+    nostr_json_builder_begin_array(builder);
+
+    /* Add private bookmarked events */
+    g_hash_table_iter_init(&iter, self->bookmarks);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        BookmarkEntry *entry = (BookmarkEntry *)value;
+        if (entry->is_private) {
+            nostr_json_builder_begin_array(builder);
+            nostr_json_builder_add_string(builder, "e");
+            nostr_json_builder_add_string(builder, entry->event_id);
+            if (entry->relay_hint && *entry->relay_hint) {
+                nostr_json_builder_add_string(builder, entry->relay_hint);
+            }
+            nostr_json_builder_end_array(builder);
+            tag_count++;
+        }
+    }
+
+    nostr_json_builder_end_array(builder);
+
+    /* Return NULL if no private tags */
+    if (tag_count == 0) {
+        nostr_json_builder_free(builder);
+        return NULL;
+    }
+
+    char *result = nostr_json_builder_finish(builder);
+    nostr_json_builder_free(builder);
+    return result;
+}
+
+/* Forward declarations */
+static void proceed_to_sign(SaveContext *ctx, const char *encrypted_content);
+static void on_bookmarks_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data);
+
+/* Callback when private tags are encrypted */
+static void on_private_tags_encrypted(GObject *source, GAsyncResult *res, gpointer user_data) {
+    SaveContext *ctx = (SaveContext *)user_data;
+    if (!ctx) return;
+
+    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+    GError *error = NULL;
+    char *encrypted_content = NULL;
+
+    gboolean ok = nostr_org_nostr_signer_call_nip44_encrypt_finish(
+        proxy, &encrypted_content, res, &error);
+
+    if (!ok || !encrypted_content) {
+        g_warning("bookmarks: failed to encrypt private entries: %s",
+                  error ? error->message : "unknown");
+        g_clear_error(&error);
+        /* Proceed without private entries - still save public ones */
+        proceed_to_sign(ctx, "");
+        return;
+    }
+
+    g_debug("bookmarks: encrypted private entries");
+    proceed_to_sign(ctx, encrypted_content);
+    g_free(encrypted_content);
+}
+
+/* Build and sign the event with given content */
+static void proceed_to_sign(SaveContext *ctx, const char *encrypted_content) {
+    /* Check if signer service is available */
+    GnostrSignerService *signer = gnostr_signer_service_get_default();
+    if (!gnostr_signer_service_is_available(signer)) {
+        if (ctx->callback) ctx->callback(ctx->bookmarks, FALSE, "Signer not available", ctx->user_data);
+        save_context_free(ctx);
+        return;
+    }
+
+    g_mutex_lock(&ctx->bookmarks->lock);
+
+    /* Count public bookmarks for tag array */
+    guint public_count = 0;
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, ctx->bookmarks->bookmarks);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        BookmarkEntry *entry = (BookmarkEntry *)value;
+        if (!entry->is_private) public_count++;
+    }
+
+    /* Build the tags array using NostrTags API */
+    NostrTags *tags = nostr_tags_new(public_count);
+    size_t tag_idx = 0;
+
+    /* Add public bookmarked events as "e" tags */
+    g_hash_table_iter_init(&iter, ctx->bookmarks->bookmarks);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        BookmarkEntry *entry = (BookmarkEntry *)value;
+        if (!entry->is_private) {
+            NostrTag *tag;
+            /* Add relay hint if available */
+            if (entry->relay_hint && *entry->relay_hint) {
+                tag = nostr_tag_new("e", entry->event_id, entry->relay_hint, NULL);
+            } else {
+                tag = nostr_tag_new("e", entry->event_id, NULL);
+            }
+            nostr_tags_set(tags, tag_idx++, tag);
+        }
+    }
+
+    g_mutex_unlock(&ctx->bookmarks->lock);
+
+    /* Build unsigned event using NostrEvent API */
+    NostrEvent *event = nostr_event_new();
+    nostr_event_set_kind(event, BOOKMARK_LIST_KIND);
+    nostr_event_set_created_at(event, (int64_t)time(NULL));
+    nostr_event_set_content(event, encrypted_content ? encrypted_content : "");
+    nostr_event_set_tags(event, tags);  /* Takes ownership of tags */
+
+    char *event_json = nostr_event_serialize(event);
+    nostr_event_free(event);
+
+    if (!event_json) {
+        if (ctx->callback) ctx->callback(ctx->bookmarks, FALSE, "Failed to build event JSON", ctx->user_data);
+        save_context_free(ctx);
+        return;
+    }
+
+    g_message("bookmarks: requesting signature for event");
+    g_free(ctx->event_json);
+    ctx->event_json = event_json;
+
+    /* Call unified signer service (uses NIP-46 or NIP-55L based on login method) */
+    gnostr_sign_event_async(
+        event_json,
+        "",        /* current_user: ignored */
+        "gnostr",  /* app_id: ignored */
+        NULL,      /* cancellable */
+        on_bookmarks_sign_complete,
+        ctx
+    );
+}
 
 static void on_bookmarks_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
     SaveContext *ctx = (SaveContext *)user_data;
@@ -673,73 +1004,43 @@ void gnostr_bookmarks_save_async(GnostrBookmarks *self,
         return;
     }
 
-    g_mutex_lock(&self->lock);
-
-    /* Count public bookmarks for tag array */
-    guint public_count = 0;
-    GHashTableIter iter;
-    gpointer key, value;
-    g_hash_table_iter_init(&iter, self->bookmarks);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        BookmarkEntry *entry = (BookmarkEntry *)value;
-        if (!entry->is_private) public_count++;
-    }
-
-    /* Build the tags array using NostrTags API */
-    NostrTags *tags = nostr_tags_new(public_count);
-    size_t tag_idx = 0;
-
-    /* Add bookmarked events as "e" tags */
-    g_hash_table_iter_init(&iter, self->bookmarks);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        BookmarkEntry *entry = (BookmarkEntry *)value;
-        if (!entry->is_private) {
-            NostrTag *tag;
-            /* Add relay hint if available */
-            if (entry->relay_hint && *entry->relay_hint) {
-                tag = nostr_tag_new("e", entry->event_id, entry->relay_hint, NULL);
-            } else {
-                tag = nostr_tag_new("e", entry->event_id, NULL);
-            }
-            nostr_tags_set(tags, tag_idx++, tag);
-        }
-    }
-
-    g_mutex_unlock(&self->lock);
-
-    /* Build unsigned event using NostrEvent API */
-    NostrEvent *event = nostr_event_new();
-    nostr_event_set_kind(event, BOOKMARK_LIST_KIND);
-    nostr_event_set_created_at(event, (int64_t)time(NULL));
-    nostr_event_set_content(event, ""); /* TODO: Add encrypted private entries */
-    nostr_event_set_tags(event, tags);
-
-    char *event_json = nostr_event_serialize(event);
-    nostr_event_free(event);
-
-    if (!event_json) {
-        if (callback) callback(self, FALSE, "Failed to build event JSON", user_data);
-        return;
-    }
-
-    g_message("bookmarks: requesting signature for: %s", event_json);
-
     /* Create save context */
     SaveContext *ctx = g_new0(SaveContext, 1);
     ctx->bookmarks = self;
     ctx->callback = callback;
     ctx->user_data = user_data;
-    ctx->event_json = event_json;
 
-    /* Call unified signer service (uses NIP-46 or NIP-55L based on login method) */
-    gnostr_sign_event_async(
-        event_json,
-        "",        /* current_user: ignored */
-        "gnostr",  /* app_id: ignored */
-        NULL,      /* cancellable */
-        on_bookmarks_sign_complete,
-        ctx
-    );
+    /* Get user pubkey for encryption */
+    g_mutex_lock(&self->lock);
+    ctx->user_pubkey = g_strdup(self->user_pubkey);
+
+    /* Build private tags JSON (nostrc-nluo) */
+    ctx->private_tags_json = build_private_tags_json(self);
+    g_mutex_unlock(&self->lock);
+
+    /* Note: Private entry encryption still uses the D-Bus proxy directly
+     * because the unified signer service doesn't yet support NIP-44 encrypt.
+     * This is a separate issue to address in a future task. */
+    GError *proxy_err = NULL;
+    NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
+
+    /* If there are private entries and we have user pubkey and proxy, encrypt them first */
+    if (ctx->private_tags_json && ctx->user_pubkey && proxy) {
+        g_message("bookmarks: encrypting private entries");
+        nostr_org_nostr_signer_call_nip44_encrypt(
+            proxy,
+            ctx->private_tags_json,
+            ctx->user_pubkey,  /* encrypt to self */
+            ctx->user_pubkey,  /* identity = current user */
+            NULL,              /* GCancellable */
+            on_private_tags_encrypted,
+            ctx
+        );
+    } else {
+        g_clear_error(&proxy_err);
+        /* No private entries or no pubkey/proxy - proceed directly to sign */
+        proceed_to_sign(ctx, "");
+    }
 }
 
 /* ---- Accessors ---- */
