@@ -18,6 +18,7 @@
 /* Nostr event kinds for notifications */
 #define KIND_LEGACY_DM        4
 #define KIND_TEXT_NOTE        1
+#define KIND_COMMENT          1111  /* NIP-22 comments */
 #define KIND_REPOST           6
 #define KIND_REACTION         7
 #define KIND_NIP17_RUMOR      14
@@ -1006,10 +1007,11 @@ gnostr_badge_manager_start_subscriptions(GnostrBadgeManager *self)
   self->sub_dm = gn_ndb_subscribe(dm_filter, on_dm_events, self, NULL);
   g_free(dm_filter);
 
-  /* Subscribe to mentions (text notes with #p tag matching user) */
+  /* Subscribe to mentions (text notes and comments with #p tag matching user)
+   * Kind 1 = text notes, kind 1111 = NIP-22 comments */
   gchar *mention_filter = g_strdup_printf(
-    "[{\"kinds\":[%d],\"#p\":[\"%s\"]}]",
-    KIND_TEXT_NOTE, self->user_pubkey);
+    "[{\"kinds\":[%d,%d],\"#p\":[\"%s\"]}]",
+    KIND_TEXT_NOTE, KIND_COMMENT, self->user_pubkey);
   self->sub_mentions = gn_ndb_subscribe(mention_filter, on_mention_events, self, NULL);
   g_free(mention_filter);
 
