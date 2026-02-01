@@ -193,9 +193,9 @@ handle_get_property(GDBusConnection  *connection,
   } else if (g_strcmp0(property_name, "Status") == 0) {
     return g_variant_new_string(self->status ? self->status : "Active");
   } else if (g_strcmp0(property_name, "IconName") == 0) {
-    return g_variant_new_string(self->icon_name ? self->icon_name : "org.gnostr.Client");
+    return g_variant_new_string(self->icon_name ? self->icon_name : "org.gnostr.gnostr");
   } else if (g_strcmp0(property_name, "AttentionIconName") == 0) {
-    return g_variant_new_string(self->attention_icon_name ? self->attention_icon_name : "org.gnostr.Client");
+    return g_variant_new_string(self->attention_icon_name ? self->attention_icon_name : "org.gnostr.gnostr");
   } else if (g_strcmp0(property_name, "ToolTip") == 0) {
     /* ToolTip is a struct: (icon_name, icon_pixmap[], title, description) */
     GVariantBuilder pixmap_builder;
@@ -448,8 +448,8 @@ gnostr_tray_icon_init(GnostrTrayIcon *self)
   self->object_path = NULL;
   self->title = g_strdup("GNostr");
   self->status = g_strdup("Active");
-  self->icon_name = g_strdup("org.gnostr.Client");
-  self->attention_icon_name = g_strdup("org.gnostr.Client");
+  self->icon_name = g_strdup("org.gnostr.gnostr");
+  self->attention_icon_name = g_strdup("org.gnostr.gnostr");
   self->unread_count = 0;
 #ifdef HAVE_DBUSMENU
   self->menu_server = NULL;
