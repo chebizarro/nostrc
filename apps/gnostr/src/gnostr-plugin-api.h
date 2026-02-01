@@ -483,6 +483,44 @@ GtkApplication *gnostr_plugin_context_get_application(GnostrPluginContext *conte
  */
 GtkWindow *gnostr_plugin_context_get_main_window(GnostrPluginContext *context);
 
+/* --- Repository Browser (NIP-34) --- */
+
+/**
+ * gnostr_plugin_context_add_repository:
+ * @context: A #GnostrPluginContext
+ * @id: Repository ID (d-tag from event)
+ * @name: (nullable): Repository name
+ * @description: (nullable): Repository description
+ * @clone_url: (nullable): Git clone URL
+ * @web_url: (nullable): Web interface URL
+ * @maintainer_pubkey: (nullable): Primary maintainer pubkey (hex)
+ * @updated_at: Last update timestamp (Unix seconds)
+ *
+ * Add or update a repository in the main repository browser.
+ * Used by NIP-34 plugins to push discovered repositories to the UI.
+ *
+ * @stability: Stable
+ */
+void gnostr_plugin_context_add_repository(GnostrPluginContext *context,
+                                          const char          *id,
+                                          const char          *name,
+                                          const char          *description,
+                                          const char          *clone_url,
+                                          const char          *web_url,
+                                          const char          *maintainer_pubkey,
+                                          gint64               updated_at);
+
+/**
+ * gnostr_plugin_context_clear_repositories:
+ * @context: A #GnostrPluginContext
+ *
+ * Clear all repositories from the main repository browser.
+ * Typically called before a refresh operation.
+ *
+ * @stability: Stable
+ */
+void gnostr_plugin_context_clear_repositories(GnostrPluginContext *context);
+
 /* --- Network Access --- */
 
 /**

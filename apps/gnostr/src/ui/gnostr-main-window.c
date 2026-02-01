@@ -4000,6 +4000,22 @@ static void on_clone_requested(GnostrRepoBrowser *browser, const char *clone_url
   }
 }
 
+/* Handler for refresh-requested signal from repo browser */
+static void on_repo_refresh_requested(GnostrRepoBrowser *browser, gpointer user_data) {
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  (void)browser;
+
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  g_debug("[REPO] Refresh requested");
+
+  /* Show feedback that refresh is happening.
+   * The NIP-34 plugin will push repositories when it receives events from subscriptions. */
+  if (ADW_IS_TOAST_OVERLAY(self->toast_overlay)) {
+    adw_toast_overlay_add_toast(self->toast_overlay, adw_toast_new("Refreshing repositories..."));
+  }
+}
+
 /* Public: Mute a user (adds to mute list and refreshes timeline) */
 void gnostr_main_window_mute_user(GtkWidget *window, const char *pubkey_hex) {
   if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
@@ -4502,6 +4518,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                        G_CALLBACK(on_repo_selected), self);
       g_signal_connect(repo_browser, "clone-requested",
                        G_CALLBACK(on_clone_requested), self);
+      g_signal_connect(repo_browser, "refresh-requested",
+                       G_CALLBACK(on_repo_refresh_requested), self);
     }
   }
 
@@ -5138,6 +5156,13 @@ void gnostr_main_window_set_page(GnostrMainWindow *self, GnostrMainWindowPage pa
 
   if (name && self->main_stack)
     gtk_stack_set_visible_child_name(self->main_stack, name);
+}
+
+GtkWidget *gnostr_main_window_get_repo_browser(GnostrMainWindow *self) {
+  g_return_val_if_fail(GNOSTR_IS_MAIN_WINDOW(self), NULL);
+  if (!self->session_view || !GNOSTR_IS_SESSION_VIEW(self->session_view))
+    return NULL;
+  return gnostr_session_view_get_repo_browser(self->session_view);
 }
 
 static void gnostr_main_window_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {

@@ -24,6 +24,8 @@ G_DECLARE_FINAL_TYPE(GnostrRepoBrowser, gnostr_repo_browser, GNOSTR, REPO_BROWSE
  *   - Emitted when user selects a repository
  * "clone-requested" (gchar *clone_url, gpointer user_data)
  *   - Emitted when user clicks clone button
+ * "refresh-requested" (gpointer user_data)
+ *   - Emitted when user clicks the refresh button
  */
 
 /**

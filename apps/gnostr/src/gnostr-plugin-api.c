@@ -20,6 +20,8 @@
 #include "nostr-event.h"
 #include "nostr-relay.h"
 #include "nostr-json.h"
+#include "ui/gnostr-main-window.h"
+#include "ui/gnostr-repo-browser.h"
 #include <json-glib/json-glib.h>
 #include <string.h>
 #endif /* !GNOSTR_PLUGIN_BUILD */
@@ -311,6 +313,56 @@ gnostr_plugin_context_get_main_window(GnostrPluginContext *context)
 {
   g_return_val_if_fail(context != NULL, NULL);
   return context->main_window;
+}
+
+/* --- Repository Browser (NIP-34) --- */
+
+void
+gnostr_plugin_context_add_repository(GnostrPluginContext *context,
+                                     const char          *id,
+                                     const char          *name,
+                                     const char          *description,
+                                     const char          *clone_url,
+                                     const char          *web_url,
+                                     const char          *maintainer_pubkey,
+                                     gint64               updated_at)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(id != NULL);
+
+  if (!context->main_window)
+    return;
+
+  /* Get the repo browser from main window */
+  if (!GNOSTR_IS_MAIN_WINDOW(context->main_window))
+    return;
+
+  GtkWidget *browser = gnostr_main_window_get_repo_browser(GNOSTR_MAIN_WINDOW(context->main_window));
+  if (!browser || !GNOSTR_IS_REPO_BROWSER(browser))
+    return;
+
+  gnostr_repo_browser_add_repository(GNOSTR_REPO_BROWSER(browser),
+                                     id, name, description,
+                                     clone_url, web_url,
+                                     maintainer_pubkey, updated_at);
+}
+
+void
+gnostr_plugin_context_clear_repositories(GnostrPluginContext *context)
+{
+  g_return_if_fail(context != NULL);
+
+  if (!context->main_window)
+    return;
+
+  if (!GNOSTR_IS_MAIN_WINDOW(context->main_window))
+    return;
+
+  GtkWidget *browser = gnostr_main_window_get_repo_browser(GNOSTR_MAIN_WINDOW(context->main_window));
+  if (!browser || !GNOSTR_IS_REPO_BROWSER(browser))
+    return;
+
+  gnostr_repo_browser_clear(GNOSTR_REPO_BROWSER(browser));
 }
 
 /* --- Network Access --- */

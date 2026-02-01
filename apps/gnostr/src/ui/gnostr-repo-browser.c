@@ -65,6 +65,7 @@ G_DEFINE_TYPE(GnostrRepoBrowser, gnostr_repo_browser, GTK_TYPE_WIDGET)
 enum {
   SIGNAL_REPO_SELECTED,
   SIGNAL_CLONE_REQUESTED,
+  SIGNAL_REFRESH_REQUESTED,
   N_SIGNALS
 };
 
@@ -107,6 +108,13 @@ on_clone_clicked(GtkButton *button, gpointer user_data)
 
   if (url)
     g_signal_emit(self, signals[SIGNAL_CLONE_REQUESTED], 0, url);
+}
+
+static void
+on_refresh_clicked(GtkButton *button G_GNUC_UNUSED, gpointer user_data)
+{
+  GnostrRepoBrowser *self = GNOSTR_REPO_BROWSER(user_data);
+  g_signal_emit(self, signals[SIGNAL_REFRESH_REQUESTED], 0);
 }
 
 static GtkWidget *
@@ -300,6 +308,13 @@ gnostr_repo_browser_class_init(GnostrRepoBrowserClass *klass)
                  G_SIGNAL_RUN_LAST,
                  0, NULL, NULL, NULL,
                  G_TYPE_NONE, 1, G_TYPE_STRING);
+
+  signals[SIGNAL_REFRESH_REQUESTED] =
+    g_signal_new("refresh-requested",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 0, NULL, NULL, NULL,
+                 G_TYPE_NONE, 0);
 }
 
 static void
@@ -327,7 +342,8 @@ gnostr_repo_browser_init(GnostrRepoBrowser *self)
   gtk_box_append(GTK_BOX(self->header_box), self->search_entry);
 
   self->refresh_button = gtk_button_new_from_icon_name("view-refresh-symbolic");
-  gtk_widget_set_tooltip_text(self->refresh_button, "Refresh");
+  gtk_widget_set_tooltip_text(self->refresh_button, "Refresh repositories");
+  g_signal_connect(self->refresh_button, "clicked", G_CALLBACK(on_refresh_clicked), self);
   gtk_box_append(GTK_BOX(self->header_box), self->refresh_button);
 
   gtk_box_append(GTK_BOX(self->main_box), self->header_box);

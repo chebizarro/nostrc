@@ -266,6 +266,27 @@ parse_repository_event(const gchar *event_json)
  * GnostrPlugin interface implementation
  * ============================================================================ */
 
+/* Push a repository to the main browser UI */
+static void
+push_repo_to_browser(Nip34GitPlugin *self, RepoInfo *info)
+{
+  if (!self->context || !info)
+    return;
+
+  /* Get first maintainer pubkey if available */
+  const char *maintainer = (info->maintainers && info->maintainers[0])
+                             ? info->maintainers[0] : NULL;
+
+  gnostr_plugin_context_add_repository(self->context,
+                                       info->d_tag,
+                                       info->name,
+                                       info->description,
+                                       info->clone_url,
+                                       info->web_url,
+                                       maintainer,
+                                       info->updated_at);
+}
+
 /* Callback for repository subscription events */
 static void
 on_repository_event(const char *event_json, gpointer user_data)
@@ -282,6 +303,9 @@ on_repository_event(const char *event_json, gpointer user_data)
                            g_strdup(info->d_tag), info);
       g_debug("[NIP-34] Subscription: cached repository %s",
               info->name ? info->name : info->d_tag);
+
+      /* Push to browser UI */
+      push_repo_to_browser(self, info);
     }
   else
     {
@@ -338,6 +362,8 @@ load_cached_repositories(Nip34GitPlugin *self, GnostrPluginContext *context)
                     {
                       g_hash_table_replace(self->repositories,
                                            g_strdup(info->d_tag), info);
+                      /* Push to browser UI */
+                      push_repo_to_browser(self, info);
                     }
                   else
                     {
@@ -570,6 +596,8 @@ nip34_git_plugin_handle_event(GnostrEventHandler  *handler,
             g_hash_table_replace(self->repositories,
                                  g_strdup(info->d_tag), info);
             g_debug("[NIP-34] Cached repository: %s", info->name ? info->name : info->d_tag);
+            /* Push to browser UI */
+            push_repo_to_browser(self, info);
           }
         else
           {
@@ -721,6 +749,8 @@ on_refresh_button_clicked(GtkButton *button G_GNUC_UNUSED, gpointer user_data)
                 {
                   g_hash_table_replace(data->plugin->repositories,
                                        g_strdup(info->d_tag), info);
+                  /* Push to browser UI */
+                  push_repo_to_browser(data->plugin, info);
                 }
               else
                 {

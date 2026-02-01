@@ -45,6 +45,9 @@ void gnostr_main_window_request_delete_note(GtkWidget *window, const char *id_he
 /* Public: Request a NIP-22 comment (kind 1111) on an event */
 void gnostr_main_window_request_comment(GtkWidget *window, const char *id_hex, int kind, const char *pubkey_hex);
 
+/* Public: Get the repository browser widget (NIP-34) */
+GtkWidget *gnostr_main_window_get_repo_browser(GnostrMainWindow *self);
+
 G_END_DECLS
 
 #endif /* GNOSTR_MAIN_WINDOW_H */
