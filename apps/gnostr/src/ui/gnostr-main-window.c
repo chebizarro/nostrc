@@ -271,6 +271,35 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
 void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
 void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, const char *pubkey_hex);
 void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, const char *pubkey_hex, gint event_kind, const char *reaction_content, GnostrNoteCardRow *row);
+
+/* nostrc-c0mp: Forward declarations for compose dialog with context */
+typedef enum {
+  COMPOSE_CONTEXT_NONE,
+  COMPOSE_CONTEXT_REPLY,
+  COMPOSE_CONTEXT_QUOTE,
+  COMPOSE_CONTEXT_COMMENT
+} ComposeContextType;
+
+typedef struct {
+  ComposeContextType type;
+  /* For reply: */
+  char *reply_to_id;
+  char *root_id;
+  char *reply_to_pubkey;
+  char *display_name;
+  /* For quote: */
+  char *quote_id;
+  char *quote_pubkey;
+  char *nostr_uri;
+  /* For comment: */
+  char *comment_root_id;
+  int comment_root_kind;
+  char *comment_root_pubkey;
+} ComposeContext;
+
+static void compose_context_free(ComposeContext *ctx);
+static void open_compose_dialog_with_context(GnostrMainWindow *self, ComposeContext *context);
+
 static void user_meta_free(gpointer p);
 static void show_toast(GnostrMainWindow *self, const char *msg);
 static void gnostr_main_window_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec);
@@ -3681,15 +3710,17 @@ void gnostr_main_window_request_reply(GtkWidget *window, const char *id_hex, con
     }
   }
 
-  /* See nostrc-c0mp: Wire composer context through session view */
   g_debug("[REPLY] Reply context: id=%s root=%s pubkey=%s display=%s",
           id_hex, root_id ? root_id : "(none)", pubkey_hex, display_name ? display_name : "@user");
-  g_free(display_name);
 
-  /* Switch to timeline tab via session view */
-  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
-    gnostr_session_view_show_page(self->session_view, "timeline");
-  }
+  /* nostrc-c0mp: Create context and open compose dialog */
+  ComposeContext *ctx = g_new0(ComposeContext, 1);
+  ctx->type = COMPOSE_CONTEXT_REPLY;
+  ctx->reply_to_id = g_strdup(id_hex);
+  ctx->root_id = g_strdup(root_id ? root_id : id_hex); /* If no root, this is the root */
+  ctx->reply_to_pubkey = g_strdup(pubkey_hex);
+  ctx->display_name = display_name; /* Takes ownership */
+  open_compose_dialog_with_context(self, ctx);
 }
 
 /* Public wrapper for requesting a quote post (kind 1 with q-tag) */
@@ -3752,16 +3783,17 @@ void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, con
     }
   }
 
-  /* See nostrc-c0mp: Wire composer context through session view */
   g_debug("[QUOTE] Quote context: id=%s pubkey=%s uri=%s display=%s",
           id_hex, pubkey_hex, nostr_uri, display_name ? display_name : "@user");
-  g_free(display_name);
-  g_free(nostr_uri);
 
-  /* Switch to timeline tab via session view */
-  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
-    gnostr_session_view_show_page(self->session_view, "timeline");
-  }
+  /* nostrc-c0mp: Create context and open compose dialog */
+  ComposeContext *ctx = g_new0(ComposeContext, 1);
+  ctx->type = COMPOSE_CONTEXT_QUOTE;
+  ctx->quote_id = g_strdup(id_hex);
+  ctx->quote_pubkey = g_strdup(pubkey_hex);
+  ctx->nostr_uri = nostr_uri; /* Takes ownership */
+  ctx->display_name = display_name; /* Takes ownership */
+  open_compose_dialog_with_context(self, ctx);
 }
 
 /* NIP-22: Public wrapper for requesting a comment (kind 1111) on any event */
@@ -3807,15 +3839,17 @@ void gnostr_main_window_request_comment(GtkWidget *window, const char *id_hex, i
     }
   }
 
-  /* See nostrc-c0mp: Wire composer context through session view */
   g_debug("[COMMENT] Comment context: id=%s kind=%d pubkey=%s display=%s",
           id_hex, kind, pubkey_hex, display_name ? display_name : "@user");
-  g_free(display_name);
 
-  /* Switch to timeline tab via session view */
-  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
-    gnostr_session_view_show_page(self->session_view, "timeline");
-  }
+  /* nostrc-c0mp: Create context and open compose dialog */
+  ComposeContext *ctx = g_new0(ComposeContext, 1);
+  ctx->type = COMPOSE_CONTEXT_COMMENT;
+  ctx->comment_root_id = g_strdup(id_hex);
+  ctx->comment_root_kind = kind;
+  ctx->comment_root_pubkey = g_strdup(pubkey_hex);
+  ctx->display_name = display_name; /* Takes ownership */
+  open_compose_dialog_with_context(self, ctx);
 }
 
 static void on_note_card_repost_requested(GnostrNoteCardRow *row, const char *id_hex, const char *pubkey_hex, gpointer user_data) {
@@ -4901,6 +4935,111 @@ static void on_compose_requested(GnostrSessionView *session_view, gpointer user_
   adw_dialog_present(dialog, GTK_WIDGET(self));
 }
 
+/* nostrc-c0mp: Free compose context helper */
+static void compose_context_free(ComposeContext *ctx) {
+  if (!ctx) return;
+  g_free(ctx->reply_to_id);
+  g_free(ctx->root_id);
+  g_free(ctx->reply_to_pubkey);
+  g_free(ctx->display_name);
+  g_free(ctx->quote_id);
+  g_free(ctx->quote_pubkey);
+  g_free(ctx->nostr_uri);
+  g_free(ctx->comment_root_id);
+  g_free(ctx->comment_root_pubkey);
+  g_free(ctx);
+}
+
+/* nostrc-c0mp: Open compose dialog with optional context (reply/quote/comment) */
+static void open_compose_dialog_with_context(GnostrMainWindow *self, ComposeContext *context) {
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) {
+    compose_context_free(context);
+    return;
+  }
+
+  /* Create the compose dialog */
+  AdwDialog *dialog = adw_dialog_new();
+  adw_dialog_set_content_width(dialog, 500);
+  adw_dialog_set_content_height(dialog, 400);
+
+  /* Set appropriate title based on context */
+  const char *title = _("New Note");
+  if (context) {
+    switch (context->type) {
+      case COMPOSE_CONTEXT_REPLY:
+        title = _("Reply");
+        break;
+      case COMPOSE_CONTEXT_QUOTE:
+        title = _("Quote");
+        break;
+      case COMPOSE_CONTEXT_COMMENT:
+        title = _("Comment");
+        break;
+      default:
+        break;
+    }
+  }
+  adw_dialog_set_title(dialog, title);
+
+  /* Create a toolbar view for the dialog content */
+  AdwToolbarView *toolbar = ADW_TOOLBAR_VIEW(adw_toolbar_view_new());
+
+  /* Create header bar with close button */
+  AdwHeaderBar *header = ADW_HEADER_BAR(adw_header_bar_new());
+  adw_toolbar_view_add_top_bar(toolbar, GTK_WIDGET(header));
+
+  /* Create the composer widget */
+  GtkWidget *composer = gnostr_composer_new();
+
+  /* Connect the post signal to our existing handler */
+  g_signal_connect(composer, "post-requested",
+                   G_CALLBACK(on_composer_post_requested), self);
+
+  /* Store dialog reference on composer so we can close it after post */
+  g_object_set_data(G_OBJECT(composer), "compose-dialog", dialog);
+
+  /* Set context on composer */
+  if (context) {
+    switch (context->type) {
+      case COMPOSE_CONTEXT_REPLY:
+        gnostr_composer_set_reply_context(GNOSTR_COMPOSER(composer),
+                                          context->reply_to_id,
+                                          context->root_id,
+                                          context->reply_to_pubkey,
+                                          context->display_name);
+        break;
+      case COMPOSE_CONTEXT_QUOTE:
+        gnostr_composer_set_quote_context(GNOSTR_COMPOSER(composer),
+                                          context->quote_id,
+                                          context->quote_pubkey,
+                                          context->nostr_uri,
+                                          context->display_name);
+        break;
+      case COMPOSE_CONTEXT_COMMENT:
+        gnostr_composer_set_comment_context(GNOSTR_COMPOSER(composer),
+                                            context->comment_root_id,
+                                            context->comment_root_kind,
+                                            context->comment_root_pubkey,
+                                            context->display_name);
+        break;
+      default:
+        break;
+    }
+  }
+
+  /* Add composer to toolbar view content */
+  adw_toolbar_view_set_content(toolbar, composer);
+
+  /* Set the toolbar view as dialog content */
+  adw_dialog_set_child(dialog, GTK_WIDGET(toolbar));
+
+  /* Present the dialog */
+  adw_dialog_present(dialog, GTK_WIDGET(self));
+
+  /* Cleanup context */
+  compose_context_free(context);
+}
+
 gboolean gnostr_main_window_get_compact(GnostrMainWindow *self) {
   g_return_val_if_fail(GNOSTR_IS_MAIN_WINDOW(self), FALSE);
   return self->compact;
@@ -5117,6 +5256,7 @@ static void gnostr_load_settings(GnostrMainWindow *self) {
 struct _PublishContext {
   GnostrMainWindow *self;  /* weak ref */
   char *text;              /* owned; original note content */
+  GnostrComposer *composer; /* weak ref; for clearing/closing dialog on success */
 };
 
 static void publish_context_free(PublishContext *ctx) {
@@ -5240,8 +5380,16 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
     show_toast(self, msg);
     g_free(msg);
 
-    /* See nostrc-c0mp: Wire composer context through session view */
-    g_debug("[PUBLISH] Success - composer clear would happen here");
+    /* nostrc-c0mp: Close compose dialog and clear composer on successful publish */
+    if (ctx->composer && GNOSTR_IS_COMPOSER(ctx->composer)) {
+      /* Get the dialog reference stored on the composer */
+      AdwDialog *dialog = ADW_DIALOG(g_object_get_data(G_OBJECT(ctx->composer), "compose-dialog"));
+      if (dialog && ADW_IS_DIALOG(dialog)) {
+        adw_dialog_force_close(dialog);
+      }
+      /* Clear the composer for next use */
+      gnostr_composer_clear(ctx->composer);
+    }
 
     /* Switch to timeline tab via session view */
     if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
@@ -5971,6 +6119,7 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
     PublishContext *ctx = g_new0(PublishContext, 1);
     ctx->self = self;
     ctx->text = g_strdup(text);
+    ctx->composer = composer; /* weak ref for closing dialog on success */
 
     gnostr_sign_event_async(
       event_json,
@@ -6172,6 +6321,7 @@ static void on_composer_post_requested(GnostrComposer *composer, const char *tex
   PublishContext *ctx = g_new0(PublishContext, 1);
   ctx->self = self;
   ctx->text = g_strdup(text);
+  ctx->composer = composer; /* weak ref for closing dialog on success */
 
   /* Call unified signer service (uses NIP-46 or NIP-55L based on login method) */
   gnostr_sign_event_async(
