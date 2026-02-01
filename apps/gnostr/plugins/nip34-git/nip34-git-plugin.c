@@ -59,8 +59,16 @@ typedef struct {
 /* Implement GnostrPlugin interface */
 static void gnostr_plugin_iface_init(GnostrPluginInterface *iface);
 
+/* Implement GnostrEventHandler interface */
+static void gnostr_event_handler_iface_init(GnostrEventHandlerInterface *iface);
+
+/* Implement GnostrUIExtension interface */
+static void gnostr_ui_extension_iface_init(GnostrUIExtensionInterface *iface);
+
 G_DEFINE_TYPE_WITH_CODE(Nip34GitPlugin, nip34_git_plugin, G_TYPE_OBJECT,
-                        G_IMPLEMENT_INTERFACE(GNOSTR_TYPE_PLUGIN, gnostr_plugin_iface_init))
+                        G_IMPLEMENT_INTERFACE(GNOSTR_TYPE_PLUGIN, gnostr_plugin_iface_init)
+                        G_IMPLEMENT_INTERFACE(GNOSTR_TYPE_EVENT_HANDLER, gnostr_event_handler_iface_init)
+                        G_IMPLEMENT_INTERFACE(GNOSTR_TYPE_UI_EXTENSION, gnostr_ui_extension_iface_init))
 
 static void
 repo_info_free(gpointer data)
@@ -231,6 +239,249 @@ gnostr_plugin_iface_init(GnostrPluginInterface *iface)
 }
 
 /* ============================================================================
+ * GnostrEventHandler interface implementation
+ * ============================================================================ */
+
+static gboolean
+nip34_git_plugin_handle_event(GnostrEventHandler  *handler,
+                              GnostrPluginContext *context,
+                              GnostrPluginEvent   *event)
+{
+  Nip34GitPlugin *self = NIP34_GIT_PLUGIN(handler);
+  (void)context;
+
+  if (!self->active)
+    return FALSE;
+
+  int kind = gnostr_plugin_event_get_kind(event);
+
+  switch (kind)
+    {
+    case NIP34_KIND_REPOSITORY:
+      {
+        /* Parse and cache repository announcement */
+        char *json = gnostr_plugin_event_to_json(event);
+        RepoInfo *info = parse_repository_event(json);
+        if (info && info->d_tag)
+          {
+            g_hash_table_replace(self->repositories,
+                                 g_strdup(info->d_tag), info);
+            g_debug("[NIP-34] Cached repository: %s", info->name ? info->name : info->d_tag);
+          }
+        else
+          {
+            repo_info_free(info);
+          }
+        g_free(json);
+        return TRUE;
+      }
+
+    case NIP34_KIND_PATCH:
+      g_debug("[NIP-34] Received patch event");
+      return TRUE;
+
+    case NIP34_KIND_ISSUE:
+      g_debug("[NIP-34] Received issue event");
+      return TRUE;
+
+    case NIP34_KIND_ISSUE_REPLY:
+      g_debug("[NIP-34] Received issue reply event");
+      return TRUE;
+
+    default:
+      return FALSE;
+    }
+}
+
+static gboolean
+nip34_git_plugin_can_handle_kind(GnostrEventHandler *handler, int kind)
+{
+  (void)handler;
+  return kind == NIP34_KIND_REPOSITORY ||
+         kind == NIP34_KIND_PATCH ||
+         kind == NIP34_KIND_ISSUE ||
+         kind == NIP34_KIND_ISSUE_REPLY;
+}
+
+static void
+gnostr_event_handler_iface_init(GnostrEventHandlerInterface *iface)
+{
+  iface->handle_event = nip34_git_plugin_handle_event;
+  iface->can_handle_kind = nip34_git_plugin_can_handle_kind;
+}
+
+/* ============================================================================
+ * GnostrUIExtension interface implementation - Settings page
+ * ============================================================================ */
+
+typedef struct {
+  Nip34GitPlugin *plugin;
+  GtkListBox *repo_list;
+  GtkLabel *status_label;
+} SettingsPageData;
+
+static void
+settings_page_data_free(SettingsPageData *data)
+{
+  g_slice_free(SettingsPageData, data);
+}
+
+static void
+update_repo_list(SettingsPageData *data)
+{
+  /* Clear existing items */
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(data->repo_list))) != NULL)
+    gtk_list_box_remove(data->repo_list, child);
+
+  guint n_repos = g_hash_table_size(data->plugin->repositories);
+
+  if (n_repos == 0)
+    {
+      gtk_label_set_text(data->status_label, "No repositories found");
+      return;
+    }
+
+  g_autofree char *status = g_strdup_printf("%u repositories", n_repos);
+  gtk_label_set_text(data->status_label, status);
+
+  /* Add repository rows */
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, data->plugin->repositories);
+
+  while (g_hash_table_iter_next(&iter, &key, &value))
+    {
+      RepoInfo *info = (RepoInfo *)value;
+
+      GtkWidget *row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+      gtk_widget_set_margin_start(row, 12);
+      gtk_widget_set_margin_end(row, 12);
+      gtk_widget_set_margin_top(row, 8);
+      gtk_widget_set_margin_bottom(row, 8);
+
+      GtkWidget *name_label = gtk_label_new(info->name ? info->name : info->d_tag);
+      gtk_widget_add_css_class(name_label, "heading");
+      gtk_widget_set_halign(name_label, GTK_ALIGN_START);
+      gtk_box_append(GTK_BOX(row), name_label);
+
+      if (info->description)
+        {
+          GtkWidget *desc_label = gtk_label_new(info->description);
+          gtk_widget_add_css_class(desc_label, "dim-label");
+          gtk_label_set_ellipsize(GTK_LABEL(desc_label), PANGO_ELLIPSIZE_END);
+          gtk_widget_set_halign(desc_label, GTK_ALIGN_START);
+          gtk_box_append(GTK_BOX(row), desc_label);
+        }
+
+      if (info->clone_url)
+        {
+          GtkWidget *url_label = gtk_label_new(info->clone_url);
+          gtk_widget_add_css_class(url_label, "monospace");
+          gtk_widget_add_css_class(url_label, "dim-label");
+          gtk_label_set_selectable(GTK_LABEL(url_label), TRUE);
+          gtk_widget_set_halign(url_label, GTK_ALIGN_START);
+          gtk_box_append(GTK_BOX(row), url_label);
+        }
+
+      gtk_list_box_append(data->repo_list, row);
+    }
+}
+
+static void
+on_refresh_button_clicked(GtkButton *button G_GNUC_UNUSED, gpointer user_data)
+{
+  SettingsPageData *data = user_data;
+
+  gtk_label_set_text(data->status_label, "Refreshing...");
+
+  /* TODO: Query relays for repositories when API is available */
+  update_repo_list(data);
+}
+
+static GtkWidget *
+nip34_git_plugin_create_settings_page(GnostrUIExtension   *extension,
+                                      GnostrPluginContext *context G_GNUC_UNUSED)
+{
+  Nip34GitPlugin *self = NIP34_GIT_PLUGIN(extension);
+
+  /* Create settings page container */
+  GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+  gtk_widget_set_margin_start(page, 18);
+  gtk_widget_set_margin_end(page, 18);
+  gtk_widget_set_margin_top(page, 18);
+  gtk_widget_set_margin_bottom(page, 18);
+
+  /* Title */
+  GtkWidget *title = gtk_label_new("Git Repositories (NIP-34)");
+  gtk_widget_add_css_class(title, "title-2");
+  gtk_widget_set_halign(title, GTK_ALIGN_START);
+  gtk_box_append(GTK_BOX(page), title);
+
+  /* Description */
+  GtkWidget *desc = gtk_label_new(
+    "Browse and collaborate on git repositories published to Nostr relays. "
+    "Repositories appear here when announced via kind 30617 events.");
+  gtk_label_set_wrap(GTK_LABEL(desc), TRUE);
+  gtk_label_set_xalign(GTK_LABEL(desc), 0);
+  gtk_widget_add_css_class(desc, "dim-label");
+  gtk_box_append(GTK_BOX(page), desc);
+
+  /* Status and refresh */
+  GtkWidget *header_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+  gtk_widget_set_margin_top(header_box, 12);
+
+  GtkWidget *status_label = gtk_label_new("Loading...");
+  gtk_widget_set_hexpand(status_label, TRUE);
+  gtk_widget_set_halign(status_label, GTK_ALIGN_START);
+  gtk_box_append(GTK_BOX(header_box), status_label);
+
+  GtkWidget *refresh_button = gtk_button_new_from_icon_name("view-refresh-symbolic");
+  gtk_widget_set_tooltip_text(refresh_button, "Refresh repositories");
+  gtk_box_append(GTK_BOX(header_box), refresh_button);
+
+  gtk_box_append(GTK_BOX(page), header_box);
+
+  /* Repository list */
+  GtkWidget *scrolled = gtk_scrolled_window_new();
+  gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scrolled), 300);
+  gtk_widget_set_vexpand(scrolled, TRUE);
+
+  GtkWidget *repo_list = gtk_list_box_new();
+  gtk_list_box_set_selection_mode(GTK_LIST_BOX(repo_list), GTK_SELECTION_SINGLE);
+  gtk_widget_add_css_class(repo_list, "boxed-list");
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), repo_list);
+
+  gtk_box_append(GTK_BOX(page), scrolled);
+
+  /* Placeholder for empty state */
+  GtkWidget *placeholder = gtk_label_new("No repositories found.\nClick refresh to search relays.");
+  gtk_widget_add_css_class(placeholder, "dim-label");
+  gtk_list_box_set_placeholder(GTK_LIST_BOX(repo_list), placeholder);
+
+  /* Setup data and signals */
+  SettingsPageData *data = g_slice_new0(SettingsPageData);
+  data->plugin = self;
+  data->repo_list = GTK_LIST_BOX(repo_list);
+  data->status_label = GTK_LABEL(status_label);
+
+  g_signal_connect_data(refresh_button, "clicked",
+                        G_CALLBACK(on_refresh_button_clicked), data,
+                        (GClosureNotify)settings_page_data_free, 0);
+
+  /* Initial list update */
+  update_repo_list(data);
+
+  return page;
+}
+
+static void
+gnostr_ui_extension_iface_init(GnostrUIExtensionInterface *iface)
+{
+  iface->create_settings_page = nip34_git_plugin_create_settings_page;
+}
+
+/* ============================================================================
  * Plugin registration for libpeas
  * ============================================================================ */
 
@@ -239,5 +490,11 @@ peas_register_types(PeasObjectModule *module)
 {
   peas_object_module_register_extension_type(module,
                                               GNOSTR_TYPE_PLUGIN,
+                                              NIP34_TYPE_GIT_PLUGIN);
+  peas_object_module_register_extension_type(module,
+                                              GNOSTR_TYPE_EVENT_HANDLER,
+                                              NIP34_TYPE_GIT_PLUGIN);
+  peas_object_module_register_extension_type(module,
+                                              GNOSTR_TYPE_UI_EXTENSION,
                                               NIP34_TYPE_GIT_PLUGIN);
 }

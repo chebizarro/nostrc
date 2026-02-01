@@ -15,14 +15,39 @@ add_library(${PLUGIN_NAME} MODULE ${PLUGIN_SOURCES})
 # Include directories
 target_include_directories(${PLUGIN_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/apps/gnostr/src
+    ${CMAKE_SOURCE_DIR}/nips/nip34/include
+    ${CMAKE_SOURCE_DIR}/nips/nip46/include
+    ${CMAKE_SOURCE_DIR}/gobject/include
+    ${CMAKE_SOURCE_DIR}/libnostr/include
+    ${CMAKE_SOURCE_DIR}/libgo/include
+    ${CMAKE_BINARY_DIR}/apps/gnostr/generated
 )
 
-# Link libraries (use parent's pkg-config targets)
+# Plugin build mode - excludes host-only code from gnostr-plugin-api.c
+target_compile_definitions(${PLUGIN_NAME} PRIVATE GNOSTR_PLUGIN_BUILD=1)
+
+# Link libraries
 target_link_libraries(${PLUGIN_NAME} PRIVATE
     PkgConfig::GTK4
     PkgConfig::GLIB
     PkgConfig::LIBPEAS
+    PkgConfig::JSON_GLIB
 )
+
+# Link libgo for include paths (nsync, etc)
+if (TARGET libgo)
+    target_link_libraries(${PLUGIN_NAME} PRIVATE libgo)
+endif()
+
+# Link NIP-34 library if available
+if (TARGET nostr_nip34_core)
+    target_link_libraries(${PLUGIN_NAME} PRIVATE nostr_nip34_core)
+endif()
+
+# Allow undefined symbols - they're resolved when the plugin is loaded by the host app
+if(APPLE)
+    target_link_options(${PLUGIN_NAME} PRIVATE -undefined dynamic_lookup)
+endif()
 
 # Set library properties
 set_target_properties(${PLUGIN_NAME} PROPERTIES
