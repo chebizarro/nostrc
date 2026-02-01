@@ -286,12 +286,15 @@ static void nip46_pubkey_ctx_free(gpointer data) {
 static gboolean on_nip46_pubkey_result(gpointer data) {
   Nip46PubkeyCtx *ctx = data;
   if (!ctx || !ctx->self || !GNOSTR_IS_LOGIN(ctx->self)) {
+    g_warning("[NIP46_LOGIN] on_nip46_pubkey_result: invalid context");
     return G_SOURCE_REMOVE;
   }
 
   GnostrLogin *self = ctx->self;
 
-  g_message("[NIP46_LOGIN] Got user pubkey from RPC: %s", ctx->user_pubkey_hex);
+  g_message("[NIP46_LOGIN] *** FINAL PUBKEY RESULT ***");
+  g_message("[NIP46_LOGIN] User pubkey from get_public_key RPC: %s", ctx->user_pubkey_hex);
+  g_message("[NIP46_LOGIN] Signer pubkey (for communication): %s", ctx->signer_pubkey_hex);
 
   /* Convert hex pubkey to npub */
   uint8_t pubkey_bytes[32];
@@ -355,7 +358,10 @@ static void nip46_get_pubkey_thread(GTask *task,
   (void)cancellable;
   Nip46ConnectCtx *ctx = task_data;
 
-  g_message("[NIP46_LOGIN] Starting get_public_key RPC in thread");
+  g_message("[NIP46_LOGIN] *** STARTING get_public_key RPC THREAD ***");
+  g_message("[NIP46_LOGIN] Context: signer_pubkey=%s", ctx->signer_pubkey_hex);
+  g_message("[NIP46_LOGIN] Context: nostrconnect_uri=%.60s...", ctx->nostrconnect_uri ? ctx->nostrconnect_uri : "(null)");
+  g_message("[NIP46_LOGIN] Context: nostrconnect_secret=%s", ctx->nostrconnect_secret ? "present" : "NULL");
 
   /* Create a fresh session for the RPC call */
   NostrNip46Session *rpc_session = nostr_nip46_client_new();
@@ -433,7 +439,11 @@ static void on_get_pubkey_done(GObject *source, GAsyncResult *result, gpointer u
 /* Called on main thread after connect response - sets up session and spawns get_public_key RPC */
 static gboolean on_nip46_connect_success(gpointer data) {
   Nip46ConnectCtx *ctx = data;
+
+  g_message("[NIP46_LOGIN] *** on_nip46_connect_success ENTERED ***");
+
   if (!ctx || !ctx->self || !GNOSTR_IS_LOGIN(ctx->self)) {
+    g_warning("[NIP46_LOGIN] on_nip46_connect_success: invalid context");
     nip46_connect_ctx_free(ctx);
     return G_SOURCE_REMOVE;
   }
@@ -443,8 +453,9 @@ static gboolean on_nip46_connect_success(gpointer data) {
   /* Stop the listener (we're not in the callback anymore) */
   stop_nip46_listener(self);
 
-  g_message("[NIP46_LOGIN] Connect success, signer pubkey: %s", ctx->signer_pubkey_hex);
-  g_message("[NIP46_LOGIN] Now calling get_public_key RPC to get user's actual pubkey...");
+  g_message("[NIP46_LOGIN] Connect success!");
+  g_message("[NIP46_LOGIN] Signer pubkey (communication): %s", ctx->signer_pubkey_hex);
+  g_message("[NIP46_LOGIN] Spawning get_public_key RPC to get user's ACTUAL pubkey...");
 
   /* Update status to show we're getting the pubkey */
   set_bunker_status(self, BUNKER_STATUS_CONNECTING,
