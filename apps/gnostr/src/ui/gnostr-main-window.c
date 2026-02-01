@@ -3177,8 +3177,6 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
     gnostr_nip51_settings_auto_sync_on_login(self->user_pubkey_hex);
   }
 
-  /* TODO: Close avatar popover - now in session view */
-
   show_toast(self, "Signed in successfully");
 }
 
@@ -3389,7 +3387,7 @@ static void on_classifieds_open_profile(GnostrClassifiedsView *view, const char 
 static void on_classifieds_contact_seller(GnostrClassifiedsView *view, const char *pubkey_hex,
                                            const char *lud16, gpointer user_data) {
   (void)view;
-  (void)lud16;  /* TODO: Could open DM with zap hint in future */
+  (void)lud16;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !pubkey_hex) return;
 
@@ -3418,7 +3416,7 @@ static void on_classifieds_contact_seller(GnostrClassifiedsView *view, const cha
 static void on_classifieds_listing_clicked(GnostrClassifiedsView *view, const char *event_id,
                                             const char *naddr, gpointer user_data) {
   (void)view;
-  (void)naddr;  /* TODO: Could use naddr for richer thread context */
+  (void)naddr;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !event_id) return;
 
@@ -3444,13 +3442,7 @@ static void on_discover_open_communities(GnostrPageDiscover *page, gpointer user
   /* Show a toast indicating the feature is being accessed */
   gnostr_main_window_show_toast(GTK_WIDGET(self), "Communities (NIP-72) - Coming soon!");
 
-  /* TODO: Implement full community list view:
-   * 1. Create a GnostrCommunityListView widget
-   * 2. Add it as an overlay like thread_view
-   * 3. Query relays for kind 34550 (community definitions)
-   * 4. Display community cards using GnostrCommunityCard
-   * 5. On card click, show GnostrCommunityView with approved posts
-   */
+  /* See nostrc-72lv: Implement community list view (NIP-72) */
   g_debug("[COMMUNITIES] Open communities list requested");
 }
 
@@ -3500,9 +3492,7 @@ static void on_discover_zap_article(GnostrPageDiscover *page, const char *event_
     return;
   }
 
-  /* TODO: Open zap dialog
-   * gnostr_zap_dialog_show(pubkey_hex, lud16, event_id);
-   */
+  /* See nostrc-z4pd: Implement zap dialog */
   gnostr_main_window_show_toast(GTK_WIDGET(self), "Zap dialog coming soon!");
   g_debug("[ARTICLES] Zap article author requested: pubkey=%s, lud16=%s", pubkey_hex, lud16);
 }
@@ -3633,8 +3623,7 @@ void gnostr_main_window_request_reply(GtkWidget *window, const char *id_hex, con
     }
   }
 
-  /* Set the reply context on the composer */
-  /* TODO: Reply context needs to be wired through session view when composer is added */
+  /* See nostrc-c0mp: Wire composer context through session view */
   g_debug("[REPLY] Reply context: id=%s root=%s pubkey=%s display=%s",
           id_hex, root_id ? root_id : "(none)", pubkey_hex, display_name ? display_name : "@user");
   g_free(display_name);
@@ -3705,7 +3694,7 @@ void gnostr_main_window_request_quote(GtkWidget *window, const char *id_hex, con
     }
   }
 
-  /* TODO: Quote context needs to be wired through session view when composer is added */
+  /* See nostrc-c0mp: Wire composer context through session view */
   g_debug("[QUOTE] Quote context: id=%s pubkey=%s uri=%s display=%s",
           id_hex, pubkey_hex, nostr_uri, display_name ? display_name : "@user");
   g_free(display_name);
@@ -3760,7 +3749,7 @@ void gnostr_main_window_request_comment(GtkWidget *window, const char *id_hex, i
     }
   }
 
-  /* TODO: Comment context needs to be wired through session view when composer is added */
+  /* See nostrc-c0mp: Wire composer context through session view */
   g_debug("[COMMENT] Comment context: id=%s kind=%d pubkey=%s display=%s",
           id_hex, kind, pubkey_hex, display_name ? display_name : "@user");
   g_free(display_name);
@@ -4720,7 +4709,7 @@ static void on_timeline_tab_filter_changed(GnostrTimelineView *view, guint type,
       break;
 
     case GN_TIMELINE_TAB_FOLLOWING:
-      /* Following tab - TODO: implement once we have follow list */
+      /* See nostrc-f0ll: Implement following tab with follow list */
       query = gn_timeline_query_new_global();
       g_debug("[TAB_FILTER] Following tab not yet implemented, showing global");
       break;
@@ -5193,7 +5182,7 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
     show_toast(self, msg);
     g_free(msg);
 
-    /* TODO: Clear composer text on success - needs to be wired through session view */
+    /* See nostrc-c0mp: Wire composer context through session view */
     g_debug("[PUBLISH] Success - composer clear would happen here");
 
     /* Switch to timeline tab via session view */
