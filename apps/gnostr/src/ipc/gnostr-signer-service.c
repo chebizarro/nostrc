@@ -12,7 +12,10 @@
 #include "nostr-event.h"
 #include "nostr-filter.h"
 #include "nostr-tag.h"
-#include "nostr-simple-pool.h"
+#include "nostr-relay.h"
+#include "nostr-subscription.h"
+#include "select.h"
+#include "error.h"
 #include "secure_buf.h"
 #include <string.h>
 #include <time.h>
@@ -230,97 +233,56 @@ on_nip55l_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data)
   sign_context_free(ctx);
 }
 
-/* nostrc-stsz: NIP-46 signing relay round-trip context */
+/* nostrc-e5k6: NIP-46 signing relay round-trip context
+ * Uses channel-based waiting with go_select instead of timeout-based pthread_cond */
 typedef struct {
-  pthread_mutex_t mutex;
-  pthread_cond_t cond;
-  char *response_content;     /* Encrypted response from signer */
-  char *response_sender_pk;   /* Sender pubkey for decryption */
   char *expected_client_pk;   /* Our pubkey to filter responses */
-  gboolean response_received;
+  volatile gboolean relay_disconnected;  /* Set by state callback on disconnect */
 } Nip46SignRoundtripCtx;
 
-/* Global context pointer for event middleware callback.
- * Note: We use a regular global (not __thread) because the callback
- * runs on the pool's worker thread, not our signing thread. */
-static Nip46SignRoundtripCtx *g_nip46_roundtrip_ctx = NULL;
-static pthread_mutex_t g_nip46_ctx_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-/* Callback for NIP-46 response events - runs from pool thread */
+/* Relay state callback - signals when relay disconnects */
 static void
-nip46_sign_event_middleware(NostrIncomingEvent *incoming)
+nip46_relay_state_callback(NostrRelay *relay,
+                            NostrRelayConnectionState old_state,
+                            NostrRelayConnectionState new_state,
+                            void *user_data)
 {
-  if (!incoming || !incoming->event) {
-    g_debug("[NIP46-MW] middleware called with NULL incoming/event");
-    return;
-  }
+  Nip46SignRoundtripCtx *ctx = (Nip46SignRoundtripCtx *)user_data;
+  (void)relay;
+  (void)old_state;
 
-  NostrEvent *ev = incoming->event;
+  if (new_state == NOSTR_RELAY_STATE_DISCONNECTED) {
+    g_warning("[SIGNER_SERVICE] Relay disconnected during NIP-46 round-trip");
+    if (ctx) {
+      ctx->relay_disconnected = TRUE;
+    }
+  }
+}
+
+/* Helper to check if an event is a NIP-46 response addressed to us */
+static gboolean
+nip46_event_is_for_client(NostrEvent *ev, const char *client_pubkey)
+{
+  if (!ev || !client_pubkey) return FALSE;
+
   int kind = nostr_event_get_kind(ev);
-  const char *sender = nostr_event_get_pubkey(ev);
-  g_debug("[NIP46-MW] received event kind=%d from %.16s...", kind, sender ? sender : "(null)");
+  if (kind != NOSTR_EVENT_KIND_NIP46) return FALSE;
 
-  /* Get context under lock */
-  pthread_mutex_lock(&g_nip46_ctx_mutex);
-  Nip46SignRoundtripCtx *ctx = g_nip46_roundtrip_ctx;
-  pthread_mutex_unlock(&g_nip46_ctx_mutex);
-
-  if (!ctx) {
-    g_debug("[NIP46-MW] no roundtrip context set");
-    return;
-  }
-
-  if (kind != NOSTR_EVENT_KIND_NIP46) {
-    g_debug("[NIP46-MW] ignoring non-NIP46 event kind=%d", kind);
-    return;
-  }
-
-  /* Check if this is for us (p-tag matches our client pubkey) */
   NostrTags *tags = nostr_event_get_tags(ev);
-  if (!tags) {
-    g_debug("[NIP46-MW] event has no tags");
-    return;
-  }
+  if (!tags) return FALSE;
 
-  gboolean is_for_us = FALSE;
   size_t tag_count = nostr_tags_size(tags);
-  g_debug("[NIP46-MW] checking %zu tags for p-tag matching %.16s...",
-          tag_count, ctx->expected_client_pk ? ctx->expected_client_pk : "(null)");
-
   for (size_t i = 0; i < tag_count; i++) {
     NostrTag *tag = nostr_tags_get(tags, i);
     if (!tag || nostr_tag_size(tag) < 2) continue;
     const char *key = nostr_tag_get(tag, 0);
     const char *value = nostr_tag_get(tag, 1);
-    if (key && value && strcmp(key, "p") == 0) {
-      g_debug("[NIP46-MW] found p-tag: %.16s...", value);
-      if (ctx->expected_client_pk &&
-          strcmp(value, ctx->expected_client_pk) == 0) {
-        is_for_us = TRUE;
-        break;
-      }
+    if (key && value && strcmp(key, "p") == 0 &&
+        strcmp(value, client_pubkey) == 0) {
+      return TRUE;
     }
   }
-
-  if (!is_for_us) {
-    g_debug("[NIP46-MW] event not for us (p-tag mismatch)");
-    return;
-  }
-
-  /* Got a response! Store it and signal */
-  const char *content = nostr_event_get_content(ev);
-  g_info("[NIP46-MW] GOT RESPONSE from %.16s..., content_len=%zu",
-         sender ? sender : "(null)", content ? strlen(content) : 0);
-
-  pthread_mutex_lock(&ctx->mutex);
-  if (!ctx->response_received && content && sender) {
-    ctx->response_content = g_strdup(content);
-    ctx->response_sender_pk = g_strdup(sender);
-    ctx->response_received = TRUE;
-    pthread_cond_signal(&ctx->cond);
-    g_debug("[NIP46-MW] signaled response received");
-  }
-  pthread_mutex_unlock(&ctx->mutex);
+  return FALSE;
 }
 
 /* Helper to convert hex string to bytes */
@@ -458,174 +420,252 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
     goto cleanup;
   }
 
-  /* Set up response capture context */
+  /* nostrc-e5k6: Use direct subscription with go_select instead of pool+timeout */
+
+  /* Set up roundtrip context for relay state callback */
   Nip46SignRoundtripCtx roundtrip = {
-    .response_content = NULL,
-    .response_sender_pk = NULL,
     .expected_client_pk = client_pubkey,
-    .response_received = FALSE
+    .relay_disconnected = FALSE
   };
-  pthread_mutex_init(&roundtrip.mutex, NULL);
-  pthread_cond_init(&roundtrip.cond, NULL);
-
-  /* Set global context pointer for callback (protected by mutex) */
-  pthread_mutex_lock(&g_nip46_ctx_mutex);
-  g_nip46_roundtrip_ctx = &roundtrip;
-  pthread_mutex_unlock(&g_nip46_ctx_mutex);
-
-  /* Create pool and subscribe for response */
-  NostrSimplePool *pool = nostr_simple_pool_new();
-  if (!pool) {
-    g_warning("[SIGNER_SERVICE] Failed to create relay pool");
-    pthread_mutex_lock(&g_nip46_ctx_mutex);
-    g_nip46_roundtrip_ctx = NULL;
-    pthread_mutex_unlock(&g_nip46_ctx_mutex);
-    pthread_mutex_destroy(&roundtrip.mutex);
-    pthread_cond_destroy(&roundtrip.cond);
-    secure_free(&sb);
-    nostr_event_free(wrapper);
-    free(encrypted_request);
-    goto cleanup;
-  }
-
-  /* Set event middleware to capture responses */
-  nostr_simple_pool_set_event_middleware(pool, nip46_sign_event_middleware);
-  g_debug("[NIP46-SIGN] middleware registered");
 
   /* Subscribe for response events (kind 24133, p-tag = client_pubkey) */
   NostrFilter *filter = nostr_filter_new();
   int kinds[] = { NOSTR_EVENT_KIND_NIP46 };
   nostr_filter_set_kinds(filter, kinds, 1);
   nostr_filter_tags_append(filter, "p", client_pubkey, NULL);
-  g_debug("[NIP46-SIGN] filter: kind=%d, #p=%.16s...", NOSTR_EVENT_KIND_NIP46, client_pubkey);
+  /* Set since to a few seconds ago to catch any responses */
+  nostr_filter_set_since_i64(filter, (int64_t)time(NULL) - 5);
 
   NostrFilters *filters = nostr_filters_new();
   nostr_filters_add(filters, filter);
 
-  const char *relay_urls[] = { relay_url, NULL };
-  g_debug("[NIP46-SIGN] ensuring relay connection to %s", relay_url);
-  nostr_simple_pool_ensure_relay(pool, relay_url);
+  /* Connect to relay directly with error checking */
+  g_debug("[SIGNER_SERVICE] Connecting to relay %s", relay_url);
+  NostrRelay *relay = nostr_relay_new(NULL, relay_url, NULL);
+  if (!relay) {
+    g_warning("[SIGNER_SERVICE] Failed to create relay for %s", relay_url);
+    secure_free(&sb);
+    nostr_event_free(wrapper);
+    free(encrypted_request);
+    nostr_filters_free(filters);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Failed to create relay connection");
+    goto cleanup_final;
+  }
 
-  g_debug("[NIP46-SIGN] creating subscription");
-  nostr_simple_pool_subscribe(pool, relay_urls, 1, *filters, true);
+  /* Set state callback to detect disconnects */
+  nostr_relay_set_state_callback(relay, nip46_relay_state_callback, &roundtrip);
 
-  g_debug("[NIP46-SIGN] starting pool thread");
-  nostr_simple_pool_start(pool);
+  Error *conn_err = NULL;
+  if (!nostr_relay_connect(relay, &conn_err)) {
+    g_warning("[SIGNER_SERVICE] Failed to connect to relay %s: %s",
+              relay_url, conn_err ? conn_err->message : "unknown");
+    if (conn_err) free_error(conn_err);
+    nostr_relay_free(relay);
+    secure_free(&sb);
+    nostr_event_free(wrapper);
+    free(encrypted_request);
+    nostr_filters_free(filters);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Failed to connect to NIP-46 relay");
+    goto cleanup_final;
+  }
 
-  /* Give relay time to connect and subscription to be established */
-  g_debug("[NIP46-SIGN] waiting 500ms for relay connection...");
-  g_usleep(500000); /* 500ms */
+  g_debug("[SIGNER_SERVICE] Relay %s connected", relay_url);
+
+  /* Create subscription with accessible channels */
+  NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, filters);
+  if (!sub) {
+    g_warning("[SIGNER_SERVICE] Failed to create subscription");
+    nostr_relay_free(relay);
+    secure_free(&sb);
+    nostr_event_free(wrapper);
+    free(encrypted_request);
+    nostr_filters_free(filters);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Failed to create relay subscription");
+    goto cleanup_final;
+  }
+
+  /* Start the subscription */
+  Error *sub_err = NULL;
+  if (!nostr_subscription_fire(sub, &sub_err)) {
+    g_warning("[SIGNER_SERVICE] Failed to start subscription: %s",
+              sub_err ? sub_err->message : "unknown");
+    if (sub_err) free_error(sub_err);
+    nostr_subscription_free(sub);
+    nostr_relay_free(relay);
+    secure_free(&sb);
+    nostr_event_free(wrapper);
+    free(encrypted_request);
+    nostr_filters_free(filters);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Subscription rejected by relay");
+    goto cleanup_final;
+  }
+
+  g_debug("[SIGNER_SERVICE] Subscribed for NIP-46 responses");
 
   /* Publish the request */
-  pthread_mutex_lock(&pool->pool_mutex);
-  gboolean published = FALSE;
-  g_debug("[NIP46-SIGN] checking %zu relays for publishing", pool->relay_count);
-  for (size_t i = 0; i < pool->relay_count; i++) {
-    NostrRelay *relay = pool->relays[i];
-    gboolean connected = relay ? nostr_relay_is_connected(relay) : FALSE;
-    g_debug("[NIP46-SIGN] relay[%zu]: url=%s connected=%d",
-            i, relay ? nostr_relay_get_url_const(relay) : "(null)", connected);
-    if (relay && connected) {
-      nostr_relay_publish(relay, wrapper);
-      g_info("[NIP46-SIGN] Published NIP-46 request to %s", nostr_relay_get_url_const(relay));
-      published = TRUE;
-    }
-  }
-  pthread_mutex_unlock(&pool->pool_mutex);
-
-  if (!published) {
-    g_warning("[NIP46-SIGN] FAILED TO PUBLISH: no connected relays!");
-  }
+  nostr_relay_publish(relay, wrapper);
+  g_debug("[SIGNER_SERVICE] Published NIP-46 request to %s", relay_url);
 
   nostr_event_free(wrapper);
   free(encrypted_request);
   nostr_filters_free(filters);
 
-  /* Wait for response - poll with cancellable checks instead of hard timeout */
-  char *signed_event_json = NULL;
-  gboolean was_cancelled = FALSE;
-  const int max_poll_iterations = 60; /* Poll for up to 60 seconds */
+  /* Get subscription channels for go_select */
+  GoChannel *events_ch = nostr_subscription_get_events_channel(sub);
+  GoChannel *eose_ch = nostr_subscription_get_eose_channel(sub);
+  GoChannel *closed_ch = nostr_subscription_get_closed_channel(sub);
 
-  g_info("[NIP46-SIGN] waiting for response (polling with cancellable)...");
-  pthread_mutex_lock(&roundtrip.mutex);
-  for (int i = 0; i < max_poll_iterations && !roundtrip.response_received; i++) {
-    /* Check if operation was cancelled */
+  if (!events_ch) {
+    g_warning("[SIGNER_SERVICE] No events channel on subscription");
+    nostr_subscription_free(sub);
+    nostr_relay_free(relay);
+    secure_free(&sb);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Internal error: subscription has no events channel");
+    goto cleanup_final;
+  }
+
+  /* Wait for response using go_select on channels */
+  char *signed_event_json = NULL;
+  char *error_message = NULL;
+  gboolean eose_received = FALSE;
+  gboolean keep_waiting = TRUE;
+
+  void *received_event = NULL;
+  void *eose_signal = NULL;
+  void *closed_reason = NULL;
+
+  /* Prepare select cases */
+  GoSelectCase cases[3] = {
+    { .op = GO_SELECT_RECEIVE, .chan = events_ch, .recv_buf = &received_event },
+    { .op = GO_SELECT_RECEIVE, .chan = eose_ch, .recv_buf = &eose_signal },
+    { .op = GO_SELECT_RECEIVE, .chan = closed_ch, .recv_buf = &closed_reason }
+  };
+  int num_cases = closed_ch ? 3 : (eose_ch ? 2 : 1);
+
+  g_debug("[SIGNER_SERVICE] Waiting for NIP-46 response via go_select");
+
+  while (keep_waiting) {
+    /* Check cancellable */
     if (g_cancellable_is_cancelled(cancellable)) {
-      g_info("[NIP46-SIGN] cancelled by user");
-      was_cancelled = TRUE;
+      g_info("[SIGNER_SERVICE] Signing cancelled by user");
+      error_message = g_strdup("Signing cancelled");
       break;
     }
 
-    /* Wait up to 1 second for signal */
-    struct timespec poll_ts;
-    clock_gettime(CLOCK_REALTIME, &poll_ts);
-    poll_ts.tv_sec += 1;
-    pthread_cond_timedwait(&roundtrip.cond, &roundtrip.mutex, &poll_ts);
-  }
+    /* Check relay connection state before blocking */
+    if (roundtrip.relay_disconnected || !nostr_relay_is_connected(relay)) {
+      g_warning("[SIGNER_SERVICE] Relay disconnected");
+      error_message = g_strdup("NIP-46 relay disconnected");
+      break;
+    }
 
-  if (!roundtrip.response_received && !was_cancelled) {
-    g_warning("[NIP46-SIGN] no response from remote signer after %d seconds", max_poll_iterations);
-  }
+    /* Use go_select_timeout with short interval to check cancellable/relay state */
+    GoSelectResult result = go_select_timeout(cases, num_cases, 500); /* 500ms poll */
 
-  if (roundtrip.response_received && roundtrip.response_content && roundtrip.response_sender_pk) {
-    g_debug("[SIGNER_SERVICE] Got NIP-46 response from %s", roundtrip.response_sender_pk);
+    if (result.selected_case == 0) {
+      /* Got an event */
+      NostrEvent *ev = (NostrEvent *)received_event;
+      if (ev && nip46_event_is_for_client(ev, client_pubkey)) {
+        const char *content = nostr_event_get_content(ev);
+        const char *sender = nostr_event_get_pubkey(ev);
 
-    /* Decrypt the response */
-    char *plaintext = NULL;
-    char *decrypt_err = NULL;
-    if (nostr_nip04_decrypt_secure(roundtrip.response_content, roundtrip.response_sender_pk,
-                                    &sb, &plaintext, &decrypt_err) == 0 && plaintext) {
-      g_debug("[SIGNER_SERVICE] Decrypted NIP-46 response: %.100s...", plaintext);
+        if (content && sender) {
+          g_debug("[SIGNER_SERVICE] Got NIP-46 response from %.16s...", sender);
 
-      /* Parse the NIP-46 response */
-      NostrNip46Response resp = {0};
-      if (nostr_nip46_response_parse(plaintext, &resp) == 0) {
-        if (resp.error) {
-          g_warning("[SIGNER_SERVICE] NIP-46 signer error: %s", resp.error);
-        } else if (resp.result) {
-          /* Success! The result is the signed event JSON */
-          signed_event_json = g_strdup(resp.result);
-          g_debug("[SIGNER_SERVICE] Got signed event: %.100s...", signed_event_json);
+          /* Decrypt the response */
+          char *plaintext = NULL;
+          char *decrypt_err = NULL;
+          if (nostr_nip04_decrypt_secure(content, sender, &sb, &plaintext, &decrypt_err) == 0 && plaintext) {
+            g_debug("[SIGNER_SERVICE] Decrypted NIP-46 response: %.100s...", plaintext);
+
+            /* Parse the NIP-46 response */
+            NostrNip46Response resp = {0};
+            if (nostr_nip46_response_parse(plaintext, &resp) == 0) {
+              if (resp.error) {
+                g_warning("[SIGNER_SERVICE] NIP-46 signer error: %s", resp.error);
+                error_message = g_strdup_printf("Signer error: %s", resp.error);
+              } else if (resp.result) {
+                /* Success! */
+                signed_event_json = g_strdup(resp.result);
+                g_debug("[SIGNER_SERVICE] Got signed event: %.100s...", signed_event_json);
+              }
+              nostr_nip46_response_free(&resp);
+            } else {
+              g_warning("[SIGNER_SERVICE] Failed to parse NIP-46 response JSON");
+              error_message = g_strdup("Invalid response from signer");
+            }
+            free(plaintext);
+          } else {
+            g_warning("[SIGNER_SERVICE] Failed to decrypt NIP-46 response: %s",
+                      decrypt_err ? decrypt_err : "unknown");
+            error_message = g_strdup_printf("Failed to decrypt signer response: %s",
+                                             decrypt_err ? decrypt_err : "unknown");
+            free(decrypt_err);
+          }
+          keep_waiting = FALSE;
         }
-        nostr_nip46_response_free(&resp);
-      } else {
-        g_warning("[SIGNER_SERVICE] Failed to parse NIP-46 response JSON");
       }
-      free(plaintext);
-    } else {
-      g_warning("[SIGNER_SERVICE] Failed to decrypt NIP-46 response: %s",
-                decrypt_err ? decrypt_err : "unknown");
-      free(decrypt_err);
+      received_event = NULL; /* Reset for next iteration */
+
+    } else if (result.selected_case == 1) {
+      /* EOSE - all stored events delivered */
+      g_debug("[SIGNER_SERVICE] EOSE received - historical events done");
+      eose_received = TRUE;
+      eose_signal = NULL;
+
+    } else if (result.selected_case == 2) {
+      /* CLOSED - subscription was closed by relay */
+      const char *reason = closed_reason ? (const char *)closed_reason : "unknown";
+      g_warning("[SIGNER_SERVICE] Subscription closed by relay: %s", reason);
+      error_message = g_strdup_printf("Relay closed subscription: %s", reason);
+      keep_waiting = FALSE;
+
+    } else if (result.selected_case == -1) {
+      /* Timeout - check state and continue */
+      if (roundtrip.relay_disconnected || !nostr_relay_is_connected(relay)) {
+        g_warning("[SIGNER_SERVICE] Relay disconnected during wait");
+        error_message = g_strdup("NIP-46 relay connection lost");
+        keep_waiting = FALSE;
+      }
+      if (eose_received && nostr_subscription_is_closed(sub)) {
+        g_warning("[SIGNER_SERVICE] Subscription ended after EOSE with no response");
+        error_message = g_strdup("Remote signer not responding - is it online?");
+        keep_waiting = FALSE;
+      }
     }
   }
-  pthread_mutex_unlock(&roundtrip.mutex);
 
-  /* Cleanup */
-  pthread_mutex_lock(&g_nip46_ctx_mutex);
-  g_nip46_roundtrip_ctx = NULL;
-  pthread_mutex_unlock(&g_nip46_ctx_mutex);
-  nostr_simple_pool_stop(pool);
-  nostr_simple_pool_free(pool);
-  pthread_mutex_destroy(&roundtrip.mutex);
-  pthread_cond_destroy(&roundtrip.cond);
-  g_free(roundtrip.response_content);
-  g_free(roundtrip.response_sender_pk);
+  /* Cleanup subscription and relay */
+  nostr_subscription_close(sub, NULL);
+  nostr_subscription_free(sub);
+  nostr_relay_set_state_callback(relay, NULL, NULL);
+  nostr_relay_disconnect(relay);
+  nostr_relay_free(relay);
   secure_free(&sb);
 
   if (signed_event_json) {
     g_debug("[SIGNER_SERVICE] NIP-46 sign succeeded");
     g_task_return_pointer(task, signed_event_json, g_free);
+    g_free(error_message);
     goto cleanup_final;
   }
 
-  if (was_cancelled) {
-    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
-                            "Signing operation was cancelled");
-  } else {
-    g_warning("[SIGNER_SERVICE] NIP-46 sign failed - no valid response");
-    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
-                            "Remote signer did not respond. Check connection and try again.");
+  if (error_message) {
+    g_warning("[SIGNER_SERVICE] NIP-46 sign failed: %s", error_message);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "%s", error_message);
+    g_free(error_message);
+    goto cleanup_final;
   }
+
+  /* Should not reach here, but just in case */
+  g_warning("[SIGNER_SERVICE] NIP-46 sign failed - unexpected state");
+  g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                          "NIP-46 signing failed unexpectedly");
   goto cleanup_final;
 
 cleanup:
