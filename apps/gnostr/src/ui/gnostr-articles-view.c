@@ -419,14 +419,21 @@ static void load_articles_from_nostrdb(GnostrArticlesView *self) {
 
 /* --- Async relay fetch callback --- */
 static void on_relay_fetch_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
+  g_debug("articles-view: on_relay_fetch_complete called");
+
   GnostrArticlesView *self = GNOSTR_ARTICLES_VIEW(user_data);
 
-  if (!GNOSTR_IS_ARTICLES_VIEW(self)) return;
+  if (!GNOSTR_IS_ARTICLES_VIEW(self)) {
+    g_warning("articles-view: widget no longer valid in callback");
+    return;
+  }
 
   self->fetch_in_progress = FALSE;
 
   GError *error = NULL;
   GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+  g_debug("articles-view: fetch complete, results=%p, results_len=%u, error=%s",
+          (void*)results, results ? results->len : 0, error ? error->message : "none");
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -480,7 +487,10 @@ static void on_relay_fetch_complete(GObject *source, GAsyncResult *res, gpointer
 
   if (results) g_ptr_array_unref(results);
 
+  g_debug("articles-view: calling set_loading(FALSE)");
   gnostr_articles_view_set_loading(self, FALSE);
+  g_debug("articles-view: set_loading(FALSE) complete, model has %u items",
+          g_list_model_get_n_items(G_LIST_MODEL(self->articles_model)));
 }
 
 /* --- Fetch articles from relays --- */
@@ -519,10 +529,21 @@ static void fetch_articles_from_relays(GnostrArticlesView *self) {
 
   self->fetch_in_progress = TRUE;
 
-  g_debug("articles-view: Fetching articles from %u relays", relay_arr->len);
+  GnostrSimplePool *pool = gnostr_get_shared_query_pool();
+  g_debug("articles-view: Fetching articles from %u relays, pool=%p", relay_arr->len, (void*)pool);
+
+  if (!pool) {
+    g_warning("articles-view: shared query pool is NULL, cannot fetch");
+    self->fetch_in_progress = FALSE;
+    gnostr_articles_view_set_loading(self, FALSE);
+    g_free(urls);
+    g_ptr_array_unref(relay_arr);
+    nostr_filter_free(filter);
+    return;
+  }
 
   gnostr_simple_pool_query_single_async(
-    gnostr_get_shared_query_pool(),
+    pool,
     urls,
     relay_arr->len,
     filter,
@@ -895,13 +916,17 @@ static void update_article_count(GnostrArticlesView *self) {
 }
 
 static void update_content_state(GnostrArticlesView *self) {
+  guint model_count = g_list_model_get_n_items(G_LIST_MODEL(self->articles_model));
   guint count = self->filtered_model ?
-    g_list_model_get_n_items(G_LIST_MODEL(self->filtered_model)) :
-    g_list_model_get_n_items(G_LIST_MODEL(self->articles_model));
+    g_list_model_get_n_items(G_LIST_MODEL(self->filtered_model)) : model_count;
+
+  g_debug("articles-view: update_content_state model=%u filtered=%u", model_count, count);
 
   if (count == 0) {
+    g_debug("articles-view: switching stack to 'empty'");
     gtk_stack_set_visible_child_name(GTK_STACK(self->content_stack), "empty");
   } else {
+    g_debug("articles-view: switching stack to 'results'");
     gtk_stack_set_visible_child_name(GTK_STACK(self->content_stack), "results");
   }
 
@@ -1175,6 +1200,8 @@ void gnostr_articles_view_set_loading(GnostrArticlesView *self,
                                        gboolean is_loading) {
   g_return_if_fail(GNOSTR_IS_ARTICLES_VIEW(self));
 
+  g_debug("articles-view: set_loading(%s)", is_loading ? "TRUE" : "FALSE");
+
   if (is_loading) {
     gtk_spinner_start(GTK_SPINNER(self->loading_spinner));
     gtk_stack_set_visible_child_name(GTK_STACK(self->content_stack), "loading");
@@ -1182,6 +1209,9 @@ void gnostr_articles_view_set_loading(GnostrArticlesView *self,
     gtk_spinner_stop(GTK_SPINNER(self->loading_spinner));
     update_content_state(self);
   }
+
+  g_debug("articles-view: stack now showing '%s'",
+          gtk_stack_get_visible_child_name(GTK_STACK(self->content_stack)));
 }
 
 guint gnostr_articles_view_get_article_count(GnostrArticlesView *self) {

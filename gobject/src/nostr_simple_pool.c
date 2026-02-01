@@ -843,14 +843,17 @@ static gpointer query_single_thread(gpointer user_data) {
                       sid ? sid : "null");
         }
 
-        /* Wait for events until EOSE or connection drops - NO TIMEOUTS
+        /* Wait for events until EOSE or connection drops
          * We exit when:
          * 1. EOSE received (normal completion)
          * 2. Subscription closed by relay (CLOSED message)
          * 3. Connection dropped (websocket closed/failed)
-         * 4. Cancellation requested */
+         * 4. Cancellation requested
+         * 5. Safety timeout reached (30s per relay) */
         bool done = false;
         guint events_received = 0;
+        guint wait_iterations = 0;
+        const guint max_wait_iterations = 3000;  /* 30 seconds at 10ms per iteration */
         GoChannel *ch_events = nostr_subscription_get_events_channel(sub);
         GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
         GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
@@ -865,6 +868,12 @@ static gpointer query_single_thread(gpointer user_data) {
             /* Check connection state - if relay disconnected, stop waiting */
             if (!nostr_relay_is_connected(relay)) {
                 g_debug("query_single: connection dropped for %s after %u events", url, events_received);
+                break;
+            }
+
+            /* Safety timeout to prevent infinite waiting if relay never sends EOSE */
+            if (wait_iterations++ >= max_wait_iterations) {
+                g_debug("query_single: timeout waiting for EOSE from %s after %u events", url, events_received);
                 break;
             }
 
