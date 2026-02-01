@@ -256,6 +256,7 @@ NostrSimplePool *nostr_simple_pool_new(void) {
     pool->running = false;
     pool->subs = NULL;
     pool->subs_count = 0;
+    pool->filters_shared = NULL;  /* nostrc-ey0f: prevent use-after-free on uninitialized pointer */
     pool->dedup_unique = false;
     pool->dedup_cap = 65536; /* align with GObject reference scale */
     pool->dedup_ring = NULL;

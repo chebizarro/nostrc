@@ -206,6 +206,7 @@ bool nostr_filters_add(NostrFilters *filters, NostrFilter *filter) {
 
 
 void nostr_filters_free(NostrFilters *filters) {
+    if (!filters) return;  /* nostrc-ey0f: NULL guard */
     for (size_t i = 0; i < filters->count; i++) {
         free_filter_contents(&filters->filters[i]);
     }
