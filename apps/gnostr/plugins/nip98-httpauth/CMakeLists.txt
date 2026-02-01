@@ -18,6 +18,9 @@ target_include_directories(${PLUGIN_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/nips/nip98/include
 )
 
+# Plugin build mode - excludes host-only code from gnostr-plugin-api.c
+target_compile_definitions(${PLUGIN_NAME} PRIVATE GNOSTR_PLUGIN_BUILD=1)
+
 # Link libraries
 target_link_libraries(${PLUGIN_NAME} PRIVATE
     PkgConfig::GTK4

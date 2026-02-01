@@ -3,10 +3,15 @@
  *
  * Implementation of GObject interfaces for the plugin system.
  *
+ * nostrc-ih5: Guard context implementation for plugin builds.
+ *
  * Copyright (C) 2026 Gnostr Contributors
  */
 
 #include "gnostr-plugin-api.h"
+
+/* App-internal includes - only needed when building the main app */
+#ifndef GNOSTR_PLUGIN_BUILD
 #include "storage_ndb.h"
 #include "util/relays.h"
 #include "ipc/gnostr-signer-service.h"
@@ -17,6 +22,10 @@
 #include "nostr-json.h"
 #include <json-glib/json-glib.h>
 #include <string.h>
+#endif /* !GNOSTR_PLUGIN_BUILD */
+
+/* Context implementation - only needed when building the main app */
+#ifndef GNOSTR_PLUGIN_BUILD
 
 /* ============================================================================
  * PLUGIN CONTEXT STRUCTURE
@@ -94,6 +103,8 @@ gnostr_plugin_context_set_pool(GnostrPluginContext *ctx, GnostrSimplePool *pool)
 {
   if (ctx) ctx->pool = pool;
 }
+
+#endif /* !GNOSTR_PLUGIN_BUILD */
 
 /* ============================================================================
  * GNOSTR_PLUGIN INTERFACE
@@ -280,7 +291,11 @@ G_DEFINE_QUARK(gnostr-plugin-error-quark, gnostr_plugin_error)
 
 /* ============================================================================
  * PLUGIN CONTEXT API IMPLEMENTATIONS
+ * These implementations use internal app services and are only built into
+ * the main app, not into plugins.
  * ============================================================================ */
+
+#ifndef GNOSTR_PLUGIN_BUILD
 
 /* --- Application Access --- */
 
@@ -748,3 +763,5 @@ gnostr_plugin_context_request_sign_event_finish(GnostrPluginContext *context,
   g_return_val_if_fail(G_IS_TASK(result), NULL);
   return g_task_propagate_pointer(G_TASK(result), error);
 }
+
+#endif /* !GNOSTR_PLUGIN_BUILD */
