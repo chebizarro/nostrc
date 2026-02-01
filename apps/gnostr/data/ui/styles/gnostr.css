@@ -363,9 +363,7 @@ label a:visited {
 	border-radius: 50%;
 	min-width: 48px;
 	min-height: 48px;
-	max-width: 48px;
-	max-height: 48px;
-	overflow: hidden;
+	/* Note: max-width/max-height/overflow not supported in GTK4 CSS */
 	/* Force the overlay to maintain size even without image */
 	-gtk-icon-size: 24px;
 	/* Default fallback gradient for avatars without images */
@@ -388,16 +386,12 @@ label a:visited {
 	border-radius: 50%;
 	min-width: 48px;
 	min-height: 48px;
-	max-width: 48px;
-	max-height: 48px;
 }
 
 .note-avatar-image {
 	border-radius: 50%;
 	min-width: 48px;
 	min-height: 48px;
-	max-width: 48px;
-	max-height: 48px;
 }
 
 /* Profile Pane Styles */
@@ -1788,10 +1782,8 @@ button.zapped image {
 .profile-row-avatar {
 	min-width: 48px;
 	min-height: 48px;
-	max-width: 48px;
-	max-height: 48px;
+	/* Note: max-width/max-height/overflow not supported in GTK4 CSS */
 	border-radius: 50%;
-	overflow: hidden;
 	background: linear-gradient(
 		135deg,
 		alpha(@accent_bg_color, 0.2) 0%,
@@ -1803,16 +1795,12 @@ button.zapped image {
 	border-radius: 50%;
 	min-width: 48px;
 	min-height: 48px;
-	max-width: 48px;
-	max-height: 48px;
 }
 
 .profile-row-avatar-image {
 	border-radius: 50%;
 	min-width: 48px;
 	min-height: 48px;
-	max-width: 48px;
-	max-height: 48px;
 }
 
 /* Profile row avatar initials - constrained to 48x48 */

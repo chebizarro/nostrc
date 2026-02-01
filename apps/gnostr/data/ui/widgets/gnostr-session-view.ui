@@ -10,7 +10,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <section>
       <item>
         <attribute name="label" translatable="yes">_Preferences</attribute>
-        <attribute name="action">app.preferences</attribute>
+        <attribute name="action">win.show-preferences</attribute>
       </item>
       <item>
         <attribute name="label" translatable="yes">_Keyboard Shortcuts</attribute>
@@ -18,7 +18,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </item>
       <item>
         <attribute name="label" translatable="yes">_About GNostr</attribute>
-        <attribute name="action">app.about</attribute>
+        <attribute name="action">win.show-about</attribute>
       </item>
     </section>
   </menu>

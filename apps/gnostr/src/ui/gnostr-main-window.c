@@ -235,6 +235,7 @@ static void on_reconnect_requested(GnostrSessionView *view, gpointer user_data);
 static void on_settings_clicked(GtkButton *btn, gpointer user_data);
 static void on_show_mute_list_activated(GSimpleAction *action, GVariant *param, gpointer user_data);
 static void on_show_about_activated(GSimpleAction *action, GVariant *param, gpointer user_data);
+static void on_show_preferences_activated(GSimpleAction *action, GVariant *param, gpointer user_data);
 static void on_avatar_login_clicked(GtkButton *btn, gpointer user_data);
 static void on_avatar_logout_clicked(GtkButton *btn, gpointer user_data);
 static void on_note_card_open_profile(GnostrNoteCardRow *row, const char *pubkey_hex, gpointer user_data);
@@ -3097,6 +3098,17 @@ static void on_show_about_activated(GSimpleAction *action, GVariant *param, gpoi
   gtk_window_present(win);
 }
 
+/* Handler for the "Preferences" menu action - opens Settings dialog */
+static void on_show_preferences_activated(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action;
+  (void)param;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  /* Reuse the settings button click handler logic */
+  on_settings_clicked(NULL, self);
+}
+
 /* Forward declaration for updating login UI state */
 static void update_login_ui_state(GnostrMainWindow *self);
 
@@ -4410,12 +4422,17 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
 
   /* Register for relay configuration changes (live relay switching, nostrc-36y.4) */
   self->relay_change_handler_id = gnostr_relay_change_connect(on_relay_config_changed, self);
-  /* Register window action for About dialog (menu is now in session view) */
+  /* Register window actions for menu (menu is now in session view) */
   {
     GSimpleAction *about_action = g_simple_action_new("show-about", NULL);
     g_signal_connect(about_action, "activate", G_CALLBACK(on_show_about_activated), self);
     g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(about_action));
     g_object_unref(about_action);
+
+    GSimpleAction *prefs_action = g_simple_action_new("show-preferences", NULL);
+    g_signal_connect(prefs_action, "activate", G_CALLBACK(on_show_preferences_activated), self);
+    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(prefs_action));
+    g_object_unref(prefs_action);
   }
   /* Connect discover page signals (nostrc-dr3) - accessed via session view */
   {
