@@ -203,6 +203,14 @@ struct _GnostrNoteCardRow {
   GtkWidget *repost_indicator_box;  /* "Reposted by X" header */
   GtkWidget *repost_indicator_label;
   GtkWidget *lbl_repost_count;  /* Repost count next to button */
+  /* NIP-57 Zap receipt state */
+  gboolean is_zap_receipt;      /* TRUE if this is a kind 9735 zap receipt */
+  gchar *zap_sender_pubkey;     /* Zap sender's pubkey */
+  gchar *zap_recipient_pubkey;  /* Zap recipient's pubkey */
+  gchar *zap_target_event_id;   /* Event that was zapped (if any) */
+  gint64 zap_amount_msat;       /* Zap amount in millisatoshis */
+  GtkWidget *zap_indicator_box; /* "⚡ X zapped Y Z sats" header */
+  GtkWidget *zap_indicator_label;
   /* NIP-18 Quote state */
   gchar *quoted_event_id;
   GtkWidget *quote_embed_box;  /* Container for quoted note preview */
@@ -488,6 +496,10 @@ static void gnostr_note_card_row_finalize(GObject *obj) {
   g_clear_pointer(&self->reposter_pubkey, g_free);
   g_clear_pointer(&self->reposter_display_name, g_free);
   g_clear_pointer(&self->quoted_event_id, g_free);
+  /* NIP-57 zap receipt state cleanup */
+  g_clear_pointer(&self->zap_sender_pubkey, g_free);
+  g_clear_pointer(&self->zap_recipient_pubkey, g_free);
+  g_clear_pointer(&self->zap_target_event_id, g_free);
   /* NIP-36 sensitive content state cleanup */
   g_clear_pointer(&self->content_warning_reason, g_free);
   /* NIP-23 article state cleanup */
@@ -4113,6 +4125,109 @@ void gnostr_note_card_row_set_repost_count(GnostrNoteCardRow *self, guint count)
       g_free(text);
     } else {
       gtk_widget_set_visible(self->lbl_repost_count, FALSE);
+    }
+  }
+}
+
+/* NIP-57: Set zap receipt info to display "⚡ X zapped Y Z sats" header */
+void gnostr_note_card_row_set_zap_receipt_info(GnostrNoteCardRow *self,
+                                                const char *sender_pubkey,
+                                                const char *sender_display_name,
+                                                const char *recipient_pubkey,
+                                                const char *recipient_display_name,
+                                                const char *target_event_id,
+                                                gint64 amount_msat) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  /* Store zap info */
+  g_clear_pointer(&self->zap_sender_pubkey, g_free);
+  g_clear_pointer(&self->zap_recipient_pubkey, g_free);
+  g_clear_pointer(&self->zap_target_event_id, g_free);
+  self->zap_sender_pubkey = g_strdup(sender_pubkey);
+  self->zap_recipient_pubkey = g_strdup(recipient_pubkey);
+  self->zap_target_event_id = g_strdup(target_event_id);
+  self->zap_amount_msat = amount_msat;
+  self->is_zap_receipt = TRUE;
+
+  /* Create zap indicator box if it doesn't exist */
+  if (!self->zap_indicator_box && self->root && GTK_IS_WIDGET(self->root)) {
+    self->zap_indicator_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_add_css_class(self->zap_indicator_box, "zap-indicator");
+    gtk_widget_set_margin_start(self->zap_indicator_box, 52);  /* Align with content */
+    gtk_widget_set_margin_bottom(self->zap_indicator_box, 4);
+
+    /* Zap icon */
+    GtkWidget *icon = gtk_label_new("⚡");
+    gtk_widget_add_css_class(icon, "zap-icon");
+    gtk_box_append(GTK_BOX(self->zap_indicator_box), icon);
+
+    /* Zap info label */
+    self->zap_indicator_label = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(self->zap_indicator_label), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(self->zap_indicator_label), PANGO_ELLIPSIZE_END);
+    gtk_widget_add_css_class(self->zap_indicator_label, "dim-label");
+    gtk_widget_add_css_class(self->zap_indicator_label, "caption");
+    gtk_box_append(GTK_BOX(self->zap_indicator_box), self->zap_indicator_label);
+
+    /* Insert at top of root box */
+    GtkWidget *first = gtk_widget_get_first_child(self->root);
+    if (first) {
+      gtk_box_insert_child_after(GTK_BOX(self->root), self->zap_indicator_box, NULL);
+    } else {
+      gtk_box_prepend(GTK_BOX(self->root), self->zap_indicator_box);
+    }
+  }
+
+  /* Format amount */
+  gint64 sats = amount_msat / 1000;
+  gchar *amount_str;
+  if (sats >= 1000000) {
+    amount_str = g_strdup_printf("%.1fM sats", sats / 1000000.0);
+  } else if (sats >= 1000) {
+    amount_str = g_strdup_printf("%.1fK sats", sats / 1000.0);
+  } else {
+    amount_str = g_strdup_printf("%lld sats", (long long)sats);
+  }
+
+  /* Format label text */
+  const char *sender_name = sender_display_name && *sender_display_name ? sender_display_name : "Someone";
+  const char *recipient_name = recipient_display_name && *recipient_display_name ? recipient_display_name : "someone";
+
+  gchar *text;
+  if (target_event_id && *target_event_id) {
+    text = g_strdup_printf("%s zapped %s's note %s", sender_name, recipient_name, amount_str);
+  } else {
+    text = g_strdup_printf("%s zapped %s %s", sender_name, recipient_name, amount_str);
+  }
+
+  if (GTK_IS_LABEL(self->zap_indicator_label)) {
+    gtk_label_set_text(GTK_LABEL(self->zap_indicator_label), text);
+  }
+
+  g_free(amount_str);
+  g_free(text);
+
+  /* Show the indicator */
+  if (GTK_IS_WIDGET(self->zap_indicator_box)) {
+    gtk_widget_set_visible(self->zap_indicator_box, TRUE);
+  }
+
+  /* Add CSS class for styling */
+  gtk_widget_add_css_class(GTK_WIDGET(self), "zap-receipt");
+}
+
+/* NIP-57: Set whether this card represents a zap receipt (kind 9735) */
+void gnostr_note_card_row_set_is_zap_receipt(GnostrNoteCardRow *self, gboolean is_zap) {
+  if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+
+  self->is_zap_receipt = is_zap;
+
+  if (is_zap) {
+    gtk_widget_add_css_class(GTK_WIDGET(self), "zap-receipt");
+  } else {
+    gtk_widget_remove_css_class(GTK_WIDGET(self), "zap-receipt");
+    if (GTK_IS_WIDGET(self->zap_indicator_box)) {
+      gtk_widget_set_visible(self->zap_indicator_box, FALSE);
     }
   }
 }

@@ -1811,6 +1811,24 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       }
     }
 
+    /* NIP-57: Handle zap receipt events (kind 9735) */
+    if (event_kind == 9735 && G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
+      /* For zap receipts, mark them as such and set up the indicator */
+      gnostr_note_card_row_set_is_zap_receipt(GNOSTR_NOTE_CARD_ROW(row), TRUE);
+
+      /* Get zap stats from the event item if available */
+      gint64 zap_total = gn_nostr_event_item_get_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj));
+
+      /* Simple zap display - show "⚡ Zap" with amount if available */
+      gnostr_note_card_row_set_zap_receipt_info(GNOSTR_NOTE_CARD_ROW(row),
+                                                 pubkey,    /* sender is the event pubkey for now */
+                                                 display,   /* sender name */
+                                                 NULL,      /* recipient - parsed from tags if needed */
+                                                 NULL,      /* recipient name */
+                                                 NULL,      /* target event - parsed from tags if needed */
+                                                 zap_total > 0 ? zap_total : 21000); /* Default 21 sats if unknown */
+    }
+
     /* NIP-05: Set verification identifier for async verification badge */
     if (nip05 && *nip05 && pubkey && strlen(pubkey) == 64) {
       gnostr_note_card_row_set_nip05(GNOSTR_NOTE_CARD_ROW(row), nip05, pubkey);

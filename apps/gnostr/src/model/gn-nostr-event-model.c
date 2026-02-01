@@ -23,7 +23,7 @@
 #define MIN_UPDATE_INTERVAL_MS (1000 / MAX_UPDATES_PER_SEC)
 
 /* Subscription filters - storage_ndb_subscribe expects a single filter object, not an array */
-#define FILTER_TIMELINE   "{\"kinds\":[1,6]}"
+#define FILTER_TIMELINE   "{\"kinds\":[1,6,9735]}"
 #define FILTER_PROFILES   "{\"kinds\":[0]}"
 #define FILTER_DELETES    "{\"kinds\":[5]}"
 #define FILTER_REACTIONS  "{\"kinds\":[7]}"
@@ -1224,8 +1224,8 @@ static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, gui
 
     uint32_t kind_u32 = storage_ndb_note_kind(note);
     int kind = (int)kind_u32;
-    /* Allow kind 1 (text notes), kind 6 (reposts), and kind 1111 (NIP-22 comments) */
-    if (kind != 1 && kind != 6 && kind != 1111) { filtered++; continue; }
+    /* Allow kind 1 (text notes), kind 6 (reposts), kind 1111 (NIP-22 comments), and kind 9735 (zap receipts) */
+    if (kind != 1 && kind != 6 && kind != 1111 && kind != 9735) { filtered++; continue; }
 
     /* NIP-40: Filter out expired events */
     if (storage_ndb_note_is_expired(note)) { filtered++; continue; }

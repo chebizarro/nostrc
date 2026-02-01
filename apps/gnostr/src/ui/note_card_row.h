@@ -123,6 +123,18 @@ void gnostr_note_card_row_set_quote_info(GnostrNoteCardRow *self,
 					 const char *quoted_content,
 					 const char *quoted_author_name);
 
+/* NIP-57 Zap Receipts: set zap receipt info to display "⚡ X zapped Y Z sats" */
+void gnostr_note_card_row_set_zap_receipt_info(GnostrNoteCardRow *self,
+                                                const char *sender_pubkey,
+                                                const char *sender_display_name,
+                                                const char *recipient_pubkey,
+                                                const char *recipient_display_name,
+                                                const char *target_event_id,
+                                                gint64 amount_msat);
+
+/* NIP-57 Zap Receipts: set whether this card represents a zap receipt (kind 9735) */
+void gnostr_note_card_row_set_is_zap_receipt(GnostrNoteCardRow *self, gboolean is_zap);
+
 /* NIP-36 Sensitive Content: set content-warning for sensitive/NSFW content */
 void gnostr_note_card_row_set_content_warning(GnostrNoteCardRow *self,
 					      const char *content_warning_reason);
