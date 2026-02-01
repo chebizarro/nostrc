@@ -12,6 +12,7 @@
 #include "../storage_ndb.h"
 #include "../util/zap.h"
 
+#include <stdio.h>
 #include <string.h>
 
 /* Nostr event kinds for notifications */
@@ -551,21 +552,71 @@ on_dm_events(uint64_t subid, const uint64_t *note_keys,
   }
 }
 
-/* Check if a note has a reply marker (e-tag with "reply" marker per NIP-10) */
+/* Check if a note is a reply to a note authored by the given user (NIP-10).
+ * Returns TRUE if this note replies to one of user's notes.
+ * Also returns the target note ID via target_id_out (caller must g_free).
+ * Uses storage_ndb_note_get_nip10_thread for proper NIP-10 parsing. */
 static gboolean
-note_has_reply_marker(storage_ndb_note *note)
+note_is_reply_to_user(void *txn, storage_ndb_note *note, const char *user_pubkey,
+                      char **target_id_out)
 {
-  if (!note) return FALSE;
+  if (!note || !user_pubkey || strlen(user_pubkey) != 64) return FALSE;
 
-  /* Get tags JSON and check for reply marker.
-   * A more efficient implementation would directly iterate tags
-   * via nostrdb API, but this works for now. */
-  char *tags_json = storage_ndb_note_tags_json(note);
-  if (!tags_json) return FALSE;
+  if (target_id_out) *target_id_out = NULL;
 
-  gboolean is_reply = (strstr(tags_json, "\"reply\"") != NULL);
-  g_free(tags_json);
-  return is_reply;
+  /* Extract NIP-10 thread context - gets the note ID this note replies to */
+  char *root_id = NULL;
+  char *reply_id = NULL;
+  storage_ndb_note_get_nip10_thread(note, &root_id, &reply_id);
+
+  /* If no reply_id, check root_id (some clients only set root for direct replies) */
+  char *target_id = reply_id ? reply_id : root_id;
+
+  if (!target_id) {
+    g_free(root_id);
+    g_free(reply_id);
+    return FALSE;
+  }
+
+  /* Convert target_id hex to binary for lookup */
+  unsigned char target_id_bin[32];
+  gboolean valid_hex = TRUE;
+  for (int i = 0; i < 32 && valid_hex; i++) {
+    unsigned int byte;
+    if (sscanf(target_id + (i * 2), "%2x", &byte) != 1) {
+      valid_hex = FALSE;
+    } else {
+      target_id_bin[i] = (unsigned char)byte;
+    }
+  }
+
+  if (!valid_hex) {
+    g_free(root_id);
+    g_free(reply_id);
+    return FALSE;
+  }
+
+  /* Look up the target note to check its author */
+  storage_ndb_note *target_note = NULL;
+  uint64_t target_key = storage_ndb_get_note_key_by_id(txn, target_id_bin, &target_note);
+
+  gboolean is_reply_to_user = FALSE;
+  if (target_key != 0 && target_note) {
+    const unsigned char *target_author = storage_ndb_note_pubkey(target_note);
+    if (target_author) {
+      char target_author_hex[65];
+      storage_ndb_hex_encode(target_author, target_author_hex);
+      is_reply_to_user = (g_strcmp0(target_author_hex, user_pubkey) == 0);
+    }
+  }
+
+  if (is_reply_to_user && target_id_out) {
+    *target_id_out = g_strdup(target_id);
+  }
+
+  g_free(root_id);
+  g_free(reply_id);
+  return is_reply_to_user;
 }
 
 static void
@@ -574,6 +625,12 @@ on_mention_events(uint64_t subid, const uint64_t *note_keys,
 {
   (void)subid;
   GnostrBadgeManager *self = GNOSTR_BADGE_MANAGER(user_data);
+
+  /* Need user pubkey to distinguish replies to user's notes from general mentions */
+  if (!self->user_pubkey || strlen(self->user_pubkey) != 64) {
+    g_debug("No user pubkey set, cannot process mention/reply events");
+    return;
+  }
 
   /* Get transaction to access notes */
   void *txn = NULL;
@@ -595,11 +652,12 @@ on_mention_events(uint64_t subid, const uint64_t *note_keys,
 
     gint64 created_at = (gint64)storage_ndb_note_created_at(note);
 
-    /* Check if it's a mention or reply by looking at tags.
-     * A reply has an e-tag with "reply" marker per NIP-10. */
-    gboolean is_reply = note_has_reply_marker(note);
+    /* Check if this note is a reply to one of user's notes using NIP-10 thread context.
+     * This properly handles both marker style and positional e-tags. */
+    char *target_note_id = NULL;
+    gboolean is_reply_to_user = note_is_reply_to_user(txn, note, self->user_pubkey, &target_note_id);
 
-    if (is_reply && self->enabled[GNOSTR_NOTIFICATION_REPLY]) {
+    if (is_reply_to_user && self->enabled[GNOSTR_NOTIFICATION_REPLY]) {
       if (created_at > reply_last) {
         reply_count++;
 
@@ -615,9 +673,14 @@ on_mention_events(uint64_t subid, const uint64_t *note_keys,
 
           emit_event(self, GNOSTR_NOTIFICATION_REPLY, pubkey_hex, NULL, content, id_hex, 0);
           reply_event_emitted = TRUE;
+
+          g_debug("Reply to user's note detected: %.16s... replied to %.16s...",
+                  pubkey_hex, target_note_id ? target_note_id : "unknown");
         }
       }
+      g_free(target_note_id);
     } else if (self->enabled[GNOSTR_NOTIFICATION_MENTION]) {
+      /* Not a reply to user's note, but user is p-tagged = mention */
       if (created_at > mention_last) {
         mention_count++;
 
