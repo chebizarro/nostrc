@@ -587,16 +587,6 @@ static gboolean hex_to_bytes_32(const char *hex, unsigned char out[32]) {
   return TRUE;
 }
 
-/* Ensure NostrDB is initialized (idempotent). Mirrors logic in main_app.c */
-static void ensure_ndb_initialized(void) {
-  /* storage_ndb_init is idempotent; if already initialized it returns 1 */
-  gchar *dbdir = g_build_filename(g_get_user_cache_dir(), "gnostr", "ndb", NULL);
-  (void)g_mkdir_with_parents(dbdir, 0700);
-  const char *opts = "{\"mapsize\":1073741824,\"ingester_threads\":4}";
-  storage_ndb_init(dbdir, opts);
-  g_free(dbdir);
-}
-
 /* Helper: pretty-print JSON string with indentation */
 static char *pretty_print_json(const char *json_str) {
   if (!json_str) return NULL;
@@ -618,9 +608,6 @@ static void show_json_viewer(GnostrNoteCardRow *self) {
     g_warning("No event ID available to fetch JSON");
     return;
   }
-
-  /* Ensure DB is initialized (safe if already initialized) */
-  ensure_ndb_initialized();
 
   /* Fetch event JSON from NostrDB using nontxn helper with built-in retries */
   char *event_json = NULL;
