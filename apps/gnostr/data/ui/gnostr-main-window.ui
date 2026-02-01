@@ -8,7 +8,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <requires lib="gtk" version="4.0"/>
   <template class="GnostrMainWindow" parent="AdwApplicationWindow">
     <property name="title">GNostr</property>
-    <property name="default-width">1280</property>
+    <property name="default-width">1040</property>
     <property name="default-height">720</property>
     <property name="width-request">360</property>
     <property name="height-request">480</property>
