@@ -23,6 +23,7 @@
 #define NOTIFY_ID_MENTION "gnostr-mention-"
 #define NOTIFY_ID_REPLY   "gnostr-reply-"
 #define NOTIFY_ID_ZAP     "gnostr-zap-"
+#define NOTIFY_ID_REPOST  "gnostr-repost-"
 
 /* Maximum preview length for notification body */
 #define MAX_PREVIEW_LENGTH 100
@@ -345,6 +346,9 @@ get_notification_id(GnostrNotificationType type, const char *event_id)
     case GNOSTR_NOTIFICATION_ZAP:
       prefix = NOTIFY_ID_ZAP;
       break;
+    case GNOSTR_NOTIFICATION_REPOST:
+      prefix = NOTIFY_ID_REPOST;
+      break;
     default:
       prefix = "gnostr-";
       break;
@@ -610,6 +614,35 @@ gnostr_desktop_notify_send_zap(GnostrDesktopNotify *self,
 
   g_free(title);
   g_free(body);
+}
+
+void
+gnostr_desktop_notify_send_repost(GnostrDesktopNotify *self,
+                                   const char *reposter_name,
+                                   const char *reposter_pubkey,
+                                   const char *event_id)
+{
+  g_return_if_fail(GNOSTR_IS_DESKTOP_NOTIFY(self));
+  g_return_if_fail(reposter_name != NULL);
+  (void)reposter_pubkey;
+
+  gchar *title;
+
+  switch (self->privacy) {
+    case GNOSTR_NOTIFY_PRIVACY_HIDDEN:
+      title = g_strdup("Your note was reposted");
+      break;
+
+    case GNOSTR_NOTIFY_PRIVACY_SENDER_ONLY:
+    case GNOSTR_NOTIFY_PRIVACY_FULL:
+    default:
+      title = g_strdup_printf("%s reposted your note", reposter_name);
+      break;
+  }
+
+  send_notification_internal(self, GNOSTR_NOTIFICATION_REPOST, title, NULL, event_id);
+
+  g_free(title);
 }
 
 void

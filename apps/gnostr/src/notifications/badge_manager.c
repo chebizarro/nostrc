@@ -10,12 +10,14 @@
 #include "badge_manager.h"
 #include "../model/gn-ndb-sub-dispatcher.h"
 #include "../storage_ndb.h"
+#include "../util/zap.h"
 
 #include <string.h>
 
 /* Nostr event kinds for notifications */
 #define KIND_LEGACY_DM        4
 #define KIND_TEXT_NOTE        1
+#define KIND_REPOST           6
 #define KIND_NIP17_RUMOR      14
 #define KIND_ZAP_RECEIPT      9735
 #define KIND_GIFT_WRAP        1059
@@ -52,6 +54,7 @@ struct _GnostrBadgeManager {
   uint64_t sub_dm;
   uint64_t sub_mentions;
   uint64_t sub_zaps;
+  uint64_t sub_reposts;
 
   /* GSettings for persistence */
   GSettings *settings;
@@ -68,6 +71,8 @@ static void on_mention_events(uint64_t subid, const uint64_t *note_keys,
                               guint n_keys, gpointer user_data);
 static void on_zap_events(uint64_t subid, const uint64_t *note_keys,
                           guint n_keys, gpointer user_data);
+static void on_repost_events(uint64_t subid, const uint64_t *note_keys,
+                             guint n_keys, gpointer user_data);
 static void emit_changed(GnostrBadgeManager *self);
 static void load_settings(GnostrBadgeManager *self);
 static void save_settings(GnostrBadgeManager *self);
@@ -140,6 +145,7 @@ gnostr_badge_manager_init(GnostrBadgeManager *self)
   self->sub_dm = 0;
   self->sub_mentions = 0;
   self->sub_zaps = 0;
+  self->sub_reposts = 0;
   self->settings = NULL;
 
   /* Try to load settings */
@@ -643,7 +649,6 @@ on_zap_events(uint64_t subid, const uint64_t *note_keys,
 
   guint new_count = 0;
   gint64 last_read = self->last_read[GNOSTR_NOTIFICATION_ZAP];
-  guint64 total_sats = 0;
 
   for (guint i = 0; i < n_keys; i++) {
     storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_keys[i]);
@@ -653,20 +658,56 @@ on_zap_events(uint64_t subid, const uint64_t *note_keys,
     if (created_at > last_read) {
       new_count++;
 
-      /* Emit event for first zap only.
-       * Note: Amount extraction from zap receipt would require parsing the bolt11
-       * tag, which is complex. For now, pass 0 as amount. */
+      /* Emit event for first zap only to avoid notification spam */
       if (new_count == 1 && self->event_callback) {
-        const unsigned char *pubkey_bin = storage_ndb_note_pubkey(note);
         const unsigned char *id_bin = storage_ndb_note_id(note);
-        const char *content = storage_ndb_note_content(note);
 
-        char pubkey_hex[65], id_hex[65];
-        storage_ndb_hex_encode(pubkey_bin, pubkey_hex);
-        storage_ndb_hex_encode(id_bin, id_hex);
+        /* Get the note JSON to parse zap receipt details */
+        char *note_json = NULL;
+        int json_len = 0;
+        int rc = storage_ndb_get_note_by_id(txn, id_bin, &note_json, &json_len);
 
-        /* TODO: Parse bolt11 from tags to extract actual amount */
-        emit_event(self, GNOSTR_NOTIFICATION_ZAP, pubkey_hex, NULL, content, id_hex, total_sats);
+        if (rc == 0 && note_json && json_len > 0) {
+          /* Make a null-terminated copy for parsing */
+          char *json_copy = g_strndup(note_json, json_len);
+          GnostrZapReceipt *receipt = gnostr_zap_parse_receipt(json_copy);
+
+          if (receipt) {
+            /* Extract amount in sats from the parsed receipt */
+            guint64 amount_sats = 0;
+            if (receipt->amount_msat > 0) {
+              amount_sats = (guint64)(receipt->amount_msat / 1000);
+            }
+
+            /* Use sender pubkey from receipt (P tag), fallback to receipt event pubkey */
+            const char *sender = receipt->sender_pubkey ? receipt->sender_pubkey : receipt->event_pubkey;
+
+            char id_hex[65];
+            storage_ndb_hex_encode(id_bin, id_hex);
+
+            /* Emit with actual amount and sender */
+            emit_event(self, GNOSTR_NOTIFICATION_ZAP, sender, NULL, NULL, id_hex, amount_sats);
+
+            g_debug("Zap notification: %llu sats from %.16s...",
+                    (unsigned long long)amount_sats, sender ? sender : "unknown");
+
+            gnostr_zap_receipt_free(receipt);
+          } else {
+            /* Fallback if parsing fails */
+            char pubkey_hex[65], id_hex[65];
+            storage_ndb_hex_encode(storage_ndb_note_pubkey(note), pubkey_hex);
+            storage_ndb_hex_encode(id_bin, id_hex);
+            emit_event(self, GNOSTR_NOTIFICATION_ZAP, pubkey_hex, NULL, NULL, id_hex, 0);
+          }
+
+          g_free(json_copy);
+        } else {
+          /* Fallback if JSON fetch fails */
+          char pubkey_hex[65], id_hex[65];
+          storage_ndb_hex_encode(storage_ndb_note_pubkey(note), pubkey_hex);
+          storage_ndb_hex_encode(id_bin, id_hex);
+          emit_event(self, GNOSTR_NOTIFICATION_ZAP, pubkey_hex, NULL, NULL, id_hex, 0);
+        }
       }
     }
   }
@@ -676,6 +717,58 @@ on_zap_events(uint64_t subid, const uint64_t *note_keys,
   if (new_count > 0) {
     gnostr_badge_manager_increment(self, GNOSTR_NOTIFICATION_ZAP, new_count);
     g_debug("Zap notification: +%u new", new_count);
+  }
+}
+
+static void
+on_repost_events(uint64_t subid, const uint64_t *note_keys,
+                 guint n_keys, gpointer user_data)
+{
+  (void)subid;
+  GnostrBadgeManager *self = GNOSTR_BADGE_MANAGER(user_data);
+
+  if (!self->enabled[GNOSTR_NOTIFICATION_REPOST]) return;
+
+  /* Get transaction to access notes */
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) {
+    g_warning("Failed to begin query for repost notifications");
+    return;
+  }
+
+  guint new_count = 0;
+  gint64 last_read = self->last_read[GNOSTR_NOTIFICATION_REPOST];
+
+  for (guint i = 0; i < n_keys; i++) {
+    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_keys[i]);
+    if (!note) continue;
+
+    gint64 created_at = (gint64)storage_ndb_note_created_at(note);
+    if (created_at > last_read) {
+      new_count++;
+
+      /* Emit event for first repost only to avoid notification spam */
+      if (new_count == 1 && self->event_callback) {
+        const unsigned char *pubkey_bin = storage_ndb_note_pubkey(note);
+        const unsigned char *id_bin = storage_ndb_note_id(note);
+
+        char pubkey_hex[65], id_hex[65];
+        storage_ndb_hex_encode(pubkey_bin, pubkey_hex);
+        storage_ndb_hex_encode(id_bin, id_hex);
+
+        /* Emit repost notification - amount_sats is 0 for reposts */
+        emit_event(self, GNOSTR_NOTIFICATION_REPOST, pubkey_hex, NULL, NULL, id_hex, 0);
+
+        g_debug("Repost notification from %.16s...", pubkey_hex);
+      }
+    }
+  }
+
+  storage_ndb_end_query(txn);
+
+  if (new_count > 0) {
+    gnostr_badge_manager_increment(self, GNOSTR_NOTIFICATION_REPOST, new_count);
+    g_debug("Repost notification: +%u new", new_count);
   }
 }
 
@@ -716,9 +809,17 @@ gnostr_badge_manager_start_subscriptions(GnostrBadgeManager *self)
   self->sub_zaps = gn_ndb_subscribe(zap_filter, on_zap_events, self, NULL);
   g_free(zap_filter);
 
-  g_debug("Started notification subscriptions for %s (dm=%lu, mentions=%lu, zaps=%lu)",
+  /* Subscribe to reposts (kind 6 with #p tag matching user per NIP-18) */
+  gchar *repost_filter = g_strdup_printf(
+    "[{\"kinds\":[%d],\"#p\":[\"%s\"]}]",
+    KIND_REPOST, self->user_pubkey);
+  self->sub_reposts = gn_ndb_subscribe(repost_filter, on_repost_events, self, NULL);
+  g_free(repost_filter);
+
+  g_debug("Started notification subscriptions for %s (dm=%lu, mentions=%lu, zaps=%lu, reposts=%lu)",
           self->user_pubkey, (unsigned long)self->sub_dm,
-          (unsigned long)self->sub_mentions, (unsigned long)self->sub_zaps);
+          (unsigned long)self->sub_mentions, (unsigned long)self->sub_zaps,
+          (unsigned long)self->sub_reposts);
 }
 
 void
@@ -739,6 +840,11 @@ gnostr_badge_manager_stop_subscriptions(GnostrBadgeManager *self)
   if (self->sub_zaps) {
     gn_ndb_unsubscribe(self->sub_zaps);
     self->sub_zaps = 0;
+  }
+
+  if (self->sub_reposts) {
+    gn_ndb_unsubscribe(self->sub_reposts);
+    self->sub_reposts = 0;
   }
 
   g_debug("Stopped notification subscriptions");

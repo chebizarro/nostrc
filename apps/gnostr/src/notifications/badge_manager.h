@@ -25,6 +25,7 @@ G_DECLARE_FINAL_TYPE(GnostrBadgeManager, gnostr_badge_manager, GNOSTR, BADGE_MAN
  * @GNOSTR_NOTIFICATION_MENTION: Mentions in notes (p-tag)
  * @GNOSTR_NOTIFICATION_REPLY: Replies to own notes (e-tag with reply marker)
  * @GNOSTR_NOTIFICATION_ZAP: Zap receipts (kind:9735)
+ * @GNOSTR_NOTIFICATION_REPOST: Reposts of user's notes (kind:6)
  *
  * Types of notifications that can generate badges.
  */
@@ -33,6 +34,7 @@ typedef enum {
   GNOSTR_NOTIFICATION_MENTION,
   GNOSTR_NOTIFICATION_REPLY,
   GNOSTR_NOTIFICATION_ZAP,
+  GNOSTR_NOTIFICATION_REPOST,
   GNOSTR_NOTIFICATION_TYPE_COUNT
 } GnostrNotificationType;
 

@@ -16,6 +16,7 @@
  *   - Mention: Mentions in notes
  *   - Reply: Replies to your notes
  *   - Zap: Zap receipts
+ *   - Repost: Reposts of your notes
  *
  * Settings are read from GSettings (org.gnostr.Notifications schema).
  */
@@ -243,6 +244,20 @@ void gnostr_desktop_notify_send_zap(GnostrDesktopNotify *self,
                                      guint64 amount_sats,
                                      const char *message,
                                      const char *event_id);
+
+/**
+ * gnostr_desktop_notify_send_repost:
+ * @self: The desktop notification manager
+ * @reposter_name: Display name of the person who reposted
+ * @reposter_pubkey: Reposter's public key (hex)
+ * @event_id: Event ID (hex)
+ *
+ * Sends a repost notification if repost notifications are enabled.
+ */
+void gnostr_desktop_notify_send_repost(GnostrDesktopNotify *self,
+                                        const char *reposter_name,
+                                        const char *reposter_pubkey,
+                                        const char *event_id);
 
 /**
  * gnostr_desktop_notify_send:
