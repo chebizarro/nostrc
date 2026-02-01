@@ -499,6 +499,49 @@ static void test_empty_relay_hints(void) {
     printf("test_empty_relay_hints: ok\n");
 }
 
+/* Test the exact bug event from hq-lo184 via JSON parsing.
+ * This is the event that was reported as not showing as a thread:
+ * ["e", "7e65ff6b9fd4e777ebcfcf1ad9f8ce6480889cf29234dc6e86bb06c169b18238",
+ *       "wss://relay.primal.net/", "root",
+ *       "fd0266485777bd73e97c7c37f520c83c82e362fe4c25a6be93f3380083d4646b"] */
+static void test_five_element_tag_from_json(void) {
+    /* The exact JSON event from the bug report */
+    const char *json =
+        "{"
+        "\"id\":\"abf1237ae70631cbae3f412269b705e9d32751c9320475a4bff90ee93561ec2e\","
+        "\"pubkey\":\"ec9bd7465546ba061f5dfde716a4f20f3f27ecc28ca4870775e5e853df11a9d0\","
+        "\"created_at\":1706000000,"
+        "\"kind\":1,"
+        "\"content\":\"Is this released as Open Hardware?\","
+        "\"tags\":["
+            "[\"alt\",\"A short note: Is this released as Open Hardware?\"],"
+            "[\"e\",\"7e65ff6b9fd4e777ebcfcf1ad9f8ce6480889cf29234dc6e86bb06c169b18238\",\"wss://relay.primal.net/\",\"root\",\"fd0266485777bd73e97c7c37f520c83c82e362fe4c25a6be93f3380083d4646b\"],"
+            "[\"p\",\"fd0266485777bd73e97c7c37f520c83c82e362fe4c25a6be93f3380083d4646b\",\"wss://relay.damus.io/\"]"
+        "],"
+        "\"sig\":\"0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\""
+        "}";
+
+    /* Parse via nostr_nip10_parse_thread_from_json which uses nostr_event_deserialize_compact */
+    NostrNip10ThreadInfo info;
+    memset(&info, 0, sizeof(info));
+
+    int rc = nostr_nip10_parse_thread_from_json(json, &info);
+    assert(rc == 0);
+
+    /* The 5-element e-tag should be parsed correctly with root marker at index 3 */
+    assert(info.root_id != NULL);
+    assert(strcmp(info.root_id, "7e65ff6b9fd4e777ebcfcf1ad9f8ce6480889cf29234dc6e86bb06c169b18238") == 0);
+    /* NIP-10: root-only means reply_id = root_id */
+    assert(info.reply_id != NULL);
+    assert(strcmp(info.reply_id, "7e65ff6b9fd4e777ebcfcf1ad9f8ce6480889cf29234dc6e86bb06c169b18238") == 0);
+    /* Relay hint should be extracted */
+    assert(info.root_relay_hint != NULL);
+    assert(strcmp(info.root_relay_hint, "wss://relay.primal.net/") == 0);
+
+    nostr_nip10_thread_info_clear(&info);
+    printf("test_five_element_tag_from_json: ok\n");
+}
+
 // Extend main to run edge cases
 int main_edge(void) {
     test_mixed_markers_ordering();
@@ -514,6 +557,8 @@ int main_edge(void) {
     test_root_only_marker_direct_reply();
     // NIP-10 5-element tag with pubkey at index 4
     test_five_element_tag_with_pubkey();
+    // hq-lo184: Test 5-element tag via JSON parsing path (the actual bug)
+    test_five_element_tag_from_json();
     // nostrc-7r5: Test relay hint extraction from e-tags
     test_relay_hints_extraction();
     test_empty_relay_hints();
