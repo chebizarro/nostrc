@@ -154,6 +154,58 @@ gboolean gnostr_signer_service_restore_from_settings(GnostrSignerService *self);
  */
 void gnostr_signer_service_clear_saved_credentials(GnostrSignerService *self);
 
+/* ---- NIP-44 Encryption/Decryption (nostrc-n44s) ---- */
+
+/**
+ * Callback signature for async NIP-44 encryption/decryption operations.
+ * @service: The signer service
+ * @result: The ciphertext (for encrypt) or plaintext (for decrypt), NULL on error
+ * @error: Error on failure, NULL on success
+ * @user_data: User-provided data
+ */
+typedef void (*GnostrNip44Callback)(GnostrSignerService *service,
+                                     const char *result,
+                                     GError *error,
+                                     gpointer user_data);
+
+/**
+ * gnostr_signer_service_nip44_encrypt_async:
+ * @self: The signer service
+ * @peer_pubkey: The recipient's public key (hex format)
+ * @plaintext: The plaintext to encrypt
+ * @cancellable: (nullable): A #GCancellable
+ * @callback: Callback for when encryption completes
+ * @user_data: User data for callback
+ *
+ * Encrypts plaintext using NIP-44 for the specified peer.
+ * The callback receives the ciphertext on success.
+ */
+void gnostr_signer_service_nip44_encrypt_async(GnostrSignerService *self,
+                                                const char *peer_pubkey,
+                                                const char *plaintext,
+                                                GCancellable *cancellable,
+                                                GnostrNip44Callback callback,
+                                                gpointer user_data);
+
+/**
+ * gnostr_signer_service_nip44_decrypt_async:
+ * @self: The signer service
+ * @peer_pubkey: The sender's public key (hex format)
+ * @ciphertext: The ciphertext to decrypt
+ * @cancellable: (nullable): A #GCancellable
+ * @callback: Callback for when decryption completes
+ * @user_data: User data for callback
+ *
+ * Decrypts ciphertext using NIP-44 from the specified peer.
+ * The callback receives the plaintext on success.
+ */
+void gnostr_signer_service_nip44_decrypt_async(GnostrSignerService *self,
+                                                const char *peer_pubkey,
+                                                const char *ciphertext,
+                                                GCancellable *cancellable,
+                                                GnostrNip44Callback callback,
+                                                gpointer user_data);
+
 /* ---- Convenience wrapper matching D-Bus proxy pattern ---- */
 
 /**
@@ -197,6 +249,68 @@ void gnostr_sign_event_async(const char *event_json,
 gboolean gnostr_sign_event_finish(GAsyncResult *res,
                                    char **out_signed_event,
                                    GError **error);
+
+/* ---- NIP-44 Convenience Wrappers (nostrc-n44s) ---- */
+
+/**
+ * gnostr_nip44_encrypt_async:
+ * @peer_pubkey: The recipient's public key (hex format)
+ * @plaintext: The plaintext to encrypt
+ * @cancellable: (nullable): A #GCancellable
+ * @callback: GAsyncReadyCallback for completion
+ * @user_data: User data for callback
+ *
+ * Encrypts plaintext using NIP-44 via the default signer service.
+ */
+void gnostr_nip44_encrypt_async(const char *peer_pubkey,
+                                 const char *plaintext,
+                                 GCancellable *cancellable,
+                                 GAsyncReadyCallback callback,
+                                 gpointer user_data);
+
+/**
+ * gnostr_nip44_encrypt_finish:
+ * @res: The #GAsyncResult
+ * @out_ciphertext: (out) (transfer full): Location for ciphertext
+ * @error: (out) (optional): Location for error
+ *
+ * Finishes an encryption operation started with gnostr_nip44_encrypt_async().
+ *
+ * Returns: TRUE on success
+ */
+gboolean gnostr_nip44_encrypt_finish(GAsyncResult *res,
+                                      char **out_ciphertext,
+                                      GError **error);
+
+/**
+ * gnostr_nip44_decrypt_async:
+ * @peer_pubkey: The sender's public key (hex format)
+ * @ciphertext: The ciphertext to decrypt
+ * @cancellable: (nullable): A #GCancellable
+ * @callback: GAsyncReadyCallback for completion
+ * @user_data: User data for callback
+ *
+ * Decrypts ciphertext using NIP-44 via the default signer service.
+ */
+void gnostr_nip44_decrypt_async(const char *peer_pubkey,
+                                 const char *ciphertext,
+                                 GCancellable *cancellable,
+                                 GAsyncReadyCallback callback,
+                                 gpointer user_data);
+
+/**
+ * gnostr_nip44_decrypt_finish:
+ * @res: The #GAsyncResult
+ * @out_plaintext: (out) (transfer full): Location for plaintext
+ * @error: (out) (optional): Location for error
+ *
+ * Finishes a decryption operation started with gnostr_nip44_decrypt_async().
+ *
+ * Returns: TRUE on success
+ */
+gboolean gnostr_nip44_decrypt_finish(GAsyncResult *res,
+                                      char **out_plaintext,
+                                      GError **error);
 
 G_END_DECLS
 

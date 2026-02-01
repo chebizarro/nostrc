@@ -541,3 +541,397 @@ gnostr_signer_service_clear_saved_credentials(GnostrSignerService *self)
 
   g_debug("[SIGNER_SERVICE] Cleared saved NIP-46 credentials");
 }
+
+/* ---- nostrc-n44s: NIP-44 Encryption/Decryption ---- */
+
+typedef struct {
+  GnostrSignerService *service;
+  GnostrNip44Callback callback;
+  gpointer user_data;
+  char *peer_pubkey;
+  char *data;  /* plaintext for encrypt, ciphertext for decrypt */
+  gboolean is_encrypt;  /* TRUE for encrypt, FALSE for decrypt */
+} Nip44Context;
+
+static void
+nip44_context_free(Nip44Context *ctx)
+{
+  if (!ctx) return;
+  g_free(ctx->peer_pubkey);
+  g_free(ctx->data);
+  g_free(ctx);
+}
+
+/* NIP-55L encrypt callback */
+static void
+on_nip55l_nip44_encrypt_complete(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  Nip44Context *ctx = (Nip44Context *)user_data;
+  NostrSignerProxy *proxy = (NostrSignerProxy *)source;
+
+  GError *error = NULL;
+  char *ciphertext = NULL;
+
+  gboolean ok = nostr_org_nostr_signer_call_nip44_encrypt_finish(
+      proxy, &ciphertext, res, &error);
+
+  if (!ok) {
+    if (!error) {
+      error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED, "NIP-44 encryption failed");
+    }
+    ctx->callback(ctx->service, NULL, error, ctx->user_data);
+    g_error_free(error);
+  } else {
+    ctx->callback(ctx->service, ciphertext, NULL, ctx->user_data);
+    g_free(ciphertext);
+  }
+
+  nip44_context_free(ctx);
+}
+
+/* NIP-55L decrypt callback */
+static void
+on_nip55l_nip44_decrypt_complete(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  Nip44Context *ctx = (Nip44Context *)user_data;
+  NostrSignerProxy *proxy = (NostrSignerProxy *)source;
+
+  GError *error = NULL;
+  char *plaintext = NULL;
+
+  gboolean ok = nostr_org_nostr_signer_call_nip44_decrypt_finish(
+      proxy, &plaintext, res, &error);
+
+  if (!ok) {
+    if (!error) {
+      error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED, "NIP-44 decryption failed");
+    }
+    ctx->callback(ctx->service, NULL, error, ctx->user_data);
+    g_error_free(error);
+  } else {
+    ctx->callback(ctx->service, plaintext, NULL, ctx->user_data);
+    g_free(plaintext);
+  }
+
+  nip44_context_free(ctx);
+}
+
+/* NIP-46 encrypt/decrypt thread */
+static void
+nip46_nip44_thread(GTask *task, gpointer source, gpointer task_data, GCancellable *cancellable)
+{
+  Nip44Context *ctx = (Nip44Context *)task_data;
+  (void)source;
+  (void)cancellable;
+
+  if (!ctx->service->nip46_session) {
+    g_warning("[SIGNER_SERVICE] NIP-44 %s failed: session is NULL",
+              ctx->is_encrypt ? "encrypt" : "decrypt");
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "NIP-46 session not available - please sign in again");
+    return;
+  }
+
+  char *result = NULL;
+  int rc;
+
+  if (ctx->is_encrypt) {
+    g_debug("[SIGNER_SERVICE] NIP-46 NIP-44 encrypting for %.16s...", ctx->peer_pubkey);
+    rc = nostr_nip46_client_nip44_encrypt(ctx->service->nip46_session,
+                                           ctx->peer_pubkey,
+                                           ctx->data,
+                                           &result);
+  } else {
+    g_debug("[SIGNER_SERVICE] NIP-46 NIP-44 decrypting from %.16s...", ctx->peer_pubkey);
+    rc = nostr_nip46_client_nip44_decrypt(ctx->service->nip46_session,
+                                           ctx->peer_pubkey,
+                                           ctx->data,
+                                           &result);
+  }
+
+  if (rc != 0 || !result) {
+    g_warning("[SIGNER_SERVICE] NIP-46 NIP-44 %s failed with rc=%d",
+              ctx->is_encrypt ? "encrypt" : "decrypt", rc);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "NIP-44 %s failed (error %d)",
+                            ctx->is_encrypt ? "encryption" : "decryption", rc);
+    return;
+  }
+
+  g_debug("[SIGNER_SERVICE] NIP-46 NIP-44 %s succeeded",
+          ctx->is_encrypt ? "encrypt" : "decrypt");
+  g_task_return_pointer(task, result, g_free);
+}
+
+static void
+on_nip46_nip44_complete(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  Nip44Context *ctx = (Nip44Context *)user_data;
+  (void)source;
+
+  GError *error = NULL;
+  char *result = g_task_propagate_pointer(G_TASK(res), &error);
+
+  if (error) {
+    ctx->callback(ctx->service, NULL, error, ctx->user_data);
+    g_error_free(error);
+  } else {
+    ctx->callback(ctx->service, result, NULL, ctx->user_data);
+    g_free(result);
+  }
+
+  nip44_context_free(ctx);
+}
+
+void
+gnostr_signer_service_nip44_encrypt_async(GnostrSignerService *self,
+                                           const char *peer_pubkey,
+                                           const char *plaintext,
+                                           GCancellable *cancellable,
+                                           GnostrNip44Callback callback,
+                                           gpointer user_data)
+{
+  g_return_if_fail(GNOSTR_IS_SIGNER_SERVICE(self));
+  g_return_if_fail(peer_pubkey != NULL);
+  g_return_if_fail(plaintext != NULL);
+  g_return_if_fail(callback != NULL);
+
+  Nip44Context *ctx = g_new0(Nip44Context, 1);
+  ctx->service = self;
+  ctx->callback = callback;
+  ctx->user_data = user_data;
+  ctx->peer_pubkey = g_strdup(peer_pubkey);
+  ctx->data = g_strdup(plaintext);
+  ctx->is_encrypt = TRUE;
+
+  switch (self->method) {
+    case GNOSTR_SIGNER_METHOD_NIP46:
+      g_debug("[SIGNER_SERVICE] NIP-44 encrypt via NIP-46 remote signer");
+      {
+        GTask *task = g_task_new(NULL, cancellable, on_nip46_nip44_complete, ctx);
+        g_task_set_task_data(task, ctx, NULL);
+        g_task_run_in_thread(task, nip46_nip44_thread);
+        g_object_unref(task);
+      }
+      break;
+
+    case GNOSTR_SIGNER_METHOD_NIP55L:
+      g_debug("[SIGNER_SERVICE] NIP-44 encrypt via NIP-55L local signer");
+      if (!self->nip55l_proxy) {
+        GError *error = NULL;
+        self->nip55l_proxy = gnostr_signer_proxy_get(&error);
+        if (!self->nip55l_proxy) {
+          GError *cb_error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED,
+                                          "Failed to connect to local signer: %s",
+                                          error ? error->message : "unknown");
+          callback(self, NULL, cb_error, user_data);
+          g_error_free(cb_error);
+          if (error) g_error_free(error);
+          nip44_context_free(ctx);
+          return;
+        }
+      }
+      nostr_org_nostr_signer_call_nip44_encrypt(
+          self->nip55l_proxy,
+          plaintext,
+          peer_pubkey,
+          "",  /* current_user: empty = use default */
+          cancellable,
+          on_nip55l_nip44_encrypt_complete,
+          ctx);
+      break;
+
+    case GNOSTR_SIGNER_METHOD_NONE:
+    default:
+      {
+        GError *error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED,
+                                     "No signing method available");
+        callback(self, NULL, error, user_data);
+        g_error_free(error);
+        nip44_context_free(ctx);
+      }
+      break;
+  }
+}
+
+void
+gnostr_signer_service_nip44_decrypt_async(GnostrSignerService *self,
+                                           const char *peer_pubkey,
+                                           const char *ciphertext,
+                                           GCancellable *cancellable,
+                                           GnostrNip44Callback callback,
+                                           gpointer user_data)
+{
+  g_return_if_fail(GNOSTR_IS_SIGNER_SERVICE(self));
+  g_return_if_fail(peer_pubkey != NULL);
+  g_return_if_fail(ciphertext != NULL);
+  g_return_if_fail(callback != NULL);
+
+  Nip44Context *ctx = g_new0(Nip44Context, 1);
+  ctx->service = self;
+  ctx->callback = callback;
+  ctx->user_data = user_data;
+  ctx->peer_pubkey = g_strdup(peer_pubkey);
+  ctx->data = g_strdup(ciphertext);
+  ctx->is_encrypt = FALSE;
+
+  switch (self->method) {
+    case GNOSTR_SIGNER_METHOD_NIP46:
+      g_debug("[SIGNER_SERVICE] NIP-44 decrypt via NIP-46 remote signer");
+      {
+        GTask *task = g_task_new(NULL, cancellable, on_nip46_nip44_complete, ctx);
+        g_task_set_task_data(task, ctx, NULL);
+        g_task_run_in_thread(task, nip46_nip44_thread);
+        g_object_unref(task);
+      }
+      break;
+
+    case GNOSTR_SIGNER_METHOD_NIP55L:
+      g_debug("[SIGNER_SERVICE] NIP-44 decrypt via NIP-55L local signer");
+      if (!self->nip55l_proxy) {
+        GError *error = NULL;
+        self->nip55l_proxy = gnostr_signer_proxy_get(&error);
+        if (!self->nip55l_proxy) {
+          GError *cb_error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED,
+                                          "Failed to connect to local signer: %s",
+                                          error ? error->message : "unknown");
+          callback(self, NULL, cb_error, user_data);
+          g_error_free(cb_error);
+          if (error) g_error_free(error);
+          nip44_context_free(ctx);
+          return;
+        }
+      }
+      nostr_org_nostr_signer_call_nip44_decrypt(
+          self->nip55l_proxy,
+          ciphertext,
+          peer_pubkey,
+          "",  /* current_user: empty = use default */
+          cancellable,
+          on_nip55l_nip44_decrypt_complete,
+          ctx);
+      break;
+
+    case GNOSTR_SIGNER_METHOD_NONE:
+    default:
+      {
+        GError *error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED,
+                                     "No signing method available");
+        callback(self, NULL, error, user_data);
+        g_error_free(error);
+        nip44_context_free(ctx);
+      }
+      break;
+  }
+}
+
+/* ---- NIP-44 Convenience Wrappers ---- */
+
+typedef struct {
+  GAsyncReadyCallback callback;
+  gpointer user_data;
+} Nip44WrapperContext;
+
+static void
+on_nip44_wrapper_complete(GnostrSignerService *service,
+                           const char *result,
+                           GError *error,
+                           gpointer user_data)
+{
+  Nip44WrapperContext *ctx = (Nip44WrapperContext *)user_data;
+  (void)service;
+
+  GTask *task = g_task_new(NULL, NULL, NULL, NULL);
+
+  if (error) {
+    g_task_return_error(task, g_error_copy(error));
+  } else if (result) {
+    g_task_return_pointer(task, g_strdup(result), g_free);
+  } else {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                             "NIP-44 operation returned no result");
+  }
+
+  ctx->callback(NULL, G_ASYNC_RESULT(task), ctx->user_data);
+
+  g_object_unref(task);
+  g_free(ctx);
+}
+
+void
+gnostr_nip44_encrypt_async(const char *peer_pubkey,
+                            const char *plaintext,
+                            GCancellable *cancellable,
+                            GAsyncReadyCallback callback,
+                            gpointer user_data)
+{
+  Nip44WrapperContext *ctx = g_new0(Nip44WrapperContext, 1);
+  ctx->callback = callback;
+  ctx->user_data = user_data;
+
+  gnostr_signer_service_nip44_encrypt_async(
+      gnostr_signer_service_get_default(),
+      peer_pubkey,
+      plaintext,
+      cancellable,
+      on_nip44_wrapper_complete,
+      ctx);
+}
+
+gboolean
+gnostr_nip44_encrypt_finish(GAsyncResult *res,
+                             char **out_ciphertext,
+                             GError **error)
+{
+  g_return_val_if_fail(G_IS_TASK(res), FALSE);
+
+  char *result = g_task_propagate_pointer(G_TASK(res), error);
+  if (result) {
+    if (out_ciphertext) {
+      *out_ciphertext = result;
+    } else {
+      g_free(result);
+    }
+    return TRUE;
+  }
+  return FALSE;
+}
+
+void
+gnostr_nip44_decrypt_async(const char *peer_pubkey,
+                            const char *ciphertext,
+                            GCancellable *cancellable,
+                            GAsyncReadyCallback callback,
+                            gpointer user_data)
+{
+  Nip44WrapperContext *ctx = g_new0(Nip44WrapperContext, 1);
+  ctx->callback = callback;
+  ctx->user_data = user_data;
+
+  gnostr_signer_service_nip44_decrypt_async(
+      gnostr_signer_service_get_default(),
+      peer_pubkey,
+      ciphertext,
+      cancellable,
+      on_nip44_wrapper_complete,
+      ctx);
+}
+
+gboolean
+gnostr_nip44_decrypt_finish(GAsyncResult *res,
+                             char **out_plaintext,
+                             GError **error)
+{
+  g_return_val_if_fail(G_IS_TASK(res), FALSE);
+
+  char *result = g_task_propagate_pointer(G_TASK(res), error);
+  if (result) {
+    if (out_plaintext) {
+      *out_plaintext = result;
+    } else {
+      g_free(result);
+    }
+    return TRUE;
+  }
+  return FALSE;
+}
