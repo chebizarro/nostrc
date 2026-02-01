@@ -7,6 +7,31 @@
 #include "gnostr-plugin-row.h"
 #include <adwaita.h>
 
+/* Register GnostrPluginState enum type */
+static GType
+gnostr_plugin_state_get_type(void)
+{
+  static gsize g_type_id = 0;
+
+  if (g_once_init_enter(&g_type_id))
+    {
+      static const GEnumValue values[] = {
+        { GNOSTR_PLUGIN_STATE_UNLOADED, "GNOSTR_PLUGIN_STATE_UNLOADED", "unloaded" },
+        { GNOSTR_PLUGIN_STATE_LOADED, "GNOSTR_PLUGIN_STATE_LOADED", "loaded" },
+        { GNOSTR_PLUGIN_STATE_ACTIVE, "GNOSTR_PLUGIN_STATE_ACTIVE", "active" },
+        { GNOSTR_PLUGIN_STATE_ERROR, "GNOSTR_PLUGIN_STATE_ERROR", "error" },
+        { GNOSTR_PLUGIN_STATE_NEEDS_RESTART, "GNOSTR_PLUGIN_STATE_NEEDS_RESTART", "needs-restart" },
+        { GNOSTR_PLUGIN_STATE_INCOMPATIBLE, "GNOSTR_PLUGIN_STATE_INCOMPATIBLE", "incompatible" },
+        { 0, NULL, NULL }
+      };
+      GType type_id = g_enum_register_static("GnostrPluginState", values);
+      g_once_init_leave(&g_type_id, type_id);
+    }
+  return g_type_id;
+}
+
+#define GNOSTR_TYPE_PLUGIN_STATE (gnostr_plugin_state_get_type())
+
 struct _GnostrPluginRow
 {
   GtkWidget parent_instance;
@@ -178,8 +203,7 @@ gnostr_plugin_row_class_init(GnostrPluginRowClass *klass)
     g_param_spec_enum("state",
                       "State",
                       "The plugin state",
-                      /* TODO: Register GnostrPluginState as GEnum */
-                      G_TYPE_INT,
+                      GNOSTR_TYPE_PLUGIN_STATE,
                       GNOSTR_PLUGIN_STATE_UNLOADED,
                       G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 

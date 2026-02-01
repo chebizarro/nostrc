@@ -7,6 +7,7 @@
 #include "gnostr-plugin-manager-panel.h"
 #include "gnostr-plugin-row.h"
 #include "../util/gnostr-plugin-manager.h"
+#include "../gnostr-plugin-api.h"
 #include <adwaita.h>
 
 #ifdef HAVE_LIBPEAS
@@ -462,9 +463,12 @@ populate_plugin_list(GnostrPluginManagerPanel *self)
       gnostr_plugin_row_set_state(plugin_row, GNOSTR_PLUGIN_STATE_ERROR);
     }
 
-    /* Check if plugin has settings */
-    /* TODO: Check for GnostrConfigurable interface */
-    gnostr_plugin_row_set_has_settings(plugin_row, FALSE);
+    /* Check if plugin has settings (implements GnostrUIExtension) */
+    gboolean has_settings = FALSE;
+    if (loaded && peas_engine_provides_extension(engine, info, GNOSTR_TYPE_UI_EXTENSION)) {
+      has_settings = TRUE;
+    }
+    gnostr_plugin_row_set_has_settings(plugin_row, has_settings);
 
     /* Connect signals */
     g_signal_connect(plugin_row, "toggled",
@@ -532,8 +536,58 @@ gnostr_plugin_manager_panel_show_plugin_settings(GnostrPluginManagerPanel *self,
   g_return_if_fail(GNOSTR_IS_PLUGIN_MANAGER_PANEL(self));
   g_return_if_fail(plugin_id != NULL);
 
-  /* TODO: Show plugin settings dialog */
-  g_debug("Show settings for plugin: %s", plugin_id);
+#ifdef HAVE_LIBPEAS
+  GnostrPluginManager *manager = gnostr_plugin_manager_get_default();
+  GtkWidget *settings_widget = gnostr_plugin_manager_get_plugin_settings_widget(manager, plugin_id);
+
+  if (!settings_widget) {
+    g_debug("No settings widget for plugin: %s", plugin_id);
+    return;
+  }
+
+  /* Get plugin name for dialog title */
+  PeasEngine *engine = peas_engine_get_default();
+  PeasPluginInfo *info = peas_engine_get_plugin_info(engine, plugin_id);
+  const char *plugin_name = info ? peas_plugin_info_get_name(info) : plugin_id;
+
+  /* Create settings dialog */
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  AdwDialog *dialog = adw_dialog_new();
+
+  g_autofree char *title = g_strdup_printf("%s Settings", plugin_name);
+  adw_dialog_set_title(dialog, title);
+
+  /* Create content with toolbar view for proper layout */
+  AdwToolbarView *toolbar_view = ADW_TOOLBAR_VIEW(adw_toolbar_view_new());
+
+  /* Add header bar */
+  AdwHeaderBar *header = ADW_HEADER_BAR(adw_header_bar_new());
+  adw_toolbar_view_add_top_bar(toolbar_view, GTK_WIDGET(header));
+
+  /* Wrap settings widget in scrolled window */
+  GtkScrolledWindow *scrolled = GTK_SCROLLED_WINDOW(gtk_scrolled_window_new());
+  gtk_scrolled_window_set_policy(scrolled, GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_scrolled_window_set_propagate_natural_height(scrolled, TRUE);
+  gtk_widget_set_vexpand(GTK_WIDGET(scrolled), TRUE);
+
+  /* Add some margin to the settings widget */
+  gtk_widget_set_margin_start(settings_widget, 12);
+  gtk_widget_set_margin_end(settings_widget, 12);
+  gtk_widget_set_margin_top(settings_widget, 12);
+  gtk_widget_set_margin_bottom(settings_widget, 12);
+
+  gtk_scrolled_window_set_child(scrolled, settings_widget);
+  adw_toolbar_view_set_content(toolbar_view, GTK_WIDGET(scrolled));
+
+  adw_dialog_set_child(dialog, GTK_WIDGET(toolbar_view));
+  adw_dialog_set_content_width(dialog, 400);
+  adw_dialog_set_content_height(dialog, 500);
+
+  adw_dialog_present(dialog, GTK_WIDGET(root));
+#else
+  (void)self;
+  (void)plugin_id;
+#endif
 }
 
 void

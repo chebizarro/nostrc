@@ -143,6 +143,19 @@ void gnostr_plugin_manager_shutdown(GnostrPluginManager *manager);
 void gnostr_plugin_manager_set_main_window(GnostrPluginManager *manager,
                                            GtkWindow           *window);
 
+/**
+ * gnostr_plugin_manager_get_plugin_settings_widget:
+ * @manager: The plugin manager
+ * @plugin_id: Plugin identifier
+ *
+ * Get the settings page widget for a plugin.
+ * The plugin must be loaded and implement GnostrUIExtension.
+ *
+ * Returns: (transfer full) (nullable): Settings widget, or %NULL
+ */
+GtkWidget *gnostr_plugin_manager_get_plugin_settings_widget(GnostrPluginManager *manager,
+                                                            const char          *plugin_id);
+
 G_END_DECLS
 
 #endif /* GNOSTR_PLUGIN_MANAGER_H */

@@ -542,6 +542,58 @@ gnostr_plugin_manager_set_main_window(GnostrPluginManager *manager,
   }
 }
 
+GtkWidget *
+gnostr_plugin_manager_get_plugin_settings_widget(GnostrPluginManager *manager,
+                                                 const char          *plugin_id)
+{
+  g_return_val_if_fail(GNOSTR_IS_PLUGIN_MANAGER(manager), NULL);
+  g_return_val_if_fail(plugin_id != NULL, NULL);
+
+#ifdef HAVE_LIBPEAS
+  if (!manager->context) {
+    g_warning("[PLUGIN] No context available for settings widget");
+    return NULL;
+  }
+
+  PeasEngine *engine = peas_engine_get_default();
+  PeasPluginInfo *info = peas_engine_get_plugin_info(engine, plugin_id);
+
+  if (!info) {
+    g_warning("[PLUGIN] Plugin not found: %s", plugin_id);
+    return NULL;
+  }
+
+  if (!peas_plugin_info_is_loaded(info)) {
+    g_warning("[PLUGIN] Plugin not loaded: %s", plugin_id);
+    return NULL;
+  }
+
+  if (!peas_engine_provides_extension(engine, info, GNOSTR_TYPE_UI_EXTENSION)) {
+    g_debug("[PLUGIN] Plugin %s doesn't provide UI extension", plugin_id);
+    return NULL;
+  }
+
+  /* Get the UI extension for this plugin */
+  GObject *exten = peas_engine_create_extension(engine, info,
+                                                GNOSTR_TYPE_UI_EXTENSION,
+                                                NULL);
+  if (!exten) {
+    g_warning("[PLUGIN] Failed to create UI extension for %s", plugin_id);
+    return NULL;
+  }
+
+  GnostrUIExtension *ui_ext = GNOSTR_UI_EXTENSION(exten);
+  GtkWidget *widget = gnostr_ui_extension_create_settings_page(ui_ext, manager->context);
+
+  g_object_unref(exten);
+  return widget;
+#else
+  (void)manager;
+  (void)plugin_id;
+  return NULL;
+#endif
+}
+
 /* ============================================================================
  * Plugin API version check implementation
  * ============================================================================
