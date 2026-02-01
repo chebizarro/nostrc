@@ -34,7 +34,7 @@
 #define SETTINGS_KEY_CURRENT_NPUB "current-npub"
 
 struct _GnostrLogin {
-  GtkWindow parent_instance;
+  AdwBin parent_instance;
 
   /* Template children */
   GtkWidget *stack;
@@ -84,7 +84,7 @@ struct _GnostrLogin {
   gboolean listening_for_response;
 };
 
-G_DEFINE_TYPE(GnostrLogin, gnostr_login, GTK_TYPE_WINDOW)
+G_DEFINE_TYPE(GnostrLogin, gnostr_login, ADW_TYPE_BIN)
 
 /* Signals */
 enum {
@@ -240,12 +240,8 @@ static void gnostr_login_init(GnostrLogin *self) {
   check_local_signer_availability(self);
 }
 
-GnostrLogin *gnostr_login_new(GtkWindow *parent) {
-  GnostrLogin *self = g_object_new(GNOSTR_TYPE_LOGIN,
-                                    "transient-for", parent,
-                                    "modal", TRUE,
-                                    NULL);
-  return self;
+GnostrLogin *gnostr_login_new(void) {
+  return g_object_new(GNOSTR_TYPE_LOGIN, NULL);
 }
 
 NostrNip46Session *gnostr_login_take_nip46_session(GnostrLogin *self) {

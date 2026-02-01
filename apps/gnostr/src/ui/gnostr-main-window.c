@@ -3173,9 +3173,24 @@ static void on_login_signed_in(GnostrLogin *login, const char *npub, gpointer us
 
 /* Opens the login dialog */
 static void open_login_dialog(GnostrMainWindow *self) {
-  GnostrLogin *login = gnostr_login_new(GTK_WINDOW(self));
+  /* Create a window to host the login widget */
+  GtkWindow *win = GTK_WINDOW(gtk_window_new());
+  gtk_window_set_title(win, "Sign In");
+  gtk_window_set_transient_for(win, GTK_WINDOW(self));
+  gtk_window_set_modal(win, TRUE);
+  gtk_window_set_default_size(win, 400, 500);
+  gtk_window_set_resizable(win, FALSE);
+
+  /* Create and embed the login widget */
+  GnostrLogin *login = gnostr_login_new();
+  gtk_window_set_child(win, GTK_WIDGET(login));
+
   g_signal_connect(login, "signed-in", G_CALLBACK(on_login_signed_in), self);
-  gtk_window_present(GTK_WINDOW(login));
+
+  /* Close window when login is complete - connect to window destroy */
+  g_signal_connect_swapped(login, "signed-in", G_CALLBACK(gtk_window_close), win);
+
+  gtk_window_present(win);
 }
 
 static void on_avatar_login_clicked(GtkButton *btn, gpointer user_data) {
