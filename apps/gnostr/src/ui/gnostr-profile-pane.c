@@ -2562,6 +2562,113 @@ static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer use
   g_ptr_array_unref(results);
 }
 
+/* Load media from local nostrdb cache.
+ * Returns number of media items loaded from cache. */
+static guint load_media_from_cache(GnostrProfilePane *self) {
+  if (!self->current_pubkey || !*self->current_pubkey) {
+    g_debug("profile_pane: no pubkey set, cannot load media from cache");
+    return 0;
+  }
+
+  /* Build NIP-01 filter JSON for author's kind:1 posts */
+  GString *filter_json = g_string_new("[{");
+  g_string_append(filter_json, "\"kinds\":[1],");
+  g_string_append_printf(filter_json, "\"authors\":[\"%s\"],", self->current_pubkey);
+
+  /* Apply pagination if we already have media */
+  if (self->media_oldest_timestamp > 0) {
+    g_string_append_printf(filter_json, "\"until\":%" G_GINT64_FORMAT ",",
+                           self->media_oldest_timestamp - 1);
+  }
+
+  g_string_append_printf(filter_json, "\"limit\":%d}]", MEDIA_PAGE_SIZE);
+
+  g_debug("profile_pane: querying nostrdb for media with filter: %s", filter_json->str);
+
+  /* Begin query transaction */
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn) != 0 || !txn) {
+    g_warning("profile_pane: failed to begin nostrdb query for media");
+    g_string_free(filter_json, TRUE);
+    return 0;
+  }
+
+  /* Execute query */
+  char **json_results = NULL;
+  int count = 0;
+  int rc = storage_ndb_query(txn, filter_json->str, &json_results, &count);
+  g_string_free(filter_json, TRUE);
+
+  if (rc != 0) {
+    g_warning("profile_pane: nostrdb media query failed with rc=%d", rc);
+    storage_ndb_end_query(txn);
+    return 0;
+  }
+
+  g_debug("profile_pane: nostrdb returned %d cached posts for media extraction", count);
+
+  guint added = 0;
+  gint64 oldest_timestamp = self->media_oldest_timestamp > 0 ? self->media_oldest_timestamp : G_MAXINT64;
+
+  for (int i = 0; i < count; i++) {
+    const char *json_str = json_results[i];
+    if (!json_str) continue;
+
+    /* Parse event */
+    NostrEvent *evt = nostr_event_new();
+    if (nostr_event_deserialize(evt, json_str) != 0) {
+      nostr_event_free(evt);
+      continue;
+    }
+
+    const char *id_hex = nostr_event_get_id(evt);
+    const char *content = nostr_event_get_content(evt);
+    NostrTags *tags = nostr_event_get_tags(evt);
+    gint64 created_at = (gint64)nostr_event_get_created_at(evt);
+
+    /* Track oldest timestamp for pagination */
+    if (created_at > 0 && created_at < oldest_timestamp) {
+      oldest_timestamp = created_at;
+    }
+
+    /* Extract media URLs from content */
+    GPtrArray *content_urls = extract_media_urls_from_content(content);
+    for (guint j = 0; j < content_urls->len; j++) {
+      const char *url = g_ptr_array_index(content_urls, j);
+      ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
+      g_list_store_append(self->media_model, item);
+      g_object_unref(item);
+      added++;
+    }
+    g_ptr_array_unref(content_urls);
+
+    /* Extract media URLs from imeta tags (NIP-92) and r tags */
+    GPtrArray *tag_urls = extract_media_urls_from_tags(tags);
+    for (guint j = 0; j < tag_urls->len; j++) {
+      const char *url = g_ptr_array_index(tag_urls, j);
+      ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
+      g_list_store_append(self->media_model, item);
+      g_object_unref(item);
+      added++;
+    }
+    g_ptr_array_unref(tag_urls);
+
+    nostr_event_free(evt);
+  }
+
+  storage_ndb_free_results(json_results, count);
+  storage_ndb_end_query(txn);
+
+  if (added > 0) {
+    self->media_oldest_timestamp = oldest_timestamp;
+    self->media_loaded = TRUE;
+  }
+
+  g_debug("profile_pane: loaded %u media items from cache (oldest_ts=%" G_GINT64_FORMAT ")",
+          added, oldest_timestamp);
+  return added;
+}
+
 /* Load media for the current profile */
 static void load_media(GnostrProfilePane *self) {
   if (!self->current_pubkey || !*self->current_pubkey) {
@@ -2596,7 +2703,22 @@ static void load_media(GnostrProfilePane *self) {
     }
   }
 
-  /* Show loading indicator */
+  /* Try loading from nostrdb cache first */
+  guint cached_count = load_media_from_cache(self);
+  if (cached_count > 0) {
+    g_debug("profile_pane: loaded %u media items from cache, skipping network fetch", cached_count);
+    /* Hide loading indicator since we have cached data */
+    if (self->media_loading_box)
+      gtk_widget_set_visible(self->media_loading_box, FALSE);
+    if (self->media_empty_box)
+      gtk_widget_set_visible(self->media_empty_box, FALSE);
+    /* Show load more button if we got a full page */
+    if (self->btn_media_load_more)
+      gtk_widget_set_visible(self->btn_media_load_more, cached_count >= MEDIA_PAGE_SIZE);
+    return;  /* Cache had media, no need for network fetch */
+  }
+
+  /* No cached media, show loading indicator and fetch from network */
   if (self->media_loading_box)
     gtk_widget_set_visible(self->media_loading_box, TRUE);
   if (self->media_empty_box)
