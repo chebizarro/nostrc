@@ -18,6 +18,9 @@ typedef struct {
   unsigned long long rl_last_ms;
   unsigned int rl_ops_per_sec;
   unsigned int rl_burst;
+  /* NIP-77 Negentropy state */
+  void *neg_state;         /* storage negentropy session state */
+  char neg_subid[128];     /* negentropy subscription id */
 } ConnState;
 
 #ifdef __cplusplus
