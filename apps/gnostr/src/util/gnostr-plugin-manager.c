@@ -167,10 +167,32 @@ gnostr_plugin_manager_discover_plugins(GnostrPluginManager *manager)
 
   /* Add search paths */
   peas_engine_add_search_path(manager->engine, user_plugin_dir, NULL);
+  g_debug("[PLUGIN] Added user plugin path: %s", user_plugin_dir);
   g_free(user_plugin_dir);
 
   for (const char **path = &s_plugin_search_paths[1]; *path; path++) {
     peas_engine_add_search_path(manager->engine, *path, NULL);
+    g_debug("[PLUGIN] Added system plugin path: %s", *path);
+  }
+
+  /* Add development build plugin directory if defined */
+#ifdef GNOSTR_DEV_PLUGIN_DIR
+  peas_engine_add_search_path(manager->engine, GNOSTR_DEV_PLUGIN_DIR, NULL);
+  g_debug("[PLUGIN] Added dev build plugin path: %s", GNOSTR_DEV_PLUGIN_DIR);
+#endif
+
+  /* Check environment variable for additional plugin paths */
+  const char *env_plugin_path = g_getenv("GNOSTR_PLUGIN_PATH");
+  if (env_plugin_path && *env_plugin_path) {
+    /* Support colon-separated paths like PATH */
+    char **paths = g_strsplit(env_plugin_path, ":", -1);
+    for (char **p = paths; *p; p++) {
+      if (*p && **p) {
+        peas_engine_add_search_path(manager->engine, *p, NULL);
+        g_debug("[PLUGIN] Added env plugin path: %s", *p);
+      }
+    }
+    g_strfreev(paths);
   }
 
   /* Rescan for plugins */

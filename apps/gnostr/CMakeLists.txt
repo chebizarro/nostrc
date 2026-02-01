@@ -183,6 +183,8 @@ target_compile_features(${APP_CLIENT_BIN} PRIVATE c_std_11)
 target_compile_definitions(${APP_CLIENT_BIN} PRIVATE APP_ID="${APP_CLIENT_FLATPAK_ID}" APP_NAME="${APP_CLIENT_NAME}")
 # Enable real SimplePool-backed timeline fetching in the UI
 target_compile_definitions(${APP_CLIENT_BIN} PRIVATE GNOSTR_ENABLE_REAL_SIMPLEPOOL)
+# Plugin search path for development builds - points to build/plugins directory
+target_compile_definitions(${APP_CLIENT_BIN} PRIVATE GNOSTR_DEV_PLUGIN_DIR="${CMAKE_BINARY_DIR}/plugins")
 # Find secp256k1 for key derivation in identity.c
 pkg_check_modules(SECP256K1 QUIET libsecp256k1)
 # Project root for finding shared libraries (works whether built standalone or from top-level)
@@ -277,6 +279,18 @@ add_subdirectory(plugins/nip49-keyencrypt)
 add_subdirectory(plugins/nip77-negentropy)
 add_subdirectory(plugins/nip57-zaps)
 add_subdirectory(plugins/nip34-git)
+
+# Make gnostr depend on plugins so they're built together
+add_dependencies(${APP_CLIENT_BIN}
+  nip98-httpauth
+  nip46-connect
+  nip17-dms
+  nip55-androidsigner
+  nip49-keyencrypt
+  nip77-negentropy
+  nip57-zaps
+  nip34-git
+)
 
 # ---- OpenSSL for DM file encryption (AES-GCM) ----
 # OpenSSL is already found at the top-level CMakeLists.txt
