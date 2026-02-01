@@ -374,13 +374,24 @@ static void on_attach_clicked(GnostrComposer *self, GtkButton *button) {
   gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters));
   gtk_file_dialog_set_default_filter(dialog, filter_all_media);
 
-  /* Get the window for the dialog */
-  GtkWidget *toplevel = GTK_WIDGET(self);
-  while (toplevel && !GTK_IS_WINDOW(toplevel)) {
-    toplevel = gtk_widget_get_parent(toplevel);
+  /* Get the window for the dialog.
+   * When composer is in an AdwDialog, the parent walk won't find a GtkWindow
+   * because AdwDialog is not a GtkWindow. Use gtk_widget_get_root() first,
+   * then fall back to walking up the tree. */
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  GtkWindow *parent_window = NULL;
+
+  if (root && GTK_IS_WINDOW(root)) {
+    parent_window = GTK_WINDOW(root);
+  } else {
+    /* Fallback: try to find any active application window */
+    GApplication *app = g_application_get_default();
+    if (app && GTK_IS_APPLICATION(app)) {
+      parent_window = gtk_application_get_active_window(GTK_APPLICATION(app));
+    }
   }
 
-  gtk_file_dialog_open(dialog, GTK_WINDOW(toplevel), NULL,
+  gtk_file_dialog_open(dialog, parent_window, NULL,
                        on_file_chooser_response, self);
 
   g_object_unref(filters);
