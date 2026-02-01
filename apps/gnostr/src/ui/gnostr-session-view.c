@@ -34,6 +34,7 @@ typedef enum {
   SIGNAL_LOGIN_REQUESTED,
   SIGNAL_LOGOUT_REQUESTED,
   SIGNAL_NEW_NOTES_CLICKED,
+  SIGNAL_COMPOSE_REQUESTED,
   N_SIGNALS
 } GnostrSessionViewSignal;
 
@@ -73,6 +74,7 @@ struct _GnostrSessionView {
   GtkButton *btn_manage_relays;
   GtkButton *btn_reconnect;
   GtkMenuButton *btn_avatar;
+  GtkButton *btn_compose;
 
   GtkPopover *avatar_popover;
   GtkLabel *lbl_signin_status;
@@ -292,6 +294,13 @@ static void on_btn_new_notes_clicked(GtkButton *btn, gpointer user_data) {
   g_signal_emit(self, signals[SIGNAL_NEW_NOTES_CLICKED], 0);
 }
 
+static void on_btn_compose_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
+  if (!GNOSTR_IS_SESSION_VIEW(self)) return;
+  g_signal_emit(self, signals[SIGNAL_COMPOSE_REQUESTED], 0);
+}
+
 static void gnostr_session_view_dispose(GObject *object) {
   GnostrSessionView *self = GNOSTR_SESSION_VIEW(object);
 
@@ -440,6 +449,17 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
       G_TYPE_NONE,
       0);
 
+  signals[SIGNAL_COMPOSE_REQUESTED] = g_signal_new(
+      "compose-requested",
+      G_TYPE_FROM_CLASS(klass),
+      G_SIGNAL_RUN_LAST,
+      0,
+      NULL,
+      NULL,
+      g_cclosure_marshal_VOID__VOID,
+      G_TYPE_NONE,
+      0);
+
   /* Ensure custom widget types used in the template are registered */
   g_type_ensure(GNOSTR_TYPE_TIMELINE_VIEW);
   g_type_ensure(GNOSTR_TYPE_NOTIFICATIONS_VIEW);
@@ -479,6 +499,7 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_manage_relays);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_reconnect);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_avatar);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_compose);
 
   /* avatar_popover and its children are now created programmatically to avoid
    * GTK4 crash on Linux where GtkPopover in template causes gtk_widget_root assertion */
@@ -555,6 +576,10 @@ static void gnostr_session_view_init(GnostrSessionView *self) {
 
   if (self->btn_new_notes) {
     g_signal_connect(self->btn_new_notes, "clicked", G_CALLBACK(on_btn_new_notes_clicked), self);
+  }
+
+  if (self->btn_compose) {
+    g_signal_connect(self->btn_compose, "clicked", G_CALLBACK(on_btn_compose_clicked), self);
   }
 
   /* Start on Timeline by default */

@@ -26,6 +26,7 @@
 #include "../model/gn-nostr-profile.h"
 #include <gio/gio.h>
 #include <glib.h>
+#include <glib/gi18n.h>
 #include <adwaita.h>
 #include <gtk/gtk.h>
 #include <gdk/gdkkeysyms.h>
@@ -228,6 +229,7 @@ static void ui_event_row_free(gpointer p);
 static void schedule_apply_events(GnostrMainWindow *self, GPtrArray *rows /* UiEventRow* */);
 static gboolean periodic_backfill_cb(gpointer data);
 static void on_composer_post_requested(GnostrComposer *composer, const char *text, gpointer user_data);
+static void on_compose_requested(GnostrSessionView *session_view, gpointer user_data);
 static void on_relays_clicked(GtkButton *btn, gpointer user_data);
 static void on_reconnect_requested(GnostrSessionView *view, gpointer user_data);
 static void on_settings_clicked(GtkButton *btn, gpointer user_data);
@@ -4302,6 +4304,8 @@ static void gnostr_main_window_init(GnostrMainWindow *self) {
                      G_CALLBACK(on_avatar_logout_clicked), self);
     g_signal_connect(self->session_view, "new-notes-clicked",
                      G_CALLBACK(on_new_notes_clicked), self);
+    g_signal_connect(self->session_view, "compose-requested",
+                     G_CALLBACK(on_compose_requested), self);
   }
 
   /* Connect profile pane and thread view close signals */
@@ -4744,6 +4748,45 @@ static void on_new_notes_clicked(GtkButton *btn, gpointer user_data) {
    * while still avoiding ListView crashes during widget recycling.
    * We ref the window to ensure it stays valid until the idle fires. */
   g_idle_add_full(G_PRIORITY_HIGH, scroll_to_top_idle, g_object_ref(self), NULL);
+}
+
+/* nostrc-yo2m: Handle compose button click from session view */
+static void on_compose_requested(GnostrSessionView *session_view, gpointer user_data) {
+  (void)session_view;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+
+  /* Create the compose dialog */
+  AdwDialog *dialog = adw_dialog_new();
+  adw_dialog_set_title(dialog, _("New Note"));
+  adw_dialog_set_content_width(dialog, 500);
+  adw_dialog_set_content_height(dialog, 400);
+
+  /* Create a toolbar view for the dialog content */
+  AdwToolbarView *toolbar = ADW_TOOLBAR_VIEW(adw_toolbar_view_new());
+
+  /* Create header bar with close button */
+  AdwHeaderBar *header = ADW_HEADER_BAR(adw_header_bar_new());
+  adw_toolbar_view_add_top_bar(toolbar, GTK_WIDGET(header));
+
+  /* Create the composer widget */
+  GtkWidget *composer = gnostr_composer_new();
+
+  /* Connect the post signal to our existing handler */
+  g_signal_connect(composer, "post-requested",
+                   G_CALLBACK(on_composer_post_requested), self);
+
+  /* Store dialog reference on composer so we can close it after post */
+  g_object_set_data(G_OBJECT(composer), "compose-dialog", dialog);
+
+  /* Add composer to toolbar view content */
+  adw_toolbar_view_set_content(toolbar, composer);
+
+  /* Set the toolbar view as dialog content */
+  adw_dialog_set_child(dialog, GTK_WIDGET(toolbar));
+
+  /* Present the dialog */
+  adw_dialog_present(dialog, GTK_WIDGET(self));
 }
 
 gboolean gnostr_main_window_get_compact(GnostrMainWindow *self) {
