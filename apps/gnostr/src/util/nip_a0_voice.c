@@ -310,7 +310,7 @@ gboolean gnostr_voice_validate_mime_type(const char *mime_type) {
     }
   }
 
-  /* Accept any audio/* type even if not in our list */
+  /* Accept any audio MIME type even if not in our list */
   return TRUE;
 }
 
