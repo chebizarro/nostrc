@@ -48,6 +48,33 @@ template $GnostrThreadView: Widget {
             orientation: horizontal;
         }
 
+        Box missing_events_banner {
+            orientation: horizontal;
+            spacing: 8;
+            margin-start: 12;
+            margin-end: 12;
+            margin-top: 8;
+            margin-bottom: 8;
+            visible: false;
+
+            styles [
+                "info-bar",
+                "warning",
+            ]
+
+            Image {
+                icon-name: "dialog-warning-symbolic";
+                pixel-size: 16;
+            }
+
+            Label missing_events_label {
+                label: "Some messages in this thread could not be found";
+                xalign: 0;
+                hexpand: true;
+                wrap: true;
+            }
+        }
+
         Box loading_box {
             orientation: vertical;
             halign: center;

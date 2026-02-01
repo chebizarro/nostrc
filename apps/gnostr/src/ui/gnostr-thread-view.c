@@ -145,6 +145,8 @@ struct _GnostrThreadView {
   GtkWidget *loading_spinner;
   GtkWidget *empty_box;
   GtkWidget *empty_label;
+  GtkWidget *missing_events_banner;  /* nostrc-x3b: banner for missing ancestors */
+  GtkWidget *missing_events_label;
 
   /* State */
   char *focus_event_id;
@@ -495,6 +497,9 @@ static void gnostr_thread_view_class_init(GnostrThreadViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, loading_spinner);
   gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, empty_box);
   gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, empty_label);
+  /* nostrc-x3b: missing events banner */
+  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, missing_events_banner);
+  gtk_widget_class_bind_template_child(widget_class, GnostrThreadView, missing_events_label);
 
   signals[SIGNAL_CLOSE_REQUESTED] = g_signal_new(
     "close-requested",
@@ -1369,6 +1374,39 @@ static void rebuild_thread_ui(GnostrThreadView *self) {
   set_loading_state(self, FALSE);
   if (self->scroll_window) {
     gtk_widget_set_visible(self->scroll_window, TRUE);
+  }
+
+  /* nostrc-x3b: Check if we have missing ancestors and show banner */
+  if (self->missing_events_banner) {
+    gboolean has_missing = FALSE;
+    guint missing_count = 0;
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, self->events_by_id);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+      ThreadEventItem *item = (ThreadEventItem *)value;
+      /* Check for missing parent */
+      if (item->parent_id && strlen(item->parent_id) == 64 &&
+          !g_hash_table_contains(self->events_by_id, item->parent_id)) {
+        has_missing = TRUE;
+        missing_count++;
+      }
+      /* Check for missing root (if different from parent) */
+      if (item->root_id && strlen(item->root_id) == 64 &&
+          g_strcmp0(item->root_id, item->parent_id) != 0 &&
+          !g_hash_table_contains(self->events_by_id, item->root_id)) {
+        has_missing = TRUE;
+        missing_count++;
+      }
+    }
+    gtk_widget_set_visible(self->missing_events_banner, has_missing);
+    if (has_missing && self->missing_events_label) {
+      char *msg = g_strdup_printf(
+        "Some messages in this thread could not be found on your relays (%u missing)",
+        missing_count);
+      gtk_label_set_text(GTK_LABEL(self->missing_events_label), msg);
+      g_free(msg);
+    }
   }
 
   /* Scroll to focus event if set */

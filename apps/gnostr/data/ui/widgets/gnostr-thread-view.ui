@@ -55,6 +55,35 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child>
+          <object class="GtkBox" id="missing_events_banner">
+            <property name="orientation">0</property>
+            <property name="spacing">8</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">8</property>
+            <property name="margin-bottom">8</property>
+            <property name="visible">false</property>
+            <style>
+              <class name="info-bar"/>
+              <class name="warning"/>
+            </style>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">dialog-warning-symbolic</property>
+                <property name="pixel-size">16</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="missing_events_label">
+                <property name="label">Some messages in this thread could not be found</property>
+                <property name="xalign">0</property>
+                <property name="hexpand">true</property>
+                <property name="wrap">true</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
           <object class="GtkBox" id="loading_box">
             <property name="orientation">1</property>
             <property name="halign">3</property>
