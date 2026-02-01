@@ -107,6 +107,8 @@ template $GnostrLogin: Adw.Bin {
                         }
 
                         Frame {
+                            focusable: false;
+
                             styles [
                                 "view",
                             ]
@@ -184,6 +186,8 @@ template $GnostrLogin: Adw.Bin {
                         }
 
                         Frame {
+                            focusable: false;
+
                             styles [
                                 "view",
                             ]
@@ -311,11 +315,13 @@ template $GnostrLogin: Adw.Bin {
                                     margin-end: 8;
                                     margin-top: 8;
                                     margin-bottom: 8;
+                                    halign: center;
 
                                     Picture qr_picture {
                                         content-fit: contain;
                                         width-request: 180;
                                         height-request: 180;
+                                        halign: center;
                                     }
                                 }
                             }

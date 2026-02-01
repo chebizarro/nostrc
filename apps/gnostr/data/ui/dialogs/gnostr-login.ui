@@ -116,6 +116,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="GtkFrame">
+                            <property name="focusable">false</property>
                             <style>
                               <class name="view"/>
                             </style>
@@ -199,6 +200,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="GtkFrame">
+                            <property name="focusable">false</property>
                             <style>
                               <class name="view"/>
                             </style>
@@ -337,11 +339,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="margin-end">8</property>
                                     <property name="margin-top">8</property>
                                     <property name="margin-bottom">8</property>
+                                    <property name="halign">3</property>
                                     <child>
                                       <object class="GtkPicture" id="qr_picture">
                                         <property name="content-fit">1</property>
                                         <property name="width-request">180</property>
                                         <property name="height-request">180</property>
+                                        <property name="halign">3</property>
                                       </object>
                                     </child>
                                   </object>
