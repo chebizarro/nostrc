@@ -556,36 +556,18 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
   };
   int num_cases = closed_ch ? 3 : (eose_ch ? 2 : 1);
 
-  g_debug("[SIGNER_SERVICE] Waiting for NIP-46 response via go_select (num_cases=%d)", num_cases);
-  fprintf(stderr, "[SIGNER_SERVICE] events_ch=%p, eose_ch=%p, closed_ch=%p\n",
-          (void*)events_ch, (void*)eose_ch, (void*)closed_ch);
+  g_debug("[SIGNER_SERVICE] Waiting for NIP-46 response via blocking go_select");
 
-  int iteration = 0;
+  /* Use blocking go_select - no timeouts, no polling.
+   * The select will wake when:
+   * - events_ch: Response event received
+   * - eose_ch: End of stored events (continue waiting for live)
+   * - closed_ch: Subscription closed by relay (error)
+   */
   while (keep_waiting) {
-    iteration++;
+    int selected = go_select(cases, num_cases);
 
-    /* Check cancellable */
-    if (g_cancellable_is_cancelled(cancellable)) {
-      g_info("[SIGNER_SERVICE] Signing cancelled by user");
-      error_message = g_strdup("Signing cancelled");
-      break;
-    }
-
-    /* Check relay connection state before blocking */
-    gboolean relay_connected = nostr_relay_is_connected(relay);
-    if (roundtrip.relay_disconnected || !relay_connected) {
-      g_warning("[SIGNER_SERVICE] Relay disconnected (flag=%d, is_connected=%d)",
-                roundtrip.relay_disconnected, relay_connected);
-      error_message = g_strdup("NIP-46 relay disconnected");
-      break;
-    }
-
-    /* Use go_select_timeout with short interval to check cancellable/relay state */
-    fprintf(stderr, "[SIGNER_SERVICE] go_select_timeout iteration %d...\n", iteration);
-    GoSelectResult result = go_select_timeout(cases, num_cases, 500); /* 500ms poll */
-    fprintf(stderr, "[SIGNER_SERVICE] go_select returned: selected_case=%d\n", result.selected_case);
-
-    if (result.selected_case == 0) {
+    if (selected == 0) {
       /* Got an event */
       NostrEvent *ev = (NostrEvent *)received_event;
       if (ev && nip46_event_is_for_client(ev, client_pubkey)) {
@@ -630,38 +612,25 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
       }
       received_event = NULL; /* Reset for next iteration */
 
-    } else if (result.selected_case == 1) {
-      /* EOSE - all stored events delivered */
-      fprintf(stderr, "[SIGNER_SERVICE] EOSE received - historical events done, continuing to wait for live events\n");
-      g_debug("[SIGNER_SERVICE] EOSE received - historical events done");
+    } else if (selected == 1) {
+      /* EOSE - all stored events delivered, continue waiting for live events */
+      g_debug("[SIGNER_SERVICE] EOSE received - waiting for signer response");
       eose_received = TRUE;
       eose_signal = NULL;
+      /* Don't break - keep waiting for the actual response */
 
-    } else if (result.selected_case == 2) {
+    } else if (selected == 2) {
       /* CLOSED - subscription was closed by relay */
       const char *reason = closed_reason ? (const char *)closed_reason : "unknown";
       g_warning("[SIGNER_SERVICE] Subscription closed by relay: %s", reason);
       error_message = g_strdup_printf("Relay closed subscription: %s", reason);
       keep_waiting = FALSE;
 
-    } else if (result.selected_case == -1) {
-      /* Timeout - check state and continue */
-      gboolean relay_ok = nostr_relay_is_connected(relay);
-      gboolean sub_closed = nostr_subscription_is_closed(sub);
-      fprintf(stderr, "[SIGNER_SERVICE] Timeout (500ms): relay_disconnected=%d, relay_is_connected=%d, eose_received=%d, sub_closed=%d\n",
-              roundtrip.relay_disconnected, relay_ok, eose_received, sub_closed);
-
-      if (roundtrip.relay_disconnected || !relay_ok) {
-        g_warning("[SIGNER_SERVICE] Relay disconnected during wait");
-        error_message = g_strdup("NIP-46 relay connection lost");
-        keep_waiting = FALSE;
-      }
-      if (eose_received && sub_closed) {
-        g_warning("[SIGNER_SERVICE] Subscription ended after EOSE with no response");
-        error_message = g_strdup("Remote signer not responding - is it online?");
-        keep_waiting = FALSE;
-      }
-      /* Continue waiting for live events */
+    } else {
+      /* Unexpected return - channel closed or error */
+      g_warning("[SIGNER_SERVICE] go_select returned unexpected value: %d", selected);
+      error_message = g_strdup("NIP-46 subscription error");
+      keep_waiting = FALSE;
     }
   }
 
