@@ -2806,6 +2806,8 @@ static gchar *format_nostr_mention_display(const char *t) {
 
 void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *content) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
+  /* nostrc-cz0: Prevent Pango crash by checking disposed before modifying label */
+  if (self->disposed) return;
 
   /* Store plain text content for clipboard operations */
   g_clear_pointer(&self->content_text, g_free);
@@ -3087,6 +3089,8 @@ void gnostr_note_card_row_set_content(GnostrNoteCardRow *self, const char *conte
 /* NIP-92 imeta-aware content setter */
 void gnostr_note_card_row_set_content_with_imeta(GnostrNoteCardRow *self, const char *content, const char *tags_json) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
+  /* nostrc-cz0: Prevent Pango crash by checking disposed before modifying label */
+  if (self->disposed) return;
 
   /* Store plain text content for clipboard operations */
   g_clear_pointer(&self->content_text, g_free);
@@ -4601,6 +4605,8 @@ void gnostr_note_card_row_set_article_mode(GnostrNoteCardRow *self,
                                             const char *d_tag,
                                             const char * const *hashtags) {
   if (!GNOSTR_IS_NOTE_CARD_ROW(self)) return;
+  /* nostrc-cz0: Prevent Pango crash by checking disposed before modifying labels */
+  if (self->disposed) return;
 
   self->is_article = TRUE;
 
