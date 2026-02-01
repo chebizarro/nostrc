@@ -42,9 +42,13 @@ static void gnostr_plugin_iface_init(GnostrPluginInterface *iface);
 /* Implement GnostrEventHandler interface */
 static void gnostr_event_handler_iface_init(GnostrEventHandlerInterface *iface);
 
+/* Implement GnostrUIExtension interface */
+static void gnostr_ui_extension_iface_init(GnostrUIExtensionInterface *iface);
+
 G_DEFINE_TYPE_WITH_CODE(Nip46ConnectPlugin, nip46_connect_plugin, G_TYPE_OBJECT,
                         G_IMPLEMENT_INTERFACE(GNOSTR_TYPE_PLUGIN, gnostr_plugin_iface_init)
-                        G_IMPLEMENT_INTERFACE(GNOSTR_TYPE_EVENT_HANDLER, gnostr_event_handler_iface_init))
+                        G_IMPLEMENT_INTERFACE(GNOSTR_TYPE_EVENT_HANDLER, gnostr_event_handler_iface_init)
+                        G_IMPLEMENT_INTERFACE(GNOSTR_TYPE_UI_EXTENSION, gnostr_ui_extension_iface_init))
 
 static void
 nip46_connect_plugin_dispose(GObject *object)
@@ -659,6 +663,176 @@ nip46_connect_plugin_ping(Nip46ConnectPlugin *self, GError **error)
 }
 
 /* ============================================================================
+ * GnostrUIExtension interface implementation - Settings page
+ * ============================================================================ */
+
+typedef struct {
+  Nip46ConnectPlugin *plugin;
+  GtkEntry *uri_entry;
+  GtkLabel *status_label;
+  GtkButton *connect_button;
+} SettingsPageData;
+
+static void
+settings_page_data_free(SettingsPageData *data)
+{
+  g_slice_free(SettingsPageData, data);
+}
+
+static void
+update_settings_ui(SettingsPageData *data)
+{
+  if (data->plugin->connected)
+    {
+      gtk_label_set_text(data->status_label, "Connected");
+      gtk_button_set_label(data->connect_button, "Disconnect");
+      gtk_widget_add_css_class(GTK_WIDGET(data->status_label), "success");
+      gtk_widget_remove_css_class(GTK_WIDGET(data->status_label), "error");
+    }
+  else
+    {
+      gtk_label_set_text(data->status_label, "Not connected");
+      gtk_button_set_label(data->connect_button, "Connect");
+      gtk_widget_remove_css_class(GTK_WIDGET(data->status_label), "success");
+    }
+}
+
+static void
+on_connect_button_clicked(GtkButton *button G_GNUC_UNUSED, gpointer user_data)
+{
+  SettingsPageData *data = user_data;
+  Nip46ConnectPlugin *self = data->plugin;
+
+  if (self->connected)
+    {
+      /* Disconnect */
+      nip46_connect_plugin_disconnect(self);
+      update_settings_ui(data);
+    }
+  else
+    {
+      /* Connect */
+      const char *uri = gtk_editable_get_text(GTK_EDITABLE(data->uri_entry));
+      if (!uri || *uri == '\0')
+        {
+          gtk_label_set_text(data->status_label, "Error: Enter a bunker URI");
+          gtk_widget_add_css_class(GTK_WIDGET(data->status_label), "error");
+          return;
+        }
+
+      GError *error = NULL;
+      if (nip46_connect_plugin_connect(self, uri, &error))
+        {
+          update_settings_ui(data);
+        }
+      else
+        {
+          g_autofree char *msg = g_strdup_printf("Error: %s", error->message);
+          gtk_label_set_text(data->status_label, msg);
+          gtk_widget_add_css_class(GTK_WIDGET(data->status_label), "error");
+          g_error_free(error);
+        }
+    }
+}
+
+static GtkWidget *
+nip46_connect_plugin_create_settings_page(GnostrUIExtension   *extension,
+                                          GnostrPluginContext *context G_GNUC_UNUSED)
+{
+  Nip46ConnectPlugin *self = NIP46_CONNECT_PLUGIN(extension);
+
+  /* Create settings page container */
+  GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+  gtk_widget_set_margin_start(page, 18);
+  gtk_widget_set_margin_end(page, 18);
+  gtk_widget_set_margin_top(page, 18);
+  gtk_widget_set_margin_bottom(page, 18);
+
+  /* Title */
+  GtkWidget *title = gtk_label_new("Nostr Connect (NIP-46)");
+  gtk_widget_add_css_class(title, "title-2");
+  gtk_widget_set_halign(title, GTK_ALIGN_START);
+  gtk_box_append(GTK_BOX(page), title);
+
+  /* Description */
+  GtkWidget *desc = gtk_label_new(
+    "Connect to a remote signer (bunker) to sign events without exposing your private key.");
+  gtk_label_set_wrap(GTK_LABEL(desc), TRUE);
+  gtk_label_set_xalign(GTK_LABEL(desc), 0);
+  gtk_widget_add_css_class(desc, "dim-label");
+  gtk_box_append(GTK_BOX(page), desc);
+
+  /* Bunker URI input */
+  GtkWidget *uri_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_margin_top(uri_box, 12);
+
+  GtkWidget *uri_label = gtk_label_new("Bunker URI:");
+  gtk_box_append(GTK_BOX(uri_box), uri_label);
+
+  GtkWidget *uri_entry = gtk_entry_new();
+  gtk_entry_set_placeholder_text(GTK_ENTRY(uri_entry), "bunker://... or nostrconnect://...");
+  gtk_widget_set_hexpand(uri_entry, TRUE);
+  if (self->bunker_uri)
+    gtk_editable_set_text(GTK_EDITABLE(uri_entry), self->bunker_uri);
+  gtk_box_append(GTK_BOX(uri_box), uri_entry);
+
+  gtk_box_append(GTK_BOX(page), uri_box);
+
+  /* Status and connect button */
+  GtkWidget *status_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+  gtk_widget_set_margin_top(status_box, 8);
+
+  GtkWidget *status_label = gtk_label_new("Not connected");
+  gtk_widget_set_hexpand(status_label, TRUE);
+  gtk_widget_set_halign(status_label, GTK_ALIGN_START);
+  gtk_box_append(GTK_BOX(status_box), status_label);
+
+  GtkWidget *connect_button = gtk_button_new_with_label("Connect");
+  gtk_box_append(GTK_BOX(status_box), connect_button);
+
+  gtk_box_append(GTK_BOX(page), status_box);
+
+  /* Remote pubkey display (when connected) */
+  GtkWidget *pubkey_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_margin_top(pubkey_box, 8);
+
+  GtkWidget *pubkey_label = gtk_label_new("Remote Signer:");
+  gtk_box_append(GTK_BOX(pubkey_box), pubkey_label);
+
+  GtkWidget *pubkey_value = gtk_label_new(self->remote_pubkey ? self->remote_pubkey : "—");
+  gtk_label_set_selectable(GTK_LABEL(pubkey_value), TRUE);
+  gtk_label_set_ellipsize(GTK_LABEL(pubkey_value), PANGO_ELLIPSIZE_MIDDLE);
+  gtk_widget_set_hexpand(pubkey_value, TRUE);
+  gtk_widget_add_css_class(pubkey_value, "monospace");
+  gtk_box_append(GTK_BOX(pubkey_box), pubkey_value);
+
+  gtk_box_append(GTK_BOX(page), pubkey_box);
+
+  /* Setup data and signals */
+  SettingsPageData *data = g_slice_new0(SettingsPageData);
+  data->plugin = self;
+  data->uri_entry = GTK_ENTRY(uri_entry);
+  data->status_label = GTK_LABEL(status_label);
+  data->connect_button = GTK_BUTTON(connect_button);
+
+  g_signal_connect_data(connect_button, "clicked",
+                        G_CALLBACK(on_connect_button_clicked), data,
+                        (GClosureNotify)settings_page_data_free, 0);
+
+  /* Update UI to reflect current state */
+  update_settings_ui(data);
+
+  return page;
+}
+
+static void
+gnostr_ui_extension_iface_init(GnostrUIExtensionInterface *iface)
+{
+  iface->create_settings_page = nip46_connect_plugin_create_settings_page;
+  /* menu_items and note_decoration not needed for this plugin */
+}
+
+/* ============================================================================
  * Plugin registration for libpeas
  * ============================================================================ */
 
@@ -670,5 +844,8 @@ peas_register_types(PeasObjectModule *module)
                                               NIP46_TYPE_CONNECT_PLUGIN);
   peas_object_module_register_extension_type(module,
                                               GNOSTR_TYPE_EVENT_HANDLER,
+                                              NIP46_TYPE_CONNECT_PLUGIN);
+  peas_object_module_register_extension_type(module,
+                                              GNOSTR_TYPE_UI_EXTENSION,
                                               NIP46_TYPE_CONNECT_PLUGIN);
 }
