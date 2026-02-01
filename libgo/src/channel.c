@@ -466,6 +466,10 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         {
             _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[idx];
             tmp = atomic_load_explicit(p, memory_order_acquire);
+            // nostrc-nft: Clear slot after receive to prevent stale pointer reads
+            // under race conditions. This is defense-in-depth; the slot_seq protocol
+            // should already prevent invalid reads, but zeroing adds safety margin.
+            atomic_store_explicit(p, NULL, memory_order_release);
         }
         if (data) *data = tmp;
         atomic_store_explicit(&chan->slot_seq[idx], tail + chan->capacity, memory_order_release);
@@ -549,6 +553,8 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
             __builtin_prefetch(&chan->buffer[idx], 0, 1);
         }
         void *tmp = chan->buffer[out_idx];
+        // nostrc-nft: Clear slot after receive to prevent stale pointer reads
+        chan->buffer[out_idx] = NULL;
         if (data) *data = tmp;
         go_channel_inc_out(chan);
         // size derived: no counter update
@@ -991,6 +997,8 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
     {
         _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[idx];
         tmp = atomic_load_explicit(p, memory_order_acquire);
+        // nostrc-nft: Clear slot after receive to prevent stale pointer reads
+        atomic_store_explicit(p, NULL, memory_order_release);
     }
     if (data) *data = tmp;
     atomic_store_explicit(&chan->slot_seq[idx], tail + chan->capacity, memory_order_release);
@@ -1001,6 +1009,8 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
     {
         _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[chan->out];
         tmp = atomic_load_explicit(p, memory_order_acquire);
+        // nostrc-nft: Clear slot after receive to prevent stale pointer reads
+        atomic_store_explicit(p, NULL, memory_order_release);
     }
     if (data) *data = tmp;
     go_channel_inc_out(chan);
