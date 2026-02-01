@@ -367,6 +367,11 @@ void nostr_subscription_dispatch_eose(NostrSubscription *sub) {
     if (atomic_exchange(&sub->priv->eosed, true) == false) {
         sub->priv->match = nostr_filters_match_ignoring_timestamp;
 
+        // nostrc-dkx: Log event count before EOSE for debugging relay response sizes
+        uint64_t event_count = atomic_load(&sub->priv->metrics.events_enqueued);
+        fprintf(stderr, "[RELAY_POOL] Subscription %s received %llu events before EOSE\n",
+                sub->priv->id ? sub->priv->id : "unknown", (unsigned long long)event_count);
+
         // CRITICAL: Must use blocking send for EOSE to ensure delivery!
         // The goroutine polling loop DEPENDS on receiving EOSE to complete.
         // Non-blocking try_send can drop the signal if timing is off.
