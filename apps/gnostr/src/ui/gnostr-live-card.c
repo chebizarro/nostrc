@@ -602,16 +602,7 @@ load_cover_image(GnostrLiveCard *self)
         g_clear_object(&self->image_cancellable);
     }
 
-    /* TODO: Implement async image loading with GdkTexture
-     * For now, we just show the widget is ready for an image
-     * A real implementation would use GtkPicture with async loading:
-     *
-     * GFile *file = g_file_new_for_uri(self->activity->image);
-     * gtk_picture_set_file(self->cover_image, file);
-     * g_object_unref(file);
-     */
-
-    /* Attempt to load image from URL */
+    /* Load image from URL - gtk_picture_set_file handles async loading */
     GFile *file = g_file_new_for_uri(self->activity->image);
     gtk_picture_set_file(self->cover_image, file);
     g_object_unref(file);

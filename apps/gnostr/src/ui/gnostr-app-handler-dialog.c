@@ -195,27 +195,43 @@ build_event_bech32(GnostrAppHandlerDialog *self)
 {
   /* For addressable events, use naddr. Otherwise use nevent. */
   if (gnostr_nip89_is_addressable_kind(self->event_kind) && self->d_tag && self->event_pubkey_hex) {
-    /* Build naddr */
-    /* TODO: Use proper nip19_encode_naddr when available */
-    return g_strdup_printf("naddr1...%s", self->d_tag);
+    /* Build naddr using proper NIP-19 encoding */
+    NostrEntityPointer *entity = nostr_entity_pointer_new();
+    entity->public_key = g_strdup(self->event_pubkey_hex);
+    entity->kind = (int)self->event_kind;
+    entity->identifier = g_strdup(self->d_tag);
+    entity->relays = NULL;
+    entity->relays_count = 0;
+
+    char *naddr = NULL;
+    int rc = nostr_nip19_encode_naddr(entity, &naddr);
+    nostr_entity_pointer_free(entity);
+
+    if (rc == 0 && naddr) {
+      return naddr;
+    }
+    g_warning("app-handler: failed to encode naddr");
+    return NULL;
   }
 
   /* Use nevent for regular events */
   if (self->event_id_hex && strlen(self->event_id_hex) == 64) {
-    uint8_t id_bytes[32];
-    for (int i = 0; i < 32; i++) {
-      unsigned int byte;
-      if (sscanf(self->event_id_hex + i * 2, "%2x", &byte) != 1) {
-        return NULL;
-      }
-      id_bytes[i] = (uint8_t)byte;
-    }
+    NostrEventPointer *event = nostr_event_pointer_new();
+    event->id = g_strdup(self->event_id_hex);
+    event->author = self->event_pubkey_hex ? g_strdup(self->event_pubkey_hex) : NULL;
+    event->kind = (int)self->event_kind;
+    event->relays = NULL;
+    event->relays_count = 0;
 
     char *nevent = NULL;
-    /* Try to encode as nevent */
-    /* For now, use a simple format - proper NIP-19 encoding would be better */
-    nevent = g_strdup_printf("nevent1...%s", self->event_id_hex);
-    return nevent;
+    int rc = nostr_nip19_encode_nevent(event, &nevent);
+    nostr_event_pointer_free(event);
+
+    if (rc == 0 && nevent) {
+      return nevent;
+    }
+    g_warning("app-handler: failed to encode nevent");
+    return NULL;
   }
 
   return NULL;
