@@ -1226,11 +1226,16 @@ static void rebuild_thread_ui(GnostrThreadView *self) {
     return;
   }
 
-  /* Update title */
+  /* Update title - show visible/total if some are collapsed */
   guint total_notes = g_hash_table_size(self->thread_graph->nodes);
+  guint visible_notes = self->thread_graph->render_order->len;
   if (self->title_label) {
     char title[64];
-    snprintf(title, sizeof(title), "Thread (%u notes)", total_notes);
+    if (visible_notes < total_notes) {
+      snprintf(title, sizeof(title), "Thread (%u of %u notes)", visible_notes, total_notes);
+    } else {
+      snprintf(title, sizeof(title), "Thread (%u notes)", total_notes);
+    }
     gtk_label_set_text(GTK_LABEL(self->title_label), title);
   }
 
@@ -1436,6 +1441,8 @@ static void on_missing_ancestors_done(GObject *source, GAsyncResult *res, gpoint
    * New events may reference additional ancestors we need to fetch. */
   if (found_new_events) {
     fetch_missing_ancestors(self);
+    /* Also fetch children of the new ancestors for complete graph */
+    fetch_children_from_relays(self);
   } else {
     g_debug("[THREAD_VIEW] No new ancestor events found, chain traversal complete");
   }
@@ -1786,6 +1793,9 @@ static void on_children_query_done(GObject *source, GAsyncResult *res, gpointer 
   if (found_new) {
     /* Rebuild UI with new events */
     rebuild_thread_ui(self);
+
+    /* Fetch any missing ancestors of the new children */
+    fetch_missing_ancestors(self);
 
     /* Continue iterative child discovery if we haven't reached the limit */
     fetch_children_from_relays(self);
