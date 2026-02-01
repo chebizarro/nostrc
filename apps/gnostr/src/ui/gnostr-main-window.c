@@ -3966,26 +3966,45 @@ static gboolean profile_fetch_fire_idle(gpointer data) {
   const guint n_batches = (total + batch_sz - 1) / batch_sz;
   (void)n_batches; /* For batch organization only */
   
-  /* Check for stale batch state (shouldn't happen, but be defensive) */
+  /* Check for existing batch state */
   if (self->profile_batches) {
-    g_warning("[PROFILE] ⚠️ STALE BATCH DETECTED - profile_batches is non-NULL but no fetch running!");
-    g_warning("[PROFILE] This indicates a previous fetch never completed. Clearing stale state.");
-    
-    /* Clean up stale batch state */
-    for (guint i = 0; i < self->profile_batches->len; i++) {
-      GPtrArray *b = g_ptr_array_index(self->profile_batches, i);
-      if (b) g_ptr_array_free(b, TRUE);
+    if (self->profile_fetch_active > 0) {
+      /* Active fetches in progress - re-queue authors for next cycle instead of
+       * starting a concurrent sequence which can cause state corruption. */
+      g_debug("[PROFILE] Fetch in progress (active=%u), re-queuing %u authors",
+              self->profile_fetch_active, authors->len);
+      if (!self->profile_fetch_queue) {
+        self->profile_fetch_queue = g_ptr_array_new_with_free_func(g_free);
+      }
+      for (guint i = 0; i < authors->len; i++) {
+        char *pk = g_ptr_array_index(authors, i);
+        if (pk) g_ptr_array_add(self->profile_fetch_queue, g_strdup(pk));
+      }
+      g_ptr_array_free(authors, TRUE);
+      if (dummy) nostr_filters_free(dummy);
+      if (urls) free_urls_owned(urls, url_count);
+      return G_SOURCE_REMOVE;
+    } else {
+      /* No active fetches but profile_batches still exists - truly stale state */
+      g_warning("[PROFILE] ⚠️ STALE BATCH DETECTED - profile_batches is non-NULL but no fetch running!");
+      g_warning("[PROFILE] This indicates a previous fetch never completed. Clearing stale state.");
+
+      /* Clean up stale batch state */
+      for (guint i = 0; i < self->profile_batches->len; i++) {
+        GPtrArray *b = g_ptr_array_index(self->profile_batches, i);
+        if (b) g_ptr_array_free(b, TRUE);
+      }
+      g_ptr_array_free(self->profile_batches, TRUE);
+      self->profile_batches = NULL;
+
+      if (self->profile_batch_urls) {
+        free_urls_owned(self->profile_batch_urls, self->profile_batch_url_count);
+        self->profile_batch_urls = NULL;
+        self->profile_batch_url_count = 0;
+      }
+      self->profile_batch_pos = 0;
+      /* Fall through to create new batch sequence */
     }
-    g_ptr_array_free(self->profile_batches, TRUE);
-    self->profile_batches = NULL;
-    
-    if (self->profile_batch_urls) {
-      free_urls_owned(self->profile_batch_urls, self->profile_batch_url_count);
-      self->profile_batch_urls = NULL;
-      self->profile_batch_url_count = 0;
-    }
-    self->profile_batch_pos = 0;
-    /* Fall through to create new batch sequence */
   }
   /* Do not set a free-func: we'll free each batch when its callback completes,
      and clean up any remaining (if canceled) at sequence end. */
