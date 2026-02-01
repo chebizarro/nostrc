@@ -19,6 +19,7 @@
 #define KIND_LEGACY_DM        4
 #define KIND_TEXT_NOTE        1
 #define KIND_COMMENT          1111  /* NIP-22 comments */
+#define KIND_CONTACT_LIST     3     /* NIP-02 contact list (followers) */
 #define KIND_REPOST           6
 #define KIND_REACTION         7
 #define KIND_NIP17_RUMOR      14
@@ -66,6 +67,7 @@ struct _GnostrBadgeManager {
   uint64_t sub_reposts;
   uint64_t sub_reactions;
   uint64_t sub_lists;
+  uint64_t sub_followers;
 
   /* GSettings for persistence */
   GSettings *settings;
@@ -88,6 +90,8 @@ static void on_reaction_events(uint64_t subid, const uint64_t *note_keys,
                                guint n_keys, gpointer user_data);
 static void on_list_events(uint64_t subid, const uint64_t *note_keys,
                            guint n_keys, gpointer user_data);
+static void on_follower_events(uint64_t subid, const uint64_t *note_keys,
+                               guint n_keys, gpointer user_data);
 static void emit_changed(GnostrBadgeManager *self);
 static void load_settings(GnostrBadgeManager *self);
 static void save_settings(GnostrBadgeManager *self);
@@ -201,6 +205,8 @@ load_settings(GnostrBadgeManager *self)
     g_settings_get_boolean(self->settings, "badge-reaction-enabled");
   /* nostrc-51a.6: List notifications - try to load if key exists, else default to enabled */
   self->enabled[GNOSTR_NOTIFICATION_LIST] = TRUE; /* Default until schema is updated */
+  /* nostrc-51a.5: Follower notifications - default to enabled */
+  self->enabled[GNOSTR_NOTIFICATION_FOLLOWER] = TRUE; /* Default until schema is updated */
 
   /* Load display mode */
   gchar *mode_str = g_settings_get_string(self->settings, "badge-display-mode");
@@ -227,10 +233,11 @@ load_settings(GnostrBadgeManager *self)
   self->last_read[GNOSTR_NOTIFICATION_REACTION] =
     g_settings_get_int64(self->settings, "last-read-reaction");
   self->last_read[GNOSTR_NOTIFICATION_LIST] = 0; /* Default until schema is updated */
+  self->last_read[GNOSTR_NOTIFICATION_FOLLOWER] = 0; /* Default until schema is updated */
 
-  g_debug("Loaded settings: dm=%d mention=%d reply=%d zap=%d repost=%d reaction=%d list=%d mode=%d",
+  g_debug("Loaded settings: dm=%d mention=%d reply=%d zap=%d repost=%d reaction=%d list=%d follower=%d mode=%d",
           self->enabled[0], self->enabled[1], self->enabled[2], self->enabled[3],
-          self->enabled[4], self->enabled[5], self->enabled[6], self->display_mode);
+          self->enabled[4], self->enabled[5], self->enabled[6], self->enabled[7], self->display_mode);
 }
 
 static void
@@ -984,6 +991,76 @@ on_list_events(uint64_t subid, const uint64_t *note_keys,
   }
 }
 
+/* nostrc-51a.5: Handle new follower events (kind 3 contact lists with user in p-tag).
+ * When someone adds the user to their contact list, we detect it as a new follower. */
+static void
+on_follower_events(uint64_t subid, const uint64_t *note_keys,
+                   guint n_keys, gpointer user_data)
+{
+  (void)subid;
+  GnostrBadgeManager *self = GNOSTR_BADGE_MANAGER(user_data);
+
+  if (!self->enabled[GNOSTR_NOTIFICATION_FOLLOWER]) return;
+
+  /* Need user pubkey to verify we're in their contact list */
+  if (!self->user_pubkey || strlen(self->user_pubkey) != 64) {
+    g_debug("No user pubkey set, cannot process follower events");
+    return;
+  }
+
+  /* Get transaction to access notes */
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) {
+    g_warning("Failed to begin query for follower notifications");
+    return;
+  }
+
+  guint new_count = 0;
+  gint64 last_read = self->last_read[GNOSTR_NOTIFICATION_FOLLOWER];
+  gboolean event_emitted = FALSE;
+
+  for (guint i = 0; i < n_keys; i++) {
+    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_keys[i]);
+    if (!note) continue;
+
+    /* Check if this is a kind 3 contact list */
+    int kind = storage_ndb_note_kind(note);
+    if (kind != KIND_CONTACT_LIST) continue;
+
+    /* Check timestamp - only count new followers */
+    gint64 created_at = storage_ndb_note_created_at(note);
+    if (created_at <= last_read) continue;
+
+    /* The fact that we received this event means the user is in the p-tags
+     * (our subscription filter already filters for #p:[user_pubkey]).
+     * This is a new follower! */
+    new_count++;
+
+    /* Emit event for first new follower only (to show desktop notification) */
+    if (!event_emitted && self->event_callback) {
+      const unsigned char *pubkey_bin = storage_ndb_note_pubkey(note);
+      const unsigned char *id_bin = storage_ndb_note_id(note);
+
+      char pubkey_hex[65], id_hex[65];
+      storage_ndb_hex_encode(pubkey_bin, pubkey_hex);
+      storage_ndb_hex_encode(id_bin, id_hex);
+
+      emit_event(self, GNOSTR_NOTIFICATION_FOLLOWER, pubkey_hex, NULL,
+                 "started following you", id_hex, 0);
+      event_emitted = TRUE;
+
+      g_debug("New follower: %.16s...", pubkey_hex);
+    }
+  }
+
+  storage_ndb_end_query(txn);
+
+  if (new_count > 0) {
+    gnostr_badge_manager_increment(self, GNOSTR_NOTIFICATION_FOLLOWER, new_count);
+    g_debug("Follower notification: +%u new", new_count);
+  }
+}
+
 /* ============== Relay Subscription Integration ============== */
 
 void
@@ -1044,11 +1121,18 @@ gnostr_badge_manager_start_subscriptions(GnostrBadgeManager *self)
   self->sub_lists = gn_ndb_subscribe(list_filter, on_list_events, self, NULL);
   g_free(list_filter);
 
-  g_debug("Started notification subscriptions for %s (dm=%lu, mentions=%lu, zaps=%lu, reposts=%lu, reactions=%lu, lists=%lu)",
+  /* nostrc-51a.5: Subscribe to new followers (kind 3 contact lists with user in p-tag) */
+  gchar *follower_filter = g_strdup_printf(
+    "[{\"kinds\":[%d],\"#p\":[\"%s\"]}]",
+    KIND_CONTACT_LIST, self->user_pubkey);
+  self->sub_followers = gn_ndb_subscribe(follower_filter, on_follower_events, self, NULL);
+  g_free(follower_filter);
+
+  g_debug("Started notification subscriptions for %s (dm=%lu, mentions=%lu, zaps=%lu, reposts=%lu, reactions=%lu, lists=%lu, followers=%lu)",
           self->user_pubkey, (unsigned long)self->sub_dm,
           (unsigned long)self->sub_mentions, (unsigned long)self->sub_zaps,
           (unsigned long)self->sub_reposts, (unsigned long)self->sub_reactions,
-          (unsigned long)self->sub_lists);
+          (unsigned long)self->sub_lists, (unsigned long)self->sub_followers);
 }
 
 void
@@ -1084,6 +1168,11 @@ gnostr_badge_manager_stop_subscriptions(GnostrBadgeManager *self)
   if (self->sub_lists) {
     gn_ndb_unsubscribe(self->sub_lists);
     self->sub_lists = 0;
+  }
+
+  if (self->sub_followers) {
+    gn_ndb_unsubscribe(self->sub_followers);
+    self->sub_followers = 0;
   }
 
   g_debug("Stopped notification subscriptions");
