@@ -24,6 +24,12 @@
 #define KIND_ZAP_RECEIPT      9735
 #define KIND_GIFT_WRAP        1059
 
+/* NIP-51 list event kinds */
+#define KIND_MUTE_LIST        10000
+#define KIND_PIN_LIST         10001
+#define KIND_PEOPLE_LIST      30000
+#define KIND_BOOKMARK_LIST    30001
+
 /* GSettings schema IDs */
 #define GSETTINGS_NOTIFICATIONS_SCHEMA "org.gnostr.Notifications"
 #define GSETTINGS_NOTIFICATIONS_PATH   "/org/gnostr/notifications/"
@@ -58,6 +64,7 @@ struct _GnostrBadgeManager {
   uint64_t sub_zaps;
   uint64_t sub_reposts;
   uint64_t sub_reactions;
+  uint64_t sub_lists;
 
   /* GSettings for persistence */
   GSettings *settings;
@@ -78,6 +85,8 @@ static void on_repost_events(uint64_t subid, const uint64_t *note_keys,
                              guint n_keys, gpointer user_data);
 static void on_reaction_events(uint64_t subid, const uint64_t *note_keys,
                                guint n_keys, gpointer user_data);
+static void on_list_events(uint64_t subid, const uint64_t *note_keys,
+                           guint n_keys, gpointer user_data);
 static void emit_changed(GnostrBadgeManager *self);
 static void load_settings(GnostrBadgeManager *self);
 static void save_settings(GnostrBadgeManager *self);
@@ -189,6 +198,8 @@ load_settings(GnostrBadgeManager *self)
     g_settings_get_boolean(self->settings, "badge-repost-enabled");
   self->enabled[GNOSTR_NOTIFICATION_REACTION] =
     g_settings_get_boolean(self->settings, "badge-reaction-enabled");
+  /* nostrc-51a.6: List notifications - try to load if key exists, else default to enabled */
+  self->enabled[GNOSTR_NOTIFICATION_LIST] = TRUE; /* Default until schema is updated */
 
   /* Load display mode */
   gchar *mode_str = g_settings_get_string(self->settings, "badge-display-mode");
@@ -214,10 +225,11 @@ load_settings(GnostrBadgeManager *self)
     g_settings_get_int64(self->settings, "last-read-repost");
   self->last_read[GNOSTR_NOTIFICATION_REACTION] =
     g_settings_get_int64(self->settings, "last-read-reaction");
+  self->last_read[GNOSTR_NOTIFICATION_LIST] = 0; /* Default until schema is updated */
 
-  g_debug("Loaded settings: dm=%d mention=%d reply=%d zap=%d repost=%d reaction=%d mode=%d",
+  g_debug("Loaded settings: dm=%d mention=%d reply=%d zap=%d repost=%d reaction=%d list=%d mode=%d",
           self->enabled[0], self->enabled[1], self->enabled[2], self->enabled[3],
-          self->enabled[4], self->enabled[5], self->display_mode);
+          self->enabled[4], self->enabled[5], self->enabled[6], self->display_mode);
 }
 
 static void
@@ -908,6 +920,69 @@ on_reaction_events(uint64_t subid, const uint64_t *note_keys,
   }
 }
 
+/* nostrc-51a.6: Handle NIP-51 list events (mute, pin, people, bookmark lists) */
+static void
+on_list_events(uint64_t subid, const uint64_t *note_keys,
+               guint n_keys, gpointer user_data)
+{
+  (void)subid;
+  GnostrBadgeManager *self = GNOSTR_BADGE_MANAGER(user_data);
+
+  if (!self->enabled[GNOSTR_NOTIFICATION_LIST]) return;
+
+  /* Get transaction to access notes */
+  void *txn = NULL;
+  if (storage_ndb_begin_query_retry(&txn, 3, 10) != 0 || !txn) {
+    g_warning("Failed to begin query for list notifications");
+    return;
+  }
+
+  guint new_count = 0;
+  gint64 last_read = self->last_read[GNOSTR_NOTIFICATION_LIST];
+
+  for (guint i = 0; i < n_keys; i++) {
+    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_keys[i]);
+    if (!note) continue;
+
+    gint64 created_at = (gint64)storage_ndb_note_created_at(note);
+    if (created_at > last_read) {
+      new_count++;
+
+      /* Emit event for first list addition only to avoid notification spam */
+      if (new_count == 1 && self->event_callback) {
+        const unsigned char *pubkey_bin = storage_ndb_note_pubkey(note);
+        const unsigned char *id_bin = storage_ndb_note_id(note);
+        uint32_t kind = storage_ndb_note_kind(note);
+
+        char pubkey_hex[65], id_hex[65];
+        storage_ndb_hex_encode(pubkey_bin, pubkey_hex);
+        storage_ndb_hex_encode(id_bin, id_hex);
+
+        /* Determine list type from kind for notification content */
+        const char *list_type = "a list";
+        switch (kind) {
+          case KIND_MUTE_LIST:   list_type = "their mute list"; break;
+          case KIND_PIN_LIST:    list_type = "their pinned list"; break;
+          case KIND_PEOPLE_LIST: list_type = "a people list"; break;
+          case KIND_BOOKMARK_LIST: list_type = "a bookmark list"; break;
+        }
+
+        /* Emit list notification - use content field for list type description */
+        emit_event(self, GNOSTR_NOTIFICATION_LIST, pubkey_hex, NULL, list_type, id_hex, 0);
+
+        g_debug("List notification: added to %s by %.16s...", list_type, pubkey_hex);
+      }
+    }
+  }
+
+  storage_ndb_end_query(txn);
+
+  if (new_count > 0) {
+    gnostr_badge_manager_increment(self, GNOSTR_NOTIFICATION_LIST, new_count);
+    g_debug("List notification: +%u new", new_count);
+  }
+}
+
 /* ============== Relay Subscription Integration ============== */
 
 void
@@ -959,10 +1034,19 @@ gnostr_badge_manager_start_subscriptions(GnostrBadgeManager *self)
   self->sub_reactions = gn_ndb_subscribe(reaction_filter, on_reaction_events, self, NULL);
   g_free(reaction_filter);
 
-  g_debug("Started notification subscriptions for %s (dm=%lu, mentions=%lu, zaps=%lu, reposts=%lu, reactions=%lu)",
+  /* nostrc-51a.6: Subscribe to NIP-51 lists that include user (mute, pin, people, bookmark) */
+  gchar *list_filter = g_strdup_printf(
+    "[{\"kinds\":[%d,%d,%d,%d],\"#p\":[\"%s\"]}]",
+    KIND_MUTE_LIST, KIND_PIN_LIST, KIND_PEOPLE_LIST, KIND_BOOKMARK_LIST,
+    self->user_pubkey);
+  self->sub_lists = gn_ndb_subscribe(list_filter, on_list_events, self, NULL);
+  g_free(list_filter);
+
+  g_debug("Started notification subscriptions for %s (dm=%lu, mentions=%lu, zaps=%lu, reposts=%lu, reactions=%lu, lists=%lu)",
           self->user_pubkey, (unsigned long)self->sub_dm,
           (unsigned long)self->sub_mentions, (unsigned long)self->sub_zaps,
-          (unsigned long)self->sub_reposts, (unsigned long)self->sub_reactions);
+          (unsigned long)self->sub_reposts, (unsigned long)self->sub_reactions,
+          (unsigned long)self->sub_lists);
 }
 
 void
@@ -993,6 +1077,11 @@ gnostr_badge_manager_stop_subscriptions(GnostrBadgeManager *self)
   if (self->sub_reactions) {
     gn_ndb_unsubscribe(self->sub_reactions);
     self->sub_reactions = 0;
+  }
+
+  if (self->sub_lists) {
+    gn_ndb_unsubscribe(self->sub_lists);
+    self->sub_lists = 0;
   }
 
   g_debug("Stopped notification subscriptions");

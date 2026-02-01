@@ -446,6 +446,8 @@ gnostr_notification_type_name(GnostrNotificationType type)
             return "zap";
         case GNOSTR_NOTIFICATION_TYPE_FOLLOW:
             return "follow";
+        case GNOSTR_NOTIFICATION_TYPE_LIST:
+            return "list";
         default:
             return "unknown";
     }

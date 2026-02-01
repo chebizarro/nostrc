@@ -29,6 +29,7 @@ typedef enum {
     GNOSTR_NOTIFICATION_TYPE_REACTION,   /* Someone reacted to your note (kind 7) */
     GNOSTR_NOTIFICATION_TYPE_ZAP,        /* Someone zapped your note (kind 9735) */
     GNOSTR_NOTIFICATION_TYPE_FOLLOW,     /* Someone followed you */
+    GNOSTR_NOTIFICATION_TYPE_LIST,       /* Someone added you to a NIP-51 list */
 } GnostrNotificationType;
 
 /**
