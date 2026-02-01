@@ -10,9 +10,10 @@ static char *fake_sign(const char *event_json, void *ud){
     (void)ud;
     /* Return a simple wrapped object to prove pass-through */
     size_t n = strlen(event_json);
-    char *out = (char*)malloc(n + 20);
+    size_t out_size = n + 20;
+    char *out = (char*)malloc(out_size);
     if (!out) return NULL;
-    sprintf(out, "{\"signed\":%s}", event_json);
+    snprintf(out, out_size, "{\"signed\":%s}", event_json);
     return out;
 }
 

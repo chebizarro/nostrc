@@ -67,8 +67,9 @@ nostr_event_t *nostr_group_to_admins_event(const nostr_group_t *group) {
     for (size_t i = 0; i < group->members_len; ++i) {
         nostr_role_t *role = &group->members[i];
         if (role->permissions_len > 0) {
-            char *tag = malloc(3 + role->permissions_len * 10);
-            sprintf(tag, "p,%s,%s", group->members[i].name, group->members[i].name);
+            size_t tag_size = 3 + strlen(group->members[i].name) * 2 + role->permissions_len * 16;
+            char *tag = malloc(tag_size);
+            snprintf(tag, tag_size, "p,%s,%s", group->members[i].name, group->members[i].name);
             for (size_t j = 0; j < role->permissions_len; ++j) {
                 strcat(tag, ",");
                 strcat(tag, nostr_permission_to_string(role->permissions[j]));

@@ -808,9 +808,10 @@ static void handle_req_envelope(NostrMockRelayServer *server, MockConnection *co
 
         if (matches) {
             /* Send EVENT envelope: ["EVENT", "<sub_id>", <event>] */
-            char *envelope = malloc(strlen(event_json) + strlen(sub_id) + 32);
+            size_t envelope_size = strlen(event_json) + strlen(sub_id) + 32;
+            char *envelope = malloc(envelope_size);
             if (envelope) {
-                sprintf(envelope, "[\"EVENT\",\"%s\",%s]", sub_id, event_json);
+                snprintf(envelope, envelope_size, "[\"EVENT\",\"%s\",%s]", sub_id, event_json);
                 send_to_connection(conn, envelope);
                 free(envelope);
                 matched++;

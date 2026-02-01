@@ -170,10 +170,11 @@ char *nostr_nip46_request_build(const char *id,
         cap += plen[i];
         if (i + 1 < n_params) cap += 1; /* comma */
     }
-    char *buf = (char*)malloc(cap + 32);
+    size_t buf_size = cap + 32;
+    char *buf = (char*)malloc(buf_size);
     if (!buf) { if (eparams){ for (size_t i=0;i<n_params;++i) free(eparams[i]); free(eparams);} free(is_raw); free(plen); free(eid); free(emethod); return NULL; }
     char *q = buf;
-    q += sprintf(q, "{\"id\":\"%s\",\"method\":\"%s\",\"params\":[", eid, emethod);
+    q += snprintf(q, buf_size, "{\"id\":\"%s\",\"method\":\"%s\",\"params\":[", eid, emethod);
     for (size_t i = 0; i < n_params; ++i) {
         if (i) *q++ = ',';
         if (is_raw[i]) {

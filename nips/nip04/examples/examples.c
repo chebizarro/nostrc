@@ -27,10 +27,10 @@ int main() {
     }
     unsigned char out33[33]; size_t outlen = 33;
     secp256k1_ec_pubkey_serialize(ctx, out33, &outlen, &pk1, SECP256K1_EC_COMPRESSED);
-    for (size_t i = 0; i < outlen; i++) sprintf(sender_pk_hex + 2*i, "%02x", out33[i]);
+    for (size_t i = 0; i < outlen; i++) snprintf(sender_pk_hex + 2*i, 3, "%02x", out33[i]);
     outlen = 33;
     secp256k1_ec_pubkey_serialize(ctx, out33, &outlen, &pk2, SECP256K1_EC_COMPRESSED);
-    for (size_t i = 0; i < outlen; i++) sprintf(receiver_pk_hex + 2*i, "%02x", out33[i]);
+    for (size_t i = 0; i < outlen; i++) snprintf(receiver_pk_hex + 2*i, 3, "%02x", out33[i]);
     sender_pk_hex[66] = '\0';
     receiver_pk_hex[66] = '\0';
     secp256k1_context_destroy(ctx);

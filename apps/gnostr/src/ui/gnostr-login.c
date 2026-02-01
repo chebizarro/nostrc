@@ -446,7 +446,7 @@ static void generate_nostrconnect_uri(GnostrLogin *self) {
   /* Encode secret as hex for the URI query parameter */
   char secret_hex[65];
   for (int i = 0; i < 32; i++) {
-    sprintf(secret_hex + i * 2, "%02x", secret_bytes[i]);
+    snprintf(secret_hex + i * 2, 3, "%02x", secret_bytes[i]);
   }
   secret_hex[64] = '\0';
 
@@ -465,7 +465,7 @@ static void generate_nostrconnect_uri(GnostrLogin *self) {
         secp256k1_xonly_pubkey_serialize(ctx, pubkey_bytes, &xonly_pubkey);
         /* Encode pubkey as hex */
         for (int i = 0; i < 32; i++) {
-          sprintf(client_pubkey_hex + i * 2, "%02x", pubkey_bytes[i]);
+          snprintf(client_pubkey_hex + i * 2, 3, "%02x", pubkey_bytes[i]);
         }
         client_pubkey_hex[64] = '\0';
       }

@@ -383,7 +383,7 @@ static void on_add_user_clicked(GtkButton *btn, gpointer user_data) {
         unsigned char pk_bytes[32];
         if (nostr_nip19_decode_npub(input, pk_bytes) == 0) {
             for (int i = 0; i < 32; i++) {
-                sprintf(&pubkey_hex[i*2], "%02x", pk_bytes[i]);
+                snprintf(&pubkey_hex[i*2], 3, "%02x", pk_bytes[i]);
             }
             valid = TRUE;
         }
