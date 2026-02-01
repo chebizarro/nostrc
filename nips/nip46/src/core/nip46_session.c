@@ -456,7 +456,7 @@ int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, 
     nostr_filter_set_tags(f, filter_tags);
 
     /* Only get events from after our request */
-    nostr_filter_set_since(f, (int64_t)time(NULL) - 5);
+    nostr_filter_set_since_i64(f, (int64_t)time(NULL) - 5);
 
     NostrFilter f_copy = *f;
     free(f);

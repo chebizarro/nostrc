@@ -1144,16 +1144,22 @@ gnostr_community_view_update_author_profile(GnostrCommunityView *self,
         g_hash_table_insert(self->author_avatars, g_strdup(pubkey), g_strdup(avatar_url));
     }
 
-    /* nostrc-n63f: Refresh visible rows with updated author info by signaling
-     * items-changed on the list models. This triggers rebind of visible rows. */
-    guint approved_len = g_list_model_get_n_items(G_LIST_MODEL(self->approved_posts));
-    guint pending_len = g_list_model_get_n_items(G_LIST_MODEL(self->pending_posts));
-
-    if (approved_len > 0) {
-        g_list_model_items_changed(G_LIST_MODEL(self->approved_posts), 0, approved_len, approved_len);
-    }
-    if (pending_len > 0) {
-        g_list_model_items_changed(G_LIST_MODEL(self->pending_posts), 0, pending_len, pending_len);
+    /* Refresh rows matching this pubkey (more efficient than refreshing all) */
+    GListStore *stores[] = { self->approved_posts, self->pending_posts };
+    for (guint s = 0; s < G_N_ELEMENTS(stores); s++) {
+        if (!stores[s]) continue;
+        guint n_items = g_list_model_get_n_items(G_LIST_MODEL(stores[s]));
+        for (guint i = 0; i < n_items; i++) {
+            CommunityPostItem *item = g_list_model_get_item(G_LIST_MODEL(stores[s]), i);
+            if (item && item->post && g_strcmp0(item->post->author_pubkey, pubkey) == 0) {
+                g_free(item->author_name);
+                g_free(item->author_avatar);
+                item->author_name = display_name ? g_strdup(display_name) : NULL;
+                item->author_avatar = avatar_url ? g_strdup(avatar_url) : NULL;
+                g_list_model_items_changed(G_LIST_MODEL(stores[s]), i, 1, 1);
+            }
+            g_clear_object(&item);
+        }
     }
 }
 

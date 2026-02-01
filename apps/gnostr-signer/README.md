@@ -106,7 +106,6 @@ gnostr-signer
 - **[README.md](README.md)** - This file, overview and basic usage
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture and design
 - **[DEVELOPMENT.md](DEVELOPMENT.md)** - Developer guide and coding standards
-- **[TODO.md](TODO.md)** - Outstanding tasks and feature roadmap
 - **[DAEMON_QUICKSTART.md](DAEMON_QUICKSTART.md)** - Quick start guide for the daemon
 - **[DAEMON_DEPLOYMENT.md](DAEMON_DEPLOYMENT.md)** - Comprehensive deployment guide
 - **[DAEMON_IMPROVEMENTS.md](DAEMON_IMPROVEMENTS.md)** - Summary of production improvements
