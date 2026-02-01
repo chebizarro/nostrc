@@ -830,12 +830,10 @@ void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_
 void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilter filter) {
     if (!pool || !urls || url_count == 0) return;
 
-    // Feature gate: ONESHOT behavior (block briefly per URL until first event or EOSE), else delegate to subscribe
+    // Feature gate: ONESHOT behavior (block until first event or EOSE/CLOSED), else delegate to subscribe
+    // nostrc-9o1: Removed arbitrary timeout - use proper signals (EOSE, CLOSED, disconnect)
     const char *oneshot_env = getenv("NOSTR_SIMPLE_POOL_ONESHOT");
     int oneshot = (oneshot_env && *oneshot_env && strcmp(oneshot_env, "0") != 0) ? 1 : 0;
-    unsigned timeout_ms = 1000; // default 1s per URL
-    const char *to_env = getenv("NOSTR_SIMPLE_POOL_Q_TIMEOUT_MS");
-    if (to_env && *to_env) { unsigned v = (unsigned)atoi(to_env); if (v > 0) timeout_ms = v; }
 
     if (!oneshot) {
         // Ensure relays exist/connected
@@ -888,38 +886,45 @@ void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, si
             continue;
         }
 
-        // Wait for first event or EOSE/timeout
+        // nostrc-9o1: Wait for first event or EOSE/CLOSED using proper signals, not timeouts
         GoChannel *ch_ev = nostr_subscription_get_events_channel(sub);
         GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
-        const unsigned step_us = 5 * 1000; // 5ms polling
-        unsigned waited = 0;
-        int done = 0;
-        while (!done && waited < timeout_ms) {
-            void *msg = NULL;
-            if (ch_ev && go_channel_try_receive(ch_ev, &msg) == 0 && msg) {
-                NostrEvent *ev = (NostrEvent *)msg;
-                char *eid = nostr_event_get_id(ev);
-                int seen = pool_seen(pool, eid);
-                free(eid);
-                if (!seen) {
-                    if (pool->event_middleware) {
-                        NostrIncomingEvent incoming = { .event = ev, .relay = relay };
-                        pool->event_middleware(&incoming);
+        GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
+
+        GoSelectCase cases[] = {
+            (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ch_ev, .value = NULL, .recv_buf = NULL },
+            (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ch_eose, .value = NULL, .recv_buf = NULL },
+            (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ch_closed, .value = NULL, .recv_buf = NULL },
+        };
+
+        while (true) {
+            int result = go_select(cases, 3);
+            if (result == 0) { // Event received
+                void *msg = NULL;
+                if (go_channel_try_receive(ch_ev, &msg) == 0 && msg) {
+                    NostrEvent *ev = (NostrEvent *)msg;
+                    char *eid = nostr_event_get_id(ev);
+                    int seen = pool_seen(pool, eid);
+                    free(eid);
+                    if (!seen) {
+                        if (pool->event_middleware) {
+                            NostrIncomingEvent incoming = { .event = ev, .relay = relay };
+                            pool->event_middleware(&incoming);
+                        } else {
+                            nostr_event_free(ev);
+                        }
                     } else {
                         nostr_event_free(ev);
                     }
-                } else {
-                    nostr_event_free(ev);
+                    break; // First event consumed, done with this relay
                 }
-                done = 1; // first event consumed
-                break;
+            } else if (result == 1) { // EOSE
+                break; // No events for this filter, move to next relay
+            } else if (result == 2) { // CLOSED
+                break; // Subscription closed by relay, move to next relay
+            } else {
+                break; // Unexpected result, move on
             }
-            // Check EOSE: stop if seen
-            if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
-                break;
-            }
-            usleep(step_us);
-            waited += (step_us / 1000);
         }
 
         // Close/free ephemeral subscription

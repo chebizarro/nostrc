@@ -1240,15 +1240,14 @@ NostrEvent **nostr_relay_query_sync(NostrRelay *relay, GoContext *ctx, NostrFilt
         return NULL;
     }
 
-    // Wait for events or until the subscription closes or timeout
+    // Wait for events or until the subscription closes
+    // nostrc-9o1: Use proper connection signals instead of arbitrary timeouts
     size_t received_count = 0;
-    // Create a timeout ticker (e.g., 3s) to bound waits
-    Ticker *timeout = create_ticker(3000);
     GoSelectCase cases[] = {
         (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = subscription->events, .value = NULL, .recv_buf = NULL },
         (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = subscription->end_of_stored_events, .value = NULL, .recv_buf = NULL },
         (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = conn_ctx->done, .value = NULL, .recv_buf = NULL },
-        (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = timeout->c, .value = NULL, .recv_buf = NULL },
+        (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = subscription->closed_reason, .value = NULL, .recv_buf = NULL },
     };
 
     while (true) {
@@ -1261,7 +1260,6 @@ NostrEvent **nostr_relay_query_sync(NostrRelay *relay, GoContext *ctx, NostrFilt
                 NostrEvent **new_events = (NostrEvent **)realloc(events, max_events * sizeof(NostrEvent *));
                 if (!new_events) {
                     if (err) *err = new_error(1, "failed to expand event array");
-                    stop_ticker(timeout);
                     free(events);
                     go_context_unref(conn_ctx);
                     return NULL;
@@ -1277,22 +1275,19 @@ NostrEvent **nostr_relay_query_sync(NostrRelay *relay, GoContext *ctx, NostrFilt
         case 1: {                             // End of stored events (EOSE)
             nostr_subscription_unsubscribe(subscription); // Unsubscribe from the relay
             *event_count = (int)received_count;    // Set the event count for the caller
-            stop_ticker(timeout);
             go_context_unref(conn_ctx);
             return events;                    // Return the array of events
         }
         case 2: { // Connection context is canceled (relay is closing)
             if (err) *err = new_error(1, "relay connection closed while querying events");
-            stop_ticker(timeout);
             free(events);
             go_context_unref(conn_ctx);
             return NULL;
         }
-        case 3: { // Timeout waiting for events
-            if (err) *err = new_error(1, "nostr_relay_query_sync timed out");
+        case 3: { // Subscription closed by relay (CLOSED message)
+            // Relay sent CLOSED - return what we have so far
             nostr_subscription_unsubscribe(subscription);
             *event_count = (int)received_count;
-            stop_ticker(timeout);
             go_context_unref(conn_ctx);
             return events;
         }
