@@ -1339,6 +1339,69 @@ button.pill:hover {
 	background: alpha(@accent_bg_color, 0.1);
 }
 
+/* Focus path highlighting - events on path from focus to root */
+.thread-focus-path {
+	background: alpha(@accent_bg_color, 0.06);
+	border-left: 3px solid @accent_bg_color;
+}
+
+.thread-focus-path:hover {
+	background: alpha(@accent_bg_color, 0.1);
+}
+
+/* Collapsed branch indicator button */
+.thread-collapsed-indicator {
+	padding: 8px 16px;
+	margin-top: 4px;
+	margin-bottom: 8px;
+	color: @accent_bg_color;
+	font-weight: 500;
+	border-radius: 8px;
+	transition: all 150ms ease;
+	background: alpha(@accent_bg_color, 0.06);
+	border: 1px dashed alpha(@accent_bg_color, 0.3);
+}
+
+.thread-collapsed-indicator:hover {
+	background: alpha(@accent_bg_color, 0.12);
+	border-color: alpha(@accent_bg_color, 0.5);
+}
+
+.thread-collapsed-indicator image {
+	color: @accent_bg_color;
+	min-width: 16px;
+	min-height: 16px;
+}
+
+/* Expand button on note cards with children */
+.thread-expand-btn {
+	min-width: 24px;
+	min-height: 24px;
+	padding: 2px;
+	border-radius: 4px;
+	opacity: 0.6;
+	transition: all 150ms ease;
+}
+
+.thread-expand-btn:hover {
+	opacity: 1;
+	background: alpha(@accent_bg_color, 0.1);
+}
+
+.thread-expand-btn image {
+	color: @accent_bg_color;
+}
+
+/* Sibling branch styling - slightly different from focus path */
+.thread-sibling {
+	opacity: 0.9;
+}
+
+/* Child/descendant branch styling */
+.thread-child {
+	border-left: 2px solid alpha(@theme_fg_color, 0.1);
+}
+
 /* ============================================
    NIP-21 Embedded Note/Profile Styles
    ============================================ */

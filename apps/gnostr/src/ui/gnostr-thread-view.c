@@ -38,6 +38,9 @@ static gboolean is_user_logged_in(void) {
 /* Maximum events to fetch for a thread */
 #define MAX_THREAD_EVENTS 100
 
+/* Maximum iterations for iterative child discovery */
+#define MAX_CHILD_DISCOVERY_ITERATIONS 5
+
 /* Thread event item for internal use */
 typedef struct {
   char *id_hex;
@@ -55,6 +58,62 @@ typedef struct {
   char *avatar_url;
   char *nip05;
 } ThreadEventItem;
+
+/* ThreadNode: Graph node representing an event with its relationships */
+struct _ThreadNode {
+  ThreadEventItem *event;      /* Borrowed reference to event data */
+  GPtrArray *child_ids;        /* Array of child event ID strings (owned) */
+  char *parent_id;             /* Direct parent event ID (owned) */
+  guint depth;                 /* Distance from root */
+  gboolean is_focus_path;      /* TRUE if on path from focus to root */
+  gboolean is_collapsed;       /* TRUE if branch is collapsed */
+  guint child_count;           /* Total descendants (for collapse indicator) */
+};
+
+/* ThreadGraph: Complete bidirectional graph of thread */
+struct _ThreadGraph {
+  GHashTable *nodes;           /* event_id -> ThreadNode* (owned) */
+  char *root_id;               /* Discovered thread root */
+  char *focus_id;              /* User's focus event */
+  GPtrArray *render_order;     /* Events in tree traversal order (borrowed refs) */
+};
+
+static void thread_node_free(ThreadNode *node) {
+  if (!node) return;
+  /* event is borrowed, don't free */
+  if (node->child_ids) g_ptr_array_unref(node->child_ids);
+  g_free(node->parent_id);
+  g_free(node);
+}
+
+static ThreadNode *thread_node_new(ThreadEventItem *event) {
+  ThreadNode *node = g_new0(ThreadNode, 1);
+  node->event = event;
+  node->child_ids = g_ptr_array_new_with_free_func(g_free);
+  node->parent_id = event->parent_id ? g_strdup(event->parent_id) : NULL;
+  node->depth = 0;
+  node->is_focus_path = FALSE;
+  node->is_collapsed = FALSE;
+  node->child_count = 0;
+  return node;
+}
+
+static void thread_graph_free(ThreadGraph *graph) {
+  if (!graph) return;
+  if (graph->nodes) g_hash_table_unref(graph->nodes);
+  if (graph->render_order) g_ptr_array_unref(graph->render_order);
+  g_free(graph->root_id);
+  g_free(graph->focus_id);
+  g_free(graph);
+}
+
+static ThreadGraph *thread_graph_new(void) {
+  ThreadGraph *graph = g_new0(ThreadGraph, 1);
+  graph->nodes = g_hash_table_new_full(g_str_hash, g_str_equal, NULL,
+                                        (GDestroyNotify)thread_node_free);
+  graph->render_order = g_ptr_array_new();
+  return graph;
+}
 
 static void thread_event_item_free(ThreadEventItem *item) {
   if (!item) return;
@@ -104,6 +163,12 @@ struct _GnostrThreadView {
   GHashTable *ancestors_fetched; /* event_id_hex -> gboolean */
   guint ancestor_fetch_depth;    /* Current chain traversal depth */
 
+  /* Thread graph for bidirectional traversal (parents, children, siblings) */
+  ThreadGraph *thread_graph;
+  /* Track event IDs we've already queried for children */
+  GHashTable *children_fetched;  /* event_id_hex -> gboolean */
+  guint child_discovery_iteration; /* Current iteration of child discovery */
+
   /* nostrc-50t: nostrdb subscription for live thread updates */
   uint64_t ndb_sub_thread;       /* Subscription ID for thread events */
   guint rebuild_pending_id;      /* Timeout source for debounced UI rebuild */
@@ -128,6 +193,10 @@ static void fetch_thread_from_relays(GnostrThreadView *self);
 static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data);
 static void setup_thread_subscription(GnostrThreadView *self);
 static void teardown_thread_subscription(GnostrThreadView *self);
+static void fetch_children_from_relays(GnostrThreadView *self);
+static void build_thread_graph(GnostrThreadView *self);
+static void mark_focus_path(GnostrThreadView *self);
+static guint count_descendants(GnostrThreadView *self, const char *event_id);
 
 /* Helper: convert hex string to 32-byte binary */
 static gboolean hex_to_bytes_32(const char *hex, unsigned char out[32]) {
@@ -336,6 +405,13 @@ static void gnostr_thread_view_dispose(GObject *obj) {
   g_clear_pointer(&self->events_by_id, g_hash_table_unref);
   g_clear_pointer(&self->profiles_requested, g_hash_table_unref);
   g_clear_pointer(&self->ancestors_fetched, g_hash_table_unref);
+  g_clear_pointer(&self->children_fetched, g_hash_table_unref);
+
+  /* Clear thread graph */
+  if (self->thread_graph) {
+    thread_graph_free(self->thread_graph);
+    self->thread_graph = NULL;
+  }
 
   /* Clear array (items are borrowed, owned by hash table) */
   if (self->sorted_events) {
@@ -457,6 +533,10 @@ static void gnostr_thread_view_init(GnostrThreadView *self) {
   /* nostrc-46g: Track fetched ancestors to prevent duplicate requests and enable chain traversal */
   self->ancestors_fetched = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->ancestor_fetch_depth = 0;
+  /* Track fetched children for bidirectional graph building */
+  self->children_fetched = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->child_discovery_iteration = 0;
+  self->thread_graph = NULL;
   /* Uses shared query pool from gnostr_get_shared_query_pool() */
 
   /* Connect close button */
@@ -546,6 +626,18 @@ void gnostr_thread_view_clear(GnostrThreadView *self) {
     g_hash_table_remove_all(self->ancestors_fetched);
   }
   self->ancestor_fetch_depth = 0;
+
+  /* Clear child tracking for bidirectional fetching */
+  if (self->children_fetched) {
+    g_hash_table_remove_all(self->children_fetched);
+  }
+  self->child_discovery_iteration = 0;
+
+  /* Clear thread graph */
+  if (self->thread_graph) {
+    thread_graph_free(self->thread_graph);
+    self->thread_graph = NULL;
+  }
 
   /* Clear UI */
   if (self->thread_list_box) {
@@ -868,6 +960,252 @@ static GtkWidget *create_note_card_for_item(GnostrThreadView *self, ThreadEventI
   return GTK_WIDGET(row);
 }
 
+/* Internal: count all descendants of an event recursively */
+static guint count_descendants(GnostrThreadView *self, const char *event_id) {
+  if (!self->thread_graph || !event_id) return 0;
+
+  ThreadNode *node = g_hash_table_lookup(self->thread_graph->nodes, event_id);
+  if (!node || !node->child_ids) return 0;
+
+  guint count = node->child_ids->len;
+  for (guint i = 0; i < node->child_ids->len; i++) {
+    const char *child_id = g_ptr_array_index(node->child_ids, i);
+    count += count_descendants(self, child_id);
+  }
+  return count;
+}
+
+/* Compare ThreadNodes by their event's created_at */
+static gint compare_nodes_by_time(gconstpointer a, gconstpointer b) {
+  const ThreadNode *node_a = *(const ThreadNode **)a;
+  const ThreadNode *node_b = *(const ThreadNode **)b;
+
+  if (!node_a->event || !node_b->event) return 0;
+
+  if (node_a->event->created_at < node_b->event->created_at) return -1;
+  if (node_a->event->created_at > node_b->event->created_at) return 1;
+  return 0;
+}
+
+/* Internal: mark events on the path from focus to root */
+static void mark_focus_path(GnostrThreadView *self) {
+  if (!self->thread_graph || !self->focus_event_id) return;
+
+  /* Walk from focus event up to root, marking each node */
+  const char *current_id = self->focus_event_id;
+  while (current_id) {
+    ThreadNode *node = g_hash_table_lookup(self->thread_graph->nodes, current_id);
+    if (!node) break;
+
+    node->is_focus_path = TRUE;
+
+    /* Move to parent */
+    current_id = node->parent_id;
+  }
+}
+
+/* Internal: recursive helper to build render order (DFS tree traversal) */
+static void add_subtree_to_render_order(GnostrThreadView *self, const char *event_id) {
+  if (!self->thread_graph || !event_id) return;
+
+  ThreadNode *node = g_hash_table_lookup(self->thread_graph->nodes, event_id);
+  if (!node) return;
+
+  /* Add this node to render order */
+  g_ptr_array_add(self->thread_graph->render_order, node);
+
+  /* If collapsed and not on focus path, skip children (they'll be hidden) */
+  if (node->is_collapsed && !node->is_focus_path) {
+    return;
+  }
+
+  /* Sort children by created_at for consistent ordering */
+  if (node->child_ids && node->child_ids->len > 0) {
+    /* Create array of child nodes for sorting */
+    GPtrArray *child_nodes = g_ptr_array_new();
+    for (guint i = 0; i < node->child_ids->len; i++) {
+      const char *child_id = g_ptr_array_index(node->child_ids, i);
+      ThreadNode *child_node = g_hash_table_lookup(self->thread_graph->nodes, child_id);
+      if (child_node && child_node->event) {
+        g_ptr_array_add(child_nodes, child_node);
+      }
+    }
+
+    /* Sort by created_at */
+    g_ptr_array_sort(child_nodes, compare_nodes_by_time);
+
+    /* Recursively add children */
+    for (guint i = 0; i < child_nodes->len; i++) {
+      ThreadNode *child_node = g_ptr_array_index(child_nodes, i);
+      add_subtree_to_render_order(self, child_node->event->id_hex);
+    }
+
+    g_ptr_array_unref(child_nodes);
+  }
+}
+
+/* Internal: build thread graph from flat event list */
+static void build_thread_graph(GnostrThreadView *self) {
+  if (g_hash_table_size(self->events_by_id) == 0) return;
+
+  /* Free existing graph */
+  if (self->thread_graph) {
+    thread_graph_free(self->thread_graph);
+  }
+  self->thread_graph = thread_graph_new();
+
+  /* Copy focus/root IDs */
+  self->thread_graph->focus_id = self->focus_event_id ? g_strdup(self->focus_event_id) : NULL;
+  self->thread_graph->root_id = self->thread_root_id ? g_strdup(self->thread_root_id) : NULL;
+
+  /* Step 1: Create nodes for all events */
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->events_by_id);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    ThreadEventItem *item = (ThreadEventItem *)value;
+    ThreadNode *node = thread_node_new(item);
+    g_hash_table_insert(self->thread_graph->nodes, item->id_hex, node);
+  }
+
+  /* Step 2: Build parent->children relationships */
+  g_hash_table_iter_init(&iter, self->thread_graph->nodes);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    ThreadNode *node = (ThreadNode *)value;
+    if (!node->event) continue;
+
+    /* Find parent node and add this as a child */
+    const char *parent_id = node->event->parent_id;
+    if (parent_id && strlen(parent_id) == 64) {
+      ThreadNode *parent_node = g_hash_table_lookup(self->thread_graph->nodes, parent_id);
+      if (parent_node) {
+        /* Add this event as a child of the parent */
+        g_ptr_array_add(parent_node->child_ids, g_strdup(node->event->id_hex));
+      }
+    }
+  }
+
+  /* Step 3: Find root node (no parent in our set) */
+  const char *discovered_root = NULL;
+  g_hash_table_iter_init(&iter, self->thread_graph->nodes);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    ThreadNode *node = (ThreadNode *)value;
+    if (!node->event) continue;
+
+    const char *parent_id = node->event->parent_id;
+
+    /* Node is a root if it has no parent, or parent is not in our set */
+    if (!parent_id || !g_hash_table_contains(self->thread_graph->nodes, parent_id)) {
+      /* Prefer the explicitly set root ID if available */
+      if (self->thread_graph->root_id &&
+          g_strcmp0(node->event->id_hex, self->thread_graph->root_id) == 0) {
+        discovered_root = node->event->id_hex;
+        break;
+      }
+      /* Otherwise take the earliest event as root */
+      if (!discovered_root) {
+        discovered_root = node->event->id_hex;
+      } else {
+        ThreadNode *current_root = g_hash_table_lookup(self->thread_graph->nodes, discovered_root);
+        if (current_root && current_root->event &&
+            node->event->created_at < current_root->event->created_at) {
+          discovered_root = node->event->id_hex;
+        }
+      }
+    }
+  }
+
+  if (discovered_root && !self->thread_graph->root_id) {
+    self->thread_graph->root_id = g_strdup(discovered_root);
+  }
+
+  /* Step 4: Calculate depths using BFS from root */
+  if (self->thread_graph->root_id) {
+    GQueue *queue = g_queue_new();
+    ThreadNode *root_node = g_hash_table_lookup(self->thread_graph->nodes, self->thread_graph->root_id);
+    if (root_node) {
+      root_node->depth = 0;
+      g_queue_push_tail(queue, root_node);
+
+      while (!g_queue_is_empty(queue)) {
+        ThreadNode *node = g_queue_pop_head(queue);
+        if (!node->child_ids) continue;
+
+        for (guint i = 0; i < node->child_ids->len; i++) {
+          const char *child_id = g_ptr_array_index(node->child_ids, i);
+          ThreadNode *child_node = g_hash_table_lookup(self->thread_graph->nodes, child_id);
+          if (child_node) {
+            child_node->depth = node->depth + 1;
+            if (child_node->depth > MAX_THREAD_DEPTH) {
+              child_node->depth = MAX_THREAD_DEPTH;
+            }
+            g_queue_push_tail(queue, child_node);
+          }
+        }
+      }
+      g_queue_free(queue);
+    }
+  }
+
+  /* Step 5: Mark focus path and calculate child counts */
+  mark_focus_path(self);
+
+  g_hash_table_iter_init(&iter, self->thread_graph->nodes);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    ThreadNode *node = (ThreadNode *)value;
+    node->child_count = count_descendants(self, (const char *)key);
+
+    /* Collapse branches not on focus path by default (if they have children) */
+    if (!node->is_focus_path && node->child_ids && node->child_ids->len > 0) {
+      node->is_collapsed = TRUE;
+    }
+  }
+
+  /* Step 6: Build render order (DFS from root) */
+  g_ptr_array_set_size(self->thread_graph->render_order, 0);
+  if (self->thread_graph->root_id) {
+    add_subtree_to_render_order(self, self->thread_graph->root_id);
+  }
+}
+
+/* Internal: create collapse indicator showing hidden reply count */
+static GtkWidget *create_collapse_indicator(GnostrThreadView *self, ThreadNode *node) {
+  GtkWidget *btn = gtk_button_new();
+  gtk_button_set_has_frame(GTK_BUTTON(btn), FALSE);
+  gtk_widget_add_css_class(btn, "thread-collapsed-indicator");
+  gtk_widget_add_css_class(btn, "flat");
+
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+  gtk_button_set_child(GTK_BUTTON(btn), box);
+
+  GtkWidget *icon = gtk_image_new_from_icon_name("go-down-symbolic");
+  gtk_box_append(GTK_BOX(box), icon);
+
+  char *label_text = g_strdup_printf("%u more replies", node->child_count);
+  GtkWidget *label = gtk_label_new(label_text);
+  gtk_widget_add_css_class(label, "dim-label");
+  gtk_box_append(GTK_BOX(box), label);
+  g_free(label_text);
+
+  /* Set margin based on depth */
+  gtk_widget_set_margin_start(btn, 24 * (node->depth + 1));
+
+  /* Store event ID for click handler */
+  g_object_set_data_full(G_OBJECT(btn), "event-id", g_strdup(node->event->id_hex), g_free);
+
+  return btn;
+}
+
+/* Callback for collapse indicator click */
+static void on_collapse_indicator_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+  const char *event_id = g_object_get_data(G_OBJECT(btn), "event-id");
+
+  if (event_id) {
+    gnostr_thread_view_toggle_branch(self, event_id);
+  }
+}
+
 /* Internal: rebuild UI from sorted events */
 static void rebuild_thread_ui(GnostrThreadView *self) {
   if (!self->thread_list_box) return;
@@ -880,26 +1218,51 @@ static void rebuild_thread_ui(GnostrThreadView *self) {
     child = next;
   }
 
-  /* Rebuild sorted array */
-  rebuild_sorted_events(self);
+  /* Build thread graph for tree-structured rendering */
+  build_thread_graph(self);
 
-  if (self->sorted_events->len == 0) {
+  if (!self->thread_graph || g_hash_table_size(self->thread_graph->nodes) == 0) {
     show_empty_state(self, "No messages in this thread");
     return;
   }
 
   /* Update title */
+  guint total_notes = g_hash_table_size(self->thread_graph->nodes);
   if (self->title_label) {
     char title[64];
-    snprintf(title, sizeof(title), "Thread (%u notes)", self->sorted_events->len);
+    snprintf(title, sizeof(title), "Thread (%u notes)", total_notes);
     gtk_label_set_text(GTK_LABEL(self->title_label), title);
   }
 
-  /* Add note cards */
-  for (guint i = 0; i < self->sorted_events->len; i++) {
-    ThreadEventItem *item = g_ptr_array_index(self->sorted_events, i);
-    GtkWidget *card = create_note_card_for_item(self, item);
+  /* Add note cards in tree order */
+  for (guint i = 0; i < self->thread_graph->render_order->len; i++) {
+    ThreadNode *node = g_ptr_array_index(self->thread_graph->render_order, i);
+    if (!node || !node->event) continue;
+
+    /* Update event depth from graph */
+    node->event->depth = node->depth;
+
+    GtkWidget *card = create_note_card_for_item(self, node->event);
+
+    /* Add focus path styling */
+    if (node->is_focus_path) {
+      gtk_widget_add_css_class(card, "thread-focus-path");
+    }
+
+    /* Add root note styling */
+    if (self->thread_graph->root_id &&
+        g_strcmp0(node->event->id_hex, self->thread_graph->root_id) == 0) {
+      gtk_widget_add_css_class(card, "thread-root-note");
+    }
+
     gtk_box_append(GTK_BOX(self->thread_list_box), card);
+
+    /* If this node is collapsed and has children, show collapse indicator */
+    if (node->is_collapsed && node->child_count > 0) {
+      GtkWidget *indicator = create_collapse_indicator(self, node);
+      g_signal_connect(indicator, "clicked", G_CALLBACK(on_collapse_indicator_clicked), self);
+      gtk_box_append(GTK_BOX(self->thread_list_box), indicator);
+    }
   }
 
   /* Show the scroll window */
@@ -910,15 +1273,15 @@ static void rebuild_thread_ui(GnostrThreadView *self) {
 
   /* Scroll to focus event if set */
   if (self->focus_event_id) {
-    /* Find the focus event index */
-    for (guint i = 0; i < self->sorted_events->len; i++) {
-      ThreadEventItem *item = g_ptr_array_index(self->sorted_events, i);
-      if (g_strcmp0(item->id_hex, self->focus_event_id) == 0) {
+    /* Find the focus event in render order */
+    for (guint i = 0; i < self->thread_graph->render_order->len; i++) {
+      ThreadNode *node = g_ptr_array_index(self->thread_graph->render_order, i);
+      if (node && node->event && g_strcmp0(node->event->id_hex, self->focus_event_id) == 0) {
         /* Scroll to this position after layout */
         GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(self->scroll_window));
-        if (vadj && self->sorted_events->len > 0) {
+        if (vadj && self->thread_graph->render_order->len > 0) {
           /* Approximate position based on index */
-          double fraction = (double)i / (double)self->sorted_events->len;
+          double fraction = (double)i / (double)self->thread_graph->render_order->len;
           double range = gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_lower(vadj);
           gtk_adjustment_set_value(vadj, gtk_adjustment_get_lower(vadj) + fraction * range);
         }
@@ -979,6 +1342,9 @@ static void on_thread_query_done(GObject *source, GAsyncResult *res, gpointer us
 
   /* Check if new events reference ancestors we don't have yet */
   fetch_missing_ancestors(self);
+
+  /* Fetch children of newly discovered events for complete graph */
+  fetch_children_from_relays(self);
 }
 
 /* Callback for root event fetch completion */
@@ -1340,6 +1706,171 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
   nostr_filter_free(filter_nip22);
   g_free(urls);
   g_ptr_array_unref(relay_arr);
+
+  /* Query 4: Fetch replies to the focus event specifically (children)
+   * This enables bidirectional traversal - we want to see replies TO the focus event */
+  if (focus && g_strcmp0(focus, root) != 0) {
+    NostrFilter *filter_focus_replies = nostr_filter_new();
+    nostr_filter_set_kinds(filter_focus_replies, kinds, 2);
+    nostr_filter_tags_append(filter_focus_replies, "e", focus, NULL);
+    nostr_filter_set_limit(filter_focus_replies, MAX_THREAD_EVENTS);
+
+    /* Mark focus as fetched for children */
+    if (!g_hash_table_contains(self->children_fetched, focus)) {
+      g_hash_table_insert(self->children_fetched, g_strdup(focus), GINT_TO_POINTER(1));
+    }
+
+    GPtrArray *relay_arr2 = gnostr_get_read_relay_urls();
+    const char **urls2 = g_new0(const char*, relay_arr2->len);
+    for (guint i = 0; i < relay_arr2->len; i++) {
+      urls2[i] = g_ptr_array_index(relay_arr2, i);
+    }
+
+    gnostr_simple_pool_query_single_async(
+      gnostr_get_shared_query_pool(),
+      urls2,
+      relay_arr2->len,
+      filter_focus_replies,
+      self->fetch_cancellable,
+      on_thread_query_done,
+      self
+    );
+
+    nostr_filter_free(filter_focus_replies);
+    g_free(urls2);
+    g_ptr_array_unref(relay_arr2);
+  }
+
+  /* Mark root as fetched for children */
+  if (!g_hash_table_contains(self->children_fetched, root)) {
+    g_hash_table_insert(self->children_fetched, g_strdup(root), GINT_TO_POINTER(1));
+  }
+}
+
+/* Callback for child discovery query completion */
+static void on_children_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
+
+  if (!GNOSTR_IS_THREAD_VIEW(self)) return;
+
+  GError *error = NULL;
+  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_debug("[THREAD_VIEW] Children query failed: %s", error->message);
+    }
+    g_error_free(error);
+    return;
+  }
+
+  gboolean found_new = FALSE;
+
+  if (results && results->len > 0) {
+    g_debug("[THREAD_VIEW] Received %u child events from relays", results->len);
+
+    for (guint i = 0; i < results->len; i++) {
+      const char *json = g_ptr_array_index(results, i);
+      if (json) {
+        storage_ndb_ingest_event_json(json, NULL);
+        ThreadEventItem *item = add_event_from_json(self, json);
+        if (item) {
+          found_new = TRUE;
+        }
+      }
+    }
+  }
+
+  if (results) g_ptr_array_unref(results);
+
+  if (found_new) {
+    /* Rebuild UI with new events */
+    rebuild_thread_ui(self);
+
+    /* Continue iterative child discovery if we haven't reached the limit */
+    fetch_children_from_relays(self);
+  }
+}
+
+/* Internal: fetch children (replies) of events we have, but haven't queried yet.
+ * This implements iterative child discovery for complete graph building. */
+static void fetch_children_from_relays(GnostrThreadView *self) {
+  if (!self || g_hash_table_size(self->events_by_id) == 0) return;
+
+  /* Check iteration limit to prevent infinite loops */
+  if (self->child_discovery_iteration >= MAX_CHILD_DISCOVERY_ITERATIONS) {
+    g_debug("[THREAD_VIEW] Reached max child discovery iterations (%d), stopping",
+            MAX_CHILD_DISCOVERY_ITERATIONS);
+    return;
+  }
+
+  /* Collect event IDs that we haven't queried for children yet */
+  GPtrArray *unfetched_ids = g_ptr_array_new_with_free_func(g_free);
+
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->events_by_id);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    const char *event_id = (const char *)key;
+
+    /* Skip if we've already queried for this event's children */
+    if (g_hash_table_contains(self->children_fetched, event_id)) {
+      continue;
+    }
+
+    /* Add to list and mark as fetched */
+    g_ptr_array_add(unfetched_ids, g_strdup(event_id));
+    g_hash_table_insert(self->children_fetched, g_strdup(event_id), GINT_TO_POINTER(1));
+  }
+
+  if (unfetched_ids->len == 0) {
+    g_ptr_array_unref(unfetched_ids);
+    g_debug("[THREAD_VIEW] No more events to query for children, discovery complete");
+    return;
+  }
+
+  self->child_discovery_iteration++;
+  g_debug("[THREAD_VIEW] Fetching children for %u events (iteration %u)",
+          unfetched_ids->len, self->child_discovery_iteration);
+
+  /* Build filter with #e tags for all unfetched event IDs */
+  NostrFilter *filter = nostr_filter_new();
+  int kinds[2] = { 1, 1111 };
+  nostr_filter_set_kinds(filter, kinds, 2);
+
+  /* Add all event IDs as #e tag values (replies reference parent via #e) */
+  for (guint i = 0; i < unfetched_ids->len; i++) {
+    nostr_filter_tags_append(filter, "e", g_ptr_array_index(unfetched_ids, i), NULL);
+  }
+  nostr_filter_set_limit(filter, MAX_THREAD_EVENTS);
+
+  g_ptr_array_unref(unfetched_ids);
+
+  /* Get relay URLs */
+  GPtrArray *relay_arr = gnostr_get_read_relay_urls();
+  const char **urls = g_new0(const char*, relay_arr->len);
+  for (guint i = 0; i < relay_arr->len; i++) {
+    urls[i] = g_ptr_array_index(relay_arr, i);
+  }
+
+  /* Query relays */
+  if (!self->fetch_cancellable) {
+    self->fetch_cancellable = g_cancellable_new();
+  }
+
+  gnostr_simple_pool_query_single_async(
+    gnostr_get_shared_query_pool(),
+    urls,
+    relay_arr->len,
+    filter,
+    self->fetch_cancellable,
+    on_children_query_done,
+    self
+  );
+
+  nostr_filter_free(filter);
+  g_free(urls);
+  g_ptr_array_unref(relay_arr);
 }
 
 /* Internal: load a single event by ID from nostrdb and add to collection.
@@ -1403,6 +1934,18 @@ static void load_thread(GnostrThreadView *self) {
     g_hash_table_remove_all(self->ancestors_fetched);
   }
   self->ancestor_fetch_depth = 0;
+
+  /* Reset child tracking for bidirectional fetching */
+  if (self->children_fetched) {
+    g_hash_table_remove_all(self->children_fetched);
+  }
+  self->child_discovery_iteration = 0;
+
+  /* Clear existing thread graph */
+  if (self->thread_graph) {
+    thread_graph_free(self->thread_graph);
+    self->thread_graph = NULL;
+  }
 
   set_loading_state(self, TRUE);
 
@@ -1710,4 +2253,60 @@ static void teardown_thread_subscription(GnostrThreadView *self) {
     gn_ndb_unsubscribe(self->ndb_sub_thread);
     self->ndb_sub_thread = 0;
   }
+}
+
+/* ========== Public API for branch collapse/expand ========== */
+
+void gnostr_thread_view_toggle_branch(GnostrThreadView *self, const char *event_id_hex) {
+  g_return_if_fail(GNOSTR_IS_THREAD_VIEW(self));
+  g_return_if_fail(event_id_hex != NULL);
+
+  if (!self->thread_graph) return;
+
+  ThreadNode *node = g_hash_table_lookup(self->thread_graph->nodes, event_id_hex);
+  if (!node) return;
+
+  /* Toggle collapsed state */
+  node->is_collapsed = !node->is_collapsed;
+
+  /* Rebuild UI to reflect change */
+  rebuild_thread_ui(self);
+}
+
+void gnostr_thread_view_expand_all(GnostrThreadView *self) {
+  g_return_if_fail(GNOSTR_IS_THREAD_VIEW(self));
+
+  if (!self->thread_graph) return;
+
+  /* Expand all nodes */
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->thread_graph->nodes);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    ThreadNode *node = (ThreadNode *)value;
+    node->is_collapsed = FALSE;
+  }
+
+  /* Rebuild UI to reflect change */
+  rebuild_thread_ui(self);
+}
+
+void gnostr_thread_view_collapse_non_focus(GnostrThreadView *self) {
+  g_return_if_fail(GNOSTR_IS_THREAD_VIEW(self));
+
+  if (!self->thread_graph) return;
+
+  /* Collapse all nodes not on focus path that have children */
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->thread_graph->nodes);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    ThreadNode *node = (ThreadNode *)value;
+    if (!node->is_focus_path && node->child_ids && node->child_ids->len > 0) {
+      node->is_collapsed = TRUE;
+    }
+  }
+
+  /* Rebuild UI to reflect change */
+  rebuild_thread_ui(self);
 }
