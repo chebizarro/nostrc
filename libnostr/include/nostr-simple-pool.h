@@ -66,6 +66,9 @@ typedef struct _NostrSimplePool {
     /* nostrc-py1: Relay brown list for persistently failing relays */
     NostrBrownList *brown_list;
     bool brown_list_enabled;        /* Whether to use brown list (default: true) */
+
+    /* nostrc-ey0f: Disposed flag to prevent double-free */
+    volatile int disposed;          /* 0 = active, 1 = disposed */
 } NostrSimplePool;
 
 typedef struct _NostrDirectedFilters {

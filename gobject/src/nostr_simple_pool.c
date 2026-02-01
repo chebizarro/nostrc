@@ -36,8 +36,12 @@ static void free_urls(char **urls, size_t count);
 
 static void nostr_simple_pool_finalize(GObject *object) {
     GnostrSimplePool *self = GNOSTR_SIMPLE_POOL(object);
-    if (self->pool) {
-        nostr_simple_pool_free(self->pool);
+    /* nostrc-ey0f: Atomically exchange pool pointer with NULL to prevent
+     * any possibility of double-free if finalize is somehow called twice
+     * or from concurrent paths. */
+    NostrSimplePool *pool = __atomic_exchange_n(&self->pool, NULL, __ATOMIC_SEQ_CST);
+    if (pool) {
+        nostr_simple_pool_free(pool);
     }
     G_OBJECT_CLASS(gnostr_simple_pool_parent_class)->finalize(object);
 }

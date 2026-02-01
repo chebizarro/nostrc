@@ -295,6 +295,9 @@ NostrSimplePool *nostr_simple_pool_new(void) {
         fprintf(stderr, "[pool] brown list disabled via environment\n");
     }
 
+    /* nostrc-ey0f: Initialize disposed flag */
+    pool->disposed = 0;
+
     return pool;
 }
 
@@ -324,94 +327,106 @@ void nostr_simple_pool_set_auto_unsub_on_eose(NostrSimplePool *pool, bool enable
 
 // Function to free a SimplePool
 void nostr_simple_pool_free(NostrSimplePool *pool) {
-    if (pool) {
-        /* Phase 2: Shutdown cleanup worker first */
-        if (pool->sub_registry) {
-            fprintf(stderr, "[pool] shutting down cleanup worker...\n");
-            pool->sub_registry->shutdown_requested = true;
-            
-            // Close cleanup queue to wake up worker
-            go_channel_close(pool->sub_registry->cleanup_queue);
-            
-            // Give worker time to exit gracefully (max 2s)
-            if (pool->cleanup_worker_running) {
-                struct timespec ts;
-                ts.tv_sec = 0;
-                ts.tv_nsec = 100000000; // 100ms
-                for (int i = 0; i < 20; i++) {
-                    nanosleep(&ts, NULL);
-                    // Worker should exit on its own
-                }
-            }
-            
-            fprintf(stderr, "[pool] cleanup worker shutdown complete\n");
-        }
-        
-        /* Ensure stopped */
-        if (pool->running) {
-            pool->running = false;
-            pthread_join(pool->thread, NULL);
-        }
-        
-        /* Phase 2: Cancel all registered subscriptions */
-        if (pool->sub_registry) {
-            fprintf(stderr, "[pool] cancelling %zu registered subscriptions...\n", 
-                    pool->sub_registry->count);
-            
-            pthread_mutex_lock(&pool->sub_registry->mutex);
-            PoolSubscriptionEntry *entry = pool->sub_registry->head;
-            while (entry) {
-                if (entry->cancel && entry->ctx) {
-                    entry->cancel(entry->ctx);
-                }
-                entry = entry->next;
-            }
-            pthread_mutex_unlock(&pool->sub_registry->mutex);
-            
-            // Give subscriptions brief time to cleanup (500ms)
+    if (!pool) return;
+
+    /* nostrc-ey0f: Atomic check to prevent double-free from concurrent paths
+     * (e.g., background thread and main thread idle callbacks both unreffing) */
+    int expected = 0;
+    if (!__atomic_compare_exchange_n(&pool->disposed, &expected, 1,
+                                     0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+        /* Already disposed by another thread/path */
+        return;
+    }
+
+    /* Phase 2: Shutdown cleanup worker first */
+    if (pool->sub_registry) {
+        fprintf(stderr, "[pool] shutting down cleanup worker...\n");
+        pool->sub_registry->shutdown_requested = true;
+
+        // Close cleanup queue to wake up worker
+        go_channel_close(pool->sub_registry->cleanup_queue);
+
+        // Give worker time to exit gracefully (max 2s)
+        if (pool->cleanup_worker_running) {
             struct timespec ts;
             ts.tv_sec = 0;
-            ts.tv_nsec = 500000000;
-            nanosleep(&ts, NULL);
-            
-            subscription_registry_free(pool->sub_registry);
-            fprintf(stderr, "[pool] subscription registry freed\n");
-        }
-        
-        /* Close subscriptions */
-        if (pool->subs) {
-            for (size_t i = 0; i < pool->subs_count; i++) {
-                NostrSubscription *sub = pool->subs[i];
-                if (sub) {
-                    nostr_subscription_close(sub, NULL);
-                    nostr_subscription_free(sub);
-                }
+            ts.tv_nsec = 100000000; // 100ms
+            for (int i = 0; i < 20; i++) {
+                nanosleep(&ts, NULL);
+                // Worker should exit on its own
             }
-            free(pool->subs);
-        }
-        /* Free dedup ring */
-        if (pool->dedup_ring) {
-            for (size_t i = 0; i < pool->dedup_len; i++) free(pool->dedup_ring[i]);
-            free(pool->dedup_ring);
-        }
-        if (pool->filters_shared) {
-            nostr_filters_free(pool->filters_shared);
-            pool->filters_shared = NULL;
-        }
-        for (size_t i = 0; i < pool->relay_count; i++) {
-            nostr_relay_free(pool->relays[i]);
-        }
-        free(pool->relays);
-
-        /* nostrc-py1: Free brown list */
-        if (pool->brown_list) {
-            nostr_brown_list_free(pool->brown_list);
-            pool->brown_list = NULL;
         }
 
-        pthread_mutex_destroy(&pool->pool_mutex);
-        free(pool);
+        fprintf(stderr, "[pool] cleanup worker shutdown complete\n");
     }
+
+    /* Ensure stopped */
+    if (pool->running) {
+        pool->running = false;
+        pthread_join(pool->thread, NULL);
+    }
+
+    /* Phase 2: Cancel all registered subscriptions */
+    if (pool->sub_registry) {
+        fprintf(stderr, "[pool] cancelling %zu registered subscriptions...\n",
+                pool->sub_registry->count);
+
+        pthread_mutex_lock(&pool->sub_registry->mutex);
+        PoolSubscriptionEntry *entry = pool->sub_registry->head;
+        while (entry) {
+            if (entry->cancel && entry->ctx) {
+                entry->cancel(entry->ctx);
+            }
+            entry = entry->next;
+        }
+        pthread_mutex_unlock(&pool->sub_registry->mutex);
+
+        // Give subscriptions brief time to cleanup (500ms)
+        struct timespec ts;
+        ts.tv_sec = 0;
+        ts.tv_nsec = 500000000;
+        nanosleep(&ts, NULL);
+
+        subscription_registry_free(pool->sub_registry);
+        fprintf(stderr, "[pool] subscription registry freed\n");
+    }
+
+    /* Close subscriptions */
+    if (pool->subs) {
+        for (size_t i = 0; i < pool->subs_count; i++) {
+            NostrSubscription *sub = pool->subs[i];
+            if (sub) {
+                nostr_subscription_close(sub, NULL);
+                nostr_subscription_free(sub);
+            }
+        }
+        free(pool->subs);
+    }
+
+    /* Free dedup ring */
+    if (pool->dedup_ring) {
+        for (size_t i = 0; i < pool->dedup_len; i++) free(pool->dedup_ring[i]);
+        free(pool->dedup_ring);
+    }
+
+    if (pool->filters_shared) {
+        nostr_filters_free(pool->filters_shared);
+        pool->filters_shared = NULL;
+    }
+
+    for (size_t i = 0; i < pool->relay_count; i++) {
+        nostr_relay_free(pool->relays[i]);
+    }
+    free(pool->relays);
+
+    /* nostrc-py1: Free brown list */
+    if (pool->brown_list) {
+        nostr_brown_list_free(pool->brown_list);
+        pool->brown_list = NULL;
+    }
+
+    pthread_mutex_destroy(&pool->pool_mutex);
+    free(pool);
 }
 
 // Function to ensure a relay connection
