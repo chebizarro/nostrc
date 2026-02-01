@@ -843,62 +843,58 @@ static gpointer query_single_thread(gpointer user_data) {
                       sid ? sid : "null");
         }
 
-        // Wait for events until EOSE with timeout
-        // Use shorter timeout per relay since we query sequentially
-        bool got_eose = false;
-        guint64 start_time = g_get_monotonic_time();
-        const guint64 timeout_us = 3000000;  // 3 seconds per relay (was 10s)
+        /* Wait for events until EOSE or connection drops - NO TIMEOUTS
+         * We exit when:
+         * 1. EOSE received (normal completion)
+         * 2. Subscription closed by relay (CLOSED message)
+         * 3. Connection dropped (websocket closed/failed)
+         * 4. Cancellation requested */
+        bool done = false;
         guint events_received = 0;
-        guint poll_iterations = 0;
+        GoChannel *ch_events = nostr_subscription_get_events_channel(sub);
+        GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
+        GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
 
-        while (!got_eose) {
-            poll_iterations++;
-
+        while (!done) {
+            /* Check cancellation */
             if (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable)) {
-                if (debug_eose) {
-                    g_message("[QUERY_SINGLE] sid=%s cancelled after %u events, %u iterations",
-                              sid ? sid : "null", events_received, poll_iterations);
-                }
+                g_debug("query_single: cancelled for %s", url);
                 break;
             }
 
-            // Check timeout
-            guint64 elapsed_us = g_get_monotonic_time() - start_time;
-            if (elapsed_us > timeout_us) {
-                /* hq-3xato: Log detailed timeout info for debugging */
-                g_warning("[QUERY_SINGLE] TIMEOUT sid=%s relay=%s after %.1fs - received %u events, %u poll iterations (EOSE never arrived)",
-                          sid ? sid : "null", url, elapsed_us / 1000000.0, events_received, poll_iterations);
+            /* Check connection state - if relay disconnected, stop waiting */
+            if (!nostr_relay_is_connected(relay)) {
+                g_debug("query_single: connection dropped for %s after %u events", url, events_received);
                 break;
             }
 
-            // Check for events (collect all until EOSE)
+            /* Drain all available events first */
             NostrEvent *evt = NULL;
-            GoChannel *ch_events = nostr_subscription_get_events_channel(sub);
-            if (ch_events && go_channel_try_receive(ch_events, (void**)&evt) == 0) {
+            while (ch_events && go_channel_try_receive(ch_events, (void**)&evt) == 0) {
                 events_received++;
                 char *json = nostr_event_serialize(evt);
                 if (json) {
                     g_ptr_array_add(ctx->results, json);
                 }
                 nostr_event_free(evt);
-                // Don't break - keep collecting until EOSE
-                continue;
+                evt = NULL;
             }
 
-            // Check for EOSE
-            GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
+            /* Check for EOSE (normal completion) */
             if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
-                got_eose = true;
-                if (debug_eose) {
-                    guint64 elapsed_ms = (g_get_monotonic_time() - start_time) / 1000;
-                    g_message("[QUERY_SINGLE] EOSE received sid=%s relay=%s after %lums with %u events",
-                              sid ? sid : "null", url, (unsigned long)elapsed_ms, events_received);
-                }
+                g_debug("query_single: EOSE from %s with %u events", url, events_received);
+                done = true;
                 break;
             }
 
-            // Small sleep to prevent busy waiting
-            g_usleep(5000);  // 5ms
+            /* Check for CLOSED (relay closed subscription) */
+            if (ch_closed && go_channel_try_receive(ch_closed, NULL) == 0) {
+                g_debug("query_single: subscription closed by %s after %u events", url, events_received);
+                break;
+            }
+
+            /* Small sleep to prevent busy waiting */
+            g_usleep(10000);  /* 10ms */
         }
 
         // Cleanup subscription (but NOT relay if from pool)
@@ -910,8 +906,6 @@ static gpointer query_single_thread(gpointer user_data) {
          * (e.g., the root event might only be on one relay, replies on another).
          * We query ALL relays and deduplicate later. The thread view handles
          * deduplication via events_by_id hash table. */
-        g_debug("query_single: relay %s returned %s, continuing to next relay",
-                url, got_eose ? "EOSE" : "timeout");
     }
 
     // Cleanup only relays we created that weren't added to pool
