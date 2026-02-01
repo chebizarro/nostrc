@@ -746,6 +746,12 @@ static ThreadEventItem *add_event_from_json(GnostrThreadView *self, const char *
 
   nostr_event_free(evt);
 
+  /* Debug: log what we parsed */
+  g_message("[THREAD_VIEW] Added event %.16s... root=%.16s%s parent=%.16s%s",
+            item->id_hex,
+            item->root_id ? item->root_id : "(none)", item->root_id ? "..." : "",
+            item->parent_id ? item->parent_id : "(none)", item->parent_id ? "..." : "");
+
   /* Add to hash table (owns the item) */
   g_hash_table_insert(self->events_by_id, item->id_hex, item);
 
@@ -1170,12 +1176,27 @@ static void build_thread_graph(GnostrThreadView *self) {
     }
   }
 
+  /* Log what we found */
+  g_message("[THREAD_VIEW] build_thread_graph: %u nodes, %u roots, graph_root=%.16s%s",
+            g_hash_table_size(self->thread_graph->nodes),
+            root_ids->len,
+            self->thread_graph->root_id ? self->thread_graph->root_id : "(none)",
+            self->thread_graph->root_id ? "..." : "");
+
+  for (guint i = 0; i < root_ids->len; i++) {
+    const char *rid = g_ptr_array_index(root_ids, i);
+    g_message("[THREAD_VIEW]   Root %u: %.16s...", i, rid);
+  }
+
   /* Sort roots: prefer thread_root_id first, then focus_id, then by timestamp */
   /* For now just render from each root */
   for (guint i = 0; i < root_ids->len; i++) {
     const char *root_id = g_ptr_array_index(root_ids, i);
     add_subtree_to_render_order(self, root_id);
   }
+
+  g_message("[THREAD_VIEW] build_thread_graph: render_order has %u nodes",
+            self->thread_graph->render_order->len);
 
   g_ptr_array_unref(root_ids);
 }
@@ -1945,6 +1966,10 @@ static void load_parent_chain(GnostrThreadView *self, ThreadEventItem *item, int
 static void load_thread(GnostrThreadView *self) {
   const char *focus_id = self->focus_event_id;
   const char *root_id = self->thread_root_id;
+
+  g_message("[THREAD_VIEW] load_thread: focus=%.16s%s root=%.16s%s",
+            focus_id ? focus_id : "(none)", focus_id ? "..." : "",
+            root_id ? root_id : "(none)", root_id ? "..." : "");
 
   if (!focus_id && !root_id) {
     show_empty_state(self, "No thread selected");
