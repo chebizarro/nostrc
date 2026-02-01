@@ -36,6 +36,11 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE
     nip04
 )
 
+# Allow undefined symbols - they're resolved when the plugin is loaded by the host app
+if(APPLE)
+    target_link_options(${PLUGIN_NAME} PRIVATE -undefined dynamic_lookup)
+endif()
+
 # Set library properties
 set_target_properties(${PLUGIN_NAME} PROPERTIES
     PREFIX "lib"
