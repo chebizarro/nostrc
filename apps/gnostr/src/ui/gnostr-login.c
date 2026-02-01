@@ -126,6 +126,46 @@ static gboolean hide_toast_on_main(gpointer user_data) {
   return G_SOURCE_REMOVE;
 }
 
+/* Deferred NIP-46 success context - used to safely stop the listener
+ * and update UI AFTER the event callback completes */
+typedef struct {
+  GnostrLogin *self;
+  char *npub;
+} Nip46SuccessCtx;
+
+static void nip46_success_ctx_free(gpointer data) {
+  Nip46SuccessCtx *ctx = data;
+  if (ctx) {
+    g_clear_object(&ctx->self);
+    g_free(ctx->npub);
+    g_free(ctx);
+  }
+}
+
+static gboolean nip46_success_on_main(gpointer data) {
+  Nip46SuccessCtx *ctx = data;
+  if (!ctx || !ctx->self || !GNOSTR_IS_LOGIN(ctx->self)) {
+    return G_SOURCE_REMOVE;
+  }
+
+  GnostrLogin *self = ctx->self;
+
+  /* Now safe to stop the listener (we're not in the callback anymore) */
+  stop_nip46_listener(self);
+
+  /* Create NIP-46 session for future signing operations */
+  if (self->nip46_session) {
+    nostr_nip46_session_free(self->nip46_session);
+  }
+  self->nip46_session = nostr_nip46_client_new();
+
+  /* Save to settings and show success */
+  save_npub_to_settings(ctx->npub);
+  show_success(self, ctx->npub);
+
+  return G_SOURCE_REMOVE;
+}
+
 static void gnostr_login_dispose(GObject *obj) {
   GnostrLogin *self = GNOSTR_LOGIN(obj);
 
@@ -910,19 +950,15 @@ static void on_nip46_events(GnostrSimplePool *pool, GPtrArray *batch, gpointer u
 
     g_free(signer_pubkey_hex);
 
-    /* Stop listening */
-    stop_nip46_listener(self);
-
-    /* Create NIP-46 session for future signing operations */
-    if (self->nip46_session) {
-      nostr_nip46_session_free(self->nip46_session);
-    }
-    self->nip46_session = nostr_nip46_client_new();
-
-    /* Save to settings and show success */
-    save_npub_to_settings(npub);
-    show_success(self, npub);
+    /* Defer the stop/success operations to after this callback completes.
+     * Stopping the listener from within the signal callback can cause issues
+     * since we're modifying the signal handler list during emission. */
+    Nip46SuccessCtx *ctx = g_new0(Nip46SuccessCtx, 1);
+    ctx->self = g_object_ref(self);
+    ctx->npub = g_strdup(npub);
     free(npub);
+
+    g_idle_add_full(G_PRIORITY_HIGH, nip46_success_on_main, ctx, nip46_success_ctx_free);
     return;
   }
 }
