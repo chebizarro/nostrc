@@ -1389,21 +1389,28 @@ static void on_thread_query_done(GObject *source, GAsyncResult *res, gpointer us
 static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   GnostrThreadView *self = GNOSTR_THREAD_VIEW(user_data);
 
-  if (!GNOSTR_IS_THREAD_VIEW(self)) return;
+  g_message("[THREAD_VIEW] on_root_fetch_done: callback fired");
+
+  if (!GNOSTR_IS_THREAD_VIEW(self)) {
+    g_message("[THREAD_VIEW] on_root_fetch_done: self is not valid, aborting");
+    return;
+  }
 
   GError *error = NULL;
   GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
 
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_debug("[THREAD_VIEW] Root fetch failed: %s", error->message);
+      g_message("[THREAD_VIEW] Root fetch failed: %s", error->message);
+    } else {
+      g_message("[THREAD_VIEW] Root fetch cancelled");
     }
     g_error_free(error);
     return;
   }
 
   if (results && results->len > 0) {
-    g_debug("[THREAD_VIEW] Received %u root/ancestor events from relays", results->len);
+    g_message("[THREAD_VIEW] Received %u root/ancestor events from relays", results->len);
 
     /* Add events to our collection */
     for (guint i = 0; i < results->len; i++) {
@@ -1420,6 +1427,8 @@ static void on_root_fetch_done(GObject *source, GAsyncResult *res, gpointer user
 
     /* Check if new events reference ancestors we don't have yet */
     fetch_missing_ancestors(self);
+  } else {
+    g_message("[THREAD_VIEW] on_root_fetch_done: NO RESULTS from relay query!");
   }
 
   if (results) g_ptr_array_unref(results);
@@ -1687,6 +1696,9 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
   nostr_filter_free(filter_replies);
 
   /* Query 2: Fetch root event and focus event by ID (they may not reference themselves) */
+  g_message("[THREAD_VIEW] Query 2: fetching root=%.16s... focus=%.16s...",
+            root, focus ? focus : "(same)");
+
   NostrFilter *filter_ids = nostr_filter_new();
   nostr_filter_set_kinds(filter_ids, kinds, 2);  /* Include both kind 1 and 1111 */
 
@@ -1696,6 +1708,7 @@ static void fetch_thread_from_relays(GnostrThreadView *self) {
   /* Add focus ID if different from root */
   if (focus && g_strcmp0(focus, root) != 0) {
     nostr_filter_add_id(filter_ids, focus);
+    g_message("[THREAD_VIEW] Query 2: also fetching focus (different from root)");
   }
 
   /* Also fetch any parent IDs we know about from loaded events */
