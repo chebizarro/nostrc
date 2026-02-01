@@ -2415,6 +2415,83 @@ static GPtrArray *extract_media_urls_from_tags(NostrTags *tags) {
   return urls;
 }
 
+/* nostrc-tv0u: Normalize a media URL for deduplication.
+ * - Force https (if http)
+ * - Remove common tracking query params
+ * - Lowercase the hostname
+ * Returns newly allocated string, caller must free. */
+static gchar *normalize_media_url(const char *url) {
+  if (!url || !*url) return NULL;
+
+  GString *norm = g_string_new(NULL);
+
+  /* Force https */
+  if (g_str_has_prefix(url, "http://")) {
+    g_string_append(norm, "https://");
+    url += 7;
+  } else if (g_str_has_prefix(url, "https://")) {
+    g_string_append(norm, "https://");
+    url += 8;
+  } else {
+    /* Not an http(s) URL, return as-is */
+    g_string_free(norm, TRUE);
+    return g_strdup(url);
+  }
+
+  /* Find end of hostname (first / after scheme) */
+  const char *path_start = strchr(url, '/');
+  if (!path_start) {
+    /* No path, just hostname */
+    gchar *host_lower = g_ascii_strdown(url, -1);
+    g_string_append(norm, host_lower);
+    g_free(host_lower);
+    return g_string_free(norm, FALSE);
+  }
+
+  /* Lowercase hostname */
+  gchar *hostname = g_strndup(url, path_start - url);
+  gchar *host_lower = g_ascii_strdown(hostname, -1);
+  g_string_append(norm, host_lower);
+  g_free(hostname);
+  g_free(host_lower);
+
+  /* Append path, but stop at query string */
+  const char *query_start = strchr(path_start, '?');
+  if (query_start) {
+    g_string_append_len(norm, path_start, query_start - path_start);
+    /* Skip query params - they often contain tracking info */
+  } else {
+    g_string_append(norm, path_start);
+  }
+
+  /* Remove trailing slash if present (except for root path) */
+  if (norm->len > 8 && norm->str[norm->len - 1] == '/') {
+    g_string_truncate(norm, norm->len - 1);
+  }
+
+  return g_string_free(norm, FALSE);
+}
+
+/* nostrc-tv0u: Check if a normalized URL already exists in the media model */
+static gboolean media_url_exists_in_model(GListStore *model, const char *normalized_url) {
+  if (!model || !normalized_url) return FALSE;
+
+  guint n_items = g_list_model_get_n_items(G_LIST_MODEL(model));
+  for (guint i = 0; i < n_items; i++) {
+    ProfileMediaItem *item = g_list_model_get_item(G_LIST_MODEL(model), i);
+    if (item && item->url) {
+      gchar *item_norm = normalize_media_url(item->url);
+      gboolean match = (item_norm && g_strcmp0(item_norm, normalized_url) == 0);
+      g_free(item_norm);
+      g_object_unref(item);
+      if (match) return TRUE;
+    } else if (item) {
+      g_object_unref(item);
+    }
+  }
+  return FALSE;
+}
+
 /* Setup media grid item widget factory */
 static void setup_media_item(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
   (void)factory;
@@ -2503,6 +2580,9 @@ static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer use
   /* Track oldest timestamp for pagination */
   gint64 oldest_timestamp = G_MAXINT64;
 
+  /* nostrc-tv0u: Hash table to track seen URLs for deduplication within this load */
+  GHashTable *seen_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
   /* Extract media from each event */
   for (guint i = 0; i < results->len; i++) {
     const char *json = g_ptr_array_index(results, i);
@@ -2527,9 +2607,16 @@ static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer use
     GPtrArray *content_urls = extract_media_urls_from_content(content);
     for (guint j = 0; j < content_urls->len; j++) {
       const char *url = g_ptr_array_index(content_urls, j);
-      ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
-      g_list_store_append(self->media_model, item);
-      g_object_unref(item);
+      /* nostrc-tv0u: Deduplicate by normalized URL */
+      gchar *norm_url = normalize_media_url(url);
+      if (norm_url && !g_hash_table_contains(seen_urls, norm_url) &&
+          !media_url_exists_in_model(self->media_model, norm_url)) {
+        g_hash_table_add(seen_urls, g_strdup(norm_url));
+        ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
+        g_list_store_append(self->media_model, item);
+        g_object_unref(item);
+      }
+      g_free(norm_url);
     }
     g_ptr_array_unref(content_urls);
 
@@ -2537,15 +2624,23 @@ static void on_media_query_done(GObject *source, GAsyncResult *res, gpointer use
     GPtrArray *tag_urls = extract_media_urls_from_tags(tags);
     for (guint j = 0; j < tag_urls->len; j++) {
       const char *url = g_ptr_array_index(tag_urls, j);
-      ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
-      g_list_store_append(self->media_model, item);
-      g_object_unref(item);
+      /* nostrc-tv0u: Deduplicate by normalized URL */
+      gchar *norm_url = normalize_media_url(url);
+      if (norm_url && !g_hash_table_contains(seen_urls, norm_url) &&
+          !media_url_exists_in_model(self->media_model, norm_url)) {
+        g_hash_table_add(seen_urls, g_strdup(norm_url));
+        ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
+        g_list_store_append(self->media_model, item);
+        g_object_unref(item);
+      }
+      g_free(norm_url);
     }
     g_ptr_array_unref(tag_urls);
 
     nostr_event_free(evt);
   }
 
+  g_hash_table_destroy(seen_urls);
   self->media_oldest_timestamp = oldest_timestamp;
 
   /* Check if we have any media */
@@ -2610,6 +2705,9 @@ static guint load_media_from_cache(GnostrProfilePane *self) {
   guint added = 0;
   gint64 oldest_timestamp = self->media_oldest_timestamp > 0 ? self->media_oldest_timestamp : G_MAXINT64;
 
+  /* nostrc-tv0u: Hash table to track seen URLs for deduplication within this load */
+  GHashTable *seen_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
   for (int i = 0; i < count; i++) {
     const char *json_str = json_results[i];
     if (!json_str) continue;
@@ -2635,10 +2733,17 @@ static guint load_media_from_cache(GnostrProfilePane *self) {
     GPtrArray *content_urls = extract_media_urls_from_content(content);
     for (guint j = 0; j < content_urls->len; j++) {
       const char *url = g_ptr_array_index(content_urls, j);
-      ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
-      g_list_store_append(self->media_model, item);
-      g_object_unref(item);
-      added++;
+      /* nostrc-tv0u: Deduplicate by normalized URL */
+      gchar *norm_url = normalize_media_url(url);
+      if (norm_url && !g_hash_table_contains(seen_urls, norm_url) &&
+          !media_url_exists_in_model(self->media_model, norm_url)) {
+        g_hash_table_add(seen_urls, g_strdup(norm_url));
+        ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
+        g_list_store_append(self->media_model, item);
+        g_object_unref(item);
+        added++;
+      }
+      g_free(norm_url);
     }
     g_ptr_array_unref(content_urls);
 
@@ -2646,16 +2751,24 @@ static guint load_media_from_cache(GnostrProfilePane *self) {
     GPtrArray *tag_urls = extract_media_urls_from_tags(tags);
     for (guint j = 0; j < tag_urls->len; j++) {
       const char *url = g_ptr_array_index(tag_urls, j);
-      ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
-      g_list_store_append(self->media_model, item);
-      g_object_unref(item);
-      added++;
+      /* nostrc-tv0u: Deduplicate by normalized URL */
+      gchar *norm_url = normalize_media_url(url);
+      if (norm_url && !g_hash_table_contains(seen_urls, norm_url) &&
+          !media_url_exists_in_model(self->media_model, norm_url)) {
+        g_hash_table_add(seen_urls, g_strdup(norm_url));
+        ProfileMediaItem *item = profile_media_item_new(url, url, id_hex, NULL, created_at);
+        g_list_store_append(self->media_model, item);
+        g_object_unref(item);
+        added++;
+      }
+      g_free(norm_url);
     }
     g_ptr_array_unref(tag_urls);
 
     nostr_event_free(evt);
   }
 
+  g_hash_table_destroy(seen_urls);
   storage_ndb_free_results(json_results, count);
   storage_ndb_end_query(txn);
 
