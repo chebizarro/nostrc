@@ -17,6 +17,7 @@
 #include "../util/nip23.h"
 #include "../util/nip71.h"
 #include "nostr-filter.h"
+#include "nostr-tag.h"
 #include <string.h>
 #include <time.h>
 #include <errno.h>
@@ -731,6 +732,10 @@ struct _GnostrTimelineView {
   GListStore *list_model;             /* owned: TimelineItem (flat) or tree roots when tree is active */
   GtkTreeListModel *tree_model;       /* owned when tree roots set */
   GListStore *flattened_model;        /* owned: flattened timeline with threading */
+
+  /* nostrc-lig9: NIP-65 reaction fetch tracking */
+  GHashTable *reaction_nip65_fetched; /* pubkey_hex -> gboolean: authors we've fetched NIP-65 for */
+  GCancellable *reaction_cancellable; /* cancellable for reaction fetch operations */
 };
 
 G_DEFINE_TYPE(GnostrTimelineView, gnostr_timeline_view, GTK_TYPE_WIDGET)
@@ -793,6 +798,14 @@ static void gnostr_timeline_view_dispose(GObject *obj) {
     g_warning("🔥 Clearing list model");
     g_clear_object(&self->list_model);
   }
+
+  /* nostrc-lig9: Cancel and clean up reaction fetch state */
+  if (self->reaction_cancellable) {
+    g_cancellable_cancel(self->reaction_cancellable);
+    g_clear_object(&self->reaction_cancellable);
+  }
+  g_clear_pointer(&self->reaction_nip65_fetched, g_hash_table_unref);
+
   /* Dispose template children before chaining up so they are unparented first */
   gtk_widget_dispose_template(GTK_WIDGET(obj), GNOSTR_TYPE_TIMELINE_VIEW);
   self->root_scroller = NULL;
@@ -1513,8 +1526,202 @@ static gchar *parse_content_warning_from_tags_json(const char *tags_json) {
   return ctx.reason;
 }
 
+/* ============== nostrc-lig9: NIP-65 Reaction Fetching ============== */
+
+/* Context for async reaction fetch operations */
+typedef struct {
+  GWeakRef view_ref;        /* weak ref to timeline view */
+  gchar *event_id_hex;      /* event ID to fetch reactions for */
+  gchar *author_pubkey_hex; /* post author's pubkey */
+} ReactionFetchContext;
+
+static void reaction_fetch_ctx_free(ReactionFetchContext *ctx) {
+  if (!ctx) return;
+  g_weak_ref_clear(&ctx->view_ref);
+  g_free(ctx->event_id_hex);
+  g_free(ctx->author_pubkey_hex);
+  g_free(ctx);
+}
+
+/* Callback when reaction query from author's NIP-65 relays completes */
+static void on_reaction_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  ReactionFetchContext *ctx = (ReactionFetchContext *)user_data;
+  if (!ctx) return;
+
+  GError *error = NULL;
+  GPtrArray *results = gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), res, &error);
+
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_debug("timeline_view: reaction query error: %s", error->message);
+    }
+    g_error_free(error);
+    reaction_fetch_ctx_free(ctx);
+    return;
+  }
+
+  GnostrTimelineView *self = g_weak_ref_get(&ctx->view_ref);
+  if (!self) {
+    if (results) g_ptr_array_unref(results);
+    reaction_fetch_ctx_free(ctx);
+    return;
+  }
+
+  if (!results || results->len == 0) {
+    g_debug("timeline_view: no reactions found from author NIP-65 relays for %.16s", ctx->event_id_hex);
+    if (results) g_ptr_array_unref(results);
+    g_object_unref(self);
+    reaction_fetch_ctx_free(ctx);
+    return;
+  }
+
+  g_debug("timeline_view: received %u reaction events from author NIP-65 relays", results->len);
+
+  /* Store reactions in nostrdb - they will be picked up by local query next time */
+  for (guint i = 0; i < results->len; i++) {
+    const char *event_json = g_ptr_array_index(results, i);
+    if (event_json && *event_json) {
+      storage_ndb_ingest_event_json(event_json, NULL);
+    }
+  }
+
+  /* Update reaction count in model - find the event item and update it */
+  guint new_count = storage_ndb_count_reactions(ctx->event_id_hex);
+  if (new_count > 0 && self->list_model) {
+    guint n_items = g_list_model_get_n_items(G_LIST_MODEL(self->list_model));
+    for (guint i = 0; i < n_items; i++) {
+      GObject *obj = g_list_model_get_item(G_LIST_MODEL(self->list_model), i);
+      if (obj && G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
+        gchar *item_id = NULL;
+        g_object_get(obj, "event-id", &item_id, NULL);
+        if (item_id && g_strcmp0(item_id, ctx->event_id_hex) == 0) {
+          guint old_count = gn_nostr_event_item_get_like_count(GN_NOSTR_EVENT_ITEM(obj));
+          if (new_count > old_count) {
+            g_debug("timeline_view: updating reaction count for %.16s: %u -> %u",
+                    ctx->event_id_hex, old_count, new_count);
+            gn_nostr_event_item_set_like_count(GN_NOSTR_EVENT_ITEM(obj), new_count);
+          }
+        }
+        g_free(item_id);
+      }
+      if (obj) g_object_unref(obj);
+    }
+  }
+
+  g_ptr_array_unref(results);
+  g_object_unref(self);
+  reaction_fetch_ctx_free(ctx);
+}
+
+/* Callback when author's NIP-65 relay list is fetched */
+static void on_author_nip65_for_reactions(GPtrArray *relays, gpointer user_data) {
+  ReactionFetchContext *ctx = (ReactionFetchContext *)user_data;
+  if (!ctx) return;
+
+  GnostrTimelineView *self = g_weak_ref_get(&ctx->view_ref);
+  if (!self) {
+    if (relays) g_ptr_array_unref(relays);
+    reaction_fetch_ctx_free(ctx);
+    return;
+  }
+
+  if (!relays || relays->len == 0) {
+    g_debug("timeline_view: no NIP-65 relays for author %.16s", ctx->author_pubkey_hex);
+    if (relays) g_ptr_array_unref(relays);
+    g_object_unref(self);
+    reaction_fetch_ctx_free(ctx);
+    return;
+  }
+
+  /* Get write relays from NIP-65 list (reactions are sent to author's write relays) */
+  GPtrArray *write_relays = gnostr_nip65_get_write_relays(relays);
+  g_ptr_array_unref(relays);
+
+  if (!write_relays || write_relays->len == 0) {
+    g_debug("timeline_view: no write relays in NIP-65 for author %.16s", ctx->author_pubkey_hex);
+    if (write_relays) g_ptr_array_unref(write_relays);
+    g_object_unref(self);
+    reaction_fetch_ctx_free(ctx);
+    return;
+  }
+
+  g_debug("timeline_view: querying %u author write relays for reactions to %.16s",
+          write_relays->len, ctx->event_id_hex);
+
+  /* Build filter for kind:7 reactions referencing this event */
+  NostrFilter *filter = nostr_filter_new();
+  int kinds[1] = { 7 };
+  nostr_filter_set_kinds(filter, kinds, 1);
+
+  /* Set #e tag filter using NostrTags API */
+  NostrTag *e_tag = nostr_tag_new("e", ctx->event_id_hex, NULL);
+  NostrTags *tags = nostr_tags_new(1, e_tag);
+  nostr_filter_set_tags(filter, tags);  /* Takes ownership of tags */
+
+  nostr_filter_set_limit(filter, 100);
+
+  /* Build URL array */
+  const char **urls = g_new0(const char *, write_relays->len);
+  for (guint i = 0; i < write_relays->len; i++) {
+    urls[i] = g_ptr_array_index(write_relays, i);
+  }
+
+  /* Query author's relays for reactions */
+  gnostr_simple_pool_query_single_async(
+    gnostr_get_shared_query_pool(),
+    urls,
+    write_relays->len,
+    filter,
+    self->reaction_cancellable,
+    on_reaction_query_done,
+    ctx  /* transfer ownership of ctx */
+  );
+
+  g_free(urls);
+  g_ptr_array_unref(write_relays);
+  nostr_filter_free(filter);
+  g_object_unref(self);
+  /* Note: ctx ownership transferred to on_reaction_query_done */
+}
+
+/* Initiate async fetch of reactions from post author's NIP-65 relays */
+static void fetch_reactions_from_author_relays(GnostrTimelineView *self,
+                                                const char *event_id_hex,
+                                                const char *author_pubkey_hex) {
+  if (!self || !event_id_hex || !author_pubkey_hex) return;
+  if (strlen(event_id_hex) != 64 || strlen(author_pubkey_hex) != 64) return;
+
+  /* Check if we've already initiated a fetch for this author */
+  if (g_hash_table_contains(self->reaction_nip65_fetched, author_pubkey_hex)) {
+    return;
+  }
+
+  /* Mark as fetched to prevent duplicate requests */
+  g_hash_table_insert(self->reaction_nip65_fetched,
+                      g_strdup(author_pubkey_hex),
+                      GINT_TO_POINTER(1));
+
+  g_debug("timeline_view: initiating NIP-65 reaction fetch for author %.16s, event %.16s",
+          author_pubkey_hex, event_id_hex);
+
+  /* Create context for async callbacks */
+  ReactionFetchContext *ctx = g_new0(ReactionFetchContext, 1);
+  g_weak_ref_init(&ctx->view_ref, self);
+  ctx->event_id_hex = g_strdup(event_id_hex);
+  ctx->author_pubkey_hex = g_strdup(author_pubkey_hex);
+
+  /* Fetch author's NIP-65 relay list */
+  gnostr_nip65_fetch_relays_async(author_pubkey_hex,
+                                   self->reaction_cancellable,
+                                   on_author_nip65_for_reactions,
+                                   ctx);
+}
+
+/* ============== End nostrc-lig9 ============== */
+
 static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
-  (void)f; (void)data;
+  (void)f;
+  GnostrTimelineView *self = GNOSTR_TIMELINE_VIEW(data);
   GObject *obj = gtk_list_item_get_item(item);
   
   if (!obj) {
@@ -1887,6 +2094,11 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       gnostr_note_card_row_set_like_count(GNOSTR_NOTE_CARD_ROW(row), like_count);
       gnostr_note_card_row_set_liked(GNOSTR_NOTE_CARD_ROW(row), is_liked);
 
+      /* nostrc-lig9: Fetch reactions from post author's NIP-65 relays if we haven't already */
+      if (self && id_hex && pubkey && strlen(id_hex) == 64 && strlen(pubkey) == 64) {
+        fetch_reactions_from_author_relays(self, id_hex, pubkey);
+      }
+
       /* NIP-57: Set zap stats from model or local storage */
       guint zap_count = gn_nostr_event_item_get_zap_count(GN_NOSTR_EVENT_ITEM(obj));
       gint64 zap_total = gn_nostr_event_item_get_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj));
@@ -2030,6 +2242,10 @@ static void gnostr_timeline_view_init(GnostrTimelineView *self) {
   if (self->tabs && GN_IS_TIMELINE_TABS(self->tabs)) {
     g_signal_connect(self->tabs, "tab-selected", G_CALLBACK(on_tabs_tab_selected), self);
   }
+
+  /* nostrc-lig9: Initialize NIP-65 reaction fetch tracking */
+  self->reaction_nip65_fetched = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->reaction_cancellable = g_cancellable_new();
 
   /* Install minimal CSS for thread indicator and avatar */
   static const char *css =
