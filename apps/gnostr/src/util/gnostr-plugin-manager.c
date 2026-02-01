@@ -75,6 +75,12 @@ gnostr_plugin_manager_dispose(GObject *obj)
   g_clear_object(&self->settings);
   g_clear_pointer(&self->loaded_plugins, g_hash_table_unref);
 
+  /* Free plugin context */
+  if (self->context) {
+    gnostr_plugin_context_free(self->context);
+    self->context = NULL;
+  }
+
 #ifdef HAVE_LIBPEAS
   g_clear_object(&self->extension_set);
   /* Engine is a singleton, don't unref */
@@ -137,6 +143,9 @@ gnostr_plugin_manager_init_with_app(GnostrPluginManager *manager,
 
   manager->app = app;
   manager->initialized = TRUE;
+
+  /* Create the shared plugin context */
+  manager->context = gnostr_plugin_context_new(app, "gnostr");
 
   g_debug("[PLUGIN] Plugin manager initialized with application");
 }
@@ -498,6 +507,18 @@ on_extension_removed(PeasExtensionSet *set,
   }
 }
 #endif
+
+void
+gnostr_plugin_manager_set_main_window(GnostrPluginManager *manager,
+                                      GtkWindow           *window)
+{
+  g_return_if_fail(GNOSTR_IS_PLUGIN_MANAGER(manager));
+
+  if (manager->context) {
+    gnostr_plugin_context_set_main_window(manager->context, window);
+    g_debug("[PLUGIN] Set main window on plugin context");
+  }
+}
 
 /* ============================================================================
  * Plugin API version check implementation

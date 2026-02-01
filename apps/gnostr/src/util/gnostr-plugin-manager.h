@@ -132,6 +132,17 @@ gboolean gnostr_plugin_manager_get_plugin_info(GnostrPluginManager  *manager,
  */
 void gnostr_plugin_manager_shutdown(GnostrPluginManager *manager);
 
+/**
+ * gnostr_plugin_manager_set_main_window:
+ * @manager: The plugin manager
+ * @window: The main #GtkWindow
+ *
+ * Set the main window for the plugin context.
+ * Call this when the main window is created.
+ */
+void gnostr_plugin_manager_set_main_window(GnostrPluginManager *manager,
+                                           GtkWindow           *window);
+
 G_END_DECLS
 
 #endif /* GNOSTR_PLUGIN_MANAGER_H */

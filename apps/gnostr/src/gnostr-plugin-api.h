@@ -53,6 +53,9 @@ typedef struct _GnostrPluginContext GnostrPluginContext;
 /* Opaque event wrapper - use accessor functions */
 typedef struct _GnostrPluginEvent GnostrPluginEvent;
 
+/* Forward declaration for relay pool (internal use) */
+typedef struct _GnostrSimplePool GnostrSimplePool;
+
 /* ============================================================================
  * GNOSTR_PLUGIN INTERFACE
  * ============================================================================
@@ -409,6 +412,52 @@ GtkWidget *gnostr_ui_extension_create_note_decoration(GnostrUIExtension   *exten
  * Functions for accessing host services from plugins.
  * The context is provided during activate/deactivate and event handling.
  */
+
+/* --- Context Lifecycle (Host internal use) --- */
+
+/**
+ * gnostr_plugin_context_new:
+ * @app: The #GtkApplication
+ * @plugin_id: Plugin identifier for namespacing
+ *
+ * Create a new plugin context. For host internal use.
+ *
+ * Returns: (transfer full): A new #GnostrPluginContext
+ * @stability: Private
+ */
+GnostrPluginContext *gnostr_plugin_context_new(GtkApplication *app, const char *plugin_id);
+
+/**
+ * gnostr_plugin_context_free:
+ * @context: A #GnostrPluginContext
+ *
+ * Free a plugin context. For host internal use.
+ *
+ * @stability: Private
+ */
+void gnostr_plugin_context_free(GnostrPluginContext *context);
+
+/**
+ * gnostr_plugin_context_set_main_window:
+ * @context: A #GnostrPluginContext
+ * @window: The main #GtkWindow
+ *
+ * Set the main window on a context. For host internal use.
+ *
+ * @stability: Private
+ */
+void gnostr_plugin_context_set_main_window(GnostrPluginContext *context, GtkWindow *window);
+
+/**
+ * gnostr_plugin_context_set_pool:
+ * @context: A #GnostrPluginContext
+ * @pool: A #GnostrSimplePool (or compatible GObject)
+ *
+ * Set the relay pool on a context. For host internal use.
+ *
+ * @stability: Private
+ */
+void gnostr_plugin_context_set_pool(GnostrPluginContext *context, GnostrSimplePool *pool);
 
 /* --- Application Access --- */
 
