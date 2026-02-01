@@ -535,14 +535,15 @@ static void gnostr_session_view_init(GnostrSessionView *self) {
 
   gtk_widget_init_template(GTK_WIDGET(self));
 
-  /* Avatar popover will be created lazily in ensure_avatar_popover() to avoid
-   * GTK4 crash on Linux where GtkPopover creation during template init causes
-   * gtk_widget_root assertion failure */
+  /* Avatar popover created after template init to avoid GTK4 crash on Linux
+   * where GtkPopover creation during template init causes gtk_widget_root
+   * assertion failure. Safe to call here since template init is complete. */
   self->avatar_popover = NULL;
   self->lbl_signin_status = NULL;
   self->lbl_profile_name = NULL;
   self->btn_login = NULL;
   self->btn_logout = NULL;
+  ensure_avatar_popover(self);
 
   /* ESC closes profile/thread side panel when visible */
   GtkEventController *keys = gtk_event_controller_key_new();
