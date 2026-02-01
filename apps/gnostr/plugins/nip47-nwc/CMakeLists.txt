@@ -12,9 +12,15 @@ set(PLUGIN_SOURCES
 # Create shared library
 add_library(${PLUGIN_NAME} MODULE ${PLUGIN_SOURCES})
 
+# Determine nostrc root (handle both standalone and subproject builds)
+get_filename_component(NOSTRC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." ABSOLUTE)
+
 # Include directories
 target_include_directories(${PLUGIN_NAME} PRIVATE
-    ${CMAKE_SOURCE_DIR}/apps/gnostr/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+    ${NOSTRC_ROOT}/lib
+    ${NOSTRC_ROOT}/nips/nip47/include
+    ${NOSTRC_ROOT}/nips/nip04/include
 )
 
 # Link libraries (use parent's pkg-config targets)
@@ -22,6 +28,9 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE
     PkgConfig::GTK4
     PkgConfig::GLIB
     PkgConfig::LIBPEAS
+    nostr
+    nip47
+    nip04
 )
 
 # Set library properties
