@@ -389,7 +389,7 @@ void gnostr_avatar_prefetch(const char *url) {
     g_weak_ref_init(&ctx->image_ref, NULL);    /* no UI to update */
     g_weak_ref_init(&ctx->initials_ref, NULL); /* no UI to update */
     ctx->url = g_strdup(url);
-    g_message("avatar prefetch: fetching via HTTP url=%s", url);
+    g_debug("avatar prefetch: fetching via HTTP url=%s", url);
     s_avatar_metrics.http_start++;
     soup_session_send_and_read_async(sess, msg, G_PRIORITY_DEFAULT, NULL, on_avatar_http_done, ctx);
     g_object_unref(msg);
@@ -463,8 +463,7 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
   if (!bytes) {
     s_avatar_metrics.http_error++;
-    g_debug("avatar http: error fetching url=%s: %s", ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
-    g_message("avatar http: fetch failed; profile metadata/UI remain applied (url=%s)", ctx && ctx->url ? ctx->url : "(null)");
+    g_debug("avatar http: fetch failed url=%s: %s", ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
     g_clear_error(&error);
     avatar_ctx_free(ctx);
     return;
