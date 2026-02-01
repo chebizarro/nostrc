@@ -1,0 +1,10 @@
+[Plugin]
+Module=nip34-git
+Name=NIP-34 Git Repositories
+Description=Git repository browser and client for Nostr-based git collaboration
+Authors=Gnostr Contributors
+Version=1.0
+Copyright=Copyright 2026 Gnostr Contributors
+Website=https://github.com/nostr-protocol/nips/blob/master/34.md
+Builtin=true
+Loader=c
