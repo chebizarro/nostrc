@@ -18,7 +18,7 @@ typedef struct {
 
 struct _OgPreviewWidget {
   GtkWidget parent_instance;
-  
+
   /* UI elements */
   GtkWidget *card_box;
   GtkWidget *image_widget;
@@ -27,19 +27,20 @@ struct _OgPreviewWidget {
   GtkWidget *description_label;
   GtkWidget *site_label;
   GtkWidget *spinner;
-  
+  GtkWidget *error_label;   /* "Preview Not Available" message */
+
   /* State */
   char *current_url;
   /* Note: Uses gnostr_get_shared_soup_session() instead of per-widget session */
   GCancellable *cancellable;
   GHashTable *cache; /* URL -> OgMetadata */
-  
+
   /* Image loading */
   GCancellable *image_cancellable;
-  
+
   /* External cancellable from parent widget (not owned, just referenced) */
   GCancellable *external_cancellable;
-  
+
   /* Disposal flag - set during dispose to prevent callbacks from accessing widget */
   gboolean disposed;
 };
@@ -100,39 +101,62 @@ static const char *stristr(const char *haystack, const char *needle) {
   return NULL;
 }
 
-/* HTML parsing: Extract meta tag content */
-static char *extract_meta_tag(const char *html, const char *property) {
-  if (!html || !property) return NULL;
-  
-  /* Build search patterns */
-  char *pattern1 = g_strdup_printf("<meta property=\"%s\"", property);
-  char *pattern2 = g_strdup_printf("<meta property='%s'", property);
-  
-  const char *meta_start = stristr(html, pattern1);
-  if (!meta_start) meta_start = stristr(html, pattern2);
-  
-  g_free(pattern1);
-  g_free(pattern2);
-  
+/* HTML parsing: Extract content from a meta tag starting at meta_start */
+static char *extract_content_from_meta(const char *meta_start) {
   if (!meta_start) return NULL;
-  
+
   /* Find content attribute */
   const char *content_start = stristr(meta_start, "content=");
   if (!content_start) return NULL;
-  
+
   content_start += 8; /* Skip "content=" */
-  
+
   /* Determine quote type */
   char quote = *content_start;
   if (quote != '"' && quote != '\'') return NULL;
-  
+
   content_start++; /* Skip opening quote */
-  
+
   /* Find closing quote */
   const char *content_end = strchr(content_start, quote);
   if (!content_end) return NULL;
-  
+
   return g_strndup(content_start, content_end - content_start);
+}
+
+/* HTML parsing: Extract meta tag content by property or name attribute */
+static char *extract_meta_tag(const char *html, const char *property) {
+  if (!html || !property) return NULL;
+
+  /* Build search patterns for property="..." (OpenGraph standard) */
+  char *pattern1 = g_strdup_printf("<meta property=\"%s\"", property);
+  char *pattern2 = g_strdup_printf("<meta property='%s'", property);
+
+  const char *meta_start = stristr(html, pattern1);
+  if (!meta_start) meta_start = stristr(html, pattern2);
+
+  g_free(pattern1);
+  g_free(pattern2);
+
+  if (meta_start) {
+    return extract_content_from_meta(meta_start);
+  }
+
+  /* Fallback: Try name="..." attribute (used by Twitter cards) */
+  pattern1 = g_strdup_printf("<meta name=\"%s\"", property);
+  pattern2 = g_strdup_printf("<meta name='%s'", property);
+
+  meta_start = stristr(html, pattern1);
+  if (!meta_start) meta_start = stristr(html, pattern2);
+
+  g_free(pattern1);
+  g_free(pattern2);
+
+  if (meta_start) {
+    return extract_content_from_meta(meta_start);
+  }
+
+  return NULL;
 }
 
 /* HTML parsing: Extract <title> tag */
@@ -157,39 +181,53 @@ static char *extract_title_tag(const char *html) {
 /* Parse Open Graph metadata from HTML */
 static OgMetadata *parse_og_metadata(const char *html, const char *url) {
   if (!html) return NULL;
-  
+
   OgMetadata *meta = g_new0(OgMetadata, 1);
-  
+
   /* Extract OG tags */
   meta->title = extract_meta_tag(html, "og:title");
   meta->description = extract_meta_tag(html, "og:description");
   meta->image_url = extract_meta_tag(html, "og:image");
   meta->url = extract_meta_tag(html, "og:url");
   meta->site_name = extract_meta_tag(html, "og:site_name");
-  
-  /* Fallbacks */
+
+  /* Twitter card fallbacks (Twitter/X uses twitter:* meta tags) */
+  if (!meta->title) {
+    meta->title = extract_meta_tag(html, "twitter:title");
+  }
+  if (!meta->description) {
+    meta->description = extract_meta_tag(html, "twitter:description");
+  }
+  if (!meta->image_url) {
+    meta->image_url = extract_meta_tag(html, "twitter:image");
+  }
+  if (!meta->site_name) {
+    meta->site_name = extract_meta_tag(html, "twitter:site");
+  }
+
+  /* Generic fallbacks */
   if (!meta->title) {
     meta->title = extract_title_tag(html);
   }
-  
+
   if (!meta->description) {
     meta->description = extract_meta_tag(html, "description");
   }
-  
+
   if (!meta->url) {
     meta->url = g_strdup(url);
   }
-  
+
   if (!meta->site_name) {
     meta->site_name = extract_domain(url);
   }
-  
+
   /* Validate we have at least a title */
   if (!meta->title || !*meta->title) {
     og_metadata_free(meta);
     return NULL;
   }
-  
+
   return meta;
 }
 
@@ -294,14 +332,18 @@ static void load_image_async(OgPreviewWidget *self, const char *url) {
 static void update_ui_with_metadata(OgPreviewWidget *self, OgMetadata *meta) {
   /* Guard against disposed widget */
   if (self->disposed) return;
-  
+
   if (!meta) {
+    /* Hide spinner and card, show "Preview Not Available" */
+    if (self->spinner) gtk_widget_set_visible(self->spinner, FALSE);
     if (self->card_box) gtk_widget_set_visible(self->card_box, FALSE);
+    if (self->error_label) gtk_widget_set_visible(self->error_label, TRUE);
     return;
   }
-  
-  /* Hide spinner, show card - check pointers before use */
+
+  /* Hide spinner and error, show card - check pointers before use */
   if (self->spinner) gtk_widget_set_visible(self->spinner, FALSE);
+  if (self->error_label) gtk_widget_set_visible(self->error_label, FALSE);
   if (self->card_box) gtk_widget_set_visible(self->card_box, TRUE);
   
   /* Update labels - verify each widget is valid before use */
@@ -357,15 +399,23 @@ static void on_html_fetched(GObject *source, GAsyncResult *res, gpointer user_da
   if (error) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_debug("OG: Failed to fetch URL: %s", error->message);
+      /* Show error message instead of spinner */
+      if (!self->disposed) {
+        if (self->spinner) gtk_widget_set_visible(self->spinner, FALSE);
+        if (self->error_label) gtk_widget_set_visible(self->error_label, TRUE);
+      }
     }
     g_error_free(error);
     if (!self->disposed && self->spinner) gtk_widget_set_visible(self->spinner, FALSE);
     return;
   }
-  
+
   if (!bytes || g_bytes_get_size(bytes) == 0) {
     if (bytes) g_bytes_unref(bytes);
-    if (!self->disposed && self->spinner) gtk_widget_set_visible(self->spinner, FALSE);
+    if (!self->disposed) {
+      if (self->spinner) gtk_widget_set_visible(self->spinner, FALSE);
+      if (self->error_label) gtk_widget_set_visible(self->error_label, TRUE);
+    }
     return;
   }
   
@@ -429,6 +479,7 @@ static void fetch_og_metadata_async(OgPreviewWidget *self, const char *url) {
   
   /* Show loading state */
   gtk_widget_set_visible(self->card_box, FALSE);
+  gtk_widget_set_visible(self->error_label, FALSE);
   gtk_widget_set_visible(self->spinner, TRUE);
   
   /* Create request */
@@ -493,6 +544,7 @@ static void og_preview_widget_dispose(GObject *object) {
    * Just clear the pointers to prevent async callbacks from accessing them. */
   self->card_box = NULL;
   self->spinner = NULL;
+  self->error_label = NULL;
   self->title_label = NULL;
   self->description_label = NULL;
   self->site_label = NULL;
@@ -500,19 +552,27 @@ static void og_preview_widget_dispose(GObject *object) {
   self->text_box = NULL;
 
   G_OBJECT_CLASS(og_preview_widget_parent_class)->dispose(object);
-  
+
   /* Shared session is managed globally - do not clear here */
 }
 
 static void og_preview_widget_finalize(GObject *object) {
   OgPreviewWidget *self = OG_PREVIEW_WIDGET(object);
-  
+
   /* Clean up cancellables that were only cancelled in dispose */
   g_clear_object(&self->cancellable);
   g_clear_object(&self->image_cancellable);
-  
+
   g_free(self->current_url);
-  
+
+  /* Unparent children in finalize (not dispose) to avoid Pango crashes.
+   * GTK4's standard dispose-then-finalize cycle means we need to be careful
+   * about when we unparent widgets that contain Pango layouts. */
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self))) != NULL) {
+    gtk_widget_unparent(child);
+  }
+
   G_OBJECT_CLASS(og_preview_widget_parent_class)->finalize(object);
 }
 
@@ -555,6 +615,12 @@ static void og_preview_widget_init(OgPreviewWidget *self) {
   gtk_spinner_start(GTK_SPINNER(self->spinner));
   gtk_widget_set_visible(self->spinner, FALSE);
   gtk_widget_set_parent(self->spinner, GTK_WIDGET(self));
+
+  /* Create error label for "Preview Not Available" */
+  self->error_label = gtk_label_new("Preview Not Available");
+  gtk_widget_add_css_class(self->error_label, "dim-label");
+  gtk_widget_set_visible(self->error_label, FALSE);
+  gtk_widget_set_parent(self->error_label, GTK_WIDGET(self));
   
   /* Create card container */
   self->card_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -671,6 +737,7 @@ void og_preview_widget_clear(OgPreviewWidget *self) {
 
   /* Hide UI */
   gtk_widget_set_visible(self->spinner, FALSE);
+  gtk_widget_set_visible(self->error_label, FALSE);
   gtk_widget_set_visible(self->card_box, FALSE);
 }
 
