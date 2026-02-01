@@ -135,8 +135,11 @@ GnTimelineQuery *gn_timeline_query_new_thread(const char *root_event_id) {
   /* Include replies for thread view */
   q->include_replies = TRUE;
   
-  /* TODO: Add #e tag filter for root_event_id */
-  /* For now, store in hashtag field as a workaround */
+  /* nostrc-n63f: Thread queries use a tagged-reference filter convention.
+   * The "e:" prefix in hashtag field signals to the query executor that this
+   * is an event reference filter, not a hashtag. This allows reuse of existing
+   * infrastructure without adding a dedicated event_ids field to the struct.
+   * A future refactor could add proper #e/#p tag filter arrays. */
   q->hashtag = g_strdup_printf("e:%s", root_event_id);
   
   return q;

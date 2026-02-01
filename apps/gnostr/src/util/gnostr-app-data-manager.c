@@ -631,7 +631,10 @@ void gnostr_app_data_manager_sync_mutes_async(GnostrAppDataManager *self,
                                                GnostrAppDataManagerCallback callback,
                                                gpointer user_data) {
     g_return_if_fail(GNOSTR_IS_APP_DATA_MANAGER(self));
-    (void)strategy; /* TODO: implement merge strategies */
+    /* nostrc-n63f: Merge strategy param unused - underlying modules (mute_list,
+     * bookmarks) currently use "remote wins if newer" which maps to MERGE_LATEST.
+     * Full strategy support requires propagating to sync functions. */
+    (void)strategy;
 
     /* Delegate to mute_list module which handles NIP-51 kind 10000 */
     /* NIP-78 can be used as an alternative/backup sync mechanism */

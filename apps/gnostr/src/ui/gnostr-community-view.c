@@ -1144,7 +1144,17 @@ gnostr_community_view_update_author_profile(GnostrCommunityView *self,
         g_hash_table_insert(self->author_avatars, g_strdup(pubkey), g_strdup(avatar_url));
     }
 
-    /* TODO: Refresh visible rows with updated author info */
+    /* nostrc-n63f: Refresh visible rows with updated author info by signaling
+     * items-changed on the list models. This triggers rebind of visible rows. */
+    guint approved_len = g_list_model_get_n_items(G_LIST_MODEL(self->approved_posts));
+    guint pending_len = g_list_model_get_n_items(G_LIST_MODEL(self->pending_posts));
+
+    if (approved_len > 0) {
+        g_list_model_items_changed(G_LIST_MODEL(self->approved_posts), 0, approved_len, approved_len);
+    }
+    if (pending_len > 0) {
+        g_list_model_items_changed(G_LIST_MODEL(self->pending_posts), 0, pending_len, pending_len);
+    }
 }
 
 GtkWidget *

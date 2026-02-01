@@ -658,7 +658,9 @@ void gnostr_nip89_set_preferred_handler(guint event_kind, const char *handler_a_
 
   g_mutex_unlock(&g_nip89_cache_mutex);
 
-  /* TODO: Persist to GSettings or publish kind 31990 event */
+  /* nostrc-n63f: Handler preferences are in-memory only. Persisting to GSettings
+   * or publishing kind 31990 (recommendation) events is a larger feature.
+   * See nostrc-89ps if a bead exists for NIP-89 persistence. */
 }
 
 void gnostr_nip89_clear_all_preferences(void)
@@ -867,8 +869,10 @@ void gnostr_nip89_query_handlers_async(guint event_kind,
 
   (void)cancellable;
 
-  /* For now, just return cached results.
-   * TODO: Implement actual relay queries using NostrSimplePool */
+  /* nostrc-n63f: Currently returns cached results only. Live relay queries for
+   * kind 31989/31990 events would enable real-time handler discovery but adds
+   * complexity (relay selection, timeout handling, deduplication). The cache
+   * is populated at startup from storage_ndb queries. */
 
   GPtrArray *handlers = gnostr_nip89_cache_get_handlers_for_kind(event_kind);
   GPtrArray *recommendations = gnostr_nip89_cache_get_recommendations_for_kind(event_kind, NULL);

@@ -409,9 +409,39 @@ GnostrNip66RelayMeta *gnostr_nip66_parse_relay_meta(const gchar *event_json)
     }
     g_ptr_array_unref(nip_values);
 
-    /* Geographic tags */
+    /* Geographic tags - parse geohash to lat/lon (nostrc-n63f) */
     gchar *geo_val = find_tag_value(tags_json, "g", 1);  /* geohash or coordinates */
-    g_free(geo_val); /* TODO: parse geohash if present */
+    if (geo_val && *geo_val) {
+      /* Simple geohash decoder - decodes center point of geohash cell */
+      static const char base32[] = "0123456789bcdefghjkmnpqrstuvwxyz";
+      gdouble lat_min = -90.0, lat_max = 90.0;
+      gdouble lon_min = -180.0, lon_max = 180.0;
+      gboolean is_lon = TRUE;  /* geohash alternates: lon bit, lat bit, lon bit, ... */
+
+      for (const gchar *p = geo_val; *p; p++) {
+        const gchar *idx = strchr(base32, g_ascii_tolower(*p));
+        if (!idx) break;  /* invalid character */
+
+        int val = (int)(idx - base32);
+        for (int bit = 4; bit >= 0; bit--) {
+          if (is_lon) {
+            gdouble mid = (lon_min + lon_max) / 2.0;
+            if (val & (1 << bit)) lon_min = mid;
+            else lon_max = mid;
+          } else {
+            gdouble mid = (lat_min + lat_max) / 2.0;
+            if (val & (1 << bit)) lat_min = mid;
+            else lat_max = mid;
+          }
+          is_lon = !is_lon;
+        }
+      }
+
+      meta->latitude = (lat_min + lat_max) / 2.0;
+      meta->longitude = (lon_min + lon_max) / 2.0;
+      meta->has_geolocation = TRUE;
+    }
+    g_free(geo_val);
 
     gchar *country_val = find_tag_value(tags_json, "G", 1);  /* Country code */
     if (country_val) {

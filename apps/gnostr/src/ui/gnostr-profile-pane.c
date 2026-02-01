@@ -3145,8 +3145,9 @@ static void load_highlights(GnostrProfilePane *self) {
     gtk_widget_set_visible(self->highlights_empty_box, FALSE);
   }
 
-  /* For now, show empty state after brief delay - actual fetching would use relay pool */
-  /* TODO: Implement actual NIP-84 highlight fetching via SimplePool */
+  /* nostrc-n63f: NIP-84 highlights (kind 9802) fetching not implemented.
+   * This would require a SimplePool query for kind 9802 events authored by
+   * the displayed pubkey. For now, shows empty state. */
   g_message("NIP-84: Highlights tab opened for pubkey %.8s...", self->current_pubkey);
 
   /* Hide loading, show empty state for now (until relay fetching is implemented) */
