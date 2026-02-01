@@ -1191,6 +1191,13 @@ void gnostr_articles_view_load_articles(GnostrArticlesView *self) {
 void gnostr_articles_view_refresh(GnostrArticlesView *self) {
   g_return_if_fail(GNOSTR_IS_ARTICLES_VIEW(self));
 
+  /* Cancel any pending fetch */
+  if (self->fetch_cancellable) {
+    g_cancellable_cancel(self->fetch_cancellable);
+    g_clear_object(&self->fetch_cancellable);
+  }
+  self->fetch_in_progress = FALSE;
+
   self->articles_loaded = FALSE;
   g_list_store_remove_all(self->articles_model);
   gnostr_articles_view_load_articles(self);

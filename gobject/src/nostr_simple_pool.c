@@ -857,11 +857,11 @@ static gpointer query_single_thread(gpointer user_data) {
          * 2. Subscription closed by relay (CLOSED message)
          * 3. Connection dropped (websocket closed/failed)
          * 4. Cancellation requested
-         * 5. Safety timeout reached (30s per relay) */
+         * 5. Safety timeout reached (10s per relay) */
         bool done = false;
         guint events_received = 0;
         guint wait_iterations = 0;
-        const guint max_wait_iterations = 3000;  /* 30 seconds at 10ms per iteration */
+        const guint max_wait_iterations = 1000;  /* 10 seconds at 10ms per iteration */
         GoChannel *ch_events = nostr_subscription_get_events_channel(sub);
         GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
         GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
